@@ -285,6 +285,7 @@ beatctl --help
 | `beatctl get <name>`           | Detailed view of a single run (also `-o yaml` / `-o json`).                  |
 | `beatctl logs <name> [-f]`     | Stream container logs. `-c dispatcher` to watch the sidecar instead.         |
 | `beatctl attach <name>`        | Start a `kubectl port-forward` to the run's Service and launch `opencode attach` with the right basic-auth password loaded from the auth Secret. Port-forward is torn down automatically on exit. |
+| `beatctl wait <name>`          | Block until the run reaches a terminal phase. Exit 0 on `Succeeded`, 1 on `Failed`/`Cancelled`/deleted, 2 on timeout. `--for <phase>` waits for a specific phase (e.g. `Running`). Intended for CI and `submit && wait` chains. |
 | `beatctl cancel <name>`        | Delete the run (cascades to its Pod/Service/Secret via `ownerReferences`).   |
 
 Global conventions:
@@ -305,6 +306,26 @@ beatctl ls
 beatctl logs hello -c dispatcher -f
 beatctl cancel hello
 ```
+
+### Scripting with `wait`
+
+`wait` turns `beatctl` into a first-class CI citizen. Exit 0 means the run
+succeeded — everything else is a non-zero exit code:
+
+```sh
+beatctl submit -t "run the linter" --name ci-lint -f run.yaml
+if beatctl wait ci-lint --timeout 600; then
+  echo "lint passed"
+else
+  beatctl logs ci-lint -c opencode --tail 200
+  exit 1
+fi
+beatctl cancel ci-lint
+```
+
+Exit codes: `0` awaited phase reached · `1` terminal-but-not-awaited (e.g.
+`Failed`, `Cancelled`, or the CR was deleted mid-wait) · `2` timeout · `3`
+Kubernetes API error.
 
 ### One-shot interactive shell
 
@@ -328,6 +349,8 @@ beatctl submit -i -a --name scratch
       `opencode attach` with the correct credentials; cleans up port-forward
       on exit.
 - [x] `cancel` deletes the CR and cascades to all child objects.
+- [x] `wait` blocks on a terminal phase with script-friendly exit codes
+      (added post-M3 for CI workflows).
 
 ## M4: git workspace source
 

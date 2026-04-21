@@ -11,6 +11,7 @@ import { runLs, runGet } from "./view.js";
 import { runLogs } from "./logs.js";
 import { runAttach } from "./attach.js";
 import { runCancel } from "./cancel.js";
+import { runWait } from "./wait.js";
 import { runAuthImport } from "./auth.js";
 import { DEFAULT_NAMESPACE } from "./kube.js";
 
@@ -98,6 +99,24 @@ program
   .description("delete a run (cascades to its pod/service/secret)")
   .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
   .action((name: string, opts) => runCancel(name, opts));
+
+// wait ----------------------------------------------------------------------
+// Exit codes are documented on runWait; intended for CI / `submit && wait`.
+program
+  .command("wait <name>")
+  .description("block until a run reaches a terminal phase (exit 0 on Succeeded)")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option(
+    "--timeout <seconds>",
+    "abort with exit code 2 if not settled within N seconds",
+    "600",
+  )
+  .option(
+    "--for <phase>",
+    "wait for a specific phase (e.g. Running, Succeeded); default: any terminal, success=Succeeded",
+  )
+  .option("-q, --quiet", "suppress the progress line on stderr")
+  .action((name: string, opts) => runWait(name, opts));
 
 // auth ----------------------------------------------------------------------
 // Subcommand group so we can grow `beatctl auth list/rotate/revoke` later
