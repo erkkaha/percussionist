@@ -1,0 +1,146 @@
+# RBAC and operator Deployment for the percussionist operator.
+#
+# Layout:
+#   - Namespace:         percussionist
+#   - ServiceAccounts:
+#       percussionist-operator   : used by the operator Deployment
+#       percussionist-dispatcher : used by the dispatcher sidecar in every run pod
+#   - ClusterRole "percussionist-operator":
+#       full rights on our CRD + rights to create pods/services/secrets in
+#       any namespace we watch. (M2 watches a single namespace but the
+#       permissions model stays cluster-wide for simplicity.)
+#   - Role "percussionist-dispatcher":
+#       patch status on OpenCodeRun resources in its own namespace only.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: percussionist
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: percussionist-operator
+  namespace: percussionist
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: percussionist-dispatcher
+  namespace: percussionist
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: percussionist-operator
+rules:
+  - apiGroups: ["percussionist.dev"]
+    resources: ["opencoderuns"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["percussionist.dev"]
+    resources: ["opencoderuns/status"]
+    verbs: ["get", "update", "patch"]
+  # Child resources the operator creates per run.
+  - apiGroups: [""]
+    resources: ["pods", "services", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: percussionist-operator
+subjects:
+  - kind: ServiceAccount
+    name: percussionist-operator
+    namespace: percussionist
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: percussionist-operator
+---
+# Dispatcher SA: can read its own CR and patch status. Scoped per-namespace
+# because each run pod only needs to touch resources in its own namespace.
+# We create the Role in the operator namespace; for M2 the dispatcher runs
+# there too. If runs target other namespaces later the operator should
+# propagate this Role via a per-namespace reconciler.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: percussionist-dispatcher
+  namespace: percussionist
+rules:
+  - apiGroups: ["percussionist.dev"]
+    resources: ["opencoderuns"]
+    verbs: ["get", "list"]
+  - apiGroups: ["percussionist.dev"]
+    resources: ["opencoderuns/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: percussionist-dispatcher
+  namespace: percussionist
+subjects:
+  - kind: ServiceAccount
+    name: percussionist-dispatcher
+    namespace: percussionist
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: percussionist-dispatcher
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: percussionist-operator
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: operator
+spec:
+  replicas: 1
+  # Single-replica for M2. No leader election yet.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: percussionist
+      app.kubernetes.io/component: operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: percussionist
+        app.kubernetes.io/component: operator
+    spec:
+      serviceAccountName: percussionist-operator
+      containers:
+        - name: operator
+          image: percussionist/operator:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: WATCH_NAMESPACE
+              value: percussionist
+            - name: RUNNER_IMAGE_DEFAULT
+              value: percussionist/runner:dev
+            - name: DISPATCHER_IMAGE
+              value: percussionist/dispatcher:dev
+            - name: DISPATCHER_SERVICE_ACCOUNT
+              value: percussionist-dispatcher
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+          readinessProbe:
+            # The operator has no HTTP surface yet; use an exec probe on a
+            # sentinel file the process could touch later. For now simply
+            # check that the process is alive via a tiny `node -e`.
+            exec:
+              command: ["sh", "-c", "pgrep -f node >/dev/null"]
+            initialDelaySeconds: 2
+            periodSeconds: 5

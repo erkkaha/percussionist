@@ -1,0 +1,23 @@
+{
+  "name": "@percussionist/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "beatctl — CLI for percussionist",
+  "bin": {
+    "beatctl": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "tsx src/index.ts",
+    "beatctl": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.4.0",
+    "@percussionist/api": "workspace:*",
+    "commander": "^12.1.0",
+    "yaml": "^2.6.1"
+  }
+}

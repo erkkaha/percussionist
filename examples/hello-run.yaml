@@ -1,0 +1,23 @@
+# Sample OpenCodeRun. Apply after the CRD and operator are installed.
+#   kubectl apply -f examples/hello-run.yaml
+#
+# Requires an LLM key secret (created by scripts/m2-smoke.sh from your env):
+#   kubectl -n percussionist create secret generic llm-keys \
+#     --from-literal=ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+apiVersion: percussionist.dev/v1alpha1
+kind: OpenCodeRun
+metadata:
+  name: hello
+  namespace: percussionist
+spec:
+  task: |
+    Say hello, then explain in one sentence what opencode is. Do not use any
+    tools. Keep the response under 40 words.
+  # Agent and model are optional; the opencode server defaults apply when
+  # omitted. Uncomment + edit to pin them:
+  # agent: build
+  # model: anthropic/claude-3-5-haiku-latest
+  secrets:
+    llmKeysSecret: llm-keys
+  timeoutSeconds: 600
+  ttlSecondsAfterFinished: 3600

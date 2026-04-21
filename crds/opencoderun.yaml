@@ -1,0 +1,167 @@
+# OpenCodeRun v1alpha1 — declarative description of a single agent run.
+# Keep in sync with packages/api/src/index.ts (Zod schemas are authoritative
+# at runtime; this CRD is just the cluster's admission-time schema).
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: opencoderuns.percussionist.dev
+spec:
+  group: percussionist.dev
+  scope: Namespaced
+  names:
+    kind: OpenCodeRun
+    listKind: OpenCodeRunList
+    singular: opencoderun
+    plural: opencoderuns
+    shortNames:
+      - ocr
+      - run
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Session
+          type: string
+          jsonPath: .status.sessionID
+          priority: 1
+        - name: Started
+          type: date
+          jsonPath: .status.startedAt
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            apiVersion: { type: string }
+            kind: { type: string }
+            metadata: { type: object }
+            spec:
+              type: object
+              # Note: `task` is required unless `interactive: true`. The CRD
+              # schema can't express "one-of" conditionals without
+              # x-kubernetes-validations (CEL, k8s 1.25+), so we relax the
+              # `required` here and rely on the Zod schema inside the
+              # operator/CLI to enforce the constraint at admission.
+              properties:
+                task:
+                  type: string
+                  minLength: 1
+                  description: Natural-language task sent as the first prompt. Required unless `interactive` is true.
+                interactive:
+                  type: boolean
+                  default: false
+                  description: |
+                    If true, the dispatcher skips the automatic prompt and
+                    keeps the runner alive waiting for `beatctl attach`.
+                    The user drives the session manually. Terminal phase is
+                    reached via CR deletion (Cancelled) or timeout (Failed).
+                agent:
+                  type: string
+                  description: Opencode agent name (e.g. "build", "plan").
+                model:
+                  type: string
+                  description: Model in provider/model form.
+                image:
+                  type: string
+                  default: percussionist/runner:dev
+                resources:
+                  type: object
+                  properties:
+                    requests:
+                      type: object
+                      additionalProperties: { type: string }
+                    limits:
+                      type: object
+                      additionalProperties: { type: string }
+                secrets:
+                  type: object
+                  properties:
+                    llmKeysSecret: { type: string }
+                    serverPasswordSecret: { type: string }
+                    gitSSHSecret:
+                      type: string
+                      description: Deprecated. Use spec.source.git.sshSecret instead.
+                source:
+                  type: object
+                  description: |
+                    Workspace source. When `git` is set, an init container
+                    clones the repo into /workspace before the runner
+                    starts; the runner's working directory is /workspace.
+                  properties:
+                    git:
+                      type: object
+                      required: [url]
+                      properties:
+                        url:
+                          type: string
+                          minLength: 1
+                          description: Any URL git(1) accepts (https, ssh, git://, file://).
+                        ref:
+                          type: string
+                          description: |
+                            Branch, tag, or commit SHA. Omitted = remote
+                            HEAD (server-default branch). Full SHAs trigger
+                            a full clone + detached checkout; branches/tags
+                            use --depth=1.
+                        sshSecret:
+                          type: object
+                          required: [name]
+                          description: |
+                            Reference to a Secret containing an SSH private
+                            key. Mounted read-only (mode 0400) into the
+                            init container; GIT_SSH_COMMAND is set to use
+                            it with StrictHostKeyChecking disabled.
+                          properties:
+                            name: { type: string, minLength: 1 }
+                            key:
+                              type: string
+                              default: ssh-privatekey
+                              description: |
+                                Key inside the Secret that holds the
+                                private key. Defaults to `ssh-privatekey`,
+                                matching `kubernetes.io/ssh-auth` Secrets.
+                timeoutSeconds:
+                  type: integer
+                  minimum: 1
+                  default: 3600
+                ttlSecondsAfterFinished:
+                  type: integer
+                  minimum: 0
+                  default: 3600
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: [Pending, Initializing, Running, Succeeded, Failed, Cancelled]
+                message: { type: string }
+                podName: { type: string }
+                serviceName: { type: string }
+                sessionID: { type: string }
+                startedAt: { type: string }
+                completedAt: { type: string }
+                lastEventAt: { type: string }
+                tokensIn: { type: integer, minimum: 0 }
+                tokensOut: { type: integer, minimum: 0 }
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type: { type: string }
+                      status:
+                        type: string
+                        enum: [ "True", "False", "Unknown" ]
+                      reason: { type: string }
+                      message: { type: string }
+                      lastTransitionTime: { type: string }

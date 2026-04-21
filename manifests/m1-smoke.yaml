@@ -1,0 +1,94 @@
+# M1 smoke: single Pod running `opencode serve` + ClusterIP Service.
+# This is the minimum viable "opencode in a pod" so we can validate:
+#   1. The runner image starts opencode serve on 0.0.0.0:4096
+#   2. Basic auth via OPENCODE_SERVER_PASSWORD works
+#   3. Provider API key is reachable from inside the pod
+#   4. `opencode attach` from a laptop works through kubectl port-forward
+#
+# Secrets are created by scripts/m1-smoke.sh (they read your local env)
+# so we do not commit API keys to git.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: percussionist-m1
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: opencode-smoke
+  namespace: percussionist-m1
+  labels:
+    app: opencode-smoke
+    percussionist.dev/component: runner
+    percussionist.dev/milestone: m1
+spec:
+  restartPolicy: Never
+  # Pull from local docker (k3s: imported via `ctr images import`; Docker Desktop
+  # k8s shares the daemon). Override with --image flag in scripts/m1-smoke.sh
+  # when pushing to a registry.
+  containers:
+    - name: opencode
+      image: percussionist/runner:dev
+      imagePullPolicy: IfNotPresent
+      command: ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096"]
+      ports:
+        - name: http
+          containerPort: 4096
+      env:
+        # Basic-auth password for the HTTP server. Username defaults to "opencode".
+        - name: OPENCODE_SERVER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: opencode-smoke-auth
+              key: password
+        # Provider keys. Add more keys to the secret + env entries here as needed.
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: opencode-smoke-llm
+              key: ANTHROPIC_API_KEY
+              optional: true
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: opencode-smoke-llm
+              key: OPENAI_API_KEY
+              optional: true
+      readinessProbe:
+        # TCP probe: /global/health requires basic auth once
+        # OPENCODE_SERVER_PASSWORD is set, and we don't want to bake the
+        # password into the manifest. A successful TCP accept proves the
+        # server is listening, which is all we need at M1.
+        tcpSocket:
+          port: http
+        initialDelaySeconds: 2
+        periodSeconds: 3
+        failureThreshold: 10
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: "2"
+          memory: 2Gi
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+  volumes:
+    - name: workspace
+      emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opencode-smoke
+  namespace: percussionist-m1
+spec:
+  type: ClusterIP
+  selector:
+    app: opencode-smoke
+  ports:
+    - name: http
+      port: 4096
+      targetPort: http

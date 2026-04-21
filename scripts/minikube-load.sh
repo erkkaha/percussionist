@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# Build the percussionist images and load them into the minikube node.
+#
+# Builds three images:
+#   percussionist/runner:dev       (opencode + git + ssh; used by every run pod)
+#   percussionist/operator:dev     (CRD reconciler Deployment)
+#   percussionist/dispatcher:dev   (sidecar that drives each run)
+#
+# minikube cannot pull these from a registry (tags aren't pushed), so we build
+# on the host and use `minikube image load` to copy them into the node.
+#
+# Usage:
+#   ./scripts/minikube-load.sh                       # build all + load
+#   ./scripts/minikube-load.sh --no-build            # load existing local images
+#   ./scripts/minikube-load.sh --only runner         # build+load just one
+#   ./scripts/minikube-load.sh --no-build --only operator
+#   ./scripts/minikube-load.sh --force               # no-cache build +
+#                                                    # auto-evict pods pinning
+#                                                    # the old image
+#
+# --force is the "I know what I'm doing, just make it fresh" switch:
+#   * docker build with --no-cache (so workspace symlink + pnpm install in the
+#     Dockerfile actually pick up package changes)
+#   * if the operator image changed: scale deploy/percussionist-operator to 0
+#     until the image is loaded, then back to 1
+#   * if the runner/dispatcher image changed and any OpenCodeRun pods are
+#     pinning the old ID: delete those OpenCodeRun CRs (cascades to pods).
+#     The script prints what it's about to delete and asks for confirmation
+#     unless --yes is also passed.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD=true
+ONLY=""
+FORCE=false
+YES=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-build) BUILD=false; shift ;;
+    --only)     ONLY="${2:-}"; shift 2 ;;
+    --force)    FORCE=true; shift ;;
+    --yes|-y)   YES=true; shift ;;
+    *) echo "unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+command -v minikube >/dev/null || { echo "minikube not found in PATH" >&2; exit 1; }
+command -v docker   >/dev/null || { echo "docker not found in PATH"  >&2; exit 1; }
+command -v kubectl  >/dev/null || { echo "kubectl not found in PATH" >&2; exit 1; }
+
+if ! minikube status >/dev/null 2>&1; then
+  echo "minikube is not running. Start it first: minikube start" >&2
+  exit 1
+fi
+
+build_one() {
+  local name="$1"; local tag="$2"
+  local extra=()
+  if $FORCE; then extra+=(--no-cache); fi
+  case "$name" in
+    runner)
+      docker build "${extra[@]}" -t "$tag" "$REPO_ROOT/images/runner"
+      ;;
+    operator)
+      docker build "${extra[@]}" -t "$tag" --build-arg PKG=operator \
+        -f "$REPO_ROOT/images/node/Dockerfile" "$REPO_ROOT"
+      ;;
+    dispatcher)
+      docker build "${extra[@]}" -t "$tag" --build-arg PKG=dispatcher \
+        -f "$REPO_ROOT/images/node/Dockerfile" "$REPO_ROOT"
+      ;;
+    *) echo "unknown image: $name" >&2; return 1 ;;
+  esac
+}
+
+# Return the short (12-char) image ID of $tag on the host, or empty.
+host_image_id() {
+  local tag="$1"
+  docker image inspect --format '{{.Id}}' "$tag" 2>/dev/null \
+    | cut -d: -f2 | cut -c1-12 || true
+}
+
+# Return the short image ID of $tag inside minikube, or empty. Parses
+# `minikube image ls --format table` (box-drawing separators).
+minikube_image_id() {
+  local tag="$1" short_tag
+  short_tag="${tag%:*}"
+  minikube image ls --format table 2>/dev/null \
+    | awk -F'│' -v t="$short_tag" '$2 ~ t {gsub(/ /,"",$4); print $4}' \
+    | head -n1 | cut -c1-12 || true
+}
+
+confirm() {
+  local prompt="$1"
+  if $YES; then return 0; fi
+  read -r -p "$prompt [y/N] " ans
+  [[ "$ans" =~ ^[Yy]$ ]]
+}
+
+# List OpenCodeRuns whose pods are still running in the cluster. For the
+# runner/dispatcher images we delete the CR (the operator + k8s GC handle
+# the rest). For the operator image we scale the Deployment.
+list_runs_with_pods() {
+  kubectl get opencoderuns -A -o json 2>/dev/null \
+    | jq -r '.items[] | select(.status.podName != null) |
+             "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null \
+    || true
+}
+
+# Evict anything that might be pinning the old image for $name.
+evict_for() {
+  local name="$1"
+  case "$name" in
+    operator)
+      if kubectl -n percussionist get deploy percussionist-operator >/dev/null 2>&1; then
+        echo ">> --force: scaling deploy/percussionist-operator to 0"
+        kubectl -n percussionist scale deploy/percussionist-operator --replicas=0
+        kubectl -n percussionist wait --for=delete pod \
+          -l app.kubernetes.io/name=percussionist-operator \
+          --timeout=60s 2>/dev/null || true
+      fi
+      ;;
+    runner|dispatcher)
+      local runs
+      runs="$(list_runs_with_pods)"
+      if [[ -z "$runs" ]]; then return 0; fi
+      echo ">> --force: these OpenCodeRuns have live pods that may pin the old $name image:"
+      echo "$runs" | sed 's/^/     /'
+      if ! confirm "   Delete them?"; then
+        echo "   aborting" >&2
+        return 1
+      fi
+      while IFS= read -r nsname; do
+        [[ -z "$nsname" ]] && continue
+        local ns="${nsname%/*}" n="${nsname##*/}"
+        kubectl -n "$ns" delete opencoderun "$n" --wait=false
+      done <<<"$runs"
+      # Wait for the actual run pods (labelled `percussionist.dev/run=<name>`)
+      # to terminate. Listing CRs no longer works here because we just
+      # deleted them; their child pods linger briefly during GC.
+      echo "   waiting for pods to terminate..."
+      for _ in $(seq 1 60); do
+        local remaining
+        remaining="$(kubectl get pods -A \
+          -l percussionist.dev/run \
+          --no-headers 2>/dev/null | wc -l)"
+        [[ "$remaining" -eq 0 ]] && break
+        sleep 1
+      done
+      # Double-check — any lingering container that's actually pinning the
+      # image will still block `minikube image rm`. Wait on the minikube
+      # docker daemon too.
+      local pinning_cid
+      for _ in $(seq 1 30); do
+        pinning_cid="$(minikube ssh -- docker ps -q \
+          --filter "ancestor=docker.io/percussionist/$name:dev" 2>/dev/null \
+          | tr -d '\r')"
+        [[ -z "$pinning_cid" ]] && break
+        sleep 1
+      done
+      ;;
+  esac
+}
+
+# After eviction, minikube's docker still holds the untagged blob under the
+# old ID. `minikube image rm` + `load` is the reliable way to replace.
+force_reload() {
+  local tag="$1"
+  echo ">> --force: removing stale $tag from minikube"
+  minikube image rm "docker.io/$tag" >/dev/null 2>&1 || true
+  echo ">> --force: loading fresh $tag"
+  minikube image load "$tag"
+}
+
+# Undo the operator scale-down from evict_for.
+restore_operator() {
+  if kubectl -n percussionist get deploy percussionist-operator >/dev/null 2>&1; then
+    echo ">> --force: scaling deploy/percussionist-operator back to 1"
+    kubectl -n percussionist scale deploy/percussionist-operator --replicas=1
+    kubectl -n percussionist rollout status deploy/percussionist-operator --timeout=60s || true
+  fi
+}
+
+process_one() {
+  local name="$1"; local tag="$2"
+  if $BUILD; then
+    echo ">> Building $tag${FORCE:+ (no-cache)}"
+    build_one "$name" "$tag"
+  fi
+
+  if $FORCE; then
+    # Only bother with eviction / rm+load if the IDs actually diverge. If
+    # nothing's running with the old image, a plain `image load` works fine.
+    local host_id mk_id
+    host_id="$(host_image_id "$tag")"
+    mk_id="$(minikube_image_id "$tag")"
+    if [[ -n "$host_id" && "$host_id" != "$mk_id" ]]; then
+      evict_for "$name" || return 1
+      force_reload "$tag"
+    else
+      echo ">> Loading $tag into minikube"
+      minikube image load "$tag" --overwrite=true
+    fi
+  else
+    echo ">> Loading $tag into minikube"
+    minikube image load "$tag" --overwrite=true
+  fi
+
+  # Sanity-check: `minikube image load --overwrite=true` silently no-ops when
+  # a running container inside minikube is still referencing the previous
+  # image ID (docker refuses to untag a referenced image). Compare IDs and
+  # tell the user what to do. With --force this should always pass.
+  local host_id mk_id
+  host_id="$(host_image_id "$tag")"
+  mk_id="$(minikube_image_id "$tag")"
+  if [[ -n "$host_id" && -n "$mk_id" && "$host_id" != "$mk_id" ]]; then
+    echo "!! WARNING: $tag image-ID mismatch after load" >&2
+    echo "     host:     $host_id" >&2
+    echo "     minikube: $mk_id" >&2
+    echo "   A running container inside minikube is pinning the old image." >&2
+    echo "   Re-run with --force to auto-evict." >&2
+    if $FORCE; then
+      echo "   (this shouldn't happen under --force; please report)" >&2
+      return 1
+    fi
+  fi
+}
+
+# The M1 script supported `IMAGE=` to override a single image; keep that
+# behaviour for the runner for backward compat.
+RUNNER_TAG="${IMAGE:-percussionist/runner:dev}"
+OPERATOR_TAG="percussionist/operator:dev"
+DISPATCHER_TAG="percussionist/dispatcher:dev"
+
+RESTORE_OPERATOR=false
+
+if [[ -n "$ONLY" ]]; then
+  case "$ONLY" in
+    runner)     process_one runner     "$RUNNER_TAG" ;;
+    operator)   process_one operator   "$OPERATOR_TAG"; $FORCE && RESTORE_OPERATOR=true ;;
+    dispatcher) process_one dispatcher "$DISPATCHER_TAG" ;;
+    *) echo "unknown --only value: $ONLY (runner|operator|dispatcher)" >&2; exit 2 ;;
+  esac
+else
+  process_one runner     "$RUNNER_TAG"
+  process_one operator   "$OPERATOR_TAG";   $FORCE && RESTORE_OPERATOR=true
+  process_one dispatcher "$DISPATCHER_TAG"
+fi
+
+# Bring the operator back up if we scaled it down.
+if $RESTORE_OPERATOR; then restore_operator; fi
+
+echo ">> Images present in minikube:"
+minikube image ls | grep -E 'percussionist/(runner|operator|dispatcher)' || true

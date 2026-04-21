@@ -1,0 +1,24 @@
+# Build artifacts
+*.tar
+*.tar.gz
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Node (for upcoming M2+ packages)
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
