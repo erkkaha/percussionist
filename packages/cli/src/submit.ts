@@ -44,6 +44,8 @@ export interface SubmitOpts {
   timeout?: string;
   llmKeysSecret?: string;
   serverPasswordSecret?: string;
+  authSecret?: string;
+  authKey?: string;
   wait?: boolean;
 }
 
@@ -75,7 +77,7 @@ function buildRunFromFlags(opts: SubmitOpts): OpenCodeRun {
       ...(opts.model ? { model: opts.model } : {}),
       ...(opts.image ? { image: opts.image } : {}),
       ...(opts.timeout ? { timeoutSeconds: Number(opts.timeout) } : {}),
-      ...(opts.llmKeysSecret || opts.serverPasswordSecret
+      ...(opts.llmKeysSecret || opts.serverPasswordSecret || opts.authSecret
         ? {
             secrets: {
               ...(opts.llmKeysSecret
@@ -83,6 +85,17 @@ function buildRunFromFlags(opts: SubmitOpts): OpenCodeRun {
                 : {}),
               ...(opts.serverPasswordSecret
                 ? { serverPasswordSecret: opts.serverPasswordSecret }
+                : {}),
+              ...(opts.authSecret
+                ? {
+                    opencodeAuthSecret: {
+                      name: opts.authSecret,
+                      // .default() in the Zod schema fills auth.json when
+                      // omitted, but Zod runs on the built object — so we
+                      // only pass `key` through if the user set one.
+                      ...(opts.authKey ? { key: opts.authKey } : {}),
+                    },
+                  }
                 : {}),
             },
           }

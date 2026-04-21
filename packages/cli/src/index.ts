@@ -11,6 +11,7 @@ import { runLs, runGet } from "./view.js";
 import { runLogs } from "./logs.js";
 import { runAttach } from "./attach.js";
 import { runCancel } from "./cancel.js";
+import { runAuthImport } from "./auth.js";
 import { DEFAULT_NAMESPACE } from "./kube.js";
 
 const program = new Command();
@@ -44,6 +45,14 @@ program
   .option(
     "--server-password-secret <name>",
     "Secret with OPENCODE_SERVER_PASSWORD (auto-generated if omitted)",
+  )
+  .option(
+    "--auth-secret <name>",
+    "Secret with opencode auth.json (created by `beatctl auth import`)",
+  )
+  .option(
+    "--auth-key <key>",
+    "key inside --auth-secret holding auth.json (default: auth.json)",
   )
   .action(runSubmit);
 
@@ -89,6 +98,37 @@ program
   .description("delete a run (cascades to its pod/service/secret)")
   .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
   .action((name: string, opts) => runCancel(name, opts));
+
+// auth ----------------------------------------------------------------------
+// Subcommand group so we can grow `beatctl auth list/rotate/revoke` later
+// without another top-level restructure.
+const auth = program.command("auth").description("manage opencode provider credentials");
+
+auth
+  .command("import")
+  .description("copy your local opencode auth.json into a cluster Secret")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option(
+    "--name <name>",
+    "Secret name to create/update",
+    "opencode-auth",
+  )
+  .option(
+    "--key <key>",
+    "key inside the Secret that holds auth.json",
+    "auth.json",
+  )
+  .option(
+    "-p, --provider <id>",
+    "import only this provider (repeatable); default: all",
+    (val: string, prev: string[] = []) => [...prev, val],
+  )
+  .option(
+    "--file <path>",
+    "override the auth.json source path (default: $XDG_DATA_HOME/opencode/auth.json)",
+  )
+  .option("--dry-run", "print what would be imported; don't touch the cluster")
+  .action(runAuthImport);
 
 program.parseAsync(process.argv).catch((e) => {
   console.error("beatctl:", (e as Error).message ?? e);

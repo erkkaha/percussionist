@@ -90,6 +90,23 @@ spec:
                     gitSSHSecret:
                       type: string
                       description: Deprecated. Use spec.source.git.sshSecret instead.
+                    opencodeAuthSecret:
+                      type: object
+                      required: [name]
+                      description: |
+                        Reference to a Secret whose `key` (default
+                        `auth.json`) holds the full contents of
+                        opencode's auth.json. Projected into the runner
+                        as OPENCODE_AUTH_CONTENT. Populate it with
+                        `beatctl auth import` after running
+                        `opencode auth login <provider>` on your
+                        workstation. Required for OAuth providers
+                        (GitHub Copilot, ChatGPT Plus, Claude Pro).
+                      properties:
+                        name: { type: string, minLength: 1 }
+                        key:
+                          type: string
+                          default: auth.json
                 source:
                   type: object
                   description: |

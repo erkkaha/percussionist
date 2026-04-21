@@ -267,6 +267,25 @@ function renderPod(run: OpenCodeRun, passwordSecret: string): V1Pod {
                 secretKeyRef: { name: passwordSecret, key: "password" },
               },
             },
+            // OPENCODE_AUTH_CONTENT: opencode checks this env var before
+            // reading ~/.local/share/opencode/auth.json, so projecting the
+            // full JSON blob from a Secret gives us a zero-file headless
+            // credential path. Carries OAuth/device-flow tokens (GitHub
+            // Copilot, ChatGPT Plus, Claude Pro) that can't be expressed
+            // as simple provider-keyed env vars.
+            ...(spec.secrets?.opencodeAuthSecret
+              ? [
+                  {
+                    name: "OPENCODE_AUTH_CONTENT",
+                    valueFrom: {
+                      secretKeyRef: {
+                        name: spec.secrets.opencodeAuthSecret.name,
+                        key: spec.secrets.opencodeAuthSecret.key,
+                      },
+                    },
+                  },
+                ]
+              : []),
             ...(llmKeysSecret
               ? [
                   {

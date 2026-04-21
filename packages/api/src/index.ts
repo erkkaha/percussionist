@@ -33,6 +33,25 @@ export const SecretsRefSchema = z
     // Deprecated: use spec.source.git.sshSecret instead. Retained so
     // existing CRs don't blow up on admission.
     gitSSHSecret: z.string().optional(),
+    // Reference to a Secret whose `key` (default: "auth.json") holds the
+    // full contents of opencode's auth.json. Projected into the runner
+    // as the env var OPENCODE_AUTH_CONTENT, which opencode consults
+    // before reading ~/.local/share/opencode/auth.json on disk.
+    //
+    // Use this for providers that require OAuth / device-code login —
+    // GitHub Copilot, ChatGPT Plus, Claude Pro — where a static API key
+    // isn't available. Obtain once on a workstation via
+    // `opencode auth login <provider>`, then ship the resulting auth.json
+    // slice into a cluster Secret with `beatctl auth import`.
+    //
+    // Orthogonal to llmKeysSecret: both may be set. If both configure
+    // the same provider, opencode's auth.json entry wins.
+    opencodeAuthSecret: z
+      .object({
+        name: z.string().min(1),
+        key: z.string().default("auth.json"),
+      })
+      .optional(),
   })
   .partial();
 
