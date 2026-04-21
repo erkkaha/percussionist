@@ -39,7 +39,7 @@ program
   .option("-f, --file <path>", "read run YAML from file")
   .option("--image <image>", "override runner image")
   .option("--agent <agent>", "agent name")
-  .option("--model <model>", "model name")
+  .option("-m, --model <model>", "model name (e.g. github-copilot/claude-sonnet-4.5)")
   .option("--timeout <seconds>", "hard timeout (seconds)")
   .option("--llm-keys-secret <name>", "Secret with provider API keys")
   .option(
