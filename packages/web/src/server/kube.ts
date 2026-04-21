@@ -1,0 +1,124 @@
+// Shared Kubernetes client setup for the web server.
+//
+// In-cluster: uses the service account token mounted at
+// /var/run/secrets/kubernetes.io/serviceaccount.
+// Local dev: falls back to kubeconfig (same as beatctl).
+
+import {
+  KubeConfig,
+  CoreV1Api,
+  CustomObjectsApi,
+} from "@kubernetes/client-node";
+import {
+  API_GROUP,
+  API_VERSION,
+  PLURAL_RUN,
+  type OpenCodeRun,
+} from "@percussionist/api";
+
+export const NAMESPACE =
+  process.env.WATCH_NAMESPACE ??
+  process.env.PERCUSSIONIST_NAMESPACE ??
+  "percussionist";
+
+let _kc: KubeConfig | undefined;
+let _core: CoreV1Api | undefined;
+let _custom: CustomObjectsApi | undefined;
+
+function init() {
+  if (_kc) return;
+  _kc = new KubeConfig();
+  try {
+    _kc.loadFromCluster();
+  } catch {
+    // Fallback for local development.
+    _kc.loadFromDefault();
+  }
+  _core = _kc.makeApiClient(CoreV1Api);
+  _custom = _kc.makeApiClient(CustomObjectsApi);
+}
+
+export function core(): CoreV1Api {
+  init();
+  return _core!;
+}
+
+export function custom(): CustomObjectsApi {
+  init();
+  return _custom!;
+}
+
+// ---------------------------------------------------------------------------
+// Typed helpers (same pattern as CLI's kube.ts)
+
+export async function listRuns(): Promise<OpenCodeRun[]> {
+  const res = (await custom().listNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_RUN,
+  })) as { items: OpenCodeRun[] };
+  return res.items ?? [];
+}
+
+export async function getRun(name: string): Promise<OpenCodeRun> {
+  return (await custom().getNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_RUN,
+    name,
+  })) as OpenCodeRun;
+}
+
+export async function readPodLog(
+  podName: string,
+  container: string,
+  tailLines?: number,
+): Promise<string> {
+  const res = await core().readNamespacedPodLog({
+    name: podName,
+    namespace: NAMESPACE,
+    container,
+    tailLines,
+  });
+  return res ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// OpenCode API proxy helpers
+//
+// Session messages live inside each run pod's OpenCode server (port 4096).
+// To fetch them we need the Service name (from run status) and the Basic auth
+// password (from the per-run auth Secret).
+
+export async function readAuthPassword(runName: string): Promise<string> {
+  const secretName = `${runName}-auth`;
+  const secret = await core().readNamespacedSecret({
+    name: secretName,
+    namespace: NAMESPACE,
+  });
+  const raw = secret.data?.["password"];
+  if (!raw) throw new Error(`secret ${secretName} has no "password" key`);
+  return Buffer.from(raw, "base64").toString("utf-8");
+}
+
+export async function fetchSessionMessages(
+  serviceName: string,
+  sessionID: string,
+  password: string,
+): Promise<unknown> {
+  const url = `http://${serviceName}.${NAMESPACE}.svc.cluster.local:4096/session/${sessionID}/messages`;
+  const auth = Buffer.from(`opencode:${password}`).toString("base64");
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Basic ${auth}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    throw new Error(`OpenCode API returned HTTP ${res.status}: ${await res.text().catch(() => "")}`);
+  }
+  return res.json();
+}

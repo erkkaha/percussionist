@@ -1,0 +1,34 @@
+{
+  "name": "@percussionist/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Web dashboard for percussionist",
+  "scripts": {
+    "dev": "tsx watch src/server/index.ts",
+    "dev:client": "vite",
+    "build:client": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build": "pnpm build:client && pnpm build:server",
+    "start": "node dist/server/index.js",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "@kubernetes/client-node": "^1.4.0",
+    "@percussionist/api": "workspace:*",
+    "@tanstack/react-query": "^5.62.0",
+    "hono": "^4.6.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "tailwindcss": "^4.1.0",
+    "vite": "^6.0.0"
+  }
+}

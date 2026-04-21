@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+/*
+ * Custom theme tokens — dark-first palette inspired by terminal tooling.
+ * Uses Tailwind v4 @theme syntax.
+ */
+@theme {
+  --color-surface: #09090b;
+  --color-surface-raised: #18181b;
+  --color-surface-overlay: #27272a;
+  --color-border: #3f3f46;
+  --color-border-muted: #27272a;
+  --color-text: #fafafa;
+  --color-text-muted: #a1a1aa;
+  --color-text-dim: #71717a;
+
+  --color-phase-pending: #facc15;
+  --color-phase-initializing: #38bdf8;
+  --color-phase-running: #818cf8;
+  --color-phase-succeeded: #4ade80;
+  --color-phase-failed: #f87171;
+  --color-phase-cancelled: #a1a1aa;
+}
+
+/* Scrollbar styling for log viewer */
+.log-viewer::-webkit-scrollbar {
+  width: 8px;
+}
+.log-viewer::-webkit-scrollbar-track {
+  background: var(--color-surface);
+}
+.log-viewer::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}

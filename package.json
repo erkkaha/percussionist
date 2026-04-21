@@ -9,7 +9,9 @@
     "bundle": "pnpm --filter @percussionist/cli bundle",
     "typecheck": "pnpm -r run typecheck",
     "lint": "pnpm -r run lint",
-    "beatctl": "pnpm --filter @percussionist/cli exec tsx src/index.ts"
+    "beatctl": "pnpm --filter @percussionist/cli exec tsx src/index.ts",
+    "web": "pnpm --filter @percussionist/web dev",
+    "web:client": "pnpm --filter @percussionist/web dev:client"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
