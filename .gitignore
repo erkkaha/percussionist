@@ -19,6 +19,9 @@ dist/
 .turbo/
 *.tsbuildinfo
 
+# Bundled CLI binaries (produced by `pnpm --filter @percussionist/cli bundle`)
+packages/cli/bin/
+
 # Kubernetes
 kubeconfig
 *.kubeconfig

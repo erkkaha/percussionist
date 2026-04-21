@@ -273,6 +273,22 @@ pnpm link --global --filter @percussionist/cli
 beatctl --help
 ```
 
+Or bundle a single-file executable (no `tsx`/pnpm at runtime, but still
+needs Node 22+ on the host):
+
+```sh
+pnpm bundle                    # -> packages/cli/bin/beatctl (~1.8 MB)
+./packages/cli/bin/beatctl ls  # drop into ~/.local/bin if you like
+```
+
+The bundle is produced by `packages/cli/scripts/bundle.mjs` using esbuild.
+It bakes in all workspace deps (`@percussionist/api` included), so the
+binary is hermetic apart from the Node runtime itself. A fully
+self-contained native binary (no Node required) is possible via Node's
+experimental SEA feature but isn't shipped here — Kubernetes client auth
+(mTLS client certs, `exec` plugins) relies on Node-native APIs that Bun's
+`--compile` path doesn't fully honour, and SEA adds ~90 MB per platform.
+
 ### Commands
 
 | Command                        | What it does                                                                 |

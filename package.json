@@ -6,6 +6,7 @@
   "packageManager": "pnpm@10.30.2",
   "scripts": {
     "build": "pnpm -r run build",
+    "bundle": "pnpm --filter @percussionist/cli bundle",
     "typecheck": "pnpm -r run typecheck",
     "lint": "pnpm -r run lint",
     "beatctl": "pnpm --filter @percussionist/cli exec tsx src/index.ts"
