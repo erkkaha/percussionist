@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Build the percussionist images and load them into the minikube node.
 #
-# Builds three images:
+# Builds four images:
 #   percussionist/runner:dev       (opencode + git + ssh; used by every run pod)
 #   percussionist/operator:dev     (CRD reconciler Deployment)
 #   percussionist/dispatcher:dev   (sidecar that drives each run)
+#   percussionist/web:dev          (web dashboard)
 #
 # minikube cannot pull these from a registry (tags aren't pushed), so we build
 # on the host and use `minikube image load` to copy them into the node.
@@ -69,6 +70,10 @@ build_one() {
     dispatcher)
       docker build "${extra[@]}" -t "$tag" --build-arg PKG=dispatcher \
         -f "$REPO_ROOT/images/node/Dockerfile" "$REPO_ROOT"
+      ;;
+    web)
+      docker build "${extra[@]}" -t "$tag" \
+        -f "$REPO_ROOT/images/web/Dockerfile" "$REPO_ROOT"
       ;;
     *) echo "unknown image: $name" >&2; return 1 ;;
   esac
@@ -160,6 +165,15 @@ evict_for() {
         sleep 1
       done
       ;;
+    web)
+      if kubectl -n percussionist get deploy percussionist-web >/dev/null 2>&1; then
+        echo ">> --force: scaling deploy/percussionist-web to 0"
+        kubectl -n percussionist scale deploy/percussionist-web --replicas=0
+        kubectl -n percussionist wait --for=delete pod \
+          -l app.kubernetes.io/component=web \
+          --timeout=60s 2>/dev/null || true
+      fi
+      ;;
   esac
 }
 
@@ -173,12 +187,20 @@ force_reload() {
   minikube image load "$tag"
 }
 
-# Undo the operator scale-down from evict_for.
+# Undo the operator/web scale-down from evict_for.
 restore_operator() {
   if kubectl -n percussionist get deploy percussionist-operator >/dev/null 2>&1; then
     echo ">> --force: scaling deploy/percussionist-operator back to 1"
     kubectl -n percussionist scale deploy/percussionist-operator --replicas=1
     kubectl -n percussionist rollout status deploy/percussionist-operator --timeout=60s || true
+  fi
+}
+
+restore_web() {
+  if kubectl -n percussionist get deploy percussionist-web >/dev/null 2>&1; then
+    echo ">> --force: scaling deploy/percussionist-web back to 1"
+    kubectl -n percussionist scale deploy/percussionist-web --replicas=1
+    kubectl -n percussionist rollout status deploy/percussionist-web --timeout=60s || true
   fi
 }
 
@@ -232,24 +254,29 @@ process_one() {
 RUNNER_TAG="${IMAGE:-percussionist/runner:dev}"
 OPERATOR_TAG="percussionist/operator:dev"
 DISPATCHER_TAG="percussionist/dispatcher:dev"
+WEB_TAG="percussionist/web:dev"
 
 RESTORE_OPERATOR=false
+RESTORE_WEB=false
 
 if [[ -n "$ONLY" ]]; then
   case "$ONLY" in
     runner)     process_one runner     "$RUNNER_TAG" ;;
     operator)   process_one operator   "$OPERATOR_TAG"; $FORCE && RESTORE_OPERATOR=true ;;
     dispatcher) process_one dispatcher "$DISPATCHER_TAG" ;;
-    *) echo "unknown --only value: $ONLY (runner|operator|dispatcher)" >&2; exit 2 ;;
+    web)        process_one web        "$WEB_TAG"; $FORCE && RESTORE_WEB=true ;;
+    *) echo "unknown --only value: $ONLY (runner|operator|dispatcher|web)" >&2; exit 2 ;;
   esac
 else
   process_one runner     "$RUNNER_TAG"
   process_one operator   "$OPERATOR_TAG";   $FORCE && RESTORE_OPERATOR=true
   process_one dispatcher "$DISPATCHER_TAG"
+  process_one web        "$WEB_TAG";        $FORCE && RESTORE_WEB=true
 fi
 
-# Bring the operator back up if we scaled it down.
+# Bring scaled-down deployments back up.
 if $RESTORE_OPERATOR; then restore_operator; fi
+if $RESTORE_WEB; then restore_web; fi
 
 echo ">> Images present in minikube:"
-minikube image ls | grep -E 'percussionist/(runner|operator|dispatcher)' || true
+minikube image ls | grep -E 'percussionist/(runner|operator|dispatcher|web)' || true

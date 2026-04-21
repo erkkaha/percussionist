@@ -30,6 +30,10 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get"]
+  # Read session snapshot ConfigMaps (fallback when live proxy is unavailable).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

@@ -7,7 +7,7 @@ export function useLogs(
   container: string = "opencode",
   tailLines: number = 500,
   enabled: boolean = true,
-  refetchInterval = 5_000,
+  refetchInterval: number | false = 5_000,
 ) {
   return useQuery<LogsResponse, Error>({
     queryKey: ["logs", name, container, tailLines],

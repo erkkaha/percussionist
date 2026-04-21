@@ -317,6 +317,7 @@ function renderPod(run: OpenCodeRun, passwordSecret: string): V1Pod {
           env: [
             { name: "RUN_NAME", value: run.metadata.name },
             { name: "RUN_NAMESPACE", value: run.metadata.namespace! },
+            { name: "RUN_UID", value: run.metadata.uid! },
             { name: "OPENCODE_BASE_URL", value: `http://127.0.0.1:${CONTAINER_PORT}` },
             {
               name: "OPENCODE_SERVER_PASSWORD",

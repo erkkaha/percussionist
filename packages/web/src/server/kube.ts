@@ -108,7 +108,7 @@ export async function fetchSessionMessages(
   sessionID: string,
   password: string,
 ): Promise<unknown> {
-  const url = `http://${serviceName}.${NAMESPACE}.svc.cluster.local:4096/session/${sessionID}/messages`;
+  const url = `http://${serviceName}.${NAMESPACE}.svc.cluster.local:4096/session/${sessionID}/message`;
   const auth = Buffer.from(`opencode:${password}`).toString("base64");
   const res = await fetch(url, {
     headers: {
@@ -121,4 +121,33 @@ export async function fetchSessionMessages(
     throw new Error(`OpenCode API returned HTTP ${res.status}: ${await res.text().catch(() => "")}`);
   }
   return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Session snapshot fallback
+//
+// When the live proxy to the OpenCode server fails (pod deleted, etc) we
+// try reading the session from the ConfigMap that the dispatcher wrote
+// before exiting.
+
+export async function readSessionConfigMap(
+  runName: string,
+): Promise<{ messages: unknown; truncated: boolean } | null> {
+  try {
+    const cm = await core().readNamespacedConfigMap({
+      name: `${runName}-session`,
+      namespace: NAMESPACE,
+    });
+    const raw = cm.data?.["messages.json"];
+    if (!raw) return null;
+    return {
+      messages: JSON.parse(raw),
+      truncated: cm.data?.["truncated"] === "true",
+    };
+  } catch (e: unknown) {
+    const anyE = e as { statusCode?: number };
+    // 404 = no snapshot exists (run didn't succeed yet, or snapshot was GC'd).
+    if (anyE.statusCode === 404) return null;
+    throw e;
+  }
 }

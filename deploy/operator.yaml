@@ -81,6 +81,11 @@ rules:
   - apiGroups: ["percussionist.dev"]
     resources: ["opencoderuns/status"]
     verbs: ["get", "update", "patch"]
+  # Session snapshot: dispatcher writes a ConfigMap with the full conversation
+  # before exiting so the web dashboard can display it after the pod dies.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

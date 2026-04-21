@@ -24,6 +24,7 @@
 import {
   KubeConfig,
   CustomObjectsApi,
+  CoreV1Api,
   PatchStrategy,
   setHeaderOptions,
 } from "@kubernetes/client-node";
@@ -31,6 +32,8 @@ import { createOpencodeClient } from "@opencode-ai/sdk";
 import {
   API_GROUP,
   API_VERSION,
+  API_GROUP_VERSION,
+  KIND_RUN,
   PLURAL_RUN,
   RunPhase,
   type OpenCodeRunStatus,
@@ -47,6 +50,7 @@ const env = (k: string, required = true): string => {
 
 const RUN_NAME = env("RUN_NAME");
 const RUN_NAMESPACE = env("RUN_NAMESPACE");
+const RUN_UID = env("RUN_UID");
 const BASE_URL = env("OPENCODE_BASE_URL", false) || "http://127.0.0.1:4096";
 const USERNAME = env("OPENCODE_SERVER_USERNAME", false) || "opencode";
 const PASSWORD = env("OPENCODE_SERVER_PASSWORD");
@@ -106,6 +110,7 @@ function interruptibleSleep(ms: number): Promise<void> {
 const kc = new KubeConfig();
 kc.loadFromDefault(); // in-cluster service account when running in a pod
 const k8s = kc.makeApiClient(CustomObjectsApi);
+const coreApi = kc.makeApiClient(CoreV1Api);
 
 async function patchStatus(patch: OpenCodeRunStatus): Promise<void> {
   // Merge-patch against the /status subresource. The CRD enables the status
@@ -126,6 +131,79 @@ async function patchStatus(patch: OpenCodeRunStatus): Promise<void> {
     );
   } catch (e) {
     err("patchStatus failed:", (e as Error).message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Session snapshot — persist conversation to a ConfigMap
+//
+// After the session finishes successfully the dispatcher writes the full
+// message list to a ConfigMap named `<runName>-session`. This lets the web
+// dashboard render the conversation even after the runner pod has been
+// deleted. The ConfigMap is owned by the OpenCodeRun CR so it gets GC'd
+// together with the rest of the child resources.
+//
+// ConfigMaps have a 1 MiB etcd limit. If the payload is larger we truncate
+// old messages until it fits and include a truncation marker.
+
+const CM_MAX_BYTES = 900_000; // leave headroom under the 1 MiB etcd limit
+
+async function snapshotSession(sessionID: string): Promise<void> {
+  log("snapshotSession: fetching messages");
+  const res = await fetch(`${BASE_URL}/session/${sessionID}/message`, {
+    headers: { Authorization: authHeader },
+  });
+  if (!res.ok) {
+    err(`snapshotSession: GET /message failed HTTP ${res.status}`);
+    return;
+  }
+  let messages: unknown[] = (await res.json()) as unknown[];
+  let json = JSON.stringify(messages);
+
+  // Truncate from the front (oldest messages) if too large.
+  let truncated = false;
+  while (Buffer.byteLength(json, "utf8") > CM_MAX_BYTES && messages.length > 1) {
+    truncated = true;
+    messages = messages.slice(1);
+    json = JSON.stringify(messages);
+  }
+
+  const cmData: Record<string, string> = { "messages.json": json };
+  if (truncated) {
+    cmData["truncated"] = "true";
+  }
+
+  try {
+    await coreApi.createNamespacedConfigMap({
+      namespace: RUN_NAMESPACE,
+      body: {
+        apiVersion: "v1",
+        kind: "ConfigMap",
+        metadata: {
+          name: `${RUN_NAME}-session`,
+          namespace: RUN_NAMESPACE,
+          labels: {
+            "app.kubernetes.io/managed-by": "percussionist",
+            "percussionist.dev/run-name": RUN_NAME,
+            "percussionist.dev/component": "session-snapshot",
+          },
+          ownerReferences: [
+            {
+              apiVersion: API_GROUP_VERSION,
+              kind: KIND_RUN,
+              name: RUN_NAME,
+              uid: RUN_UID,
+              controller: true,
+              blockOwnerDeletion: true,
+            },
+          ],
+        },
+        data: cmData,
+      },
+    });
+    log(`snapshotSession: created ConfigMap ${RUN_NAME}-session (${Buffer.byteLength(json, "utf8")} bytes${truncated ? ", truncated" : ""})`);
+  } catch (e) {
+    err("snapshotSession: failed to create ConfigMap:", (e as Error).message);
   }
 }
 
@@ -417,6 +495,13 @@ async function main(): Promise<void> {
   }
 
   await flushStatus(true);
+
+  // Persist the conversation to a ConfigMap before marking the run as
+  // Succeeded. This must happen while the opencode server is still
+  // reachable (it is — the runner container stays alive; only the
+  // dispatcher container exits when main() returns).
+  await snapshotSession(sessionID);
+
   await patchStatus({
     phase: RunPhase.Succeeded,
     message: "session completed",

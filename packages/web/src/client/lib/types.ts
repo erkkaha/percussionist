@@ -153,4 +153,8 @@ export interface SessionMessage {
 export interface SessionResponse {
   sessionID: string;
   messages: SessionMessage[];
+  /** "live" = proxied from the running pod; "snapshot" = read from ConfigMap. */
+  source?: "live" | "snapshot";
+  /** True when the ConfigMap snapshot was truncated to fit under 1 MiB. */
+  truncated?: boolean;
 }

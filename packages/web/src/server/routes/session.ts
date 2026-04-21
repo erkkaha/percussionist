@@ -1,10 +1,16 @@
 import { Hono } from "hono";
-import { getRun, readAuthPassword, fetchSessionMessages } from "../kube.js";
+import { getRun, readAuthPassword, fetchSessionMessages, readSessionConfigMap } from "../kube.js";
 
 const session = new Hono();
 
 // GET /api/runs/:name/session — proxy session messages from the OpenCode API
-// running inside the run's pod.
+// running inside the run's pod, with ConfigMap snapshot fallback.
+//
+// Strategy:
+//   1. Try the live proxy to the OpenCode server inside the run pod.
+//   2. If that fails (pod deleted, network error, etc), read the session
+//      snapshot from the ConfigMap the dispatcher wrote before exiting.
+//   3. If neither works, return an appropriate error.
 session.get("/:name/session", async (c) => {
   const name = c.req.param("name");
 
@@ -24,25 +30,34 @@ session.get("/:name/session", async (c) => {
     return c.json({ error: anyE.body?.message ?? anyE.message ?? String(e) }, status);
   }
 
-  // 2. Read the auth password from the per-run Secret.
-  let password: string;
+  // 2. Try live proxy first.
   try {
-    password = await readAuthPassword(name);
-  } catch (e: unknown) {
-    const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    if (anyE.statusCode === 404) {
-      return c.json({ error: "Auth secret not found (run may have been cleaned up)" }, 404);
-    }
-    return c.json({ error: anyE.body?.message ?? anyE.message ?? String(e) }, 500);
+    const password = await readAuthPassword(name);
+    const messages = await fetchSessionMessages(serviceName, sessionID, password);
+    return c.json({ sessionID, messages, source: "live" });
+  } catch {
+    // Live proxy failed — fall through to ConfigMap snapshot.
   }
 
-  // 3. Fetch messages from the OpenCode API inside the pod.
+  // 3. ConfigMap fallback.
   try {
-    const messages = await fetchSessionMessages(serviceName, sessionID, password);
-    return c.json({ sessionID, messages });
-  } catch (e: unknown) {
-    return c.json({ error: (e as Error).message ?? String(e) }, 502);
+    const snapshot = await readSessionConfigMap(name);
+    if (snapshot) {
+      return c.json({
+        sessionID,
+        messages: snapshot.messages,
+        source: "snapshot",
+        truncated: snapshot.truncated,
+      });
+    }
+  } catch {
+    // ConfigMap read also failed — fall through to error.
   }
+
+  return c.json(
+    { error: "Session unavailable: live proxy failed and no snapshot exists" },
+    502,
+  );
 });
 
 export default session;

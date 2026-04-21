@@ -13,6 +13,9 @@ export default function SessionView({ name, hasSession, active }: SessionViewPro
   const { data, error, isLoading, isFetching } = useSession(
     name,
     hasSession,
+    // Poll while the run is active. For terminal runs, do one fetch
+    // (the hook default) and then stop — the data won't change once
+    // we get a snapshot or the live proxy succeeds on a still-alive pod.
     active ? 5_000 : false,
   );
 
@@ -59,6 +62,12 @@ export default function SessionView({ name, hasSession, active }: SessionViewPro
     <div className="space-y-3">
       {isFetching && (
         <span className="text-xs text-text-dim animate-pulse">refreshing...</span>
+      )}
+      {data?.source === "snapshot" && (
+        <div className="rounded border border-border-muted bg-surface-overlay/30 px-3 py-2 text-xs text-text-dim">
+          Loaded from snapshot (pod no longer available)
+          {data.truncated && " — oldest messages truncated to fit size limit"}
+        </div>
       )}
       {messages.map((msg) => (
         <MessageBubble key={msg.info.id} message={msg} />
