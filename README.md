@@ -3,8 +3,9 @@
 Kubernetes-native orchestration for [OpenCode](https://opencode.ai) agents.
 Each agent run is a Pod; you attach to it on demand with `opencode attach`.
 
-> **Status:** M3 — `beatctl` CLI on top of the M2 operator. M1 (single
-> hand-rolled pod) and M2 (CRD + operator + dispatcher) both still work.
+> **Status:** M4 + Provider auth — git-sourced workspaces and OAuth-based
+> providers (GitHub Copilot, ChatGPT Plus, Claude Pro) on top of the M3
+> CLI, M2 operator, and the original M1 runner pod.
 
 ## Repo layout
 
@@ -25,7 +26,7 @@ Each agent run is a Pod; you attach to it on demand with `opencode attach`.
 └── scripts/            # Smoke tests + minikube image loader
 ```
 
-Planned (M4+): `e2e/` automated end-to-end suite.
+Planned (M5+): `e2e/` automated end-to-end suite; git push-back.
 
 ## M1: smoke test
 
@@ -54,7 +55,9 @@ Pick the one that matches your setup:
   ```sh
   ./scripts/minikube-load.sh
   ```
-  (Re-run after any change to `images/runner/Dockerfile`; `--overwrite` is used.)
+  (Re-run after any change to `images/runner/Dockerfile`; the script loads
+  with `--overwrite=true` and, with `--force`, also evicts any pods still
+  pinning the previous image ID — see the M2 section.)
 - **Docker Desktop Kubernetes** — nothing to do, the daemon is shared.
 - **k3s (homelab)** — import into containerd:
   ```sh
@@ -224,7 +227,7 @@ Runs expose the same Service shape as M1, so `opencode attach` still works:
 ```sh
 kubectl -n percussionist port-forward svc/hello 4096:4096 &
 export OPENCODE_SERVER_PASSWORD="$(kubectl -n percussionist get secret hello-auth \
-  -o jsonpath='{.data.OPENCODE_SERVER_PASSWORD}' | base64 -d)"
+  -o jsonpath='{.data.password}' | base64 -d)"
 opencode attach http://localhost:4096
 ```
 
@@ -394,15 +397,6 @@ pnpm beatctl get git-demo
       `Pod.Failed` and propagate to `RunPhase.Failed` via the operator's
       pod-phase mirror.
 
-## M4 exit criteria
-
-- [x] `spec.source.git.url` triggers an init-container clone before the runner
-      starts; runner `workingDir` is `/workspace`.
-- [x] `ref` supports branches, tags, and full commit SHAs; omitted falls back
-      to the remote default branch.
-- [x] `sshSecret` mounts an SSH private key for private-repo auth.
-- [x] Init-container failures surface as `Pod.Failed` → `RunPhase.Failed`.
-
 ## Provider auth
 
 Not every LLM provider exposes a static API key. GitHub Copilot, ChatGPT
@@ -473,87 +467,3 @@ entry wins.
   `<set to the key '…' in secret '…'>`; the token isn't in plain text in
   any k8s object. It *is* reachable from inside the pod via
   `/proc/<pid>/environ`, same exposure class as `OPENCODE_SERVER_PASSWORD`.
-
-## M4 exit criteria
-
-- [x] `spec.source.git.url` triggers an init-container clone before the runner
-      starts; runner `workingDir` is `/workspace`.
-- [x] `ref` supports branches, tags, and full commit SHAs; omitted falls back
-      to the remote default branch.
-- [x] `sshSecret` mounts an SSH private key for private-repo auth.
-- [x] Init-container failures (bad URL, wrong ref, missing key) surface as
-      `Pod.Failed` and propagate to `RunPhase.Failed` via the operator's
-      pod-phase mirror.
-
-## Provider auth
-
-Not every LLM provider exposes a static API key. GitHub Copilot, ChatGPT
-Plus, and Claude Pro use OAuth device-code flows whose resulting token
-lands in your workstation's `~/.local/share/opencode/auth.json`. Opencode
-also checks a first-class env var, `OPENCODE_AUTH_CONTENT`, before reading
-that file — so the integration shape is "log in once locally, ship the
-token into a cluster Secret, project it as an env var in run pods".
-
-### One-time setup
-
-```bash
-# On your workstation: log into the provider.
-opencode auth login github-copilot     # opens https://github.com/login/device
-# ...repeat for any other OAuth providers you want in the cluster:
-# opencode auth login openai           # ChatGPT Plus/Pro
-# opencode auth login anthropic        # Claude Pro/Max
-
-# Push the credentials into the cluster. Default = import every provider
-# found locally; filter with --provider. The command is read-only on your
-# workstation — it never modifies ~/.local/share/opencode/auth.json.
-pnpm beatctl auth import
-```
-
-This creates a Secret called `opencode-auth` in the `percussionist`
-namespace. Re-run the import whenever you re-auth locally; the Secret is
-replaced wholesale.
-
-### Referencing it from a run
-
-```yaml
-spec:
-  task: "Say hi"
-  model: github-copilot/claude-sonnet-4.5    # optional; pins a Copilot-proxied model
-  secrets:
-    opencodeAuthSecret:
-      name: opencode-auth
-```
-
-Or with inline flags:
-
-```bash
-pnpm beatctl submit \
-  -t "Say hi" \
-  -m github-copilot/claude-sonnet-4.5 \
-  --auth-secret opencode-auth
-```
-
-Both `llmKeysSecret` and `opencodeAuthSecret` may be set on the same run —
-they're orthogonal. `llmKeysSecret` projects `ANTHROPIC_API_KEY` /
-`OPENAI_API_KEY` / … for static-key providers, while `opencodeAuthSecret`
-carries OAuth tokens. If both configure the same provider, the auth.json
-entry wins.
-
-### Caveats
-
-- The token's lifetime is whatever the upstream provider says. GitHub
-  Copilot OAuth tokens are long-lived until revoked under
-  [github.com/settings/applications](https://github.com/settings/applications);
-  Anthropic's are refresh-rotated and may expire — re-run
-  `beatctl auth import` when you see auth errors.
-- One Secret shared across many runs means one revocation breaks all of
-  them. That's intentional — per-run tokens aren't worth the orphan-Secret
-  cleanup churn.
-- `beatctl auth` never prints raw tokens. `--dry-run` shows a summary
-  (type, first-four/last-four chars, length) so you can sanity-check.
-- `kubectl describe pod` shows the env var as
-  `<set to the key '…' in secret '…'>`; the token isn't in plain text in
-  any k8s object. It *is* reachable from inside the pod via
-  `/proc/<pid>/environ`, same exposure class as `OPENCODE_SERVER_PASSWORD`.
-
-## M4 exit criteria
