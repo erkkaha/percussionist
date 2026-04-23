@@ -8,6 +8,7 @@ import TokenCounter from "./TokenCounter";
 import LogViewer from "./LogViewer";
 import SessionView from "./SessionView";
 import { TERMINAL_PHASES } from "../lib/types";
+import OpenOpencodeButton from "./OpenOpencodeButton";
 
 const DEFAULT_NAMESPACE = "percussionist";
 
@@ -132,10 +133,10 @@ export default function RunDetail() {
             tokensIn={run.status?.tokensIn}
             tokensOut={run.status?.tokensOut}
           />
-          {/* Attach shortcut — copy beatctl attach command to clipboard */}
           {isActive && (
-            <AttachButton name={name!} namespace={run.metadata.namespace} />
-          )}
+              <AttachButton name={name!} namespace={run.metadata.namespace} />
+            )}
+          {run && <OpenOpencodeButton run={run} />}
           {/* Cancel / Delete button */}
           {!confirmDelete ? (
             <button
@@ -178,6 +179,19 @@ export default function RunDetail() {
           <Field label="Session ID" value={run.status?.sessionID} mono />
           <Field label="Pod" value={run.status?.podName} mono />
           <Field label="Service" value={run.status?.serviceName} mono />
+          {run.status?.webURL && (
+            <div className="flex items-baseline gap-3 text-sm">
+              <span className="text-text-dim w-36 shrink-0">Web UI</span>
+              <a
+                href={run.status.webURL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-text font-mono text-xs break-all hover:underline"
+              >
+                {run.status.webURL}
+              </a>
+            </div>
+          )}
           <Field label="Created" value={formatTime(run.metadata.creationTimestamp)} />
           <Field label="Started" value={formatTime(run.status?.startedAt)} />
           <Field label="Completed" value={formatTime(run.status?.completedAt)} />

@@ -42,7 +42,7 @@ rules:
     verbs: ["get", "update", "patch"]
   # Child resources the operator creates per run.
   - apiGroups: [""]
-    resources: ["pods", "services", "secrets"]
+    resources: ["pods", "services"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["pods/log"]
@@ -50,6 +50,9 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -138,6 +141,24 @@ spec:
               value: percussionist/dispatcher:dev
             - name: DISPATCHER_SERVICE_ACCOUNT
               value: percussionist-dispatcher
+            # Set PERCUSSIONIST_INGRESS_BASE_URL to enable per-run Ingresses
+            # that expose the opencode web UI at <baseURL-with-run-subdomain>/.
+            # Format: scheme://host[:port]  (no trailing slash)
+            #
+            # Examples:
+            #   Port-80 cluster (*.percussionist.localhost resolves to 127.0.0.1):
+            #     http://percussionist.localhost
+            #   minikube NodePort via traefik.me wildcard DNS (port 30080):
+            #     http://192.168.49.2.traefik.me:30080
+            #
+            # Legacy PERCUSSIONIST_INGRESS_BASE_DOMAIN is also accepted and is
+            # equivalent to http://<domain> (port 80 assumed).
+            # - name: PERCUSSIONIST_INGRESS_BASE_URL
+            #   value: http://percussionist.localhost
+            # - name: PERCUSSIONIST_INGRESS_CLASS
+            #   value: nginx
+            # - name: PERCUSSIONIST_INGRESS_ANNOTATIONS
+            #   value: '{"nginx.ingress.kubernetes.io/proxy-read-timeout":"3600","nginx.ingress.kubernetes.io/proxy-buffering":"off"}'
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits:   { cpu: 500m, memory: 512Mi }

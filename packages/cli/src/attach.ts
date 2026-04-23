@@ -1,14 +1,12 @@
 // `beatctl attach <name>` — drop into the live opencode TUI for a run.
 //
 // Flow:
-//   1. Look up the run so we know which Service to forward to and which
-//      Secret holds OPENCODE_SERVER_PASSWORD.
+//   1. Look up the run so we know which Service to forward to.
 //   2. Pick a free local port (or honour --local-port).
 //   3. Start `kubectl port-forward svc/<svc> <local>:4096` as a child.
 //      Wait for the "Forwarding from" line on stderr (that's when it's
 //      actually listening; connecting before that sometimes 500s).
-//   4. Read the basic-auth password out of the Secret and exec
-//      `opencode attach http://localhost:<local>` with it in env.
+//   4. Exec `opencode attach http://localhost:<local>`.
 //   5. Whatever happens after, kill the port-forward on exit.
 //
 // We shell out to kubectl port-forward rather than using the client-node
@@ -47,9 +45,7 @@ async function pickFreePort(): Promise<number> {
   });
 }
 
-// Start kubectl port-forward and resolve once it's listening. Rejects if
-// the child exits before it reports ready.
-function startPortForward(
+async function startPortForward(
   namespace: string,
   serviceName: string,
   localPort: number,
@@ -92,25 +88,6 @@ function startPortForward(
   });
 }
 
-async function readPassword(
-  namespace: string,
-  secretName: string,
-): Promise<string> {
-  const { core } = loadKube();
-  const secret = await core.readNamespacedSecret({
-    name: secretName,
-    namespace,
-  });
-  // The operator stores the password under the key `password` (see
-  // operator/src/index.ts ensureAuthSecret, which writes `stringData.password`
-  // and mounts it as OPENCODE_SERVER_PASSWORD via secretKeyRef).
-  const enc = secret.data?.password;
-  if (!enc) {
-    throw new Error(`Secret ${secretName} has no 'password' key`);
-  }
-  return Buffer.from(enc, "base64").toString("utf8");
-}
-
 export async function runAttach(name: string, opts: AttachOpts): Promise<void> {
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
   const { custom } = loadKube();
@@ -145,10 +122,6 @@ export async function runAttach(name: string, opts: AttachOpts): Promise<void> {
   }
 
   const serviceName = run.status?.serviceName ?? run.metadata.name;
-  // The operator names the auth secret <runName>-auth (see operator/src/index.ts
-  // ensureAuthSecret). We don't pull it from status because .status doesn't
-  // carry it today.
-  const secretName = `${run.metadata.name}-auth`;
 
   const localPort = opts.localPort
     ? Number(opts.localPort)
@@ -179,21 +152,13 @@ export async function runAttach(name: string, opts: AttachOpts): Promise<void> {
     process.exit(143);
   });
 
-  let password: string;
-  try {
-    password = await readPassword(ns, secretName);
-  } catch (e) {
-    kill();
-    fatal(`read secret ${secretName}`, e);
-  }
-
   console.log(`beatctl: launching opencode attach...`);
   const attach = spawn(
     "opencode",
     ["attach", `http://localhost:${localPort}`],
     {
       stdio: "inherit",
-      env: { ...process.env, OPENCODE_SERVER_PASSWORD: password },
+      env: { ...process.env },
     },
   );
   attach.on("exit", (code) => {

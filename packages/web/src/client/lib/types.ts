@@ -20,6 +20,8 @@ export interface OpenCodeRunStatus {
   lastEventAt?: string;
   tokensIn?: number;
   tokensOut?: number;
+  webURL?: string;
+  ingressName?: string;
   conditions?: OpenCodeRunCondition[];
 }
 

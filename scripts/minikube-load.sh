@@ -280,3 +280,29 @@ if $RESTORE_WEB; then restore_web; fi
 
 echo ">> Images present in minikube:"
 minikube image ls | grep -E 'percussionist/(runner|operator|dispatcher|web)' || true
+
+# ---------------------------------------------------------------------------
+# Pin the ingress-nginx HTTP NodePort to 30080 so the dashboard and per-run
+# URLs stay stable across cluster restarts.  Idempotent: skipped when already
+# correct or when the addon is not installed.
+if kubectl -n ingress-nginx get svc ingress-nginx-controller &>/dev/null; then
+  current_np=$(kubectl -n ingress-nginx get svc ingress-nginx-controller \
+    -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}' 2>/dev/null || true)
+  if [[ "$current_np" != "30080" ]]; then
+    echo ">> Pinning ingress-nginx HTTP NodePort to 30080 (was ${current_np:-unset})"
+    kubectl -n ingress-nginx patch svc ingress-nginx-controller --type=json \
+      -p='[{"op":"replace","path":"/spec/ports/0/nodePort","value":30080}]'
+  else
+    echo ">> ingress-nginx HTTP NodePort already pinned to 30080"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Print access URLs.
+MINIKUBE_IP=$(minikube ip 2>/dev/null || echo "192.168.49.2")
+echo ""
+echo "================================================================"
+echo "  Dashboard:  http://app.${MINIKUBE_IP}.traefik.me:30080/"
+echo "  Runs:       http://<run>.${MINIKUBE_IP}.traefik.me:30080/"
+echo "  (requires: minikube addons enable ingress)"
+echo "================================================================"

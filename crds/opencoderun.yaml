@@ -163,6 +163,8 @@ spec:
                 message: { type: string }
                 podName: { type: string }
                 serviceName: { type: string }
+                ingressName: { type: string }
+                webURL: { type: string }
                 sessionID: { type: string }
                 startedAt: { type: string }
                 completedAt: { type: string }

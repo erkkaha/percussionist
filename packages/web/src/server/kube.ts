@@ -111,32 +111,14 @@ export async function readPodLog(
 // OpenCode API proxy helpers
 //
 // Session messages live inside each run pod's OpenCode server (port 4096).
-// To fetch them we need the Service name (from run status) and the Basic auth
-// password (from the per-run auth Secret).
-
-export async function readAuthPassword(runName: string): Promise<string> {
-  const secretName = `${runName}-auth`;
-  const secret = await core().readNamespacedSecret({
-    name: secretName,
-    namespace: NAMESPACE,
-  });
-  const raw = secret.data?.["password"];
-  if (!raw) throw new Error(`secret ${secretName} has no "password" key`);
-  return Buffer.from(raw, "base64").toString("utf-8");
-}
 
 export async function fetchSessionMessages(
   serviceName: string,
   sessionID: string,
-  password: string,
 ): Promise<unknown> {
   const url = `http://${serviceName}.${NAMESPACE}.svc.cluster.local:4096/session/${sessionID}/message`;
-  const auth = Buffer.from(`opencode:${password}`).toString("base64");
   const res = await fetch(url, {
-    headers: {
-      Authorization: `Basic ${auth}`,
-      Accept: "application/json",
-    },
+    headers: { Accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) {

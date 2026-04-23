@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getRun, readAuthPassword, fetchSessionMessages, readSessionConfigMap } from "../kube.js";
+import { getRun, fetchSessionMessages, readSessionConfigMap } from "../kube.js";
 
 const session = new Hono();
 
@@ -32,8 +32,7 @@ session.get("/:name/session", async (c) => {
 
   // 2. Try live proxy first.
   try {
-    const password = await readAuthPassword(name);
-    const messages = await fetchSessionMessages(serviceName, sessionID, password);
+    const messages = await fetchSessionMessages(serviceName, sessionID);
     return c.json({ sessionID, messages, source: "live" });
   } catch {
     // Live proxy failed — fall through to ConfigMap snapshot.

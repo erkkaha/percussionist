@@ -27,9 +27,6 @@ export const SecretsRefSchema = z
     // Env-projected: provider API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...).
     // All keys in the secret are exposed as environment variables verbatim.
     llmKeysSecret: z.string().optional(),
-    // Basic-auth password for opencode serve. If absent the operator
-    // generates a random one into a per-run Secret.
-    serverPasswordSecret: z.string().optional(),
     // Deprecated: use spec.source.git.sshSecret instead. Retained so
     // existing CRs don't blow up on admission.
     gitSSHSecret: z.string().optional(),
@@ -92,6 +89,16 @@ export const SourceSchema = z.object({
   git: GitSourceSchema.optional(),
 });
 
+export const ExposeSchema = z
+  .object({
+    // When true (and the operator has PERCUSSIONIST_INGRESS_BASE_DOMAIN set)
+    // the operator creates a per-run Ingress so the opencode web UI is
+    // reachable at http://<run>.<baseDomain>/ without a password.
+    // Defaults to true when the operator has a base domain configured.
+    web: z.boolean().default(true),
+  })
+  .partial();
+
 export const OpenCodeRunSpecSchema = z
   .object({
     // What the agent should do. Sent as the first user prompt via
@@ -133,6 +140,10 @@ export const OpenCodeRunSpecSchema = z
 
     // Garbage collection: how long to keep the CR after terminal phase.
     ttlSecondsAfterFinished: z.number().int().nonnegative().default(3600),
+
+    // Controls per-run Ingress creation when the operator has
+    // PERCUSSIONIST_INGRESS_BASE_DOMAIN configured.
+    expose: ExposeSchema.optional(),
   })
   // Either a task or interactive=true must be supplied. Enforced here so the
   // operator doesn't have to double-check at reconcile time.
@@ -183,6 +194,10 @@ export const OpenCodeRunStatusSchema = z
     // Rough running token totals streamed from /event.
     tokensIn: z.number().int().nonnegative().optional(),
     tokensOut: z.number().int().nonnegative().optional(),
+    // Opencode web UI URL — set when the operator has created a per-run
+    // Ingress (requires PERCUSSIONIST_INGRESS_BASE_DOMAIN on the operator).
+    webURL: z.string().optional(),
+    ingressName: z.string().optional(),
     conditions: z
       .array(
         z.object({

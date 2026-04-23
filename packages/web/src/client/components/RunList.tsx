@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useRuns } from "../hooks/useRuns";
 import StatusBadge from "./StatusBadge";
 import TokenCounter from "./TokenCounter";
+import OpenOpencodeButton from "./OpenOpencodeButton";
 import type { RunPhase, OpenCodeRun } from "../lib/types";
 import { TERMINAL_PHASES } from "../lib/types";
 const ALL_PHASES: RunPhase[] = [
@@ -209,7 +210,10 @@ function RunRow({ run }: { run: OpenCodeRun }) {
         {age(run.metadata.creationTimestamp)}
       </td>
       <td className="px-4 py-3">
-        {isActive && <AttachButton name={run.metadata.name} namespace={run.metadata.namespace} />}
+        <div className="flex items-center gap-1.5">
+          {isActive && <AttachButton name={run.metadata.name} namespace={run.metadata.namespace} />}
+          <OpenOpencodeButton run={run} compact />
+        </div>
       </td>
     </tr>
   );

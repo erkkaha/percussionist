@@ -45,10 +45,6 @@ program
   .option("--timeout <seconds>", "hard timeout (seconds)")
   .option("--llm-keys-secret <name>", "Secret with provider API keys")
   .option(
-    "--server-password-secret <name>",
-    "Secret with OPENCODE_SERVER_PASSWORD (auto-generated if omitted)",
-  )
-  .option(
     "--auth-secret <name>",
     "Secret with opencode auth.json (created by `beatctl auth import`)",
   )
