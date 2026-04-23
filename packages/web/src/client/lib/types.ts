@@ -89,6 +89,10 @@ export interface CreateRunRequest {
       ref?: string;
     };
   };
+  secrets?: {
+    llmKeysSecret?: string;
+    opencodeAuthSecret?: { name: string; key?: string };
+  };
   /** Seconds before the run is killed. Default 3600. */
   timeoutSeconds?: number;
   /** Optional custom name (auto-generated if absent). */

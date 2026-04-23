@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { submitRun } from "../lib/api";
@@ -8,7 +8,7 @@ import type { CreateRunRequest, OpenCodeProject } from "../lib/types";
 export default function CreateRunForm() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: projects } = useProjects(0); // no auto-refetch needed here
+  const { data: projects } = useProjects(0);
 
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [task, setTask] = useState("");
@@ -19,9 +19,9 @@ export default function CreateRunForm() {
   const [showGit, setShowGit] = useState(false);
   const [gitUrl, setGitUrl] = useState("");
   const [gitRef, setGitRef] = useState("");
+  const [llmKeysSecret, setLlmKeysSecret] = useState("");
+  const [authSecret, setAuthSecret] = useState("");
 
-  // When the user picks a project, pre-fill fields with project defaults.
-  // Explicit edits after selection are not overwritten.
   function applyProject(proj: OpenCodeProject) {
     if (proj.spec.model) setModel(proj.spec.model);
     if (proj.spec.agent) setAgent(proj.spec.agent);
@@ -30,6 +30,10 @@ export default function CreateRunForm() {
       setShowGit(true);
     }
     if (proj.spec.source?.git?.ref) setGitRef(proj.spec.source.git.ref);
+    if (proj.spec.secrets?.llmKeysSecret)
+      setLlmKeysSecret(proj.spec.secrets.llmKeysSecret);
+    if (proj.spec.secrets?.opencodeAuthSecret?.name)
+      setAuthSecret(proj.spec.secrets.opencodeAuthSecret.name);
   }
 
   function handleProjectChange(name: string) {
@@ -57,6 +61,11 @@ export default function CreateRunForm() {
       req.source = { git: { url: gitUrl.trim() } };
       if (gitRef.trim()) req.source.git!.ref = gitRef.trim();
     }
+    if (llmKeysSecret.trim() || authSecret.trim()) {
+      req.secrets = {};
+      if (llmKeysSecret.trim()) req.secrets.llmKeysSecret = llmKeysSecret.trim();
+      if (authSecret.trim()) req.secrets.opencodeAuthSecret = { name: authSecret.trim() };
+    }
     mutation.mutate(req);
   }
 
@@ -67,7 +76,6 @@ export default function CreateRunForm() {
 
   return (
     <div className="space-y-6 max-w-2xl">
-      {/* Back link */}
       <Link
         to="/"
         className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text transition-colors"
@@ -174,6 +182,30 @@ export default function CreateRunForm() {
               onChange={(e) => setAgent(e.target.value)}
               placeholder="e.g. build"
               className={inputClass}
+            />
+          </div>
+        </div>
+
+        {/* Secrets row */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">LLM Keys Secret</label>
+            <input
+              type="text"
+              value={llmKeysSecret}
+              onChange={(e) => setLlmKeysSecret(e.target.value)}
+              placeholder="llm-keys"
+              className={inputClass + " font-mono"}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">Auth Secret</label>
+            <input
+              type="text"
+              value={authSecret}
+              onChange={(e) => setAuthSecret(e.target.value)}
+              placeholder="opencode-auth"
+              className={inputClass + " font-mono"}
             />
           </div>
         </div>
