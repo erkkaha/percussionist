@@ -215,9 +215,17 @@ function renderPod(run: OpenCodeRun): V1Pod {
             [
               "set -eo pipefail",
               'echo "[git-clone] cloning ${GIT_URL} ref=${GIT_REF:-<default>} into /workspace"',
+              // Always disable host-key checking so SSH URLs work without a
+              // pre-populated known_hosts. When an explicit key file is
+              // mounted we also force IdentitiesOnly so the agent is bypassed
+              // and only the provided key is used. Without a key file we omit
+              // IdentitiesOnly so the SSH agent (if present) can still be
+              // consulted — useful for interactive debugging.
               'if [ -f /etc/git-ssh/id ]; then',
               '  export GIT_SSH_COMMAND="ssh -i /etc/git-ssh/id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"',
               '  echo "[git-clone] using ssh key from secret"',
+              'else',
+              '  export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"',
               'fi',
               'cd /workspace',
               'if [ -z "${GIT_REF}" ]; then',
