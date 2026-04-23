@@ -307,6 +307,20 @@ function renderPod(run: OpenCodeRun): V1Pod {
           ],
           ports: [{ name: "http", containerPort: CONTAINER_PORT }],
           env: [
+            // Always set GIT_SSH_COMMAND so any git operation the agent runs
+            // (fetch, push, clone) works over SSH without a known_hosts file.
+            // When the run has an sshSecret the key is mounted at
+            // /etc/git-ssh/id and IdentitiesOnly forces its use exclusively.
+            sshSecret
+              ? {
+                  name: "GIT_SSH_COMMAND",
+                  value:
+                    "ssh -i /etc/git-ssh/id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes",
+                }
+              : {
+                  name: "GIT_SSH_COMMAND",
+                  value: "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+                },
             // OPENCODE_AUTH_CONTENT: opencode checks this env var before
             // reading ~/.local/share/opencode/auth.json.
             ...(spec.secrets?.opencodeAuthSecret
@@ -339,7 +353,12 @@ function renderPod(run: OpenCodeRun): V1Pod {
             requests: { cpu: "200m", memory: "512Mi" },
             limits: { cpu: "2", memory: "2Gi" },
           },
-          volumeMounts: [{ name: "workspace", mountPath: "/workspace" }],
+          volumeMounts: [
+            { name: "workspace", mountPath: "/workspace" },
+            ...(sshSecret
+              ? [{ name: "git-ssh", mountPath: "/etc/git-ssh", readOnly: true }]
+              : []),
+          ],
         },
         {
           name: DISPATCHER_CONTAINER,
