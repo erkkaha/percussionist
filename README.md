@@ -17,12 +17,14 @@ Each agent run is a Pod; you attach to it on demand with `opencode attach`.
 ├── images/
 │   ├── runner/         # opencode + git + ssh on Alpine (used by every run pod)
 │   └── node/           # Shared Node 22 image; builds operator + dispatcher
+│   └── web/            # Bun image; builds + serves the web dashboard
 ├── manifests/          # Raw k8s manifests for M1 smoke
 ├── packages/
 │   ├── api/            # Shared Zod schemas, constants, type helpers
 │   ├── operator/       # CRD reconciler (informer + reconciler loop)
 │   ├── dispatcher/     # Sidecar that drives each run via the opencode HTTP API
-│   └── cli/            # beatctl — user-facing CLI (M3)
+│   ├── cli/            # beatctl — user-facing CLI (M3)
+│   └── web/            # Dashboard SPA + Hono server + bun:sqlite stats DB
 └── scripts/            # Smoke tests + minikube image loader
 ```
 
@@ -141,7 +143,8 @@ configured prompt, and writes lifecycle info back to `.status`.
 ```
 
 - **runner** container: `percussionist/runner:dev`, runs `opencode serve` on
-  `:4096`, password-protected via `OPENCODE_SERVER_PASSWORD`.
+  `:4096` (unauthenticated — rely on network isolation; expose only via the
+  per-run Ingress described below for local access).
 - **dispatcher** container: waits for the runner's health endpoint, creates a
   session, `POST /session/:id/prompt_async`, polls `/session/:id/message` for
   the last assistant message's `time.completed`, then patches the CR status to
@@ -154,7 +157,7 @@ configured prompt, and writes lifecycle info back to `.status`.
 
 Everything from M1, plus:
 
-- `pnpm` (Node workspace) and Node 22
+- `pnpm` (Node workspace) and Node 24
 - A running cluster with the `percussionist` namespace available (the deploy
   manifest creates it for you)
 
@@ -226,8 +229,6 @@ Runs expose the same Service shape as M1, so `opencode attach` still works:
 
 ```sh
 kubectl -n percussionist port-forward svc/hello 4096:4096 &
-export OPENCODE_SERVER_PASSWORD="$(kubectl -n percussionist get secret hello-auth \
-  -o jsonpath='{.data.password}' | base64 -d)"
 opencode attach http://localhost:4096
 ```
 
@@ -262,7 +263,7 @@ kubectl: `KUBECONFIG`, then `~/.kube/config`), so it picks up whatever cluster
 ```sh
 pnpm beatctl --help
 # or equivalently:
-pnpm --filter @percussionist/cli exec tsx src/index.ts --help
+pnpm --filter @percussionist/cli exec bun src/index.ts --help
 ```
 
 Install globally (after `pnpm -r build`):
@@ -273,21 +274,18 @@ pnpm link --global --filter @percussionist/cli
 beatctl --help
 ```
 
-Or bundle a single-file executable (no `tsx`/pnpm at runtime, but still
-needs Node 22+ on the host):
+Or bundle a self-contained single-file executable (no Node or Bun required on
+the target machine — the Bun runtime is embedded in the binary):
 
 ```sh
-pnpm bundle                    # -> packages/cli/bin/beatctl (~1.8 MB)
+pnpm bundle                    # -> packages/cli/bin/beatctl (~98 MB)
 ./packages/cli/bin/beatctl ls  # drop into ~/.local/bin if you like
 ```
 
-The bundle is produced by `packages/cli/scripts/bundle.mjs` using esbuild.
-It bakes in all workspace deps (`@percussionist/api` included), so the
-binary is hermetic apart from the Node runtime itself. A fully
-self-contained native binary (no Node required) is possible via Node's
-experimental SEA feature but isn't shipped here — Kubernetes client auth
-(mTLS client certs, `exec` plugins) relies on Node-native APIs that Bun's
-`--compile` path doesn't fully honour, and SEA adds ~90 MB per platform.
+The bundle is produced by `packages/cli/scripts/bundle.mjs` using
+`bun build --compile`. It bakes in all workspace deps (`@percussionist/api`
+included) and the Bun runtime itself, so the binary runs anywhere with no
+external dependencies.
 
 ### Commands
 
@@ -300,7 +298,7 @@ experimental SEA feature but isn't shipped here — Kubernetes client auth
 | `beatctl ls`                   | Table of runs with phase, session ID, running token totals, age.             |
 | `beatctl get <name>`           | Detailed view of a single run (also `-o yaml` / `-o json`).                  |
 | `beatctl logs <name> [-f]`     | Stream container logs. `-c dispatcher` to watch the sidecar instead.         |
-| `beatctl attach <name>`        | Start a `kubectl port-forward` to the run's Service and launch `opencode attach` with the right basic-auth password loaded from the auth Secret. Port-forward is torn down automatically on exit. |
+| `beatctl attach <name>`        | Start a `kubectl port-forward` to the run's Service and launch `opencode attach`. Port-forward is torn down automatically on exit. |
 | `beatctl wait <name>`          | Block until the run reaches a terminal phase. Exit 0 on `Succeeded`, 1 on `Failed`/`Cancelled`/deleted, 2 on timeout. `--for <phase>` waits for a specific phase (e.g. `Running`). Intended for CI and `submit && wait` chains. |
 | `beatctl cancel <name>`        | Delete the run (cascades to its Pod/Service/Secret via `ownerReferences`).   |
 
@@ -355,6 +353,161 @@ beatctl submit -i -a --name scratch
 # down the pod (interactive runs stay Running until cancelled or timed
 # out).
 ```
+
+## Dashboard access
+
+The Percussionist web dashboard (`percussionist-web`) is exposed via Ingress
+at a stable URL — no `kubectl port-forward` needed:
+
+```
+http://app.<minikube-ip>.traefik.me:30080/
+```
+
+For the default minikube IP (`192.168.49.2`):
+
+```
+http://app.192.168.49.2.traefik.me:30080/
+```
+
+[traefik.me](https://traefik.me) is a free wildcard DNS service: `*.192.168.49.2.traefik.me`
+resolves to `192.168.49.2` — no `/etc/hosts` edits needed.
+
+The web pod runs under **Bun** and hosts the session analytics SQLite database
+alongside the dashboard SPA. See [Session analytics](#session-analytics) for
+details on the `/api/stats/export` endpoint.
+
+### Pages
+
+The dashboard has a persistent left sidebar with two views:
+
+| Page | URL | What it shows |
+|------|-----|---------------|
+| **Runs** | `/` | Live `OpenCodeRun` list — phase badges, token totals, age, attach button. Sortable and filterable by phase. |
+| **Stats** | `/stats` | Historical session analytics from the stats DB (see below). |
+
+#### Stats view
+
+The stats view aggregates data persisted by the dispatcher sidecar after each
+run completes. It shows:
+
+- **Summary cards** — total runs, succeeded, failed, success rate, average
+  duration, total tokens in/out.
+- **Tool usage** — call counts per tool with a proportional bar. Falls back to
+  parsing inline message content when the `toolCalls` table is empty.
+- **Model breakdown** — runs and tokens in/out per model, with a stacked
+  in/out bar. Resolves the model from the user message when the run row has
+  `null`.
+- **Tokens per run** — horizontal stacked bar chart of the top 20 sessions by
+  total token count.
+- **Sessions table** — one row per historical session with phase, model,
+  tokens, duration, and age.
+
+A day-range selector (7d / 30d / 90d / All) refetches from
+`/api/stats/export?days=N`. Data is retained for `RETENTION_DAYS` days
+(default: 30; set to 0 to keep forever).
+
+### Prerequisites
+
+1. Enable the ingress addon:
+   ```sh
+   minikube addons enable ingress
+   ```
+2. Run `scripts/minikube-load.sh` at least once — it pins the ingress-nginx
+   HTTP NodePort to `30080` automatically (idempotent).
+3. Apply `deploy/web.yaml`:
+   ```sh
+   kubectl apply -f deploy/web.yaml
+   ```
+
+> **Note:** the web server runs under Bun. Bun's TLS stack does not pick up
+> the custom `https.Agent` that `@kubernetes/client-node` configures for the
+> in-cluster CA. `deploy/web.yaml` sets `NODE_EXTRA_CA_CERTS` to the service
+> account CA bundle path so Bun trusts the cluster API server certificate.
+
+The script also prints the dashboard and run URLs as a reminder at the end of
+each run.
+
+## Opencode web access (per-run subdomains)
+
+Each run exposes a full opencode web UI via its ClusterIP Service on port 4096.
+By default this is only reachable in-cluster. To make it accessible in a
+browser while running locally, Percussionist can create a per-run Kubernetes
+Ingress that routes `http://<run>.<baseDomain>/` to the run's Service.
+
+### Prerequisites
+
+An ingress controller must be deployed. Quick setups:
+
+| Cluster  | Setup |
+|----------|-------|
+| **minikube** | `minikube addons enable ingress` (then run `scripts/minikube-load.sh` to pin NodePort) |
+| **kind** | Add `extraPortMappings` for port 80 and install `ingress-nginx`: `kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml` |
+| **k3d**  | `k3d cluster create --port 80:80@loadbalancer` — Traefik is included by default |
+| **Docker Desktop k8s** | Install `ingress-nginx` manually |
+
+### DNS
+
+For minikube, use `traefik.me` wildcard DNS with your minikube IP:
+
+```sh
+PERCUSSIONIST_INGRESS_BASE_URL=http://$(minikube ip).traefik.me:30080
+```
+
+For setups where the ingress controller is on `127.0.0.1:80`, use
+`*.percussionist.localhost` — modern OS resolvers (Linux with systemd-resolved,
+macOS Ventura+, Windows 11) resolve `*.localhost` to `127.0.0.1` automatically:
+
+```sh
+PERCUSSIONIST_INGRESS_BASE_URL=http://percussionist.localhost
+```
+
+### Operator configuration
+
+Set these environment variables on the operator Deployment (see commented-out
+examples in `deploy/operator.yaml`):
+
+```sh
+# Required: enables per-run Ingress creation (scheme://host[:port])
+PERCUSSIONIST_INGRESS_BASE_URL=http://192.168.49.2.traefik.me:30080
+
+# Optional: ingress class name (e.g. "nginx", "traefik")
+PERCUSSIONIST_INGRESS_CLASS=nginx
+
+# Optional: extra annotations merged onto every Ingress (JSON)
+# The SSE endpoint /event needs long timeouts and no buffering:
+PERCUSSIONIST_INGRESS_ANNOTATIONS='{"nginx.ingress.kubernetes.io/proxy-read-timeout":"3600","nginx.ingress.kubernetes.io/proxy-buffering":"off"}'
+```
+
+### Per-run opt-out
+
+Set `spec.expose.web: false` on a run to skip Ingress creation for that run:
+
+```yaml
+spec:
+  task: "run the tests"
+  expose:
+    web: false
+```
+
+### Usage
+
+Once configured, every run's dashboard page shows an **Open web** link in the
+header and a **Web UI** field in the Status card with the full URL. Clicking
+opens the opencode SPA in a new tab — no authentication required.
+
+The URL format is:
+
+```
+http://<run-name>.<base-host>:<port>/
+```
+
+e.g. for minikube with the default IP:
+
+```
+http://run-abc123.192.168.49.2.traefik.me:30080/
+```
+
+> **Security note:** the opencode server runs without a password. The Ingress is only reachable on your local network via the minikube IP. If you bind the ingress controller to a public interface the service becomes reachable without authentication.
 
 ## M3 exit criteria
 
@@ -575,3 +728,86 @@ A future milestone will add `spec.source.skills` to the CRD, rendering a
 second init container that clones a dedicated skills repo into
 `/root/.config/opencode/`. This allows cluster-wide skills to be updated
 without rebuilding the runner image.
+
+---
+
+## Session analytics
+
+Every completed run is automatically recorded in a SQLite database embedded
+in the web pod. The data covers the full conversation — prompts, assistant
+responses, tool invocations with arguments, files read/written, token counts,
+and timing — and is intended for periodic LLM-assisted pattern analysis to
+improve agent prompts and tool usage.
+
+### Architecture
+
+```
+Dispatcher sidecar  ──POST /api/stats/session──►  percussionist-web pod
+                                                       │
+                                                  bun:sqlite
+                                                  /app/data/stats.db
+                                                  (1 Gi PVC — survives restarts)
+```
+
+The dispatcher sends stats at the end of each successful run. The call is
+fire-and-forget (non-fatal) and never blocks or delays the run completing.
+
+### What is stored
+
+| Table | Contents |
+|-------|----------|
+| `runs` | session ID, run name, task text, model, agent, phase, timestamps, token totals, error |
+| `messages` | full part list (JSON), role, model, per-message token counts, timing |
+| `tool_calls` | tool name, arguments (JSON), success, error, duration |
+| `file_ops` | file path, operation (`read`/`write`), message index |
+
+### Exporting for analysis
+
+```bash
+# Last 30 days (default)
+curl http://app.<minikube-ip>.traefik.me:30080/api/stats/export > sessions.json
+
+# All time
+curl http://app.<minikube-ip>.traefik.me:30080/api/stats/export?days=0 > sessions.json
+
+# Pipe straight into your LLM CLI of choice
+curl .../api/stats/export | llm "find patterns in agent tool usage and prompt effectiveness"
+```
+
+The export is a JSON array where each element is a session with nested
+`messages`, `toolCalls`, and `fileOps` arrays.
+
+### Retention
+
+Sessions are automatically deleted after **30 days** by an hourly cleanup
+job running inside the web pod. Override via the `RETENTION_DAYS` env var
+on the `percussionist-web` Deployment (set to `0` to keep data indefinitely):
+
+```yaml
+# deploy/web.yaml — under the web container env:
+- name: RETENTION_DAYS
+  value: "90"
+```
+
+### Web pod configuration
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `DATA_DIR` | `/app/data` | Directory for `stats.db` |
+| `RETENTION_DAYS` | `30` | Days to retain session data (`0` = forever) |
+
+The PVC (`percussionist-web-stats`, 1 Gi) is created by `deploy/web.yaml`
+and survives pod restarts and redeployments.
+
+### Operator configuration
+
+The operator automatically injects `WEB_STATS_URL` into every dispatcher
+pod, resolving to the web service in the same namespace:
+
+```
+http://percussionist-web.<namespace>.svc.cluster.local:8080
+```
+
+Override by setting `WEB_STATS_URL` on the operator Deployment if the web
+pod lives in a different location. Set it to an empty string to disable
+stats collection entirely.

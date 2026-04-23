@@ -1,7 +1,27 @@
-# RBAC, Service, and Deployment for the percussionist web dashboard.
+# RBAC, Service, Deployment, and PVC for the percussionist web dashboard.
 #
-# The web server is read-only: it lists OpenCodeRuns and reads pod logs.
-# It uses its own ServiceAccount with minimal permissions.
+# The web server reads OpenCodeRun resources and pod logs, and also hosts
+# the stats SQLite database (bun:sqlite) on a PersistentVolumeClaim.
+# Dispatcher sidecars POST session data to /api/stats/session after each run.
+#
+# Stats configuration (env vars on the Deployment):
+#   DATA_DIR        — path where stats.db is stored (default: /app/data)
+#   RETENTION_DAYS  — delete sessions older than N days (default: 30; 0=forever)
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: percussionist-web-stats
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: web
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -102,9 +122,22 @@ spec:
               value: percussionist
             - name: PORT
               value: "8080"
+            - name: DATA_DIR
+              value: /app/data
+            # Number of days to retain session stats (0 = keep forever).
+            - name: RETENTION_DAYS
+              value: "30"
+            # Bun's TLS stack does not pick up the in-cluster CA from the
+            # @kubernetes/client-node https.Agent. Point it at the service
+            # account CA bundle explicitly so Bun trusts the API server cert.
+            - name: NODE_EXTRA_CA_CERTS
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits: { cpu: 500m, memory: 512Mi }
+          volumeMounts:
+            - name: stats-db
+              mountPath: /app/data
           readinessProbe:
             httpGet:
               path: /api/health
@@ -117,3 +150,40 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 15
+      volumes:
+        - name: stats-db
+          persistentVolumeClaim:
+            claimName: percussionist-web-stats
+---
+# Dashboard Ingress — exposes the Percussionist web UI at a stable URL without
+# kubectl port-forward. Relies on the ingress-nginx addon (or any nginx-class
+# ingress controller) and the traefik.me wildcard DNS that maps
+# *.192.168.49.2.traefik.me → 192.168.49.2 (default minikube IP).
+#
+# With the ingress-nginx HTTP NodePort pinned to 30080 (see scripts/minikube-load.sh),
+# the dashboard is reachable at:
+#   http://app.192.168.49.2.traefik.me:30080/
+#
+# For other cluster setups, replace the host value with the appropriate base
+# domain, e.g. app.percussionist.localhost (requires ingress controller on 127.0.0.1:80).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: percussionist-web
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: web
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: app.192.168.49.2.traefik.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: percussionist-web
+                port:
+                  number: 8080

@@ -1,30 +1,28 @@
 // Operator entrypoint.
 //
-// Watches OpenCodeRun resources across a single namespace (METRICS: we'll
-// extend to cluster-wide later) and reconciles each into:
-//   - a Secret holding the basic-auth password for opencode serve (if the
-//     user didn't supply one via spec.secrets.serverPasswordSecret)
+// Watches OpenCodeRun resources across a single namespace and reconciles each
+// into:
 //   - a Service exposing port 4096
 //   - a Pod with two containers:
 //       * `opencode`   running `opencode serve --hostname 0.0.0.0`
 //       * `dispatcher` driving the session and writing /status
+//   - (optional) a per-run Ingress when PERCUSSIONIST_INGRESS_BASE_URL is
+//     set, exposing the opencode web UI at <baseURL-with-run-subdomain>/
 //
-// Uses informer-driven reconciliation with a simple work queue. Not
-// production hardened (no leader election, no retry budget, no metrics),
-// but sufficient for M2 validation.
+// Uses informer-driven reconciliation with a simple work queue.
 
 import {
   KubeConfig,
   CoreV1Api,
   CustomObjectsApi,
+  NetworkingV1Api,
   makeInformer,
   PatchStrategy,
   setHeaderOptions,
   type V1Pod,
   type V1Service,
-  type V1Secret,
+  type V1Ingress,
 } from "@kubernetes/client-node";
-import { randomBytes } from "node:crypto";
 import {
   API_GROUP,
   API_VERSION,
@@ -51,6 +49,46 @@ const DISPATCHER_IMAGE =
 const DISPATCHER_SERVICE_ACCOUNT =
   process.env.DISPATCHER_SERVICE_ACCOUNT ?? "percussionist-dispatcher";
 
+// When set, the dispatcher POSTs full session data here after each run for
+// persistent analytics storage (bun:sqlite in the web pod).
+// Default: auto-resolve to the web service in the same namespace.
+const WEB_STATS_URL =
+  process.env.WEB_STATS_URL ??
+  `http://percussionist-web.${NAMESPACE}.svc.cluster.local:8080`;
+
+// Ingress config — all optional. Feature is disabled when BASE_URL is unset.
+//
+// PERCUSSIONIST_INGRESS_BASE_URL — full URL prefix used to build per-run URLs.
+//   Format: scheme://host[:port]  (no trailing slash)
+//   Example (traefik.me + NodePort 30080):
+//     http://192.168.49.2.traefik.me:30080
+//   The per-run URL becomes:
+//     http://<run>.192.168.49.2.traefik.me:30080/
+//
+// Legacy PERCUSSIONIST_INGRESS_BASE_DOMAIN is still accepted for plain http port-80
+// setups — it is equivalent to setting BASE_URL=http://<domain>.
+const _rawBaseURL = process.env.PERCUSSIONIST_INGRESS_BASE_URL ?? "";
+const _legacyDomain = process.env.PERCUSSIONIST_INGRESS_BASE_DOMAIN ?? "";
+const INGRESS_BASE_URL: string = _rawBaseURL
+  ? _rawBaseURL.replace(/\/$/, "")
+  : _legacyDomain
+    ? `http://${_legacyDomain}`
+    : "";
+
+const INGRESS_CLASS = process.env.PERCUSSIONIST_INGRESS_CLASS ?? "";
+// JSON object of extra annotations to merge onto each Ingress, e.g.:
+//   '{"nginx.ingress.kubernetes.io/proxy-read-timeout":"3600"}'
+const INGRESS_ANNOTATIONS_RAW = process.env.PERCUSSIONIST_INGRESS_ANNOTATIONS ?? "{}";
+let INGRESS_ANNOTATIONS: Record<string, string> = {};
+try {
+  INGRESS_ANNOTATIONS = JSON.parse(INGRESS_ANNOTATIONS_RAW);
+} catch {
+  // ignore malformed value
+}
+// Default for spec.expose.web when unspecified — true when a base URL is set.
+const EXPOSE_WEB_DEFAULT =
+  process.env.PERCUSSIONIST_EXPOSE_WEB_DEFAULT !== "false";
+
 const log = (...args: unknown[]) =>
   console.log(`[operator ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
@@ -63,6 +101,7 @@ const kc = new KubeConfig();
 kc.loadFromDefault();
 const core = kc.makeApiClient(CoreV1Api);
 const co = kc.makeApiClient(CustomObjectsApi);
+const networking = kc.makeApiClient(NetworkingV1Api);
 
 // ---------------------------------------------------------------------------
 // Rendering helpers
@@ -83,25 +122,9 @@ const commonLabels = (run: OpenCodeRun) => ({
   [LABELS.runName]: run.metadata.name,
 });
 
-const passwordSecretName = (run: OpenCodeRun) =>
-  `${run.metadata.name}-auth`;
 const serviceName = (run: OpenCodeRun) => run.metadata.name;
 const podName = (run: OpenCodeRun) => run.metadata.name;
-
-function renderPasswordSecret(run: OpenCodeRun): V1Secret {
-  const password = randomBytes(18).toString("base64url");
-  return {
-    apiVersion: "v1",
-    kind: "Secret",
-    metadata: {
-      name: passwordSecretName(run),
-      namespace: run.metadata.namespace!,
-      labels: { ...commonLabels(run), [LABELS.component]: "auth" },
-      ownerReferences: ownerRefsFor(run),
-    },
-    stringData: { password },
-  };
-}
+const ingressName = (run: OpenCodeRun) => run.metadata.name;
 
 function renderService(run: OpenCodeRun): V1Service {
   return {
@@ -115,6 +138,9 @@ function renderService(run: OpenCodeRun): V1Service {
     },
     spec: {
       type: "ClusterIP",
+      // Always include the pod in endpoints even when the dispatcher sidecar
+      // has exited (NotReady). The opencode container serves traffic on its own.
+      publishNotReadyAddresses: true,
       selector: { [LABELS.runName]: run.metadata.name },
       ports: [
         { name: "http", port: CONTAINER_PORT, targetPort: "http" as unknown as number },
@@ -123,19 +149,58 @@ function renderService(run: OpenCodeRun): V1Service {
   };
 }
 
-function renderPod(run: OpenCodeRun, passwordSecret: string): V1Pod {
+function renderIngress(run: OpenCodeRun): V1Ingress {
+  const host = new URL(INGRESS_BASE_URL).hostname;
+  const runHost = `${run.metadata.name}.${host}`;
+  const annotations: Record<string, string> = {
+    // SSE streams (opencode /event endpoint) need long read timeouts and
+    // disabled buffering on nginx-ingress. Merge user-supplied annotations
+    // on top so they can override.
+    ...INGRESS_ANNOTATIONS,
+  };
+  const ingress: V1Ingress = {
+    apiVersion: "networking.k8s.io/v1",
+    kind: "Ingress",
+    metadata: {
+      name: ingressName(run),
+      namespace: run.metadata.namespace!,
+      labels: { ...commonLabels(run), [LABELS.component]: "opencode-web" },
+      annotations,
+      ownerReferences: ownerRefsFor(run),
+    },
+    spec: {
+      rules: [
+        {
+          host: runHost,
+          http: {
+            paths: [
+              {
+                path: "/",
+                pathType: "Prefix",
+                backend: {
+                  service: {
+                    name: serviceName(run),
+                    port: { number: CONTAINER_PORT },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  };
+  if (INGRESS_CLASS) {
+    ingress.spec!.ingressClassName = INGRESS_CLASS;
+  }
+  return ingress;
+}
+
+function renderPod(run: OpenCodeRun): V1Pod {
   const spec = OpenCodeRunSpecSchema.parse(run.spec);
   const llmKeysSecret = spec.secrets?.llmKeysSecret;
   const image = spec.image ?? RUNNER_IMAGE_DEFAULT;
 
-  // --- workspace source wiring ---------------------------------------------
-  // When spec.source.git is set we inject an init container that clones the
-  // repo into the shared `workspace` emptyDir before the runner starts.
-  // Auth: if sshSecret is present we mount it at /etc/git-ssh (read-only,
-  // mode 0400 via defaultMode) and tell git to use it via GIT_SSH_COMMAND.
-  //
-  // We deliberately use the runner image for the init container so we
-  // don't have to maintain a second base — it already has git + openssh.
   const git = spec.source?.git;
   const sshSecret = git?.sshSecret;
 
@@ -145,24 +210,11 @@ function renderPod(run: OpenCodeRun, passwordSecret: string): V1Pod {
           name: "git-clone",
           image,
           imagePullPolicy: "IfNotPresent" as const,
-          // Inline script keeps the contract visible in the Pod spec
-          // (easy to read via `kubectl get pod -o yaml`). Logic:
-          //   1. Prepare GIT_SSH_COMMAND if a key is mounted.
-          //   2. If ref is empty, clone default branch (--depth=1).
-          //   3. If ref looks like a full SHA, do a full clone then checkout.
-          //   4. Otherwise assume branch/tag and use --branch --depth=1.
-          // `set -eo pipefail` so any failure bubbles up as init-container
-          // failed; kubelet will mark the Pod Failed and the operator's
-          // pod-phase mirror propagates that to the CR.
           command: ["/bin/sh", "-c"],
           args: [
             [
               "set -eo pipefail",
               'echo "[git-clone] cloning ${GIT_URL} ref=${GIT_REF:-<default>} into /workspace"',
-              // SSH setup. The mounted key has mode 0400 from defaultMode,
-              // but git/ssh still insists on an absolute path and no
-              // known_hosts surprises. StrictHostKeyChecking=no is fine for
-              // the homelab; tighten once we ship known_hosts support.
               'if [ -f /etc/git-ssh/id ]; then',
               '  export GIT_SSH_COMMAND="ssh -i /etc/git-ssh/id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"',
               '  echo "[git-clone] using ssh key from secret"',
@@ -182,19 +234,12 @@ function renderPod(run: OpenCodeRun, passwordSecret: string): V1Pod {
           env: [
             { name: "GIT_URL", value: git.url },
             ...(git.ref ? [{ name: "GIT_REF", value: git.ref }] : []),
-            // Disable interactive prompts — no TTY here.
             { name: "GIT_TERMINAL_PROMPT", value: "0" },
           ],
           volumeMounts: [
             { name: "workspace", mountPath: "/workspace" },
             ...(sshSecret
-              ? [
-                  {
-                    name: "git-ssh",
-                    mountPath: "/etc/git-ssh",
-                    readOnly: true,
-                  },
-                ]
+              ? [{ name: "git-ssh", mountPath: "/etc/git-ssh", readOnly: true }]
               : []),
           ],
           resources: {
@@ -213,10 +258,7 @@ function renderPod(run: OpenCodeRun, passwordSecret: string): V1Pod {
             name: "git-ssh",
             secret: {
               secretName: sshSecret.name,
-              // Rename the user-supplied key to a stable path (`id`) so
-              // GIT_SSH_COMMAND above doesn't need to know the original key.
               items: [{ key: sshSecret.key, path: "id" }],
-              // 0400 — ssh refuses keys with looser perms.
               defaultMode: 0o400,
             },
           },
@@ -233,7 +275,6 @@ function renderPod(run: OpenCodeRun, passwordSecret: string): V1Pod {
       labels: {
         ...commonLabels(run),
         [LABELS.component]: "runner",
-        // The service selector requires this label on the pod too.
       },
       ownerReferences: ownerRefsFor(run),
     },
@@ -247,9 +288,6 @@ function renderPod(run: OpenCodeRun, passwordSecret: string): V1Pod {
           name: RUNNER_CONTAINER,
           image,
           imagePullPolicy: "IfNotPresent",
-          // When a source is configured the agent should start *inside*
-          // the cloned tree so `ls`, reads, git, etc. just work. Without
-          // a source /workspace is an empty dir — still a fine CWD.
           workingDir: "/workspace",
           command: [
             "opencode",
@@ -261,18 +299,8 @@ function renderPod(run: OpenCodeRun, passwordSecret: string): V1Pod {
           ],
           ports: [{ name: "http", containerPort: CONTAINER_PORT }],
           env: [
-            {
-              name: "OPENCODE_SERVER_PASSWORD",
-              valueFrom: {
-                secretKeyRef: { name: passwordSecret, key: "password" },
-              },
-            },
             // OPENCODE_AUTH_CONTENT: opencode checks this env var before
-            // reading ~/.local/share/opencode/auth.json, so projecting the
-            // full JSON blob from a Secret gives us a zero-file headless
-            // credential path. Carries OAuth/device-flow tokens (GitHub
-            // Copilot, ChatGPT Plus, Claude Pro) that can't be expressed
-            // as simple provider-keyed env vars.
+            // reading ~/.local/share/opencode/auth.json.
             ...(spec.secrets?.opencodeAuthSecret
               ? [
                   {
@@ -287,12 +315,7 @@ function renderPod(run: OpenCodeRun, passwordSecret: string): V1Pod {
                 ]
               : []),
             ...(llmKeysSecret
-              ? [
-                  {
-                    name: "_LLM_KEYS_MARKER",
-                    value: "see envFrom",
-                  },
-                ]
+              ? [{ name: "_LLM_KEYS_MARKER", value: "see envFrom" }]
               : []),
           ],
           envFrom: llmKeysSecret
@@ -319,14 +342,7 @@ function renderPod(run: OpenCodeRun, passwordSecret: string): V1Pod {
             { name: "RUN_NAMESPACE", value: run.metadata.namespace! },
             { name: "RUN_UID", value: run.metadata.uid! },
             { name: "OPENCODE_BASE_URL", value: `http://127.0.0.1:${CONTAINER_PORT}` },
-            {
-              name: "OPENCODE_SERVER_PASSWORD",
-              valueFrom: {
-                secretKeyRef: { name: passwordSecret, key: "password" },
-              },
-            },
-            // RUN_TASK is only set in non-interactive mode; the dispatcher
-            // treats missing task + RUN_INTERACTIVE=1 as "wait for attach".
+            { name: "WEB_STATS_URL", value: WEB_STATS_URL },
             ...(spec.task && !spec.interactive
               ? [{ name: "RUN_TASK", value: spec.task }]
               : []),
@@ -345,6 +361,24 @@ function renderPod(run: OpenCodeRun, passwordSecret: string): V1Pod {
       volumes,
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+
+function shouldCreateIngress(run: OpenCodeRun): boolean {
+  if (!INGRESS_BASE_URL) return false;
+  const exposeWeb = run.spec?.expose?.web;
+  return exposeWeb === undefined ? EXPOSE_WEB_DEFAULT : exposeWeb;
+}
+
+function webURLFor(run: OpenCodeRun): string {
+  // INGRESS_BASE_URL = scheme://host[:port]
+  // Insert the run name as the leftmost subdomain of the host.
+  const url = new URL(INGRESS_BASE_URL);
+  url.hostname = `${run.metadata.name}.${url.hostname}`;
+  url.pathname = "/";
+  return url.toString();
 }
 
 // ---------------------------------------------------------------------------
@@ -385,24 +419,6 @@ async function reconcile(run: OpenCodeRun): Promise<void> {
     return;
   }
 
-  // Ensure auth secret exists (generate if caller didn't provide one).
-  const userSecret = run.spec.secrets?.serverPasswordSecret;
-  const secretName = userSecret ?? passwordSecretName(run);
-  if (!userSecret) {
-    try {
-      await core.readNamespacedSecret({ name: secretName, namespace: ns });
-    } catch {
-      const secret = renderPasswordSecret(run);
-      try {
-        await core.createNamespacedSecret({ namespace: ns, body: secret });
-        log(`created secret ${ns}/${secretName}`);
-      } catch (e) {
-        const msg = (e as Error).message;
-        if (!/already exists/i.test(msg)) throw e;
-      }
-    }
-  }
-
   // Ensure service exists.
   try {
     await core.readNamespacedService({ name: serviceName(run), namespace: ns });
@@ -419,6 +435,32 @@ async function reconcile(run: OpenCodeRun): Promise<void> {
     }
   }
 
+  // Ensure Ingress exists (when configured).
+  if (shouldCreateIngress(run)) {
+    try {
+      await networking.readNamespacedIngress({ name: ingressName(run), namespace: ns });
+    } catch {
+      try {
+        await networking.createNamespacedIngress({
+          namespace: ns,
+          body: renderIngress(run),
+        });
+        log(`created ingress ${ns}/${ingressName(run)} → ${webURLFor(run)}`);
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (!/already exists/i.test(msg)) throw e;
+      }
+    }
+    // Backfill webURL/ingressName into status if missing (e.g. operator restarted
+    // after ingress feature was enabled, or run existed before the feature).
+    if (!run.status?.webURL) {
+      await patchStatus(run, {
+        ingressName: ingressName(run),
+        webURL: webURLFor(run),
+      });
+    }
+  }
+
   // Ensure pod exists.
   let pod: V1Pod | undefined;
   try {
@@ -427,13 +469,17 @@ async function reconcile(run: OpenCodeRun): Promise<void> {
     try {
       pod = await core.createNamespacedPod({
         namespace: ns,
-        body: renderPod(run, secretName),
+        body: renderPod(run),
       });
       log(`created pod ${ns}/${podName(run)}`);
       await patchStatus(run, {
         phase: RunPhase.Initializing,
         podName: podName(run),
         serviceName: serviceName(run),
+        ...(shouldCreateIngress(run) ? {
+          ingressName: ingressName(run),
+          webURL: webURLFor(run),
+        } : {}),
         message: "pod created",
       });
     } catch (e) {
@@ -450,22 +496,21 @@ async function reconcile(run: OpenCodeRun): Promise<void> {
   }
 
   // Mirror pod phase into CR status when the dispatcher hasn't claimed it yet.
-  // Dispatcher's Running/Succeeded writes take precedence over anything we
-  // infer here because of the order: we only write when currentPhase is
-  // Pending/Initializing.
   const podPhase = pod?.status?.phase;
   if (!currentPhase || currentPhase === RunPhase.Pending) {
     await patchStatus(run, {
       phase: RunPhase.Initializing,
       podName: podName(run),
       serviceName: serviceName(run),
+      ...(shouldCreateIngress(run) ? {
+        ingressName: ingressName(run),
+        webURL: webURLFor(run),
+      } : {}),
       message: `pod phase: ${podPhase ?? "Unknown"}`,
     });
   }
 
-  // Terminal reflection from pod:
-  // - Pod Succeeded: dispatcher exited 0, session completed.
-  // - Pod Failed:    either container died non-zero.
+  // Terminal reflection from pod.
   if (podPhase === "Succeeded" && currentPhase !== RunPhase.Succeeded) {
     await patchStatus(run, {
       phase: RunPhase.Succeeded,
@@ -523,7 +568,6 @@ async function worker(): Promise<void> {
       await reconcile(run);
     } catch (e) {
       err(`reconcile(${key}) failed:`, (e as Error).message);
-      // Simple linear backoff: re-enqueue after 5s.
       setTimeout(() => {
         const current = seen.get(key);
         if (current) enqueue(current);
@@ -532,8 +576,6 @@ async function worker(): Promise<void> {
   }
 }
 
-// Periodic resync so we catch pod phase transitions even when no CR event
-// fires (e.g. pod succeeded 10s after last CR update).
 function periodicResync(): void {
   setInterval(() => {
     for (const run of seen.values()) enqueue(run);
@@ -545,11 +587,14 @@ function periodicResync(): void {
 
 async function run(): Promise<void> {
   log(`watching ${API_GROUP_VERSION}/${PLURAL_RUN} in namespace=${NAMESPACE}`);
+  if (INGRESS_BASE_URL) {
+    log(`ingress base URL: ${INGRESS_BASE_URL}${INGRESS_CLASS ? ` (class: ${INGRESS_CLASS})` : ""}`);
+  } else {
+    log("no PERCUSSIONIST_INGRESS_BASE_URL set — per-run ingress disabled");
+  }
 
   const path = `/apis/${API_GROUP}/${API_VERSION}/namespaces/${NAMESPACE}/${PLURAL_RUN}`;
   const listFn = async () => {
-    // makeInformer wants a { response, body: { items } } shape OR a promise
-    // resolving to { items }. v1.x returns the list object directly.
     const res = await co.listNamespacedCustomObject({
       group: API_GROUP,
       version: API_VERSION,

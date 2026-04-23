@@ -1,25 +1,22 @@
 // Dispatcher sidecar.
 //
 // Runs alongside `opencode serve` inside an OpenCodeRun pod. Responsibilities:
-//   1. Wait for the server to be reachable on 127.0.0.1:4096 (auth via
-//      OPENCODE_SERVER_PASSWORD).
-//   2. Create a session, fire the task as a prompt (async — server does the
-//      work; we don't block on the model roundtrip).
-//   3. Subscribe to /event SSE, mirror interesting events into the
-//      OpenCodeRun status subresource (phase, sessionID, lastEventAt, token
-//      counters).
-//   4. Exit 0 when the session reports idle after completion, non-zero on
-//      error. The Job controller then marks the Job Complete / Failed and
-//      the operator reflects that into the CR terminal phase.
+//   1. Wait for the server to be reachable on 127.0.0.1:4096.
+//   2. (prompt mode) Create a session, fire the task as a prompt (async).
+//      (interactive mode) Wait for the user to start a session via the web UI
+//      or `beatctl attach`; observe all sessions that appear.
+//   3. Mirror session activity (sessionID, token counters, lastEventAt) into
+//      the OpenCodeRun status subresource via merge-patch.
+//   4. (prompt mode) Exit 0 when the session completes.
+//      (interactive mode) Sleep until SIGTERM; snapshot all sessions on exit.
 //
 // Environment (injected by the operator):
 //   RUN_NAME, RUN_NAMESPACE         — which CR to update
 //   OPENCODE_BASE_URL               — http://127.0.0.1:4096 (same pod)
-//   OPENCODE_SERVER_USERNAME        — defaults to "opencode"
-//   OPENCODE_SERVER_PASSWORD        — matches the opencode container
-//   RUN_TASK                        — the prompt text
+//   RUN_TASK                        — the prompt text (prompt mode only)
 //   RUN_MODEL                       — optional, "provider/model"
 //   RUN_AGENT                       — optional
+//   RUN_INTERACTIVE                 — "1" for interactive mode
 
 import {
   KubeConfig,
@@ -52,31 +49,23 @@ const RUN_NAME = env("RUN_NAME");
 const RUN_NAMESPACE = env("RUN_NAMESPACE");
 const RUN_UID = env("RUN_UID");
 const BASE_URL = env("OPENCODE_BASE_URL", false) || "http://127.0.0.1:4096";
-const USERNAME = env("OPENCODE_SERVER_USERNAME", false) || "opencode";
-const PASSWORD = env("OPENCODE_SERVER_PASSWORD");
 // In interactive mode the operator leaves RUN_TASK unset on purpose.
 const INTERACTIVE = env("RUN_INTERACTIVE", false) === "1";
 const TASK = env("RUN_TASK", !INTERACTIVE);
 const MODEL = env("RUN_MODEL", false);
 const AGENT = env("RUN_AGENT", false);
+// Optional: web pod stats service URL. When set, the dispatcher POSTs the
+// full session data here after completion for persistent analytics storage.
+// Example: http://percussionist-web.percussionist.svc.cluster.local:8080
+const WEB_STATS_URL = env("WEB_STATS_URL", false);
 
 const log = (...args: unknown[]) =>
   console.log(`[dispatcher ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
   console.error(`[dispatcher ${new Date().toISOString()}]`, ...args);
 
-const authHeader = `Basic ${Buffer.from(`${USERNAME}:${PASSWORD}`).toString("base64")}`;
-
 // ---------------------------------------------------------------------------
 // Graceful shutdown
-//
-// kubelet sends SIGTERM when a pod is being deleted (user ran
-// `beatctl cancel`, CR was removed, activeDeadlineSeconds fired, etc).
-// Without a handler we'd keep sleeping/polling until the 30s grace period
-// runs out and kubelet SIGKILLs us — visible as "pod takes forever to
-// terminate". Install a handler that flips a shared flag, patches a final
-// "shutting down" status, and exits 0. Long-running waits in main() check
-// `shuttingDown` to exit their loops promptly.
 
 let shuttingDown = false;
 const shutdownSignalled = new Promise<void>((resolve) => {
@@ -90,9 +79,6 @@ const shutdownSignalled = new Promise<void>((resolve) => {
   process.once("SIGINT", () => onSignal("SIGINT"));
 });
 
-// Sleep that wakes early if a shutdown signal arrives. Use this in loops
-// so we don't spend the tail end of a poll interval blocking on
-// setTimeout after SIGTERM.
 function interruptibleSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const t = setTimeout(resolve, ms);
@@ -108,14 +94,11 @@ function interruptibleSleep(ms: number): Promise<void> {
 // K8s client + status patching
 
 const kc = new KubeConfig();
-kc.loadFromDefault(); // in-cluster service account when running in a pod
+kc.loadFromDefault();
 const k8s = kc.makeApiClient(CustomObjectsApi);
 const coreApi = kc.makeApiClient(CoreV1Api);
 
 async function patchStatus(patch: OpenCodeRunStatus): Promise<void> {
-  // Merge-patch against the /status subresource. The CRD enables the status
-  // subresource, so writing spec fields from here is ignored by the API
-  // server even if accidentally included.
   const body = { status: { ...patch, lastEventAt: new Date().toISOString() } };
   try {
     await k8s.patchNamespacedCustomObjectStatus(
@@ -135,75 +118,333 @@ async function patchStatus(patch: OpenCodeRunStatus): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Session snapshot — persist conversation to a ConfigMap
+// Session snapshot — persist all conversations to a ConfigMap.
 //
-// After the session finishes successfully the dispatcher writes the full
-// message list to a ConfigMap named `<runName>-session`. This lets the web
-// dashboard render the conversation even after the runner pod has been
-// deleted. The ConfigMap is owned by the OpenCodeRun CR so it gets GC'd
-// together with the rest of the child resources.
+// Fetches the list of all sessions from the opencode server and writes their
+// messages into a single ConfigMap named `<runName>-session`. Each session
+// gets its own key: `messages-<sessionID>.json`. A `sessions.json` key holds
+// the list of session IDs in order. This lets the web dashboard render
+// conversations even after the runner pod has been deleted.
 //
-// ConfigMaps have a 1 MiB etcd limit. If the payload is larger we truncate
-// old messages until it fits and include a truncation marker.
+// The ConfigMap is owned by the OpenCodeRun CR and gets GC'd with it.
+// ConfigMaps have a 1 MiB etcd limit; individual session message lists are
+// truncated from the front if they exceed their share.
 
-const CM_MAX_BYTES = 900_000; // leave headroom under the 1 MiB etcd limit
+const CM_MAX_BYTES = 900_000;
 
-async function snapshotSession(sessionID: string): Promise<void> {
-  log("snapshotSession: fetching messages");
-  const res = await fetch(`${BASE_URL}/session/${sessionID}/message`, {
-    headers: { Authorization: authHeader },
-  });
-  if (!res.ok) {
-    err(`snapshotSession: GET /message failed HTTP ${res.status}`);
+type SessionEntry = { id: string; title?: string };
+type MessagesEntry = {
+  info?: {
+    role?: "user" | "assistant";
+    time?: { created?: number; completed?: number };
+    tokens?: { input?: number; output?: number };
+    error?: unknown;
+  };
+};
+
+async function listSessions(): Promise<SessionEntry[]> {
+  try {
+    const res = await fetch(`${BASE_URL}/session`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as SessionEntry[] | { sessions?: SessionEntry[] };
+    // opencode returns either an array or { sessions: [...] } depending on version
+    return Array.isArray(data) ? data : (data.sessions ?? []);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchMessages(sessionID: string): Promise<MessagesEntry[]> {
+  try {
+    const res = await fetch(`${BASE_URL}/session/${sessionID}/message`);
+    if (!res.ok) return [];
+    return (await res.json()) as MessagesEntry[];
+  } catch {
+    return [];
+  }
+}
+
+async function snapshotAllSessions(): Promise<void> {
+  const sessions = await listSessions();
+  if (sessions.length === 0) {
+    log("snapshotAllSessions: no sessions to snapshot");
     return;
   }
-  let messages: unknown[] = (await res.json()) as unknown[];
-  let json = JSON.stringify(messages);
 
-  // Truncate from the front (oldest messages) if too large.
-  let truncated = false;
-  while (Buffer.byteLength(json, "utf8") > CM_MAX_BYTES && messages.length > 1) {
-    truncated = true;
-    messages = messages.slice(1);
-    json = JSON.stringify(messages);
+  log(`snapshotAllSessions: snapshotting ${sessions.length} session(s)`);
+
+  // Per-session budget: divide headroom evenly (rough heuristic).
+  const perSessionBudget = Math.floor(CM_MAX_BYTES / sessions.length);
+
+  const cmData: Record<string, string> = {
+    "sessions.json": JSON.stringify(sessions.map((s) => s.id)),
+  };
+
+  for (const session of sessions) {
+    let messages = await fetchMessages(session.id);
+    let json = JSON.stringify(messages);
+    let truncated = false;
+    while (Buffer.byteLength(json, "utf8") > perSessionBudget && messages.length > 1) {
+      truncated = true;
+      messages = messages.slice(1);
+      json = JSON.stringify(messages);
+    }
+    cmData[`messages-${session.id}.json`] = json;
+    if (truncated) cmData[`truncated-${session.id}`] = "true";
+    log(
+      `snapshotAllSessions: session ${session.id} — ${messages.length} messages, ` +
+        `${Buffer.byteLength(json, "utf8")} bytes${truncated ? " (truncated)" : ""}`,
+    );
   }
 
-  const cmData: Record<string, string> = { "messages.json": json };
-  if (truncated) {
-    cmData["truncated"] = "true";
-  }
+  // Upsert: try create, fall back to patch if already exists (e.g. operator restart).
+  const cmMeta = {
+    name: `${RUN_NAME}-session`,
+    namespace: RUN_NAMESPACE,
+    labels: {
+      "app.kubernetes.io/managed-by": "percussionist",
+      "percussionist.dev/run-name": RUN_NAME,
+      "percussionist.dev/component": "session-snapshot",
+    },
+    ownerReferences: [
+      {
+        apiVersion: API_GROUP_VERSION,
+        kind: KIND_RUN,
+        name: RUN_NAME,
+        uid: RUN_UID,
+        controller: true,
+        blockOwnerDeletion: true,
+      },
+    ],
+  };
 
   try {
     await coreApi.createNamespacedConfigMap({
       namespace: RUN_NAMESPACE,
-      body: {
-        apiVersion: "v1",
-        kind: "ConfigMap",
-        metadata: {
-          name: `${RUN_NAME}-session`,
-          namespace: RUN_NAMESPACE,
-          labels: {
-            "app.kubernetes.io/managed-by": "percussionist",
-            "percussionist.dev/run-name": RUN_NAME,
-            "percussionist.dev/component": "session-snapshot",
-          },
-          ownerReferences: [
-            {
-              apiVersion: API_GROUP_VERSION,
-              kind: KIND_RUN,
-              name: RUN_NAME,
-              uid: RUN_UID,
-              controller: true,
-              blockOwnerDeletion: true,
-            },
-          ],
-        },
-        data: cmData,
-      },
+      body: { apiVersion: "v1", kind: "ConfigMap", metadata: cmMeta, data: cmData },
     });
-    log(`snapshotSession: created ConfigMap ${RUN_NAME}-session (${Buffer.byteLength(json, "utf8")} bytes${truncated ? ", truncated" : ""})`);
+    log(`snapshotAllSessions: created ConfigMap ${RUN_NAME}-session`);
+  } catch (createErr) {
+    if (!/already exists/i.test((createErr as Error).message)) {
+      err("snapshotAllSessions: create failed:", (createErr as Error).message);
+      return;
+    }
+    // Already exists — replace data via merge patch.
+    try {
+      await coreApi.patchNamespacedConfigMap(
+        { name: `${RUN_NAME}-session`, namespace: RUN_NAMESPACE, body: { data: cmData } },
+        setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
+      );
+      log(`snapshotAllSessions: updated ConfigMap ${RUN_NAME}-session`);
+    } catch (patchErr) {
+      err("snapshotAllSessions: patch failed:", (patchErr as Error).message);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stats reporting — POST full session data to the web pod for persistent
+// analytics storage. Non-fatal: a failure here never blocks the run from
+// completing. Only called when WEB_STATS_URL is configured.
+
+// Part shapes we care about for stats extraction.
+type TextPart = { type: "text"; text: string };
+type ToolUsePart = {
+  type: "tool-use" | "tool_use";
+  id?: string;
+  name?: string;
+  input?: unknown;
+};
+type ToolResultPart = {
+  type: "tool-result" | "tool_result";
+  toolUseId?: string;
+  tool_use_id?: string;
+  isError?: boolean;
+  content?: unknown;
+};
+type FilePart = { type: "file"; filename?: string; path?: string };
+type Part = TextPart | ToolUsePart | ToolResultPart | FilePart | { type: string };
+
+type RawMessage = {
+  info?: {
+    id?: string;
+    sessionID?: string;
+    role?: "user" | "assistant";
+    time?: { created?: number; completed?: number };
+    tokens?: { input?: number; output?: number };
+    model?: { providerID?: string; modelID?: string };
+    error?: unknown;
+  };
+  parts?: Part[];
+};
+
+async function sendStats(
+  sessionID: string,
+  phase: string,
+  startedAt: string,
+  completedAt: string | undefined,
+  tokensIn: number,
+  tokensOut: number,
+  sessionError?: string,
+): Promise<void> {
+  if (!WEB_STATS_URL) return;
+
+  // Fetch full message list from opencode.
+  let rawMessages: RawMessage[] = [];
+  try {
+    const res = await fetch(`${BASE_URL}/session/${sessionID}/message`);
+    if (res.ok) rawMessages = (await res.json()) as RawMessage[];
   } catch (e) {
-    err("snapshotSession: failed to create ConfigMap:", (e as Error).message);
+    err("sendStats: failed to fetch messages:", (e as Error).message);
+  }
+
+  // Build structured payloads from the raw message list.
+  const messagesPayload: unknown[] = [];
+  const toolCallsPayload: unknown[] = [];
+  const fileOpsPayload: unknown[] = [];
+
+  // Track tool-use parts so we can match them with tool-result parts for
+  // duration estimation (opencode doesn't expose duration directly).
+  const toolUseTimestamps = new Map<string, number>();
+
+  for (let idx = 0; idx < rawMessages.length; idx++) {
+    const msg = rawMessages[idx]!;
+    const info = msg.info ?? {};
+    const parts = msg.parts ?? [];
+
+    // Full content as JSON — preserves all part types for LLM analysis.
+    const content = JSON.stringify(parts);
+    const model =
+      info.model
+        ? `${info.model.providerID ?? ""}/${info.model.modelID ?? ""}`.replace(/^\/|\/$/g, "")
+        : undefined;
+
+    messagesPayload.push({
+      id: info.id ?? `${sessionID}-${idx}`,
+      idx,
+      role: info.role,
+      content,
+      model,
+      tokensIn: info.tokens?.input,
+      tokensOut: info.tokens?.output,
+      createdAt: info.time?.created
+        ? new Date(info.time.created).toISOString()
+        : undefined,
+      completedAt: info.time?.completed
+        ? new Date(info.time.completed).toISOString()
+        : undefined,
+    });
+
+    // Extract tool invocations and file accesses from parts.
+    for (const part of parts) {
+      if (part.type === "tool-use" || part.type === "tool_use") {
+        const tp = part as ToolUsePart;
+        const toolId = tp.id ?? `${sessionID}-${idx}-${tp.name}`;
+        toolUseTimestamps.set(toolId, info.time?.created ?? Date.now());
+        toolCallsPayload.push({
+          id: toolId,
+          messageIdx: idx,
+          tool: tp.name ?? "unknown",
+          args: tp.input != null ? JSON.stringify(tp.input) : undefined,
+          success: true, // assume success until tool-result says otherwise
+        });
+
+        // Detect file reads/writes from well-known tool names.
+        const toolName = (tp.name ?? "").toLowerCase();
+        if (
+          toolName === "read" ||
+          toolName === "readfile" ||
+          toolName === "read_file"
+        ) {
+          const fp =
+            (tp.input as Record<string, unknown>)?.filePath ??
+            (tp.input as Record<string, unknown>)?.path;
+          if (typeof fp === "string") {
+            fileOpsPayload.push({ messageIdx: idx, filePath: fp, operation: "read" });
+          }
+        } else if (
+          toolName === "write" ||
+          toolName === "writefile" ||
+          toolName === "write_file" ||
+          toolName === "edit" ||
+          toolName === "multiedit"
+        ) {
+          const fp =
+            (tp.input as Record<string, unknown>)?.filePath ??
+            (tp.input as Record<string, unknown>)?.path;
+          if (typeof fp === "string") {
+            fileOpsPayload.push({ messageIdx: idx, filePath: fp, operation: "write" });
+          }
+        }
+      } else if (part.type === "tool-result" || part.type === "tool_result") {
+        const rp = part as ToolResultPart;
+        const refId = rp.toolUseId ?? rp.tool_use_id;
+        // Update the matching tool call with error/success info.
+        if (refId) {
+          const existing = toolCallsPayload.find(
+            (t) => (t as { id: string }).id === refId,
+          ) as Record<string, unknown> | undefined;
+          if (existing) {
+            existing.success = !rp.isError;
+            if (rp.isError) {
+              existing.error =
+                typeof rp.content === "string"
+                  ? rp.content
+                  : JSON.stringify(rp.content);
+            }
+            const startTs = toolUseTimestamps.get(refId);
+            if (startTs && info.time?.completed) {
+              existing.durationMs = info.time.completed - startTs;
+            }
+          }
+        }
+      } else if (part.type === "file") {
+        const fp = part as FilePart;
+        const filePath = fp.path ?? fp.filename;
+        if (filePath) {
+          fileOpsPayload.push({ messageIdx: idx, filePath, operation: "read" });
+        }
+      }
+    }
+  }
+
+  const payload = {
+    sessionID,
+    run: {
+      name: RUN_NAME,
+      namespace: RUN_NAMESPACE,
+      task: TASK || undefined,
+      model: MODEL || undefined,
+      agent: AGENT || undefined,
+      phase,
+      startedAt,
+      completedAt,
+      tokensIn,
+      tokensOut,
+      error: sessionError,
+    },
+    messages: messagesPayload,
+    toolCalls: toolCallsPayload,
+    fileOps: fileOpsPayload,
+  };
+
+  try {
+    const res = await fetch(`${WEB_STATS_URL}/api/stats/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) {
+      err(`sendStats: web pod responded HTTP ${res.status}: ${await res.text().catch(() => "")}`);
+    } else {
+      log(
+        `sendStats: persisted session ${sessionID} — ${messagesPayload.length} messages, ` +
+          `${toolCallsPayload.length} tool calls, ${fileOpsPayload.length} file ops`,
+      );
+    }
+  } catch (e) {
+    err("sendStats: POST failed (non-fatal):", (e as Error).message);
   }
 }
 
@@ -215,9 +456,7 @@ async function waitForHealthy(timeoutMs = 120_000): Promise<void> {
   let lastErr: unknown = null;
   while (Date.now() < deadline && !shuttingDown) {
     try {
-      const res = await fetch(`${BASE_URL}/global/health`, {
-        headers: { Authorization: authHeader },
-      });
+      const res = await fetch(`${BASE_URL}/global/health`);
       if (res.ok) {
         const body = (await res.json()) as { healthy?: boolean; version?: string };
         if (body.healthy) {
@@ -239,44 +478,193 @@ async function waitForHealthy(timeoutMs = 120_000): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Token aggregator — accumulates input/output tokens across all tracked
+// sessions and debounces status patches.
 
-async function main(): Promise<void> {
-  await patchStatus({ phase: RunPhase.Initializing, message: "waiting for opencode" });
-  await waitForHealthy();
+class TokenAggregator {
+  private bySession = new Map<string, { input: number; output: number }>();
+  private lastWrite = 0;
 
-  if (INTERACTIVE) {
-    // Interactive mode: don't create a session or dispatch any prompt. The
-    // runner container keeps `opencode serve` alive; the user connects via
-    // `beatctl attach` and drives the session by hand.
-    //
-    // We still want the CR to show a sensible phase so `beatctl ls` looks
-    // right. Use Running + a clear message. The dispatcher then sleeps
-    // until SIGTERM (CR deletion) or activeDeadlineSeconds (pod Failed →
-    // CR Failed via the operator's pod-phase mirror, which also honours
-    // spec.timeoutSeconds).
-    await patchStatus({
-      phase: RunPhase.Running,
-      startedAt: new Date().toISOString(),
-      message: "waiting for attach",
+  update(sessionID: string, input: number, output: number): void {
+    const prev = this.bySession.get(sessionID) ?? { input: 0, output: 0 };
+    this.bySession.set(sessionID, {
+      input: Math.max(prev.input, input),
+      output: Math.max(prev.output, output),
     });
-    log("interactive mode — sleeping; use `beatctl attach` to connect");
-    // Block until SIGTERM flips the shutdown flag. On kubelet pod delete
-    // we want to unblock immediately rather than eat the 30s grace
-    // before the SIGKILL.
-    await shutdownSignalled;
-    log("interactive session ending");
-    return;
   }
 
-  const client = createOpencodeClient({
-    baseUrl: BASE_URL,
-    fetch: (input: RequestInfo | URL, init?: RequestInit) => {
-      const headers = new Headers(init?.headers);
-      headers.set("Authorization", authHeader);
-      return fetch(input, { ...init, headers });
-    },
+  totals(): { tokensIn: number; tokensOut: number } {
+    let tokensIn = 0;
+    let tokensOut = 0;
+    for (const { input, output } of this.bySession.values()) {
+      tokensIn += input;
+      tokensOut += output;
+    }
+    return { tokensIn, tokensOut };
+  }
+
+  async flush(force = false): Promise<void> {
+    const now = Date.now();
+    if (!force && now - this.lastWrite < 3000) return;
+    this.lastWrite = now;
+    await patchStatus(this.totals());
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Interactive mode: observe all sessions, mirror activity into CR status.
+//
+// - Polls GET /session every 3 s to discover sessions created by the web UI
+//   or by `beatctl attach`.
+// - When the first session appears, patches status with sessionID + "session active".
+// - SSE /event stream updates token counts across all sessions.
+// - Blocks until SIGTERM; snapshots all sessions on exit.
+
+async function runInteractive(): Promise<void> {
+  await patchStatus({
+    phase: RunPhase.Running,
+    startedAt: new Date().toISOString(),
+    message: "waiting for attach or web session",
   });
+  log("interactive mode — waiting for session via web UI or `beatctl attach`");
+
+  const tokens = new TokenAggregator();
+  let firstSessionID: string | undefined;
+  const knownSessions = new Set<string>();
+  let terminate = false; // set when SIGTERM arrives
+
+  // Wire SIGTERM → terminate flag so inner loops exit.
+  shutdownSignalled.then(() => { terminate = true; });
+
+  // ------- Session discovery poller ------------------------------------------
+  const discoverSessions = async (): Promise<void> => {
+    while (!terminate) {
+      const sessions = await listSessions();
+      for (const s of sessions) {
+        if (!knownSessions.has(s.id)) {
+          knownSessions.add(s.id);
+          log(`discovered session ${s.id}${s.title ? ` ("${s.title}")` : ""}`);
+          if (!firstSessionID) {
+            firstSessionID = s.id;
+            await patchStatus({
+              sessionID: firstSessionID,
+              message: "session active",
+            });
+            log(`patched status sessionID=${firstSessionID}`);
+          }
+        }
+      }
+      // Also refresh token counts from any known sessions.
+      for (const sessionID of knownSessions) {
+        const msgs = await fetchMessages(sessionID);
+        for (const msg of msgs) {
+          const t = msg.info?.tokens;
+          if (t?.input || t?.output) {
+            tokens.update(sessionID, t.input ?? 0, t.output ?? 0);
+          }
+        }
+      }
+      await tokens.flush();
+      await interruptibleSleep(3000);
+    }
+  };
+
+  // ------- SSE event stream (low-latency token updates) ---------------------
+  const streamEvents = async (): Promise<void> => {
+    while (!terminate) {
+      try {
+        const evtRes = await fetch(`${BASE_URL}/event`, {
+          headers: { Accept: "text/event-stream" },
+        });
+        if (!evtRes.ok || !evtRes.body) {
+          err(`event stream failed: HTTP ${evtRes.status}; retrying in 5s`);
+          await interruptibleSleep(5000);
+          continue;
+        }
+
+        const reader = evtRes.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (!terminate) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let idx;
+          while ((idx = buffer.indexOf("\n\n")) >= 0) {
+            const raw = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const dataLines = raw
+              .split("\n")
+              .filter((l) => l.startsWith("data:"))
+              .map((l) => l.slice(5).trimStart());
+            if (dataLines.length === 0) continue;
+            let evt: { type?: string; properties?: Record<string, unknown> };
+            try {
+              evt = JSON.parse(dataLines.join("\n"));
+            } catch {
+              continue;
+            }
+
+            if (evt.type === "message.updated") {
+              const p = (evt.properties ?? {}) as {
+                info?: {
+                  sessionID?: string;
+                  tokens?: { input?: number; output?: number };
+                };
+              };
+              const sid = p.info?.sessionID;
+              if (sid) {
+                // Register newly seen sessions from SSE (faster than poll).
+                if (!knownSessions.has(sid)) {
+                  knownSessions.add(sid);
+                  log(`discovered session via SSE: ${sid}`);
+                  if (!firstSessionID) {
+                    firstSessionID = sid;
+                    await patchStatus({
+                      sessionID: firstSessionID,
+                      message: "session active",
+                    });
+                  }
+                }
+                if (typeof p.info?.tokens?.input === "number")
+                  tokens.update(sid, p.info.tokens.input, p.info.tokens?.output ?? 0);
+                if (typeof p.info?.tokens?.output === "number")
+                  tokens.update(sid, p.info.tokens?.input ?? 0, p.info.tokens.output);
+                await tokens.flush();
+              }
+            }
+          }
+        }
+        try { await reader.cancel(); } catch { /* ignore */ }
+      } catch (e) {
+        if (terminate) return;
+        err("SSE stream error:", (e as Error).message, "— retrying in 5s");
+        await interruptibleSleep(5000);
+      }
+    }
+  };
+
+  // Run both concurrently; both exit when terminate flips.
+  await Promise.all([discoverSessions(), streamEvents()]);
+
+  // Flush final token counts.
+  await tokens.flush(true);
+
+  log("interactive session ending — snapshotting all sessions");
+  await snapshotAllSessions();
+  // Don't mark Succeeded — the run was interactive (no automated task to complete).
+  // The operator will reflect the pod's terminal phase (Cancelled/Failed/etc).
+  await patchStatus({ message: "dispatcher terminated" });
+}
+
+// ---------------------------------------------------------------------------
+// Prompt-driven mode: create a session, dispatch the task, observe to completion.
+
+async function runPrompt(): Promise<void> {
+  const client = createOpencodeClient({ baseUrl: BASE_URL });
+  const tokens = new TokenAggregator();
 
   // Create a session for this run.
   const session = await client.session.create({
@@ -285,15 +673,15 @@ async function main(): Promise<void> {
   const sessionID = (session.data as { id: string }).id;
   log(`created session ${sessionID}`);
 
+  const runStartedAt = new Date().toISOString();
+
   await patchStatus({
     phase: RunPhase.Running,
     sessionID,
-    startedAt: new Date().toISOString(),
+    startedAt: runStartedAt,
     message: "dispatching prompt",
   });
 
-  // Dispatch the prompt asynchronously so the dispatcher doesn't hold an
-  // HTTP connection open for the duration of the run.
   const promptBody: Record<string, unknown> = {
     parts: [{ type: "text", text: TASK }],
   };
@@ -301,18 +689,12 @@ async function main(): Promise<void> {
   if (MODEL) {
     const [providerID, ...rest] = MODEL.split("/");
     const modelID = rest.join("/");
-    if (providerID && modelID) {
-      promptBody.model = { providerID, modelID };
-    }
+    if (providerID && modelID) promptBody.model = { providerID, modelID };
   }
 
-  // `prompt_async` returns 204 and does the work in the background.
   const asyncRes = await fetch(`${BASE_URL}/session/${sessionID}/prompt_async`, {
     method: "POST",
-    headers: {
-      Authorization: authHeader,
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(promptBody),
   });
   if (!asyncRes.ok && asyncRes.status !== 204) {
@@ -320,39 +702,11 @@ async function main(): Promise<void> {
   }
   log("prompt dispatched (async)");
 
-  // Subscribe to SSE events for token/progress updates. Termination is
-  // detected by polling /session/status: once the session appears in the
-  // status map with a busy flag and later disappears (or flips to idle),
-  // we consider it done. Polling is dramatically simpler than getting SSE
-  // event shapes exactly right across opencode versions.
   let sawBusy = false;
-  let tokensIn = 0;
-  let tokensOut = 0;
-  let lastStatusWrite = 0;
   let terminate = false;
-
-  const flushStatus = async (force = false) => {
-    const now = Date.now();
-    if (!force && now - lastStatusWrite < 3000) return;
-    lastStatusWrite = now;
-    await patchStatus({ tokensIn, tokensOut });
-  };
+  shutdownSignalled.then(() => { terminate = true; });
 
   // ------- Termination poller ------------------------------------------------
-  // We can't rely on /session/status (returns {} in many versions) or on
-  // the session.updated SSE event shape (inconsistent across versions).
-  // Pragmatic signal: GET /session/:id/message and look at the tail. The
-  // dispatch is complete when the last *assistant* message has a
-  // `time.completed` timestamp and is not followed by a pending user turn.
-  type MessagesEntry = {
-    info?: {
-      role?: "user" | "assistant";
-      time?: { created?: number; completed?: number };
-      tokens?: { input?: number; output?: number };
-      error?: unknown;
-    };
-  };
-
   const pollStatus = async (): Promise<void> => {
     const POLL_MS = 2000;
     const startedAt = Date.now();
@@ -362,42 +716,28 @@ async function main(): Promise<void> {
     while (!terminate && !shuttingDown) {
       iter++;
       try {
-        const res = await fetch(
-          `${BASE_URL}/session/${sessionID}/message`,
-          { headers: { Authorization: authHeader } },
-        );
-        if (!res.ok) {
-          if (iter <= 3 || iter % 10 === 0) {
-            err(`pollStatus: GET /message -> HTTP ${res.status}`);
+        const msgs = await fetchMessages(sessionID);
+        const last = msgs.length > 0 ? msgs[msgs.length - 1] : undefined;
+        if (iter <= 3 || iter % 10 === 0) {
+          log(
+            `pollStatus iter=${iter} msgs=${msgs.length} lastRole=${last?.info?.role} completed=${last?.info?.time?.completed ?? "-"}`,
+          );
+        }
+        if (last?.info?.role === "assistant") {
+          sawBusy = true;
+          const t = last.info.tokens;
+          if (t?.input || t?.output) {
+            tokens.update(sessionID, t.input ?? 0, t.output ?? 0);
           }
-        } else {
-          const msgs = (await res.json()) as MessagesEntry[];
-          const last = msgs.length > 0 ? msgs[msgs.length - 1] : undefined;
-          if (iter <= 3 || iter % 10 === 0) {
-            log(
-              `pollStatus iter=${iter} msgs=${msgs.length} lastRole=${last?.info?.role} completed=${last?.info?.time?.completed ?? "-"}`,
-            );
-          }
-          if (last?.info?.role === "assistant") {
-            sawBusy = true;
-            const tokens = last.info.tokens;
-            if (tokens?.input) tokensIn = Math.max(tokensIn, tokens.input);
-            if (tokens?.output) tokensOut = Math.max(tokensOut, tokens.output);
-            await flushStatus();
-            if (last.info.time?.completed) {
-              if (last.info.error) {
-                err(
-                  "session ended with error:",
-                  JSON.stringify(last.info.error),
-                );
-                throw new Error(
-                  `session error: ${JSON.stringify(last.info.error)}`,
-                );
-              }
-              log("last assistant message completed — treating as done");
-              terminate = true;
-              return;
+          await tokens.flush();
+          if (last.info.time?.completed) {
+            if (last.info.error) {
+              err("session ended with error:", JSON.stringify(last.info.error));
+              throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
             }
+            log("last assistant message completed — treating as done");
+            terminate = true;
+            return;
           }
         }
       } catch (e) {
@@ -415,7 +755,7 @@ async function main(): Promise<void> {
   // ------- Event stream (progress only) --------------------------------------
   const streamEvents = async (): Promise<void> => {
     const evtRes = await fetch(`${BASE_URL}/event`, {
-      headers: { Authorization: authHeader, Accept: "text/event-stream" },
+      headers: { Accept: "text/event-stream" },
     });
     if (!evtRes.ok || !evtRes.body) {
       err(`event stream failed: HTTP ${evtRes.status}; continuing on polling only`);
@@ -440,10 +780,9 @@ async function main(): Promise<void> {
           .filter((l) => l.startsWith("data:"))
           .map((l) => l.slice(5).trimStart());
         if (dataLines.length === 0) continue;
-        const payload = dataLines.join("\n");
         let evt: { type?: string; properties?: Record<string, unknown> };
         try {
-          evt = JSON.parse(payload);
+          evt = JSON.parse(dataLines.join("\n"));
         } catch {
           continue;
         }
@@ -457,22 +796,17 @@ async function main(): Promise<void> {
           };
           if (p.info?.sessionID === sessionID) {
             if (typeof p.info.tokens?.input === "number")
-              tokensIn = Math.max(tokensIn, p.info.tokens.input);
+              tokens.update(sessionID, p.info.tokens.input, p.info.tokens?.output ?? 0);
             if (typeof p.info.tokens?.output === "number")
-              tokensOut = Math.max(tokensOut, p.info.tokens.output);
-            await flushStatus();
+              tokens.update(sessionID, p.info.tokens?.input ?? 0, p.info.tokens.output);
+            await tokens.flush();
           }
         }
       }
     }
-    try {
-      await reader.cancel();
-    } catch {
-      /* ignore */
-    }
+    try { await reader.cancel(); } catch { /* ignore */ }
   };
 
-  // Hard timeout guard (operator also enforces activeDeadlineSeconds).
   const hardTimeout = setTimeout(() => {
     err("dispatcher hit its own timeout guard");
     process.exit(3);
@@ -484,37 +818,53 @@ async function main(): Promise<void> {
   clearTimeout(hardTimeout);
 
   if (shuttingDown) {
-    // SIGTERM arrived mid-run — the CR is being deleted (Cancelled) or the
-    // pod is being torn down externally. Don't overwrite phase to Succeeded;
-    // let the operator/GC decide the terminal state. A best-effort message
-    // helps post-mortem if the CR somehow survives (it shouldn't, since
-    // owner refs cascade).
     log("shutting down mid-run; not claiming Succeeded");
+    await snapshotAllSessions();
     await patchStatus({ message: "dispatcher terminated" });
     return;
   }
 
-  await flushStatus(true);
+  await tokens.flush(true);
+  void sawBusy; // accessed above, suppress unused warning
 
-  // Persist the conversation to a ConfigMap before marking the run as
-  // Succeeded. This must happen while the opencode server is still
-  // reachable (it is — the runner container stays alive; only the
-  // dispatcher container exits when main() returns).
-  await snapshotSession(sessionID);
+  await snapshotAllSessions();
+
+  const completedAt = new Date().toISOString();
+  const { tokensIn, tokensOut } = tokens.totals();
+
+  // Send full session stats to web pod for persistent analytics (best-effort).
+  await sendStats(
+    sessionID,
+    RunPhase.Succeeded,
+    runStartedAt,
+    completedAt,
+    tokensIn,
+    tokensOut,
+  );
 
   await patchStatus({
     phase: RunPhase.Succeeded,
     message: "session completed",
-    completedAt: new Date().toISOString(),
+    completedAt,
   });
   log("done");
 }
 
+// ---------------------------------------------------------------------------
+// Main
+
+async function main(): Promise<void> {
+  await patchStatus({ phase: RunPhase.Initializing, message: "waiting for opencode" });
+  await waitForHealthy();
+
+  if (INTERACTIVE) {
+    await runInteractive();
+  } else {
+    await runPrompt();
+  }
+}
+
 main().catch(async (e) => {
-  // If we're already shutting down, whatever blew up is probably just a
-  // cancelled fetch (the k8s client's HTTPS agent tends to throw when the
-  // process is torn down mid-request). Don't overwrite the status with a
-  // misleading Failed in that case; let the operator/GC finish.
   if (shuttingDown) {
     log("shutdown in progress; suppressing fatal:", (e as Error).message ?? e);
     process.exit(0);

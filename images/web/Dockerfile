@@ -1,8 +1,14 @@
 # Dockerfile for the percussionist web dashboard.
 #
+# Build stage uses Node + pnpm (same toolchain as the rest of the monorepo) to
+# compile the TypeScript server and the Vite client bundle. The runtime stage
+# switches to the official Bun image so the server runs under Bun and has
+# access to bun:sqlite for the stats database.
+#
 #   docker build -t percussionist/web:dev -f images/web/Dockerfile .
 
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
+ARG BUN_VERSION=1.3.13
 
 # --- deps stage ---------------------------------------------------------------
 FROM node:${NODE_VERSION}-alpine AS deps
@@ -15,7 +21,7 @@ COPY packages/api/package.json packages/api/package.json
 COPY packages/web/package.json packages/web/package.json
 RUN pnpm install --frozen-lockfile=false && pnpm approve-builds esbuild
 
-# --- build stage: copy only source (not node_modules) so pnpm links survive --
+# --- build stage --------------------------------------------------------------
 FROM deps AS build
 COPY packages/api/src           packages/api/src
 COPY packages/api/tsconfig.json packages/api/tsconfig.json
@@ -27,13 +33,12 @@ COPY packages/web/vite.config.ts   packages/web/vite.config.ts
 RUN pnpm -C packages/api run build \
  && pnpm -C packages/web run build
 
-# --- runtime ------------------------------------------------------------------
-FROM node:${NODE_VERSION}-alpine AS runtime
-ENV NODE_ENV=production
-RUN apk add --no-cache tini
+# --- runtime (Bun) ------------------------------------------------------------
+FROM oven/bun:${BUN_VERSION}-alpine AS runtime
 
 WORKDIR /app
 
+# Copy compiled server + client bundle + dependencies from the build stage.
 COPY --from=build /repo/node_modules                    /app/node_modules
 COPY --from=build /repo/packages/api/dist               /app/packages/api/dist
 COPY --from=build /repo/packages/api/package.json       /app/packages/api/package.json
@@ -42,8 +47,12 @@ COPY --from=build /repo/packages/web/dist               /app/packages/web/dist
 COPY --from=build /repo/packages/web/package.json       /app/packages/web/package.json
 COPY --from=build /repo/packages/web/node_modules       /app/packages/web/node_modules
 
+# Data directory for stats.db (override DATA_DIR to mount a PVC here).
+ENV DATA_DIR=/app/data
+RUN mkdir -p /app/data
+
 EXPOSE 8080
 ENV PORT=8080
 
-ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "/app/packages/web/dist/server/index.js"]
+# Bun runs the compiled JS directly — no tsx, no node.
+CMD ["bun", "/app/packages/web/dist/server/index.js"]
