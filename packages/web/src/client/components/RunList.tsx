@@ -180,6 +180,8 @@ export default function RunList() {
 function RunRow({ run }: { run: OpenCodeRun }) {
   const phase = run.status?.phase;
   const isActive = !phase || !TERMINAL_PHASES.has(phase);
+  const isFailed = phase === "Failed";
+  const errorMsg = isFailed ? run.status?.message : undefined;
   return (
     <tr className="hover:bg-surface-raised/60 transition-colors">
       <td className="px-4 py-3">
@@ -189,9 +191,14 @@ function RunRow({ run }: { run: OpenCodeRun }) {
         >
           {run.metadata.name}
         </Link>
+        {errorMsg && (
+          <p className="text-xs text-phase-failed/80 mt-0.5 font-mono truncate max-w-xs" title={errorMsg}>
+            {errorMsg}
+          </p>
+        )}
       </td>
       <td className="px-4 py-3">
-        <StatusBadge phase={run.status?.phase} />
+        <StatusBadge phase={run.status?.phase} title={errorMsg} />
       </td>
       <td className="px-4 py-3 text-text-muted">{run.spec.agent ?? "-"}</td>
       <td className="px-4 py-3 text-text-muted font-mono text-xs">

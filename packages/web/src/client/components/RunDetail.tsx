@@ -10,6 +10,8 @@ import SessionView from "./SessionView";
 import { TERMINAL_PHASES } from "../lib/types";
 import OpenOpencodeButton from "./OpenOpencodeButton";
 
+const GIT_CLONE_CONTAINER = "git-clone";
+
 const DEFAULT_NAMESPACE = "percussionist";
 
 function attachCommand(name: string, namespace: string | undefined): string {
@@ -108,6 +110,14 @@ export default function RunDetail() {
 
   const phase = run.status?.phase;
   const isActive = !phase || !TERMINAL_PHASES.has(phase);
+  const isFailed = phase === "Failed";
+
+  // When the run failed on an init container (git-clone), default the log
+  // viewer to that container so the error is immediately visible.
+  const failedOnInit =
+    isFailed &&
+    run.status?.message?.startsWith("init container");
+  const defaultLogContainer = failedOnInit ? GIT_CLONE_CONTAINER : "opencode";
 
   return (
     <div className="space-y-6">
@@ -124,7 +134,8 @@ export default function RunDetail() {
               <span className="text-xs text-text-dim animate-pulse">refreshing</span>
             )}
           </div>
-          {run.status?.message && (
+          {/* Show message as muted subtitle only when not failed — failed gets a banner below */}
+          {run.status?.message && !isFailed && (
             <p className="text-sm text-text-muted">{run.status.message}</p>
           )}
         </div>
@@ -165,6 +176,18 @@ export default function RunDetail() {
           )}
         </div>
       </div>
+
+      {/* Error banner — shown prominently when the run has failed */}
+      {isFailed && run.status?.message && (
+        <div className="rounded-lg border border-phase-failed/40 bg-phase-failed/10 px-4 py-3 flex items-start gap-3">
+          <span className="text-phase-failed text-base leading-none mt-0.5">✕</span>
+          <div>
+            <p className="text-sm font-medium text-phase-failed">Run failed</p>
+            <p className="text-sm text-phase-failed/80 mt-0.5 font-mono">{run.status.message}</p>
+          </div>
+        </div>
+      )}
+
       {deleteMutation.error && (
         <div className="rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
           Delete failed: {deleteMutation.error.message}
@@ -289,7 +312,7 @@ export default function RunDetail() {
 
       {/* Logs */}
       <Card title="Logs">
-        <LogViewer name={name!} active={isActive} />
+        <LogViewer name={name!} active={isActive} defaultContainer={defaultLogContainer} />
       </Card>
     </div>
   );

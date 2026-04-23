@@ -5,16 +5,26 @@ interface LogViewerProps {
   name: string;
   /** Whether the run is still active (controls auto-refresh). */
   active: boolean;
+  /** Container to select by default. Defaults to "opencode". */
+  defaultContainer?: string;
 }
 
-const CONTAINERS = ["opencode", "dispatcher"] as const;
+const BASE_CONTAINERS = ["opencode", "dispatcher"] as const;
+const GIT_CLONE_CONTAINER = "git-clone";
 const TAIL_OPTIONS = [100, 500, 1000] as const;
 
-export default function LogViewer({ name, active }: LogViewerProps) {
-  const [container, setContainer] = useState<string>("opencode");
+export default function LogViewer({ name, active, defaultContainer = "opencode" }: LogViewerProps) {
+  const [container, setContainer] = useState<string>(defaultContainer);
   const [tailLines, setTailLines] = useState<number>(500);
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLPreElement>(null);
+
+  // When defaultContainer changes (e.g. run loads and we know it failed on
+  // git-clone), switch to it — but only if the user hasn't manually picked
+  // a different container yet.
+  useEffect(() => {
+    setContainer(defaultContainer);
+  }, [defaultContainer]);
 
   const { data, error, isLoading, isFetching } = useLogs(
     name,
@@ -23,6 +33,13 @@ export default function LogViewer({ name, active }: LogViewerProps) {
     true,
     active ? 5_000 : false,
   );
+
+  // Show git-clone tab only when it's the defaultContainer (init failed) or
+  // the user has manually selected it.
+  const showGitClone = defaultContainer === GIT_CLONE_CONTAINER || container === GIT_CLONE_CONTAINER;
+  const containers = showGitClone
+    ? [GIT_CLONE_CONTAINER, ...BASE_CONTAINERS]
+    : [...BASE_CONTAINERS];
 
   // Auto-scroll to bottom when new content arrives.
   useEffect(() => {
@@ -37,7 +54,7 @@ export default function LogViewer({ name, active }: LogViewerProps) {
       <div className="flex items-center gap-3 flex-wrap">
         {/* Container tabs */}
         <div className="flex rounded-md border border-border overflow-hidden">
-          {CONTAINERS.map((c) => (
+          {containers.map((c) => (
             <button
               key={c}
               onClick={() => setContainer(c)}
@@ -79,7 +96,6 @@ export default function LogViewer({ name, active }: LogViewerProps) {
           auto-scroll
         </label>
 
-        {/* Fetching indicator */}
         {isFetching && (
           <span className="text-xs text-text-dim animate-pulse">refreshing...</span>
         )}

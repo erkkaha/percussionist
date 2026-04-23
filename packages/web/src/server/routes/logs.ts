@@ -1,16 +1,47 @@
 import { Hono } from "hono";
 import { getRun, readPodLog } from "../kube.js";
-import { RUNNER_CONTAINER, DISPATCHER_CONTAINER } from "@percussionist/api";
+import { RUNNER_CONTAINER, DISPATCHER_CONTAINER, GIT_CLONE_CONTAINER } from "@percussionist/api";
 
-const VALID_CONTAINERS = new Set([RUNNER_CONTAINER, DISPATCHER_CONTAINER]);
+const VALID_CONTAINERS = new Set([
+  RUNNER_CONTAINER,
+  DISPATCHER_CONTAINER,
+  GIT_CLONE_CONTAINER,
+]);
+// Extract a human-readable message from a @kubernetes/client-node error.
+// The library throws errors whose `.message` contains a raw HTTP dump like:
+//   "HTTP-Code: 400\nMessage: ...\nBody: "{\"message\":\"container ... waiting\"}"
+// This helper parses the JSON body out of that string when present.
+function kubeErrMsg(e: unknown): string {
+  const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
+  if (anyE.body?.message) return anyE.body.message;
+  const raw = anyE.message ?? String(e);
+  // Try to extract the JSON body embedded in the multi-line error string.
+  // The k8s client serialises the body as a JSON-stringified string, so we
+  // need two levels of JSON.parse to get back to the original object.
+  const bodyMatch = raw.match(/\nBody: (".*")\nHeaders:/s);
+  if (bodyMatch?.[1]) {
+    try {
+      const bodyStr = JSON.parse(bodyMatch[1]) as string;
+      const parsed = JSON.parse(bodyStr) as { message?: string };
+      if (parsed?.message) return parsed.message;
+    } catch { /* ignore */ }
+  }
+  return raw;
+}
+
 const DEFAULT_TAIL = 500;
-
 const logs = new Hono();
 
 // GET /api/runs/:name/logs?container=opencode&tailLines=500
+//
+// container defaults to "opencode" but can be "dispatcher" or "git-clone".
+// When the requested container is still waiting (init failed, pod never
+// started) and no explicit container was requested, we auto-fall-back to
+// the git-clone init container so the caller always gets useful output.
 logs.get("/:name/logs", async (c) => {
   const name = c.req.param("name");
-  const container = c.req.query("container") ?? RUNNER_CONTAINER;
+  const explicitContainer = c.req.query("container");
+  const container = explicitContainer ?? RUNNER_CONTAINER;
   const tailParam = c.req.query("tailLines");
   const tailLines = tailParam ? parseInt(tailParam, 10) : DEFAULT_TAIL;
 
@@ -27,10 +58,9 @@ logs.get("/:name/logs", async (c) => {
     const run = await getRun(name);
     podName = run.status?.podName ?? name;
   } catch (e: unknown) {
-    const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
+    const anyE = e as { statusCode?: number };
     const status = anyE.statusCode === 404 ? 404 : 500;
-    const msg = anyE.body?.message ?? anyE.message ?? String(e);
-    return c.json({ error: msg }, status);
+    return c.json({ error: kubeErrMsg(e) }, status);
   }
 
   try {
@@ -38,10 +68,27 @@ logs.get("/:name/logs", async (c) => {
     return c.json({ podName, container, lines: text });
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    // Pod may not exist yet or container may not have started.
-    const status = anyE.statusCode === 404 ? 404 : 500;
-    const msg = anyE.body?.message ?? anyE.message ?? String(e);
-    return c.json({ error: msg }, status);
+
+    // If the main container was never started (init container failure) and
+    // the caller didn't explicitly request a specific container, automatically
+    // retry with the git-clone init container — that's where the failure is.
+    const errStr = kubeErrMsg(e);
+    const isWaiting =
+      !explicitContainer &&
+      (anyE.statusCode === 400 || String(e).includes("400")) &&
+      errStr.includes("waiting to start");
+
+    if (isWaiting) {
+      try {
+        const initText = await readPodLog(podName, GIT_CLONE_CONTAINER, tailLines || undefined);
+        return c.json({ podName, container: GIT_CLONE_CONTAINER, lines: initText });
+      } catch {
+        // Fall through to the original error below.
+      }
+    }
+
+    const status = anyE.statusCode === 404 ? 404 : anyE.statusCode === 400 ? 400 : 500;
+    return c.json({ error: errStr }, status);
   }
 });
 

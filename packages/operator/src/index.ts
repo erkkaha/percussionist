@@ -527,15 +527,27 @@ async function reconcile(run: OpenCodeRun): Promise<void> {
 }
 
 function summarizePodFailure(pod?: V1Pod): string {
-  if (!pod?.status?.containerStatuses) return "pod failed";
-  const reasons = pod.status.containerStatuses
+  // Check init containers first — when they fail the main containers never
+  // start, so containerStatuses has no terminated entries to inspect.
+  for (const c of pod?.status?.initContainerStatuses ?? []) {
+    const t = c.state?.terminated;
+    if (t && (t.exitCode ?? 0) !== 0) {
+      const detail = t.message?.trim();
+      const base = `init container ${c.name} failed (exit ${t.exitCode ?? "?"})`;
+      return detail ? `${base}: ${detail}` : base;
+    }
+  }
+  // Main containers.
+  const reasons = (pod?.status?.containerStatuses ?? [])
     .map((c) => {
       const t = c.state?.terminated;
       if (!t) return null;
-      return `${c.name}: ${t.reason ?? "Error"} (exit ${t.exitCode ?? "?"})`;
+      const detail = t.message?.trim();
+      const base = `${c.name}: ${t.reason ?? "Error"} (exit ${t.exitCode ?? "?"})`;
+      return detail ? `${base}: ${detail}` : base;
     })
     .filter(Boolean);
-  return reasons.length ? reasons.join("; ") : pod.status.reason ?? "pod failed";
+  return reasons.length ? reasons.join("; ") : pod?.status?.reason ?? "pod failed";
 }
 
 // ---------------------------------------------------------------------------

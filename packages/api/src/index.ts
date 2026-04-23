@@ -254,3 +254,4 @@ export const MANAGED_BY = "percussionist";
 export const CONTAINER_PORT = 4096;
 export const RUNNER_CONTAINER = "opencode";
 export const DISPATCHER_CONTAINER = "dispatcher";
+export const GIT_CLONE_CONTAINER = "git-clone";
