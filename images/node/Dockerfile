@@ -4,7 +4,7 @@
 #   docker build -t percussionist/operator:dev   --build-arg PKG=operator   -f images/node/Dockerfile .
 #   docker build -t percussionist/dispatcher:dev --build-arg PKG=dispatcher -f images/node/Dockerfile .
 
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 
 # --- deps stage: install workspace deps once ---------------------------------
 FROM node:${NODE_VERSION}-alpine AS deps
@@ -12,11 +12,11 @@ RUN apk add --no-cache libc6-compat
 RUN corepack enable && corepack prepare pnpm@10.30.2 --activate
 
 WORKDIR /repo
-COPY pnpm-workspace.yaml package.json tsconfig.base.json ./
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/api/package.json        packages/api/package.json
 COPY packages/operator/package.json   packages/operator/package.json
 COPY packages/dispatcher/package.json packages/dispatcher/package.json
-RUN pnpm install --frozen-lockfile=false
+RUN pnpm install --frozen-lockfile
 
 # --- build stage: compile TS --------------------------------------------------
 FROM deps AS build
