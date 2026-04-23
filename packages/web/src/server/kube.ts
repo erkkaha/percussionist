@@ -12,6 +12,8 @@ import {
 import {
   API_GROUP,
   API_VERSION,
+  API_GROUP_VERSION,
+  KIND_RUN,
   PLURAL_RUN,
   type OpenCodeRun,
 } from "@percussionist/api";
@@ -69,6 +71,26 @@ export async function getRun(name: string): Promise<OpenCodeRun> {
     plural: PLURAL_RUN,
     name,
   })) as OpenCodeRun;
+}
+
+export async function createRun(run: OpenCodeRun): Promise<OpenCodeRun> {
+  return (await custom().createNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_RUN,
+    body: run,
+  })) as OpenCodeRun;
+}
+
+export async function deleteRun(name: string): Promise<void> {
+  await custom().deleteNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_RUN,
+    name,
+  });
 }
 
 export async function readPodLog(

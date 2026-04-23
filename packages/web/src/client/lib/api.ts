@@ -1,6 +1,6 @@
 // Thin fetch wrappers for the /api endpoints.
 
-import type { OpenCodeRun, LogsResponse, SessionResponse } from "./types";
+import type { OpenCodeRun, LogsResponse, SessionResponse, CreateRunRequest } from "./types";
 
 const BASE = "/api";
 
@@ -33,4 +33,27 @@ export async function fetchLogs(
 
 export async function fetchSession(name: string): Promise<SessionResponse> {
   return fetchJSON<SessionResponse>(`/runs/${encodeURIComponent(name)}/session`);
+}
+
+export async function submitRun(req: CreateRunRequest): Promise<OpenCodeRun> {
+  const res = await fetch(`${BASE}/runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return body as OpenCodeRun;
+}
+
+export async function deleteRun(name: string): Promise<void> {
+  const res = await fetch(`${BASE}/runs/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
 }

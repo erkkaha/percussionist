@@ -15,10 +15,10 @@ metadata:
   name: percussionist-web
   namespace: percussionist
 rules:
-  # Read OpenCodeRun resources (list + detail views).
+  # Read + write OpenCodeRun resources (list, detail, create, delete).
   - apiGroups: ["percussionist.dev"]
     resources: ["opencoderuns"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   # Read pods (needed to resolve podName and read logs).
   - apiGroups: [""]
     resources: ["pods"]

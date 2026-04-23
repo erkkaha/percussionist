@@ -1,10 +1,48 @@
-import { useParams, Link } from "react-router-dom";
+import { useState } from "react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRun } from "../hooks/useRun";
+import { deleteRun } from "../lib/api";
 import StatusBadge from "./StatusBadge";
 import TokenCounter from "./TokenCounter";
 import LogViewer from "./LogViewer";
 import SessionView from "./SessionView";
 import { TERMINAL_PHASES } from "../lib/types";
+
+const DEFAULT_NAMESPACE = "percussionist";
+
+function attachCommand(name: string, namespace: string | undefined): string {
+  const ns = namespace ?? DEFAULT_NAMESPACE;
+  return ns === DEFAULT_NAMESPACE
+    ? `beatctl attach ${name}`
+    : `beatctl attach ${name} -n ${ns}`;
+}
+
+function AttachButton({ name, namespace }: { name: string; namespace?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    const cmd = attachCommand(name, namespace);
+    navigator.clipboard.writeText(cmd).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      title={`Copy: ${attachCommand(name, namespace)}`}
+      className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+        copied
+          ? "border-phase-succeeded/40 text-phase-succeeded bg-phase-succeeded/10"
+          : "border-border-muted text-text-muted hover:border-border hover:text-text"
+      }`}
+    >
+      {copied ? "Copied!" : "Attach"}
+    </button>
+  );
+}
 
 function formatTime(iso: string | undefined): string {
   if (!iso) return "-";
@@ -33,7 +71,18 @@ function duration(start: string | undefined, end: string | undefined): string {
 
 export default function RunDetail() {
   const { name } = useParams<{ name: string }>();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: run, error, isLoading, isFetching } = useRun(name!);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteRun(name!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+      navigate("/");
+    },
+  });
 
   if (error) {
     return (
@@ -78,11 +127,48 @@ export default function RunDetail() {
             <p className="text-sm text-text-muted">{run.status.message}</p>
           )}
         </div>
-        <TokenCounter
-          tokensIn={run.status?.tokensIn}
-          tokensOut={run.status?.tokensOut}
-        />
+        <div className="flex items-center gap-3">
+          <TokenCounter
+            tokensIn={run.status?.tokensIn}
+            tokensOut={run.status?.tokensOut}
+          />
+          {/* Attach shortcut — copy beatctl attach command to clipboard */}
+          {isActive && (
+            <AttachButton name={name!} namespace={run.metadata.namespace} />
+          )}
+          {/* Cancel / Delete button */}
+          {!confirmDelete ? (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="rounded-md border border-phase-failed/40 px-3 py-1.5 text-sm text-phase-failed hover:bg-phase-failed/10 transition-colors"
+            >
+              {isActive ? "Cancel Run" : "Delete Run"}
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-muted">Sure?</span>
+              <button
+                onClick={() => deleteMutation.mutate()}
+                disabled={deleteMutation.isPending}
+                className="rounded-md bg-phase-failed/20 border border-phase-failed/40 px-3 py-1.5 text-sm text-phase-failed hover:bg-phase-failed/30 transition-colors disabled:opacity-50"
+              >
+                {deleteMutation.isPending ? "Deleting..." : "Confirm"}
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="text-sm text-text-muted hover:text-text transition-colors"
+              >
+                No
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+      {deleteMutation.error && (
+        <div className="rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
+          Delete failed: {deleteMutation.error.message}
+        </div>
+      )}
 
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

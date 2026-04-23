@@ -13,6 +13,7 @@ import { runAttach } from "./attach.js";
 import { runCancel } from "./cancel.js";
 import { runWait } from "./wait.js";
 import { runAuthImport } from "./auth.js";
+import { runSshKeyCreate } from "./ssh-key.js";
 import { DEFAULT_NAMESPACE } from "./kube.js";
 
 const program = new Command();
@@ -54,6 +55,12 @@ program
   .option(
     "--auth-key <key>",
     "key inside --auth-secret holding auth.json (default: auth.json)",
+  )
+  .option("--git-url <url>", "git repository URL (ssh or https)")
+  .option("--git-ref <ref>", "branch, tag, or commit SHA to clone")
+  .option(
+    "--git-ssh-secret <name>",
+    "Secret name containing the SSH private key for private repos (create with `beatctl ssh-key create`)",
   )
   .action(runSubmit);
 
@@ -117,6 +124,26 @@ program
   )
   .option("-q, --quiet", "suppress the progress line on stderr")
   .action((name: string, opts) => runWait(name, opts));
+
+// ssh-key -------------------------------------------------------------------
+// Subcommand group for managing SSH key Secrets used for private repo access.
+const sshKey = program.command("ssh-key").description("manage SSH key Secrets for private git repos");
+
+sshKey
+  .command("create")
+  .description("create or update a kubernetes.io/ssh-auth Secret from a local SSH private key")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option(
+    "--name <name>",
+    "Secret name to create/update",
+    "git-ssh-key",
+  )
+  .option(
+    "--key <path>",
+    "path to SSH private key file (default: first found among ~/.ssh/id_ed25519, id_ecdsa, id_rsa)",
+  )
+  .option("--dry-run", "print what would be created; don't touch the cluster")
+  .action(runSshKeyCreate);
 
 // auth ----------------------------------------------------------------------
 // Subcommand group so we can grow `beatctl auth list/rotate/revoke` later

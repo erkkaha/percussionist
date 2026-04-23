@@ -4,7 +4,7 @@ import { useRuns } from "../hooks/useRuns";
 import StatusBadge from "./StatusBadge";
 import TokenCounter from "./TokenCounter";
 import type { RunPhase, OpenCodeRun } from "../lib/types";
-
+import { TERMINAL_PHASES } from "../lib/types";
 const ALL_PHASES: RunPhase[] = [
   "Pending",
   "Initializing",
@@ -97,6 +97,12 @@ export default function RunList() {
             )}
           </p>
         </div>
+        <Link
+          to="/runs/new"
+          className="rounded-md bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 text-sm font-medium text-text transition-colors"
+        >
+          + New Run
+        </Link>
       </div>
 
       {/* Phase filter */}
@@ -152,6 +158,7 @@ export default function RunList() {
                 <Th onClick={() => handleSort("age")}>
                   Age{sortIndicator("age")}
                 </Th>
+                <th className="px-4 py-2.5 font-medium" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border-muted">
@@ -170,6 +177,8 @@ export default function RunList() {
 // Sub-components
 
 function RunRow({ run }: { run: OpenCodeRun }) {
+  const phase = run.status?.phase;
+  const isActive = !phase || !TERMINAL_PHASES.has(phase);
   return (
     <tr className="hover:bg-surface-raised/60 transition-colors">
       <td className="px-4 py-3">
@@ -198,6 +207,9 @@ function RunRow({ run }: { run: OpenCodeRun }) {
       </td>
       <td className="px-4 py-3 text-text-muted tabular-nums">
         {age(run.metadata.creationTimestamp)}
+      </td>
+      <td className="px-4 py-3">
+        {isActive && <AttachButton name={run.metadata.name} namespace={run.metadata.namespace} />}
       </td>
     </tr>
   );
@@ -263,6 +275,41 @@ function TableSkeleton() {
         ))}
       </div>
     </div>
+  );
+}
+
+const DEFAULT_NAMESPACE = "percussionist";
+
+function attachCommand(name: string, namespace: string | undefined): string {
+  const ns = namespace ?? DEFAULT_NAMESPACE;
+  return ns === DEFAULT_NAMESPACE
+    ? `beatctl attach ${name}`
+    : `beatctl attach ${name} -n ${ns}`;
+}
+
+function AttachButton({ name, namespace }: { name: string; namespace?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    const cmd = attachCommand(name, namespace);
+    navigator.clipboard.writeText(cmd).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      title={`Copy: ${attachCommand(name, namespace)}`}
+      className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
+        copied
+          ? "border-phase-succeeded/40 text-phase-succeeded bg-phase-succeeded/10"
+          : "border-border-muted text-text-dim hover:border-border hover:text-text-muted"
+      }`}
+    >
+      {copied ? "Copied!" : "Attach"}
+    </button>
   );
 }
 

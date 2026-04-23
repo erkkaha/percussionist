@@ -47,6 +47,10 @@ export interface SubmitOpts {
   authSecret?: string;
   authKey?: string;
   wait?: boolean;
+  // git source
+  gitUrl?: string;
+  gitRef?: string;
+  gitSshSecret?: string;
 }
 
 function generateName(): string {
@@ -97,6 +101,19 @@ function buildRunFromFlags(opts: SubmitOpts): OpenCodeRun {
                     },
                   }
                 : {}),
+            },
+          }
+        : {}),
+      ...(opts.gitUrl
+        ? {
+            source: {
+              git: {
+                url: opts.gitUrl,
+                ...(opts.gitRef ? { ref: opts.gitRef } : {}),
+                ...(opts.gitSshSecret
+                  ? { sshSecret: { name: opts.gitSshSecret } }
+                  : {}),
+              },
             },
           }
         : {}),

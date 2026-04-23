@@ -1,3 +1,5 @@
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useSession } from "../hooks/useSession";
 import type { SessionMessage, SessionPart, ToolPart, TextPart } from "../lib/types";
 
@@ -129,12 +131,48 @@ function MessageBubble({ message }: { message: SessionMessage }) {
       <div className="px-4 py-3 space-y-3">
         {/* Text parts */}
         {textParts.map((part) => (
-          <div
-            key={part.id}
-            className="text-sm text-text whitespace-pre-wrap leading-relaxed break-words"
-          >
-            {part.text}
-          </div>
+          isUser ? (
+            <div
+              key={part.id}
+              className="text-sm text-text whitespace-pre-wrap leading-relaxed break-words"
+            >
+              {part.text}
+            </div>
+          ) : (
+            <div key={part.id} className="text-sm text-text leading-relaxed break-words markdown-content">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  h1: ({children}) => <h1 className="text-xl font-bold mt-4 mb-2">{children}</h1>,
+                  h2: ({children}) => <h2 className="text-lg font-bold mt-3 mb-2">{children}</h2>,
+                  h3: ({children}) => <h3 className="text-base font-semibold mt-3 mb-1">{children}</h3>,
+                  p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                  ul: ({children}) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
+                  ol: ({children}) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
+                  li: ({children}) => <li className="ml-2">{children}</li>,
+                  code: ({className, children, ...props}) => {
+                    const isBlock = className?.includes("language-");
+                    return isBlock ? (
+                      <code className="block bg-surface-sunken rounded p-3 mb-2 text-xs font-mono overflow-x-auto whitespace-pre">{children}</code>
+                    ) : (
+                      <code className="bg-surface-sunken rounded px-1 py-0.5 text-xs font-mono">{children}</code>
+                    );
+                  },
+                  pre: ({children}) => <pre className="mb-2">{children}</pre>,
+                  blockquote: ({children}) => <blockquote className="border-l-2 border-border pl-3 italic text-text-dim mb-2">{children}</blockquote>,
+                  a: ({href, children}) => <a href={href} className="text-phase-running underline" target="_blank" rel="noopener noreferrer">{children}</a>,
+                  strong: ({children}) => <strong className="font-semibold">{children}</strong>,
+                  em: ({children}) => <em className="italic">{children}</em>,
+                  hr: () => <hr className="border-border-muted my-3" />,
+                  table: ({children}) => <table className="border-collapse mb-2 text-xs w-full">{children}</table>,
+                  th: ({children}) => <th className="border border-border px-2 py-1 font-semibold text-left bg-surface-raised">{children}</th>,
+                  td: ({children}) => <td className="border border-border px-2 py-1">{children}</td>,
+                }}
+              >
+                {part.text}
+              </ReactMarkdown>
+            </div>
+          )
         ))}
 
         {/* Tool calls */}

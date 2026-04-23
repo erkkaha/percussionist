@@ -74,6 +74,25 @@ export interface LogsResponse {
   lines: string;
 }
 
+export interface CreateRunRequest {
+  /** Prompt for the agent. Required unless interactive is true. */
+  task?: string;
+  interactive?: boolean;
+  agent?: string;
+  model?: string;
+  /** Git source for /workspace. */
+  source?: {
+    git?: {
+      url: string;
+      ref?: string;
+    };
+  };
+  /** Seconds before the run is killed. Default 3600. */
+  timeoutSeconds?: number;
+  /** Optional custom name (auto-generated if absent). */
+  name?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Session messages (from OpenCode API inside run pods)
 
