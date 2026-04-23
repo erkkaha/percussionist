@@ -14,6 +14,12 @@ import { runCancel } from "./cancel.js";
 import { runWait } from "./wait.js";
 import { runAuthImport } from "./auth.js";
 import { runSshKeyCreate } from "./ssh-key.js";
+import {
+  runProjectCreate,
+  runProjectDelete,
+  runProjectGet,
+  runProjectList,
+} from "./project.js";
 import { DEFAULT_NAMESPACE } from "./kube.js";
 
 const program = new Command();
@@ -57,6 +63,10 @@ program
   .option(
     "--git-ssh-secret <name>",
     "Secret name containing the SSH private key for private repos (create with `beatctl ssh-key create`)",
+  )
+  .option(
+    "--project <name>",
+    "OpenCodeProject to use as defaults; explicit flags always override project values",
   )
   .action(runSubmit);
 
@@ -171,6 +181,54 @@ auth
   )
   .option("--dry-run", "print what would be imported; don't touch the cluster")
   .action(runAuthImport);
+
+// project -------------------------------------------------------------------
+// Subcommand group for managing reusable run templates.
+const project = program
+  .command("project")
+  .description("manage OpenCodeProject templates (reusable run defaults)");
+
+project
+  .command("list")
+  .alias("ls")
+  .description("list all projects in a namespace")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .action(runProjectList);
+
+project
+  .command("get <name>")
+  .description("show a project's spec")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("-o, --output <fmt>", "output format (yaml|json)")
+  .action((name: string, opts) => runProjectGet(name, opts));
+
+project
+  .command("create")
+  .description("create a new project from flags or a YAML file")
+  .option("--name <name>", "project name (required unless -f)")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("-f, --file <path>", "read project YAML from file")
+  .option("--display-name <name>", "human-readable label")
+  .option("--git-url <url>", "git repository URL")
+  .option("--git-ref <ref>", "default branch, tag, or SHA")
+  .option("--git-ssh-secret <name>", "Secret with SSH private key")
+  .option("--llm-keys-secret <name>", "Secret with provider API keys")
+  .option(
+    "--auth-secret <name>",
+    "Secret with opencode auth.json (from `beatctl auth import`)",
+  )
+  .option("--auth-key <key>", "key inside --auth-secret (default: auth.json)")
+  .option("-m, --model <model>", "default model (e.g. anthropic/claude-sonnet-4)")
+  .option("--agent <agent>", "default agent (e.g. build, plan)")
+  .option("--dry-run", "print YAML; don't apply to cluster")
+  .action(runProjectCreate);
+
+project
+  .command("delete <name>")
+  .alias("rm")
+  .description("delete a project")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .action((name: string, opts) => runProjectDelete(name, opts));
 
 program.parseAsync(process.argv).catch((e) => {
   console.error("beatctl:", (e as Error).message ?? e);

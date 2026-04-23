@@ -179,3 +179,46 @@ export interface SessionResponse {
   /** True when the ConfigMap snapshot was truncated to fit under 1 MiB. */
   truncated?: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// OpenCodeProject
+
+export interface OpenCodeProjectSpec {
+  displayName?: string;
+  model?: string;
+  agent?: string;
+  secrets?: {
+    llmKeysSecret?: string;
+    opencodeAuthSecret?: { name: string; key?: string };
+  };
+  source?: {
+    git?: {
+      url: string;
+      ref?: string;
+      sshSecret?: { name: string; key?: string };
+    };
+  };
+}
+
+export interface OpenCodeProject {
+  apiVersion: string;
+  kind: string;
+  metadata: {
+    name: string;
+    namespace?: string;
+    uid?: string;
+    creationTimestamp?: string;
+    [key: string]: unknown;
+  };
+  spec: OpenCodeProjectSpec;
+}
+
+export interface CreateProjectRequest {
+  /** Project name (auto-generated if absent). */
+  name?: string;
+  displayName?: string;
+  model?: string;
+  agent?: string;
+  secrets?: OpenCodeProjectSpec["secrets"];
+  source?: OpenCodeProjectSpec["source"];
+}

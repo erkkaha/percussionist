@@ -1,6 +1,13 @@
 // Thin fetch wrappers for the /api endpoints.
 
-import type { OpenCodeRun, LogsResponse, SessionResponse, CreateRunRequest } from "./types";
+import type {
+  OpenCodeRun,
+  LogsResponse,
+  SessionResponse,
+  CreateRunRequest,
+  OpenCodeProject,
+  CreateProjectRequest,
+} from "./types";
 
 const BASE = "/api";
 
@@ -50,6 +57,41 @@ export async function submitRun(req: CreateRunRequest): Promise<OpenCodeRun> {
 
 export async function deleteRun(name: string): Promise<void> {
   const res = await fetch(`${BASE}/runs/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+
+export async function fetchProjects(): Promise<OpenCodeProject[]> {
+  const data = await fetchJSON<{ items: OpenCodeProject[] }>("/projects");
+  return data.items;
+}
+
+export async function fetchProject(name: string): Promise<OpenCodeProject> {
+  return fetchJSON<OpenCodeProject>(`/projects/${encodeURIComponent(name)}`);
+}
+
+export async function submitProject(req: CreateProjectRequest): Promise<OpenCodeProject> {
+  const res = await fetch(`${BASE}/projects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return body as OpenCodeProject;
+}
+
+export async function deleteProject(name: string): Promise<void> {
+  const res = await fetch(`${BASE}/projects/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
   if (!res.ok && res.status !== 204) {

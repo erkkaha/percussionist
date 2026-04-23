@@ -29,6 +29,7 @@ export default function Layout() {
         </div>
         <nav className="flex-1 px-2 py-3 space-y-0.5">
           <SidebarLink to="/">Runs</SidebarLink>
+          <SidebarLink to="/projects">Projects</SidebarLink>
           <SidebarLink to="/stats">Stats</SidebarLink>
         </nav>
       </aside>

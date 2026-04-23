@@ -26,6 +26,7 @@ import {
   DEFAULT_NAMESPACE,
   createRun,
   fatal,
+  getProject,
   getRun,
   loadKube,
 } from "./kube.js";
@@ -51,6 +52,8 @@ export interface SubmitOpts {
   gitUrl?: string;
   gitRef?: string;
   gitSshSecret?: string;
+  // project defaults
+  project?: string;
 }
 
 function generateName(): string {
@@ -59,7 +62,7 @@ function generateName(): string {
   return `run-${stamp}`;
 }
 
-function buildRunFromFlags(opts: SubmitOpts): OpenCodeRun {
+function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussionist/api").OpenCodeProjectSpec): OpenCodeRun {
   if (!opts.task && !opts.interactive) {
     throw new Error(
       "either --task or --interactive is required when --file is not supplied",
@@ -67,6 +70,17 @@ function buildRunFromFlags(opts: SubmitOpts): OpenCodeRun {
   }
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
   const name = opts.name ?? generateName();
+
+  // Merge project defaults first, then explicit flags win over them.
+  const pd = projectDefaults;
+  const resolvedAgent = opts.agent ?? pd?.agent;
+  const resolvedModel = opts.model ?? pd?.model;
+  const resolvedLlmSecret = opts.llmKeysSecret ?? pd?.secrets?.llmKeysSecret;
+  const resolvedAuthSecret = opts.authSecret ?? pd?.secrets?.opencodeAuthSecret?.name;
+  const resolvedAuthKey = opts.authKey ?? pd?.secrets?.opencodeAuthSecret?.key;
+  const resolvedGitUrl = opts.gitUrl ?? pd?.source?.git?.url;
+  const resolvedGitRef = opts.gitRef ?? pd?.source?.git?.ref;
+  const resolvedGitSshSecret = opts.gitSshSecret ?? pd?.source?.git?.sshSecret?.name;
 
   // Only include optional fields when set; the CRD defaults fill the rest.
   // Zod schema validates and fills default()s for us.
@@ -77,35 +91,35 @@ function buildRunFromFlags(opts: SubmitOpts): OpenCodeRun {
     spec: {
       ...(opts.task ? { task: opts.task } : {}),
       ...(opts.interactive ? { interactive: true } : {}),
-      ...(opts.agent ? { agent: opts.agent } : {}),
-      ...(opts.model ? { model: opts.model } : {}),
+      ...(resolvedAgent ? { agent: resolvedAgent } : {}),
+      ...(resolvedModel ? { model: resolvedModel } : {}),
       ...(opts.image ? { image: opts.image } : {}),
       ...(opts.timeout ? { timeoutSeconds: Number(opts.timeout) } : {}),
-      ...(opts.llmKeysSecret || opts.authSecret
+      ...(resolvedLlmSecret || resolvedAuthSecret
         ? {
             secrets: {
-              ...(opts.llmKeysSecret
-                ? { llmKeysSecret: opts.llmKeysSecret }
+              ...(resolvedLlmSecret
+                ? { llmKeysSecret: resolvedLlmSecret }
                 : {}),
-              ...(opts.authSecret
+              ...(resolvedAuthSecret
                 ? {
                     opencodeAuthSecret: {
-                      name: opts.authSecret,
-                      ...(opts.authKey ? { key: opts.authKey } : {}),
+                      name: resolvedAuthSecret,
+                      ...(resolvedAuthKey ? { key: resolvedAuthKey } : {}),
                     },
                   }
                 : {}),
             },
           }
         : {}),
-      ...(opts.gitUrl
+      ...(resolvedGitUrl
         ? {
             source: {
               git: {
-                url: opts.gitUrl,
-                ...(opts.gitRef ? { ref: opts.gitRef } : {}),
-                ...(opts.gitSshSecret
-                  ? { sshSecret: { name: opts.gitSshSecret } }
+                url: resolvedGitUrl,
+                ...(resolvedGitRef ? { ref: resolvedGitRef } : {}),
+                ...(resolvedGitSshSecret
+                  ? { sshSecret: { name: resolvedGitSshSecret } }
                   : {}),
               },
             },
@@ -169,21 +183,40 @@ async function waitForRunning(
 }
 
 export async function runSubmit(opts: SubmitOpts): Promise<void> {
+  const ns = opts.namespace ?? DEFAULT_NAMESPACE;
+
+  // Resolve project defaults before building the run spec. Hard-fail if the
+  // project is referenced but cannot be found — a missing project is almost
+  // certainly a typo and silently ignoring it would produce a confusing run.
+  let projectDefaults: import("@percussionist/api").OpenCodeProjectSpec | undefined;
+  if (opts.project) {
+    const { custom } = loadKube();
+    try {
+      const proj = await getProject(custom, ns, opts.project);
+      projectDefaults = proj.spec;
+      console.log(`beatctl: using project ${opts.project}`);
+    } catch (e) {
+      fatal(`project "${opts.project}" not found in namespace ${ns}`, e);
+    }
+  }
+
   let run: OpenCodeRun;
   try {
-    run = opts.file ? buildRunFromFile(opts.file, opts) : buildRunFromFlags(opts);
+    run = opts.file
+      ? buildRunFromFile(opts.file, opts)
+      : buildRunFromFlags(opts, projectDefaults);
   } catch (e) {
     fatal("invalid run spec", e);
   }
-  const ns = run.metadata.namespace ?? DEFAULT_NAMESPACE;
-  run.metadata.namespace = ns;
+  run.metadata.namespace = run.metadata.namespace ?? ns;
+  const runNs = run.metadata.namespace;
 
   const { custom } = loadKube();
   let createdName: string;
   try {
-    const created = await createRun(custom, ns, run);
+    const created = await createRun(custom, runNs, run);
     createdName = created.metadata.name;
-    console.log(`${createdName} created in namespace ${ns}`);
+    console.log(`${createdName} created in namespace ${runNs}`);
   } catch (e) {
     fatal("create failed", e);
   }
@@ -200,20 +233,20 @@ export async function runSubmit(opts: SubmitOpts): Promise<void> {
     }
     console.log("beatctl: waiting for run to reach Running...");
     try {
-      await waitForRunning(ns, createdName);
+      await waitForRunning(runNs, createdName);
     } catch (e) {
       fatal(`wait for Running`, e);
     }
     // Hand off. runAttach calls process.exit itself on opencode termination
     // so control won't return here.
-    await runAttach(createdName, { namespace: ns });
+    await runAttach(createdName, { namespace: runNs });
     return;
   }
 
   if (run.spec.interactive) {
     console.log(
       `\nInteractive run — once the pod is Ready, attach with:\n` +
-        `  beatctl attach ${createdName} -n ${ns}`,
+        `  beatctl attach ${createdName} -n ${runNs}`,
     );
   }
 }

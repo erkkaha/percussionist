@@ -1,0 +1,85 @@
+# OpenCodeProject v1alpha1 — reusable template for OpenCodeRun specs.
+# A project has no lifecycle; it's a passive config bag that the CLI / web UI
+# dereferences when building a new run. No controller watches this CRD.
+# Keep in sync with packages/api/src/index.ts (Zod is authoritative).
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: opencodeprojects.percussionist.dev
+spec:
+  group: percussionist.dev
+  scope: Namespaced
+  names:
+    kind: OpenCodeProject
+    listKind: OpenCodeProjectList
+    singular: opencodeproject
+    plural: opencodeprojects
+    shortNames:
+      - ocp
+      - project
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Display
+          type: string
+          jsonPath: .spec.displayName
+        - name: Git
+          type: string
+          jsonPath: .spec.source.git.url
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            apiVersion: { type: string }
+            kind: { type: string }
+            metadata: { type: object }
+            spec:
+              type: object
+              properties:
+                displayName:
+                  type: string
+                  description: Human-readable label; falls back to metadata.name.
+                model:
+                  type: string
+                  description: Default model in provider/model form.
+                agent:
+                  type: string
+                  description: Default opencode agent (e.g. "build", "plan").
+                secrets:
+                  type: object
+                  properties:
+                    llmKeysSecret: { type: string }
+                    opencodeAuthSecret:
+                      type: object
+                      required: [name]
+                      properties:
+                        name: { type: string, minLength: 1 }
+                        key:
+                          type: string
+                          default: auth.json
+                source:
+                  type: object
+                  properties:
+                    git:
+                      type: object
+                      required: [url]
+                      properties:
+                        url:
+                          type: string
+                          minLength: 1
+                        ref:
+                          type: string
+                        sshSecret:
+                          type: object
+                          required: [name]
+                          properties:
+                            name: { type: string, minLength: 1 }
+                            key:
+                              type: string
+                              default: ssh-privatekey

@@ -14,7 +14,9 @@ import {
   API_GROUP,
   API_VERSION,
   PLURAL_RUN,
+  PLURAL_PROJECT,
   type OpenCodeRun,
+  type OpenCodeProject,
 } from "@percussionist/api";
 
 export const DEFAULT_NAMESPACE =
@@ -88,6 +90,66 @@ export async function deleteRun(
     version: API_VERSION,
     namespace,
     plural: PLURAL_RUN,
+    name,
+  });
+}
+
+// Project wrappers ---------------------------------------------------------
+//
+// Projects are just another namespaced CR, no status subresource. Same four
+// verbs, same error-propagation model as runs.
+
+export async function listProjects(
+  custom: CustomObjectsApi,
+  namespace: string,
+): Promise<OpenCodeProject[]> {
+  const res = (await custom.listNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace,
+    plural: PLURAL_PROJECT,
+  })) as { items: OpenCodeProject[] };
+  return res.items ?? [];
+}
+
+export async function getProject(
+  custom: CustomObjectsApi,
+  namespace: string,
+  name: string,
+): Promise<OpenCodeProject> {
+  return (await custom.getNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace,
+    plural: PLURAL_PROJECT,
+    name,
+  })) as OpenCodeProject;
+}
+
+export async function createProject(
+  custom: CustomObjectsApi,
+  namespace: string,
+  body: OpenCodeProject,
+): Promise<OpenCodeProject> {
+  return (await custom.createNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace,
+    plural: PLURAL_PROJECT,
+    body,
+  })) as OpenCodeProject;
+}
+
+export async function deleteProject(
+  custom: CustomObjectsApi,
+  namespace: string,
+  name: string,
+): Promise<void> {
+  await custom.deleteNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace,
+    plural: PLURAL_PROJECT,
     name,
   });
 }

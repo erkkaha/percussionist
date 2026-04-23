@@ -15,7 +15,10 @@ import {
   API_GROUP_VERSION,
   KIND_RUN,
   PLURAL_RUN,
+  KIND_PROJECT,
+  PLURAL_PROJECT,
   type OpenCodeRun,
+  type OpenCodeProject,
 } from "@percussionist/api";
 
 export const NAMESPACE =
@@ -89,6 +92,49 @@ export async function deleteRun(name: string): Promise<void> {
     version: API_VERSION,
     namespace: NAMESPACE,
     plural: PLURAL_RUN,
+    name,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Project helpers
+
+export async function listProjects(): Promise<OpenCodeProject[]> {
+  const res = (await custom().listNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_PROJECT,
+  })) as { items: OpenCodeProject[] };
+  return res.items ?? [];
+}
+
+export async function getProject(name: string): Promise<OpenCodeProject> {
+  return (await custom().getNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_PROJECT,
+    name,
+  })) as OpenCodeProject;
+}
+
+export async function createProject(project: OpenCodeProject): Promise<OpenCodeProject> {
+  return (await custom().createNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_PROJECT,
+    body: project,
+  })) as OpenCodeProject;
+}
+
+export async function deleteProject(name: string): Promise<void> {
+  await custom().deleteNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_PROJECT,
     name,
   });
 }

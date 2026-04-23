@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { submitRun } from "../lib/api";
-import type { CreateRunRequest } from "../lib/types";
+import { useProjects } from "../hooks/useProjects";
+import type { CreateRunRequest, OpenCodeProject } from "../lib/types";
 
 export default function CreateRunForm() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { data: projects } = useProjects(0); // no auto-refetch needed here
 
+  const [selectedProject, setSelectedProject] = useState<string>("");
   const [task, setTask] = useState("");
   const [model, setModel] = useState("");
   const [agent, setAgent] = useState("");
@@ -16,6 +19,25 @@ export default function CreateRunForm() {
   const [showGit, setShowGit] = useState(false);
   const [gitUrl, setGitUrl] = useState("");
   const [gitRef, setGitRef] = useState("");
+
+  // When the user picks a project, pre-fill fields with project defaults.
+  // Explicit edits after selection are not overwritten.
+  function applyProject(proj: OpenCodeProject) {
+    if (proj.spec.model) setModel(proj.spec.model);
+    if (proj.spec.agent) setAgent(proj.spec.agent);
+    if (proj.spec.source?.git?.url) {
+      setGitUrl(proj.spec.source.git.url);
+      setShowGit(true);
+    }
+    if (proj.spec.source?.git?.ref) setGitRef(proj.spec.source.git.ref);
+  }
+
+  function handleProjectChange(name: string) {
+    setSelectedProject(name);
+    if (!name) return;
+    const proj = projects?.find((p) => p.metadata.name === name);
+    if (proj) applyProject(proj);
+  }
 
   const mutation = useMutation({
     mutationFn: (req: CreateRunRequest) => submitRun(req),
@@ -40,6 +62,9 @@ export default function CreateRunForm() {
 
   const canSubmit = interactive || task.trim().length > 0;
 
+  const inputClass =
+    "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-zinc-500 focus:outline-none";
+
   return (
     <div className="space-y-6 max-w-2xl">
       {/* Back link */}
@@ -58,6 +83,31 @@ export default function CreateRunForm() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5">
+        {/* Project picker */}
+        {projects && projects.length > 0 && (
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">Project</label>
+            <select
+              value={selectedProject}
+              onChange={(e) => handleProjectChange(e.target.value)}
+              className={inputClass + " bg-surface"}
+            >
+              <option value="">— none —</option>
+              {projects.map((p) => (
+                <option key={p.metadata.name} value={p.metadata.name}>
+                  {p.spec.displayName ?? p.metadata.name}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-text-dim">
+              Pre-fills git, secrets, model, and agent from the selected project.{" "}
+              <Link to="/projects" className="underline hover:text-text-muted transition-colors">
+                Manage projects
+              </Link>
+            </p>
+          </div>
+        )}
+
         {/* Interactive toggle */}
         <div className="flex items-center gap-3">
           <button
@@ -113,7 +163,7 @@ export default function CreateRunForm() {
               value={model}
               onChange={(e) => setModel(e.target.value)}
               placeholder="e.g. anthropic/claude-sonnet-4-20250514"
-              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-zinc-500 focus:outline-none font-mono"
+              className={inputClass + " font-mono"}
             />
           </div>
           <div className="space-y-1.5">
@@ -123,7 +173,7 @@ export default function CreateRunForm() {
               value={agent}
               onChange={(e) => setAgent(e.target.value)}
               placeholder="e.g. build"
-              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-zinc-500 focus:outline-none"
+              className={inputClass}
             />
           </div>
         </div>
@@ -161,7 +211,7 @@ export default function CreateRunForm() {
                   value={gitUrl}
                   onChange={(e) => setGitUrl(e.target.value)}
                   placeholder="https://github.com/org/repo.git"
-                  className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-zinc-500 focus:outline-none font-mono"
+                  className={inputClass + " font-mono"}
                 />
               </div>
               <div className="space-y-1.5">
@@ -173,7 +223,7 @@ export default function CreateRunForm() {
                   value={gitRef}
                   onChange={(e) => setGitRef(e.target.value)}
                   placeholder="main"
-                  className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-zinc-500 focus:outline-none font-mono"
+                  className={inputClass + " font-mono"}
                 />
               </div>
             </div>

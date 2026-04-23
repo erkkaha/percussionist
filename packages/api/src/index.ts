@@ -11,6 +11,8 @@ export const API_VERSION = "v1alpha1";
 export const API_GROUP_VERSION = `${API_GROUP}/${API_VERSION}`;
 export const KIND_RUN = "OpenCodeRun";
 export const PLURAL_RUN = "opencoderuns";
+export const KIND_PROJECT = "OpenCodeProject";
+export const PLURAL_PROJECT = "opencodeprojects";
 
 // ---------------------------------------------------------------------------
 // Spec
@@ -255,3 +257,46 @@ export const CONTAINER_PORT = 4096;
 export const RUNNER_CONTAINER = "opencode";
 export const DISPATCHER_CONTAINER = "dispatcher";
 export const GIT_CLONE_CONTAINER = "git-clone";
+
+// ---------------------------------------------------------------------------
+// OpenCodeProject — reusable template for creating runs.
+//
+// Projects collect the "boring" parts of a run spec (git URL, ref, SSH/LLM/
+// auth secrets, default model/agent) under a short name so users don't have
+// to re-enter them on every submit. A project has no lifecycle of its own —
+// it is a passive config object, not reconciled by the operator. Runs built
+// from a project copy the project's values into their own spec at creation
+// time; later edits to the project do not rewrite existing runs.
+
+export const OpenCodeProjectSpecSchema = z.object({
+  // Human-readable label for the UI. Falls back to metadata.name.
+  displayName: z.string().optional(),
+
+  // Same shape as OpenCodeRunSpec.source / .secrets / .model / .agent so
+  // we can shallow-merge them into a run spec with no field remapping.
+  source: SourceSchema.optional(),
+  secrets: SecretsRefSchema.optional(),
+  model: z.string().optional(),
+  agent: z.string().optional(),
+});
+
+export type OpenCodeProjectSpec = z.infer<typeof OpenCodeProjectSpecSchema>;
+
+export const OpenCodeProjectSchema = z.object({
+  apiVersion: z.literal(API_GROUP_VERSION),
+  kind: z.literal(KIND_PROJECT),
+  metadata: z
+    .object({
+      name: z.string(),
+      namespace: z.string().optional(),
+      uid: z.string().optional(),
+      resourceVersion: z.string().optional(),
+      labels: z.record(z.string()).optional(),
+      annotations: z.record(z.string()).optional(),
+      creationTimestamp: z.string().optional(),
+    })
+    .passthrough(),
+  spec: OpenCodeProjectSpecSchema,
+});
+
+export type OpenCodeProject = z.infer<typeof OpenCodeProjectSchema>;
