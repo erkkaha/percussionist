@@ -22,6 +22,12 @@ RUN apk add --no-cache \
     && mkdir -p /workspace /root/.ssh \
     && chmod 700 /root/.ssh
 
+# Cluster-wide OpenCode agents and skills. Empty by default; populate
+# content/agents/<name>.md and content/skills/<name>/SKILL.md to ship them
+# in every run pod. Per-repo overrides via <workspace>/.opencode/ still work.
+# See content/README.md for details.
+COPY content/ /root/.config/opencode/
+
 WORKDIR /workspace
 
 # Default opencode serve listens on 127.0.0.1:4096 which is unreachable from

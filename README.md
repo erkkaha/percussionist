@@ -506,3 +506,72 @@ entry wins.
   `<set to the key '…' in secret '…'>`; the token isn't in plain text in
   any k8s object. It *is* reachable from inside the pod via
   `/proc/<pid>/environ`, same exposure class as `OPENCODE_SERVER_PASSWORD`.
+
+---
+
+## Customizing agents and skills
+
+OpenCode agents and skills can be delivered to run pods through two
+complementary channels.
+
+### Cluster-wide baseline (baked into the runner image)
+
+Place agent markdown files and skill directories under
+`images/runner/content/`:
+
+```
+images/runner/content/
+├── agents/
+│   └── <name>.md            # one file per agent, filename = agent name
+└── skills/
+    └── <name>/
+        └── SKILL.md         # one folder per skill, folder name = skill name
+```
+
+These are `COPY`'d into `/root/.config/opencode/` when the runner image is
+built. Every pod created from that image sees them as cluster-wide defaults,
+regardless of what workspace is cloned. The directory is empty by default —
+add files and rebuild to ship them.
+
+Rebuild + reload after changes:
+
+```bash
+docker build -t percussionist/runner:dev images/runner
+# Then reload into your cluster — see scripts/minikube-load.sh
+```
+
+See `images/runner/content/README.md` for the expected file formats and
+links to the OpenCode docs.
+
+### Per-repo extensions (travel with the workspace)
+
+Each user workspace repo can ship its own agents and skills without any image
+change. Commit them under `.opencode/` in the workspace repository:
+
+```
+<repo>/
+└── .opencode/
+    ├── agents/
+    │   └── <name>.md
+    └── skills/
+        └── <name>/
+            └── SKILL.md
+```
+
+When the operator clones the repo via `spec.source.git`, files land in
+`/workspace`. OpenCode walks up from `/workspace` (the runner's cwd) and
+discovers them automatically — no operator or image changes required.
+
+### Precedence
+
+Both channels are additive. If the same agent or skill name exists in the
+image baseline **and** in the workspace repo, the workspace version wins
+(OpenCode loads the first match, project-local paths are searched before
+global).
+
+### Deferred: dynamic skills via init container
+
+A future milestone will add `spec.source.skills` to the CRD, rendering a
+second init container that clones a dedicated skills repo into
+`/root/.config/opencode/`. This allows cluster-wide skills to be updated
+without rebuilding the runner image.
