@@ -19,6 +19,7 @@ export default function CreateRunForm() {
   const [showGit, setShowGit] = useState(false);
   const [gitUrl, setGitUrl] = useState("");
   const [gitRef, setGitRef] = useState("");
+  const [gitSshSecret, setGitSshSecret] = useState("");
   const [llmKeysSecret, setLlmKeysSecret] = useState("");
   const [authSecret, setAuthSecret] = useState("");
 
@@ -30,6 +31,8 @@ export default function CreateRunForm() {
       setShowGit(true);
     }
     if (proj.spec.source?.git?.ref) setGitRef(proj.spec.source.git.ref);
+    if (proj.spec.source?.git?.sshSecret?.name)
+      setGitSshSecret(proj.spec.source.git.sshSecret.name);
     if (proj.spec.secrets?.llmKeysSecret)
       setLlmKeysSecret(proj.spec.secrets.llmKeysSecret);
     if (proj.spec.secrets?.opencodeAuthSecret?.name)
@@ -60,6 +63,7 @@ export default function CreateRunForm() {
     if (showGit && gitUrl.trim()) {
       req.source = { git: { url: gitUrl.trim() } };
       if (gitRef.trim()) req.source.git!.ref = gitRef.trim();
+      if (gitSshSecret.trim()) req.source.git!.sshSecret = { name: gitSshSecret.trim() };
     }
     if (llmKeysSecret.trim() || authSecret.trim()) {
       req.secrets = {};
@@ -257,6 +261,19 @@ export default function CreateRunForm() {
                   placeholder="main"
                   className={inputClass + " font-mono"}
                 />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-text-muted">SSH Secret</label>
+                <input
+                  type="text"
+                  value={gitSshSecret}
+                  onChange={(e) => setGitSshSecret(e.target.value)}
+                  placeholder="git-ssh-key"
+                  className={inputClass + " font-mono"}
+                />
+                <p className="text-xs text-text-dim">
+                  Secret name from <code className="font-mono">beatctl ssh-key create</code>
+                </p>
               </div>
             </div>
           )}

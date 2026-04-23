@@ -87,6 +87,7 @@ export interface CreateRunRequest {
     git?: {
       url: string;
       ref?: string;
+      sshSecret?: { name: string; key?: string };
     };
   };
   secrets?: {
