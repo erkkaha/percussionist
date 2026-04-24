@@ -1,25 +1,47 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { submitProject } from "../lib/api";
-import type { CreateProjectRequest } from "../lib/types";
+import { submitProject, updateProject } from "../lib/api";
+import type { CreateProjectRequest, OpenCodeProject } from "../lib/types";
 
-export default function CreateProjectForm() {
+type CreateProjectFormProps = {
+  mode?: "create" | "edit";
+  initialProject?: OpenCodeProject;
+};
+
+export default function CreateProjectForm({
+  mode = "create",
+  initialProject,
+}: CreateProjectFormProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const isEdit = mode === "edit";
 
-  const [name, setName] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [model, setModel] = useState("");
-  const [agent, setAgent] = useState("");
-  const [gitUrl, setGitUrl] = useState("");
-  const [gitRef, setGitRef] = useState("");
-  const [gitSshSecret, setGitSshSecret] = useState("");
-  const [llmKeysSecret, setLlmKeysSecret] = useState("");
-  const [authSecret, setAuthSecret] = useState("");
+  const initialSpec = initialProject?.spec;
+
+  const [name, setName] = useState(initialProject?.metadata.name ?? "");
+  const [displayName, setDisplayName] = useState(initialSpec?.displayName ?? "");
+  const [model, setModel] = useState(initialSpec?.model ?? "");
+  const [agent, setAgent] = useState(initialSpec?.agent ?? "");
+  const [gitUrl, setGitUrl] = useState(initialSpec?.source?.git?.url ?? "");
+  const [gitRef, setGitRef] = useState(initialSpec?.source?.git?.ref ?? "");
+  const [gitSshSecret, setGitSshSecret] = useState(initialSpec?.source?.git?.sshSecret?.name ?? "");
+  const [gitAuthorName, setGitAuthorName] = useState(initialSpec?.source?.git?.author?.name ?? "");
+  const [gitAuthorEmail, setGitAuthorEmail] = useState(initialSpec?.source?.git?.author?.email ?? "");
+  const [llmKeysSecret, setLlmKeysSecret] = useState(initialSpec?.secrets?.llmKeysSecret ?? "");
+  const [authSecret, setAuthSecret] = useState(initialSpec?.secrets?.opencodeAuthSecret?.name ?? "");
+
+  const gitAuthorIncomplete =
+    (gitAuthorName.trim().length > 0 && gitAuthorEmail.trim().length === 0) ||
+    (gitAuthorName.trim().length === 0 && gitAuthorEmail.trim().length > 0);
 
   const mutation = useMutation({
-    mutationFn: (req: CreateProjectRequest) => submitProject(req),
+    mutationFn: (req: CreateProjectRequest) => {
+      if (isEdit && initialProject) {
+        return updateProject(initialProject.metadata.name, req);
+      }
+      return submitProject(req);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       navigate("/projects");
@@ -29,7 +51,7 @@ export default function CreateProjectForm() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const req: CreateProjectRequest = {};
-    if (name.trim()) req.name = name.trim();
+    if (!isEdit && name.trim()) req.name = name.trim();
     if (displayName.trim()) req.displayName = displayName.trim();
     if (model.trim()) req.model = model.trim();
     if (agent.trim()) req.agent = agent.trim();
@@ -40,6 +62,14 @@ export default function CreateProjectForm() {
           ...(gitRef.trim() ? { ref: gitRef.trim() } : {}),
           ...(gitSshSecret.trim()
             ? { sshSecret: { name: gitSshSecret.trim() } }
+            : {}),
+          ...(gitAuthorName.trim() && gitAuthorEmail.trim()
+            ? {
+                author: {
+                  name: gitAuthorName.trim(),
+                  email: gitAuthorEmail.trim(),
+                },
+              }
             : {}),
         },
       };
@@ -69,32 +99,57 @@ export default function CreateProjectForm() {
       </Link>
 
       <div>
-        <h1 className="text-xl font-semibold">New Project</h1>
+        <h1 className="text-xl font-semibold">{isEdit ? "Edit Project" : "New Project"}</h1>
         <p className="text-sm text-text-muted mt-1">
-          Save reusable defaults — git URL, secrets, model — under a short name.
-          Pick this project when creating a run to pre-fill those fields.
+          {isEdit
+            ? "Update reusable defaults for this project."
+            : "Save reusable defaults — git URL, secrets, model — under a short name. Pick this project when creating a run to pre-fill those fields."}
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Name row */}
-        <div className="grid grid-cols-2 gap-4">
+        {isEdit ? (
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">
-              Name <span className="text-phase-failed">*</span>
-            </label>
+            <label className="text-sm font-medium text-text-muted">Name</label>
             <input
               type="text"
-              required
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="my-repo"
-              className={monoInputClass}
+              readOnly
+              className={monoInputClass + " opacity-70"}
             />
-            <p className="text-xs text-text-dim">
-              Kubernetes resource name (lowercase, hyphens)
-            </p>
           </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-muted">
+                Name <span className="text-phase-failed">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="my-repo"
+                className={monoInputClass}
+              />
+              <p className="text-xs text-text-dim">
+                Kubernetes resource name (lowercase, hyphens)
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-muted">Display Name</label>
+              <input
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="My Repository"
+                className={inputClass}
+              />
+            </div>
+          </div>
+        )}
+
+        {isEdit && (
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Display Name</label>
             <input
@@ -105,7 +160,7 @@ export default function CreateProjectForm() {
               className={inputClass}
             />
           </div>
-        </div>
+        )}
 
         {/* Git section */}
         <fieldset className="space-y-3 rounded-md border border-border p-4">
@@ -148,6 +203,33 @@ export default function CreateProjectForm() {
               </p>
             </div>
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-muted">Author name</label>
+              <input
+                type="text"
+                value={gitAuthorName}
+                onChange={(e) => setGitAuthorName(e.target.value)}
+                placeholder="Percussionist Agent"
+                className={inputClass}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-muted">Author email</label>
+              <input
+                type="email"
+                value={gitAuthorEmail}
+                onChange={(e) => setGitAuthorEmail(e.target.value)}
+                placeholder="agent@example.com"
+                className={monoInputClass}
+              />
+            </div>
+          </div>
+          {gitAuthorIncomplete && (
+            <p className="text-xs text-phase-failed">
+              Git author requires both name and email.
+            </p>
+          )}
         </fieldset>
 
         {/* Secrets section */}
@@ -217,10 +299,10 @@ export default function CreateProjectForm() {
         <div className="flex items-center gap-3 pt-1">
           <button
             type="submit"
-            disabled={!name.trim() || mutation.isPending}
+            disabled={(!isEdit && !name.trim()) || mutation.isPending || gitAuthorIncomplete}
             className="rounded-md bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
           >
-            {mutation.isPending ? "Creating…" : "Create Project"}
+            {mutation.isPending ? (isEdit ? "Saving…" : "Creating…") : (isEdit ? "Save Changes" : "Create Project")}
           </button>
           <Link to="/projects" className="text-sm text-text-muted hover:text-text transition-colors">
             Cancel

@@ -83,3 +83,13 @@ spec:
                             key:
                               type: string
                               default: ssh-privatekey
+                        author:
+                          type: object
+                          required: [name, email]
+                          properties:
+                            name:
+                              type: string
+                              minLength: 1
+                            email:
+                              type: string
+                              minLength: 1

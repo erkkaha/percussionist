@@ -565,6 +565,36 @@ spec:
       sshSecret:
         name: agent-key
         # key: ssh-privatekey   # default; override only if your secret differs
+      author:
+        name: Percussionist Agent
+        email: agent@example.com
+```
+
+`author` is optional, but when set both `name` and `email` are required. The
+operator injects them as `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in both the
+clone init container and the runner container, so in-run `git commit` works
+without manual `git config`.
+
+CLI equivalents:
+
+```bash
+# One-off run
+pnpm beatctl submit \
+  -t "make a small docs change and commit" \
+  --git-url git@github.com:you/private-repo.git \
+  --git-ref main \
+  --git-ssh-secret agent-key \
+  --git-author-name "Percussionist Agent" \
+  --git-author-email "agent@example.com"
+
+# Project defaults
+pnpm beatctl project create \
+  --name my-repo \
+  --git-url git@github.com:you/private-repo.git \
+  --git-ref main \
+  --git-ssh-secret agent-key \
+  --git-author-name "Percussionist Agent" \
+  --git-author-email "agent@example.com"
 ```
 
 No push-back is implemented yet — the agent can read and modify files, but

@@ -245,7 +245,7 @@ function Card({
 
 function ToolUsage({ toolCounts }: { toolCounts: Analytics["toolCounts"] }) {
   if (toolCounts.length === 0) return null;
-  const max = toolCounts[0].count;
+  const max = toolCounts[0]?.count ?? 1;
   return (
     <section>
       <h2 className="text-sm font-semibold text-text-muted mb-3">Tool Usage</h2>
@@ -355,7 +355,8 @@ function TokensChart({ sessions }: { sessions: StatSession[] }) {
 
   if (sorted.length === 0) return null;
 
-  const maxTokens = sorted[0].tokensIn + sorted[0].tokensOut;
+  const first = sorted[0];
+  const maxTokens = first ? first.tokensIn + first.tokensOut : 1;
 
   return (
     <section>

@@ -11,7 +11,6 @@ import { TERMINAL_PHASES } from "../lib/types";
 import OpenOpencodeButton from "./OpenOpencodeButton";
 
 const GIT_CLONE_CONTAINER = "git-clone";
-
 const DEFAULT_NAMESPACE = "percussionist";
 
 function attachCommand(name: string, namespace: string | undefined): string {
@@ -148,6 +147,12 @@ export default function RunDetail() {
               <AttachButton name={name!} namespace={run.metadata.namespace} />
             )}
           {run && <OpenOpencodeButton run={run} />}
+          <Link
+            to={`/runs/new?copyFrom=${encodeURIComponent(name!)}`}
+            className="rounded-md border border-border-muted px-3 py-1.5 text-sm font-medium text-text-muted hover:border-border hover:text-text transition-colors"
+          >
+            Copy
+          </Link>
           {/* Cancel / Delete button */}
           {!confirmDelete ? (
             <button
@@ -243,6 +248,12 @@ export default function RunDetail() {
             <>
               <Field label="Git URL" value={run.spec.source.git.url} mono />
               <Field label="Git Ref" value={run.spec.source.git.ref} mono />
+              {run.spec.source.git.author && (
+                <Field
+                  label="Git Author"
+                  value={`${run.spec.source.git.author.name} <${run.spec.source.git.author.email}>`}
+                />
+              )}
             </>
           )}
         </Card>

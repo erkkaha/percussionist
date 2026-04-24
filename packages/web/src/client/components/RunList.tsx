@@ -220,6 +220,12 @@ function RunRow({ run }: { run: OpenCodeRun }) {
         <div className="flex items-center gap-1.5">
           {isActive && <AttachButton name={run.metadata.name} namespace={run.metadata.namespace} />}
           <OpenOpencodeButton run={run} compact />
+          <Link
+            to={`/runs/new?copyFrom=${encodeURIComponent(run.metadata.name)}`}
+            className="rounded border border-border-muted px-2 py-1 text-xs font-medium text-text-dim hover:border-border hover:text-text-muted transition-colors"
+          >
+            Copy
+          </Link>
         </div>
       </td>
     </tr>

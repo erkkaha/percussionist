@@ -146,6 +146,20 @@ spec:
                                 Key inside the Secret that holds the
                                 private key. Defaults to `ssh-privatekey`,
                                 matching `kubernetes.io/ssh-auth` Secrets.
+                        author:
+                          type: object
+                          required: [name, email]
+                          description: |
+                            Git commit author identity injected into the
+                            runner and init container environment as
+                            GIT_AUTHOR_* and GIT_COMMITTER_*.
+                          properties:
+                            name:
+                              type: string
+                              minLength: 1
+                            email:
+                              type: string
+                              minLength: 1
                 timeoutSeconds:
                   type: integer
                   minimum: 1

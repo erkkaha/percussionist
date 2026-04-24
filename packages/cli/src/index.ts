@@ -60,6 +60,8 @@ program
   )
   .option("--git-url <url>", "git repository URL (ssh or https)")
   .option("--git-ref <ref>", "branch, tag, or commit SHA to clone")
+  .option("--git-author-name <name>", "git commit author name for in-run commits")
+  .option("--git-author-email <email>", "git commit author email for in-run commits")
   .option(
     "--git-ssh-secret <name>",
     "Secret name containing the SSH private key for private repos (create with `beatctl ssh-key create`)",
@@ -211,6 +213,8 @@ project
   .option("--display-name <name>", "human-readable label")
   .option("--git-url <url>", "git repository URL")
   .option("--git-ref <ref>", "default branch, tag, or SHA")
+  .option("--git-author-name <name>", "default git commit author name")
+  .option("--git-author-email <email>", "default git commit author email")
   .option("--git-ssh-secret <name>", "Secret with SSH private key")
   .option("--llm-keys-secret <name>", "Secret with provider API keys")
   .option(

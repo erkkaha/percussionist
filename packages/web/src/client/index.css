@@ -22,14 +22,27 @@
   --color-phase-cancelled: #a1a1aa;
 }
 
-/* Scrollbar styling for log viewer */
-.log-viewer::-webkit-scrollbar {
-  width: 8px;
+/* Global themed thin scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) var(--color-surface);
 }
-.log-viewer::-webkit-scrollbar-track {
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
   background: var(--color-surface);
 }
-.log-viewer::-webkit-scrollbar-thumb {
+
+*::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border-radius: 4px;
+  border-radius: 9999px;
+  border: 2px solid var(--color-surface);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-dim);
 }

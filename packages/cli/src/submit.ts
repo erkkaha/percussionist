@@ -52,6 +52,8 @@ export interface SubmitOpts {
   gitUrl?: string;
   gitRef?: string;
   gitSshSecret?: string;
+  gitAuthorName?: string;
+  gitAuthorEmail?: string;
   // project defaults
   project?: string;
 }
@@ -81,6 +83,12 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
   const resolvedGitUrl = opts.gitUrl ?? pd?.source?.git?.url;
   const resolvedGitRef = opts.gitRef ?? pd?.source?.git?.ref;
   const resolvedGitSshSecret = opts.gitSshSecret ?? pd?.source?.git?.sshSecret?.name;
+  const resolvedGitAuthorName = opts.gitAuthorName ?? pd?.source?.git?.author?.name;
+  const resolvedGitAuthorEmail = opts.gitAuthorEmail ?? pd?.source?.git?.author?.email;
+
+  if ((resolvedGitAuthorName && !resolvedGitAuthorEmail) || (!resolvedGitAuthorName && resolvedGitAuthorEmail)) {
+    throw new Error("git author requires both name and email (--git-author-name and --git-author-email)");
+  }
 
   // Only include optional fields when set; the CRD defaults fill the rest.
   // Zod schema validates and fills default()s for us.
@@ -120,6 +128,14 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
                 ...(resolvedGitRef ? { ref: resolvedGitRef } : {}),
                 ...(resolvedGitSshSecret
                   ? { sshSecret: { name: resolvedGitSshSecret } }
+                  : {}),
+                ...(resolvedGitAuthorName && resolvedGitAuthorEmail
+                  ? {
+                      author: {
+                        name: resolvedGitAuthorName,
+                        email: resolvedGitAuthorEmail,
+                      },
+                    }
                   : {}),
               },
             },

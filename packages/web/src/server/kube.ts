@@ -129,6 +129,29 @@ export async function createProject(project: OpenCodeProject): Promise<OpenCodeP
   })) as OpenCodeProject;
 }
 
+export async function updateProject(
+  name: string,
+  spec: OpenCodeProject["spec"],
+): Promise<OpenCodeProject> {
+  const existing = await getProject(name);
+  return (await custom().replaceNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_PROJECT,
+    name,
+    body: {
+      apiVersion: API_GROUP_VERSION,
+      kind: KIND_PROJECT,
+      metadata: {
+        name,
+        resourceVersion: existing.metadata.resourceVersion,
+      },
+      spec,
+    },
+  })) as OpenCodeProject;
+}
+
 export async function deleteProject(name: string): Promise<void> {
   await custom().deleteNamespacedCustomObject({
     group: API_GROUP,

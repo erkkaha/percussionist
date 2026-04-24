@@ -85,6 +85,15 @@ export const GitSourceSchema = z.object({
       key: z.string().default("ssh-privatekey"),
     })
     .optional(),
+
+  // Optional git commit author identity injected into the runner
+  // environment as GIT_AUTHOR_* and GIT_COMMITTER_*.
+  author: z
+    .object({
+      name: z.string().min(1),
+      email: z.string().min(1),
+    })
+    .optional(),
 });
 
 export const SourceSchema = z.object({

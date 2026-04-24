@@ -99,3 +99,16 @@ export async function deleteProject(name: string): Promise<void> {
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
 }
+
+export async function updateProject(name: string, req: CreateProjectRequest): Promise<OpenCodeProject> {
+  const res = await fetch(`${BASE}/projects/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return body as OpenCodeProject;
+}

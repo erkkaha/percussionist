@@ -203,6 +203,14 @@ function renderPod(run: OpenCodeRun): V1Pod {
 
   const git = spec.source?.git;
   const sshSecret = git?.sshSecret;
+  const gitAuthorEnv = git?.author
+    ? [
+        { name: "GIT_AUTHOR_NAME", value: git.author.name },
+        { name: "GIT_AUTHOR_EMAIL", value: git.author.email },
+        { name: "GIT_COMMITTER_NAME", value: git.author.name },
+        { name: "GIT_COMMITTER_EMAIL", value: git.author.email },
+      ]
+    : [];
 
   const initContainers = git
     ? [
@@ -243,6 +251,7 @@ function renderPod(run: OpenCodeRun): V1Pod {
             { name: "GIT_URL", value: git.url },
             ...(git.ref ? [{ name: "GIT_REF", value: git.ref }] : []),
             { name: "GIT_TERMINAL_PROMPT", value: "0" },
+            ...gitAuthorEnv,
           ],
           volumeMounts: [
             { name: "workspace", mountPath: "/workspace" },
@@ -299,7 +308,7 @@ function renderPod(run: OpenCodeRun): V1Pod {
           workingDir: "/workspace",
           command: [
             "opencode",
-            "serve",
+            "web",
             "--hostname",
             "0.0.0.0",
             "--port",
@@ -307,6 +316,10 @@ function renderPod(run: OpenCodeRun): V1Pod {
           ],
           ports: [{ name: "http", containerPort: CONTAINER_PORT }],
           env: [
+            // Give Node.js (tsc, eslint, etc.) up to 1.5 GB of heap.
+            // The runner container limit is 2 Gi; leaving ~512 Mi for the
+            // OS and the opencode process itself.
+            { name: "NODE_OPTIONS", value: "--max-old-space-size=1536" },
             // Always set GIT_SSH_COMMAND so any git operation the agent runs
             // (fetch, push, clone) works over SSH without a known_hosts file.
             // When the run has an sshSecret the key is mounted at
@@ -339,6 +352,7 @@ function renderPod(run: OpenCodeRun): V1Pod {
             ...(llmKeysSecret
               ? [{ name: "_LLM_KEYS_MARKER", value: "see envFrom" }]
               : []),
+            ...gitAuthorEnv,
           ],
           envFrom: llmKeysSecret
             ? [{ secretRef: { name: llmKeysSecret, optional: true } }]

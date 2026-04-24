@@ -1,14 +1,17 @@
-import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { submitRun } from "../lib/api";
 import { useProjects } from "../hooks/useProjects";
-import type { CreateRunRequest, OpenCodeProject } from "../lib/types";
+import { useRun } from "../hooks/useRun";
+import type { CreateRunRequest, OpenCodeProject, OpenCodeRun } from "../lib/types";
 
 export default function CreateRunForm() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: projects } = useProjects(0);
+  const [searchParams] = useSearchParams();
+  const copyFromName = searchParams.get("copyFrom") ?? undefined;
 
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [task, setTask] = useState("");
@@ -20,8 +23,48 @@ export default function CreateRunForm() {
   const [gitUrl, setGitUrl] = useState("");
   const [gitRef, setGitRef] = useState("");
   const [gitSshSecret, setGitSshSecret] = useState("");
+  const [gitAuthorName, setGitAuthorName] = useState("");
+  const [gitAuthorEmail, setGitAuthorEmail] = useState("");
   const [llmKeysSecret, setLlmKeysSecret] = useState("");
-  const [authSecret, setAuthSecret] = useState("");
+  const [opencodeAuthSecretName, setOpencodeAuthSecretName] = useState("");
+  const [seeded, setSeeded] = useState(false);
+
+  const gitAuthorIncomplete =
+    (gitAuthorName.trim().length > 0 && gitAuthorEmail.trim().length === 0) ||
+    (gitAuthorName.trim().length === 0 && gitAuthorEmail.trim().length > 0);
+
+  // Fetch the source run when ?copyFrom is set
+  const { data: sourceRun } = useRun(copyFromName ?? "", 0);
+
+  // Pre-fill form from the source run once it loads
+  useEffect(() => {
+    if (!sourceRun || seeded) return;
+    applyRun(sourceRun);
+    setSeeded(true);
+  }, [sourceRun, seeded]);
+
+  function applyRun(run: OpenCodeRun) {
+    if (run.spec.task) setTask(run.spec.task);
+    if (run.spec.model) setModel(run.spec.model);
+    if (run.spec.agent) setAgent(run.spec.agent);
+    if (run.spec.interactive) setInteractive(run.spec.interactive);
+    if (run.spec.timeoutSeconds) setTimeoutSeconds(run.spec.timeoutSeconds);
+    if (run.spec.source?.git?.url) {
+      setGitUrl(run.spec.source.git.url);
+      setShowGit(true);
+    }
+    if (run.spec.source?.git?.ref) setGitRef(run.spec.source.git.ref);
+    if (run.spec.source?.git?.sshSecret?.name)
+      setGitSshSecret(run.spec.source.git.sshSecret.name);
+    if (run.spec.source?.git?.author?.name)
+      setGitAuthorName(run.spec.source.git.author.name);
+    if (run.spec.source?.git?.author?.email)
+      setGitAuthorEmail(run.spec.source.git.author.email);
+    if (run.spec.secrets?.llmKeysSecret)
+      setLlmKeysSecret(run.spec.secrets.llmKeysSecret);
+    if (run.spec.secrets?.opencodeAuthSecret?.name)
+      setOpencodeAuthSecretName(run.spec.secrets.opencodeAuthSecret.name);
+  }
 
   function applyProject(proj: OpenCodeProject) {
     if (proj.spec.model) setModel(proj.spec.model);
@@ -33,10 +76,14 @@ export default function CreateRunForm() {
     if (proj.spec.source?.git?.ref) setGitRef(proj.spec.source.git.ref);
     if (proj.spec.source?.git?.sshSecret?.name)
       setGitSshSecret(proj.spec.source.git.sshSecret.name);
+    if (proj.spec.source?.git?.author?.name)
+      setGitAuthorName(proj.spec.source.git.author.name);
+    if (proj.spec.source?.git?.author?.email)
+      setGitAuthorEmail(proj.spec.source.git.author.email);
     if (proj.spec.secrets?.llmKeysSecret)
       setLlmKeysSecret(proj.spec.secrets.llmKeysSecret);
     if (proj.spec.secrets?.opencodeAuthSecret?.name)
-      setAuthSecret(proj.spec.secrets.opencodeAuthSecret.name);
+      setOpencodeAuthSecretName(proj.spec.secrets.opencodeAuthSecret.name);
   }
 
   function handleProjectChange(name: string) {
@@ -64,16 +111,22 @@ export default function CreateRunForm() {
       req.source = { git: { url: gitUrl.trim() } };
       if (gitRef.trim()) req.source.git!.ref = gitRef.trim();
       if (gitSshSecret.trim()) req.source.git!.sshSecret = { name: gitSshSecret.trim() };
+      if (gitAuthorName.trim() && gitAuthorEmail.trim()) {
+        req.source.git!.author = {
+          name: gitAuthorName.trim(),
+          email: gitAuthorEmail.trim(),
+        };
+      }
     }
-    if (llmKeysSecret.trim() || authSecret.trim()) {
+    if (llmKeysSecret.trim() || opencodeAuthSecretName.trim()) {
       req.secrets = {};
       if (llmKeysSecret.trim()) req.secrets.llmKeysSecret = llmKeysSecret.trim();
-      if (authSecret.trim()) req.secrets.opencodeAuthSecret = { name: authSecret.trim() };
+      if (opencodeAuthSecretName.trim()) req.secrets.opencodeAuthSecret = { name: opencodeAuthSecretName.trim() };
     }
     mutation.mutate(req);
   }
 
-  const canSubmit = interactive || task.trim().length > 0;
+  const canSubmit = (interactive || task.trim().length > 0) && !gitAuthorIncomplete;
 
   const inputClass =
     "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-zinc-500 focus:outline-none";
@@ -81,16 +134,18 @@ export default function CreateRunForm() {
   return (
     <div className="space-y-6 max-w-2xl">
       <Link
-        to="/"
+        to={copyFromName ? `/runs/${encodeURIComponent(copyFromName)}` : "/"}
         className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text transition-colors"
       >
-        <span>&larr;</span> All runs
+        <span>&larr;</span> {copyFromName ? `Back to ${copyFromName}` : "All runs"}
       </Link>
 
       <div>
-        <h1 className="text-xl font-semibold">New Run</h1>
+        <h1 className="text-xl font-semibold">{copyFromName ? "Copy Run" : "New Run"}</h1>
         <p className="text-sm text-text-muted mt-1">
-          Submit a task for an OpenCode agent to work on.
+          {copyFromName
+            ? `Pre-filled from run \u201c${copyFromName}\u201d, including Secret references.`
+            : "Submit a task for an OpenCode agent to work on."}
         </p>
       </div>
 
@@ -191,26 +246,42 @@ export default function CreateRunForm() {
         </div>
 
         {/* Secrets row */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">LLM Keys Secret</label>
-            <input
-              type="text"
-              value={llmKeysSecret}
-              onChange={(e) => setLlmKeysSecret(e.target.value)}
-              placeholder="llm-keys"
-              className={inputClass + " font-mono"}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Auth Secret</label>
-            <input
-              type="text"
-              value={authSecret}
-              onChange={(e) => setAuthSecret(e.target.value)}
-              placeholder="opencode-auth"
-              className={inputClass + " font-mono"}
-            />
+        <div className="space-y-3">
+          <p className="text-sm font-medium text-text-muted">
+            Kubernetes Secret references
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-muted">
+                LLM keys Secret name
+              </label>
+              <input
+                type="text"
+                value={llmKeysSecret}
+                onChange={(e) => setLlmKeysSecret(e.target.value)}
+                placeholder="llm-keys"
+                className={inputClass + " font-mono"}
+              />
+              <p className="text-xs text-text-dim">
+                Secret whose keys are injected as env vars (API keys).
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-muted">
+                OpenCode auth Secret name
+              </label>
+              <input
+                type="text"
+                value={opencodeAuthSecretName}
+                onChange={(e) => setOpencodeAuthSecretName(e.target.value)}
+                placeholder="opencode-auth"
+                className={inputClass + " font-mono"}
+              />
+              <p className="text-xs text-text-dim">
+                Secret holding <code className="font-mono">auth.json</code> for OAuth providers. Populate with{" "}
+                <code className="font-mono">beatctl auth import</code>.
+              </p>
+            </div>
           </div>
         </div>
 
@@ -275,6 +346,33 @@ export default function CreateRunForm() {
                   Secret name from <code className="font-mono">beatctl ssh-key create</code>
                 </p>
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-text-muted">Author name</label>
+                  <input
+                    type="text"
+                    value={gitAuthorName}
+                    onChange={(e) => setGitAuthorName(e.target.value)}
+                    placeholder="Percussionist Agent"
+                    className={inputClass}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-text-muted">Author email</label>
+                  <input
+                    type="email"
+                    value={gitAuthorEmail}
+                    onChange={(e) => setGitAuthorEmail(e.target.value)}
+                    placeholder="agent@example.com"
+                    className={inputClass + " font-mono"}
+                  />
+                </div>
+              </div>
+              {gitAuthorIncomplete && (
+                <p className="text-xs text-phase-failed">
+                  Git author requires both name and email.
+                </p>
+              )}
             </div>
           )}
         </div>

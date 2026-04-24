@@ -29,6 +29,7 @@ export interface GitSource {
   url: string;
   ref?: string;
   sshSecret?: { name: string; key: string };
+  author?: { name: string; email: string };
 }
 
 export interface OpenCodeRunSpec {
@@ -38,6 +39,10 @@ export interface OpenCodeRunSpec {
   model?: string;
   image: string;
   source?: { git?: GitSource };
+  secrets?: {
+    llmKeysSecret?: string;
+    opencodeAuthSecret?: { name: string; key?: string };
+  };
   timeoutSeconds: number;
   ttlSecondsAfterFinished: number;
 }
@@ -88,6 +93,7 @@ export interface CreateRunRequest {
       url: string;
       ref?: string;
       sshSecret?: { name: string; key?: string };
+      author?: { name: string; email: string };
     };
   };
   secrets?: {
@@ -201,6 +207,7 @@ export interface OpenCodeProjectSpec {
       url: string;
       ref?: string;
       sshSecret?: { name: string; key?: string };
+      author?: { name: string; email: string };
     };
   };
 }

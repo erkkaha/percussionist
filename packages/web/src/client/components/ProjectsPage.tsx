@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../hooks/useProjects";
 import { deleteProject } from "../lib/api";
@@ -18,6 +18,7 @@ function age(iso: string | undefined): string {
 }
 
 function ProjectRow({ project }: { project: OpenCodeProject }) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const del = useMutation({
     mutationFn: () => deleteProject(project.metadata.name),
@@ -50,17 +51,25 @@ function ProjectRow({ project }: { project: OpenCodeProject }) {
         {age(project.metadata.creationTimestamp)}
       </td>
       <td className="px-4 py-3">
-        <button
-          onClick={() => {
-            if (confirm(`Delete project "${project.metadata.name}"?`)) {
-              del.mutate();
-            }
-          }}
-          disabled={del.isPending}
-          className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-phase-failed/50 hover:text-phase-failed transition-colors disabled:opacity-40"
-        >
-          {del.isPending ? "Deleting…" : "Delete"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate(`/projects/${encodeURIComponent(project.metadata.name)}/edit`)}
+            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-zinc-500 hover:text-text transition-colors"
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => {
+              if (confirm(`Delete project "${project.metadata.name}"?`)) {
+                del.mutate();
+              }
+            }}
+            disabled={del.isPending}
+            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-phase-failed/50 hover:text-phase-failed transition-colors disabled:opacity-40"
+          >
+            {del.isPending ? "Deleting…" : "Delete"}
+          </button>
+        </div>
       </td>
     </tr>
   );

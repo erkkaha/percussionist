@@ -249,6 +249,7 @@ async function snapshotAllSessions(): Promise<void> {
 
 // Part shapes we care about for stats extraction.
 type TextPart = { type: "text"; text: string };
+// Legacy Anthropic-style parts (kept for backwards compat with older opencode versions)
 type ToolUsePart = {
   type: "tool-use" | "tool_use";
   id?: string;
@@ -263,7 +264,21 @@ type ToolResultPart = {
   content?: unknown;
 };
 type FilePart = { type: "file"; filename?: string; path?: string };
-type Part = TextPart | ToolUsePart | ToolResultPart | FilePart | { type: string };
+// Current opencode part format — a single "tool" part contains both the call
+// and the result (including timing and exit code) once the tool completes.
+type ToolPart = {
+  type: "tool";
+  tool: string;
+  callID?: string;
+  state?: {
+    status?: string; // "completed" | "error" | "running" | ...
+    input?: unknown;
+    output?: unknown;
+    metadata?: { exit?: number; truncated?: boolean };
+    time?: { start?: number; end?: number };
+  };
+};
+type Part = TextPart | ToolUsePart | ToolResultPart | FilePart | ToolPart | { type: string };
 
 type RawMessage = {
   info?: {
@@ -337,7 +352,57 @@ async function sendStats(
 
     // Extract tool invocations and file accesses from parts.
     for (const part of parts) {
-      if (part.type === "tool-use" || part.type === "tool_use") {
+      if (part.type === "tool") {
+        // Current opencode format: a single "tool" part contains both the call
+        // and its result once execution completes.
+        const tp = part as ToolPart;
+        const toolId = tp.callID ?? `${sessionID}-${idx}-${tp.tool}`;
+        const state = tp.state;
+        const isError =
+          state?.status === "error" ||
+          (typeof state?.metadata?.exit === "number" && state.metadata.exit !== 0);
+        const durationMs =
+          state?.time?.start != null && state?.time?.end != null
+            ? state.time.end - state.time.start
+            : undefined;
+
+        toolCallsPayload.push({
+          id: toolId,
+          messageIdx: idx,
+          tool: tp.tool,
+          args: state?.input != null ? JSON.stringify(state.input) : undefined,
+          success: !isError,
+          error: isError
+            ? (typeof state?.output === "string" ? state.output : JSON.stringify(state?.output ?? null))
+            : undefined,
+          durationMs,
+        });
+
+        // Detect file reads/writes from well-known tool names.
+        const toolName = tp.tool.toLowerCase();
+        const input = state?.input as Record<string, unknown> | undefined;
+        const fp = input?.filePath ?? input?.path ?? input?.file;
+        if (typeof fp === "string") {
+          if (
+            toolName === "read" ||
+            toolName === "readfile" ||
+            toolName === "read_file"
+          ) {
+            fileOpsPayload.push({ messageIdx: idx, filePath: fp, operation: "read" });
+          } else if (
+            toolName === "write" ||
+            toolName === "writefile" ||
+            toolName === "write_file" ||
+            toolName === "edit" ||
+            toolName === "multiedit"
+          ) {
+            fileOpsPayload.push({ messageIdx: idx, filePath: fp, operation: "write" });
+          } else if (toolName === "delete" || toolName === "delete_file") {
+            fileOpsPayload.push({ messageIdx: idx, filePath: fp, operation: "delete" });
+          }
+        }
+      } else if (part.type === "tool-use" || part.type === "tool_use") {
+        // Legacy Anthropic-style format — kept for backwards compatibility.
         const tp = part as ToolUsePart;
         const toolId = tp.id ?? `${sessionID}-${idx}-${tp.name}`;
         toolUseTimestamps.set(toolId, info.time?.created ?? Date.now());
@@ -349,37 +414,25 @@ async function sendStats(
           success: true, // assume success until tool-result says otherwise
         });
 
-        // Detect file reads/writes from well-known tool names.
         const toolName = (tp.name ?? "").toLowerCase();
-        if (
-          toolName === "read" ||
-          toolName === "readfile" ||
-          toolName === "read_file"
-        ) {
-          const fp =
-            (tp.input as Record<string, unknown>)?.filePath ??
-            (tp.input as Record<string, unknown>)?.path;
-          if (typeof fp === "string") {
+        const input = tp.input as Record<string, unknown> | undefined;
+        const fp = input?.filePath ?? input?.path ?? input?.file;
+        if (typeof fp === "string") {
+          if (toolName === "read" || toolName === "readfile" || toolName === "read_file") {
             fileOpsPayload.push({ messageIdx: idx, filePath: fp, operation: "read" });
-          }
-        } else if (
-          toolName === "write" ||
-          toolName === "writefile" ||
-          toolName === "write_file" ||
-          toolName === "edit" ||
-          toolName === "multiedit"
-        ) {
-          const fp =
-            (tp.input as Record<string, unknown>)?.filePath ??
-            (tp.input as Record<string, unknown>)?.path;
-          if (typeof fp === "string") {
+          } else if (
+            toolName === "write" || toolName === "writefile" || toolName === "write_file" ||
+            toolName === "edit" || toolName === "multiedit"
+          ) {
             fileOpsPayload.push({ messageIdx: idx, filePath: fp, operation: "write" });
+          } else if (toolName === "delete" || toolName === "delete_file") {
+            fileOpsPayload.push({ messageIdx: idx, filePath: fp, operation: "delete" });
           }
         }
       } else if (part.type === "tool-result" || part.type === "tool_result") {
+        // Legacy: update the matching tool-use entry with result info.
         const rp = part as ToolResultPart;
         const refId = rp.toolUseId ?? rp.tool_use_id;
-        // Update the matching tool call with error/success info.
         if (refId) {
           const existing = toolCallsPayload.find(
             (t) => (t as { id: string }).id === refId,

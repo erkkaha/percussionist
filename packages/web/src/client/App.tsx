@@ -6,6 +6,7 @@ import CreateRunForm from "./components/CreateRunForm";
 import StatsView from "./components/StatsView";
 import ProjectsPage from "./components/ProjectsPage";
 import CreateProjectForm from "./components/CreateProjectForm";
+import EditProjectPage from "./components/EditProjectPage";
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/stats" element={<StatsView />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/new" element={<CreateProjectForm />} />
+        <Route path="/projects/:name/edit" element={<EditProjectPage />} />
       </Route>
     </Routes>
   );

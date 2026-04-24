@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { listProjects, getProject, createProject, deleteProject } from "../kube.js";
+import { listProjects, getProject, createProject, updateProject, deleteProject } from "../kube.js";
 import {
   OpenCodeProjectSpecSchema,
   API_GROUP_VERSION,
@@ -67,6 +67,32 @@ projects.post("/", async (c) => {
     const status = anyE.statusCode ?? 500;
     const msg = anyE.body?.message ?? anyE.message ?? String(e);
     return c.json({ error: msg }, status as 400 | 409 | 500);
+  }
+});
+
+// PUT /api/projects/:name
+projects.put("/:name", async (c) => {
+  const name = c.req.param("name");
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const parsed = OpenCodeProjectSpecSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
+  }
+
+  try {
+    const updated = await updateProject(name, parsed.data);
+    return c.json(updated);
+  } catch (e: unknown) {
+    const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
+    const status = anyE.statusCode === 404 ? 404 : 500;
+    const msg = anyE.body?.message ?? anyE.message ?? String(e);
+    return c.json({ error: msg }, status);
   }
 });
 

@@ -33,6 +33,8 @@ export interface ProjectCreateOpts {
   gitUrl?: string;
   gitRef?: string;
   gitSshSecret?: string;
+  gitAuthorName?: string;
+  gitAuthorEmail?: string;
   llmKeysSecret?: string;
   authSecret?: string;
   authKey?: string;
@@ -44,6 +46,9 @@ export interface ProjectCreateOpts {
 function buildProjectFromFlags(opts: ProjectCreateOpts): OpenCodeProject {
   if (!opts.name) {
     throw new Error("--name is required when --file is not supplied");
+  }
+  if ((opts.gitAuthorName && !opts.gitAuthorEmail) || (!opts.gitAuthorName && opts.gitAuthorEmail)) {
+    throw new Error("git author requires both --git-author-name and --git-author-email");
   }
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
   const raw: unknown = {
@@ -79,6 +84,14 @@ function buildProjectFromFlags(opts: ProjectCreateOpts): OpenCodeProject {
                 ...(opts.gitRef ? { ref: opts.gitRef } : {}),
                 ...(opts.gitSshSecret
                   ? { sshSecret: { name: opts.gitSshSecret } }
+                  : {}),
+                ...(opts.gitAuthorName && opts.gitAuthorEmail
+                  ? {
+                      author: {
+                        name: opts.gitAuthorName,
+                        email: opts.gitAuthorEmail,
+                      },
+                    }
                   : {}),
               },
             },

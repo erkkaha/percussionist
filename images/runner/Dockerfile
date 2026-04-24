@@ -13,12 +13,18 @@ FROM ghcr.io/anomalyco/opencode:latest
 # Tools the agent will need at runtime.
 #  - git, openssh-client: clone repos, push branches, SSH auth
 #  - ca-certificates: HTTPS to LLM providers and git hosts
-#  - tini: clean PID 1 / signal forwarding for `opencode serve`
+#  - tini: clean PID 1 / signal forwarding for `opencode web`
+#  - nodejs, npm: agents that need node/npm at runtime (24.x from Alpine repos)
+#  - gcompat: glibc ABI compatibility layer so glibc-linked .so files in the
+#             opencode binary (bun FFI) can load on musl/Alpine
 RUN apk add --no-cache \
       git \
       openssh-client \
       ca-certificates \
       tini \
+      nodejs \
+      npm \
+      gcompat \
     && mkdir -p /workspace /root/.ssh \
     && chmod 700 /root/.ssh
 
@@ -30,10 +36,10 @@ COPY content/ /root/.config/opencode/
 
 WORKDIR /workspace
 
-# Default opencode serve listens on 127.0.0.1:4096 which is unreachable from
+# Default opencode web listens on 127.0.0.1:4096 which is unreachable from
 # outside the pod. The manifest overrides the command with explicit
 # --hostname 0.0.0.0, but we expose the port here for documentation.
 EXPOSE 4096
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096"]
+CMD ["opencode", "web", "--hostname", "0.0.0.0", "--port", "4096"]
