@@ -9,6 +9,8 @@ import type {
   CreateProjectRequest,
   ClusterAgent,
   CreateAgentRequest,
+  OpenCodeKanban,
+  CreateKanbanRequest,
 } from "./types";
 
 const BASE = "/api";
@@ -155,6 +157,70 @@ export async function updateAgent(name: string, req: CreateAgentRequest): Promis
 
 export async function deleteAgent(name: string): Promise<void> {
   const res = await fetch(`${BASE}/agents/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Kanbans
+
+export async function fetchKanbans(): Promise<OpenCodeKanban[]> {
+  const data = await fetchJSON<{ items: OpenCodeKanban[] }>("/kanbans");
+  return data.items;
+}
+
+export async function fetchKanban(name: string): Promise<OpenCodeKanban> {
+  return fetchJSON<OpenCodeKanban>(`/kanbans/${encodeURIComponent(name)}`);
+}
+
+export async function submitKanban(req: CreateKanbanRequest): Promise<OpenCodeKanban> {
+  const res = await fetch(`${BASE}/kanbans`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return body as OpenCodeKanban;
+}
+
+export async function updateKanban(name: string, req: CreateKanbanRequest): Promise<OpenCodeKanban> {
+  const res = await fetch(`${BASE}/kanbans/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return body as OpenCodeKanban;
+}
+
+export async function patchKanbanStatus(
+  name: string,
+  statusPatch: Record<string, unknown>,
+): Promise<OpenCodeKanban> {
+  const res = await fetch(`${BASE}/kanbans/${encodeURIComponent(name)}/status`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(statusPatch),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return body as OpenCodeKanban;
+}
+
+export async function deleteKanban(name: string): Promise<void> {
+  const res = await fetch(`${BASE}/kanbans/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
   if (!res.ok && res.status !== 204) {

@@ -253,3 +253,69 @@ export interface CreateProjectRequest {
   secrets?: OpenCodeProjectSpec["secrets"];
   source?: OpenCodeProjectSpec["source"];
 }
+
+// ---------------------------------------------------------------------------
+// OpenCodeKanban
+
+export interface KanbanTask {
+  id: string;
+  title: string;
+  description?: string;
+  priority?: "high" | "medium" | "low";
+}
+
+export interface WorkerStatus {
+  taskId: string;
+  runName?: string;
+  status: "Running" | "Succeeded" | "Failed" | "Escalated";
+  branch?: string;
+  prNumber?: number;
+  startedAt?: string;
+  completedAt?: string;
+  escalation?: string;
+  retryCount?: number;
+}
+
+export interface OpenCodeKanbanSpec {
+  displayName?: string;
+  source?: { git?: GitSource };
+  defaults?: { model?: string; timeoutSeconds?: number; resources?: Record<string, string> };
+  maxParallel?: number;
+  agents?: AgentDef[];
+  tasks?: KanbanTask[];
+  phase?: "Active" | "Complete" | "Archived";
+}
+
+export interface OpenCodeKanbanStatus {
+  phase?: string;
+  columns?: string[];
+  backlog?: Record<string, string[]>;
+  workers?: WorkerStatus[];
+  activeWorkers?: number;
+  escalations?: string[];
+  lastEventAt?: string;
+}
+
+export interface OpenCodeKanban {
+  apiVersion: string;
+  kind: string;
+  metadata: {
+    name: string;
+    namespace?: string;
+    uid?: string;
+    creationTimestamp?: string;
+    [key: string]: unknown;
+  };
+  spec: OpenCodeKanbanSpec;
+  status?: OpenCodeKanbanStatus;
+}
+
+export interface CreateKanbanRequest {
+  name?: string;
+  displayName?: string;
+  source?: { git?: GitSource };
+  defaults?: { model?: string; timeoutSeconds?: number; resources?: Record<string, string> };
+  maxParallel?: number;
+  agents?: AgentDef[];
+  tasks?: KanbanTask[];
+}

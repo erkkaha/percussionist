@@ -31,6 +31,7 @@ export default function Layout() {
           <SidebarLink to="/">Runs</SidebarLink>
           <SidebarLink to="/projects">Projects</SidebarLink>
           <SidebarLink to="/agents">Agents</SidebarLink>
+          <SidebarLink to="/kanbans">Kanban</SidebarLink>
           <SidebarLink to="/stats">Stats</SidebarLink>
         </nav>
       </aside>

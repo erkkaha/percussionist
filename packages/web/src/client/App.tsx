@@ -9,6 +9,9 @@ import CreateProjectForm from "./components/CreateProjectForm";
 import EditProjectPage from "./components/EditProjectPage";
 import AgentsPage from "./components/AgentsPage";
 import AgentForm from "./components/AgentForm";
+import KanbansPage from "./components/KanbansPage";
+import KanbanBoard from "./components/KanbanBoard";
+import CreateKanbanForm from "./components/CreateKanbanForm";
 
 export default function App() {
   return (
@@ -24,6 +27,9 @@ export default function App() {
         <Route path="/agents" element={<AgentsPage />} />
         <Route path="/agents/new" element={<AgentForm />} />
         <Route path="/agents/:name/edit" element={<AgentForm />} />
+        <Route path="/kanbans" element={<KanbansPage />} />
+        <Route path="/kanbans/new" element={<CreateKanbanForm />} />
+        <Route path="/kanbans/:name" element={<KanbanBoard />} />
       </Route>
     </Routes>
   );

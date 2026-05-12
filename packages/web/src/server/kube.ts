@@ -19,9 +19,12 @@ import {
   PLURAL_PROJECT,
   KIND_CLUSTER_AGENT,
   PLURAL_CLUSTER_AGENT,
+  KIND_KANBAN,
+  PLURAL_KANBAN,
   type OpenCodeRun,
   type OpenCodeProject,
   type ClusterAgent,
+  type OpenCodeKanban,
 } from "@percussionist/api";
 
 export const NAMESPACE =
@@ -222,6 +225,86 @@ export async function deleteProject(name: string): Promise<void> {
     version: API_VERSION,
     namespace: NAMESPACE,
     plural: PLURAL_PROJECT,
+    name,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Kanban helpers
+
+export async function listKanbans(): Promise<OpenCodeKanban[]> {
+  const res = (await custom().listNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_KANBAN,
+  })) as { items: OpenCodeKanban[] };
+  return res.items ?? [];
+}
+
+export async function getKanban(name: string): Promise<OpenCodeKanban> {
+  return (await custom().getNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_KANBAN,
+    name,
+  })) as OpenCodeKanban;
+}
+
+export async function createKanban(kanban: OpenCodeKanban): Promise<OpenCodeKanban> {
+  return (await custom().createNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_KANBAN,
+    body: kanban,
+  })) as OpenCodeKanban;
+}
+
+export async function updateKanban(
+  name: string,
+  spec: OpenCodeKanban["spec"],
+): Promise<OpenCodeKanban> {
+  const existing = await getKanban(name);
+  return (await custom().replaceNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_KANBAN,
+    name,
+    body: {
+      apiVersion: API_GROUP_VERSION,
+      kind: KIND_KANBAN,
+      metadata: {
+        name,
+        resourceVersion: existing.metadata.resourceVersion,
+      },
+      spec,
+    },
+  })) as OpenCodeKanban;
+}
+
+export async function patchKanbanStatus(
+  name: string,
+  statusPatch: Record<string, unknown>,
+): Promise<OpenCodeKanban> {
+  return (await custom().patchNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_KANBAN,
+    name,
+    body: { status: statusPatch },
+  })) as OpenCodeKanban;
+}
+
+export async function deleteKanban(name: string): Promise<void> {
+  await custom().deleteNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: NAMESPACE,
+    plural: PLURAL_KANBAN,
     name,
   });
 }
