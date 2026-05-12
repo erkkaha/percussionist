@@ -43,6 +43,10 @@ rules:
   - apiGroups: ["percussionist.dev"]
     resources: ["opencodeprojects"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Read + write OpenCodeKanban resources (list, detail, create, update, patch, delete).
+  - apiGroups: ["percussionist.dev"]
+    resources: ["opencodekanbans"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Read pods (needed to resolve podName and read logs).
   - apiGroups: [""]
     resources: ["pods"]
