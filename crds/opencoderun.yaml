@@ -67,6 +67,28 @@ spec:
                 agent:
                   type: string
                   description: Opencode agent name (e.g. "build", "plan").
+                agents:
+                  type: array
+                  maxItems: 5
+                  description: |
+                    Inline agent definitions injected into the run pod at
+                    /workspace/.opencode/agents/<name>.md before opencode starts.
+                    The operator creates a ConfigMap from these and mounts it as a
+                    volume so opencode discovers them via its standard .opencode/
+                    walk-up mechanism. Max 5 agents, each content capped at 100KB.
+                  items:
+                    type: object
+                    required: [name, content]
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 63
+                        description: Unique agent name (used as filename and selection key). Must be k8s-compatible.
+                      content:
+                        type: string
+                        maxLength: 102400
+                        description: Full .md file contents (YAML front-matter + system prompt). Max 100KB.
                 model:
                   type: string
                   description: Model in provider/model form.

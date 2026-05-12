@@ -25,10 +25,25 @@ function AttachButton({ name, namespace }: { name: string; namespace?: string })
 
   function handleCopy() {
     const cmd = attachCommand(name, namespace);
-    navigator.clipboard.writeText(cmd).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(cmd).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = cmd;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch { /* ignore */ }
+      document.body.removeChild(ta);
+    }
   }
 
   return (
@@ -234,6 +249,18 @@ export default function RunDetail() {
         <Card title="Spec">
           <Field label="Image" value={run.spec.image} mono />
           <Field label="Agent" value={run.spec.agent} />
+          {run.spec.agents && run.spec.agents.length > 0 && (
+            <div className="flex items-baseline gap-3 text-sm">
+              <span className="text-text-dim w-36 shrink-0">Inline Agents</span>
+              <div className="flex flex-wrap gap-1.5">
+                {run.spec.agents.map((a, i) => (
+                  <span key={i} className="inline-flex items-center rounded bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text-muted">
+                    {a.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           <Field label="Model" value={run.spec.model} mono />
           <Field
             label="Interactive"

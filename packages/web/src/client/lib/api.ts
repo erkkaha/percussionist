@@ -7,6 +7,8 @@ import type {
   CreateRunRequest,
   OpenCodeProject,
   CreateProjectRequest,
+  ClusterAgent,
+  CreateAgentRequest,
 } from "./types";
 
 const BASE = "/api";
@@ -111,4 +113,52 @@ export async function updateProject(name: string, req: CreateProjectRequest): Pr
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
   return body as OpenCodeProject;
+}
+
+// ---------------------------------------------------------------------------
+// Agents
+
+export async function fetchAgents(): Promise<{ name: string; content: string }[]> {
+  const data = await fetchJSON<{ agents: { name: string; content: string }[] }>("/agents");
+  return data.agents;
+}
+
+export async function fetchAgent(name: string): Promise<ClusterAgent> {
+  return fetchJSON<ClusterAgent>(`/agents/${encodeURIComponent(name)}`);
+}
+
+export async function submitAgent(req: CreateAgentRequest): Promise<ClusterAgent> {
+  const res = await fetch(`${BASE}/agents`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return body as ClusterAgent;
+}
+
+export async function updateAgent(name: string, req: CreateAgentRequest): Promise<ClusterAgent> {
+  const res = await fetch(`${BASE}/agents/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return body as ClusterAgent;
+}
+
+export async function deleteAgent(name: string): Promise<void> {
+  const res = await fetch(`${BASE}/agents/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
 }

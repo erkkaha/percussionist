@@ -54,6 +54,9 @@ export interface SubmitOpts {
   gitSshSecret?: string;
   gitAuthorName?: string;
   gitAuthorEmail?: string;
+  // inline agents
+  agentFile?: string[];
+  agentName?: string[];
   // project defaults
   project?: string;
 }
@@ -86,6 +89,27 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
 
   if ((resolvedGitAuthorName && !resolvedGitAuthorEmail) || (!resolvedGitAuthorName && resolvedGitAuthorEmail)) {
     throw new Error("git author requires both name and email (--git-author-name and --git-author-email)");
+  }
+
+  // Build inline agents from --agent-file / --agent-name flags.
+  const rawAgents: Array<{name: string; content: string}> = [];
+  if (opts.agentFile) {
+    for (let i = 0; i < opts.agentFile.length; i++) {
+      const filePath = opts.agentFile[i];
+      if (!filePath) continue;
+      let agentName: string | undefined;
+      // Check if there's a corresponding --agent-name override at the same index.
+      if (opts.agentName && opts.agentName[i]) {
+        agentName = opts.agentName[i];
+      } else {
+        // Derive name from filename: strip directory, remove .md extension.
+        const basename = filePath.split("/").pop() ?? "";
+        agentName = basename.replace(/\.md$/, "");
+      }
+      if (!agentName) continue;
+      const content = readFileSync(filePath, "utf8");
+      rawAgents.push({ name: agentName, content });
+    }
   }
 
   // Only include optional fields when set; the CRD defaults fill the rest.
@@ -139,6 +163,7 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
             },
           }
         : {}),
+      ...(rawAgents.length > 0 ? { agents: rawAgents } : {}),
     },
   };
   return OpenCodeRunSchema.parse(raw);

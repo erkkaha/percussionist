@@ -203,6 +203,8 @@ function renderPod(run: OpenCodeRun): V1Pod {
 
   const git = spec.source?.git;
   const sshSecret = git?.sshSecret;
+  const agents = spec.agents;
+
   const gitAuthorEnv = git?.author
     ? [
         { name: "GIT_AUTHOR_NAME", value: git.author.name },
@@ -267,6 +269,35 @@ function renderPod(run: OpenCodeRun): V1Pod {
       ]
     : undefined;
 
+  // Init container to copy inline agents into the runner's config directory.
+  // Uses a shared emptyDir volume so files survive across init containers and
+  // into the main opencode container without any runtime mount conflicts.
+  const agentInitContainer =
+    agents && agents.length > 0
+      ? {
+          name: "copy-agents",
+          image,
+          imagePullPolicy: "IfNotPresent" as const,
+          command: ["/bin/sh", "-c"],
+          args: [
+            [
+              'mkdir -p /agents-out',
+              ...agents.map(
+                (a) => `echo "${a.content.replace(/"/g, '\\"')}" > /agents-out/${a.name}.md`,
+              ),
+              'cp /agents-out/*.md /root/.config/opencode/agents/',
+            ].join("\n"),
+          ],
+          volumeMounts: [
+            { name: "workspace", mountPath: "/root/.config/opencode" },
+          ],
+        }
+      : undefined;
+
+  const allInitContainers = [agentInitContainer, initContainers].flat().filter(
+    Boolean,
+  ) as typeof initContainers;
+
   const volumes = [
     { name: "workspace", emptyDir: {} },
     ...(sshSecret
@@ -277,6 +308,16 @@ function renderPod(run: OpenCodeRun): V1Pod {
               secretName: sshSecret.name,
               items: [{ key: sshSecret.key, path: "id" }],
               defaultMode: 0o400,
+            },
+          },
+        ]
+      : []),
+    ...(agents && agents.length > 0
+      ? [
+          {
+            name: "agents-volume",
+            configMap: {
+              name: `${podName(run)}-agents`,
             },
           },
         ]
@@ -372,6 +413,9 @@ function renderPod(run: OpenCodeRun): V1Pod {
             ...(sshSecret
               ? [{ name: "git-ssh", mountPath: "/etc/git-ssh", readOnly: true }]
               : []),
+            ...(agents && agents.length > 0
+              ? [{ name: "agents-volume", mountPath: "/root/.config/opencode/agents" }]
+              : []),
           ],
         },
         {
@@ -454,6 +498,7 @@ async function reconcile(run: OpenCodeRun): Promise<void> {
   const name = run.metadata.name;
   const ns = run.metadata.namespace!;
   const currentPhase = run.status?.phase;
+  const spec = OpenCodeRunSpecSchema.parse(run.spec);
 
   // Skip terminal phases — no further work to do.
   if (currentPhase && TERMINAL_PHASES.has(currentPhase)) {
@@ -499,6 +544,39 @@ async function reconcile(run: OpenCodeRun): Promise<void> {
         ingressName: ingressName(run),
         webURL: webURLFor(run),
       });
+    }
+  }
+
+  // Ensure agents ConfigMap exists (when spec.agents is set).
+  const agents = spec.agents;
+  if (agents && agents.length > 0) {
+    const agentData: Record<string, string> = {};
+    for (const a of agents) {
+      agentData[`${a.name}.md`] = a.content;
+    }
+    try {
+      await core.readNamespacedConfigMap({ name: `${podName(run)}-agents`, namespace: ns });
+    } catch {
+      try {
+        await core.createNamespacedConfigMap({
+          namespace: ns,
+          body: {
+            apiVersion: "v1",
+            kind: "ConfigMap",
+            metadata: {
+              name: `${podName(run)}-agents`,
+              namespace: ns,
+              labels: { ...commonLabels(run), [LABELS.component]: "agents" },
+              ownerReferences: ownerRefsFor(run),
+            },
+            data: agentData,
+          },
+        });
+        log(`created configmap ${ns}/${podName(run)}-agents (${agents.length} agents)`);
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (!/already exists/i.test(msg)) throw e;
+      }
     }
   }
 

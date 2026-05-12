@@ -13,6 +13,10 @@ export const KIND_RUN = "OpenCodeRun";
 export const PLURAL_RUN = "opencoderuns";
 export const KIND_PROJECT = "OpenCodeProject";
 export const PLURAL_PROJECT = "opencodeprojects";
+export const KIND_CLUSTER_AGENT = "ClusterAgent";
+export const PLURAL_CLUSTER_AGENT = "clusteragents";
+export const KIND_KANBAN = "OpenCodeKanban";
+export const PLURAL_KANBAN = "opencodekanbans";
 
 // ---------------------------------------------------------------------------
 // Spec
@@ -110,6 +114,16 @@ export const ExposeSchema = z
   })
   .partial();
 
+export const AgentDefSchema = z.object({
+  // Unique name for this agent (used as filename and selection key).
+  // Must be k8s-compatible: lowercase alphanumeric + hyphens, max 63 chars.
+  name: z.string().min(1).max(63),
+
+  // Full .md file contents (YAML front-matter + system prompt).
+  // Max 100KB to keep ConfigMaps manageable.
+  content: z.string().max(102400),
+});
+
 export const OpenCodeRunSpecSchema = z
   .object({
     // What the agent should do. Sent as the first user prompt via
@@ -133,6 +147,14 @@ export const OpenCodeRunSpecSchema = z
 
     // Optional. Defaults applied by the operator.
     agent: z.string().optional(),
+
+    // Inline agent definitions injected into the run pod at
+    // /workspace/.opencode/agents/<name>.md before opencode starts.
+    // Max 5 agents, each content capped at 100KB. The operator creates a
+    // ConfigMap from these and mounts it as a volume so opencode discovers
+    // them via its standard .opencode/ walk-up mechanism.
+    agents: AgentDefSchema.array().max(5).optional(),
+
     model: z.string().optional(),
     image: z.string().default("percussionist/runner:dev"),
 
@@ -252,6 +274,41 @@ export const OpenCodeRunSchema = z.object({
 export type OpenCodeRun = z.infer<typeof OpenCodeRunSchema>;
 
 // ---------------------------------------------------------------------------
+// ClusterAgent — cluster-scoped catalog of reusable agent definitions.
+//
+// Admins create ClusterAgents to make agents available across all projects
+// and runs without duplicating content. The operator watches them read-only;
+// they are not reconciled into pods themselves — instead, a run references
+// one by name (spec.agent) or includes inline copies in spec.agents[].
+
+export const ClusterAgentSpecSchema = z.object({
+  // Full .md file contents (YAML front-matter + system prompt).
+  content: z.string().max(102400),
+});
+
+export type ClusterAgentSpec = z.infer<typeof ClusterAgentSpecSchema>;
+
+export const ClusterAgentSchema = z.object({
+  apiVersion: z.literal(API_GROUP_VERSION),
+  kind: z.literal("ClusterAgent"),
+  metadata: z
+    .object({
+      name: z.string(),
+      namespace: z.string().optional(),
+      uid: z.string().optional(),
+      resourceVersion: z.string().optional(),
+      labels: z.record(z.string()).optional(),
+      annotations: z.record(z.string()).optional(),
+      creationTimestamp: z.string().optional(),
+      deletionTimestamp: z.string().optional(),
+    })
+    .passthrough(),
+  spec: ClusterAgentSpecSchema,
+});
+
+export type ClusterAgent = z.infer<typeof ClusterAgentSchema>;
+
+// ---------------------------------------------------------------------------
 // Well-known label/annotation keys and container naming.
 
 export const LABELS = {
@@ -309,3 +366,142 @@ export const OpenCodeProjectSchema = z.object({
 });
 
 export type OpenCodeProject = z.infer<typeof OpenCodeProjectSchema>;
+
+// ---------------------------------------------------------------------------
+// OpenCodeKanban — kanban board for agentic development.
+//
+// Tracks feature-sized tasks flowing through columns (ready → in-progress →
+// review → done). A persistent manager controller watches this CR and dispatches
+// worker runs, respecting a WIP limit derived from cluster capacity.
+
+export const KanbanTaskSchema = z.object({
+  // Unique task identifier (e.g. "F-104", "BUG-42").
+  id: z.string().min(1).max(32),
+
+  // Short human-readable title.
+  title: z.string().min(1).max(256),
+
+  // Detailed acceptance criteria and context sent to the worker agent.
+  description: z.string().max(8192).optional(),
+
+  // Task priority for ordering within a column.
+  priority: z.enum(["high", "medium", "low"]).default("medium"),
+});
+
+export type KanbanTask = z.infer<typeof KanbanTaskSchema>;
+
+// Per-worker tracking in Kanban status.
+export const WorkerStatusSchema = z.object({
+  // Task ID this worker is handling.
+  taskId: z.string().min(1),
+
+  // OpenCodeRun name created for this worker (set by manager controller).
+  runName: z.string().optional(),
+
+  // Current worker state.
+  status: z.enum(["Running", "Succeeded", "Failed", "Escalated"]),
+
+  // Git branch created by the worker (e.g. "feat/F-104").
+  branch: z.string().optional(),
+
+  // GitHub PR number if opened (set by manager after detecting PR).
+  prNumber: z.number().int().min(1).optional(),
+
+  // ISO timestamp when worker started.
+  startedAt: z.string().optional(),
+
+  // ISO timestamp when worker finished.
+  completedAt: z.string().optional(),
+
+  // Escalation text written by the manager when a worker is stuck.
+  escalation: z.string().max(4096).optional(),
+
+  // Number of retry attempts for this task (set by manager on re-dispatch).
+  retryCount: z.number().int().min(0).default(0),
+});
+
+export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;
+
+// Default run config inherited by all worker runs.
+export const KanbanDefaultsSchema = z.object({
+  model: z.string().optional(),
+  timeoutSeconds: z.number().int().min(60).default(14400),
+  resources: ResourceRequirementsSchema.optional(),
+}).partial();
+
+export type KanbanDefaults = z.infer<typeof KanbanDefaultsSchema>;
+
+// OpenCodeKanban spec — board configuration.
+export const OpenCodeKanbanSpecSchema = z.object({
+  // Human-readable label; falls back to metadata.name.
+  displayName: z.string().optional(),
+
+  // Git workspace all workers clone from (same shape as OpenCodeRun's source.git).
+  source: SourceSchema.optional(),
+
+  // Default run config inherited by all worker runs.
+  defaults: KanbanDefaultsSchema.optional(),
+
+  // WIP limit — how many concurrent worker runs the manager dispatches.
+  maxParallel: z.number().int().min(1).max(20).default(2),
+
+  // Inline agent definitions injected into worker pods (same shape as OpenCodeRun's agents[]).
+  agents: AgentDefSchema.array().max(5).optional(),
+
+  // Human-defined backlog items added to the board.
+  tasks: KanbanTaskSchema.array().max(100).optional(),
+
+  // Board lifecycle state.
+  phase: z.enum(["Active", "Complete", "Archived"]).default("Active"),
+});
+
+export type OpenCodeKanbanSpec = z.infer<typeof OpenCodeKanbanSpecSchema>;
+
+// OpenCodeKanban status — operational state tracked by the manager controller.
+export const OpenCodeKanbanStatusSchema = z.object({
+  // Mirrors spec.phase with operational state.
+  phase: z.enum(["Active", "Complete", "Archived"]).optional(),
+
+  // Ordered list of column names on the kanban board.
+  columns: z.string().array().default(["ready", "in-progress", "review", "rework", "done"]),
+
+  // Map of column name → task ID array. Manager moves IDs between these arrays.
+  backlog: z.record(z.string().array()).default({ ready: [] }),
+
+  // Active worker run tracking.
+  workers: WorkerStatusSchema.array().default([]),
+
+  // Count of workers with Running status (for printer column).
+  activeWorkers: z.number().int().min(0).default(0),
+
+  // JSON-serialized escalation messages for quick CLI/UI access.
+  escalations: z.string().array().optional(),
+
+  // ISO timestamp of the most recent state change.
+  lastEventAt: z.string().optional(),
+});
+
+export type OpenCodeKanbanStatus = z.infer<typeof OpenCodeKanbanStatusSchema>;
+
+// Full OpenCodeKanban CR shape.
+export const OpenCodeKanbanSchema = z.object({
+  apiVersion: z.literal(API_GROUP_VERSION),
+  kind: z.literal(KIND_KANBAN),
+  metadata: z
+    .object({
+      name: z.string(),
+      namespace: z.string().optional(),
+      uid: z.string().optional(),
+      resourceVersion: z.string().optional(),
+      generation: z.number().optional(),
+      labels: z.record(z.string()).optional(),
+      annotations: z.record(z.string()).optional(),
+      creationTimestamp: z.string().optional(),
+      deletionTimestamp: z.string().optional(),
+    })
+    .passthrough(),
+  spec: OpenCodeKanbanSpecSchema,
+  status: OpenCodeKanbanStatusSchema.optional(),
+});
+
+export type OpenCodeKanban = z.infer<typeof OpenCodeKanbanSchema>;

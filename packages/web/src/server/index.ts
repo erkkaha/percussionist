@@ -16,6 +16,7 @@ import logs from "./routes/logs.js";
 import session from "./routes/session.js";
 import stats, { runRetentionCleanup, RETENTION_DAYS } from "./routes/stats.js";
 import projects from "./routes/projects.js";
+import agents from "./routes/agents.js";
 import { NAMESPACE } from "./kube.js";
 import { getDb } from "./db.js";
 
@@ -34,6 +35,7 @@ app.route("/api/runs", logs);
 app.route("/api/runs", session);
 app.route("/api/stats", stats);
 app.route("/api/projects", projects);
+app.route("/api/agents", agents);
 
 // Health check
 app.get("/api/health", (c) => c.json({ ok: true, namespace: NAMESPACE }));

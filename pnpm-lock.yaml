@@ -51,6 +51,15 @@ importers:
         specifier: workspace:*
         version: link:../api
 
+  packages/manager-controller:
+    dependencies:
+      '@kubernetes/client-node':
+        specifier: ^1.4.0
+        version: 1.4.0
+      '@percussionist/api':
+        specifier: workspace:*
+        version: link:../api
+
   packages/operator:
     dependencies:
       '@kubernetes/client-node':

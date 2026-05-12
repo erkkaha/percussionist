@@ -1,0 +1,88 @@
+# RBAC and Deployment for the percussionist manager controller.
+#
+# The manager watches OpenCodeKanban CRs and dispatches worker runs.
+# It is persistent (single replica) and runs continuously during active sprints.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: percussionist-manager
+  namespace: percussionist
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: percussionist-manager
+rules:
+  # Watch and patch OpenCodeKanban CRs (the boards the manager orchestrates).
+  - apiGroups: ["percussionist.dev"]
+    resources: ["opencodekanbans"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["percussionist.dev"]
+    resources: ["opencodekanbans/status"]
+    verbs: ["get", "update", "patch"]
+  # Create and monitor OpenCodeRun worker pods (child resources).
+  - apiGroups: ["percussionist.dev"]
+    resources: ["opencoderuns"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: ["percussionist.dev"]
+    resources: ["opencoderuns/status"]
+    verbs: ["get"]
+  # ClusterAgent — read-only (for agent definitions).
+  - apiGroups: ["percussionist.dev"]
+    resources: ["clusteragents"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: percussionist-manager
+subjects:
+  - kind: ServiceAccount
+    name: percussionist-manager
+    namespace: percussionist
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: percussionist-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: percussionist-manager
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: manager
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: percussionist
+      app.kubernetes.io/component: manager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: percussionist
+        app.kubernetes.io/component: manager
+    spec:
+      serviceAccountName: percussionist-manager
+      containers:
+        - name: manager
+          image: percussionist/manager:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: WATCH_NAMESPACE
+              value: percussionist
+            - name: RUNNER_IMAGE_DEFAULT
+              value: percussionist/runner:dev
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pgrep -f node >/dev/null"]
+            initialDelaySeconds: 2
+            periodSeconds: 5

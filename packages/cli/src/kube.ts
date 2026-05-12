@@ -15,8 +15,10 @@ import {
   API_VERSION,
   PLURAL_RUN,
   PLURAL_PROJECT,
+  PLURAL_KANBAN,
   type OpenCodeRun,
   type OpenCodeProject,
+  type OpenCodeKanban,
 } from "@percussionist/api";
 
 export const DEFAULT_NAMESPACE =
@@ -152,6 +154,79 @@ export async function deleteProject(
     plural: PLURAL_PROJECT,
     name,
   });
+}
+
+// Kanban wrappers -----------------------------------------------------------
+
+export async function listKanbans(
+  custom: CustomObjectsApi,
+  namespace: string,
+): Promise<OpenCodeKanban[]> {
+  const res = (await custom.listNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace,
+    plural: PLURAL_KANBAN,
+  })) as { items: OpenCodeKanban[] };
+  return res.items ?? [];
+}
+
+export async function getKanban(
+  custom: CustomObjectsApi,
+  namespace: string,
+  name: string,
+): Promise<OpenCodeKanban> {
+  return (await custom.getNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace,
+    plural: PLURAL_KANBAN,
+    name,
+  })) as OpenCodeKanban;
+}
+
+export async function createKanban(
+  custom: CustomObjectsApi,
+  namespace: string,
+  body: OpenCodeKanban,
+): Promise<OpenCodeKanban> {
+  return (await custom.createNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace,
+    plural: PLURAL_KANBAN,
+    body,
+  })) as OpenCodeKanban;
+}
+
+export async function deleteKanban(
+  custom: CustomObjectsApi,
+  namespace: string,
+  name: string,
+): Promise<void> {
+  await custom.deleteNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace,
+    plural: PLURAL_KANBAN,
+    name,
+  });
+}
+
+export async function patchKanban(
+  custom: CustomObjectsApi,
+  namespace: string,
+  name: string,
+  body: Record<string, unknown>,
+): Promise<OpenCodeKanban> {
+  return (await custom.patchNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace,
+    plural: PLURAL_KANBAN,
+    name,
+    body,
+  })) as OpenCodeKanban;
 }
 
 // Render helpers ------------------------------------------------------------

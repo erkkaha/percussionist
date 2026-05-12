@@ -73,6 +73,29 @@ roleRef:
   kind: Role
   name: percussionist-web
 ---
+# ClusterRole for cluster-scoped resources (ClusterAgents).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: percussionist-web-clusteragents
+rules:
+  - apiGroups: ["percussionist.dev"]
+    resources: ["clusteragents"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: percussionist-web-clusteragents
+subjects:
+  - kind: ServiceAccount
+    name: percussionist-web
+    namespace: percussionist
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: percussionist-web-clusteragents
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -181,7 +204,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: app.192.168.49.2.traefik.me
+    - host: app.192.168.49.2.nip.io
       http:
         paths:
           - path: /

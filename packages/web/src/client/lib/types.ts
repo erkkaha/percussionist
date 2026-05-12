@@ -32,10 +32,28 @@ export interface GitSource {
   author?: { name: string; email: string };
 }
 
+export interface AgentDef {
+  name: string;
+  content: string;
+}
+
+export interface ClusterAgent {
+  apiVersion: string;
+  kind: string;
+  metadata: { name: string; namespace?: string; uid?: string; creationTimestamp?: string };
+  spec: { content: string };
+}
+
+export interface CreateAgentRequest {
+  name?: string;
+  content: string;
+}
+
 export interface OpenCodeRunSpec {
   task?: string;
   interactive: boolean;
   agent?: string;
+  agents?: AgentDef[];
   model?: string;
   image: string;
   source?: { git?: GitSource };
@@ -86,6 +104,7 @@ export interface CreateRunRequest {
   task?: string;
   interactive?: boolean;
   agent?: string;
+  agents?: AgentDef[];
   model?: string;
   /** Git source for /workspace. */
   source?: {

@@ -17,8 +17,11 @@ import {
   PLURAL_RUN,
   KIND_PROJECT,
   PLURAL_PROJECT,
+  KIND_CLUSTER_AGENT,
+  PLURAL_CLUSTER_AGENT,
   type OpenCodeRun,
   type OpenCodeProject,
+  type ClusterAgent,
 } from "@percussionist/api";
 
 export const NAMESPACE =
@@ -92,6 +95,67 @@ export async function deleteRun(name: string): Promise<void> {
     version: API_VERSION,
     namespace: NAMESPACE,
     plural: PLURAL_RUN,
+    name,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// ClusterAgent helpers (cluster-scoped)
+
+export async function listClusterAgents(): Promise<ClusterAgent[]> {
+  const res = (await custom().listClusterCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    plural: PLURAL_CLUSTER_AGENT,
+  })) as { items: ClusterAgent[] };
+  return res.items ?? [];
+}
+
+export async function getClusterAgent(name: string): Promise<ClusterAgent> {
+  return (await custom().getClusterCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    plural: PLURAL_CLUSTER_AGENT,
+    name,
+  })) as ClusterAgent;
+}
+
+export async function createClusterAgent(agent: ClusterAgent): Promise<ClusterAgent> {
+  return (await custom().createClusterCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    plural: PLURAL_CLUSTER_AGENT,
+    body: agent,
+  })) as ClusterAgent;
+}
+
+export async function updateClusterAgent(
+  name: string,
+  spec: ClusterAgent["spec"],
+): Promise<ClusterAgent> {
+  const existing = await getClusterAgent(name);
+  return (await custom().replaceClusterCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    plural: PLURAL_CLUSTER_AGENT,
+    name,
+    body: {
+      apiVersion: API_GROUP_VERSION,
+      kind: KIND_CLUSTER_AGENT,
+      metadata: {
+        name,
+        resourceVersion: existing.metadata.resourceVersion,
+      },
+      spec,
+    },
+  })) as ClusterAgent;
+}
+
+export async function deleteClusterAgent(name: string): Promise<void> {
+  await custom().deleteClusterCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    plural: PLURAL_CLUSTER_AGENT,
     name,
   });
 }

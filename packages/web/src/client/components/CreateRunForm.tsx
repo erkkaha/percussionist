@@ -4,7 +4,19 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { submitRun } from "../lib/api";
 import { useProjects } from "../hooks/useProjects";
 import { useRun } from "../hooks/useRun";
-import type { CreateRunRequest, OpenCodeProject, OpenCodeRun } from "../lib/types";
+import type { CreateRunRequest, OpenCodeProject, OpenCodeRun, AgentDef } from "../lib/types";
+
+interface ClusterAgent {
+  name: string;
+  content: string;
+}
+
+async function fetchClusterAgents(): Promise<ClusterAgent[]> {
+  const res = await fetch("/api/agents");
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.agents as ClusterAgent[]) ?? [];
+}
 
 export default function CreateRunForm() {
   const navigate = useNavigate();
@@ -28,6 +40,42 @@ export default function CreateRunForm() {
   const [llmKeysSecret, setLlmKeysSecret] = useState("");
   const [opencodeAuthSecretName, setOpencodeAuthSecretName] = useState("");
   const [seeded, setSeeded] = useState(false);
+  const [agents, setAgents] = useState<AgentDef[]>([]);
+  const [clusterAgents, setClusterAgents] = useState<ClusterAgent[]>([]);
+  const [selectedClusterAgent, setSelectedClusterAgent] = useState("");
+
+  // Load available cluster agents on mount.
+  useEffect(() => {
+    fetchClusterAgents().then(setClusterAgents).catch(() => {});
+  }, []);
+
+  function addAgent() {
+    if (agents.length >= 5) return;
+    setAgents((prev) => [...prev, { name: "", content: "" }]);
+  }
+
+  function removeAgent(index: number) {
+    setAgents((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function updateAgent(index: number, field: "name" | "content", value: string) {
+    setAgents((prev) =>
+      prev.map((a, i) => (i === index ? { ...a, [field]: value } : a)),
+    );
+  }
+
+  // When a cluster agent is selected, populate inline agents from it.
+  function handleClusterAgentSelect(name: string) {
+    setSelectedClusterAgent(name);
+    if (!name) {
+      setAgents([]);
+      return;
+    }
+    const found = clusterAgents.find((a) => a.name === name);
+    if (found) {
+      setAgents([{ name, content: found.content }]);
+    }
+  }
 
   const gitAuthorIncomplete =
     (gitAuthorName.trim().length > 0 && gitAuthorEmail.trim().length === 0) ||
@@ -47,6 +95,7 @@ export default function CreateRunForm() {
     if (run.spec.task) setTask(run.spec.task);
     if (run.spec.model) setModel(run.spec.model);
     if (run.spec.agent) setAgent(run.spec.agent);
+    if (run.spec.agents && run.spec.agents.length > 0) setAgents([...run.spec.agents]);
     if (run.spec.interactive) setInteractive(run.spec.interactive);
     if (run.spec.timeoutSeconds) setTimeoutSeconds(run.spec.timeoutSeconds);
     if (run.spec.source?.git?.url) {
@@ -107,6 +156,7 @@ export default function CreateRunForm() {
     if (task.trim()) req.task = task.trim();
     if (model.trim()) req.model = model.trim();
     if (agent.trim()) req.agent = agent.trim();
+    if (agents.length > 0) req.agents = agents;
     if (showGit && gitUrl.trim()) {
       req.source = { git: { url: gitUrl.trim() } };
       if (gitRef.trim()) req.source.git!.ref = gitRef.trim();
@@ -243,6 +293,71 @@ export default function CreateRunForm() {
               className={inputClass}
             />
           </div>
+        </div>
+
+        {/* Cluster agent selector */}
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-text-muted">Cluster agents</label>
+          <select
+            value={selectedClusterAgent}
+            onChange={(e) => handleClusterAgentSelect(e.target.value)}
+            className={inputClass}
+          >
+            <option value="">— none —</option>
+            {clusterAgents.map((ca) => (
+              <option key={ca.name} value={ca.name}>{ca.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Inline agents */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-text-muted">Inline agents</label>
+            <button
+              type="button"
+              onClick={addAgent}
+              disabled={agents.length >= 5}
+              className="text-xs text-zinc-400 hover:text-text transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              + Add agent ({agents.length}/5)
+            </button>
+          </div>
+          {agents.map((a, i) => (
+            <div key={i} className="space-y-2 rounded-md border border-border bg-surface p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-text-muted">Agent {i + 1}</span>
+                <button
+                  type="button"
+                  onClick={() => removeAgent(i)}
+                  disabled={agents.length <= 1}
+                  className="text-xs text-phase-failed hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  Remove
+                </button>
+              </div>
+              <input
+                type="text"
+                value={a.name}
+                onChange={(e) => updateAgent(i, "name", e.target.value)}
+                placeholder="agent-name (used as filename)"
+                className={inputClass + " font-mono"}
+              />
+              <textarea
+                value={a.content}
+                onChange={(e) => updateAgent(i, "content", e.target.value)}
+                placeholder={`---\ndescription: What this agent does\n---\nSystem prompt...`}
+                rows={6}
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-zinc-500 focus:outline-none resize-y font-mono"
+              />
+              <p className="text-xs text-text-dim">
+                {a.content.length > 0 ? `${(a.content.length / 1024).toFixed(1)} KB` : "Paste agent .md content here"}
+                {a.content.length >= 102400 && (
+                  <span className="text-phase-failed ml-1">— exceeds 100KB limit</span>
+                )}
+              </p>
+            </div>
+          ))}
         </div>
 
         {/* Secrets row */}

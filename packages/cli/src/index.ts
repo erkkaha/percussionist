@@ -21,6 +21,16 @@ import {
   runProjectGet,
   runProjectList,
 } from "./project.js";
+import { runAgentList, runAgentGet, runAgentCreate, runAgentDelete } from "./agent.js";
+import {
+  runKanbanList,
+  runKanbanGet,
+  runKanbanCreate,
+  runKanbanDelete,
+  runKanbanTaskAdd,
+  runKanbanTaskMove,
+  runKanbanTaskRemove,
+} from "./kanban.js";
 import { DEFAULT_NAMESPACE } from "./kube.js";
 
 const program = new Command();
@@ -81,6 +91,9 @@ program
     "--project <name>",
     "OpenCodeProject to use as defaults; explicit flags always override project values",
   )
+  // inline agents
+  .option("--agent-file <path>", "path to an agent .md file (repeatable)", (val: string, prev: string[] = []) => [...prev, val])
+  .option("--agent-name <name>", "override the agent name for the preceding --agent-file (repeatable)", (val: string, prev: string[] = []) => [...prev, val])
   .action(runSubmit);
 
 // ls ------------------------------------------------------------------------
@@ -244,6 +257,139 @@ project
   .description("delete a project")
   .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
   .action((name: string, opts) => runProjectDelete(name, opts));
+
+// agent ---------------------------------------------------------------------
+// Subcommand group for managing cluster-scoped agent definitions.
+const agent = program.command("agent").description("manage ClusterAgent resources (cluster-wide agent catalog)");
+
+agent
+  .command("list")
+  .alias("ls")
+  .description("list all ClusterAgents in the cluster")
+  .action(runAgentList);
+
+agent
+  .command("get <name>")
+  .description("show details of a ClusterAgent")
+  .option("-o, --output <fmt>", "output format (yaml|json)", "default")
+  .action((name: string, opts) => runAgentGet(name, opts));
+
+agent
+  .command("create")
+  .description("create a new ClusterAgent from flags or a YAML file")
+  .option("--name <name>", "agent name (required unless --file)")
+  .option("-f, --file <path>", "read agent YAML from file")
+  .option("--dry-run", "print YAML; don't apply to cluster")
+  .action(runAgentCreate);
+
+agent
+  .command("delete <name>")
+  .alias("rm")
+  .description("delete a ClusterAgent")
+  .action((name: string) => runAgentDelete(name));
+
+// kanban --------------------------------------------------------------------
+// Subcommand group for managing OpenCodeKanban boards (agentic task tracking).
+const kanban = program.command("kanban").description("manage OpenCodeKanban boards (kanban-style task tracking)");
+
+kanban
+  .command("list")
+  .alias("ls")
+  .description("list all kanban boards in a namespace")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .action(runKanbanList);
+
+kanban
+  .command("get <name>")
+  .description("show details of a kanban board (columns, workers, escalations)")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("-o, --output <fmt>", "output format (yaml|json)", "default")
+  .action((name: string, opts) => runKanbanGet(name, opts));
+
+kanban
+  .command("create")
+  .description("create a new kanban board from flags or a YAML file")
+  .option("--name <name>", "board name (required unless --file)")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("-f, --file <path>", "read kanban YAML from file")
+  .option("--display-name <name>", "human-readable label")
+  .option("--git-url <url>", "git repository URL for worker clones")
+  .option("--git-ref <ref>", "default branch, tag, or SHA")
+  .option("--git-ssh-secret <name>", "Secret with SSH private key")
+  .option("--git-author-name <name>", "default git commit author name")
+  .option("--git-author-email <email>", "default git commit author email")
+  .option("--max-parallel <n>", "WIP limit (concurrent workers)", (val) => parseInt(val, 10), 2)
+  .option("-m, --model <model>", "default model for worker runs")
+  .option("--dry-run", "print YAML; don't apply to cluster")
+  .action(runKanbanCreate);
+
+kanban
+  .command("delete <name>")
+  .alias("rm")
+  .description("delete a kanban board (cascades to child worker runs)")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .action((name: string, opts) => runKanbanDelete(name, opts));
+
+// kanban task ---------------------------------------------------------------
+const kanbanTask = kanban.command("task").description("manage tasks on a kanban board");
+
+kanbanTask
+  .command("add <kanban>")
+  .description("add a task to the board")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("--id <id>", "task ID (e.g. F-104)")
+  .option("--title <title>", "task title")
+  .option("--description <text>", "acceptance criteria and context")
+  .option("--priority <level>", "priority: high, medium, low", "medium")
+  .option("--column <name>", "target column (default: ready)", "ready")
+  .action((kanbanName: string, opts) => {
+    if (!opts.id || !opts.title) {
+      console.error("beatctl: --id and --title are required");
+      process.exit(1);
+    }
+    runKanbanTaskAdd(kanbanName, {
+      namespace: opts.namespace,
+      id: opts.id,
+      title: opts.title,
+      description: opts.description,
+      priority: opts.priority as "high" | "medium" | "low",
+      column: opts.column,
+    });
+  });
+
+kanbanTask
+  .command("move <kanban>")
+  .description("move a task between columns")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("--task-id <id>", "task ID to move")
+  .option("--to <column>", "target column name (required)")
+  .action((kanbanName: string, opts) => {
+    if (!opts.taskId || !opts.to) {
+      console.error("beatctl: --task-id and --to are required");
+      process.exit(1);
+    }
+    runKanbanTaskMove(kanbanName, {
+      namespace: opts.namespace,
+      taskId: opts.taskId,
+      to: opts.to,
+    });
+  });
+
+kanbanTask
+  .command("remove <kanban>")
+  .description("remove a task from the board")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("--task-id <id>", "task ID to remove (required)")
+  .action((kanbanName: string, opts) => {
+    if (!opts.taskId) {
+      console.error("beatctl: --task-id is required");
+      process.exit(1);
+    }
+    runKanbanTaskRemove(kanbanName, {
+      namespace: opts.namespace,
+      taskId: opts.taskId,
+    });
+  });
 
 program.parseAsync(process.argv).catch((e) => {
   console.error("beatctl:", (e as Error).message ?? e);
