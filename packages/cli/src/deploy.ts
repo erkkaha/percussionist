@@ -1,6 +1,6 @@
 // `beatctl deploy` — install/remove cluster-side percussionist resources.
 //
-// Unified deploy entrypoint for CRDs + operator + web.
+// Unified deploy entrypoint for CRDs + operator + web + manager controller.
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -73,17 +73,23 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
   const manifests = {
     runCrd: resolveManifest(repoRoot, "crds/opencoderun.yaml"),
     projectCrd: resolveManifest(repoRoot, "crds/opencodeproject.yaml"),
+    kanbanCrd: resolveManifest(repoRoot, "crds/opencodekanban.yaml"),
+    clusterAgentCrd: resolveManifest(repoRoot, "crds/clusteragent.yaml"),
     operator: resolveManifest(repoRoot, "deploy/operator.yaml"),
+    managerController: resolveManifest(repoRoot, "deploy/manager-controller.yaml"),
     web: resolveManifest(repoRoot, "deploy/web.yaml"),
   };
 
   if (opts.down) {
     try {
-      console.log("beatctl: deleting web + operator deployments/RBAC...");
+      console.log("beatctl: deleting web + operator + manager deployments/RBAC...");
       await runKubectl(["delete", "-f", manifests.web, "--ignore-not-found", "--wait=false"]);
+      await runKubectl(["delete", "-f", manifests.managerController, "--ignore-not-found", "--wait=false"]);
       await runKubectl(["delete", "-f", manifests.operator, "--ignore-not-found", "--wait=false"]);
 
       console.log("beatctl: deleting CRDs...");
+      await runKubectl(["delete", "-f", manifests.kanbanCrd, "--ignore-not-found", "--wait=false"]);
+      await runKubectl(["delete", "-f", manifests.clusterAgentCrd, "--ignore-not-found", "--wait=false"]);
       await runKubectl(["delete", "-f", manifests.projectCrd, "--ignore-not-found", "--wait=false"]);
       await runKubectl(["delete", "-f", manifests.runCrd, "--ignore-not-found", "--wait=false"]);
       console.log("beatctl: deploy --down complete");
@@ -97,6 +103,8 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     console.log("beatctl: applying CRDs...");
     await runKubectl(["apply", "-f", manifests.runCrd]);
     await runKubectl(["apply", "-f", manifests.projectCrd]);
+    await runKubectl(["apply", "-f", manifests.kanbanCrd]);
+    await runKubectl(["apply", "-f", manifests.clusterAgentCrd]);
 
     console.log("beatctl: waiting for CRDs to establish...");
     await runKubectl([
@@ -111,9 +119,22 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
       "crd/opencodeprojects.percussionist.dev",
       "--timeout=30s",
     ]);
+    await runKubectl([
+      "wait",
+      "--for=condition=Established",
+      "crd/opencodekanbans.percussionist.dev",
+      "--timeout=30s",
+    ]);
+    await runKubectl([
+      "wait",
+      "--for=condition=Established",
+      "crd/clusteragents.percussionist.dev",
+      "--timeout=30s",
+    ]);
 
-    console.log("beatctl: applying operator and web manifests...");
+    console.log("beatctl: applying operator, manager controller and web manifests...");
     await runKubectl(["apply", "-f", manifests.operator]);
+    await runKubectl(["apply", "-f", manifests.managerController]);
     await runKubectl(["apply", "-f", manifests.web]);
 
     if (opts.wait !== false) {
@@ -124,6 +145,14 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
         "rollout",
         "status",
         "deploy/percussionist-operator",
+        "--timeout=120s",
+      ]);
+      await runKubectl([
+        "-n",
+        ns,
+        "rollout",
+        "status",
+        "deploy/percussionist-manager",
         "--timeout=120s",
       ]);
       await runKubectl([

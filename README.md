@@ -3,32 +3,39 @@
 Kubernetes-native orchestration for [OpenCode](https://opencode.ai) agents.
 Each agent run is a Pod; you attach to it on demand with `opencode attach`.
 
-> **Status:** M4 + Provider auth — git-sourced workspaces and OAuth-based
-> providers (GitHub Copilot, ChatGPT Plus, Claude Pro) on top of the M3
-> CLI, M2 operator, and the original M1 runner pod.
+> **Status:** M5 — kanban-style agentic development flow with persistent manager
+> controller, git-sourced workspaces, OAuth provider auth, and web dashboard.
 
 ## Repo layout
 
 ```
 .
-├── crds/               # OpenCodeRun CustomResourceDefinition (v1alpha1)
-├── deploy/             # Operator Deployment + RBAC
+├── crds/               # CustomResourceDefinitions (v1alpha1)
+│   ├── opencoderun.yaml
+│   ├── opencodeproject.yaml
+│   ├── opencodekanban.yaml    # Kanban board for agentic development
+│   └── clusteragent.yaml      # Cluster-wide agent definitions
+├── deploy/             # Kubernetes Deployment + RBAC manifests
+│   ├── operator.yaml
+│   ├── manager-controller.yaml  # Persistent kanban manager controller
+│   └── web.yaml
 ├── examples/           # Sample OpenCodeRun manifests
 ├── images/
 │   ├── runner/         # opencode + git + ssh on Alpine (used by every run pod)
-│   └── node/           # Shared Node 22 image; builds operator + dispatcher
+│   ├── node/           # Shared Node 24 image; builds operator + dispatcher + manager
 │   └── web/            # Bun image; builds + serves the web dashboard
-├── manifests/          # Raw k8s manifests for M1 smoke
+├── manifests/          # Raw k8s manifests for M1 smoke test
 ├── packages/
 │   ├── api/            # Shared Zod schemas, constants, type helpers
 │   ├── operator/       # CRD reconciler (informer + reconciler loop)
 │   ├── dispatcher/     # Sidecar that drives each run via the opencode HTTP API
-│   ├── cli/            # beatctl — user-facing CLI (M3)
-│   └── web/            # Dashboard SPA + Hono server + bun:sqlite stats DB
+│   ├── cli/            # beatctl — user-facing CLI
+│   ├── web/            # Dashboard SPA + Hono server + bun:sqlite stats DB
+│   └── manager-controller/  # Watches OpenCodeKanban CRs, dispatches worker runs
 └── scripts/            # Smoke tests + minikube image loader
 ```
 
-Planned (M5+): `e2e/` automated end-to-end suite; git push-back.
+Planned (M6+): `e2e/` automated end-to-end suite; git push-back.
 
 ## M1: smoke test
 
@@ -177,14 +184,14 @@ kubectl apply -f examples/hello-run.yaml
 kubectl -n percussionist get opencoderun -w
 ```
 
-### 1. Build and load all three images
+### 1. Build and load all images
 
 ```sh
 ./scripts/minikube-load.sh
 ```
 
-Builds `runner`, `operator`, `dispatcher` and loads them into minikube. On
-other clusters see the M1 section for alternatives.
+Builds `runner`, `operator`, `dispatcher`, `web`, and `manager` images and loads
+them into minikube. On other clusters see the M1 section for alternatives.
 
 When you change code and a pod is still pinning the old image, minikube's
 plain `image load` silently no-ops. The script warns you when that happens;
@@ -220,9 +227,13 @@ Equivalent manual flow:
 ```sh
 kubectl apply -f crds/opencoderun.yaml
 kubectl apply -f crds/opencodeproject.yaml
+kubectl apply -f crds/opencodekanban.yaml
+kubectl apply -f crds/clusteragent.yaml
 kubectl apply -f deploy/operator.yaml
+kubectl apply -f deploy/manager-controller.yaml
 kubectl apply -f deploy/web.yaml
 kubectl -n percussionist rollout status deploy/percussionist-operator
+kubectl -n percussionist rollout status deploy/percussionist-manager
 kubectl -n percussionist rollout status deploy/percussionist-web
 ```
 
@@ -262,6 +273,8 @@ opencode attach http://localhost:4096
 ```sh
 beatctl deploy --down
 ```
+
+Deletes all CRDs, operator + manager controller deployments/RBAC, and web resources.
 
 ## M2 exit criteria
 
@@ -315,8 +328,8 @@ external dependencies.
 
 | Command                        | What it does                                                                 |
 | ------------------------------ | ---------------------------------------------------------------------------- |
-| `beatctl deploy`               | Install CRDs and apply operator/web manifests; waits for rollouts by default. |
-| `beatctl deploy --down`        | Delete operator/web resources and CRDs (`--ignore-not-found`).              |
+| `beatctl deploy`               | Install CRDs (opencoderun, opencodeproject, opencodekanban, clusteragent) and apply operator + manager controller + web manifests; waits for rollouts by default. |
+| `beatctl deploy --down`        | Delete operator/web + manager controller resources and all CRDs (`--ignore-not-found`).              |
 | `beatctl submit -t "<task>"`   | Create an `OpenCodeRun` with an inline task prompt.                          |
 | `beatctl submit -i`            | Interactive run — no automatic prompt; keeps the runner alive for `beatctl attach`. |
 | `beatctl submit ... -a`        | `--attach`: after submit, poll until `Running` and hand off to attach in one shot. Great combined with `-i`. |
@@ -404,11 +417,14 @@ details on the `/api/stats/export` endpoint.
 
 ### Pages
 
-The dashboard has a persistent left sidebar with two views:
+The dashboard has a persistent left sidebar with five views:
 
 | Page | URL | What it shows |
 |------|-----|---------------|
 | **Runs** | `/` | Live `OpenCodeRun` list — phase badges, token totals, age, attach button. Sortable and filterable by phase. |
+| **Kanban** | `/kanbans` | Kanban board listing with column counts and active workers. Board detail shows visual columns (Ready → In Progress → Review → Rework → Done) with task cards and worker status. |
+| **Projects** | `/projects` | Reusable templates for run defaults (git, secrets, model). |
+| **Agents** | `/agents` | Cluster-wide agent catalog — reusable `.md` definitions shared across runs. |
 | **Stats** | `/stats` | Historical session analytics from the stats DB (see below). |
 
 #### Stats view
@@ -644,6 +660,110 @@ pnpm beatctl get git-demo
 - [x] Init-container failures (bad URL, wrong ref, missing key) surface as
       `Pod.Failed` and propagate to `RunPhase.Failed` via the operator's
       pod-phase mirror.
+
+## M5: Kanban-style agentic development
+
+A persistent manager controller watches `OpenCodeKanban` custom resources and
+dispatches worker runs — one per task — through a kanban board with columns
+(`ready → in-progress → review → rework → done`). The manager handles retries,
+escalation to human when stuck, and rework dispatch from feedback.
+
+### Architecture at a glance
+
+```
+  OpenCodeKanban (CR)
+        │
+        ▼ watched by
+  ┌──────────────┐        creates / owns       ┌─────────────────────────┐
+  │   manager    │ ──────────────────────────► │  OpenCodeRun (worker)   │
+  │ (Deployment) │                             │   ├─ runner             │
+  └──────────────┘                             │   └─ dispatcher         │
+                                               └──────────┬──────────────┘
+                                                          │ patches status
+                                                          ▼
+                                                    .status.workers[]
+```
+
+- **manager controller** watches `OpenCodeKanban` CRs via an informer loop. On
+  each reconcile it:
+  - **Pull phase**: moves tasks from "ready" to "in-progress", up to
+    `spec.maxParallel` concurrent workers (default 2 for EliteDesk sizing).
+  - **Monitor phase**: checks each worker's `OpenCodeRun` status — succeeded
+    → review, failed → retry (up to 3 times), then escalate.
+  - **Rework**: if a human manually moves a task from "review" back to "rework",
+    the manager re-dispatches it with feedback context.
+- **Worker runs** are `OpenCodeRun` CRs with ownerReferences to their kanban,
+  so they cascade-delete when the board is deleted. The worker prompt embeds
+  structured task context (ID, title, description, acceptance criteria,
+  dependencies from succeeded workers).
+
+### Kanban spec fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `spec.displayName` | string | — | Human-readable label for the board |
+| `spec.source.git` | object | — | Git workspace all workers clone from |
+| `spec.defaults.model` | string | — | Model inherited by all worker runs |
+| `spec.defaults.timeoutSeconds` | int | 14400 (4h) | Hard timeout per worker run |
+| `spec.maxParallel` | int | 2 | WIP limit: max concurrent in-progress tasks (1–20) |
+| `spec.agents[]` | AgentDef[] | — | Inline agent definitions injected into worker pods |
+| `spec.tasks[]` | KanbanTask[] | — | Initial task backlog (max 100 per board) |
+| `spec.phase` | enum | Active | Board lifecycle: Active / Complete / Archived |
+
+### Status fields
+
+The manager controller maintains `.status.backlog` as a map of column name →
+task ID array, and `.status.workers[]` with per-worker run tracking (run name,
+status, branch, escalation text). The web dashboard renders this as a visual
+kanban board.
+
+### Quickstart
+
+```sh
+# Build + load the manager image
+./scripts/minikube-load.sh --only manager
+
+# Deploy CRDs + operator + manager controller + web
+beatctl deploy
+
+# Create a kanban board via CLI or web UI
+beatctl kanban create --name my-board --max-parallel 2 \
+  --model local/llama3.1-70b --timeout 14400
+
+# Add tasks to the board
+beatctl kanban task add my-board --id F-101 --title "Implement login" \
+  --description "Add OAuth login with GitHub provider"
+
+# View the board in the web dashboard at /kanbans
+```
+
+### Human-in-the-loop workflow
+
+The manager escalates to human when a worker fails after 3 retries. The human
+reviews the escalation text (visible on the kanban board UI or via CLI), then:
+
+1. **Accept** — move task from "review" to "done" via `beatctl kanban task move`
+   or the web UI.
+2. **Rework** — move task back to "rework"; the manager re-dispatches with
+   feedback context embedded in the prompt.
+3. **Skip** — remove the task from the board entirely.
+
+### Web dashboard
+
+The kanban page (`/kanbans`) shows a table of all boards with column counts and
+active worker totals. The board detail view renders a visual kanban board with:
+
+- Five columns: Ready, In Progress, Review, Rework, Done
+- Task cards showing ID, title, priority badge, worker status indicator
+- Worker info: run name (links to `/runs/:name`), status badge, escalation alerts
+- Button-based column movement (no drag-and-drop)
+- Escalation summary with expandable text blocks
+
+### Prerequisites for manager controller
+
+The manager controller requires the `OpenCodeKanban` CRD and its RBAC resources.
+These are installed automatically by `beatctl deploy`. The manager image must be
+available in your cluster (built via `minikube-load.sh --only manager`).
 
 ## Provider auth
 
