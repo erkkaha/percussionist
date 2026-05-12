@@ -59,9 +59,7 @@ export interface SubmitOpts {
 }
 
 function generateName(): string {
-  // 6 hex chars from the current ms is enough entropy for casual use.
-  const stamp = Date.now().toString(16).slice(-6);
-  return `run-${stamp}`;
+  return `run-${Date.now().toString(16)}`;
 }
 
 function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussionist/api").OpenCodeProjectSpec): OpenCodeRun {

@@ -40,7 +40,7 @@ session.get("/:name/session", async (c) => {
 
   // 3. ConfigMap fallback.
   try {
-    const snapshot = await readSessionConfigMap(name);
+    const snapshot = await readSessionConfigMap(name, sessionID);
     if (snapshot) {
       return c.json({
         sessionID,

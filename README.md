@@ -49,6 +49,12 @@ into its TUI from your laptop with `opencode attach`.
 docker build -t percussionist/runner:dev images/runner
 ```
 
+The runner image pins locale environment variables (`LANG`, `LC_ALL`,
+`LC_NUMERIC`) to `C.UTF-8` and installs `icu-data-full` so number/date
+formatting stays deterministic by default while still supporting explicit
+non-English locales (for example `fi-FI` decimal comma) in pod-based test
+runs.
+
 ### 2. Make the image available to the cluster
 
 Pick the one that matches your setup:
@@ -161,6 +167,16 @@ Everything from M1, plus:
 - A running cluster with the `percussionist` namespace available (the deploy
   manifest creates it for you)
 
+### Quickstart (minikube)
+
+```sh
+minikube addons enable ingress
+./scripts/minikube-load.sh
+beatctl deploy
+kubectl apply -f examples/hello-run.yaml
+kubectl -n percussionist get opencoderun -w
+```
+
 ### 1. Build and load all three images
 
 ```sh
@@ -193,12 +209,21 @@ pass `--force` to have it fix things for you:
 
 Without `--yes` the script prompts before deleting any `OpenCodeRun`.
 
-### 2. Install the CRD, RBAC, and operator
+### 2. Deploy CRDs + operator + web
+
+```sh
+beatctl deploy
+```
+
+Equivalent manual flow:
 
 ```sh
 kubectl apply -f crds/opencoderun.yaml
+kubectl apply -f crds/opencodeproject.yaml
 kubectl apply -f deploy/operator.yaml
+kubectl apply -f deploy/web.yaml
 kubectl -n percussionist rollout status deploy/percussionist-operator
+kubectl -n percussionist rollout status deploy/percussionist-web
 ```
 
 ### 3. Submit a run
@@ -232,11 +257,10 @@ kubectl -n percussionist port-forward svc/hello 4096:4096 &
 opencode attach http://localhost:4096
 ```
 
-### 5. One-shot smoke
+### 5. Tear down deployment
 
 ```sh
-./scripts/m2-smoke.sh           # apply + wait for Succeeded
-./scripts/m2-smoke.sh --down    # cleanup
+beatctl deploy --down
 ```
 
 ## M2 exit criteria
@@ -248,7 +272,7 @@ opencode attach http://localhost:4096
       token counts and timestamps.
 - [x] Deleting the CR garbage-collects all child objects.
 
-Next up — **M3:** `beatctl` CLI (`submit`, `ls`, `attach`, `logs`, `cancel`)
+Next up — **M3:** `beatctl` CLI (`deploy`, `submit`, `ls`, `attach`, `logs`, `cancel`)
 so you never have to touch `kubectl` for routine use.
 
 ## M3: `beatctl` CLI
@@ -291,6 +315,8 @@ external dependencies.
 
 | Command                        | What it does                                                                 |
 | ------------------------------ | ---------------------------------------------------------------------------- |
+| `beatctl deploy`               | Install CRDs and apply operator/web manifests; waits for rollouts by default. |
+| `beatctl deploy --down`        | Delete operator/web resources and CRDs (`--ignore-not-found`).              |
 | `beatctl submit -t "<task>"`   | Create an `OpenCodeRun` with an inline task prompt.                          |
 | `beatctl submit -i`            | Interactive run — no automatic prompt; keeps the runner alive for `beatctl attach`. |
 | `beatctl submit ... -a`        | `--attach`: after submit, poll until `Running` and hand off to attach in one shot. Great combined with `-i`. |

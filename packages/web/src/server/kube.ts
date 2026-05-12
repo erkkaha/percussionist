@@ -205,17 +205,24 @@ export async function fetchSessionMessages(
 
 export async function readSessionConfigMap(
   runName: string,
-): Promise<{ messages: unknown; truncated: boolean } | null> {
+  sessionID: string,
+): Promise<{ messages: unknown[]; truncated: boolean } | null> {
   try {
     const cm = await core().readNamespacedConfigMap({
       name: `${runName}-session`,
       namespace: NAMESPACE,
     });
-    const raw = cm.data?.["messages.json"];
+    // Verify the session exists in the snapshot index.
+    const sessionsRaw = cm.data?.["sessions.json"];
+    if (!sessionsRaw) return null;
+    const sessions: string[] = JSON.parse(sessionsRaw);
+    if (!sessions.includes(sessionID)) return null;
+
+    const raw = cm.data![`messages-${sessionID}.json`];
     if (!raw) return null;
     return {
       messages: JSON.parse(raw),
-      truncated: cm.data?.["truncated"] === "true",
+      truncated: cm.data?.[`truncated-${sessionID}`] === "true",
     };
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number };

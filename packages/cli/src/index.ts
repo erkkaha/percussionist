@@ -12,6 +12,7 @@ import { runLogs } from "./logs.js";
 import { runAttach } from "./attach.js";
 import { runCancel } from "./cancel.js";
 import { runWait } from "./wait.js";
+import { runDeploy } from "./deploy.js";
 import { runAuthImport } from "./auth.js";
 import { runSshKeyCreate } from "./ssh-key.js";
 import {
@@ -28,6 +29,16 @@ program
   .name("beatctl")
   .description("CLI for percussionist — orchestrate OpenCode runs on Kubernetes")
   .version("0.1.0");
+
+// deploy --------------------------------------------------------------------
+program
+  .command("deploy")
+  .description("install or remove percussionist CRDs and deployments")
+  .option("-n, --namespace <ns>", "namespace for rollout checks", DEFAULT_NAMESPACE)
+  .option("--repo-root <path>", "repo root containing crds/ and deploy/", process.cwd())
+  .option("--down", "remove deployed resources", false)
+  .option("--no-wait", "don't wait for deployment rollout")
+  .action(runDeploy);
 
 // submit --------------------------------------------------------------------
 program

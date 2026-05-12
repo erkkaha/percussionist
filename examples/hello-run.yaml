@@ -1,7 +1,7 @@
 # Sample OpenCodeRun. Apply after the CRD and operator are installed.
 #   kubectl apply -f examples/hello-run.yaml
 #
-# Requires an LLM key secret (created by scripts/m2-smoke.sh from your env):
+# Requires an LLM key secret (create it from your env):
 #   kubectl -n percussionist create secret generic llm-keys \
 #     --from-literal=ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 apiVersion: percussionist.dev/v1alpha1

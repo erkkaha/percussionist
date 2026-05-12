@@ -86,7 +86,6 @@ spec:
                   type: object
                   properties:
                     llmKeysSecret: { type: string }
-                    serverPasswordSecret: { type: string }
                     gitSSHSecret:
                       type: string
                       description: Deprecated. Use spec.source.git.sshSecret instead.
@@ -168,6 +167,14 @@ spec:
                   type: integer
                   minimum: 0
                   default: 3600
+                expose:
+                  type: object
+                  description: Controls per-run Ingress creation when the operator has PERCUSSIONIST_INGRESS_BASE_DOMAIN configured.
+                  properties:
+                    web:
+                      type: boolean
+                      default: true
+                      description: When true, creates a per-run Ingress exposing the opencode web UI at <run>.<baseDomain>/.
             status:
               type: object
               properties:

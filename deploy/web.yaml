@@ -39,10 +39,10 @@ rules:
   - apiGroups: ["percussionist.dev"]
     resources: ["opencoderuns"]
     verbs: ["get", "list", "watch", "create", "delete"]
-  # Read + write OpenCodeProject resources (list, detail, create, delete).
+  # Read + write OpenCodeProject resources (list, detail, create, update, delete).
   - apiGroups: ["percussionist.dev"]
     resources: ["opencodeprojects"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Read pods (needed to resolve podName and read logs).
   - apiGroups: [""]
     resources: ["pods"]

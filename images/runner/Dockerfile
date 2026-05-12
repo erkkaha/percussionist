@@ -10,6 +10,12 @@
 
 FROM ghcr.io/anomalyco/opencode:latest
 
+# Pin locale-related env for deterministic number/date formatting in tests
+# and agent runs (avoid host-dependent snapshot drift).
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    LC_NUMERIC=C.UTF-8
+
 # Tools the agent will need at runtime.
 #  - git, openssh-client: clone repos, push branches, SSH auth
 #  - ca-certificates: HTTPS to LLM providers and git hosts
@@ -17,6 +23,8 @@ FROM ghcr.io/anomalyco/opencode:latest
 #  - nodejs, npm: agents that need node/npm at runtime (24.x from Alpine repos)
 #  - gcompat: glibc ABI compatibility layer so glibc-linked .so files in the
 #             opencode binary (bun FFI) can load on musl/Alpine
+#  - icu-data-full: full ICU locale data so Intl number/date formatting supports
+#                   non-English locales (e.g. fi-FI decimal comma)
 RUN apk add --no-cache \
       git \
       openssh-client \
@@ -24,6 +32,7 @@ RUN apk add --no-cache \
       tini \
       nodejs \
       npm \
+      icu-data-full \
       gcompat \
     && mkdir -p /workspace /root/.ssh \
     && chmod 700 /root/.ssh
