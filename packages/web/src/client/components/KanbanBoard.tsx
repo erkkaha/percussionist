@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useKanban } from "../hooks/useKanbans";
-import { patchKanbanStatus, deleteKanban } from "../lib/api";
-import type { OpenCodeKanban, WorkerStatus, KanbanTask } from "../lib/types";
+import { patchKanbanStatus, deleteKanban, addKanbanTask } from "../lib/api";
+import type { OpenCodeKanban, WorkerStatus, KanbanTask, PendingQuestion } from "../lib/types";
 
 const COLUMNS = ["ready", "in-progress", "review", "rework", "done"] as const;
 
@@ -61,6 +62,59 @@ function prevColumn(col: string): string | null {
   const idx = COLUMNS.indexOf(col as (typeof COLUMNS)[number]);
   if (idx <= 0) return null;
   return COLUMNS[idx - 1] as string;
+}
+
+function PendingQuestionCard({ question }: { 
+  question: PendingQuestion; 
+}) {
+  const queryClient = useQueryClient();
+  const [replyText, setReplyText] = useState("");
+
+  async function handleReply() {
+    if (!replyText.trim()) return;
+    try {
+      await fetch(`/api/runs/${encodeURIComponent(question.runName || "")}/reply`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ message: replyText }),
+      });
+      queryClient.invalidateQueries({ queryKey: ["kanban"] });
+    } catch (e) { console.error("Reply failed:", e); }
+  }
+
+  return (
+    <div className="bg-amber-900/15 border border-amber-700/30 rounded p-4 space-y-3">
+      {/* Header */}
+      <div className="flex items-center gap-2.5">
+        <span className="text-xs font-bold uppercase tracking-wider text-text-dim">⏳ Worker Question</span>
+        {question.runName && (
+          <Link to={`/runs/${encodeURIComponent(question.runName)}`} 
+            className="text-[10px] bg-surface-overlay/40 px-2 py-0.5 rounded border border-border-muted hover:border-text-dim transition-colors">
+            {String(question.workerId)} →
+          </Link>
+        )}
+      </div>
+
+      {/* Question text */}
+      <p className="text-sm text-text-muted whitespace-pre-wrap leading-relaxed max-h-40 overflow-y-auto pr-2 scrollbar-thin">
+        {question.messageText}
+      </p>
+
+      {/* Reply textarea + button */}
+      <div className="flex gap-2 mt-3 pt-3 border-t border-border-muted/50">
+        <textarea 
+          value={replyText} onChange={(e) => setReplyText(e.target.value)}
+          placeholder="Type your answer..." rows={2}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleReply(); } }}
+          className="flex-1 bg-surface-overlay border border-border-muted rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-blue-600/50 transition-colors placeholder:text-text-dim"
+        />
+        <button onClick={handleReply} disabled={!replyText.trim()}
+          className={`self-end px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${replyText.trim() ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm" : "bg-surface-overlay/30 text-text-dim cursor-not-allowed"}`}>
+          Reply
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function TaskCard({
@@ -290,11 +344,164 @@ function Column({
   );
 }
 
+function AddTaskModal({
+  kanbanName,
+  existingIds,
+  onClose,
+  onAdded,
+}: {
+  kanbanName: string;
+  existingIds: Set<string>;
+  onClose: () => void;
+  onAdded: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [id, setId] = useState("");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [priority, setPriority] = useState<"high" | "medium" | "low">("medium");
+  const [error, setError] = useState<string>("");
+
+  function generateId() {
+    let maxNum = 0;
+    for (const existing of existingIds) {
+      if (existing.startsWith("T-")) {
+        const num = parseInt(existing.slice(2), 10);
+        if (!isNaN(num) && num > maxNum) maxNum = num;
+      }
+    }
+    return `T-${String(maxNum + 1).padStart(3, "0")}`;
+  }
+
+  function handleGenerateId() {
+    setId(generateId());
+  }
+
+  const mutation = useMutation({
+    mutationFn: () => addKanbanTask(kanbanName, { id, title, description, priority }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["kanban", kanbanName] });
+      onAdded();
+    },
+    onError: (e: Error) => {
+      setError(e.message);
+    },
+  });
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!id.trim() || !title.trim()) return;
+    mutation.mutate();
+  }
+
+  const inputClass =
+    "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-zinc-500 focus:outline-none";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="w-full max-w-md rounded-lg border border-border bg-surface-raised p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Add Task</h2>
+          <button onClick={onClose} className="text-text-dim hover:text-text transition-colors text-xl leading-none">&times;</button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-3">
+          {/* ID */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">Task ID</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={id}
+                onChange={(e) => setId(e.target.value)}
+                placeholder="T-015"
+                className={`${inputClass} font-mono flex-1`}
+              />
+              <button
+                type="button"
+                onClick={handleGenerateId}
+                className="rounded border border-border-muted px-2.5 py-2 text-xs text-text-dim hover:text-text transition-colors whitespace-nowrap"
+              >
+                Generate
+              </button>
+            </div>
+          </div>
+
+          {/* Title */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">Title *</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="What needs to be done?"
+              required
+              className={inputClass}
+            />
+          </div>
+
+          {/* Description */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">Description</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Optional details..."
+              rows={3}
+              className={`${inputClass} resize-y`}
+            />
+          </div>
+
+          {/* Priority */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">Priority</label>
+            <select
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as "high" | "medium" | "low")}
+              className={inputClass}
+            >
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-2 text-sm text-phase-failed">
+              {error}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="submit"
+              disabled={mutation.isPending || !id.trim() || !title.trim()}
+              className="rounded-md bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
+            >
+              {mutation.isPending ? "Adding..." : "Add Task"}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-sm text-text-muted hover:text-text transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function KanbanBoard() {
   const pathParts = window.location.pathname.split("/kanbans/");
   const name = pathParts[1] ?? "";
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [showAddTask, setShowAddTask] = useState(false);
 
   if (!name) {
     return (
@@ -402,17 +609,26 @@ export default function KanbanBoard() {
         )}
 
         {/* Actions */}
-        <button
-          onClick={() => {
-            if (confirm(`Delete kanban "${kanban.metadata.name}"?`)) {
-              deleteMutation.mutate();
-            }
-          }}
-          disabled={deleteMutation.isPending}
-          className="shrink-0 rounded border border-border-muted px-2.5 py-1.5 text-xs font-medium text-text-dim hover:border-phase-failed/50 hover:text-phase-failed transition-colors disabled:opacity-40"
-        >
-          {deleteMutation.isPending ? "Deleting…" : "Delete"}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowAddTask(true)}
+            disabled={kanban.spec.phase === "Complete" || kanban.spec.phase === "Archived"}
+            className="rounded-md bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 disabled:cursor-not-allowed px-2.5 py-1.5 text-xs font-medium text-text transition-colors"
+          >
+            + Add Task
+          </button>
+          <button
+            onClick={() => {
+              if (confirm(`Delete kanban "${kanban.metadata.name}"?`)) {
+                deleteMutation.mutate();
+              }
+            }}
+            disabled={deleteMutation.isPending}
+            className="rounded border border-border-muted px-2.5 py-1.5 text-xs font-medium text-text-dim hover:border-phase-failed/50 hover:text-phase-failed transition-colors disabled:opacity-40"
+          >
+            {deleteMutation.isPending ? "Deleting…" : "Delete"}
+          </button>
+        </div>
       </div>
 
       {/* Board columns */}
@@ -458,6 +674,31 @@ export default function KanbanBoard() {
           </ul>
         </div>
       ) : null}
+
+      {/* Pending Questions from Workers */}
+      {status.pendingQuestions && status.pendingQuestions.length > 0 ? (
+        <section className="mt-8 pt-6 border-t border-border-muted/50">
+          <h3 className="text-sm font-semibold text-text-dim uppercase tracking-wider mb-4 flex items-center gap-2.5">
+            ⏳ Pending Questions from Workers ({status.pendingQuestions.length})
+          </h3>
+          {status.pendingQuestions.map((q: PendingQuestion, i: number) => (
+            <PendingQuestionCard key={i} question={q} />
+          ))}
+        </section>
+      ) : null}
+
+      {/* Add Task Modal */}
+      {showAddTask && (
+        <AddTaskModal
+          kanbanName={name}
+          existingIds={new Set((kanban.spec.tasks ?? []).map((t: KanbanTask) => t.id))}
+          onClose={() => setShowAddTask(false)}
+          onAdded={() => {
+            setShowAddTask(false);
+            queryClient.invalidateQueries({ queryKey: ["kanban", name] });
+          }}
+        />
+      )}
     </div>
   );
 }

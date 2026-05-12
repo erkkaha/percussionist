@@ -286,6 +286,13 @@ export interface OpenCodeKanbanSpec {
   phase?: "Active" | "Complete" | "Archived";
 }
 
+export interface PendingQuestion {
+  workerId: string;
+  runName?: string;
+  sessionID: string;
+  messageText: string;
+}
+
 export interface OpenCodeKanbanStatus {
   phase?: string;
   columns?: string[];
@@ -293,6 +300,7 @@ export interface OpenCodeKanbanStatus {
   workers?: WorkerStatus[];
   activeWorkers?: number;
   escalations?: string[];
+  pendingQuestions?: PendingQuestion[];
   lastEventAt?: string;
 }
 

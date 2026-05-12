@@ -289,14 +289,46 @@ export async function patchKanbanStatus(
   name: string,
   statusPatch: Record<string, unknown>,
 ): Promise<OpenCodeKanban> {
-  return (await custom().patchNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace: NAMESPACE,
-    plural: PLURAL_KANBAN,
-    name,
-    body: { status: statusPatch },
-  })) as OpenCodeKanban;
+  // Use fetch directly with the correct content-type for merge-patch on status subresource.
+  // The kubernetes client's patchNamespacedCustomObjectStatus sends application/json-patch+json
+  // which Kubernetes rejects for this CRD; we need application/merge-patch+json instead.
+  const kc = _kc || new KubeConfig();
+  kc.loadFromCluster();
+
+  let token: string | undefined;
+  try {
+    token = require("fs").readFileSync("/var/run/secrets/kubernetes.io/serviceaccount/token", "utf8").trim();
+  } catch {
+    // Fallback for local development — read from kubeconfig.
+    const currentContext = kc.getCurrentContext();
+    if (currentContext) {
+      const user = kc.getUser(currentContext);
+      token = (user as unknown as Record<string, string>)?.token;
+    }
+  }
+  if (!token) throw new Error("No service account token available");
+
+  const apiVersion = `${API_GROUP}/${API_VERSION}`;
+  const host = process.env.KUBERNETES_SERVICE_HOST || "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT || "443";
+  const url = `https://${host}:${port}/apis/${apiVersion}/namespaces/${NAMESPACE}/${PLURAL_KANBAN}/${name}/status`;
+
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/merge-patch+json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ status: statusPatch }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Kubernetes API error ${res.status}: ${text}`);
+  }
+
+  return (await res.json()) as OpenCodeKanban;
 }
 
 export async function deleteKanban(name: string): Promise<void> {
@@ -375,6 +407,41 @@ export async function readSessionConfigMap(
     const anyE = e as { statusCode?: number };
     // 404 = no snapshot exists (run didn't succeed yet, or snapshot was GC'd).
     if (anyE.statusCode === 404) return null;
+
     throw e;
   }
+}
+
+// POST a follow-up message to an opencode session (human reply).
+export async function postSessionMessage(
+  serviceName: string, sessionID: string, text: string,
+): Promise<void> {
+  const url = `http://${serviceName}.${NAMESPACE}.svc.cluster.local:4096/session/${sessionID}/message`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ parts: [{ type: "text", text }] }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`OpenCode API returned HTTP ${res.status}: ${await res.text().catch(() => "")}`);
+}
+
+// Reply to a permission request (approve/reject).
+export async function postPermissionReply(
+  serviceName: string, sessionID: string, permissionID: string, response: "once" | "always" | "reject",
+): Promise<void> {
+  const url = `http://${serviceName}.${NAMESPACE}.svc.cluster.local:4096/session/${sessionID}/permissions/${permissionID}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ response }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`OpenCode permission API returned HTTP ${res.status}: ${await res.text().catch(() => "")}`);
+}
+
+// Resolve the opencode service name for a given run.
+export async function getServiceNameForRun(runName: string): Promise<string | null> {
+  const run = await getRun(runName);
+  return (run as any).status?.serviceName ?? null;
 }

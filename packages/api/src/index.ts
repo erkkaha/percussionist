@@ -194,6 +194,7 @@ export const RunPhase = {
   Pending: "Pending",
   Initializing: "Initializing",
   Running: "Running",
+  WaitingForInput: "WaitingForInput",   // agent asked a question, waiting for human reply
   Succeeded: "Succeeded",
   Failed: "Failed",
   Cancelled: "Cancelled",
@@ -212,6 +213,7 @@ export const OpenCodeRunStatusSchema = z
       RunPhase.Pending,
       RunPhase.Initializing,
       RunPhase.Running,
+      RunPhase.WaitingForInput,   // agent asked question, waiting for human reply
       RunPhase.Succeeded,
       RunPhase.Failed,
       RunPhase.Cancelled,
@@ -457,6 +459,12 @@ export const OpenCodeKanbanSpecSchema = z.object({
 
 export type OpenCodeKanbanSpec = z.infer<typeof OpenCodeKanbanSpecSchema>;
 
+// Per-worker questions from agents that need human answers.
+export const PendingQuestionSchema = z.object({
+  workerId: z.string(),         // taskId or run name
+  sessionID: z.string(),        // opencode session ID for reply routing
+  messageText: z.string().max(16384), // last assistant text (the question)
+});
 // OpenCodeKanban status — operational state tracked by the manager controller.
 export const OpenCodeKanbanStatusSchema = z.object({
   // Mirrors spec.phase with operational state.
@@ -476,6 +484,9 @@ export const OpenCodeKanbanStatusSchema = z.object({
 
   // JSON-serialized escalation messages for quick CLI/UI access.
   escalations: z.string().array().optional(),
+
+  // Pending questions from workers that need human answers.
+  pendingQuestions: PendingQuestionSchema.array().optional(),
 
   // ISO timestamp of the most recent state change.
   lastEventAt: z.string().optional(),

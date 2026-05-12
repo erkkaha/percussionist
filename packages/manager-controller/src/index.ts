@@ -63,22 +63,74 @@ function ownerRefsFor(kanban: OpenCodeKanban) {
   ];
 }
 
-function patchKanbanStatus(
+async function patchKanbanStatus(
   kanbanName: string,
   patch: Partial<OpenCodeKanban["status"]>,
 ): Promise<void> {
   const body = { status: { ...patch, lastEventAt: new Date().toISOString() } };
-  return k8s
-    .patchNamespacedCustomObjectStatus({
-      group: API_GROUP,
-      version: API_VERSION,
-      namespace: NAMESPACE,
-      plural: PLURAL_KANBAN,
-      name: kanbanName,
-      body,
-    })
-    .then(() => {})
-    .catch((e) => err(`patchKanbanStatus(${kanbanName}):`, (e as Error).message));
+
+  let token: string | undefined;
+  try {
+    const fs = await import("node:fs");
+    token = fs.readFileSync("/var/run/secrets/kubernetes.io/serviceaccount/token", "utf8").trim();
+  } catch (e) {
+    const kc = new KubeConfig();
+    kc.loadFromCluster();
+    const currentContext = kc.getCurrentContext();
+    if (currentContext) {
+      const user = kc.getUser(currentContext);
+      token = (user as unknown as Record<string, string>)?.token;
+    }
+  }
+  if (!token) { err("patchKanbanStatus: no service account token"); return; }
+
+  const host = process.env.KUBERNETES_SERVICE_HOST || "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT || "443";
+  const url = `https://${host}:${port}/apis/${API_GROUP}/${API_VERSION}/namespaces/${NAMESPACE}/${PLURAL_KANBAN}/${kanbanName}/status`;
+
+  try {
+    // Minikube uses self-signed certs; disable verification for the status patch request.
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    const res = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/merge-patch+json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      err(`patchKanbanStatus(${kanbanName}): HTTP ${res.status}: ${text}`);
+    }
+  } catch (e) {
+    err(`patchKanbanStatus(${kanbanName}):`, (e as Error).message);
+  }
+}
+
+// Fetch a single run CR by name for reading its status.
+async function getRun(runName: string): Promise<Record<string, unknown> | null> {
+  let token: string | undefined;
+  try {
+    const fs = await import("node:fs");
+    token = fs.readFileSync("/var/run/secrets/kubernetes.io/serviceaccount/token", "utf8").trim();
+  } catch (e) {}
+
+  if (!token) return null;
+
+  try {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    const host = process.env.KUBERNETES_SERVICE_HOST || "kubernetes.default.svc";
+    const port = process.env.KUBERNETES_SERVICE_PORT || "443";
+    const url = `https://${host}:${port}/apis/${API_GROUP}/${API_VERSION}/namespaces/${NAMESPACE}/opencoderuns/${runName}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    err(`getRun(${runName}):`, (e as Error).message);
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -202,7 +254,8 @@ async function reconcile(kanban: OpenCodeKanban): Promise<void> {
     // Create worker entry.
     const retryCount = existingWorker?.retryCount ?? 0;
     const branchName = `feat/${taskId}`;
-    const runName = `${name}-${taskId.toLowerCase()}-${Date.now().toString(16)}`;
+    const sanitizedTaskId = taskId.toLowerCase().replace(/[^a-z0-9]/g, "-");
+    const runName = `${name}-${sanitizedTaskId}-${Date.now().toString(16)}`;
 
     updatedWorkers.push({
       taskId,
@@ -313,6 +366,41 @@ async function reconcile(kanban: OpenCodeKanban): Promise<void> {
           newBacklog["in-progress"] = newBacklog["in-progress"]!.filter((id) => id !== worker.taskId);
           if (!newBacklog.ready) newBacklog.ready = [];
           newBacklog.ready.push(worker.taskId);
+        } else if (runPhase === "WaitingForInput") {
+          // Worker is waiting for human input — surface pending question on kanban board.
+          log(`Worker ${worker.taskId} (${worker.runName!}) WaitingForInput`);
+
+          const runData = await getRun(worker.runName!);
+          if (runData) {
+            const messageText = ((runData as any).status?.message ?? "") 
+              .replace("waiting for permission: ", "").replace(/^waiting for answer$/, "");
+
+            // Get existing pending questions or create new array.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- runtime values via K8s API
+            const qs: any[] = (kanban as any).status?.pendingQuestions ?? [];
+            
+            // Find existing entry by workerId (taskId) and update, or add new one.
+            let foundIdx = -1;
+            for (let qi = 0; qi < qs.length; qi++) {
+              if ((qs[qi] as any).workerId === worker.taskId) { foundIdx = qi; break; }
+            }
+
+            const q: Record<string, unknown> = {
+              workerId: worker.taskId,
+              runName: worker.runName!,
+              sessionID: (runData as any).status?.sessionID || "",
+              messageText: messageText || `Worker ${worker.taskId} is waiting for human input`,
+            };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- runtime values via K8s API
+            if (foundIdx >= 0) {
+              (qs as any)[foundIdx] = q; // update in place
+            } else {
+              qs.push(q);
+            }
+
+            await patchKanbanStatus(name, { pendingQuestions: qs });
+          }
         }
       } catch (e) {
         // Run not found yet — it may still be initializing. Log but don't fail.
@@ -320,6 +408,32 @@ async function reconcile(kanban: OpenCodeKanban): Promise<void> {
         if (!/not found/i.test(msg)) {
           err(`monitor worker ${worker.runName}:`, msg);
         }
+      }
+    }
+
+
+    // Clear stale pending questions for workers that returned to Running.
+    const currentQs = kanban.status?.pendingQuestions ?? [];
+    if (currentQs.length > 0 && updatedWorkers.length > 0) {
+      const activeWorkerIds = new Set(updatedWorkers.filter((w) => w.status === "Running").map(w => w.taskId));
+      // Also include Succeeded workers that are in review/done columns.
+      
+      for (const q of currentQs as Array<Record<string, unknown>>) {
+        const wid = String(q.workerId);
+        if (!activeWorkerIds.has(wid)) continue; // this worker is active — keep question? No, clear it.
+      }
+      
+      // Remove questions whose workers are back in Running state.
+      const filteredQs = currentQs.filter((q: any) => {
+        const wid = String(q.workerId);
+        return !updatedWorkers.some(w => w.taskId === wid && w.status === "Running");
+      });
+
+      const removedCount = currentQs.length - filteredQs.length;
+      if (removedCount > 0) {
+        log(`Cleared ${removedCount} pending question(s) — agents resumed`);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- runtime values via K8s API
+        await patchKanbanStatus(name, { pendingQuestions: filteredQs as any[] } as Partial<Record<string, unknown>>);
       }
     }
 

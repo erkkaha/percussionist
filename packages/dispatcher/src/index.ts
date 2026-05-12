@@ -164,6 +164,66 @@ async function fetchMessages(sessionID: string): Promise<MessagesEntry[]> {
   }
 }
 
+
+async function extractLastAssistantText(sessionID: string): Promise<string> {
+  try {
+    const msgs = await fetchMessages(sessionID);
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i];
+      if ((msg as MessagesEntry)?.info?.role === "assistant") {
+        let text = "";
+        for (const part of ((msg as RawMessage).parts ?? [])) {
+          if ((part as TextPart).type === "text" && typeof (part as TextPart).text === "string") {
+            text += (part as TextPart).text;
+          }
+        }
+        return text || "(no text in last assistant message)";
+      }
+    }
+  } catch {} // best-effort
+  return "(could not extract question text)";
+}
+
+async function postReply(sessionID: string, text: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE_URL}/session/${sessionID}/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parts: [{ type: "text", text }] }),
+    });
+    return res.ok;
+  } catch (e) {
+    err("postReply failed:", (e as Error).message);
+    return false;
+  }
+}
+
+async function postPermissionReply(
+  sessionID: string, permissionID: string, response: "once" | "always" | "reject",
+): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE_URL}/session/${sessionID}/permissions/${permissionID}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ response }),
+    });
+    return res.ok;
+  } catch (e) {
+    err("postPermissionReply failed:", (e as Error).message);
+    return false;
+  }
+}
+
+async function getPermissions(sessionID: string): Promise<unknown[]> {
+  try {
+    const res = await fetch(`${BASE_URL}/session/${sessionID}/permissions`);
+    if (!res.ok) return [];
+    return (await res.json()) as unknown[];
+  } catch {
+    return [];
+  }
+}
+
 async function snapshotAllSessions(): Promise<void> {
   const sessions = await listSessions();
   if (sessions.length === 0) {
@@ -756,6 +816,7 @@ async function runPrompt(): Promise<void> {
   log("prompt dispatched (async)");
 
   let sawBusy = false;
+  let waitingForInput = false;   // true when agent asked a question awaiting reply
   let terminate = false;
   shutdownSignalled.then(() => { terminate = true; });
 
@@ -784,13 +845,30 @@ async function runPrompt(): Promise<void> {
           }
           await tokens.flush();
           if (last.info.time?.completed) {
-            if (last.info.error) {
+            const totalTokens = tokens.totals();
+
+            // If we were waiting for input, check if agent did work after reply.
+            if (waitingForInput) {
+              if (totalTokens.tokensIn > 0 || totalTokens.tokensOut > 0) {
+                log("Agent resumed work after human reply — continuing");
+                waitingForInput = false;
+              } else {
+                // Still no work done — keep waiting.
+                continue;
+              }
+            } else if (last.info.error) {
               err("session ended with error:", JSON.stringify(last.info.error));
               throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
+            } else if (!sawBusy || totalTokens.tokensIn === 0 && totalTokens.tokensOut === 0) {
+              // Agent responded but consumed no tokens — likely just asking questions.
+              log("Agent asked question with zero token usage — entering WaitingForInput");
+              waitingForInput = true;
+            } else {
+              // Normal completion after work was done.
+              log("last assistant message completed — treating as done");
+              terminate = true;
+              return;
             }
-            log("last assistant message completed — treating as done");
-            terminate = true;
-            return;
           }
         }
       } catch (e) {
@@ -838,6 +916,20 @@ async function runPrompt(): Promise<void> {
           evt = JSON.parse(dataLines.join("\n"));
         } catch {
           continue;
+        }
+
+        if (evt.type === "permission.updated" && !waitingForInput) {
+          const p = evt.properties as { id?: string; title?: string; type?: string };
+          log(`Permission request from agent: ${p?.title ?? "?"} (${p?.id})`);
+          waitingForInput = true;
+        }
+
+        if (evt.type === "session.idle" && !waitingForInput) {
+          const p = evt.properties as { sessionID?: string };
+          if (p?.sessionID === sessionID) {
+            log("Session idle — agent may be waiting for user input");
+            waitingForInput = true;
+          }
         }
 
         if (evt.type === "message.updated") {
