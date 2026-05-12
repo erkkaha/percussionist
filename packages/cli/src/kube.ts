@@ -9,6 +9,8 @@ import {
   KubeConfig,
   CoreV1Api,
   CustomObjectsApi,
+  PatchStrategy,
+  setHeaderOptions,
 } from "@kubernetes/client-node";
 import {
   API_GROUP,
@@ -226,7 +228,7 @@ export async function patchKanban(
     plural: PLURAL_KANBAN,
     name,
     body,
-  })) as OpenCodeKanban;
+  }, setHeaderOptions("Content-Type", PatchStrategy.MergePatch))) as OpenCodeKanban;
 }
 
 // Render helpers ------------------------------------------------------------

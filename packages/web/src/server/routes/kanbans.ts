@@ -128,6 +128,54 @@ kanbans.patch("/:name/status", async (c) => {
   }
 });
 
+// POST /api/kanbans/:name/tasks — add a task to the board
+kanbans.post("/:name/tasks", async (c) => {
+  const name = c.req.param("name");
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (typeof body !== "object" || body === null) {
+    return c.json({ error: "Body must be an object" }, 400);
+  }
+
+  const task = (body as { task?: Record<string, unknown> }).task;
+  if (!task || typeof task !== "object") {
+    return c.json({ error: "Missing 'task' field in body" }, 400);
+  }
+
+  try {
+    const kanban = await getKanban(name);
+    if (!kanban) {
+      return c.json({ error: `Kanban "${name}" not found` }, 404);
+    }
+
+    const specTasks = (kanban.spec?.tasks as Record<string, unknown>[] | undefined) ?? [];
+    const taskId = (task as { id?: string }).id;
+    if (!taskId || typeof taskId !== "string") {
+      return c.json({ error: "Task must have an 'id' field" }, 400);
+    }
+
+    // Dedup by id — replace existing task with same id.
+    const existingIdx = specTasks.findIndex((t) => (t.id as string) === taskId);
+    if (existingIdx >= 0) {
+      specTasks[existingIdx] = task as Record<string, unknown>;
+    } else {
+      specTasks.push(task as Record<string, unknown>);
+    }
+
+    return c.json(await updateKanban(name, { ...(kanban.spec ?? {}), tasks: specTasks as any }), 201);
+  } catch (e: unknown) {
+    const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
+    const status = anyE.statusCode === 404 ? 404 : 500;
+    const msg = anyE.body?.message ?? anyE.message ?? String(e);
+    return c.json({ error: msg }, status as 400 | 404 | 500);
+  }
+});
+
 // DELETE /api/kanbans/:name
 kanbans.delete("/:name", async (c) => {
   const name = c.req.param("name");

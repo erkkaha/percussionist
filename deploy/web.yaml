@@ -47,6 +47,10 @@ rules:
   - apiGroups: ["percussionist.dev"]
     resources: ["opencodekanbans"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Patch Kanban status subresource (for backlog updates from UI).
+  - apiGroups: ["percussionist.dev"]
+    resources: ["opencodekanbans/status"]
+    verbs: ["get", "patch"]
   # Read pods (needed to resolve podName and read logs).
   - apiGroups: [""]
     resources: ["pods"]

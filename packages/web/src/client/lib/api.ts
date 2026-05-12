@@ -228,3 +228,19 @@ export async function deleteKanban(name: string): Promise<void> {
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
 }
+
+export async function addKanbanTask(
+  name: string,
+  task: { id: string; title: string; description?: string; priority?: "high" | "medium" | "low" },
+): Promise<OpenCodeKanban> {
+  const res = await fetch(`${BASE}/kanbans/${encodeURIComponent(name)}/tasks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return body as OpenCodeKanban;
+}
