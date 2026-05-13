@@ -102,6 +102,25 @@ export const ExposeSchema = z
   })
   .partial();
 
+// A sidecar container that runs alongside the opencode runner in every pod for
+// a given project. Useful for services the agent needs during its task, e.g. a
+// test database. The agent reaches them via localhost.
+export const SidecarSpecSchema = z.object({
+  // Must be a valid RFC 1123 DNS label (K8s container name rules).
+  name: z.string().min(1).max(63),
+  image: z.string().min(1),
+  // Environment variables injected into the sidecar container.
+  env: z
+    .array(z.object({ name: z.string().min(1), value: z.string() }))
+    .max(32)
+    .optional(),
+  // TCP ports the sidecar listens on. The operator will wait for all of these
+  // to be reachable on localhost before starting opencode.
+  ports: z.array(z.number().int().min(1).max(65535)).max(8).optional(),
+});
+
+export type SidecarSpec = z.infer<typeof SidecarSpecSchema>;
+
 // A reference to a ClusterAgent by name.
 export const AgentRefSchema = z.object({
   name: z.string().min(1).max(63),
@@ -179,6 +198,10 @@ export const OpenCodeRunSpecSchema = z
     resources: ResourceRequirementsSchema.optional(),
     secrets: SecretsRefSchema.optional(),
     source: SourceSchema.optional(),
+    // Sidecar containers injected into the pod alongside the opencode runner.
+    // Resolved from the parent OpenCodeProject at creation time.
+    // opencode will not start until all declared sidecar ports are reachable.
+    sidecars: SidecarSpecSchema.array().max(5).optional(),
     timeoutSeconds: z.number().int().positive().default(3600),
     ttlSecondsAfterFinished: z.number().int().nonnegative().default(3600),
     expose: ExposeSchema.optional(),
@@ -418,6 +441,12 @@ export const OpenCodeProjectSpecSchema = z.object({
   // Default pod resource requirements.
   resources: ResourceRequirementsSchema.optional(),
 
+  // Sidecar containers injected into every run pod for this project.
+  // Useful for test databases, mock servers, etc. The agent reaches them via
+  // localhost. opencode will not start until all declared sidecar ports are
+  // reachable.
+  sidecars: SidecarSpecSchema.array().max(5).optional(),
+
   // Embedded kanban board configuration.
   board: BoardSpecSchema.optional(),
 });
@@ -486,6 +515,7 @@ export interface ResolvedRunConfig {
   resources?: ResourceRequirements;
   secrets?: SecretsRef;
   source?: { git?: GitSource };
+  sidecars?: SidecarSpec[];
 }
 
 export function resolveRunConfig(
@@ -514,5 +544,6 @@ export function resolveRunConfig(
       project.resources,
     secrets: project.secrets,
     source: project.source,
+    sidecars: project.sidecars,
   };
 }

@@ -264,5 +264,29 @@ spec:
                           - messageText
                     lastEventAt:
                       type: string
+                    managerMetrics:
+                      type: object
+                      properties:
+                        lastReconcileAt:
+                          type: string
+                        lastReconcileDurationMs:
+                          type: integer
+                          minimum: 0
+                        lastReconcileResult:
+                          type: string
+                          enum:
+                            - success
+                            - error
+                        lastError:
+                          type: string
+                        tasksPulled:
+                          type: integer
+                          minimum: 0
+                        workersMonitored:
+                          type: integer
+                          minimum: 0
+                        tasksReworked:
+                          type: integer
+                          minimum: 0
           required:
             - spec

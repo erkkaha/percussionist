@@ -1,11 +1,15 @@
 import { Hono } from "hono";
-import { getRun, readPodLog } from "../kube.js";
+import { core, getRun, readPodLog } from "../kube.js";
 import { RUNNER_CONTAINER, DISPATCHER_CONTAINER, GIT_CLONE_CONTAINER } from "@percussionist/api";
+
+const BOOTSTRAP_CONTAINER = "bootstrap";
+const BOOTSTRAP_EXCLUDE = new Set([RUNNER_CONTAINER, DISPATCHER_CONTAINER]);
 
 const VALID_CONTAINERS = new Set([
   RUNNER_CONTAINER,
   DISPATCHER_CONTAINER,
   GIT_CLONE_CONTAINER,
+  BOOTSTRAP_CONTAINER,
 ]);
 // Extract a human-readable message from a @kubernetes/client-node error.
 // The library throws errors whose `.message` contains a raw HTTP dump like:
@@ -32,9 +36,46 @@ function kubeErrMsg(e: unknown): string {
 const DEFAULT_TAIL = 500;
 const logs = new Hono();
 
+async function readLogBlock(
+  podName: string,
+  container: string,
+  tailLines?: number,
+  ns?: string,
+): Promise<string> {
+  try {
+    const text = await readPodLog(podName, container, tailLines || undefined, ns);
+    if (!text.trim()) return `===== ${container} =====\n(no output)`;
+    return `===== ${container} =====\n${text}`;
+  } catch (e: unknown) {
+    return `===== ${container} =====\n(unavailable: ${kubeErrMsg(e)})`;
+  }
+}
+
+async function listBootstrapContainers(
+  podName: string,
+  ns: string,
+): Promise<string[]> {
+  try {
+    const pod = await core().readNamespacedPod({ name: podName, namespace: ns });
+    const initNames = (pod.spec?.initContainers ?? []).map((c) => c.name).filter(Boolean);
+    const appNames = (pod.spec?.containers ?? [])
+      .map((c) => c.name)
+      .filter((name): name is string => !!name && !BOOTSTRAP_EXCLUDE.has(name));
+    const seen = new Set<string>();
+    return [...initNames, ...appNames].filter((name) => {
+      if (seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
+  } catch {
+    return [GIT_CLONE_CONTAINER];
+  }
+}
+
 // GET /api/runs/:name/logs?container=opencode&tailLines=500
 //
-// container defaults to "opencode" but can be "dispatcher" or "git-clone".
+// container defaults to "opencode" but can be "dispatcher", "git-clone",
+// or "bootstrap" (combined startup logs from git-clone/opencode/dispatcher).
 // When the requested container is still waiting (init failed, pod never
 // started) and no explicit container was requested, we auto-fall-back to
 // the git-clone init container so the caller always gets useful output.
@@ -54,17 +95,42 @@ logs.get("/:name/logs", async (c) => {
 
   // Resolve podName from the run's status (or fall back to the run name).
   let podName: string;
+  let ns: string;
   try {
     const run = await getRun(name);
     podName = run.status?.podName ?? name;
+    ns = run.metadata.namespace ?? "percussionist";
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number };
     const status = anyE.statusCode === 404 ? 404 : 500;
     return c.json({ error: kubeErrMsg(e) }, status);
   }
 
+  if (container === BOOTSTRAP_CONTAINER) {
+    const bootstrapContainers = await listBootstrapContainers(podName, ns);
+    if (bootstrapContainers.length === 0) {
+      return c.json({
+        podName,
+        container,
+        lines: "No bootstrap containers found for this pod.",
+        bootstrapContainers,
+      });
+    }
+    const blocks = await Promise.all(
+      bootstrapContainers.map((name) =>
+        readLogBlock(podName, name, tailLines || undefined, ns),
+      ),
+    );
+    return c.json({
+      podName,
+      container,
+      lines: blocks.join("\n\n"),
+      bootstrapContainers,
+    });
+  }
+
   try {
-    const text = await readPodLog(podName, container, tailLines || undefined);
+    const text = await readPodLog(podName, container, tailLines || undefined, ns);
     return c.json({ podName, container, lines: text });
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
@@ -80,7 +146,12 @@ logs.get("/:name/logs", async (c) => {
 
     if (isWaiting) {
       try {
-        const initText = await readPodLog(podName, GIT_CLONE_CONTAINER, tailLines || undefined);
+        const initText = await readPodLog(
+          podName,
+          GIT_CLONE_CONTAINER,
+          tailLines || undefined,
+          ns,
+        );
         return c.json({ podName, container: GIT_CLONE_CONTAINER, lines: initText });
       } catch {
         // Fall through to the original error below.

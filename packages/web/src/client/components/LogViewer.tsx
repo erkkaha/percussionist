@@ -9,11 +9,14 @@ interface LogViewerProps {
   defaultContainer?: string;
 }
 
-const BASE_CONTAINERS = ["opencode", "dispatcher"] as const;
-const GIT_CLONE_CONTAINER = "git-clone";
+const BASE_CONTAINERS = ["bootstrap", "opencode", "dispatcher"] as const;
 const TAIL_OPTIONS = [100, 500, 1000] as const;
 
-export default function LogViewer({ name, active, defaultContainer = "opencode" }: LogViewerProps) {
+export default function LogViewer({
+  name,
+  active,
+  defaultContainer = "bootstrap",
+}: LogViewerProps) {
   const [container, setContainer] = useState<string>(defaultContainer);
   const [tailLines, setTailLines] = useState<number>(500);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -34,12 +37,7 @@ export default function LogViewer({ name, active, defaultContainer = "opencode" 
     active ? 5_000 : false,
   );
 
-  // Show git-clone tab only when it's the defaultContainer (init failed) or
-  // the user has manually selected it.
-  const showGitClone = defaultContainer === GIT_CLONE_CONTAINER || container === GIT_CLONE_CONTAINER;
-  const containers = showGitClone
-    ? [GIT_CLONE_CONTAINER, ...BASE_CONTAINERS]
-    : [...BASE_CONTAINERS];
+  const containers = [...BASE_CONTAINERS];
 
   // Auto-scroll to bottom when new content arrives.
   useEffect(() => {

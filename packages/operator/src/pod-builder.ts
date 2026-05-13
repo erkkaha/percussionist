@@ -15,6 +15,7 @@ import {
   DISPATCHER_CONTAINER,
   type OpenCodeRun,
   type AgentDef,
+  type SidecarSpec,
 } from "@percussionist/api";
 import {
   RUNNER_IMAGE_DEFAULT,
@@ -162,7 +163,11 @@ export function renderAgentsConfigMap(
   };
 }
 
-export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
+export function renderPod(
+  run: OpenCodeRun,
+  resolvedAgents: AgentDef[],
+  sidecars: SidecarSpec[] = [],
+): V1Pod {
   const spec = run.spec;
   const llmKeysSecret = spec.secrets?.llmKeysSecret;
   const image = spec.image ?? RUNNER_IMAGE_DEFAULT;
@@ -170,6 +175,18 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
   const sshSecret = git?.sshSecret;
   const githubTokenSecret = git?.githubTokenSecret;
   const hasAgents = resolvedAgents.length > 0;
+  const hasSidecars = sidecars.length > 0;
+
+  // Build the wait-for-sidecars prefix: for each sidecar port, loop until nc
+  // succeeds. This runs inside the opencode container so all pods share the
+  // same network namespace and localhost is available.
+  const sidecarPorts = sidecars.flatMap((sc) => sc.ports ?? []);
+  const waitScript =
+    sidecarPorts.length > 0
+      ? sidecarPorts
+          .map((p) => `until nc -z 127.0.0.1 ${p}; do sleep 1; done`)
+          .join(" && ") + " && "
+      : "";
 
   const gitAuthorEnv = git?.author
     ? [
@@ -289,14 +306,23 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
           image,
           imagePullPolicy: "IfNotPresent",
           workingDir: "/workspace",
-          command: [
-            "opencode",
-            "web",
-            "--hostname",
-            "0.0.0.0",
-            "--port",
-            String(CONTAINER_PORT),
-          ],
+          ...(hasSidecars
+            ? {
+                command: ["/bin/sh", "-c"],
+                args: [
+                  `${waitScript}exec opencode web --hostname 0.0.0.0 --port ${CONTAINER_PORT}`,
+                ],
+              }
+            : {
+                command: [
+                  "opencode",
+                  "web",
+                  "--hostname",
+                  "0.0.0.0",
+                  "--port",
+                  String(CONTAINER_PORT),
+                ],
+              }),
           ports: [{ name: "http", containerPort: CONTAINER_PORT }],
           env: [
             { name: "NODE_OPTIONS", value: "--max-old-space-size=1536" },
@@ -425,6 +451,17 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
             limits: { cpu: "500m", memory: "512Mi" },
           },
         },
+        // Project-level sidecar containers (e.g. test databases).
+        // They start alongside opencode; opencode waits for their ports.
+        ...sidecars.map((sc) => ({
+          name: sc.name,
+          image: sc.image,
+          imagePullPolicy: "IfNotPresent" as const,
+          ...(sc.env ? { env: sc.env } : {}),
+          ...(sc.ports
+            ? { ports: sc.ports.map((p) => ({ containerPort: p })) }
+            : {}),
+        })),
       ],
       volumes,
     },

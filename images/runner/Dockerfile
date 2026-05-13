@@ -10,6 +10,9 @@
 
 FROM ghcr.io/anomalyco/opencode:latest
 
+ARG BUN_VERSION=1.3.14
+ARG PNPM_VERSION=10.30.2
+
 # Pin locale-related env for deterministic number/date formatting in tests
 # and agent runs (avoid host-dependent snapshot drift).
 ENV LANG=C.UTF-8 \
@@ -21,6 +24,7 @@ ENV LANG=C.UTF-8 \
 #  - ca-certificates: HTTPS to LLM providers and git hosts
 #  - tini: clean PID 1 / signal forwarding for `opencode web`
 #  - nodejs, npm: agents that need node/npm at runtime (24.x from Alpine repos)
+#  - bash, curl, unzip: required by common repo scripts and runtime installers
 #  - github-cli: create PRs, manage issues from the CLI
 #  - gcompat: glibc ABI compatibility layer so glibc-linked .so files in the
 #             opencode binary (bun FFI) can load on musl/Alpine
@@ -34,6 +38,9 @@ RUN apk add --no-cache \
       tini \
       nodejs \
       npm \
+      bash \
+      curl \
+      unzip \
       github-cli \
       icu-data-full \
       gcompat \
@@ -53,6 +60,44 @@ RUN gcc -shared -fPIC -o /usr/local/lib/libgnustub.so /tmp/gnu_stub.c \
 
 # Preload the stub so every dlopen() call in the process can resolve the symbol.
 ENV LD_PRELOAD=/usr/local/lib/libgnustub.so
+
+# Install Bun and pnpm (via Corepack) so workspace agents can run test/build
+# workflows in modern monorepos without ad-hoc bootstrapping.
+RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION} \
+    && ln -sf /root/.bun/bin/bun /usr/local/bin/bun \
+    && npm install -g corepack \
+    && corepack enable \
+    && corepack prepare pnpm@${PNPM_VERSION} --activate
+
+# Small diagnostics helper for fast runtime preflight checks in agent sessions.
+RUN cat > /usr/local/bin/runner-doctor <<'EOF'
+#!/bin/sh
+set -eu
+
+check_cmd() {
+  cmd="$1"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "missing: $cmd" >&2
+    return 1
+  fi
+  version="$($cmd --version 2>/dev/null | head -n 1 || true)"
+  if [ -n "$version" ]; then
+    echo "$cmd: $version"
+  else
+    echo "$cmd: present"
+  fi
+}
+
+check_cmd node
+check_cmd npm
+check_cmd pnpm
+check_cmd bun
+check_cmd bash
+check_cmd curl
+check_cmd git
+check_cmd gh
+EOF
+RUN chmod +x /usr/local/bin/runner-doctor
 
 # Cluster-wide OpenCode agents and skills. Empty by default; populate
 # content/agents/<name>.md and content/skills/<name>/SKILL.md to ship them

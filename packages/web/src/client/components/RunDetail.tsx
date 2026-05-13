@@ -131,7 +131,7 @@ export default function RunDetail() {
   const failedOnInit =
     isFailed &&
     run.status?.message?.startsWith("init container");
-  const defaultLogContainer = failedOnInit ? GIT_CLONE_CONTAINER : "opencode";
+  const defaultLogContainer = failedOnInit ? GIT_CLONE_CONTAINER : "bootstrap";
 
   return (
     <div className="space-y-6">
@@ -350,7 +350,11 @@ export default function RunDetail() {
 
       {/* Logs */}
       <Card title="Logs">
-        <LogViewer name={name!} active={isActive} defaultContainer={defaultLogContainer} />
+        <LogViewer
+          name={name!}
+          active={isActive}
+          defaultContainer={defaultLogContainer}
+        />
       </Card>
     </div>
   );
