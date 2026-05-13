@@ -113,7 +113,7 @@ export default function LogViewer({ name, active, defaultContainer = "opencode" 
       ) : (
         <pre
           ref={scrollRef}
-          className="log-viewer rounded-lg border border-border bg-surface p-4 text-xs leading-5 font-mono overflow-auto max-h-[600px] whitespace-pre-wrap break-all"
+          className="log-viewer rounded-lg border border-border bg-surface p-4 text-xs font-mono overflow-auto max-h-[600px] whitespace-pre-wrap break-all"
         >
           {data?.lines || "No log output yet."}
         </pre>
