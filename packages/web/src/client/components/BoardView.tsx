@@ -199,6 +199,14 @@ export default function BoardView() {
                         )}
                       </div>
                       <p className="text-sm text-text leading-snug">{task?.title ?? id}</p>
+                      {task?.description && (
+                        <details className="text-xs text-text-dim">
+                          <summary className="cursor-pointer line-clamp-2 list-none hover:text-text transition-colors [&::-webkit-details-marker]:hidden">
+                            {task.description}
+                          </summary>
+                          <p className="mt-1 whitespace-pre-wrap">{task.description}</p>
+                        </details>
+                      )}
                       {task?.agent && (
                         <p className="text-xs text-text-dim">{task.agent}</p>
                       )}
