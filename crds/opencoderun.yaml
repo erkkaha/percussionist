@@ -1,26 +1,14 @@
-# OpenCodeRun v1alpha1 — declarative description of a single agent run.
-#
-# Every run must reference an OpenCodeProject (spec.project). The project
-# provides git, secrets, model, image, and resource defaults; explicit run
-# fields override the project values. Config is resolved at creation time
-# in the CLI / web API — the operator sees only the fully-resolved spec.
-#
-# Keep in sync with packages/api/src/index.ts (Zod is authoritative).
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   name: opencoderuns.percussionist.dev
 spec:
   group: percussionist.dev
-  scope: Namespaced
   names:
     kind: OpenCodeRun
-    listKind: OpenCodeRunList
-    singular: opencoderun
     plural: opencoderuns
-    shortNames:
-      - ocr
-      - run
+    singular: opencoderun
+  scope: Namespaced
   versions:
     - name: v1alpha1
       served: true
@@ -28,76 +16,56 @@ spec:
       subresources:
         status: {}
       additionalPrinterColumns:
-        - name: Project
-          type: string
-          jsonPath: .spec.project
         - name: Phase
           type: string
           jsonPath: .status.phase
-        - name: Session
+        - name: Project
           type: string
-          jsonPath: .status.sessionID
-          priority: 1
-        - name: Started
-          type: date
-          jsonPath: .status.startedAt
+          jsonPath: .spec.project
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
       schema:
         openAPIV3Schema:
           type: object
-          required: [spec]
           properties:
-            apiVersion: { type: string }
-            kind: { type: string }
-            metadata: { type: object }
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
             spec:
               type: object
-              required: [project]
               properties:
                 project:
                   type: string
                   minLength: 1
-                  description: Required. Name of the OpenCodeProject in the same namespace. Provides provenance and resolved defaults.
-                kanbanTask:
+                boardTask:
                   type: string
-                  description: Task ID from the project board. Set by manager-controller when this run was spawned for a board task.
                 task:
                   type: string
                   minLength: 1
-                  description: Natural-language task sent as the first prompt. Required unless interactive is true.
                 interactive:
                   type: boolean
-                  default: false
-                  description: |
-                    If true, the dispatcher skips the automatic prompt and keeps
-                    the runner alive waiting for `beatctl attach`. Terminal phase
-                    is reached via CR deletion (Cancelled) or timeout (Failed).
                 agent:
                   type: string
-                  description: Primary agent — references a ClusterAgent by name.
                 agents:
                   type: array
-                  maxItems: 10
-                  description: Additional ClusterAgent refs available in the pod.
                   items:
                     type: object
-                    required: [name]
                     properties:
                       name:
                         type: string
                         minLength: 1
                         maxLength: 63
+                    required:
+                      - name
+                  maxItems: 10
                 inlineAgents:
                   type: array
-                  maxItems: 5
-                  description: |
-                    Inline agent definitions for CLI escape hatch (--inline-agent flag).
-                    Not surfaced in the UI. Prefer ClusterAgents for persistent definitions.
                   items:
                     type: object
-                    required: [name, content]
                     properties:
                       name:
                         type: string
@@ -106,104 +74,153 @@ spec:
                       content:
                         type: string
                         maxLength: 102400
+                    required:
+                      - name
+                      - content
+                  maxItems: 5
                 model:
                   type: string
-                  description: Model override. Resolved from project at creation time.
                 image:
                   type: string
-                  default: percussionist/runner:dev
-                  description: Runner image override. Resolved from project at creation time.
                 resources:
                   type: object
-                  description: Pod resource override. Resolved from project at creation time.
                   properties:
                     requests:
                       type: object
-                      additionalProperties: { type: string }
                     limits:
                       type: object
-                      additionalProperties: { type: string }
                 secrets:
                   type: object
-                  description: Resolved from project at creation time.
                   properties:
-                    llmKeysSecret: { type: string }
+                    llmKeysSecret:
+                      type: string
                     opencodeAuthSecret:
                       type: object
-                      required: [name]
                       properties:
-                        name: { type: string, minLength: 1 }
-                        key: { type: string, default: auth.json }
+                        name:
+                          type: string
+                          minLength: 1
+                        key:
+                          type: string
+                      required:
+                        - name
                     opencodeConfigMap:
                       type: object
-                      required: [name]
                       properties:
-                        name: { type: string, minLength: 1 }
-                        key: { type: string, default: opencode.json }
+                        name:
+                          type: string
+                          minLength: 1
+                        key:
+                          type: string
+                      required:
+                        - name
                 source:
                   type: object
-                  description: Resolved from project at creation time.
                   properties:
                     git:
                       type: object
-                      required: [url]
                       properties:
-                        url: { type: string, minLength: 1 }
-                        ref: { type: string }
+                        url:
+                          type: string
+                          minLength: 1
+                        ref:
+                          type: string
                         sshSecret:
                           type: object
-                          required: [name]
                           properties:
-                            name: { type: string, minLength: 1 }
-                            key: { type: string, default: ssh-privatekey }
+                            name:
+                              type: string
+                              minLength: 1
+                            key:
+                              type: string
+                          required:
+                            - name
                         author:
                           type: object
-                          required: [name, email]
                           properties:
-                            name: { type: string, minLength: 1 }
-                            email: { type: string, minLength: 1 }
+                            name:
+                              type: string
+                              minLength: 1
+                            email:
+                              type: string
+                              minLength: 1
+                          required:
+                            - name
+                            - email
+                      required:
+                        - url
                 timeoutSeconds:
                   type: integer
-                  minimum: 1
-                  default: 3600
-                  description: Run timeout. Resolved from project at creation time.
+                  exclusiveMinimum: true
+                  minimum: 0
                 ttlSecondsAfterFinished:
                   type: integer
                   minimum: 0
-                  default: 3600
                 expose:
                   type: object
                   properties:
                     web:
                       type: boolean
-                      default: true
+              required:
+                - project
             status:
               type: object
               properties:
                 phase:
                   type: string
-                  enum: [Pending, Initializing, Running, WaitingForInput, Succeeded, Failed, Cancelled]
-                message: { type: string }
-                podName: { type: string }
-                serviceName: { type: string }
-                ingressName: { type: string }
-                webURL: { type: string }
-                sessionID: { type: string }
-                startedAt: { type: string }
-                completedAt: { type: string }
-                lastEventAt: { type: string }
-                tokensIn: { type: integer, minimum: 0 }
-                tokensOut: { type: integer, minimum: 0 }
+                  enum:
+                    - Pending
+                    - Initializing
+                    - Running
+                    - WaitingForInput
+                    - Succeeded
+                    - Failed
+                    - Cancelled
+                message:
+                  type: string
+                podName:
+                  type: string
+                serviceName:
+                  type: string
+                sessionID:
+                  type: string
+                startedAt:
+                  type: string
+                completedAt:
+                  type: string
+                lastEventAt:
+                  type: string
+                tokensIn:
+                  type: integer
+                  minimum: 0
+                tokensOut:
+                  type: integer
+                  minimum: 0
+                webURL:
+                  type: string
+                ingressName:
+                  type: string
                 conditions:
                   type: array
                   items:
                     type: object
-                    required: [type, status]
                     properties:
-                      type: { type: string }
+                      type:
+                        type: string
                       status:
                         type: string
-                        enum: ["True", "False", "Unknown"]
-                      reason: { type: string }
-                      message: { type: string }
-                      lastTransitionTime: { type: string }
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                    required:
+                      - type
+                      - status
+          required:
+            - spec

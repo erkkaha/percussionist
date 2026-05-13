@@ -13,6 +13,7 @@ import YAML from "yaml";
 import {
   type OpenCodeProject,
   type BoardTask,
+  type BoardSpec,
 } from "@percussionist/api";
 import {
   NAMESPACE,
@@ -125,7 +126,7 @@ export async function runBoardTaskAdd(
     fatal("get project failed", e);
   }
 
-  const board = project.spec.board ?? {};
+  const board: BoardSpec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
   const teamNames = (board.agents ?? []).map((a) => a.name);
   if (!teamNames.includes(opts.agent)) {
     console.error(
@@ -239,7 +240,7 @@ export async function runBoardTaskRemove(
     fatal("get project failed", e);
   }
 
-  const board = project.spec.board ?? {};
+  const board: BoardSpec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
   const tasks = (board.tasks ?? []).filter((t) => t.id !== opts.taskId);
   await patchProjectSpec(projectName, { board: { ...board, tasks } }, ns, custom).catch(
     (e) => fatal("patch spec failed", e),

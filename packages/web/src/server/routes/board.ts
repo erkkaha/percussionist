@@ -10,7 +10,7 @@
 
 import { Hono } from "hono";
 import { getProject, patchProjectSpec, patchProjectStatus } from "../kube.js";
-import type { BoardTask } from "@percussionist/api";
+import type { BoardTask, BoardSpec } from "@percussionist/api";
 
 const board = new Hono();
 
@@ -41,10 +41,10 @@ board.patch("/:project/board/spec", async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
   try {
     const project = await getProject(name);
-    const updated = await patchProjectSpec(name, {
-      board: { ...(project.spec.board ?? {}), ...(body as object) },
+    const board = await patchProjectSpec(name, {
+      board: { ...(project.spec.board ?? { maxParallel: 2, phase: "Active" as const }), ...(body as object) },
     });
-    return c.json(updated.spec.board ?? {});
+    return c.json(board.spec.board ?? {});
   } catch (e) {
     const ke = e as KubeError;
     return c.json({ error: errMsg(ke) }, errStatus(ke));
@@ -78,17 +78,17 @@ board.post("/:project/board/tasks", async (c) => {
   }
   try {
     const project = await getProject(name);
-    const board = project.spec.board ?? {};
-    const roster = (board.agents ?? []).map((a) => a.name);
+    const boardSpec: BoardSpec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
+    const roster = (boardSpec.agents ?? []).map((a) => a.name);
     if (!roster.includes(task.agent)) {
       return c.json({ error: `agent "${task.agent}" not in board roster: ${roster.join(", ") || "(empty)"}` }, 400);
     }
-    const tasks = board.tasks ?? [];
+    const tasks = boardSpec.tasks ?? [];
     if (tasks.find((t) => t.id === task.id)) {
       return c.json({ error: `task "${task.id}" already exists` }, 409);
     }
     tasks.push(task);
-    await patchProjectSpec(name, { board: { ...board, tasks } });
+    await patchProjectSpec(name, { board: { ...boardSpec, tasks } });
 
     // Add to status backlog.
     const boardStatus = project.status?.board ?? { columns: ["ready", "in-progress", "review", "rework", "done"], backlog: {}, workers: [], activeWorkers: 0 };
@@ -111,9 +111,9 @@ board.delete("/:project/board/tasks/:id", async (c) => {
   const taskId = c.req.param("id");
   try {
     const project = await getProject(name);
-    const board = project.spec.board ?? {};
-    const tasks = (board.tasks ?? []).filter((t) => t.id !== taskId);
-    await patchProjectSpec(name, { board: { ...board, tasks } });
+    const boardSpec: BoardSpec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
+    const tasks = (boardSpec.tasks ?? []).filter((t) => t.id !== taskId);
+    await patchProjectSpec(name, { board: { ...boardSpec, tasks } });
 
     const boardStatus = project.status?.board ?? { columns: [], backlog: {}, workers: [], activeWorkers: 0 };
     const backlog = { ...boardStatus.backlog };

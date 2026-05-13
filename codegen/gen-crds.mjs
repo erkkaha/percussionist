@@ -35,11 +35,61 @@ const api = await import(apiDist);
 // ---------------------------------------------------------------------------
 // Convert a Zod schema to an OpenAPI-compatible JSON Schema object.
 // We strip the $schema and title fields (not needed in CRDs).
+// We also strip additionalProperties — Kubernetes CRD validation forbids
+// combining additionalProperties with properties on the same object node.
+// We also inline all $ref references — Kubernetes CRD validation forbids $ref.
+function stripAdditionalProperties(obj) {
+  if (Array.isArray(obj)) {
+    return obj.map(stripAdditionalProperties);
+  }
+  if (obj !== null && typeof obj === "object") {
+    // Remove fields Kubernetes CRD validation forbids.
+    const { additionalProperties, default: _default, ...rest } = obj;
+    void additionalProperties;
+    void _default;
+    const result = {};
+    for (const [k, v] of Object.entries(rest)) {
+      result[k] = stripAdditionalProperties(v);
+    }
+    return result;
+  }
+  return obj;
+}
+
+/**
+ * Recursively resolve all $ref pointers in a JSON Schema.
+ * Only handles local refs of the form "#/$defs/Foo".
+ */
+function inlineRefs(obj, defs) {
+  if (Array.isArray(obj)) {
+    return obj.map((v) => inlineRefs(v, defs));
+  }
+  if (obj !== null && typeof obj === "object") {
+    if (typeof obj.$ref === "string") {
+      const refPath = obj.$ref; // e.g. "#/$defs/ResourceRequirements"
+      const name = refPath.replace(/^#\/\$defs\//, "");
+      const resolved = defs[name];
+      if (!resolved) throw new Error(`Cannot resolve $ref: ${refPath}`);
+      // Inline the resolved definition (recursively).
+      return inlineRefs({ ...resolved }, defs);
+    }
+    const result = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === "$defs") continue; // drop the defs block itself
+      result[k] = inlineRefs(v, defs);
+    }
+    return result;
+  }
+  return obj;
+}
+
 function toOpenAPISchema(schema) {
-  const js = zodToJsonSchema(schema, { target: "openApi3" });
-  // Flatten — if the schema is a $ref wrapper, keep the definitions.
-  const { $schema, title, ...rest } = js;
-  return rest;
+  // $refStrategy: "none" forces all schemas to be inlined — no $ref or $defs
+  // generated. This is required for Kubernetes CRD validation which forbids $ref.
+  const js = zodToJsonSchema(schema, { target: "openApi3", $refStrategy: "none" });
+  const { $schema, title, $defs, ...rest } = js;
+  void $defs; // should be empty with $refStrategy:"none" but drop anyway
+  return stripAdditionalProperties(rest);
 }
 
 // ---------------------------------------------------------------------------

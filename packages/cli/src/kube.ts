@@ -21,11 +21,7 @@ export {
   padCols,
   age,
   fatal,
-  // project
-  listProjects,
-  createProject,
-  deleteProject,
-  updateProject,
+  // project — new-signature (name, ns?, client?); also see old-sig wrappers below
   patchProjectSpec,
   patchProjectStatus,
   // cluster agents
@@ -78,4 +74,36 @@ export async function getProject(
   name: string,
 ): Promise<OpenCodeProject> {
   return kube.getProject(name, namespace, client);
+}
+
+export async function listProjects(
+  client: CustomObjectsApi,
+  namespace: string,
+): Promise<OpenCodeProject[]> {
+  return kube.listProjects(namespace, client);
+}
+
+export async function createProject(
+  client: CustomObjectsApi,
+  namespace: string,
+  project: OpenCodeProject,
+): Promise<OpenCodeProject> {
+  return kube.createProject(project, namespace, client);
+}
+
+export async function deleteProject(
+  client: CustomObjectsApi,
+  namespace: string,
+  name: string,
+): Promise<void> {
+  return kube.deleteProject(name, namespace, client);
+}
+
+export async function updateProject(
+  client: CustomObjectsApi,
+  namespace: string,
+  name: string,
+  spec: OpenCodeProject["spec"],
+): Promise<OpenCodeProject> {
+  return kube.updateProject(name, spec, namespace, client);
 }

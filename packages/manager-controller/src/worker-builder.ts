@@ -28,7 +28,7 @@ export function buildWorkerRun(
   retryCount: number,
   reworkFeedback?: string,
 ): OpenCodeRun {
-  const board = project.spec.board ?? {};
+  const board: import("@percussionist/api").BoardSpec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
   const resolved = resolveRunConfig(
     project.spec,
     board.overrides,
@@ -90,11 +90,13 @@ export function buildWorkerRun(
       project: projectName,
       boardTask: task.id,
       task: promptLines.join("\n"),
+      interactive: false,
       agent: task.agent,
-      agents: (board.agents ?? []).filter((a) => a.name !== task.agent),
+      agents: (board.agents ?? []).filter((a: import("@percussionist/api").AgentRef) => a.name !== task.agent),
       model: resolved.model,
       image: resolved.image,
       timeoutSeconds: resolved.timeoutSeconds,
+      ttlSecondsAfterFinished: 3600,
       ...(resolved.resources ? { resources: resolved.resources } : {}),
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
       ...(resolved.source ? { source: resolved.source } : {}),

@@ -79,7 +79,7 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
 
   // Merge project defaults first, then explicit flags win over them.
   const pd = projectDefaults;
-  const resolvedAgent = opts.agent ?? pd?.agent;
+  const resolvedAgent = opts.agent;
   const resolvedModel = opts.model ?? pd?.model;
   const resolvedLlmSecret = opts.llmKeysSecret ?? pd?.secrets?.llmKeysSecret;
   const resolvedAuthSecret = opts.authSecret ?? pd?.secrets?.opencodeAuthSecret?.name;
