@@ -4,7 +4,7 @@
 # use it. Otherwise fall back to SSH-based auth (which typically no-ops in
 # cluster pods without a forwarded agent, but is kept for local dev convenience).
 if [ -n "$GITHUB_TOKEN" ]; then
-  gh auth login --with-token <<< "$GITHUB_TOKEN"
+  printf '%s' "$GITHUB_TOKEN" | gh auth login --with-token
 else
   gh auth login --git-protocol ssh 2>/dev/null || true
 fi

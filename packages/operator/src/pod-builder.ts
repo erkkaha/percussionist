@@ -189,7 +189,7 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
           command: ["/bin/sh", "-c"],
           args: [
              [
-              "set -eo pipefail",
+              "set -e",
               'echo "[git-clone] cloning ${GIT_URL} ref=${GIT_REF:-<default>} into /workspace"',
               'if [ -f /etc/git-ssh/id ]; then',
               '  export GIT_SSH_COMMAND="ssh -i /etc/git-ssh/id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"',
@@ -200,7 +200,7 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
               'if [ -f /etc/git-github/token ]; then',
               '  GITHUB_TOKEN=$(cat /etc/git-github/token)',
               '  export GITHUB_TOKEN',
-              '  gh auth login --with-token <<< "$GITHUB_TOKEN"',
+              '  gh auth login --with-token < /etc/git-github/token',
               '  echo "[git-clone] gh authenticated with GitHub token"',
               'fi',
               'cd /workspace',
