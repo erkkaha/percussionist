@@ -171,7 +171,7 @@ export async function reconcile(run: OpenCodeRun): Promise<void> {
     try {
       pod = await core.createNamespacedPod({
         namespace: ns,
-        body: renderPod(run, resolvedAgents),
+        body: renderPod(run, resolvedAgents, run.spec.sidecars ?? []),
       });
       log(`created pod ${ns}/${podName(run)}`);
       await patchStatus(run, {

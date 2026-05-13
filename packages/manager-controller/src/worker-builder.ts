@@ -100,6 +100,7 @@ export function buildWorkerRun(
       ...(resolved.resources ? { resources: resolved.resources } : {}),
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
       ...(resolved.source ? { source: resolved.source } : {}),
+      ...(resolved.sidecars?.length ? { sidecars: resolved.sidecars } : {}),
     },
   };
 }
