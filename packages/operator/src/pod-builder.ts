@@ -302,6 +302,20 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
                   },
                 ]
               : []),
+            // Always inject the cluster-wide opencode config (providers, models, etc.)
+            // from the well-known "lmstudio-config" configmap.  Optional so pods start
+            // cleanly even if the configmap hasn't been created.
+            {
+              name: "OPENCODE_CONFIG_CONTENT",
+              valueFrom: {
+                configMapKeyRef: {
+                  name: "opencode-config",
+                  key: "opencode.json",
+                  optional: true,
+                },
+              },
+            },
+            // Per-run override from spec.secrets.opencodeConfigMap (takes precedence).
             ...(spec.secrets?.opencodeConfigMap
               ? [
                   {
