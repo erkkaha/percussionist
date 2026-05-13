@@ -1,5 +1,6 @@
 // reconciler.ts — reconciles a single OpenCodeProject's board.
 
+import { randomBytes } from "node:crypto";
 import {
   KubeConfig,
   CustomObjectsApi,
@@ -12,15 +13,18 @@ import {
   type OpenCodeProject,
   type BoardStatus,
   type WorkerStatus,
+  type FacilitationResult,
   type ManagerMetrics,
 } from "@percussionist/api";
 import {
   createRun,
+  fetchSessionMessages,
   getRun,
   getProject,
   patchProjectStatus,
 } from "@percussionist/kube";
 import { buildWorkerRun, workerRunName, MAX_RETRIES } from "./worker-builder.js";
+import { buildFacilitationRun, parseFacilitationResult } from "./facilitator.js";
 import {
   getTasksToPull,
   getTasksToRework,
@@ -109,7 +113,6 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   const specTaskIds = new Set((board.tasks ?? []).map((t) => t.id));
 
   // Prune: remove tasks from the backlog that no longer exist in spec.board.tasks.
-  // This cleans up manually-tested or stale entries (e.g. F-TEST).
   const prunedBacklog: Record<string, string[]> = {};
   for (const [col, ids] of Object.entries(backlog)) {
     const kept = (ids as string[]).filter((id) => specTaskIds.has(id));
@@ -122,8 +125,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   backlog = prunedBacklog;
 
   // Repair: any task in spec.board.tasks not present in any backlog column
-  // gets placed into "ready". Guards against status patches that failed
-  // before reaching the controller (e.g. prior RBAC gaps).
+  // gets placed into "ready".
   const placedIds = new Set(Object.values(backlog).flat());
   const unplaced = [...specTaskIds].filter((id) => !placedIds.has(id));
   if (unplaced.length > 0) {
@@ -140,17 +142,13 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
     tasksPulled++;
     const taskDef = (board.tasks ?? []).find((t) => t.id === taskId);
     if (!taskDef) {
-      // Should not happen — prune step above removes unknown backlog tasks before pull.
       err(`task ${taskId} in backlog but not in spec.board.tasks — skipping`);
       continue;
     }
 
-    // Validate task has an agent from the team roster.
     const teamNames = (board.agents ?? []).map((a) => a.name);
     if (!teamNames.includes(taskDef.agent)) {
-      err(
-        `task ${taskId} agent "${taskDef.agent}" not in board.agents roster — skipping`,
-      );
+      err(`task ${taskId} agent "${taskDef.agent}" not in board.agents roster — skipping`);
       continue;
     }
 
@@ -167,6 +165,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
       branch: `feat/${taskId}`,
       startedAt: new Date().toISOString(),
       retryCount,
+      facilitated: false,
     };
     workers = upsertWorker(workers, newWorker);
 
@@ -184,6 +183,11 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   // ------------------------------------------------------------------
   // MONITOR PHASE: poll each Running worker's OpenCodeRun status.
   // ------------------------------------------------------------------
+  const FACILITATOR_AGENT = process.env.FACILITATOR_AGENT_NAME ?? "facilitator";
+  const facilitatorEnabled = (board.agents ?? []).some(
+    (a) => a.name === FACILITATOR_AGENT,
+  );
+
   for (const worker of workers.filter((w) => w.status === "Running")) {
     workersMonitored++;
     if (!worker.runName) continue;
@@ -199,15 +203,201 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
         backlog = moveTask(backlog, worker.taskId, "review");
         log(`worker ${worker.runName} succeeded → task ${worker.taskId} in review`);
       } else if (runPhase === "Failed") {
-        if ((worker.retryCount ?? 0) < MAX_RETRIES) {
+        const taskDef = (board.tasks ?? []).find((t) => t.id === worker.taskId);
+        if (!taskDef) {
+          err(`task ${worker.taskId} not found in spec.board.tasks during failure handling`);
+          continue;
+        }
+
+        // Facilitator-based escalation: on first failure, spawn a
+        // facilitator agent to analyze the failure and recommend an action.
+        if (
+          !worker.facilitated &&
+          facilitatorEnabled &&
+          (worker.retryCount ?? 0) === 0
+        ) {
+          // Read session summary for the facilitator's context.
+          let sessionSummary = "";
+          if (run.status?.sessionID && run.status?.serviceName) {
+            let sessionData: unknown = null;
+            try {
+              sessionData = await fetchSessionMessages(
+                run.status.serviceName,
+                run.status.sessionID,
+                ns,
+              );
+            } catch {
+              sessionData = null;
+            }
+            if (sessionData && typeof sessionData === "object" && "messages" in sessionData) {
+              const msgs = (sessionData.messages as Array<{ content?: string }>)
+                .slice(-6)
+                .map((m) => m.content)
+                .filter(Boolean)
+                .join("\n");
+              sessionSummary = msgs.slice(0, 3200);
+            }
+          }
+
+          const facilitationRunName = `${projectName}-facilitator-${worker.taskId.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${randomBytes(3).toString("hex")}`;
+          const facilitationRun = buildFacilitationRun(
+            fresh,
+            taskDef,
+            worker.runName!,
+            run.status ?? {},
+            sessionSummary,
+            facilitationRunName,
+          );
+
+          try {
+            await createRun(facilitationRun, ns, k8s);
+            workers = updateWorker(workers, worker.taskId, {
+              facilitated: true,
+              facilitationRunName,
+            });
+            log(`spawned facilitator ${facilitationRunName} for failed task ${worker.taskId}`);
+          } catch (e) {
+            err(`failed to create facilitator run for ${worker.taskId}:`, (e as Error).message);
+            // Fall through to standard retry behavior.
+            if ((worker.retryCount ?? 0) < MAX_RETRIES) {
+              workers = updateWorker(workers, worker.taskId, {
+                retryCount: (worker.retryCount ?? 0) + 1,
+                status: "Running",
+              });
+              log(`facilitator creation failed — standard retry (${worker.retryCount! + 1}/${MAX_RETRIES})`);
+              // Re-queue the task for retry
+              backlog = moveTask(backlog, worker.taskId, "ready");
+            } else {
+              const msg = run.status?.message ?? "Unknown failure";
+              workers = updateWorker(workers, worker.taskId, {
+                status: "Escalated",
+                completedAt: new Date().toISOString(),
+                escalation: `Task: ${worker.taskId}\nWorker: ${worker.runName}\nError: ${msg}\nFacilitator creation failed.\nRetries exhausted (${MAX_RETRIES}). Human review needed.`,
+              });
+              log(`task ${worker.taskId} escalated after facilitator creation failure and retries exhausted`);
+            }
+          }
+        } else if (
+          facilitatorEnabled &&
+          worker.facilitated &&
+          worker.facilitationRunName
+        ) {
+          // Facilitator run exists — check its result.
+          let result: FacilitationResult | null = null;
+          try {
+            result = await parseFacilitationResult(
+              worker.facilitationRunName,
+              ns,
+            );
+          } catch (e) {
+            err(`failed to parse facilitation result for ${worker.taskId}:`, (e as Error).message);
+          }
+
+          if (result) {
+            // Apply the facilitator's recommendation.
+            if (result.recommendedAction === "retry_same") {
+              workers = updateWorker(workers, worker.taskId, {
+                retryCount: (worker.retryCount ?? 0) + 1,
+                status: "Running",
+                facilitated: true,
+                facilitationResult: result,
+              });
+              backlog = moveTask(backlog, worker.taskId, "ready");
+              log(`facilitator recommends retry_same for ${worker.taskId}`);
+            } else if (result.recommendedAction === "retry_alternative" && result.alternativeAgent) {
+              // Validate alternative agent is in the team roster.
+              const teamNames = (board.agents ?? []).map((a) => a.name);
+              if (teamNames.includes(result.alternativeAgent)) {
+                const newRunName = workerRunName(projectName, worker.taskId);
+                const reworkRun = buildWorkerRun(fresh, taskDef, newRunName, (worker.retryCount ?? 0) + 1);
+                reworkRun.spec.agent = result.alternativeAgent;
+                workers = upsertWorker(workers, {
+                  taskId: worker.taskId,
+                  runName: newRunName,
+                  status: "Running",
+                  branch: `feat/${worker.taskId}`,
+                  startedAt: new Date().toISOString(),
+                  retryCount: (worker.retryCount ?? 0) + 1,
+                  facilitated: true,
+                  facilitationResult: result,
+                });
+                backlog = moveTask(backlog, worker.taskId, "ready");
+                try {
+                  await createRun(reworkRun, ns, k8s);
+                  log(`facilitator recommends retry_alternative with ${result.alternativeAgent} for ${worker.taskId}`);
+                } catch (e) {
+                  err(`failed to create alternative-agent run for ${worker.taskId}:`, (e as Error).message);
+                  workers = updateWorker(workers, worker.taskId, {
+                    status: "Escalated",
+                    completedAt: new Date().toISOString(),
+                    escalation: `Facilitator recommended retry_alternative with ${result.alternativeAgent} but failed to create run: ${(e as Error).message}`,
+                  });
+                }
+              } else {
+                // Alternative agent not available — escalate.
+                const msg = result.suggestion ?? `Facilitator recommended alternative agent "${result.alternativeAgent}" not in team roster`;
+                workers = updateWorker(workers, worker.taskId, {
+                  status: "Escalated",
+                  completedAt: new Date().toISOString(),
+                  escalation: `Task: ${worker.taskId}\nWorker: ${worker.runName}\nFacilitator diagnosis: ${result.diagnosis}\nAction: ${msg}`,
+                  facilitationResult: result,
+                });
+                log(`facilitator: alternative agent ${result.alternativeAgent} not available — escalated`);
+              }
+            } else {
+              // "skip" or unrecognized action → escalate with diagnosis.
+              workers = updateWorker(workers, worker.taskId, {
+                status: "Escalated",
+                completedAt: new Date().toISOString(),
+                escalation: `Task: ${worker.taskId}\nWorker: ${worker.runName}\nFacilitator diagnosis: ${result.diagnosis}\nAction: skip recommended`,
+                facilitationResult: result,
+              });
+              log(`facilitator recommends skip for ${worker.taskId}`);
+            }
+          } else {
+            // No parseable result from facilitator — check facilitator run phase.
+            let facilitatorPhase: string | undefined;
+            try {
+              const facRun = await getRun(worker.facilitationRunName, ns, k8s);
+              facilitatorPhase = facRun.status?.phase;
+            } catch {
+              // facilitator run not found
+            }
+
+            if (facilitatorPhase === "Succeeded" || facilitatorPhase === "Failed") {
+              // Facilitator done but we got nothing useful. Fall back.
+              if ((worker.retryCount ?? 0) < MAX_RETRIES) {
+                workers = updateWorker(workers, worker.taskId, {
+                  retryCount: (worker.retryCount ?? 0) + 1,
+                  status: "Running",
+                  facilitated: true,
+                });
+                backlog = moveTask(backlog, worker.taskId, "ready");
+                log(`facilitator returned no result (${facilitatorPhase}) — standard retry (${worker.retryCount! + 1}/${MAX_RETRIES})`);
+              } else {
+                const msg = run.status?.message ?? "Unknown failure after retries";
+                workers = updateWorker(workers, worker.taskId, {
+                  status: "Escalated",
+                  completedAt: new Date().toISOString(),
+                  escalation: `Task: ${worker.taskId}\nWorker: ${worker.runName}\nError: ${msg}\nFacilitator returned no actionable result (${facilitatorPhase}).\nHuman review needed.`,
+                });
+                log(`task ${worker.taskId} escalated after facilitator returned no result and retries exhausted`);
+              }
+            }
+            // else: facilitator still Running — leave worker as Failed, retry next cycle
+          }
+        } else if ((worker.retryCount ?? 0) < MAX_RETRIES) {
+          // Standard retry (no facilitator configured or already facilitated).
           workers = updateWorker(workers, worker.taskId, {
             retryCount: (worker.retryCount ?? 0) + 1,
             status: "Running",
           });
+          backlog = moveTask(backlog, worker.taskId, "ready");
           log(
             `task ${worker.taskId} failed — retrying (${worker.retryCount! + 1}/${MAX_RETRIES})`,
           );
         } else {
+          // Retries exhausted → escalate.
           const msg = run.status?.message ?? "Unknown failure after retries";
           const escalation = [
             `Task: ${worker.taskId}`,
@@ -259,7 +449,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   }
 
   // ------------------------------------------------------------------
-  // REWORK PHASE: re-dispatch tasks moved to the rework column.
+  // REWORK PHASE: re-dispatch tasks in the "rework" column.
   // ------------------------------------------------------------------
   const tasksToRework = getTasksToRework({ ...boardStatus, backlog, workers });
 
@@ -267,9 +457,6 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
     const taskDef = (board.tasks ?? []).find((t) => t.id === taskId);
     if (!taskDef) continue;
 
-    // Guard against duplicate runs: if a worker is already Running for this
-    // task (e.g. a previous reconcile created it but the status patch hasn't
-    // propagated yet), skip rework dispatch to avoid a second concurrent run.
     const existingWorker = workers.find((w) => w.taskId === taskId);
     if (existingWorker?.status === "Running") {
       log(`task ${taskId} already has a running worker (${existingWorker.runName}) — skipping rework dispatch`);
@@ -292,6 +479,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
       branch: `feat/${taskId}`,
       startedAt: new Date().toISOString(),
       retryCount: 0,
+      facilitated: false,
     });
 
     try {
@@ -325,6 +513,9 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
           escalations: workers
             .filter((w) => w.escalation)
             .map((w) => w.escalation!),
+          facilitations: workers
+            .filter((w) => w.facilitationResult)
+            .map((w) => w.facilitationResult!),
           pendingQuestions,
           lastEventAt: new Date().toISOString(),
           managerMetrics: {
@@ -353,6 +544,9 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
           escalations: workers
             .filter((w) => w.escalation)
             .map((w) => w.escalation!),
+          facilitations: workers
+            .filter((w) => w.facilitationResult)
+            .map((w) => w.facilitationResult!),
           pendingQuestions,
           lastEventAt: new Date().toISOString(),
           managerMetrics: {
@@ -398,9 +592,6 @@ export async function runWorker(): Promise<void> {
       await new Promise((r) => setTimeout(r, 250));
       continue;
     }
-    // Keep `pending` set while reconcile is running so that any informer
-    // event that fires mid-reconcile de-dupes against this key rather than
-    // queuing a second concurrent reconcile for the same project.
     const project = seen.get(key);
     if (!project) {
       pending.delete(key);

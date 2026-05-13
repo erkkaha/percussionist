@@ -283,6 +283,31 @@ spec:
                           retryCount:
                             type: integer
                             minimum: 0
+                          facilitated:
+                            type: boolean
+                          facilitationRunName:
+                            type: string
+                          facilitationResult:
+                            type: object
+                            properties:
+                              diagnosis:
+                                type: string
+                                maxLength: 1024
+                              recommendedAction:
+                                type: string
+                                enum:
+                                  - retry_same
+                                  - retry_alternative
+                                  - skip
+                              alternativeAgent:
+                                type: string
+                                maxLength: 63
+                              suggestion:
+                                type: string
+                                maxLength: 4096
+                            required:
+                              - diagnosis
+                              - recommendedAction
                         required:
                           - taskId
                           - status
@@ -309,6 +334,29 @@ spec:
                           - workerId
                           - sessionID
                           - messageText
+                    facilitations:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          diagnosis:
+                            type: string
+                            maxLength: 1024
+                          recommendedAction:
+                            type: string
+                            enum:
+                              - retry_same
+                              - retry_alternative
+                              - skip
+                          alternativeAgent:
+                            type: string
+                            maxLength: 63
+                          suggestion:
+                            type: string
+                            maxLength: 4096
+                        required:
+                          - diagnosis
+                          - recommendedAction
                     lastEventAt:
                       type: string
                     managerMetrics:

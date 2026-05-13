@@ -167,6 +167,39 @@ export const ClusterAgentSchema = z.object({
 export type ClusterAgent = z.infer<typeof ClusterAgentSchema>;
 
 // ---------------------------------------------------------------------------
+// Facilitation types — must come before OpenCodeRunSpec which references them.
+
+export const FacilitationAction = {
+  RetrySame: "retry_same",
+  RetryAlternative: "retry_alternative",
+  Skip: "skip",
+} as const;
+export type FacilitationAction =
+  (typeof FacilitationAction)[keyof typeof FacilitationAction];
+
+export const FacilitationSpecSchema = z.object({
+  targetRunName: z.string().min(1),
+  targetTaskId: z.string().min(1),
+  failureReason: z.string().max(8192),
+  sessionSummary: z.string().max(32768),
+});
+
+export type FacilitationSpec = z.infer<typeof FacilitationSpecSchema>;
+
+export const FacilitationResultSchema = z.object({
+  diagnosis: z.string().max(1024),
+  recommendedAction: z.enum([
+    FacilitationAction.RetrySame,
+    FacilitationAction.RetryAlternative,
+    FacilitationAction.Skip,
+  ]),
+  alternativeAgent: z.string().max(63).optional(),
+  suggestion: z.string().max(4096).optional(),
+});
+
+export type FacilitationResult = z.infer<typeof FacilitationResultSchema>;
+
+// ---------------------------------------------------------------------------
 // OpenCodeRun — the core CRD reconciled by the operator.
 
 export const OpenCodeRunSpecSchema = z
@@ -189,6 +222,9 @@ export const OpenCodeRunSpecSchema = z
 
     // Additional ClusterAgent refs available in the pod.
     agents: AgentRefSchema.array().max(10).optional(),
+
+    // Facilitation spec — set when this run is a facilitator analyzing a failed task.
+    facilitation: FacilitationSpecSchema.optional(),
 
     // Inline agent defs for CLI escape hatch (--inline-agent). Not in UI.
     inlineAgents: AgentDefSchema.array().max(5).optional(),
@@ -340,6 +376,9 @@ export const WorkerStatusSchema = z.object({
   completedAt: z.string().optional(),
   escalation: z.string().max(4096).optional(),
   retryCount: z.number().int().min(0).default(0),
+  facilitated: z.boolean().default(false),
+  facilitationRunName: z.string().optional(),
+  facilitationResult: FacilitationResultSchema.optional(),
 });
 
 export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;
@@ -411,6 +450,7 @@ export const BoardStatusSchema = z.object({
   activeWorkers: z.number().int().min(0).default(0),
   escalations: z.string().array().optional(),
   pendingQuestions: PendingQuestionSchema.array().optional(),
+  facilitations: FacilitationResultSchema.array().optional(),
   lastEventAt: z.string().optional(),
   /** Manager reconciliation metrics — written by manager-controller. */
   managerMetrics: ManagerMetricsSchema.optional(),
