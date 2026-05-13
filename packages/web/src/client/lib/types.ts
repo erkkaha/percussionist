@@ -11,6 +11,7 @@ export type {
   BoardTask,
   BoardSpec,
   BoardStatus,
+  ManagerMetrics,
 } from "@percussionist/api";
 export { RunPhase, TERMINAL_PHASES } from "@percussionist/api";
 

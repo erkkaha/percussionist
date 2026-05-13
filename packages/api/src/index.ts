@@ -357,6 +357,26 @@ export const BoardSpecSchema = z.object({
 
 export type BoardSpec = z.infer<typeof BoardSpecSchema>;
 
+// Manager reconciliation metrics — written by manager-controller on each cycle.
+export const ManagerMetricsSchema = z.object({
+  /** When the most recent reconcile cycle started (ISO string). */
+  lastReconcileAt: z.string().optional(),
+  /** Duration of the last reconcile in milliseconds. */
+  lastReconcileDurationMs: z.number().int().nonnegative().optional(),
+  /** Result of the last reconcile: "success", "error", or undefined if never reconciled. */
+  lastReconcileResult: z.enum(["success", "error"]).optional(),
+  /** Error message from the last failed reconcile (if any). */
+  lastError: z.string().optional(),
+  /** Number of tasks pulled from ready this cycle. */
+  tasksPulled: z.number().int().nonnegative().default(0),
+  /** Number of workers monitored this cycle. */
+  workersMonitored: z.number().int().nonnegative().default(0),
+  /** Number of tasks re-dispatched this cycle. */
+  tasksReworked: z.number().int().nonnegative().default(0),
+});
+
+export type ManagerMetrics = z.infer<typeof ManagerMetricsSchema>;
+
 // Board status — tracked by manager-controller.
 export const BoardStatusSchema = z.object({
   columns: z
@@ -369,6 +389,8 @@ export const BoardStatusSchema = z.object({
   escalations: z.string().array().optional(),
   pendingQuestions: PendingQuestionSchema.array().optional(),
   lastEventAt: z.string().optional(),
+  /** Manager reconciliation metrics — written by manager-controller. */
+  managerMetrics: ManagerMetricsSchema.optional(),
 });
 
 export type BoardStatus = z.infer<typeof BoardStatusSchema>;

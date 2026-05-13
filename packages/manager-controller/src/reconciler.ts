@@ -12,6 +12,7 @@ import {
   type OpenCodeProject,
   type BoardStatus,
   type WorkerStatus,
+  type ManagerMetrics,
 } from "@percussionist/api";
 import {
   createRun,
@@ -45,8 +46,44 @@ export { kc };
 // Main reconcile
 
 export async function reconcile(project: OpenCodeProject): Promise<void> {
+  const startTime = Date.now();
+
+  try {
+    await runReconcileCycle(project, startTime);
+  } catch (e) {
+    // On any unrecoverable error, still attempt to write failure metrics.
+    const projectName = project.metadata.name;
+    const ns = project.metadata.namespace ?? NAMESPACE;
+    const reconcileDuration = Date.now() - startTime;
+    try {
+      await patchProjectStatus(
+        projectName,
+        {
+          board: {
+            managerMetrics: {
+              lastReconcileAt: new Date().toISOString(),
+              lastReconcileDurationMs: reconcileDuration,
+              lastReconcileResult: "error",
+              lastError: (e as Error).message,
+            },
+          } as Partial<BoardStatus>,
+        },
+        ns,
+      ).catch(() => {});
+    } catch {
+      /* ignore second-fail */
+    }
+    throw e;
+  }
+}
+
+async function runReconcileCycle(project: OpenCodeProject, startTime: number): Promise<void> {
   const projectName = project.metadata.name;
   const ns = project.metadata.namespace ?? NAMESPACE;
+
+  let tasksPulled = 0;
+  let workersMonitored = 0;
+  let tasksReworked = 0;
 
   // Always fetch a fresh copy — the informer object may be stale relative to
   // status subresource updates (status patches don't bump metadata.resourceVersion
@@ -100,6 +137,7 @@ export async function reconcile(project: OpenCodeProject): Promise<void> {
   const tasksToPull = getTasksToPull(fresh, { ...boardStatus, backlog });
 
   for (const taskId of tasksToPull) {
+    tasksPulled++;
     const taskDef = (board.tasks ?? []).find((t) => t.id === taskId);
     if (!taskDef) {
       // Should not happen — prune step above removes unknown backlog tasks before pull.
@@ -147,6 +185,7 @@ export async function reconcile(project: OpenCodeProject): Promise<void> {
   // MONITOR PHASE: poll each Running worker's OpenCodeRun status.
   // ------------------------------------------------------------------
   for (const worker of workers.filter((w) => w.status === "Running")) {
+    workersMonitored++;
     if (!worker.runName) continue;
     try {
       const run = await getRun(worker.runName, ns, k8s);
@@ -230,12 +269,14 @@ export async function reconcile(project: OpenCodeProject): Promise<void> {
 
     // Guard against duplicate runs: if a worker is already Running for this
     // task (e.g. a previous reconcile created it but the status patch hasn't
-    // propagated yet), skip re-dispatch to avoid a second concurrent run.
+    // propagated yet), skip rework dispatch to avoid a second concurrent run.
     const existingWorker = workers.find((w) => w.taskId === taskId);
     if (existingWorker?.status === "Running") {
       log(`task ${taskId} already has a running worker (${existingWorker.runName}) — skipping rework dispatch`);
       continue;
     }
+
+    tasksReworked++;
 
     const feedback =
       fresh.metadata.annotations?.[`percussionist.dev/rework-${taskId}`] ??
@@ -270,23 +311,64 @@ export async function reconcile(project: OpenCodeProject): Promise<void> {
     workers.some((w) => w.taskId === q.workerId && w.status === "Running"),
   );
 
-  await patchProjectStatus(
-    projectName,
-    {
-      board: {
-        columns: boardStatus.columns,
-        backlog,
-        workers,
-        activeWorkers,
-        escalations: workers
-          .filter((w) => w.escalation)
-          .map((w) => w.escalation!),
-        pendingQuestions,
-        lastEventAt: new Date().toISOString(),
+  const reconcileDuration = Date.now() - startTime;
+
+  try {
+    await patchProjectStatus(
+      projectName,
+      {
+        board: {
+          columns: boardStatus.columns,
+          backlog,
+          workers,
+          activeWorkers,
+          escalations: workers
+            .filter((w) => w.escalation)
+            .map((w) => w.escalation!),
+          pendingQuestions,
+          lastEventAt: new Date().toISOString(),
+          managerMetrics: {
+            lastReconcileAt: new Date().toISOString(),
+            lastReconcileDurationMs: reconcileDuration,
+            lastReconcileResult: "success",
+            tasksPulled,
+            workersMonitored,
+            tasksReworked,
+          },
+        },
       },
-    },
-    ns,
-  );
+      ns,
+    );
+  } catch (e) {
+    const msg = `patchProjectStatus failed after ${reconcileDuration}ms: ${(e as Error).message}`;
+    err(msg);
+    await patchProjectStatus(
+      projectName,
+      {
+        board: {
+          columns: boardStatus.columns,
+          backlog,
+          workers,
+          activeWorkers,
+          escalations: workers
+            .filter((w) => w.escalation)
+            .map((w) => w.escalation!),
+          pendingQuestions,
+          lastEventAt: new Date().toISOString(),
+          managerMetrics: {
+            lastReconcileAt: new Date().toISOString(),
+            lastReconcileDurationMs: reconcileDuration,
+            lastReconcileResult: "error",
+            lastError: (e as Error).message,
+            tasksPulled,
+            workersMonitored,
+            tasksReworked,
+          },
+        },
+      },
+      ns,
+    ).catch(() => {});
+  }
 }
 
 // ---------------------------------------------------------------------------
