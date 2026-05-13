@@ -73,7 +73,6 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
   const manifests = {
     runCrd: resolveManifest(repoRoot, "crds/opencoderun.yaml"),
     projectCrd: resolveManifest(repoRoot, "crds/opencodeproject.yaml"),
-    kanbanCrd: resolveManifest(repoRoot, "crds/opencodekanban.yaml"),
     clusterAgentCrd: resolveManifest(repoRoot, "crds/clusteragent.yaml"),
     operator: resolveManifest(repoRoot, "deploy/operator.yaml"),
     managerController: resolveManifest(repoRoot, "deploy/manager-controller.yaml"),
@@ -88,7 +87,6 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
       await runKubectl(["delete", "-f", manifests.operator, "--ignore-not-found", "--wait=false"]);
 
       console.log("beatctl: deleting CRDs...");
-      await runKubectl(["delete", "-f", manifests.kanbanCrd, "--ignore-not-found", "--wait=false"]);
       await runKubectl(["delete", "-f", manifests.clusterAgentCrd, "--ignore-not-found", "--wait=false"]);
       await runKubectl(["delete", "-f", manifests.projectCrd, "--ignore-not-found", "--wait=false"]);
       await runKubectl(["delete", "-f", manifests.runCrd, "--ignore-not-found", "--wait=false"]);
@@ -103,7 +101,6 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     console.log("beatctl: applying CRDs...");
     await runKubectl(["apply", "-f", manifests.runCrd]);
     await runKubectl(["apply", "-f", manifests.projectCrd]);
-    await runKubectl(["apply", "-f", manifests.kanbanCrd]);
     await runKubectl(["apply", "-f", manifests.clusterAgentCrd]);
 
     console.log("beatctl: waiting for CRDs to establish...");
@@ -117,12 +114,6 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
       "wait",
       "--for=condition=Established",
       "crd/opencodeprojects.percussionist.dev",
-      "--timeout=30s",
-    ]);
-    await runKubectl([
-      "wait",
-      "--for=condition=Established",
-      "crd/opencodekanbans.percussionist.dev",
       "--timeout=30s",
     ]);
     await runKubectl([

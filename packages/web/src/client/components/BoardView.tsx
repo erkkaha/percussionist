@@ -1,0 +1,225 @@
+// BoardView.tsx — kanban board embedded in an OpenCodeProject.
+//
+// Route: /projects/:name/board
+// Reads board spec + status from GET /api/projects/:name/board
+// and renders a columnar view with worker status.
+
+import { useState } from "react";
+import { useParams, Link } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { fetchBoard, addBoardTask, deleteBoardTask } from "../lib/api";
+import type { BoardTask } from "../lib/types";
+
+const DEFAULT_COLUMNS = ["ready", "in-progress", "review", "rework", "done"];
+
+export default function BoardView() {
+  const { name } = useParams<{ name: string }>();
+  const projectName = name!;
+  const queryClient = useQueryClient();
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["board", projectName],
+    queryFn: () => fetchBoard(projectName),
+    refetchInterval: 10_000,
+  });
+
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [taskId, setTaskId] = useState("");
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskDesc, setTaskDesc] = useState("");
+  const [taskAgent, setTaskAgent] = useState("");
+  const [taskPriority, setTaskPriority] = useState<"high" | "medium" | "low">("medium");
+  const [addError, setAddError] = useState<string | null>(null);
+
+  const addMutation = useMutation({
+    mutationFn: (task: BoardTask) => addBoardTask(projectName, task),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["board", projectName] });
+      setShowAddTask(false);
+      setTaskId(""); setTaskTitle(""); setTaskDesc(""); setTaskAgent(""); setAddError(null);
+    },
+    onError: (e) => setAddError((e as Error).message),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deleteBoardTask(projectName, id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", projectName] }),
+  });
+
+  if (isLoading) return <p className="text-sm text-text-dim">Loading board…</p>;
+  if (error || !data) return <p className="text-sm text-phase-failed">Failed to load board.</p>;
+
+  const { spec, status } = data;
+  const columns = status.columns ?? DEFAULT_COLUMNS;
+  const backlog = status.backlog ?? {};
+  const workers = status.workers ?? [];
+  const tasks = spec.tasks ?? [];
+  const roster = (spec.agents ?? []).map((a) => a.name);
+
+  function taskById(id: string) { return tasks.find((t) => t.id === id); }
+  function workerByTask(id: string) { return workers.find((w) => w.taskId === id); }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm text-text-dim">
+            <Link to="/projects" className="hover:text-text transition-colors">Projects</Link>
+            <span>/</span>
+            <Link to={`/projects/${encodeURIComponent(projectName)}/edit`} className="hover:text-text transition-colors">
+              {projectName}
+            </Link>
+            <span>/</span>
+            <span className="text-text">Board</span>
+          </div>
+          <h1 className="text-xl font-semibold mt-1">{projectName} — Board</h1>
+          <p className="text-sm text-text-dim mt-0.5">
+            Team: {roster.join(", ") || "(no agents configured)"}
+            {" · "}Max parallel: {spec.maxParallel ?? 2}
+            {" · "}Phase: {spec.phase ?? "Active"}
+          </p>
+        </div>
+        <button
+          onClick={() => setShowAddTask((v) => !v)}
+          className="rounded-md bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 text-sm font-medium text-text transition-colors"
+        >
+          {showAddTask ? "Cancel" : "+ Add Task"}
+        </button>
+      </div>
+
+      {/* Add task form */}
+      {showAddTask && (
+        <div className="rounded-md border border-border bg-surface p-4 space-y-3 max-w-lg">
+          <h2 className="text-sm font-semibold">Add Task</h2>
+          <div className="grid grid-cols-2 gap-3">
+            <input
+              placeholder="ID (e.g. F-104)"
+              value={taskId}
+              onChange={(e) => setTaskId(e.target.value)}
+              className="rounded border border-border bg-surface-raised px-2 py-1.5 text-sm font-mono"
+            />
+            <select
+              value={taskAgent}
+              onChange={(e) => setTaskAgent(e.target.value)}
+              className="rounded border border-border bg-surface-raised px-2 py-1.5 text-sm"
+            >
+              <option value="">— agent —</option>
+              {roster.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
+          <input
+            placeholder="Title"
+            value={taskTitle}
+            onChange={(e) => setTaskTitle(e.target.value)}
+            className="w-full rounded border border-border bg-surface-raised px-2 py-1.5 text-sm"
+          />
+          <textarea
+            placeholder="Description (optional)"
+            value={taskDesc}
+            onChange={(e) => setTaskDesc(e.target.value)}
+            rows={3}
+            className="w-full rounded border border-border bg-surface-raised px-2 py-1.5 text-sm resize-y"
+          />
+          <div className="flex items-center gap-3">
+            <select
+              value={taskPriority}
+              onChange={(e) => setTaskPriority(e.target.value as "high" | "medium" | "low")}
+              className="rounded border border-border bg-surface-raised px-2 py-1.5 text-sm"
+            >
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+            <button
+              onClick={() => {
+                if (!taskId.trim() || !taskTitle.trim() || !taskAgent) {
+                  setAddError("ID, title, and agent are required");
+                  return;
+                }
+                addMutation.mutate({
+                  id: taskId.trim(),
+                  title: taskTitle.trim(),
+                  description: taskDesc.trim() || undefined,
+                  agent: taskAgent,
+                  priority: taskPriority,
+                });
+              }}
+              disabled={addMutation.isPending}
+              className="rounded-md bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 px-3 py-1.5 text-sm font-medium text-text transition-colors"
+            >
+              {addMutation.isPending ? "Adding…" : "Add"}
+            </button>
+          </div>
+          {addError && <p className="text-xs text-phase-failed">{addError}</p>}
+        </div>
+      )}
+
+      {/* Board columns */}
+      <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
+        {columns.map((col) => {
+          const taskIds = backlog[col] ?? [];
+          return (
+            <div key={col} className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-text-dim">{col}</h3>
+                <span className="text-xs text-text-dim tabular-nums">{taskIds.length}</span>
+              </div>
+              <div className="space-y-2 min-h-[8rem]">
+                {taskIds.map((id) => {
+                  const task = taskById(id);
+                  const worker = workerByTask(id);
+                  return (
+                    <div
+                      key={id}
+                      className="rounded-md border border-border bg-surface p-2.5 space-y-1 group relative"
+                    >
+                      <div className="flex items-start justify-between gap-1">
+                        <span className="text-xs font-mono text-text-dim">{id}</span>
+                        {task?.priority && (
+                          <span className={`text-[10px] px-1 rounded ${
+                            task.priority === "high" ? "text-phase-failed bg-phase-failed/10" :
+                            task.priority === "low" ? "text-text-dim bg-surface-overlay" :
+                            "text-phase-running bg-phase-running/10"
+                          }`}>
+                            {task.priority}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-text leading-snug">{task?.title ?? id}</p>
+                      {task?.agent && (
+                        <p className="text-xs text-text-dim">{task.agent}</p>
+                      )}
+                      {worker?.runName && (
+                        <Link
+                          to={`/runs/${encodeURIComponent(worker.runName)}`}
+                          className="text-xs text-zinc-400 hover:text-text transition-colors underline"
+                        >
+                          {worker.runName}
+                        </Link>
+                      )}
+                      {worker?.status === "Escalated" && (
+                        <p className="text-xs text-phase-failed" title={worker.escalation ?? ""}>
+                          Escalated
+                        </p>
+                      )}
+                      <button
+                        onClick={() => deleteMutation.mutate(id)}
+                        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-xs text-text-dim hover:text-phase-failed transition-all"
+                        title="Remove task"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+                {taskIds.length === 0 && (
+                  <p className="text-xs text-text-dim italic">empty</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

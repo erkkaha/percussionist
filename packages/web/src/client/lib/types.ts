@@ -1,112 +1,36 @@
-// Client-side types mirroring the OpenCodeRun CRD shape returned by the API.
-// We keep these light — no Zod on the client, just TypeScript interfaces.
+// lib/types.ts — re-exports from @percussionist/api plus client-only types.
+//
+// Zod is not run in the browser. These are TypeScript-only structural types
+// derived from the server schema, plus a few client-specific view models.
 
-export interface OpenCodeRunCondition {
-  type: string;
-  status: "True" | "False" | "Unknown";
-  reason?: string;
-  message?: string;
-  lastTransitionTime?: string;
-}
+// Re-export server types so components import from a single place.
+export type {
+  OpenCodeRun,
+  OpenCodeProject,
+  ClusterAgent,
+  BoardTask,
+  BoardSpec,
+  BoardStatus,
+} from "@percussionist/api";
+export { RunPhase, TERMINAL_PHASES } from "@percussionist/api";
 
-export interface OpenCodeRunStatus {
-  phase?: RunPhase;
-  message?: string;
-  podName?: string;
-  serviceName?: string;
-  sessionID?: string;
-  startedAt?: string;
-  completedAt?: string;
-  lastEventAt?: string;
-  tokensIn?: number;
-  tokensOut?: number;
-  webURL?: string;
-  ingressName?: string;
-  conditions?: OpenCodeRunCondition[];
-}
-
-export interface GitSource {
-  url: string;
-  ref?: string;
-  sshSecret?: { name: string; key: string };
-  author?: { name: string; email: string };
-}
+// ---------------------------------------------------------------------------
+// Run creation request (sent to POST /api/runs)
 
 export interface AgentDef {
   name: string;
   content: string;
 }
 
-export interface ClusterAgent {
-  apiVersion: string;
-  kind: string;
-  metadata: { name: string; namespace?: string; uid?: string; creationTimestamp?: string };
-  spec: { content: string };
-}
-
-export interface CreateAgentRequest {
-  name?: string;
-  content: string;
-}
-
-export interface OpenCodeRunSpec {
-  task?: string;
-  interactive: boolean;
-  agent?: string;
-  agents?: AgentDef[];
-  model?: string;
-  image: string;
-  source?: { git?: GitSource };
-  secrets?: {
-    llmKeysSecret?: string;
-    opencodeAuthSecret?: { name: string; key?: string };
-  };
-  timeoutSeconds: number;
-  ttlSecondsAfterFinished: number;
-}
-
-export interface OpenCodeRun {
-  apiVersion: string;
-  kind: string;
-  metadata: {
-    name: string;
-    namespace?: string;
-    uid?: string;
-    creationTimestamp?: string;
-    [key: string]: unknown;
-  };
-  spec: OpenCodeRunSpec;
-  status?: OpenCodeRunStatus;
-}
-
-export type RunPhase =
-  | "Pending"
-  | "Initializing"
-  | "Running"
-  | "Succeeded"
-  | "Failed"
-  | "Cancelled";
-
-export const TERMINAL_PHASES: ReadonlySet<RunPhase> = new Set([
-  "Succeeded",
-  "Failed",
-  "Cancelled",
-]);
-
-export interface LogsResponse {
-  podName: string;
-  container: string;
-  lines: string;
-}
-
 export interface CreateRunRequest {
-  /** Prompt for the agent. Required unless interactive is true. */
   task?: string;
   interactive?: boolean;
   agent?: string;
-  agents?: AgentDef[];
+  /** Inline agent defs (name + markdown content). Sent as spec.inlineAgents. */
+  inlineAgents?: AgentDef[];
   model?: string;
-  /** Git source for /workspace. */
+  /** Required — project name for config resolution and provenance. */
+  project: string;
   source?: {
     git?: {
       url: string;
@@ -119,10 +43,44 @@ export interface CreateRunRequest {
     llmKeysSecret?: string;
     opencodeAuthSecret?: { name: string; key?: string };
   };
-  /** Seconds before the run is killed. Default 3600. */
   timeoutSeconds?: number;
-  /** Optional custom name (auto-generated if absent). */
   name?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Project creation / update request
+
+export interface CreateProjectRequest {
+  name?: string;
+  displayName?: string;
+  model?: string;
+  agent?: string;
+  secrets?: {
+    llmKeysSecret?: string;
+    opencodeAuthSecret?: { name: string; key?: string };
+  };
+  source?: {
+    git?: {
+      url: string;
+      ref?: string;
+      sshSecret?: { name: string; key?: string };
+      author?: { name: string; email: string };
+    };
+  };
+}
+
+export interface CreateAgentRequest {
+  name?: string;
+  content: string;
+}
+
+// ---------------------------------------------------------------------------
+// Logs
+
+export interface LogsResponse {
+  podName: string;
+  container: string;
+  lines: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,19 +128,16 @@ export interface StepFinishPart {
   messageID: string;
   type: "step-finish";
   reason: string;
-  tokens: {
-    input: number;
-    output: number;
-    reasoning: number;
-  };
+  tokens: { input: number; output: number; reasoning: number };
 }
 
-export type SessionPart = TextPart | ToolPart | ReasoningPart | StepStartPart | StepFinishPart | {
-  id: string;
-  messageID: string;
-  type: string;
-  [key: string]: unknown;
-};
+export type SessionPart =
+  | TextPart
+  | ToolPart
+  | ReasoningPart
+  | StepStartPart
+  | StepFinishPart
+  | { id: string; messageID: string; type: string; [key: string]: unknown };
 
 export interface SessionMessageInfo {
   id: string;
@@ -204,126 +159,6 @@ export interface SessionMessage {
 export interface SessionResponse {
   sessionID: string;
   messages: SessionMessage[];
-  /** "live" = proxied from the running pod; "snapshot" = read from ConfigMap. */
   source?: "live" | "snapshot";
-  /** True when the ConfigMap snapshot was truncated to fit under 1 MiB. */
   truncated?: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// OpenCodeProject
-
-export interface OpenCodeProjectSpec {
-  displayName?: string;
-  model?: string;
-  agent?: string;
-  secrets?: {
-    llmKeysSecret?: string;
-    opencodeAuthSecret?: { name: string; key?: string };
-  };
-  source?: {
-    git?: {
-      url: string;
-      ref?: string;
-      sshSecret?: { name: string; key?: string };
-      author?: { name: string; email: string };
-    };
-  };
-}
-
-export interface OpenCodeProject {
-  apiVersion: string;
-  kind: string;
-  metadata: {
-    name: string;
-    namespace?: string;
-    uid?: string;
-    creationTimestamp?: string;
-    [key: string]: unknown;
-  };
-  spec: OpenCodeProjectSpec;
-}
-
-export interface CreateProjectRequest {
-  /** Project name (auto-generated if absent). */
-  name?: string;
-  displayName?: string;
-  model?: string;
-  agent?: string;
-  secrets?: OpenCodeProjectSpec["secrets"];
-  source?: OpenCodeProjectSpec["source"];
-}
-
-// ---------------------------------------------------------------------------
-// OpenCodeKanban
-
-export interface KanbanTask {
-  id: string;
-  title: string;
-  description?: string;
-  priority?: "high" | "medium" | "low";
-}
-
-export interface WorkerStatus {
-  taskId: string;
-  runName?: string;
-  status: "Running" | "Succeeded" | "Failed" | "Escalated";
-  branch?: string;
-  prNumber?: number;
-  startedAt?: string;
-  completedAt?: string;
-  escalation?: string;
-  retryCount?: number;
-}
-
-export interface OpenCodeKanbanSpec {
-  displayName?: string;
-  source?: { git?: GitSource };
-  defaults?: { model?: string; timeoutSeconds?: number; resources?: Record<string, string> };
-  maxParallel?: number;
-  agents?: AgentDef[];
-  tasks?: KanbanTask[];
-  phase?: "Active" | "Complete" | "Archived";
-}
-
-export interface PendingQuestion {
-  workerId: string;
-  runName?: string;
-  sessionID: string;
-  messageText: string;
-}
-
-export interface OpenCodeKanbanStatus {
-  phase?: string;
-  columns?: string[];
-  backlog?: Record<string, string[]>;
-  workers?: WorkerStatus[];
-  activeWorkers?: number;
-  escalations?: string[];
-  pendingQuestions?: PendingQuestion[];
-  lastEventAt?: string;
-}
-
-export interface OpenCodeKanban {
-  apiVersion: string;
-  kind: string;
-  metadata: {
-    name: string;
-    namespace?: string;
-    uid?: string;
-    creationTimestamp?: string;
-    [key: string]: unknown;
-  };
-  spec: OpenCodeKanbanSpec;
-  status?: OpenCodeKanbanStatus;
-}
-
-export interface CreateKanbanRequest {
-  name?: string;
-  displayName?: string;
-  source?: { git?: GitSource };
-  defaults?: { model?: string; timeoutSeconds?: number; resources?: Record<string, string> };
-  maxParallel?: number;
-  agents?: AgentDef[];
-  tasks?: KanbanTask[];
 }

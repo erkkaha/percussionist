@@ -71,6 +71,9 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
       "either --task or --interactive is required when --file is not supplied",
     );
   }
+  if (!opts.project) {
+    throw new Error("--project is required");
+  }
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
   const name = opts.name ?? generateName();
 
@@ -119,6 +122,7 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
     kind: KIND_RUN,
     metadata: { name, namespace: ns },
     spec: {
+      project: opts.project,
       ...(opts.task ? { task: opts.task } : {}),
       ...(opts.interactive ? { interactive: true } : {}),
       ...(resolvedAgent ? { agent: resolvedAgent } : {}),
@@ -163,7 +167,7 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
             },
           }
         : {}),
-      ...(rawAgents.length > 0 ? { agents: rawAgents } : {}),
+      ...(rawAgents.length > 0 ? { inlineAgents: rawAgents } : {}),
     },
   };
   return OpenCodeRunSchema.parse(raw);
@@ -223,6 +227,10 @@ async function waitForRunning(
 
 export async function runSubmit(opts: SubmitOpts): Promise<void> {
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
+
+  if (!opts.project && !opts.file) {
+    fatal("--project is required (use --file to supply a fully-specified run YAML)", undefined);
+  }
 
   // Resolve project defaults before building the run spec. Hard-fail if the
   // project is referenced but cannot be found — a missing project is almost

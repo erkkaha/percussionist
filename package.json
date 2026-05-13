@@ -9,6 +9,7 @@
     "bundle": "pnpm --filter @percussionist/cli bundle",
     "typecheck": "pnpm -r run typecheck",
     "lint": "pnpm -r run lint",
+    "codegen": "pnpm --filter @percussionist/api codegen",
     "beatctl": "pnpm --filter @percussionist/cli exec tsx src/index.ts",
     "web": "pnpm --filter @percussionist/web dev",
     "web:client": "pnpm --filter @percussionist/web dev:client"

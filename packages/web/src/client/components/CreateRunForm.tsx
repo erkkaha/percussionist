@@ -95,7 +95,7 @@ export default function CreateRunForm() {
     if (run.spec.task) setTask(run.spec.task);
     if (run.spec.model) setModel(run.spec.model);
     if (run.spec.agent) setAgent(run.spec.agent);
-    if (run.spec.agents && run.spec.agents.length > 0) setAgents([...run.spec.agents]);
+    if (run.spec.inlineAgents && run.spec.inlineAgents.length > 0) setAgents([...run.spec.inlineAgents]);
     if (run.spec.interactive) setInteractive(run.spec.interactive);
     if (run.spec.timeoutSeconds) setTimeoutSeconds(run.spec.timeoutSeconds);
     if (run.spec.source?.git?.url) {
@@ -152,11 +152,11 @@ export default function CreateRunForm() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const req: CreateRunRequest = { interactive, timeoutSeconds };
+    const req: CreateRunRequest = { interactive, timeoutSeconds, project: selectedProject };
     if (task.trim()) req.task = task.trim();
     if (model.trim()) req.model = model.trim();
     if (agent.trim()) req.agent = agent.trim();
-    if (agents.length > 0) req.agents = agents;
+    if (agents.length > 0) req.inlineAgents = agents;
     if (showGit && gitUrl.trim()) {
       req.source = { git: { url: gitUrl.trim() } };
       if (gitRef.trim()) req.source.git!.ref = gitRef.trim();
@@ -176,7 +176,7 @@ export default function CreateRunForm() {
     mutation.mutate(req);
   }
 
-  const canSubmit = (interactive || task.trim().length > 0) && !gitAuthorIncomplete;
+  const canSubmit = (interactive || task.trim().length > 0) && !gitAuthorIncomplete && selectedProject.length > 0;
 
   const inputClass =
     "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-zinc-500 focus:outline-none";
@@ -200,30 +200,33 @@ export default function CreateRunForm() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Project picker */}
-        {projects && projects.length > 0 && (
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Project</label>
-            <select
-              value={selectedProject}
-              onChange={(e) => handleProjectChange(e.target.value)}
-              className={inputClass + " bg-surface"}
-            >
-              <option value="">— none —</option>
-              {projects.map((p) => (
-                <option key={p.metadata.name} value={p.metadata.name}>
-                  {p.spec.displayName ?? p.metadata.name}
-                </option>
-              ))}
-            </select>
+        {/* Project picker — required */}
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-text-muted">
+            Project <span className="text-phase-failed">*</span>
+          </label>
+          <select
+            value={selectedProject}
+            onChange={(e) => handleProjectChange(e.target.value)}
+            className={inputClass + " bg-surface"}
+            required
+          >
+            <option value="">— select a project —</option>
+            {(projects ?? []).map((p) => (
+              <option key={p.metadata.name} value={p.metadata.name}>
+                {p.spec.displayName ?? p.metadata.name}
+              </option>
+            ))}
+          </select>
+          {!selectedProject && (
             <p className="text-xs text-text-dim">
-              Pre-fills git, secrets, model, and agent from the selected project.{" "}
-              <Link to="/projects" className="underline hover:text-text-muted transition-colors">
-                Manage projects
+              A project is required.{" "}
+              <Link to="/projects/new" className="underline hover:text-text-muted transition-colors">
+                Create one
               </Link>
             </p>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Interactive toggle */}
         <div className="flex items-center gap-3">

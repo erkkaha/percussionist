@@ -1,10 +1,23 @@
 # percussionist
 
 Kubernetes-native orchestration for [OpenCode](https://opencode.ai) agents.
-Each agent run is a Pod; you attach to it on demand with `opencode attach`.
+Each agent run is a first-class Kubernetes resource — declarative, observable,
+and scriptable from CI. Attach to a live run with `opencode attach` any time.
 
-> **Status:** M5 — kanban-style agentic development flow with persistent manager
-> controller, git-sourced workspaces, OAuth provider auth, and web dashboard.
+## Features
+
+- **Declarative runs** — create an `OpenCodeRun` CR; the operator handles pod
+  scheduling, auth secrets, service routing, and lifecycle mirroring.
+- **Git workspaces** — clone any repo into `/workspace` before the agent starts,
+  with branch/tag/SHA resolution and SSH key support.
+- **Kanban boards** — `OpenCodeKanban` coordinates multi-task agentic workflows:
+  parallel dispatch, automatic retries, human-in-the-loop review, and rework.
+- **Web dashboard** — real-time run table, kanban board view, project/agent
+  catalog, and historical session analytics.
+- **`beatctl` CLI** — submit, watch, attach, and cancel runs without touching
+  `kubectl`.
+- **Provider auth** — OAuth tokens (GitHub Copilot, ChatGPT Plus, Claude Pro)
+  imported once and shared cluster-wide via Kubernetes Secrets.
 
 ## Repo layout
 
@@ -13,18 +26,18 @@ Each agent run is a Pod; you attach to it on demand with `opencode attach`.
 ├── crds/               # CustomResourceDefinitions (v1alpha1)
 │   ├── opencoderun.yaml
 │   ├── opencodeproject.yaml
-│   ├── opencodekanban.yaml    # Kanban board for agentic development
-│   └── clusteragent.yaml      # Cluster-wide agent definitions
+│   ├── opencodekanban.yaml
+│   └── clusteragent.yaml
 ├── deploy/             # Kubernetes Deployment + RBAC manifests
 │   ├── operator.yaml
-│   ├── manager-controller.yaml  # Persistent kanban manager controller
+│   ├── manager-controller.yaml
 │   └── web.yaml
 ├── examples/           # Sample OpenCodeRun manifests
 ├── images/
 │   ├── runner/         # opencode + git + ssh on Alpine (used by every run pod)
 │   ├── node/           # Shared Node 24 image; builds operator + dispatcher + manager
 │   └── web/            # Bun image; builds + serves the web dashboard
-├── manifests/          # Raw k8s manifests for M1 smoke test
+├── manifests/          # Raw k8s manifests for standalone smoke testing
 ├── packages/
 │   ├── api/            # Shared Zod schemas, constants, type helpers
 │   ├── operator/       # CRD reconciler (informer + reconciler loop)
@@ -32,157 +45,18 @@ Each agent run is a Pod; you attach to it on demand with `opencode attach`.
 │   ├── cli/            # beatctl — user-facing CLI
 │   ├── web/            # Dashboard SPA + Hono server + bun:sqlite stats DB
 │   └── manager-controller/  # Watches OpenCodeKanban CRs, dispatches worker runs
-└── scripts/            # Smoke tests + minikube image loader
+└── scripts/            # Cluster image loader + smoke test helpers
 ```
 
-Planned (M6+): `e2e/` automated end-to-end suite; git push-back.
+## Prerequisites
 
-## M1: smoke test
+- `kubectl` pointed at a cluster you control (minikube, k3s, kind, or remote)
+- `docker` to build images locally
+- `pnpm` and Node 24 for the TypeScript workspace
+- `opencode` CLI on your workstation (for `opencode attach`)
+- At least one provider API key or OAuth token (see [Provider auth](#provider-auth))
 
-Goal: prove `opencode serve` runs in a Kubernetes pod and that you can drop
-into its TUI from your laptop with `opencode attach`.
-
-### Prerequisites
-
-- `kubectl` pointed at a cluster you control (ideally homelab k3s)
-- `docker` locally to build the runner image
-- `opencode` CLI on your laptop (for `opencode attach`)
-- At least one provider API key exported as an env var
-  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...)
-
-### 1. Build the runner image
-
-```sh
-docker build -t percussionist/runner:dev images/runner
-```
-
-The runner image pins locale environment variables (`LANG`, `LC_ALL`,
-`LC_NUMERIC`) to `C.UTF-8` and installs `icu-data-full` so number/date
-formatting stays deterministic by default while still supporting explicit
-non-English locales (for example `fi-FI` decimal comma) in pod-based test
-runs.
-
-### 2. Make the image available to the cluster
-
-Pick the one that matches your setup:
-
-- **minikube** — one-shot build + load:
-  ```sh
-  ./scripts/minikube-load.sh
-  ```
-  (Re-run after any change to `images/runner/Dockerfile`; the script loads
-  with `--overwrite=true` and, with `--force`, also evicts any pods still
-  pinning the previous image ID — see the M2 section.)
-- **Docker Desktop Kubernetes** — nothing to do, the daemon is shared.
-- **k3s (homelab)** — import into containerd:
-  ```sh
-  docker save percussionist/runner:dev | sudo k3s ctr images import -
-  ```
-- **kind** — `kind load docker-image percussionist/runner:dev`
-- **Remote cluster** — push to a registry and run the smoke with
-  `IMAGE=ghcr.io/you/runner:tag ./scripts/m1-smoke.sh`
-
-### 3. Run the smoke
-
-```sh
-export ANTHROPIC_API_KEY=sk-ant-...
-./scripts/m1-smoke.sh
-```
-
-The script:
-
-1. Verifies the current `kubectl` context (warns if it looks like a non-local cluster).
-2. Creates the `percussionist-m1` namespace.
-3. Creates two Secrets (auth password + LLM keys) from your env.
-4. Applies `manifests/m1-smoke.yaml` (Pod + Service).
-5. Waits for the pod to become Ready.
-6. Starts `kubectl port-forward svc/opencode-smoke 4096:4096` in the foreground
-   and prints the `opencode attach` command.
-
-### 4. Attach from another terminal
-
-The script prints the exact command; it looks like:
-
-```sh
-export OPENCODE_SERVER_PASSWORD='<generated-or-your-value>'
-opencode attach http://localhost:4096
-```
-
-You should drop straight into a TUI backed by the pod. Send a prompt; the
-workspace lives at `/workspace` inside the pod (empty `emptyDir` for M1).
-
-### 5. Tear down
-
-```sh
-./scripts/m1-smoke.sh --down
-```
-
-Deletes the `percussionist-m1` namespace and everything in it.
-
-## M1 exit criteria
-
-- [x] Runner image builds and `opencode serve` responds on `/global/health`.
-- [ ] Pod reaches Ready in a real cluster.
-- [ ] `opencode attach` from laptop yields a working TUI.
-- [ ] A prompt executes end-to-end inside the pod.
-
-Once all four are checked, we move to **M2**: `OpenCodeRun` CRD + operator +
-dispatcher sidecar that drives sessions via the SDK and pushes branches on
-completion.
-
-## M2: CRD + operator + dispatcher
-
-Goal: declaratively launch opencode runs by creating an `OpenCodeRun` custom
-resource. The operator reconciles each CR into a Secret + Service + Pod, and a
-dispatcher sidecar inside the Pod creates an opencode session, submits the
-configured prompt, and writes lifecycle info back to `.status`.
-
-### Architecture at a glance
-
-```
-  OpenCodeRun (CR)
-        │
-        ▼  watched by
-  ┌──────────────┐        creates / owns       ┌─────────────────────────┐
-  │   operator   │ ──────────────────────────► │  Secret   (auth pwd)    │
-  │ (Deployment) │                             │  Service  (ClusterIP)   │
-  └──────────────┘                             │  Pod                    │
-                                               │   ├─ runner   (opencode)│
-                                               │   └─ dispatcher (sidecar)
-                                               └──────────┬──────────────┘
-                                                          │ patches
-                                                          ▼
-                                                    .status subresource
-```
-
-- **runner** container: `percussionist/runner:dev`, runs `opencode serve` on
-  `:4096` (unauthenticated — rely on network isolation; expose only via the
-  per-run Ingress described below for local access).
-- **dispatcher** container: waits for the runner's health endpoint, creates a
-  session, `POST /session/:id/prompt_async`, polls `/session/:id/message` for
-  the last assistant message's `time.completed`, then patches the CR status to
-  `Succeeded` (or `Failed` on error) and exits.
-- **operator** watches `OpenCodeRun` resources via a hand-rolled informer
-  (there's no kubebuilder for TypeScript), creates child objects with
-  `ownerReferences`, and mirrors Pod phase into the CR status every 10s.
-
-### Prerequisites
-
-Everything from M1, plus:
-
-- `pnpm` (Node workspace) and Node 24
-- A running cluster with the `percussionist` namespace available (the deploy
-  manifest creates it for you)
-
-### Quickstart (minikube)
-
-```sh
-minikube addons enable ingress
-./scripts/minikube-load.sh
-beatctl deploy
-kubectl apply -f examples/hello-run.yaml
-kubectl -n percussionist get opencoderun -w
-```
+## Getting started
 
 ### 1. Build and load all images
 
@@ -191,30 +65,27 @@ kubectl -n percussionist get opencoderun -w
 ```
 
 Builds `runner`, `operator`, `dispatcher`, `web`, and `manager` images and loads
-them into minikube. On other clusters see the M1 section for alternatives.
+them into minikube. For other cluster types:
+
+| Cluster | How to make images available |
+|---------|------------------------------|
+| **minikube** | `./scripts/minikube-load.sh` (handles build + load) |
+| **Docker Desktop** | Nothing — the daemon is shared |
+| **k3s** | `docker save percussionist/runner:dev \| sudo k3s ctr images import -` |
+| **kind** | `kind load docker-image percussionist/runner:dev` |
+| **Remote** | Push to a registry; set `RUNNER_IMAGE_DEFAULT` on the operator Deployment |
 
 When you change code and a pod is still pinning the old image, minikube's
-plain `image load` silently no-ops. The script warns you when that happens;
-pass `--force` to have it fix things for you:
+plain `image load` silently no-ops. Pass `--force` to evict stale pods and
+force a clean reload:
 
 ```sh
-./scripts/minikube-load.sh --only dispatcher --force          # interactive
-./scripts/minikube-load.sh --force --yes                       # CI / scripts
+./scripts/minikube-load.sh --only dispatcher --force   # interactive
+./scripts/minikube-load.sh --force --yes                # CI / scripts
 ```
 
-`--force` does three things:
-
-1. `docker build --no-cache` for the rebuilt images (ensures changes in
-   workspace packages actually land in the image — plain rebuilds can
-   reuse a cached build stage with stale sources).
-2. Finds anything inside minikube pinning the old image ID and evicts it:
-   scales `deploy/percussionist-operator` to 0 for the operator image, or
-   deletes any `OpenCodeRun` whose pods are using the runner / dispatcher
-   image.
-3. Runs `minikube image rm` before the fresh `load` so the new ID actually
-   sticks.
-
-Without `--yes` the script prompts before deleting any `OpenCodeRun`.
+`--force` does three things: rebuilds with `--no-cache`, evicts pods pinning
+the old image ID, and runs `minikube image rm` before the fresh load.
 
 ### 2. Deploy CRDs + operator + web
 
@@ -222,7 +93,8 @@ Without `--yes` the script prompts before deleting any `OpenCodeRun`.
 beatctl deploy
 ```
 
-Equivalent manual flow:
+Installs all four CRDs, the operator, manager controller, and web dashboard,
+then waits for rollouts to complete. Equivalent manual flow:
 
 ```sh
 kubectl apply -f crds/opencoderun.yaml
@@ -237,17 +109,23 @@ kubectl -n percussionist rollout status deploy/percussionist-manager
 kubectl -n percussionist rollout status deploy/percussionist-web
 ```
 
-### 3. Submit a run
-
-The sample run uses opencode's bundled Zen provider (`big-pickle`), which
-needs no API key — handy for smoke-testing without burning real credits.
+To uninstall everything:
 
 ```sh
-kubectl apply -f examples/hello-run.yaml
-kubectl get opencoderun -n percussionist -w
+beatctl deploy --down
 ```
 
-Typical lifecycle (elapsed ~5–10s on a warm node):
+### 3. Submit a run
+
+```sh
+beatctl submit --task "say hello briefly" --name hello
+beatctl ls
+# NAME   PHASE    SESSION                 TOK-IN  TOK-OUT  AGE
+# hello  Running  ses_250c...              0       0        3s
+beatctl logs hello -f
+```
+
+Typical lifecycle (elapsed ~5–10 s on a warm node):
 
 ```
 NAME    PHASE       SESSION ID               TOKENS IN   TOKENS OUT
@@ -256,117 +134,156 @@ hello   Running     ses_250d3c2afffe...              0           0
 hello   Succeeded   ses_250d3c2afffe...             65          85
 ```
 
-Inspect `.status` for `startedAt`, `completedAt`, `message`, and the
-generated `podName` / `serviceName`.
-
-### 4. Attach while a run is live
-
-Runs expose the same Service shape as M1, so `opencode attach` still works:
+### 4. Attach to a live run
 
 ```sh
-kubectl -n percussionist port-forward svc/hello 4096:4096 &
-opencode attach http://localhost:4096
+beatctl attach hello
 ```
 
-### 5. Tear down deployment
+Forwards the run's Service port, reads the auth Secret, and drops you into the
+opencode TUI. Port-forward is torn down automatically on exit.
+
+Or combine submit + attach in one step:
 
 ```sh
-beatctl deploy --down
+beatctl submit -i -a --name scratch
+# creates the run, waits for Running, then attaches
 ```
 
-Deletes all CRDs, operator + manager controller deployments/RBAC, and web resources.
-
-## M2 exit criteria
-
-- [x] `OpenCodeRun` CRD installed and validated by the apiserver.
-- [x] Operator reconciles CR → Secret + Service + Pod with owner refs.
-- [x] Dispatcher creates a session and dispatches the configured prompt.
-- [x] Dispatcher detects completion and patches status to `Succeeded` with
-      token counts and timestamps.
-- [x] Deleting the CR garbage-collects all child objects.
-
-Next up — **M3:** `beatctl` CLI (`deploy`, `submit`, `ls`, `attach`, `logs`, `cancel`)
-so you never have to touch `kubectl` for routine use.
-
-## M3: `beatctl` CLI
-
-`beatctl` is a user-facing CLI that replaces raw `kubectl` for the common
-percussionist workflows. It reuses your existing kubeconfig (same rules as
-kubectl: `KUBECONFIG`, then `~/.kube/config`), so it picks up whatever cluster
-/ context / namespace you've already set up.
-
-### Run it during development
+### 5. Tear down
 
 ```sh
+beatctl cancel hello        # deletes the CR and all owned resources
+beatctl deploy --down       # removes the operator, CRDs, and web dashboard
+```
+
+## Architecture
+
+### OpenCodeRun
+
+```mermaid
+flowchart TD
+    CR[OpenCodeRun CR]
+
+    CR -->|watched by| OP[operator\nDeployment]
+
+    OP -->|creates / owns| SEC[Secret\nauth pwd]
+    OP -->|creates / owns| SVC[Service\nClusterIP]
+    OP -->|creates / owns| POD[Pod]
+    OP -->|creates / owns\nif spec.agents set| AGCM[ConfigMap\nagents]
+    OP -->|creates / owns\nif INGRESS_BASE_URL set| ING[Ingress\nper-run web URL]
+    OP -->|mirrors pod phase\nevery 10 s| CR
+
+    POD --> INIT[git-clone init container\nif spec.source.git set]
+    POD --> OC[opencode container\nopencode web :4096]
+    POD --> DISP[dispatcher container\nsidecar]
+
+    AGCM -->|volume mount\n/root/.config/opencode/agents| OC
+    ING -->|routes| SVC
+    SVC -->|ClusterIP :4096| OC
+
+    DISP -->|HTTP 127.0.0.1:4096| OC
+    DISP -->|patches| STATUS[CR .status subresource]
+```
+
+- **opencode container** runs `opencode web` on `:4096`. Network-isolated by
+  default; exposed via per-run Ingress when configured.
+- **dispatcher container** waits for the runner's health endpoint, creates a
+  session, fires `POST /session/:id/prompt_async`, then concurrently polls
+  `/session/:id/message` and consumes the SSE `/event` stream for low-latency
+  token updates. Once the last assistant message's `time.completed` is set it
+  patches the CR to `Succeeded` (or `Failed` on error) and exits. A 1-hour
+  hard timeout guard exits with code 3 if the run stalls indefinitely.
+- **operator** uses a hand-rolled informer (no kubebuilder for TypeScript),
+  creates child objects with `ownerReferences` for cascading deletion, and
+  mirrors Pod phase into the CR status every 10 s.
+
+### OpenCodeKanban
+
+```mermaid
+flowchart TD
+    KCR[OpenCodeKanban CR\n.spec.tasks backlog]
+
+    KCR -->|watched by| MGR[manager\nDeployment]
+
+    MGR -->|pulls ready tasks\nup to maxParallel| MGR
+    MGR -->|creates / owns| WRK[OpenCodeRun\nworker CR]
+    MGR -->|reads worker status| WRK
+    MGR -->|patches backlog + workers| KCR
+
+    WRK --> INIT[git-clone init container]
+    WRK --> OC[opencode container\nrunner]
+    WRK --> DISP[dispatcher container\nsidecar]
+
+    DISP -->|patches| WRKSTATUS[OpenCodeRun .status]
+    WRKSTATUS -->|read by| MGR
+
+    COLS["Column flow\nready → in-progress → review → rework → done"]
+    MGR -->|moves task IDs\nacross columns| COLS
+```
+
+- **manager controller** reconciles `OpenCodeKanban` CRs in a continuous loop:
+  pulls ready tasks up to `spec.maxParallel`, monitors active workers, retries
+  failed tasks (up to 3 retries, 4 total attempts), escalates when exhausted,
+  and re-dispatches rework tasks with feedback context.
+- **Worker runs** are `OpenCodeRun` CRs owned by the kanban — they
+  cascade-delete when the board is deleted.
+
+### Session analytics
+
+```mermaid
+flowchart LR
+    POD[OpenCodeRun Pod\ndispatcher sidecar]
+    POD -->|POST /api/stats/session\nfire-and-forget, non-fatal| WEB[percussionist-web pod]
+    WEB --> DB[(bun:sqlite\n/app/data/stats.db\n1 Gi PVC)]
+    DB -->|hourly cleanup\nRETENTION_DAYS| DB
+    USER[user / LLM CLI]
+    USER -->|GET /api/stats/export| WEB
+```
+
+## `beatctl` CLI
+
+`beatctl` reuses your existing kubeconfig (same rules as `kubectl`: `KUBECONFIG`
+then `~/.kube/config`).
+
+### Installation
+
+```sh
+# Run from source during development
 pnpm beatctl --help
-# or equivalently:
-pnpm --filter @percussionist/cli exec bun src/index.ts --help
-```
 
-Install globally (after `pnpm -r build`):
-
-```sh
+# Install globally
 pnpm --filter @percussionist/cli build
 pnpm link --global --filter @percussionist/cli
-beatctl --help
+
+# Or build a self-contained binary (Bun runtime embedded, ~98 MB)
+pnpm bundle
+./packages/cli/bin/beatctl ls
 ```
-
-Or bundle a self-contained single-file executable (no Node or Bun required on
-the target machine — the Bun runtime is embedded in the binary):
-
-```sh
-pnpm bundle                    # -> packages/cli/bin/beatctl (~98 MB)
-./packages/cli/bin/beatctl ls  # drop into ~/.local/bin if you like
-```
-
-The bundle is produced by `packages/cli/scripts/bundle.mjs` using
-`bun build --compile`. It bakes in all workspace deps (`@percussionist/api`
-included) and the Bun runtime itself, so the binary runs anywhere with no
-external dependencies.
 
 ### Commands
 
-| Command                        | What it does                                                                 |
-| ------------------------------ | ---------------------------------------------------------------------------- |
-| `beatctl deploy`               | Install CRDs (opencoderun, opencodeproject, opencodekanban, clusteragent) and apply operator + manager controller + web manifests; waits for rollouts by default. |
-| `beatctl deploy --down`        | Delete operator/web + manager controller resources and all CRDs (`--ignore-not-found`).              |
-| `beatctl submit -t "<task>"`   | Create an `OpenCodeRun` with an inline task prompt.                          |
-| `beatctl submit -i`            | Interactive run — no automatic prompt; keeps the runner alive for `beatctl attach`. |
-| `beatctl submit ... -a`        | `--attach`: after submit, poll until `Running` and hand off to attach in one shot. Great combined with `-i`. |
-| `beatctl submit -f run.yaml`   | Create from a YAML file (CLI flags still override name / namespace).         |
-| `beatctl ls`                   | Table of runs with phase, session ID, running token totals, age.             |
-| `beatctl get <name>`           | Detailed view of a single run (also `-o yaml` / `-o json`).                  |
-| `beatctl logs <name> [-f]`     | Stream container logs. `-c dispatcher` to watch the sidecar instead.         |
-| `beatctl attach <name>`        | Start a `kubectl port-forward` to the run's Service and launch `opencode attach`. Port-forward is torn down automatically on exit. |
-| `beatctl wait <name>`          | Block until the run reaches a terminal phase. Exit 0 on `Succeeded`, 1 on `Failed`/`Cancelled`/deleted, 2 on timeout. `--for <phase>` waits for a specific phase (e.g. `Running`). Intended for CI and `submit && wait` chains. |
-| `beatctl cancel <name>`        | Delete the run (cascades to its Pod/Service/Secret via `ownerReferences`).   |
+| Command | What it does |
+|---------|-------------|
+| `beatctl deploy` | Install CRDs and apply operator + manager controller + web manifests; waits for rollouts. |
+| `beatctl deploy --down` | Delete all operator/web/manager resources and CRDs. |
+| `beatctl submit -t "<task>"` | Create an `OpenCodeRun` with an inline task prompt. |
+| `beatctl submit -i` | Interactive run — no prompt; runner stays alive for `beatctl attach`. |
+| `beatctl submit ... -a` | After submit, poll until `Running` then hand off to attach. |
+| `beatctl submit -f run.yaml` | Create from a YAML file (name/namespace flags still apply; `-t` is ignored when `-f` is given). |
+| `beatctl ls` | Table of runs with phase, session ID, token totals, age. |
+| `beatctl get <name>` | Detailed view of a single run (`-o yaml` / `-o json` supported). |
+| `beatctl logs <name> [-f]` | Stream container logs. `-c dispatcher` to watch the sidecar. |
+| `beatctl attach <name>` | Port-forward the run's Service and launch `opencode attach`; cleans up on exit. |
+| `beatctl wait <name>` | Block until terminal phase. Exit 0 = Succeeded, 1 = other terminal or deleted, 2 = timeout, 3 = API error. `--for <phase>` to await a specific phase. |
+| `beatctl cancel <name>` | Delete the run and all owned resources. |
 
-Global conventions:
-
-- `-n, --namespace <ns>` on every command, defaulting to `percussionist` (or
-  `$PERCUSSIONIST_NAMESPACE`).
-- `submit` without `--name` generates a short timestamp-based name so you can
-  spam submissions without thinking about uniqueness.
-- `attach` picks a random free local port unless you pass `--local-port`.
-
-### Example end-to-end
-
-```sh
-beatctl submit --task "say hello briefly" --name hello
-beatctl ls
-# NAME   PHASE    SESSION                 TOK-IN  TOK-OUT  AGE
-# hello  Running  ses_250c...              0       0        3s
-beatctl logs hello -c dispatcher -f
-beatctl cancel hello
-```
+Global flags: `-n, --namespace <ns>` (default: `percussionist` or `$PERCUSSIONIST_NAMESPACE`).
 
 ### Scripting with `wait`
 
-`wait` turns `beatctl` into a first-class CI citizen. Exit 0 means the run
-succeeded — everything else is a non-zero exit code:
-
 ```sh
-beatctl submit -t "run the linter" --name ci-lint -f run.yaml
+beatctl submit --name ci-lint -f run.yaml
 if beatctl wait ci-lint --timeout 600; then
   echo "lint passed"
 else
@@ -376,198 +293,13 @@ fi
 beatctl cancel ci-lint
 ```
 
-Exit codes: `0` awaited phase reached · `1` terminal-but-not-awaited (e.g.
-`Failed`, `Cancelled`, or the CR was deleted mid-wait) · `2` timeout · `3`
-Kubernetes API error.
+Exit codes: `0` awaited phase reached · `1` terminal phase other than awaited,
+or the CR was deleted mid-wait · `2` timeout · `3` Kubernetes API error (non-404).
 
-### One-shot interactive shell
+## Git workspace source
 
-For exploratory work, skip writing a task and drop straight into a TUI
-backed by a fresh pod:
-
-```sh
-beatctl submit -i -a --name scratch
-# creates OpenCodeRun scratch, waits for Running, then `opencode attach`s
-# into it. When you exit the TUI, run `beatctl cancel scratch` to tear
-# down the pod (interactive runs stay Running until cancelled or timed
-# out).
-```
-
-## Dashboard access
-
-The Percussionist web dashboard (`percussionist-web`) is exposed via Ingress
-at a stable URL — no `kubectl port-forward` needed:
-
-```
-http://app.<minikube-ip>.traefik.me:30080/
-```
-
-For the default minikube IP (`192.168.49.2`):
-
-```
-http://app.192.168.49.2.traefik.me:30080/
-```
-
-[traefik.me](https://traefik.me) is a free wildcard DNS service: `*.192.168.49.2.traefik.me`
-resolves to `192.168.49.2` — no `/etc/hosts` edits needed.
-
-The web pod runs under **Bun** and hosts the session analytics SQLite database
-alongside the dashboard SPA. See [Session analytics](#session-analytics) for
-details on the `/api/stats/export` endpoint.
-
-### Pages
-
-The dashboard has a persistent left sidebar with five views:
-
-| Page | URL | What it shows |
-|------|-----|---------------|
-| **Runs** | `/` | Live `OpenCodeRun` list — phase badges, token totals, age, attach button. Sortable and filterable by phase. |
-| **Kanban** | `/kanbans` | Kanban board listing with column counts and active workers. Board detail shows visual columns (Ready → In Progress → Review → Rework → Done) with task cards and worker status. |
-| **Projects** | `/projects` | Reusable templates for run defaults (git, secrets, model). |
-| **Agents** | `/agents` | Cluster-wide agent catalog — reusable `.md` definitions shared across runs. |
-| **Stats** | `/stats` | Historical session analytics from the stats DB (see below). |
-
-#### Stats view
-
-The stats view aggregates data persisted by the dispatcher sidecar after each
-run completes. It shows:
-
-- **Summary cards** — total runs, succeeded, failed, success rate, average
-  duration, total tokens in/out.
-- **Tool usage** — call counts per tool with a proportional bar. Falls back to
-  parsing inline message content when the `toolCalls` table is empty.
-- **Model breakdown** — runs and tokens in/out per model, with a stacked
-  in/out bar. Resolves the model from the user message when the run row has
-  `null`.
-- **Tokens per run** — horizontal stacked bar chart of the top 20 sessions by
-  total token count.
-- **Sessions table** — one row per historical session with phase, model,
-  tokens, duration, and age.
-
-A day-range selector (7d / 30d / 90d / All) refetches from
-`/api/stats/export?days=N`. Data is retained for `RETENTION_DAYS` days
-(default: 30; set to 0 to keep forever).
-
-### Prerequisites
-
-1. Enable the ingress addon:
-   ```sh
-   minikube addons enable ingress
-   ```
-2. Run `scripts/minikube-load.sh` at least once — it pins the ingress-nginx
-   HTTP NodePort to `30080` automatically (idempotent).
-3. Apply `deploy/web.yaml`:
-   ```sh
-   kubectl apply -f deploy/web.yaml
-   ```
-
-> **Note:** the web server runs under Bun. Bun's TLS stack does not pick up
-> the custom `https.Agent` that `@kubernetes/client-node` configures for the
-> in-cluster CA. `deploy/web.yaml` sets `NODE_EXTRA_CA_CERTS` to the service
-> account CA bundle path so Bun trusts the cluster API server certificate.
-
-The script also prints the dashboard and run URLs as a reminder at the end of
-each run.
-
-## Opencode web access (per-run subdomains)
-
-Each run exposes a full opencode web UI via its ClusterIP Service on port 4096.
-By default this is only reachable in-cluster. To make it accessible in a
-browser while running locally, Percussionist can create a per-run Kubernetes
-Ingress that routes `http://<run>.<baseDomain>/` to the run's Service.
-
-### Prerequisites
-
-An ingress controller must be deployed. Quick setups:
-
-| Cluster  | Setup |
-|----------|-------|
-| **minikube** | `minikube addons enable ingress` (then run `scripts/minikube-load.sh` to pin NodePort) |
-| **kind** | Add `extraPortMappings` for port 80 and install `ingress-nginx`: `kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml` |
-| **k3d**  | `k3d cluster create --port 80:80@loadbalancer` — Traefik is included by default |
-| **Docker Desktop k8s** | Install `ingress-nginx` manually |
-
-### DNS
-
-For minikube, use `traefik.me` wildcard DNS with your minikube IP:
-
-```sh
-PERCUSSIONIST_INGRESS_BASE_URL=http://$(minikube ip).traefik.me:30080
-```
-
-For setups where the ingress controller is on `127.0.0.1:80`, use
-`*.percussionist.localhost` — modern OS resolvers (Linux with systemd-resolved,
-macOS Ventura+, Windows 11) resolve `*.localhost` to `127.0.0.1` automatically:
-
-```sh
-PERCUSSIONIST_INGRESS_BASE_URL=http://percussionist.localhost
-```
-
-### Operator configuration
-
-Set these environment variables on the operator Deployment (see commented-out
-examples in `deploy/operator.yaml`):
-
-```sh
-# Required: enables per-run Ingress creation (scheme://host[:port])
-PERCUSSIONIST_INGRESS_BASE_URL=http://192.168.49.2.traefik.me:30080
-
-# Optional: ingress class name (e.g. "nginx", "traefik")
-PERCUSSIONIST_INGRESS_CLASS=nginx
-
-# Optional: extra annotations merged onto every Ingress (JSON)
-# The SSE endpoint /event needs long timeouts and no buffering:
-PERCUSSIONIST_INGRESS_ANNOTATIONS='{"nginx.ingress.kubernetes.io/proxy-read-timeout":"3600","nginx.ingress.kubernetes.io/proxy-buffering":"off"}'
-```
-
-### Per-run opt-out
-
-Set `spec.expose.web: false` on a run to skip Ingress creation for that run:
-
-```yaml
-spec:
-  task: "run the tests"
-  expose:
-    web: false
-```
-
-### Usage
-
-Once configured, every run's dashboard page shows an **Open web** link in the
-header and a **Web UI** field in the Status card with the full URL. Clicking
-opens the opencode SPA in a new tab — no authentication required.
-
-The URL format is:
-
-```
-http://<run-name>.<base-host>:<port>/
-```
-
-e.g. for minikube with the default IP:
-
-```
-http://run-abc123.192.168.49.2.traefik.me:30080/
-```
-
-> **Security note:** the opencode server runs without a password. The Ingress is only reachable on your local network via the minikube IP. If you bind the ingress controller to a public interface the service becomes reachable without authentication.
-
-## M3 exit criteria
-
-- [x] `submit` creates an `OpenCodeRun` from inline flags or a YAML file.
-- [x] `ls` / `get` show run state with token totals.
-- [x] `logs` streams pod logs, selecting runner or dispatcher container.
-- [x] `attach` forwards the Service port, reads the auth Secret, and launches
-      `opencode attach` with the correct credentials; cleans up port-forward
-      on exit.
-- [x] `cancel` deletes the CR and cascades to all child objects.
-- [x] `wait` blocks on a terminal phase with script-friendly exit codes
-      (added post-M3 for CI workflows).
-
-## M4: git workspace source
-
-Point a run at a repo and the operator clones it into `/workspace` before
-the agent starts. The runner's working directory is `/workspace`, so tools
-that list files, read sources, run `git`, etc. all just work.
+Point a run at a repo and the operator clones it into `/workspace` before the
+agent starts. The runner's working directory is `/workspace`.
 
 ```yaml
 spec:
@@ -578,18 +310,13 @@ spec:
       # ref: main     # optional; omitted = remote HEAD (default branch)
 ```
 
-How it works:
+Ref handling:
 
-- The operator injects an init container using the runner image (it already
-  has git + openssh). It clones into a shared `emptyDir` mounted at
-  `/workspace` on the runner, then exits.
-- Ref handling: omitted ⇒ default branch, `--depth=1`. Branch or tag ⇒
-  `--depth=1 --branch <ref>`. Full SHA (7–40 hex chars) ⇒ full clone +
-  `git checkout --detach <sha>` (shallow fetch by SHA isn't portable).
-- Private repos: reference a Secret containing an SSH key. The file is
-  mounted read-only at `/etc/git-ssh/id` (mode 0400) and `GIT_SSH_COMMAND`
-  is set to use it with `StrictHostKeyChecking=no` (homelab default; tighten
-  for production).
+- Omitted → default branch, `--depth=1`
+- Branch or tag → `--depth=1 --branch <ref>`
+- Full SHA (7–40 hex chars) → full clone + `git checkout --detach <sha>`
+
+For private repos, reference a Secret containing an SSH key:
 
 ```bash
 kubectl create secret generic agent-key \
@@ -606,199 +333,215 @@ spec:
       ref: main
       sshSecret:
         name: agent-key
-        # key: ssh-privatekey   # default; override only if your secret differs
+        # key: ssh-privatekey   # default
       author:
         name: Percussionist Agent
         email: agent@example.com
 ```
 
-`author` is optional, but when set both `name` and `email` are required. The
-operator injects them as `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in both the
-clone init container and the runner container, so in-run `git commit` works
-without manual `git config`.
+`author` sets `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in both the init container
+and the runner, so in-run `git commit` works without manual `git config`.
 
 CLI equivalents:
 
 ```bash
-# One-off run
-pnpm beatctl submit \
+beatctl submit \
   -t "make a small docs change and commit" \
   --git-url git@github.com:you/private-repo.git \
   --git-ref main \
   --git-ssh-secret agent-key \
   --git-author-name "Percussionist Agent" \
   --git-author-email "agent@example.com"
-
-# Project defaults
-pnpm beatctl project create \
-  --name my-repo \
-  --git-url git@github.com:you/private-repo.git \
-  --git-ref main \
-  --git-ssh-secret agent-key \
-  --git-author-name "Percussionist Agent" \
-  --git-author-email "agent@example.com"
 ```
 
-No push-back is implemented yet — the agent can read and modify files, but
-changes live only in the pod's `/workspace` until the pod is deleted. A
-later milestone will add `spec.source.git.pushRef` plus a post-run hook.
+## Kanban boards
 
-Try it:
+`OpenCodeKanban` coordinates multi-task agentic development through a
+five-column board: `ready → in-progress → review → rework → done`.
 
-```bash
-kubectl apply -f examples/git-run.yaml
-pnpm beatctl get git-demo
-```
-
-## M4 exit criteria
-
-- [x] `spec.source.git.url` triggers an init-container clone before the runner
-      starts; runner `workingDir` is `/workspace`.
-- [x] `ref` supports branches, tags, and full commit SHAs; omitted falls back
-      to the remote default branch.
-- [x] `sshSecret` mounts an SSH private key for private-repo auth.
-- [x] Init-container failures (bad URL, wrong ref, missing key) surface as
-      `Pod.Failed` and propagate to `RunPhase.Failed` via the operator's
-      pod-phase mirror.
-
-## M5: Kanban-style agentic development
-
-A persistent manager controller watches `OpenCodeKanban` custom resources and
-dispatches worker runs — one per task — through a kanban board with columns
-(`ready → in-progress → review → rework → done`). The manager handles retries,
-escalation to human when stuck, and rework dispatch from feedback.
-
-### Architecture at a glance
-
-```
-  OpenCodeKanban (CR)
-        │
-        ▼ watched by
-  ┌──────────────┐        creates / owns       ┌─────────────────────────┐
-  │   manager    │ ──────────────────────────► │  OpenCodeRun (worker)   │
-  │ (Deployment) │                             │   ├─ runner             │
-  └──────────────┘                             │   └─ dispatcher         │
-                                               └──────────┬──────────────┘
-                                                          │ patches status
-                                                          ▼
-                                                    .status.workers[]
-```
-
-- **manager controller** watches `OpenCodeKanban` CRs via an informer loop. On
-  each reconcile it:
-  - **Pull phase**: moves tasks from "ready" to "in-progress", up to
-    `spec.maxParallel` concurrent workers (default 2 for EliteDesk sizing).
-  - **Monitor phase**: checks each worker's `OpenCodeRun` status — succeeded
-    → review, failed → retry (up to 3 times), then escalate.
-  - **Rework**: if a human manually moves a task from "review" back to "rework",
-    the manager re-dispatches it with feedback context.
-- **Worker runs** are `OpenCodeRun` CRs with ownerReferences to their kanban,
-  so they cascade-delete when the board is deleted. The worker prompt embeds
-  structured task context (ID, title, description, acceptance criteria,
-  dependencies from succeeded workers).
-
-### Kanban spec fields
+### Spec fields
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `spec.displayName` | string | — | Human-readable label for the board |
 | `spec.source.git` | object | — | Git workspace all workers clone from |
 | `spec.defaults.model` | string | — | Model inherited by all worker runs |
-| `spec.defaults.timeoutSeconds` | int | 14400 (4h) | Hard timeout per worker run |
+| `spec.defaults.timeoutSeconds` | int | 14400 | Hard timeout per worker run (seconds) |
 | `spec.maxParallel` | int | 2 | WIP limit: max concurrent in-progress tasks (1–20) |
 | `spec.agents[]` | AgentDef[] | — | Inline agent definitions injected into worker pods |
 | `spec.tasks[]` | KanbanTask[] | — | Initial task backlog (max 100 per board) |
 | `spec.phase` | enum | Active | Board lifecycle: Active / Complete / Archived |
 
-### Status fields
-
-The manager controller maintains `.status.backlog` as a map of column name →
-task ID array, and `.status.workers[]` with per-worker run tracking (run name,
-status, branch, escalation text). The web dashboard renders this as a visual
-kanban board.
-
 ### Quickstart
 
 ```sh
-# Build + load the manager image
-./scripts/minikube-load.sh --only manager
-
-# Deploy CRDs + operator + manager controller + web
 beatctl deploy
 
-# Create a kanban board via CLI or web UI
 beatctl kanban create --name my-board --max-parallel 2 \
-  --model local/llama3.1-70b --timeout 14400
+  --model local/llama3.1-70b
 
-# Add tasks to the board
 beatctl kanban task add my-board --id F-101 --title "Implement login" \
   --description "Add OAuth login with GitHub provider"
-
-# View the board in the web dashboard at /kanbans
 ```
 
-### Human-in-the-loop workflow
+Then open `/kanbans` in the web dashboard to watch tasks flow through columns.
 
-The manager escalates to human when a worker fails after 3 retries. The human
-reviews the escalation text (visible on the kanban board UI or via CLI), then:
+### Human-in-the-loop
 
-1. **Accept** — move task from "review" to "done" via `beatctl kanban task move`
-   or the web UI.
-2. **Rework** — move task back to "rework"; the manager re-dispatches with
-   feedback context embedded in the prompt.
+The manager escalates a task after 3 retries (4 total attempts). Review the
+escalation text in the dashboard or CLI, then:
+
+1. **Accept** — move task to "done" via `beatctl kanban task move` or the web UI.
+2. **Rework** — move back to "rework"; the manager re-dispatches with feedback
+   context embedded in the prompt.
 3. **Skip** — remove the task from the board entirely.
 
-### Web dashboard
+### Status fields
 
-The kanban page (`/kanbans`) shows a table of all boards with column counts and
-active worker totals. The board detail view renders a visual kanban board with:
+`.status.backlog` is a map of column name → task ID array.
+`.status.workers[]` tracks per-worker run name, status, branch, and escalation text.
+The web dashboard renders both as a visual kanban board.
 
-- Five columns: Ready, In Progress, Review, Rework, Done
-- Task cards showing ID, title, priority badge, worker status indicator
-- Worker info: run name (links to `/runs/:name`), status badge, escalation alerts
-- Button-based column movement (no drag-and-drop)
-- Escalation summary with expandable text blocks
+## Web dashboard
 
-### Prerequisites for manager controller
+The dashboard (`percussionist-web`) is exposed via Ingress at a stable URL.
+For minikube with the default IP:
 
-The manager controller requires the `OpenCodeKanban` CRD and its RBAC resources.
-These are installed automatically by `beatctl deploy`. The manager image must be
-available in your cluster (built via `minikube-load.sh --only manager`).
+```
+http://app.192.168.49.2.nip.io:30080/
+```
+
+[nip.io](https://nip.io) resolves `*.192.168.49.2.nip.io` to `192.168.49.2` —
+no `/etc/hosts` edits needed.
+
+### Pages
+
+| Page | URL | What it shows |
+|------|-----|---------------|
+| **Runs** | `/` | Live `OpenCodeRun` list — phase badges, token totals, age, attach button. |
+| **Projects** | `/projects` | Reusable templates for run defaults (git, secrets, model). |
+| **Agents** | `/agents` | Cluster-wide agent catalog — reusable `.md` definitions. |
+| **Kanban** | `/kanbans` | Board listing and detail view with column movement. |
+| **Stats** | `/stats` | Historical session analytics from the stats DB. |
+
+### Stats view
+
+Aggregates data persisted by the dispatcher after each run. Shows:
+
+- **Summary cards** — total runs, success rate, average duration, total tokens.
+- **Tool usage** — call counts per tool with proportional bars.
+- **Model breakdown** — runs and tokens per model with stacked bars.
+- **Tokens per run** — top 20 sessions by total token count.
+- **Sessions table** — one row per session with phase, model, tokens, duration.
+
+A day-range selector (7d / 30d / 90d / All) refetches from `/api/stats/export?days=N`.
+
+### Setup (minikube)
+
+1. Enable the ingress addon:
+   ```sh
+   minikube addons enable ingress
+   ```
+2. Run `scripts/minikube-load.sh` — it pins the ingress-nginx HTTP NodePort to
+   `30080` automatically (idempotent).
+3. `beatctl deploy` applies `deploy/web.yaml` as part of the full deployment.
+
+> **Note:** the web server runs under Bun. Bun's TLS stack does not pick up
+> the custom `https.Agent` that `@kubernetes/client-node` configures for the
+> in-cluster CA. `deploy/web.yaml` sets `NODE_EXTRA_CA_CERTS` to the service
+> account CA bundle path so Bun trusts the cluster API server certificate.
+
+## Per-run web UI (subdomains)
+
+Each run exposes the full opencode web UI via its ClusterIP Service on port
+4096. To make it browser-accessible, the operator can create a per-run Ingress
+that routes `http://<run>.<baseDomain>/` to the run's Service.
+
+### Ingress controller setup
+
+| Cluster | Setup |
+|---------|-------|
+| **minikube** | `minikube addons enable ingress` + `scripts/minikube-load.sh` to pin NodePort |
+| **kind** | `extraPortMappings` for port 80 + install `ingress-nginx` |
+| **k3d** | `k3d cluster create --port 80:80@loadbalancer` — Traefik included |
+| **Docker Desktop** | Install `ingress-nginx` manually |
+
+### Operator configuration
+
+Set these environment variables on the operator Deployment (see commented-out
+examples in `deploy/operator.yaml`):
+
+```sh
+# Required: enables per-run Ingress creation (scheme://host[:port])
+PERCUSSIONIST_INGRESS_BASE_URL=http://192.168.49.2.nip.io:30080
+
+# Optional: ingress class name
+PERCUSSIONIST_INGRESS_CLASS=nginx
+
+# Optional: extra annotations merged onto every Ingress (JSON)
+# The SSE /event endpoint needs long timeouts and no buffering:
+PERCUSSIONIST_INGRESS_ANNOTATIONS='{"nginx.ingress.kubernetes.io/proxy-read-timeout":"3600","nginx.ingress.kubernetes.io/proxy-buffering":"off"}'
+```
+
+DNS options for minikube:
+
+```sh
+# nip.io wildcard DNS (recommended — no local config needed)
+PERCUSSIONIST_INGRESS_BASE_URL=http://$(minikube ip).nip.io:30080
+
+# *.localhost (Linux with systemd-resolved, macOS Ventura+, Windows 11)
+PERCUSSIONIST_INGRESS_BASE_URL=http://percussionist.localhost
+```
+
+### Per-run opt-out
+
+```yaml
+spec:
+  task: "run the tests"
+  expose:
+    web: false
+```
+
+### URL format
+
+```
+http://<run-name>.<base-host>:<port>/
+# e.g. http://run-abc123.192.168.49.2.nip.io:30080/
+```
+
+> **Security note:** the opencode server runs without a password. The Ingress
+> is only reachable on your local network via the minikube IP. Do not bind the
+> ingress controller to a public interface without adding authentication.
 
 ## Provider auth
 
-Not every LLM provider exposes a static API key. GitHub Copilot, ChatGPT
-Plus, and Claude Pro use OAuth device-code flows whose resulting token
-lands in your workstation's `~/.local/share/opencode/auth.json`. Opencode
-also checks a first-class env var, `OPENCODE_AUTH_CONTENT`, before reading
-that file — so the integration shape is "log in once locally, ship the
-token into a cluster Secret, project it as an env var in run pods".
+Not every LLM provider uses a static API key. GitHub Copilot, ChatGPT Plus,
+and Claude Pro use OAuth device-code flows whose token lands in
+`~/.local/share/opencode/auth.json` on your workstation. Opencode checks the
+`OPENCODE_AUTH_CONTENT` env var before reading that file — so the workflow is:
+log in once locally, ship the token to a cluster Secret, project it as an env
+var in run pods.
 
 ### One-time setup
 
 ```bash
-# On your workstation: log into the provider.
 opencode auth login github-copilot     # opens https://github.com/login/device
-# ...repeat for any other OAuth providers you want in the cluster:
 # opencode auth login openai           # ChatGPT Plus/Pro
 # opencode auth login anthropic        # Claude Pro/Max
 
-# Push the credentials into the cluster. Default = import every provider
-# found locally; filter with --provider. The command is read-only on your
-# workstation — it never modifies ~/.local/share/opencode/auth.json.
-pnpm beatctl auth import
+# Import credentials into the cluster (read-only on your workstation)
+beatctl auth import
 ```
 
-This creates a Secret called `opencode-auth` in the `percussionist`
-namespace. Re-run the import whenever you re-auth locally; the Secret is
-replaced wholesale.
+This creates a Secret called `opencode-auth` in the `percussionist` namespace.
+Re-run after re-authenticating locally; the Secret is replaced wholesale.
 
-### Referencing it from a run
+### Referencing from a run
 
 ```yaml
 spec:
   task: "Say hi"
-  model: github-copilot/claude-sonnet-4.5    # optional; pins a Copilot-proxied model
+  model: github-copilot/claude-sonnet-4.5
   secrets:
     opencodeAuthSecret:
       name: opencode-auth
@@ -807,46 +550,61 @@ spec:
 Or with inline flags:
 
 ```bash
-pnpm beatctl submit \
+beatctl submit \
   -t "Say hi" \
   -m github-copilot/claude-sonnet-4.5 \
   --auth-secret opencode-auth
 ```
 
-Both `llmKeysSecret` and `opencodeAuthSecret` may be set on the same run —
-they're orthogonal. `llmKeysSecret` projects `ANTHROPIC_API_KEY` /
-`OPENAI_API_KEY` / … for static-key providers, while `opencodeAuthSecret`
-carries OAuth tokens. If both configure the same provider, the auth.json
-entry wins.
+`llmKeysSecret` (static API keys) and `opencodeAuthSecret` (OAuth tokens) are
+orthogonal — both may be set. If both configure the same provider, the
+auth.json entry wins.
+
+### Config file injection (`opencodeConfigMap`)
+
+To supply a full `opencode.json` config file — for example to configure a
+custom provider such as lmstudio or ollama:
+
+```bash
+kubectl create configmap my-opencode-config \
+  --from-file=opencode.json=./my-opencode.json \
+  -n percussionist
+```
+
+```yaml
+spec:
+  task: "Say hi"
+  secrets:
+    opencodeConfigMap:
+      name: my-opencode-config
+      # key: opencode.json   # default
+```
+
+The operator projects the ConfigMap value as `OPENCODE_CONFIG_CONTENT`, which
+opencode reads before its on-disk `~/.config/opencode/opencode.json`.
 
 ### Caveats
 
-- The token's lifetime is whatever the upstream provider says. GitHub
-  Copilot OAuth tokens are long-lived until revoked under
-  [github.com/settings/applications](https://github.com/settings/applications);
-  Anthropic's are refresh-rotated and may expire — re-run
-  `beatctl auth import` when you see auth errors.
-- One Secret shared across many runs means one revocation breaks all of
-  them. That's intentional — per-run tokens aren't worth the orphan-Secret
-  cleanup churn.
-- `beatctl auth` never prints raw tokens. `--dry-run` shows a summary
-  (type, first-four/last-four chars, length) so you can sanity-check.
-- `kubectl describe pod` shows the env var as
-  `<set to the key '…' in secret '…'>`; the token isn't in plain text in
-  any k8s object. It *is* reachable from inside the pod via
-  `/proc/<pid>/environ`, same exposure class as `OPENCODE_SERVER_PASSWORD`.
+- Token lifetime is provider-controlled. GitHub Copilot tokens are long-lived
+  until revoked under [github.com/settings/applications](https://github.com/settings/applications);
+  Anthropic tokens are refresh-rotated and may expire — re-run `beatctl auth import` on auth errors.
+- One Secret shared across many runs means one revocation affects all. This is
+  intentional — per-run tokens create orphan-Secret cleanup churn.
+- `beatctl auth` never prints raw tokens. `--dry-run` shows a type and
+  length summary for sanity-checking.
+- The token is not in plain text in any Kubernetes object, but is reachable
+  from inside the pod via `/proc/<pid>/environ` — same exposure as
+  `OPENCODE_SERVER_PASSWORD`.
 
 ---
 
 ## Customizing agents and skills
 
-OpenCode agents and skills can be delivered to run pods through two
-complementary channels.
+Agents and skills can be delivered through two complementary channels.
 
 ### Cluster-wide baseline (baked into the runner image)
 
-Place agent markdown files and skill directories under
-`images/runner/content/`:
+Place agent markdown files and skill directories under `images/runner/content/`:
 
 ```
 images/runner/content/
@@ -854,28 +612,23 @@ images/runner/content/
 │   └── <name>.md            # one file per agent, filename = agent name
 └── skills/
     └── <name>/
-        └── SKILL.md         # one folder per skill, folder name = skill name
+        └── SKILL.md         # one folder per skill
 ```
 
-These are `COPY`'d into `/root/.config/opencode/` when the runner image is
-built. Every pod created from that image sees them as cluster-wide defaults,
-regardless of what workspace is cloned. The directory is empty by default —
-add files and rebuild to ship them.
-
-Rebuild + reload after changes:
+These are copied into `/root/.config/opencode/` when the runner image is built.
+Every pod sees them as cluster-wide defaults regardless of workspace. The
+directory is empty by default — add files and rebuild to ship them.
 
 ```bash
 docker build -t percussionist/runner:dev images/runner
-# Then reload into your cluster — see scripts/minikube-load.sh
+./scripts/minikube-load.sh --only runner
 ```
 
-See `images/runner/content/README.md` for the expected file formats and
-links to the OpenCode docs.
+See `images/runner/content/README.md` for file format details.
 
 ### Per-repo extensions (travel with the workspace)
 
-Each user workspace repo can ship its own agents and skills without any image
-change. Commit them under `.opencode/` in the workspace repository:
+Commit agents and skills under `.opencode/` in the workspace repository:
 
 ```
 <repo>/
@@ -887,77 +640,55 @@ change. Commit them under `.opencode/` in the workspace repository:
             └── SKILL.md
 ```
 
-When the operator clones the repo via `spec.source.git`, files land in
-`/workspace`. OpenCode walks up from `/workspace` (the runner's cwd) and
-discovers them automatically — no operator or image changes required.
+When the operator clones the repo via `spec.source.git`, opencode discovers
+these automatically by walking up from `/workspace` — no operator or image
+changes required.
 
 ### Precedence
 
-Both channels are additive. If the same agent or skill name exists in the
-image baseline **and** in the workspace repo, the workspace version wins
-(OpenCode loads the first match, project-local paths are searched before
-global).
-
-### Deferred: dynamic skills via init container
-
-A future milestone will add `spec.source.skills` to the CRD, rendering a
-second init container that clones a dedicated skills repo into
-`/root/.config/opencode/`. This allows cluster-wide skills to be updated
-without rebuilding the runner image.
+Both channels are additive. When the same name exists in both, the workspace
+version wins (project-local paths are searched before global).
 
 ---
 
 ## Session analytics
 
-Every completed run is automatically recorded in a SQLite database embedded
-in the web pod. The data covers the full conversation — prompts, assistant
-responses, tool invocations with arguments, files read/written, token counts,
-and timing — and is intended for periodic LLM-assisted pattern analysis to
-improve agent prompts and tool usage.
-
-### Architecture
-
-```
-Dispatcher sidecar  ──POST /api/stats/session──►  percussionist-web pod
-                                                       │
-                                                  bun:sqlite
-                                                  /app/data/stats.db
-                                                  (1 Gi PVC — survives restarts)
-```
-
-The dispatcher sends stats at the end of each successful run. The call is
-fire-and-forget (non-fatal) and never blocks or delays the run completing.
+Every run is recorded in a SQLite database embedded in the web pod, covering
+prompts, responses, tool invocations, files read/written, token counts, and
+timing. Intended for periodic LLM-assisted pattern analysis.
 
 ### What is stored
 
 | Table | Contents |
 |-------|----------|
-| `runs` | session ID, run name, task text, model, agent, phase, timestamps, token totals, error |
+| `runs` | session ID, run name, task, model, agent, phase, timestamps, token totals, error |
 | `messages` | full part list (JSON), role, model, per-message token counts, timing |
 | `tool_calls` | tool name, arguments (JSON), success, error, duration |
-| `file_ops` | file path, operation (`read`/`write`), message index |
+| `file_ops` | file path, operation (`read`/`write`/`delete`), message index |
+
+Stats are sent for both succeeded and failed runs. The call is fire-and-forget
+and never delays run completion.
 
 ### Exporting for analysis
 
 ```bash
 # Last 30 days (default)
-curl http://app.<minikube-ip>.traefik.me:30080/api/stats/export > sessions.json
+curl http://app.<minikube-ip>.nip.io:30080/api/stats/export > sessions.json
 
 # All time
-curl http://app.<minikube-ip>.traefik.me:30080/api/stats/export?days=0 > sessions.json
+curl http://app.<minikube-ip>.nip.io:30080/api/stats/export?days=0 > sessions.json
 
-# Pipe straight into your LLM CLI of choice
+# Pipe into an LLM
 curl .../api/stats/export | llm "find patterns in agent tool usage and prompt effectiveness"
 ```
 
-The export is a JSON array where each element is a session with nested
-`messages`, `toolCalls`, and `fileOps` arrays.
+The export is a JSON array; each element is a session with nested `messages`,
+`toolCalls`, and `fileOps` arrays.
 
 ### Retention
 
-Sessions are automatically deleted after **30 days** by an hourly cleanup
-job running inside the web pod. Override via the `RETENTION_DAYS` env var
-on the `percussionist-web` Deployment (set to `0` to keep data indefinitely):
+Sessions are deleted after **30 days** by an hourly cleanup job in the web pod.
+Override via `RETENTION_DAYS` on the `percussionist-web` Deployment (`0` = keep forever):
 
 ```yaml
 # deploy/web.yaml — under the web container env:
@@ -972,18 +703,17 @@ on the `percussionist-web` Deployment (set to `0` to keep data indefinitely):
 | `DATA_DIR` | `/app/data` | Directory for `stats.db` |
 | `RETENTION_DAYS` | `30` | Days to retain session data (`0` = forever) |
 
-The PVC (`percussionist-web-stats`, 1 Gi) is created by `deploy/web.yaml`
-and survives pod restarts and redeployments.
+The PVC (`percussionist-web-stats`, 1 Gi) is created by `deploy/web.yaml` and
+survives pod restarts and redeployments.
 
 ### Operator configuration
 
-The operator automatically injects `WEB_STATS_URL` into every dispatcher
-pod, resolving to the web service in the same namespace:
+The operator automatically injects `WEB_STATS_URL` into every dispatcher pod,
+resolving to the web service in the same namespace:
 
 ```
 http://percussionist-web.<namespace>.svc.cluster.local:8080
 ```
 
-Override by setting `WEB_STATS_URL` on the operator Deployment if the web
-pod lives in a different location. Set it to an empty string to disable
-stats collection entirely.
+Override by setting `WEB_STATS_URL` on the operator Deployment if the web pod
+lives elsewhere. Set it to an empty string to disable stats collection entirely.

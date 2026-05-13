@@ -95,7 +95,7 @@ export const fileOps = sqliteTable(
       .references(() => runs.id, { onDelete: "cascade" }),
     messageIdx: integer("message_idx").notNull(),
     filePath: text("file_path").notNull(),
-    operation: text("operation").notNull(), // "read" | "write"
+    operation: text("operation").notNull(), // "read" | "write" | "delete"
   },
   (table) => [
     primaryKey({ columns: [table.sessionId, table.messageIdx, table.filePath] }),

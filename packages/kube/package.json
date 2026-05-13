@@ -1,0 +1,14 @@
+{
+  "name": "@percussionist/kube",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.4.0",
+    "@percussionist/api": "workspace:*"
+  }
+}

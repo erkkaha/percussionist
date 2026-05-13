@@ -1,6 +1,10 @@
-# OpenCodeProject v1alpha1 — reusable template for OpenCodeRun specs.
-# A project has no lifecycle; it's a passive config bag that the CLI / web UI
-# dereferences when building a new run. No controller watches this CRD.
+# OpenCodeProject v1alpha1 — project config + embedded kanban board.
+#
+# Projects are the canonical home for environment config (git, secrets, model,
+# image, resources). Every run and board worker inherits from the project.
+# The embedded board is auto-initialised (empty) when the project is created;
+# the manager-controller drives worker runs from board.tasks.
+#
 # Keep in sync with packages/api/src/index.ts (Zod is authoritative).
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -21,6 +25,8 @@ spec:
     - name: v1alpha1
       served: true
       storage: true
+      subresources:
+        status: {}
       additionalPrinterColumns:
         - name: Display
           type: string
@@ -28,6 +34,12 @@ spec:
         - name: Git
           type: string
           jsonPath: .spec.source.git.url
+        - name: Board
+          type: string
+          jsonPath: .spec.board.phase
+        - name: Workers
+          type: integer
+          jsonPath: .status.board.activeWorkers
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
@@ -47,12 +59,28 @@ spec:
                   description: Human-readable label; falls back to metadata.name.
                 model:
                   type: string
-                  description: Default model in provider/model form.
-                agent:
+                  description: Default model (provider/model form) for all runs and board workers.
+                image:
                   type: string
-                  description: Default opencode agent (e.g. "build", "plan").
+                  description: Default runner container image.
+                timeoutSeconds:
+                  type: integer
+                  minimum: 1
+                  default: 3600
+                  description: Default run timeout in seconds.
+                resources:
+                  type: object
+                  description: Default pod resource requirements for all runs and board workers.
+                  properties:
+                    requests:
+                      type: object
+                      additionalProperties: { type: string }
+                    limits:
+                      type: object
+                      additionalProperties: { type: string }
                 secrets:
                   type: object
+                  description: Secrets inherited by all runs and board workers.
                   properties:
                     llmKeysSecret: { type: string }
                     opencodeAuthSecret:
@@ -60,36 +88,146 @@ spec:
                       required: [name]
                       properties:
                         name: { type: string, minLength: 1 }
-                        key:
-                          type: string
-                          default: auth.json
+                        key: { type: string, default: auth.json }
+                    opencodeConfigMap:
+                      type: object
+                      required: [name]
+                      properties:
+                        name: { type: string, minLength: 1 }
+                        key: { type: string, default: opencode.json }
                 source:
                   type: object
+                  description: Git workspace cloned by all runs and board workers.
                   properties:
                     git:
                       type: object
                       required: [url]
                       properties:
-                        url:
-                          type: string
-                          minLength: 1
-                        ref:
-                          type: string
+                        url: { type: string, minLength: 1 }
+                        ref: { type: string }
                         sshSecret:
                           type: object
                           required: [name]
                           properties:
                             name: { type: string, minLength: 1 }
-                            key:
-                              type: string
-                              default: ssh-privatekey
+                            key: { type: string, default: ssh-privatekey }
                         author:
                           type: object
                           required: [name, email]
                           properties:
-                            name:
-                              type: string
-                              minLength: 1
-                            email:
-                              type: string
-                              minLength: 1
+                            name: { type: string, minLength: 1 }
+                            email: { type: string, minLength: 1 }
+                board:
+                  type: object
+                  description: Embedded kanban board configuration.
+                  properties:
+                    phase:
+                      type: string
+                      enum: [Active, Complete, Archived]
+                      default: Active
+                    maxParallel:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                      default: 2
+                      description: WIP limit — max concurrent worker runs.
+                    agents:
+                      type: array
+                      description: Team roster — ClusterAgent name references available to board tasks.
+                      items:
+                        type: object
+                        required: [name]
+                        properties:
+                          name:
+                            type: string
+                            minLength: 1
+                            maxLength: 63
+                    tasks:
+                      type: array
+                      maxItems: 100
+                      description: Task backlog. Placement in columns is tracked in status.board.backlog.
+                      items:
+                        type: object
+                        required: [id, title, agent]
+                        properties:
+                          id:
+                            type: string
+                            minLength: 1
+                            maxLength: 32
+                            description: Unique task identifier (e.g. "F-104", "BUG-42"). Immutable once created.
+                          title:
+                            type: string
+                            minLength: 1
+                            maxLength: 256
+                          description:
+                            type: string
+                            maxLength: 8192
+                          priority:
+                            type: string
+                            enum: [high, medium, low]
+                            default: medium
+                          agent:
+                            type: string
+                            minLength: 1
+                            description: Required. ClusterAgent name from board.agents[] that handles this task.
+                    overrides:
+                      type: object
+                      description: Per-board overrides of project-level defaults applied to all worker runs.
+                      properties:
+                        model: { type: string }
+                        image: { type: string }
+                        timeoutSeconds: { type: integer, minimum: 1 }
+                        resources:
+                          type: object
+                          properties:
+                            requests:
+                              type: object
+                              additionalProperties: { type: string }
+                            limits:
+                              type: object
+                              additionalProperties: { type: string }
+            status:
+              type: object
+              properties:
+                board:
+                  type: object
+                  properties:
+                    columns:
+                      type: array
+                      items: { type: string }
+                    backlog:
+                      type: object
+                      additionalProperties:
+                        type: array
+                        items: { type: string }
+                    workers:
+                      type: array
+                      items:
+                        type: object
+                        required: [taskId, status]
+                        properties:
+                          taskId: { type: string }
+                          runName: { type: string }
+                          status:
+                            type: string
+                            enum: [Running, Succeeded, Failed, Escalated]
+                          branch: { type: string }
+                          prNumber: { type: integer }
+                          startedAt: { type: string }
+                          completedAt: { type: string }
+                          escalation: { type: string }
+                          retryCount: { type: integer, minimum: 0 }
+                    activeWorkers: { type: integer, minimum: 0 }
+                    escalations:
+                      type: array
+                      items: { type: string }
+                    pendingQuestions:
+                      type: array
+                      items:
+                        type: object
+                        required: [workerId, sessionID, messageText]
+                        properties:
+                          workerId: { type: string }
+                          sessionID: { type: string }
+                          messageText: { type: string }
+                    lastEventAt: { type: string }

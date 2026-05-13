@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { listRuns, getRun, createRun, deleteRun, postSessionMessage, listKanbans, patchKanbanStatus } from "../kube.js";
+import { randomBytes } from "node:crypto";
+import { listRuns, getRun, createRun, deleteRun, postSessionMessage } from "../kube.js";
 import {
   OpenCodeRunSpecSchema,
   API_GROUP_VERSION,
@@ -51,10 +52,10 @@ runs.post("/", async (c) => {
   }
   const spec = parsed.data;
 
-  // Auto-generate a name (same scheme as beatctl submit).
+  // Auto-generate a name with crypto-random suffix to avoid collisions under concurrent submits.
   const name =
     (body as { name?: string }).name ??
-    `run-${Date.now().toString(16)}`;
+    `run-${randomBytes(5).toString("hex")}`;
 
   const run = {
     apiVersion: API_GROUP_VERSION,
@@ -110,27 +111,6 @@ runs.post("/:name/reply", async (c) => {
 
   try {
     await postSessionMessage(serviceName, (run as any).status.sessionID, textBody.message);
-    
-    // Clear this question from kanban pendingQuestions for immediate UI feedback.
-    const match = runName.match(/^kanban-[^-]+-(.+?)-/s);
-    if (match) {
-      const taskId = match[1];
-      try {
-        const allKanbans = await listKanbans();
-        for (const kb of allKanbans) {
-          const qs = (kb as any).status?.pendingQuestions ?? [];
-          let changed = false;
-          const filtered = qs.filter((q: Record<string, unknown>) => q.workerId !== taskId);
-          if (filtered.length < qs.length) {
-            await patchKanbanStatus(kb.metadata.name!, { pendingQuestions: filtered });
-            console.log(`Cleared question for ${taskId} from kanban ${kb.metadata.name}`);
-            changed = true;
-          }
-        }
-      } catch {} // best-effort, manager will clear on next reconcile anyway
-        
-    }
-
     return c.json({ ok: true });
   } catch (e) {
     const msg = (e as Error).message;

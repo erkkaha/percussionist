@@ -58,6 +58,12 @@ function ProjectRow({ project }: { project: OpenCodeProject }) {
           >
             Edit
           </button>
+          <Link
+            to={`/projects/${encodeURIComponent(project.metadata.name)}/board`}
+            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-zinc-500 hover:text-text transition-colors"
+          >
+            Board
+          </Link>
           <button
             onClick={() => {
               if (confirm(`Delete project "${project.metadata.name}"?`)) {

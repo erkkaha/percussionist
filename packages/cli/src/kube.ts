@@ -1,274 +1,81 @@
-// Shared Kubernetes client setup and small helpers reused across commands.
+// kube.ts — backward-compat shim over @percussionist/kube.
 //
-// beatctl intentionally reuses the user's kubeconfig (same rules as kubectl):
-// KUBECONFIG env var, then ~/.kube/config. This keeps the CLI feeling like a
-// thin ergonomic wrapper on top of the cluster, rather than something that
-// owns its own credentials.
+// All CLI commands import helpers from here. The underlying implementation
+// lives in @percussionist/kube (shared with operator, manager-controller, web).
+//
+// Old call signature: fn(client, namespace, name)
+// New call signature: fn(name, namespace?, client?)
+//
+// The wrappers below bridge the gap so no other file needs to change.
 
-import {
-  KubeConfig,
-  CoreV1Api,
-  CustomObjectsApi,
-  PatchStrategy,
-  setHeaderOptions,
-} from "@kubernetes/client-node";
-import {
-  API_GROUP,
-  API_VERSION,
-  PLURAL_RUN,
-  PLURAL_PROJECT,
-  PLURAL_KANBAN,
-  type OpenCodeRun,
-  type OpenCodeProject,
-  type OpenCodeKanban,
-} from "@percussionist/api";
+import type { CustomObjectsApi } from "@kubernetes/client-node";
+import * as kube from "@percussionist/kube";
+import type { OpenCodeRun, OpenCodeProject } from "@percussionist/api";
 
-export const DEFAULT_NAMESPACE =
-  process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
+// Re-export everything, then override specific functions below.
+export {
+  NAMESPACE,
+  NAMESPACE as DEFAULT_NAMESPACE,
+  loadFromKubeconfig,
+  loadFromKubeconfig as loadKube,
+  padCols,
+  age,
+  fatal,
+  // project
+  listProjects,
+  createProject,
+  deleteProject,
+  updateProject,
+  patchProjectSpec,
+  patchProjectStatus,
+  // cluster agents
+  listClusterAgents,
+  getClusterAgent,
+  createClusterAgent,
+  deleteClusterAgent,
+  // run
+  createRun as _createRun,
+  deleteRun as _deleteRun,
+  listRuns as _listRuns,
+} from "@percussionist/kube";
 
-export function loadKube(): {
-  kc: KubeConfig;
-  core: CoreV1Api;
-  custom: CustomObjectsApi;
-} {
-  const kc = new KubeConfig();
-  kc.loadFromDefault();
-  return {
-    kc,
-    core: kc.makeApiClient(CoreV1Api),
-    custom: kc.makeApiClient(CustomObjectsApi),
-  };
-}
-
-// Thin wrappers around CustomObjectsApi so every command isn't repeating the
-// same four-field object literal.
-
-export async function listRuns(
-  custom: CustomObjectsApi,
-  namespace: string,
-): Promise<OpenCodeRun[]> {
-  const res = (await custom.listNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_RUN,
-  })) as { items: OpenCodeRun[] };
-  return res.items ?? [];
-}
+// --- Old-signature wrappers ------------------------------------------------
 
 export async function getRun(
-  custom: CustomObjectsApi,
+  client: CustomObjectsApi,
   namespace: string,
   name: string,
 ): Promise<OpenCodeRun> {
-  return (await custom.getNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_RUN,
-    name,
-  })) as OpenCodeRun;
+  return kube.getRun(name, namespace, client);
+}
+
+export async function listRuns(
+  client: CustomObjectsApi,
+  namespace: string,
+): Promise<OpenCodeRun[]> {
+  return kube.listRuns(namespace, client);
 }
 
 export async function createRun(
-  custom: CustomObjectsApi,
+  client: CustomObjectsApi,
   namespace: string,
   body: OpenCodeRun,
 ): Promise<OpenCodeRun> {
-  return (await custom.createNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_RUN,
-    body,
-  })) as OpenCodeRun;
+  return kube.createRun(body, namespace, client);
 }
 
 export async function deleteRun(
-  custom: CustomObjectsApi,
+  client: CustomObjectsApi,
   namespace: string,
   name: string,
 ): Promise<void> {
-  await custom.deleteNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_RUN,
-    name,
-  });
-}
-
-// Project wrappers ---------------------------------------------------------
-//
-// Projects are just another namespaced CR, no status subresource. Same four
-// verbs, same error-propagation model as runs.
-
-export async function listProjects(
-  custom: CustomObjectsApi,
-  namespace: string,
-): Promise<OpenCodeProject[]> {
-  const res = (await custom.listNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_PROJECT,
-  })) as { items: OpenCodeProject[] };
-  return res.items ?? [];
+  return kube.deleteRun(name, namespace, client);
 }
 
 export async function getProject(
-  custom: CustomObjectsApi,
+  client: CustomObjectsApi,
   namespace: string,
   name: string,
 ): Promise<OpenCodeProject> {
-  return (await custom.getNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_PROJECT,
-    name,
-  })) as OpenCodeProject;
-}
-
-export async function createProject(
-  custom: CustomObjectsApi,
-  namespace: string,
-  body: OpenCodeProject,
-): Promise<OpenCodeProject> {
-  return (await custom.createNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_PROJECT,
-    body,
-  })) as OpenCodeProject;
-}
-
-export async function deleteProject(
-  custom: CustomObjectsApi,
-  namespace: string,
-  name: string,
-): Promise<void> {
-  await custom.deleteNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_PROJECT,
-    name,
-  });
-}
-
-// Kanban wrappers -----------------------------------------------------------
-
-export async function listKanbans(
-  custom: CustomObjectsApi,
-  namespace: string,
-): Promise<OpenCodeKanban[]> {
-  const res = (await custom.listNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_KANBAN,
-  })) as { items: OpenCodeKanban[] };
-  return res.items ?? [];
-}
-
-export async function getKanban(
-  custom: CustomObjectsApi,
-  namespace: string,
-  name: string,
-): Promise<OpenCodeKanban> {
-  return (await custom.getNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_KANBAN,
-    name,
-  })) as OpenCodeKanban;
-}
-
-export async function createKanban(
-  custom: CustomObjectsApi,
-  namespace: string,
-  body: OpenCodeKanban,
-): Promise<OpenCodeKanban> {
-  return (await custom.createNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_KANBAN,
-    body,
-  })) as OpenCodeKanban;
-}
-
-export async function deleteKanban(
-  custom: CustomObjectsApi,
-  namespace: string,
-  name: string,
-): Promise<void> {
-  await custom.deleteNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_KANBAN,
-    name,
-  });
-}
-
-export async function patchKanban(
-  custom: CustomObjectsApi,
-  namespace: string,
-  name: string,
-  body: Record<string, unknown>,
-): Promise<OpenCodeKanban> {
-  return (await custom.patchNamespacedCustomObject({
-    group: API_GROUP,
-    version: API_VERSION,
-    namespace,
-    plural: PLURAL_KANBAN,
-    name,
-    body,
-  }, setHeaderOptions("Content-Type", PatchStrategy.MergePatch))) as OpenCodeKanban;
-}
-
-// Render helpers ------------------------------------------------------------
-
-export function padCols(rows: string[][]): string {
-  if (rows.length === 0) return "";
-  const widths: number[] = [];
-  for (const row of rows) {
-    row.forEach((cell, i) => {
-      widths[i] = Math.max(widths[i] ?? 0, cell.length);
-    });
-  }
-  return rows
-    .map((row) =>
-      row
-        .map((cell, i) => (i === row.length - 1 ? cell : cell.padEnd((widths[i] ?? 0) + 2)))
-        .join(""),
-    )
-    .join("\n");
-}
-
-export function age(iso: string | undefined): string {
-  if (!iso) return "-";
-  const ms = Date.now() - new Date(iso).getTime();
-  if (Number.isNaN(ms) || ms < 0) return "-";
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return `${h}h`;
-  const d = Math.floor(h / 24);
-  return `${d}d`;
-}
-
-// Error-to-exit helper: Kubernetes client errors carry the useful bits on
-// `.body`. Surface those instead of a generic stack trace.
-export function fatal(prefix: string, e: unknown): never {
-  const anyE = e as { body?: { message?: string }; message?: string };
-  const msg = anyE?.body?.message ?? anyE?.message ?? String(e);
-  console.error(`beatctl: ${prefix}: ${msg}`);
-  process.exit(1);
+  return kube.getProject(name, namespace, client);
 }

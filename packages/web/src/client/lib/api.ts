@@ -7,11 +7,12 @@ import type {
   CreateRunRequest,
   OpenCodeProject,
   CreateProjectRequest,
-  ClusterAgent,
   CreateAgentRequest,
-  OpenCodeKanban,
-  CreateKanbanRequest,
+  BoardTask,
+  BoardSpec,
+  BoardStatus,
 } from "./types";
+import type { ClusterAgent } from "@percussionist/api";
 
 const BASE = "/api";
 
@@ -166,81 +167,62 @@ export async function deleteAgent(name: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Kanbans
+// Board (embedded in OpenCodeProject)
 
-export async function fetchKanbans(): Promise<OpenCodeKanban[]> {
-  const data = await fetchJSON<{ items: OpenCodeKanban[] }>("/kanbans");
-  return data.items;
+export async function fetchBoard(
+  project: string,
+): Promise<{ spec: BoardSpec; status: BoardStatus }> {
+  return fetchJSON(`/projects/${encodeURIComponent(project)}/board`);
 }
 
-export async function fetchKanban(name: string): Promise<OpenCodeKanban> {
-  return fetchJSON<OpenCodeKanban>(`/kanbans/${encodeURIComponent(name)}`);
-}
-
-export async function submitKanban(req: CreateKanbanRequest): Promise<OpenCodeKanban> {
-  const res = await fetch(`${BASE}/kanbans`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
+export async function addBoardTask(
+  project: string,
+  task: BoardTask,
+): Promise<{ task: BoardTask }> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(task),
+    },
+  );
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
-  return body as OpenCodeKanban;
+  return body as { task: BoardTask };
 }
 
-export async function updateKanban(name: string, req: CreateKanbanRequest): Promise<OpenCodeKanban> {
-  const res = await fetch(`${BASE}/kanbans/${encodeURIComponent(name)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as OpenCodeKanban;
-}
-
-export async function patchKanbanStatus(
-  name: string,
-  statusPatch: Record<string, unknown>,
-): Promise<OpenCodeKanban> {
-  const res = await fetch(`${BASE}/kanbans/${encodeURIComponent(name)}/status`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(statusPatch),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as OpenCodeKanban;
-}
-
-export async function deleteKanban(name: string): Promise<void> {
-  const res = await fetch(`${BASE}/kanbans/${encodeURIComponent(name)}`, {
-    method: "DELETE",
-  });
+export async function deleteBoardTask(
+  project: string,
+  taskId: string,
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskId)}`,
+    { method: "DELETE" },
+  );
   if (!res.ok && res.status !== 204) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
 }
 
-export async function addKanbanTask(
-  name: string,
-  task: { id: string; title: string; description?: string; priority?: "high" | "medium" | "low" },
-): Promise<OpenCodeKanban> {
-  const res = await fetch(`${BASE}/kanbans/${encodeURIComponent(name)}/tasks`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task }),
-  });
+export async function patchBoardStatus(
+  project: string,
+  patch: Partial<BoardStatus>,
+): Promise<BoardStatus> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(project)}/board/status`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    },
+  );
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
-  return body as OpenCodeKanban;
+  return body as BoardStatus;
 }

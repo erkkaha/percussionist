@@ -1,6 +1,11 @@
 # OpenCodeRun v1alpha1 — declarative description of a single agent run.
-# Keep in sync with packages/api/src/index.ts (Zod schemas are authoritative
-# at runtime; this CRD is just the cluster's admission-time schema).
+#
+# Every run must reference an OpenCodeProject (spec.project). The project
+# provides git, secrets, model, image, and resource defaults; explicit run
+# fields override the project values. Config is resolved at creation time
+# in the CLI / web API — the operator sees only the fully-resolved spec.
+#
+# Keep in sync with packages/api/src/index.ts (Zod is authoritative).
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -23,6 +28,9 @@ spec:
       subresources:
         status: {}
       additionalPrinterColumns:
+        - name: Project
+          type: string
+          jsonPath: .spec.project
         - name: Phase
           type: string
           jsonPath: .status.phase
@@ -46,36 +54,47 @@ spec:
             metadata: { type: object }
             spec:
               type: object
-              # Note: `task` is required unless `interactive: true`. The CRD
-              # schema can't express "one-of" conditionals without
-              # x-kubernetes-validations (CEL, k8s 1.25+), so we relax the
-              # `required` here and rely on the Zod schema inside the
-              # operator/CLI to enforce the constraint at admission.
+              required: [project]
               properties:
+                project:
+                  type: string
+                  minLength: 1
+                  description: Required. Name of the OpenCodeProject in the same namespace. Provides provenance and resolved defaults.
+                kanbanTask:
+                  type: string
+                  description: Task ID from the project board. Set by manager-controller when this run was spawned for a board task.
                 task:
                   type: string
                   minLength: 1
-                  description: Natural-language task sent as the first prompt. Required unless `interactive` is true.
+                  description: Natural-language task sent as the first prompt. Required unless interactive is true.
                 interactive:
                   type: boolean
                   default: false
                   description: |
-                    If true, the dispatcher skips the automatic prompt and
-                    keeps the runner alive waiting for `beatctl attach`.
-                    The user drives the session manually. Terminal phase is
-                    reached via CR deletion (Cancelled) or timeout (Failed).
+                    If true, the dispatcher skips the automatic prompt and keeps
+                    the runner alive waiting for `beatctl attach`. Terminal phase
+                    is reached via CR deletion (Cancelled) or timeout (Failed).
                 agent:
                   type: string
-                  description: Opencode agent name (e.g. "build", "plan").
+                  description: Primary agent — references a ClusterAgent by name.
                 agents:
+                  type: array
+                  maxItems: 10
+                  description: Additional ClusterAgent refs available in the pod.
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 63
+                inlineAgents:
                   type: array
                   maxItems: 5
                   description: |
-                    Inline agent definitions injected into the run pod at
-                    /workspace/.opencode/agents/<name>.md before opencode starts.
-                    The operator creates a ConfigMap from these and mounts it as a
-                    volume so opencode discovers them via its standard .opencode/
-                    walk-up mechanism. Max 5 agents, each content capped at 100KB.
+                    Inline agent definitions for CLI escape hatch (--inline-agent flag).
+                    Not surfaced in the UI. Prefer ClusterAgents for persistent definitions.
                   items:
                     type: object
                     required: [name, content]
@@ -84,19 +103,19 @@ spec:
                         type: string
                         minLength: 1
                         maxLength: 63
-                        description: Unique agent name (used as filename and selection key). Must be k8s-compatible.
                       content:
                         type: string
                         maxLength: 102400
-                        description: Full .md file contents (YAML front-matter + system prompt). Max 100KB.
                 model:
                   type: string
-                  description: Model in provider/model form.
+                  description: Model override. Resolved from project at creation time.
                 image:
                   type: string
                   default: percussionist/runner:dev
+                  description: Runner image override. Resolved from project at creation time.
                 resources:
                   type: object
+                  description: Pod resource override. Resolved from project at creation time.
                   properties:
                     requests:
                       type: object
@@ -106,103 +125,64 @@ spec:
                       additionalProperties: { type: string }
                 secrets:
                   type: object
+                  description: Resolved from project at creation time.
                   properties:
                     llmKeysSecret: { type: string }
-                    gitSSHSecret:
-                      type: string
-                      description: Deprecated. Use spec.source.git.sshSecret instead.
                     opencodeAuthSecret:
                       type: object
                       required: [name]
-                      description: |
-                        Reference to a Secret whose `key` (default
-                        `auth.json`) holds the full contents of
-                        opencode's auth.json. Projected into the runner
-                        as OPENCODE_AUTH_CONTENT. Populate it with
-                        `beatctl auth import` after running
-                        `opencode auth login <provider>` on your
-                        workstation. Required for OAuth providers
-                        (GitHub Copilot, ChatGPT Plus, Claude Pro).
                       properties:
                         name: { type: string, minLength: 1 }
-                        key:
-                          type: string
-                          default: auth.json
+                        key: { type: string, default: auth.json }
+                    opencodeConfigMap:
+                      type: object
+                      required: [name]
+                      properties:
+                        name: { type: string, minLength: 1 }
+                        key: { type: string, default: opencode.json }
                 source:
                   type: object
-                  description: |
-                    Workspace source. When `git` is set, an init container
-                    clones the repo into /workspace before the runner
-                    starts; the runner's working directory is /workspace.
+                  description: Resolved from project at creation time.
                   properties:
                     git:
                       type: object
                       required: [url]
                       properties:
-                        url:
-                          type: string
-                          minLength: 1
-                          description: Any URL git(1) accepts (https, ssh, git://, file://).
-                        ref:
-                          type: string
-                          description: |
-                            Branch, tag, or commit SHA. Omitted = remote
-                            HEAD (server-default branch). Full SHAs trigger
-                            a full clone + detached checkout; branches/tags
-                            use --depth=1.
+                        url: { type: string, minLength: 1 }
+                        ref: { type: string }
                         sshSecret:
                           type: object
                           required: [name]
-                          description: |
-                            Reference to a Secret containing an SSH private
-                            key. Mounted read-only (mode 0400) into the
-                            init container; GIT_SSH_COMMAND is set to use
-                            it with StrictHostKeyChecking disabled.
                           properties:
                             name: { type: string, minLength: 1 }
-                            key:
-                              type: string
-                              default: ssh-privatekey
-                              description: |
-                                Key inside the Secret that holds the
-                                private key. Defaults to `ssh-privatekey`,
-                                matching `kubernetes.io/ssh-auth` Secrets.
+                            key: { type: string, default: ssh-privatekey }
                         author:
                           type: object
                           required: [name, email]
-                          description: |
-                            Git commit author identity injected into the
-                            runner and init container environment as
-                            GIT_AUTHOR_* and GIT_COMMITTER_*.
                           properties:
-                            name:
-                              type: string
-                              minLength: 1
-                            email:
-                              type: string
-                              minLength: 1
+                            name: { type: string, minLength: 1 }
+                            email: { type: string, minLength: 1 }
                 timeoutSeconds:
                   type: integer
                   minimum: 1
                   default: 3600
+                  description: Run timeout. Resolved from project at creation time.
                 ttlSecondsAfterFinished:
                   type: integer
                   minimum: 0
                   default: 3600
                 expose:
                   type: object
-                  description: Controls per-run Ingress creation when the operator has PERCUSSIONIST_INGRESS_BASE_DOMAIN configured.
                   properties:
                     web:
                       type: boolean
                       default: true
-                      description: When true, creates a per-run Ingress exposing the opencode web UI at <run>.<baseDomain>/.
             status:
               type: object
               properties:
                 phase:
                   type: string
-                  enum: [Pending, Initializing, Running, Succeeded, Failed, Cancelled]
+                  enum: [Pending, Initializing, Running, WaitingForInput, Succeeded, Failed, Cancelled]
                 message: { type: string }
                 podName: { type: string }
                 serviceName: { type: string }
@@ -223,7 +203,7 @@ spec:
                       type: { type: string }
                       status:
                         type: string
-                        enum: [ "True", "False", "Unknown" ]
+                        enum: ["True", "False", "Unknown"]
                       reason: { type: string }
                       message: { type: string }
                       lastTransitionTime: { type: string }
