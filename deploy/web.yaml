@@ -43,6 +43,10 @@ rules:
   - apiGroups: ["percussionist.dev"]
     resources: ["opencodeprojects"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Patch OpenCodeProject status subresource (for board backlog updates from UI).
+  - apiGroups: ["percussionist.dev"]
+    resources: ["opencodeprojects/status"]
+    verbs: ["get", "patch"]
   # Read + write OpenCodeKanban resources (list, detail, create, update, patch, delete).
   - apiGroups: ["percussionist.dev"]
     resources: ["opencodekanbans"]
