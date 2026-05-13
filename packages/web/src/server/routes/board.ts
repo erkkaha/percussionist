@@ -10,7 +10,7 @@
 
 import { Hono } from "hono";
 import { getProject, patchProjectSpec, patchProjectStatus } from "../kube.js";
-import type { BoardTask, BoardSpec } from "@percussionist/api";
+import type { BoardTask, BoardSpec, BoardStatus } from "@percussionist/api";
 
 const board = new Hono();
 
@@ -23,10 +23,23 @@ board.get("/:project/board", async (c) => {
   const name = c.req.param("project");
   try {
     const project = await getProject(name);
-    return c.json({
-      spec: project.spec.board ?? {},
-      status: project.status?.board ?? {},
-    });
+    const spec: BoardSpec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
+    const status: Partial<BoardStatus> = project.status?.board ?? {};
+
+    // Reconcile: any task in spec.tasks that isn't in any backlog column gets
+    // placed into "ready". This repairs boards where the status patch failed
+    // (e.g. due to a previous RBAC gap) without losing task data.
+    const specTaskIds = new Set((spec.tasks ?? []).map((t: BoardTask) => t.id));
+    const backlog: Record<string, string[]> = { ...(status.backlog ?? {}) };
+    const placedIds = new Set(Object.values(backlog).flat());
+    const unplaced = [...specTaskIds].filter((id) => !placedIds.has(id));
+    if (unplaced.length > 0) {
+      backlog["ready"] = [...(backlog["ready"] ?? []), ...unplaced];
+      // Persist the repaired backlog so future reads are consistent.
+      patchProjectStatus(name, { board: { ...status, backlog } }).catch(() => {});
+    }
+
+    return c.json({ spec, status: { ...status, backlog } });
   } catch (e) {
     const ke = e as KubeError;
     return c.json({ error: errMsg(ke) }, errStatus(ke));
