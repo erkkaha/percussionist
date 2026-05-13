@@ -7,10 +7,55 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchBoard, addBoardTask, deleteBoardTask, fetchAgents, patchBoardSpec } from "../lib/api";
-import type { BoardTask } from "../lib/types";
+import { fetchBoard, addBoardTask, deleteBoardTask, fetchAgents, patchBoardSpec, retryEscalatedTask } from "../lib/api";
+import type { BoardTask, ManagerMetrics } from "../lib/types";
 
 const DEFAULT_COLUMNS = ["ready", "in-progress", "review", "rework", "done"];
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${s % 60}s`;
+}
+
+function formatRelative(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 10_000) return "just now";
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return `${h}h ago`;
+}
+
+function MetricsBadge({ metrics }: { metrics: ManagerMetrics }) {
+  return (
+    <div className="flex items-center gap-3 text-xs mt-1.5 flex-wrap">
+      {metrics.lastReconcileAt && (
+        <>
+          <span title={new Date(metrics.lastReconcileAt).toISOString()}>
+            Last reconcile: {formatRelative(metrics.lastReconcileAt)} ({formatDuration(metrics.lastReconcileDurationMs ?? 0)})
+          </span>
+          {" · "}
+        </>
+      )}
+      <span>Tasks pulled: {metrics.tasksPulled}</span>
+      {" · "}
+      <span>Workers monitored: {metrics.workersMonitored}</span>
+      {" · "}
+      <span>Reworked: {metrics.tasksReworked}</span>
+      {metrics.lastReconcileResult === "error" && (
+        <>
+          {" · "}
+          <span className="text-phase-failed">{metrics.lastError ?? "error"}</span>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function BoardView() {
   const { name } = useParams<{ name: string }>();
@@ -59,6 +104,12 @@ export default function BoardView() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", projectName] }),
   });
 
+  const retryMutation = useMutation({
+    mutationFn: (id: string) =>
+      retryEscalatedTask(projectName, id, data?.status.workers, data?.status.backlog),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", projectName] }),
+  });
+
   if (isLoading) return <p className="text-sm text-text-dim">Loading board…</p>;
   if (error || !data) return <p className="text-sm text-phase-failed">Failed to load board.</p>;
 
@@ -91,6 +142,7 @@ export default function BoardView() {
             {" · "}Max parallel: {spec.maxParallel ?? 2}
             {" · "}Phase: {spec.phase ?? "Active"}
           </p>
+          {status.managerMetrics && <MetricsBadge metrics={status.managerMetrics} />}
         </div>
         <button
           onClick={() => setShowAddTask((v) => !v)}
@@ -219,9 +271,25 @@ export default function BoardView() {
                         </Link>
                       )}
                       {worker?.status === "Escalated" && (
-                        <p className="text-xs text-phase-failed" title={worker.escalation ?? ""}>
-                          Escalated
-                        </p>
+                        <details className="text-xs text-phase-failed">
+                          <summary className="cursor-pointer list-none hover:opacity-80 transition-opacity [&::-webkit-details-marker]:hidden flex items-center gap-1.5">
+                            <span>Escalated</span>
+                            {worker.escalation && <span className="text-text-dim">(show reason)</span>}
+                          </summary>
+                          {worker.escalation && (
+                            <p className="mt-1 whitespace-pre-wrap text-text-dim">{worker.escalation}</p>
+                          )}
+                        </details>
+                      )}
+                      {worker?.status === "Escalated" && (
+                        <button
+                          onClick={() => retryMutation.mutate(id)}
+                          disabled={retryMutation.isPending}
+                          className="text-xs text-zinc-400 hover:text-text disabled:opacity-40 transition-colors"
+                          title="Reset retries and move back to ready"
+                        >
+                          {retryMutation.isPending && retryMutation.variables === id ? "Retrying…" : "↺ Retry"}
+                        </button>
                       )}
                       <button
                         onClick={() => deleteMutation.mutate(id)}

@@ -235,6 +235,29 @@ export async function patchBoardStatus(
   return body as BoardStatus;
 }
 
+export async function retryEscalatedTask(
+  project: string,
+  taskId: string,
+  currentWorkers: BoardStatus["workers"],
+  currentBacklog: BoardStatus["backlog"],
+): Promise<BoardStatus> {
+  // Reset the worker entry: clear escalation, reset retryCount to 0, set status Running.
+  const workers = (currentWorkers ?? []).map((w) =>
+    w.taskId === taskId
+      ? { ...w, status: "Running" as const, escalation: undefined, retryCount: 0, runName: undefined }
+      : w,
+  );
+
+  // Move task back to "ready": remove from all columns, prepend to "ready".
+  const backlog = { ...(currentBacklog ?? {}) };
+  for (const col of Object.keys(backlog)) {
+    backlog[col] = (backlog[col] ?? []).filter((id) => id !== taskId);
+  }
+  backlog["ready"] = [taskId, ...(backlog["ready"] ?? [])];
+
+  return patchBoardStatus(project, { workers, backlog });
+}
+
 export async function patchBoardSpec(
   project: string,
   patch: Record<string, unknown>,
