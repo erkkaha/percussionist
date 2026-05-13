@@ -61,6 +61,16 @@ spec:
                               type: string
                           required:
                             - name
+                        githubTokenSecret:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                              minLength: 1
+                            key:
+                              type: string
+                          required:
+                            - name
                         author:
                           type: object
                           properties:
@@ -117,6 +127,43 @@ spec:
                     limits:
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
+                sidecars:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 63
+                      image:
+                        type: string
+                        minLength: 1
+                      env:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                              minLength: 1
+                            value:
+                              type: string
+                          required:
+                            - name
+                            - value
+                        maxItems: 32
+                      ports:
+                        type: array
+                        items:
+                          type: integer
+                          minimum: 1
+                          maximum: 65535
+                        maxItems: 8
+                    required:
+                      - name
+                      - image
+                  maxItems: 5
                 board:
                   type: object
                   properties:

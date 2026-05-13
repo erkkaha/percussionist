@@ -9,6 +9,29 @@ type CreateProjectFormProps = {
   initialProject?: OpenCodeProject;
 };
 
+// Sidecar row state — env is edited as a single "KEY=value\nKEY=value" text block.
+interface SidecarRow {
+  id: number; // local key only
+  name: string;
+  image: string;
+  ports: string; // comma-separated numbers
+  env: string;   // newline-separated KEY=VALUE pairs
+}
+
+let _sidecarIdSeq = 0;
+function nextSidecarId() { return ++_sidecarIdSeq; }
+
+function initialSidecarRows(spec: OpenCodeProject["spec"] | undefined): SidecarRow[] {
+  if (!spec?.sidecars?.length) return [];
+  return spec.sidecars.map((sc) => ({
+    id: nextSidecarId(),
+    name: sc.name,
+    image: sc.image,
+    ports: (sc.ports ?? []).join(", "),
+    env: (sc.env ?? []).map((e) => `${e.name}=${e.value}`).join("\n"),
+  }));
+}
+
 export default function CreateProjectForm({
   mode = "create",
   initialProject,
@@ -33,6 +56,7 @@ export default function CreateProjectForm({
   const [authSecret, setAuthSecret] = useState(initialSpec?.secrets?.opencodeAuthSecret?.name ?? "");
   const [opencodeConfig, setOpencodeConfig] = useState<string | null>(null);
   const [configExpanded, setConfigExpanded] = useState(false);
+  const [sidecars, setSidecars] = useState<SidecarRow[]>(() => initialSidecarRows(initialSpec));
 
   // In edit mode, fetch the current config (per-project or cluster-wide fallback).
   useQuery({
@@ -58,6 +82,29 @@ export default function CreateProjectForm({
       setOpencodeConfig(clusterConfig ?? "");
     }
   }
+
+  // Sidecar helpers
+  function addSidecar() {
+    setSidecars((prev) => [...prev, { id: nextSidecarId(), name: "", image: "", ports: "", env: "" }]);
+  }
+  function removeSidecar(id: number) {
+    setSidecars((prev) => prev.filter((sc) => sc.id !== id));
+  }
+  function updateSidecar(id: number, field: keyof Omit<SidecarRow, "id">, value: string) {
+    setSidecars((prev) => prev.map((sc) => sc.id === id ? { ...sc, [field]: value } : sc));
+  }
+
+  // Validate sidecar rows: name and image are required; ports must be valid integers.
+  const sidecarErrors: Record<number, string> = {};
+  for (const sc of sidecars) {
+    if (!sc.name.trim()) { sidecarErrors[sc.id] = "Name is required"; continue; }
+    if (!sc.image.trim()) { sidecarErrors[sc.id] = "Image is required"; continue; }
+    if (sc.ports.trim()) {
+      const bad = sc.ports.split(",").map((p) => p.trim()).filter(Boolean).find((p) => !/^\d+$/.test(p) || Number(p) < 1 || Number(p) > 65535);
+      if (bad) { sidecarErrors[sc.id] = `Invalid port: ${bad}`; continue; }
+    }
+  }
+  const hasSidecarErrors = Object.keys(sidecarErrors).length > 0;
 
   const gitAuthorIncomplete =
     (gitAuthorName.trim().length > 0 && gitAuthorEmail.trim().length === 0) ||
@@ -85,6 +132,7 @@ export default function CreateProjectForm({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (configJsonError) return;
+    if (hasSidecarErrors) return;
     const req: CreateProjectRequest = {};
     if (!isEdit && name.trim()) req.name = name.trim();
     if (displayName.trim()) req.displayName = displayName.trim();
@@ -120,6 +168,27 @@ export default function CreateProjectForm({
           ? { opencodeAuthSecret: { name: authSecret.trim() } }
           : {}),
       };
+    }
+    if (sidecars.length > 0) {
+      req.sidecars = sidecars.map((sc) => {
+        const ports = sc.ports.trim()
+          ? sc.ports.split(",").map((p) => parseInt(p.trim(), 10)).filter(Boolean)
+          : undefined;
+        const env = sc.env.trim()
+          ? sc.env.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+              const eq = line.indexOf("=");
+              return eq >= 1
+                ? { name: line.slice(0, eq), value: line.slice(eq + 1) }
+                : { name: line, value: "" };
+            })
+          : undefined;
+        return {
+          name: sc.name.trim(),
+          image: sc.image.trim(),
+          ...(ports?.length ? { ports } : {}),
+          ...(env?.length ? { env } : {}),
+        };
+      });
     }
     mutation.mutate(req);
   }
@@ -389,6 +458,106 @@ export default function CreateProjectForm({
           )}
         </fieldset>
 
+        {/* Sidecars */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Sidecars</legend>
+          <p className="text-xs text-text-dim">
+            Extra containers injected into every run pod alongside the agent — e.g. a test database.
+            The agent reaches them via <code className="font-mono">localhost</code>.
+            opencode waits for all declared ports to be reachable before starting.
+          </p>
+
+          {sidecars.length > 0 && (
+            <div className="space-y-4">
+              {sidecars.map((sc, idx) => (
+                <div key={sc.id} className="rounded-md border border-border-muted p-3 space-y-3 relative">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-text-muted">Sidecar {idx + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeSidecar(sc.id)}
+                      className="text-xs text-text-dim hover:text-phase-failed transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-text-muted">
+                        Name <span className="text-phase-failed">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={sc.name}
+                        onChange={(e) => updateSidecar(sc.id, "name", e.target.value)}
+                        placeholder="postgres"
+                        className={monoInputClass}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-text-muted">
+                        Image <span className="text-phase-failed">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={sc.image}
+                        onChange={(e) => updateSidecar(sc.id, "image", e.target.value)}
+                        placeholder="postgres:16-alpine"
+                        className={monoInputClass}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-text-muted">
+                      Ports{" "}
+                      <span className="text-text-dim font-normal">(comma-separated)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={sc.ports}
+                      onChange={(e) => updateSidecar(sc.id, "ports", e.target.value)}
+                      placeholder="5432"
+                      className={monoInputClass}
+                    />
+                    <p className="text-xs text-text-dim">
+                      opencode waits for these ports before starting.
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-text-muted">
+                      Environment{" "}
+                      <span className="text-text-dim font-normal">(one KEY=VALUE per line)</span>
+                    </label>
+                    <textarea
+                      value={sc.env}
+                      onChange={(e) => updateSidecar(sc.id, "env", e.target.value)}
+                      rows={3}
+                      spellCheck={false}
+                      placeholder={"POSTGRES_PASSWORD=test\nPOSTGRES_DB=testdb"}
+                      className={monoInputClass + " resize-y text-xs leading-5"}
+                    />
+                  </div>
+
+                  {sidecarErrors[sc.id] && (
+                    <p className="text-xs text-phase-failed">{sidecarErrors[sc.id]}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={addSidecar}
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-text-muted hover:text-text hover:border-zinc-500 transition-colors"
+          >
+            + Add sidecar
+          </button>
+        </fieldset>
+
         {mutation.error && (
           <div className="rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
             {mutation.error.message}
@@ -398,7 +567,7 @@ export default function CreateProjectForm({
         <div className="flex items-center gap-3 pt-1">
           <button
             type="submit"
-            disabled={(!isEdit && !name.trim()) || mutation.isPending || gitAuthorIncomplete || !!configJsonError}
+            disabled={(!isEdit && !name.trim()) || mutation.isPending || gitAuthorIncomplete || !!configJsonError || hasSidecarErrors}
             className="rounded-md bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
           >
             {mutation.isPending ? (isEdit ? "Saving…" : "Creating…") : (isEdit ? "Save Changes" : "Create Project")}

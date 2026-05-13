@@ -72,6 +72,13 @@ export interface CreateProjectRequest {
       author?: { name: string; email: string };
     };
   };
+  /** Project-level sidecars injected into every run pod. */
+  sidecars?: Array<{
+    name: string;
+    image: string;
+    env?: Array<{ name: string; value: string }>;
+    ports?: number[];
+  }>;
 }
 
 export interface CreateAgentRequest {

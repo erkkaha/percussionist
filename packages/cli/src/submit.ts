@@ -173,6 +173,8 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
           }
         : {}),
       ...(rawAgents.length > 0 ? { inlineAgents: rawAgents } : {}),
+      // Inherit sidecars from the project spec. Not overridable via CLI flags.
+      ...(pd?.sidecars?.length ? { sidecars: pd.sidecars } : {}),
     },
   };
   return OpenCodeRunSchema.parse(raw);
