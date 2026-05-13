@@ -15,6 +15,7 @@ RUN corepack enable && corepack prepare pnpm@10.30.2 --activate
 WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/api/package.json              packages/api/package.json
+COPY packages/kube/package.json             packages/kube/package.json
 COPY packages/operator/package.json         packages/operator/package.json
 COPY packages/dispatcher/package.json       packages/dispatcher/package.json
 COPY packages/manager-controller/package.json packages/manager-controller/package.json
@@ -25,6 +26,7 @@ FROM deps AS build
 ARG PKG
 COPY packages ./packages
 RUN pnpm -C packages/api              run build \
+ && pnpm -C packages/kube             run build \
  && pnpm -C packages/operator         run build \
  && pnpm -C packages/dispatcher       run build \
  && pnpm -C packages/manager-controller run build
@@ -44,6 +46,9 @@ COPY --from=build /repo/node_modules                     /app/node_modules
 COPY --from=build /repo/packages/api/dist                /app/packages/api/dist
 COPY --from=build /repo/packages/api/package.json        /app/packages/api/package.json
 COPY --from=build /repo/packages/api/node_modules        /app/packages/api/node_modules
+COPY --from=build /repo/packages/kube/dist               /app/packages/kube/dist
+COPY --from=build /repo/packages/kube/package.json       /app/packages/kube/package.json
+COPY --from=build /repo/packages/kube/node_modules       /app/packages/kube/node_modules
 COPY --from=build /repo/packages/operator/dist           /app/packages/operator/dist
 COPY --from=build /repo/packages/operator/package.json   /app/packages/operator/package.json
 COPY --from=build /repo/packages/operator/node_modules   /app/packages/operator/node_modules

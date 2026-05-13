@@ -18,6 +18,7 @@ RUN corepack enable && corepack prepare pnpm@10.30.2 --activate
 WORKDIR /repo
 COPY pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY packages/api/package.json packages/api/package.json
+COPY packages/kube/package.json packages/kube/package.json
 COPY packages/web/package.json packages/web/package.json
 RUN pnpm install --frozen-lockfile=false && pnpm approve-builds esbuild
 
@@ -25,12 +26,15 @@ RUN pnpm install --frozen-lockfile=false && pnpm approve-builds esbuild
 FROM deps AS build
 COPY packages/api/src           packages/api/src
 COPY packages/api/tsconfig.json packages/api/tsconfig.json
+COPY packages/kube/src           packages/kube/src
+COPY packages/kube/tsconfig.json packages/kube/tsconfig.json
 COPY packages/web/src              packages/web/src
 COPY packages/web/tsconfig.json    packages/web/tsconfig.json
 COPY packages/web/tsconfig.server.json packages/web/tsconfig.server.json
 COPY packages/web/tsconfig.client.json packages/web/tsconfig.client.json
 COPY packages/web/vite.config.ts   packages/web/vite.config.ts
 RUN pnpm -C packages/api run build \
+ && pnpm -C packages/kube run build \
  && pnpm -C packages/web run build
 
 # --- runtime (Bun) ------------------------------------------------------------
@@ -43,6 +47,9 @@ COPY --from=build /repo/node_modules                    /app/node_modules
 COPY --from=build /repo/packages/api/dist               /app/packages/api/dist
 COPY --from=build /repo/packages/api/package.json       /app/packages/api/package.json
 COPY --from=build /repo/packages/api/node_modules       /app/packages/api/node_modules
+COPY --from=build /repo/packages/kube/dist              /app/packages/kube/dist
+COPY --from=build /repo/packages/kube/package.json      /app/packages/kube/package.json
+COPY --from=build /repo/packages/kube/node_modules      /app/packages/kube/node_modules
 COPY --from=build /repo/packages/web/dist               /app/packages/web/dist
 COPY --from=build /repo/packages/web/package.json       /app/packages/web/package.json
 COPY --from=build /repo/packages/web/node_modules       /app/packages/web/node_modules
