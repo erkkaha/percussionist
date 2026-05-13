@@ -139,7 +139,7 @@ spec:
       containers:
         - name: operator
           image: percussionist/operator:dev
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Never
           env:
             - name: WATCH_NAMESPACE
               value: percussionist
@@ -149,20 +149,19 @@ spec:
               value: percussionist/dispatcher:dev
             - name: DISPATCHER_SERVICE_ACCOUNT
               value: percussionist-dispatcher
-            # Set PERCUSSIONIST_INGRESS_BASE_URL to enable per-run Ingresses
-            # that expose the opencode web UI at <baseURL-with-run-subdomain>/.
+            # Enable per-run Ingresses that expose the opencode web UI at
+            # <run-name>.<baseURL-without-scheme>/.
             # Format: scheme://host[:port]  (no trailing slash)
             #
             # Examples:
             #   Port-80 cluster (*.percussionist.localhost resolves to 127.0.0.1):
             #     http://percussionist.localhost
-            #   minikube NodePort via traefik.me wildcard DNS (port 30080):
-            #     http://192.168.49.2.traefik.me:30080
-            #
-            # Legacy PERCUSSIONIST_INGRESS_BASE_DOMAIN is also accepted and is
-            # equivalent to http://<domain> (port 80 assumed).
-            # - name: PERCUSSIONIST_INGRESS_BASE_URL
-            #   value: http://percussionist.localhost
+            #   minikube with nip.io wildcard DNS (port 30080 = nginx-ingress NodePort):
+            #     PERCUSSIONIST_INGRESS_BASE_URL=http://$(minikube ip).nip.io:30080
+            - name: PERCUSSIONIST_INGRESS_BASE_URL
+              value: http://192.168.49.2.nip.io:30080
+            - name: PERCUSSIONIST_INGRESS_CLASS
+              value: nginx
             # - name: PERCUSSIONIST_INGRESS_CLASS
             #   value: nginx
             # - name: PERCUSSIONIST_INGRESS_ANNOTATIONS

@@ -16,6 +16,7 @@ import {
 import {
   createRun,
   getRun,
+  getProject,
   patchProjectStatus,
 } from "@percussionist/kube";
 import { buildWorkerRun, workerRunName, MAX_RETRIES } from "./worker-builder.js";
@@ -46,14 +47,19 @@ export { kc };
 export async function reconcile(project: OpenCodeProject): Promise<void> {
   const projectName = project.metadata.name;
   const ns = project.metadata.namespace ?? NAMESPACE;
-  const board = project.spec.board;
+
+  // Always fetch a fresh copy — the informer object may be stale relative to
+  // status subresource updates (status patches don't bump metadata.resourceVersion
+  // seen by the informer cache in all K8s versions).
+  const fresh = await getProject(projectName, ns, k8s);
+  const board = fresh.spec.board;
 
   // No board config — nothing to drive.
   if (!board) return;
   if (board.phase === "Archived") return;
 
   // Initialise board status if missing (first reconcile after project creation).
-  const boardStatus: BoardStatus = project.status?.board ?? {
+  const boardStatus: BoardStatus = fresh.status?.board ?? {
     columns: ["ready", "in-progress", "review", "rework", "done"],
     backlog: { ready: [] },
     workers: [],
@@ -63,14 +69,40 @@ export async function reconcile(project: OpenCodeProject): Promise<void> {
   let backlog = boardStatus.backlog ?? { ready: [] };
   let workers = boardStatus.workers ?? [];
 
+  const specTaskIds = new Set((board.tasks ?? []).map((t) => t.id));
+
+  // Prune: remove tasks from the backlog that no longer exist in spec.board.tasks.
+  // This cleans up manually-tested or stale entries (e.g. F-TEST).
+  const prunedBacklog: Record<string, string[]> = {};
+  for (const [col, ids] of Object.entries(backlog)) {
+    const kept = (ids as string[]).filter((id) => specTaskIds.has(id));
+    const pruned = (ids as string[]).filter((id) => !specTaskIds.has(id));
+    if (pruned.length > 0) {
+      log(`pruning ${pruned.join(", ")} from backlog column "${col}" — not in spec.board.tasks`);
+    }
+    prunedBacklog[col] = kept;
+  }
+  backlog = prunedBacklog;
+
+  // Repair: any task in spec.board.tasks not present in any backlog column
+  // gets placed into "ready". Guards against status patches that failed
+  // before reaching the controller (e.g. prior RBAC gaps).
+  const placedIds = new Set(Object.values(backlog).flat());
+  const unplaced = [...specTaskIds].filter((id) => !placedIds.has(id));
+  if (unplaced.length > 0) {
+    log(`repairing ${unplaced.length} unplaced task(s) → ready: ${unplaced.join(", ")}`);
+    backlog = { ...backlog, ready: [...(backlog["ready"] ?? []), ...unplaced] };
+  }
+
   // ------------------------------------------------------------------
   // PULL PHASE: move ready tasks → in-progress, create worker runs.
   // ------------------------------------------------------------------
-  const tasksToPull = getTasksToPull(project, boardStatus);
+  const tasksToPull = getTasksToPull(fresh, { ...boardStatus, backlog });
 
   for (const taskId of tasksToPull) {
     const taskDef = (board.tasks ?? []).find((t) => t.id === taskId);
     if (!taskDef) {
+      // Should not happen — prune step above removes unknown backlog tasks before pull.
       err(`task ${taskId} in backlog but not in spec.board.tasks — skipping`);
       continue;
     }
@@ -100,7 +132,7 @@ export async function reconcile(project: OpenCodeProject): Promise<void> {
     };
     workers = upsertWorker(workers, newWorker);
 
-    const workerRun = buildWorkerRun(project, taskDef, runName, retryCount);
+    const workerRun = buildWorkerRun(fresh, taskDef, runName, retryCount);
     try {
       await createRun(workerRun, ns, k8s);
       log(`created worker run ${runName} for task ${taskId}`);
@@ -173,7 +205,15 @@ export async function reconcile(project: OpenCodeProject): Promise<void> {
       }
     } catch (e) {
       const msg = (e as Error).message;
-      if (!/not found/i.test(msg)) {
+      if (/not found/i.test(msg)) {
+        workers = updateWorker(workers, worker.taskId, {
+          retryCount: (worker.retryCount ?? 0) + 1,
+          status: "Failed",
+          completedAt: new Date().toISOString(),
+        });
+        backlog = moveTask(backlog, worker.taskId, "ready");
+        log(`worker run ${worker.runName} not found — task ${worker.taskId} returned to ready (retry ${(worker.retryCount ?? 0) + 1})`);
+      } else {
         err(`monitor worker ${worker.runName}:`, msg);
       }
     }
@@ -198,10 +238,10 @@ export async function reconcile(project: OpenCodeProject): Promise<void> {
     }
 
     const feedback =
-      project.metadata.annotations?.[`percussionist.dev/rework-${taskId}`] ??
+      fresh.metadata.annotations?.[`percussionist.dev/rework-${taskId}`] ??
       "Please address the feedback from the previous review.";
     const runName = workerRunName(projectName, taskId);
-    const reworkRun = buildWorkerRun(project, taskDef, runName, 0, feedback);
+    const reworkRun = buildWorkerRun(fresh, taskDef, runName, 0, feedback);
 
     backlog = moveTask(backlog, taskId, "in-progress");
     workers = upsertWorker(workers, {

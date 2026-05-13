@@ -16,6 +16,7 @@ import {
   PatchStrategy,
   setHeaderOptions,
 } from "@kubernetes/client-node";
+import fs from "node:fs";
 import {
   API_GROUP,
   API_VERSION,
@@ -507,12 +508,10 @@ export function fatal(prefix: string, e: unknown): never {
 
 function readServiceAccountToken(): string | undefined {
   try {
-    return require("fs")
-      .readFileSync(
-        "/var/run/secrets/kubernetes.io/serviceaccount/token",
-        "utf8",
-      )
-      .trim();
+    return fs.readFileSync(
+      "/var/run/secrets/kubernetes.io/serviceaccount/token",
+      "utf8",
+    ).trim();
   } catch {
     return undefined;
   }

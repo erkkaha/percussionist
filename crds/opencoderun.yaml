@@ -87,8 +87,10 @@ spec:
                   properties:
                     requests:
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     limits:
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                 secrets:
                   type: object
                   properties:

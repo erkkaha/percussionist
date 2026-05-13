@@ -35,21 +35,32 @@ const api = await import(apiDist);
 // ---------------------------------------------------------------------------
 // Convert a Zod schema to an OpenAPI-compatible JSON Schema object.
 // We strip the $schema and title fields (not needed in CRDs).
-// We also strip additionalProperties — Kubernetes CRD validation forbids
-// combining additionalProperties with properties on the same object node.
+// We also strip additionalProperties only when the object node also has a
+// `properties` field — that's the combination Kubernetes CRD validation
+// forbids.  When an object has `additionalProperties` but NO `properties`
+// it is a free-form map (z.record()); we replace it with
+// `x-kubernetes-preserve-unknown-fields: true` so Kubernetes doesn't prune
+// the map's keys.
 // We also inline all $ref references — Kubernetes CRD validation forbids $ref.
 function stripAdditionalProperties(obj) {
   if (Array.isArray(obj)) {
     return obj.map(stripAdditionalProperties);
   }
   if (obj !== null && typeof obj === "object") {
-    // Remove fields Kubernetes CRD validation forbids.
     const { additionalProperties, default: _default, ...rest } = obj;
-    void additionalProperties;
     void _default;
     const result = {};
     for (const [k, v] of Object.entries(rest)) {
       result[k] = stripAdditionalProperties(v);
+    }
+    if (additionalProperties !== undefined) {
+      if (rest.properties) {
+        // Kubernetes forbids additionalProperties alongside properties — drop it.
+        void additionalProperties;
+      } else {
+        // Free-form map (z.record): preserve unknown fields so K8s doesn't prune keys.
+        result["x-kubernetes-preserve-unknown-fields"] = true;
+      }
     }
     return result;
   }

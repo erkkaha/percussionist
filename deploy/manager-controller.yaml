@@ -14,12 +14,12 @@ kind: ClusterRole
 metadata:
   name: percussionist-manager
 rules:
-  # Watch and patch OpenCodeKanban CRs (the boards the manager orchestrates).
+  # Watch and patch OpenCodeProject CRs (the boards the manager orchestrates).
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencodekanbans"]
+    resources: ["opencodeprojects"]
     verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencodekanbans/status"]
+    resources: ["opencodeprojects/status"]
     verbs: ["get", "update", "patch"]
   # Create and monitor OpenCodeRun worker pods (child resources).
   - apiGroups: ["percussionist.dev"]
@@ -72,12 +72,14 @@ spec:
       containers:
         - name: manager
           image: percussionist/manager:dev
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Never
           env:
             - name: WATCH_NAMESPACE
               value: percussionist
             - name: RUNNER_IMAGE_DEFAULT
               value: percussionist/runner:dev
+            - name: NODE_EXTRA_CA_CERTS
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits:   { cpu: 500m, memory: 512Mi }

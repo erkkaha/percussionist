@@ -23,6 +23,7 @@ ENV LANG=C.UTF-8 \
 #  - nodejs, npm: agents that need node/npm at runtime (24.x from Alpine repos)
 #  - gcompat: glibc ABI compatibility layer so glibc-linked .so files in the
 #             opencode binary (bun FFI) can load on musl/Alpine
+#  - gcc + musl-dev: compile the gnu_stub.so (removed after build)
 #  - icu-data-full: full ICU locale data so Intl number/date formatting supports
 #                   non-English locales (e.g. fi-FI decimal comma)
 RUN apk add --no-cache \
@@ -34,8 +35,22 @@ RUN apk add --no-cache \
       npm \
       icu-data-full \
       gcompat \
+      gcc \
+      musl-dev \
     && mkdir -p /workspace /root/.ssh \
     && chmod 700 /root/.ssh
+
+# Compile and install the glibc symbol stub, then remove the compiler.
+# gnu_get_libc_version is referenced by glibc-linked .so files that Bun FFI
+# extracts at runtime for certain providers (e.g. lmstudio).  gcompat does
+# not expose this symbol; the stub satisfies the dynamic linker.
+COPY gnu_stub.c /tmp/gnu_stub.c
+RUN gcc -shared -fPIC -o /usr/local/lib/libgnustub.so /tmp/gnu_stub.c \
+    && rm /tmp/gnu_stub.c \
+    && apk del gcc musl-dev
+
+# Preload the stub so every dlopen() call in the process can resolve the symbol.
+ENV LD_PRELOAD=/usr/local/lib/libgnustub.so
 
 # Cluster-wide OpenCode agents and skills. Empty by default; populate
 # content/agents/<name>.md and content/skills/<name>/SKILL.md to ship them

@@ -113,8 +113,10 @@ spec:
                   properties:
                     requests:
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     limits:
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                 board:
                   type: object
                   properties:
@@ -179,8 +181,10 @@ spec:
                           properties:
                             requests:
                               type: object
+                              x-kubernetes-preserve-unknown-fields: true
                             limits:
                               type: object
+                              x-kubernetes-preserve-unknown-fields: true
                     phase:
                       type: string
                       enum:
@@ -199,6 +203,7 @@ spec:
                         type: string
                     backlog:
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     workers:
                       type: array
                       items:
