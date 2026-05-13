@@ -1,17 +1,12 @@
 # OpenCodeRun using a GitHub Copilot subscription.
 #
-# Prereq — once, on your workstation:
-#   opencode auth login github-copilot     # device-code flow in a browser
-#   beatctl auth import --provider github-copilot
-#
-# That creates a Secret named `opencode-auth` in the percussionist namespace
-# containing the auth.json slice the runner needs. The operator projects it
-# as OPENCODE_AUTH_CONTENT inside the pod, which opencode reads before
-# looking at ~/.local/share/opencode/auth.json on disk.
+# Prerequisite: create the project first (e.g. `beatctl project create --name my-project`)
+# and an auth Secret via `beatctl auth import`.
 #
 # Apply:
 #   kubectl apply -f examples/copilot-run.yaml
 #   beatctl logs copilot-demo -f -c dispatcher
+
 apiVersion: percussionist.dev/v1alpha1
 kind: OpenCodeRun
 metadata:
@@ -21,11 +16,7 @@ spec:
   task: |
     In one short sentence, tell me which model and provider you are running.
     Do not use any tools.
-  # Model pinning is optional. When omitted, opencode picks the default for
-  # the first provider it finds credentials for. With a Copilot token
-  # present you can explicitly select one of the Copilot-proxied models:
-  # model: github-copilot/claude-sonnet-4.5
-  # model: github-copilot/gpt-4.1
+  project: my-project   # references OpenCodeProject for git/secrets/model defaults
   secrets:
     opencodeAuthSecret:
       name: opencode-auth

@@ -226,3 +226,21 @@ export async function patchBoardStatus(
   }
   return body as BoardStatus;
 }
+
+export async function patchBoardSpec(
+  project: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(project)}/board/spec`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    },
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}

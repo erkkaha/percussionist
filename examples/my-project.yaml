@@ -1,0 +1,27 @@
+# Sample OpenCodeProject — reusable template for run defaults (git, secrets, model).
+#
+# Create from the CLI:
+#   beatctl project create --name my-project --display-name "My Project" \
+#     --git-url https://github.com/octocat/Hello-World.git
+#
+# Or apply directly:
+#   kubectl apply -f examples/my-project.yaml
+apiVersion: percussionist.dev/v1alpha1
+kind: OpenCodeProject
+metadata:
+  name: my-project
+  namespace: percussionist
+spec:
+  displayName: My Project
+  model: github-copilot/claude-sonnet-4.5   # default model for all runs and board workers
+
+  source:
+    git:
+      url: https://github.com/octocat/Hello-World.git
+      ref: main                              # optional; omitted = remote HEAD
+
+  secrets:
+    llmKeysSecret: llm-keys                  # Secret with provider API keys
+    opencodeAuthSecret:                      # OAuth tokens (from `beatctl auth import`)
+      name: opencode-auth
+      # key: auth.json   # default

@@ -1,4 +1,9 @@
-# OpenCodeRun with a git workspace.
+# OpenCodeRun with a git workspace reference.
+#
+# Prerequisite: create a project first (or set `source.git` on an existing one).
+# For example via CLI:
+#   beatctl project create --name my-project \
+#     --git-url https://github.com/octocat/Hello-World.git
 #
 # The operator injects an init container (using the runner image) that
 # clones spec.source.git.url into /workspace before `opencode serve`
@@ -12,6 +17,7 @@
 # Apply:
 #   kubectl apply -f examples/git-run.yaml
 #   beatctl attach git-demo   # or: beatctl logs git-demo -f
+
 apiVersion: percussionist.dev/v1alpha1
 kind: OpenCodeRun
 metadata:
@@ -21,13 +27,16 @@ spec:
   task: |
     List the top-level files and folders in the workspace, then summarise
     what this repository is for in one sentence. Do not modify anything.
-  source:
-    git:
-      url: https://github.com/octocat/Hello-World.git
-      # ref: main          # optional; omit to use the remote's default branch
-      # sshSecret:
-      #   name: agent-key  # a Secret with key `ssh-privatekey` (type: kubernetes.io/ssh-auth)
-      #   # key: ssh-privatekey   # override if the secret uses a different key
+  project: my-project   # references OpenCodeProject (inherit git source from there)
+
+  # Override the project's git source with a different repo/branch if needed:
+  # source:
+  #   git:
+  #     url: https://github.com/other/repo.git
+  #     ref: main          # optional; omit to use the remote's default branch
+  #     sshSecret:
+  #       name: agent-key  # a Secret with key `ssh-privatekey` (type: kubernetes.io/ssh-auth)
+
   secrets:
     llmKeysSecret: llm-keys
   timeoutSeconds: 600

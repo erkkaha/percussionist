@@ -1,5 +1,6 @@
-# Sample OpenCodeRun. Apply after the CRD and operator are installed.
-#   kubectl apply -f examples/hello-run.yaml
+# Sample OpenCodeRun referencing an OpenCodeProject for defaults (git, secrets, model).
+# Prerequisite: create the project first:
+#   kubectl apply -f examples/my-project.yaml  (or use beatctl project create)
 #
 # Requires an LLM key secret (create it from your env):
 #   kubectl -n percussionist create secret generic llm-keys \
@@ -13,11 +14,6 @@ spec:
   task: |
     Say hello, then explain in one sentence what opencode is. Do not use any
     tools. Keep the response under 40 words.
-  # Agent and model are optional; the opencode server defaults apply when
-  # omitted. Uncomment + edit to pin them:
-  # agent: build
-  # model: anthropic/claude-3-5-haiku-latest
-  secrets:
-    llmKeysSecret: llm-keys
+  project: my-project   # references OpenCodeProject for git/secrets/model defaults
   timeoutSeconds: 600
   ttlSecondsAfterFinished: 3600

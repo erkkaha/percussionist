@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchBoard, addBoardTask, deleteBoardTask } from "../lib/api";
+import { fetchBoard, addBoardTask, deleteBoardTask, fetchAgents, patchBoardSpec } from "../lib/api";
 import type { BoardTask } from "../lib/types";
 
 const DEFAULT_COLUMNS = ["ready", "in-progress", "review", "rework", "done"];
@@ -23,6 +23,12 @@ export default function BoardView() {
     refetchInterval: 10_000,
   });
 
+  // All ClusterAgents available in the cluster — used for the agent dropdown.
+  const { data: clusterAgents = [] } = useQuery({
+    queryKey: ["agents"],
+    queryFn: fetchAgents,
+  });
+
   const [showAddTask, setShowAddTask] = useState(false);
   const [taskId, setTaskId] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
@@ -32,7 +38,14 @@ export default function BoardView() {
   const [addError, setAddError] = useState<string | null>(null);
 
   const addMutation = useMutation({
-    mutationFn: (task: BoardTask) => addBoardTask(projectName, task),
+    mutationFn: async (task: BoardTask) => {
+      // If this agent isn't in the board roster yet, add it first.
+      if (!roster.includes(task.agent)) {
+        const updatedAgents = [...(spec.agents ?? []), { name: task.agent }];
+        await patchBoardSpec(projectName, { agents: updatedAgents });
+      }
+      return addBoardTask(projectName, task);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["board", projectName] });
       setShowAddTask(false);
@@ -104,7 +117,7 @@ export default function BoardView() {
               className="rounded border border-border bg-surface-raised px-2 py-1.5 text-sm"
             >
               <option value="">— agent —</option>
-              {roster.map((a) => <option key={a} value={a}>{a}</option>)}
+              {clusterAgents.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
             </select>
           </div>
           <input
