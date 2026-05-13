@@ -105,6 +105,14 @@ export async function deleteProject(name: string): Promise<void> {
   }
 }
 
+export async function fetchProjectConfig(name: string): Promise<string> {
+  return fetchJSON<string>(`/projects/${encodeURIComponent(name)}/config`);
+}
+
+export async function fetchDefaultConfig(): Promise<string> {
+  return fetchJSON<string>(`/projects/config/default`);
+}
+
 export async function updateProject(name: string, req: CreateProjectRequest): Promise<OpenCodeProject> {
   const res = await fetch(`${BASE}/projects/${encodeURIComponent(name)}`, {
     method: "PUT",

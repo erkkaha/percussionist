@@ -56,6 +56,8 @@ export interface CreateProjectRequest {
   displayName?: string;
   model?: string;
   agent?: string;
+  /** Inline opencode.json content — stored as a per-project ConfigMap. */
+  opencodeConfig?: string;
   secrets?: {
     llmKeysSecret?: string;
     opencodeAuthSecret?: { name: string; key?: string };

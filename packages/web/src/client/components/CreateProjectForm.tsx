@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { submitProject, updateProject } from "../lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { submitProject, updateProject, fetchProjectConfig, fetchDefaultConfig } from "../lib/api";
 import type { CreateProjectRequest, OpenCodeProject } from "../lib/types";
 
 type CreateProjectFormProps = {
@@ -31,10 +31,43 @@ export default function CreateProjectForm({
   const [gitAuthorEmail, setGitAuthorEmail] = useState(initialSpec?.source?.git?.author?.email ?? "");
   const [llmKeysSecret, setLlmKeysSecret] = useState(initialSpec?.secrets?.llmKeysSecret ?? "");
   const [authSecret, setAuthSecret] = useState(initialSpec?.secrets?.opencodeAuthSecret?.name ?? "");
+  const [opencodeConfig, setOpencodeConfig] = useState<string | null>(null);
+  const [configExpanded, setConfigExpanded] = useState(false);
+
+  // In edit mode, fetch the current config (per-project or cluster-wide fallback).
+  useQuery({
+    queryKey: ["project-config", initialProject?.metadata.name],
+    queryFn: () => fetchProjectConfig(initialProject!.metadata.name),
+    enabled: isEdit && !!initialProject,
+    onSuccess: (data: string) => {
+      if (opencodeConfig === null) setOpencodeConfig(data);
+    },
+  } as Parameters<typeof useQuery>[0]);
+
+  // Fetch cluster-wide config to use as default when the textarea is first opened in create mode.
+  const { data: clusterConfig } = useQuery({
+    queryKey: ["project-config-default"],
+    queryFn: fetchDefaultConfig,
+    enabled: !isEdit,
+  });
+
+  function handleConfigExpand() {
+    setConfigExpanded(true);
+    // Pre-populate with cluster-wide config when first opened in create mode.
+    if (!isEdit && opencodeConfig === null) {
+      setOpencodeConfig(clusterConfig ?? "");
+    }
+  }
 
   const gitAuthorIncomplete =
     (gitAuthorName.trim().length > 0 && gitAuthorEmail.trim().length === 0) ||
     (gitAuthorName.trim().length === 0 && gitAuthorEmail.trim().length > 0);
+
+  const configJsonError = (() => {
+    if (!opencodeConfig?.trim()) return null;
+    try { JSON.parse(opencodeConfig); return null; }
+    catch (e) { return (e as Error).message; }
+  })();
 
   const mutation = useMutation({
     mutationFn: (req: CreateProjectRequest) => {
@@ -51,11 +84,13 @@ export default function CreateProjectForm({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (configJsonError) return;
     const req: CreateProjectRequest = {};
     if (!isEdit && name.trim()) req.name = name.trim();
     if (displayName.trim()) req.displayName = displayName.trim();
     if (model.trim()) req.model = model.trim();
     if (agent.trim()) req.agent = agent.trim();
+    if (opencodeConfig !== null) req.opencodeConfig = opencodeConfig.trim() || "";
     if (gitUrl.trim()) {
       req.source = {
         git: {
@@ -309,6 +344,51 @@ export default function CreateProjectForm({
           </div>
         </div>
 
+        {/* OpenCode Config */}
+        <fieldset className="rounded-md border border-border">
+          <button
+            type="button"
+            onClick={() => configExpanded ? setConfigExpanded(false) : handleConfigExpand()}
+            className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-text-muted hover:text-text transition-colors"
+          >
+            <span>
+              OpenCode config
+              {isEdit && initialSpec?.secrets?.opencodeConfigMap && (
+                <span className="ml-2 text-xs font-normal text-phase-running">per-project</span>
+              )}
+            </span>
+            <span className="text-text-dim">{configExpanded ? "▲" : "▼"}</span>
+          </button>
+
+          {configExpanded && (
+            <div className="border-t border-border p-4 space-y-2">
+              <p className="text-xs text-text-dim">
+                Override <code className="font-mono">opencode.json</code> for this project.
+                Leave empty to use the cluster-wide <code className="font-mono">opencode-config</code> configmap.
+              </p>
+              <textarea
+                value={opencodeConfig ?? ""}
+                onChange={(e) => setOpencodeConfig(e.target.value)}
+                rows={14}
+                spellCheck={false}
+                placeholder={'{\n  "$schema": "https://opencode.ai/config.json",\n  "provider": { ... }\n}'}
+                className={monoInputClass + " resize-y text-xs leading-5"}
+              />
+              {configJsonError && (
+                <p className="text-xs text-phase-failed">Invalid JSON: {configJsonError}</p>
+              )}
+              {opencodeConfig?.trim() && !configJsonError && (
+                <p className="text-xs text-phase-succeeded">Valid JSON</p>
+              )}
+              {opencodeConfig !== null && opencodeConfig.trim() === "" && isEdit && (
+                <p className="text-xs text-text-dim">
+                  Saving with an empty config will remove the per-project override and revert to the cluster-wide default.
+                </p>
+              )}
+            </div>
+          )}
+        </fieldset>
+
         {mutation.error && (
           <div className="rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
             {mutation.error.message}
@@ -318,7 +398,7 @@ export default function CreateProjectForm({
         <div className="flex items-center gap-3 pt-1">
           <button
             type="submit"
-            disabled={(!isEdit && !name.trim()) || mutation.isPending || gitAuthorIncomplete}
+            disabled={(!isEdit && !name.trim()) || mutation.isPending || gitAuthorIncomplete || !!configJsonError}
             className="rounded-md bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
           >
             {mutation.isPending ? (isEdit ? "Saving…" : "Creating…") : (isEdit ? "Save Changes" : "Create Project")}
