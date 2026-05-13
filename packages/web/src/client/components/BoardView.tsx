@@ -106,7 +106,7 @@ export default function BoardView() {
 
   const retryMutation = useMutation({
     mutationFn: (id: string) =>
-      retryEscalatedTask(projectName, id, data?.status.workers, data?.status.backlog),
+      retryEscalatedTask(projectName, id, data?.status.workers ?? [], data?.status.backlog ?? {}),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", projectName] }),
   });
 

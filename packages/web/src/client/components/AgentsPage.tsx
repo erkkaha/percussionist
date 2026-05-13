@@ -65,7 +65,7 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
           </button>
           <button
             onClick={() => {
-              if (confirm(`Delete agent "${agent.metadata.name}"?`)) {
+              if (confirm(`Delete agent "${agent.name}"?`)) {
                 del.mutate();
               }
             }}

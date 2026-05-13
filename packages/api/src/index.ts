@@ -472,6 +472,9 @@ export const OpenCodeProjectSpecSchema = z.object({
   // Default model for runs and board workers.
   model: z.string().optional(),
 
+  // Default agent for runs and board workers.
+  agent: z.string().optional(),
+
   // Default runner image.
   image: z.string().optional(),
 
