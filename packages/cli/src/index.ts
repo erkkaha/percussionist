@@ -15,6 +15,7 @@ import { runWait } from "./wait.js";
 import { runDeploy } from "./deploy.js";
 import { runAuthImport } from "./auth.js";
 import { runSshKeyCreate } from "./ssh-key.js";
+import { runGithubTokenCreate } from "./github-token.js";
 import {
   runProjectCreate,
   runProjectDelete,
@@ -83,6 +84,10 @@ program
   .option(
     "--git-ssh-secret <name>",
     "Secret name containing the SSH private key for private repos (create with `beatctl ssh-key create`)",
+  )
+  .option(
+    "--git-github-token-secret <name>",
+    "Secret name containing a GitHub token for gh CLI auth (create with `beatctl github-token create`)",
   )
   .option(
     "--project <name>",
@@ -174,6 +179,24 @@ sshKey
   .option("--dry-run", "print what would be created; don't touch the cluster")
   .action(runSshKeyCreate);
 
+// github-token --------------------------------------------------------------
+// Subcommand group for managing GitHub token Secrets used for gh CLI auth.
+const githubToken = program
+  .command("github-token")
+  .description("manage GitHub token Secrets for gh CLI authentication in runners");
+
+githubToken
+  .command("create")
+  .description("create or update an Opaque Secret holding a GitHub personal access token")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("--name <name>", "Secret name to create/update", "git-github-token")
+  .option(
+    "--token <token>",
+    "GitHub personal access token (default: $GITHUB_TOKEN env var)",
+  )
+  .option("--dry-run", "print what would be created; don't touch the cluster")
+  .action(runGithubTokenCreate);
+
 // auth ----------------------------------------------------------------------
 // Subcommand group so we can grow `beatctl auth list/rotate/revoke` later
 // without another top-level restructure.
@@ -237,6 +260,10 @@ project
   .option("--git-author-name <name>", "default git commit author name")
   .option("--git-author-email <email>", "default git commit author email")
   .option("--git-ssh-secret <name>", "Secret with SSH private key")
+  .option(
+    "--git-github-token-secret <name>",
+    "Secret with GitHub token for gh CLI auth (create with `beatctl github-token create`)",
+  )
   .option("--llm-keys-secret <name>", "Secret with provider API keys")
   .option(
     "--auth-secret <name>",

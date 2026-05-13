@@ -36,6 +36,7 @@ export interface CreateRunRequest {
       url: string;
       ref?: string;
       sshSecret?: { name: string; key?: string };
+      githubTokenSecret?: { name: string; key?: string };
       author?: { name: string; email: string };
     };
   };
@@ -64,6 +65,7 @@ export interface CreateProjectRequest {
       url: string;
       ref?: string;
       sshSecret?: { name: string; key?: string };
+      githubTokenSecret?: { name: string; key?: string };
       author?: { name: string; email: string };
     };
   };

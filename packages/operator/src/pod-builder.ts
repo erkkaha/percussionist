@@ -168,6 +168,7 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
   const image = spec.image ?? RUNNER_IMAGE_DEFAULT;
   const git = spec.source?.git;
   const sshSecret = git?.sshSecret;
+  const githubTokenSecret = git?.githubTokenSecret;
   const hasAgents = resolvedAgents.length > 0;
 
   const gitAuthorEnv = git?.author
@@ -187,7 +188,7 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
           imagePullPolicy: "IfNotPresent" as const,
           command: ["/bin/sh", "-c"],
           args: [
-            [
+             [
               "set -eo pipefail",
               'echo "[git-clone] cloning ${GIT_URL} ref=${GIT_REF:-<default>} into /workspace"',
               'if [ -f /etc/git-ssh/id ]; then',
@@ -195,6 +196,12 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
               '  echo "[git-clone] using ssh key from secret"',
               'else',
               '  export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"',
+              'fi',
+              'if [ -f /etc/git-github/token ]; then',
+              '  GITHUB_TOKEN=$(cat /etc/git-github/token)',
+              '  export GITHUB_TOKEN',
+              '  gh auth login --with-token <<< "$GITHUB_TOKEN"',
+              '  echo "[git-clone] gh authenticated with GitHub token"',
               'fi',
               'cd /workspace',
               'if [ -z "${GIT_REF}" ]; then',
@@ -219,6 +226,9 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
             ...(sshSecret
               ? [{ name: "git-ssh", mountPath: "/etc/git-ssh", readOnly: true }]
               : []),
+            ...(githubTokenSecret
+              ? [{ name: "git-github", mountPath: "/etc/git-github", readOnly: true }]
+              : []),
           ],
           resources: {
             requests: { cpu: "50m", memory: "128Mi" },
@@ -237,6 +247,18 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
             secret: {
               secretName: sshSecret.name,
               items: [{ key: sshSecret.key, path: "id" }],
+              defaultMode: 0o400,
+            },
+          },
+        ]
+      : []),
+    ...(githubTokenSecret
+      ? [
+          {
+            name: "git-github",
+            secret: {
+              secretName: githubTokenSecret.name,
+              items: [{ key: githubTokenSecret.key, path: "token" }],
               defaultMode: 0o400,
             },
           },
@@ -330,6 +352,19 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
                 ]
               : []),
             ...gitAuthorEnv,
+            ...(githubTokenSecret
+              ? [
+                  {
+                    name: "GITHUB_TOKEN",
+                    valueFrom: {
+                      secretKeyRef: {
+                        name: githubTokenSecret.name,
+                        key: githubTokenSecret.key,
+                      },
+                    },
+                  },
+                ]
+              : []),
           ],
           envFrom: llmKeysSecret
             ? [{ secretRef: { name: llmKeysSecret, optional: true } }]
@@ -348,6 +383,9 @@ export function renderPod(run: OpenCodeRun, resolvedAgents: AgentDef[]): V1Pod {
             { name: "workspace", mountPath: "/workspace" },
             ...(sshSecret
               ? [{ name: "git-ssh", mountPath: "/etc/git-ssh", readOnly: true }]
+              : []),
+            ...(githubTokenSecret
+              ? [{ name: "git-github", mountPath: "/etc/git-github", readOnly: true }]
               : []),
             ...(hasAgents
               ? [

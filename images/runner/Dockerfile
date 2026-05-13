@@ -21,6 +21,7 @@ ENV LANG=C.UTF-8 \
 #  - ca-certificates: HTTPS to LLM providers and git hosts
 #  - tini: clean PID 1 / signal forwarding for `opencode web`
 #  - nodejs, npm: agents that need node/npm at runtime (24.x from Alpine repos)
+#  - github-cli: create PRs, manage issues from the CLI
 #  - gcompat: glibc ABI compatibility layer so glibc-linked .so files in the
 #             opencode binary (bun FFI) can load on musl/Alpine
 #  - gcc + musl-dev: compile the gnu_stub.so (removed after build)
@@ -33,6 +34,7 @@ RUN apk add --no-cache \
       tini \
       nodejs \
       npm \
+      github-cli \
       icu-data-full \
       gcompat \
       gcc \

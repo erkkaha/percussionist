@@ -52,6 +52,7 @@ export interface SubmitOpts {
   gitUrl?: string;
   gitRef?: string;
   gitSshSecret?: string;
+  gitGithubTokenSecret?: string;
   gitAuthorName?: string;
   gitAuthorEmail?: string;
   // inline agents
@@ -87,6 +88,7 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
   const resolvedGitUrl = opts.gitUrl ?? pd?.source?.git?.url;
   const resolvedGitRef = opts.gitRef ?? pd?.source?.git?.ref;
   const resolvedGitSshSecret = opts.gitSshSecret ?? pd?.source?.git?.sshSecret?.name;
+  const resolvedGitGithubTokenSecret = opts.gitGithubTokenSecret ?? pd?.source?.git?.githubTokenSecret?.name;
   const resolvedGitAuthorName = opts.gitAuthorName ?? pd?.source?.git?.author?.name;
   const resolvedGitAuthorEmail = opts.gitAuthorEmail ?? pd?.source?.git?.author?.email;
 
@@ -154,6 +156,9 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
                 ...(resolvedGitRef ? { ref: resolvedGitRef } : {}),
                 ...(resolvedGitSshSecret
                   ? { sshSecret: { name: resolvedGitSshSecret } }
+                  : {}),
+                ...(resolvedGitGithubTokenSecret
+                  ? { githubTokenSecret: { name: resolvedGitGithubTokenSecret } }
                   : {}),
                 ...(resolvedGitAuthorName && resolvedGitAuthorEmail
                   ? {

@@ -35,6 +35,7 @@ export default function CreateRunForm() {
   const [gitUrl, setGitUrl] = useState("");
   const [gitRef, setGitRef] = useState("");
   const [gitSshSecret, setGitSshSecret] = useState("");
+  const [gitGithubTokenSecret, setGitGithubTokenSecret] = useState("");
   const [gitAuthorName, setGitAuthorName] = useState("");
   const [gitAuthorEmail, setGitAuthorEmail] = useState("");
   const [llmKeysSecret, setLlmKeysSecret] = useState("");
@@ -105,6 +106,8 @@ export default function CreateRunForm() {
     if (run.spec.source?.git?.ref) setGitRef(run.spec.source.git.ref);
     if (run.spec.source?.git?.sshSecret?.name)
       setGitSshSecret(run.spec.source.git.sshSecret.name);
+    if (run.spec.source?.git?.githubTokenSecret?.name)
+      setGitGithubTokenSecret(run.spec.source.git.githubTokenSecret.name);
     if (run.spec.source?.git?.author?.name)
       setGitAuthorName(run.spec.source.git.author.name);
     if (run.spec.source?.git?.author?.email)
@@ -125,6 +128,8 @@ export default function CreateRunForm() {
     if (proj.spec.source?.git?.ref) setGitRef(proj.spec.source.git.ref);
     if (proj.spec.source?.git?.sshSecret?.name)
       setGitSshSecret(proj.spec.source.git.sshSecret.name);
+    if (proj.spec.source?.git?.githubTokenSecret?.name)
+      setGitGithubTokenSecret(proj.spec.source.git.githubTokenSecret.name);
     if (proj.spec.source?.git?.author?.name)
       setGitAuthorName(proj.spec.source.git.author.name);
     if (proj.spec.source?.git?.author?.email)
@@ -161,6 +166,7 @@ export default function CreateRunForm() {
       req.source = { git: { url: gitUrl.trim() } };
       if (gitRef.trim()) req.source.git!.ref = gitRef.trim();
       if (gitSshSecret.trim()) req.source.git!.sshSecret = { name: gitSshSecret.trim() };
+      if (gitGithubTokenSecret.trim()) req.source.git!.githubTokenSecret = { name: gitGithubTokenSecret.trim() };
       if (gitAuthorName.trim() && gitAuthorEmail.trim()) {
         req.source.git!.author = {
           name: gitAuthorName.trim(),
@@ -462,6 +468,20 @@ export default function CreateRunForm() {
                 />
                 <p className="text-xs text-text-dim">
                   Secret name from <code className="font-mono">beatctl ssh-key create</code>
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-text-muted">GitHub Token Secret</label>
+                <input
+                  type="text"
+                  value={gitGithubTokenSecret}
+                  onChange={(e) => setGitGithubTokenSecret(e.target.value)}
+                  placeholder="git-github-token"
+                  className={inputClass + " font-mono"}
+                />
+                <p className="text-xs text-text-dim">
+                  Secret name from <code className="font-mono">beatctl github-token create</code>
+                  {" "}— authenticates <code className="font-mono">gh</code> CLI in the runner
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-4">

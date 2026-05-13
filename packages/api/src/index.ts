@@ -73,6 +73,15 @@ export const GitSourceSchema = z.object({
       key: z.string().default("ssh-privatekey"),
     })
     .optional(),
+  // Reference to a Secret whose `key` holds a GitHub personal access token
+  // (or fine-grained token). When set, the operator mounts the token into the
+  // runner and authenticates `gh` CLI so it can create PRs, manage issues, etc.
+  githubTokenSecret: z
+    .object({
+      name: z.string().min(1),
+      key: z.string().default("token"),
+    })
+    .optional(),
   author: z
     .object({
       name: z.string().min(1),

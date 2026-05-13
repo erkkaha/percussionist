@@ -33,6 +33,7 @@ export interface ProjectCreateOpts {
   gitUrl?: string;
   gitRef?: string;
   gitSshSecret?: string;
+  gitGithubTokenSecret?: string;
   gitAuthorName?: string;
   gitAuthorEmail?: string;
   llmKeysSecret?: string;
@@ -84,6 +85,9 @@ function buildProjectFromFlags(opts: ProjectCreateOpts): OpenCodeProject {
                 ...(opts.gitRef ? { ref: opts.gitRef } : {}),
                 ...(opts.gitSshSecret
                   ? { sshSecret: { name: opts.gitSshSecret } }
+                  : {}),
+                ...(opts.gitGithubTokenSecret
+                  ? { githubTokenSecret: { name: opts.gitGithubTokenSecret } }
                   : {}),
                 ...(opts.gitAuthorName && opts.gitAuthorEmail
                   ? {

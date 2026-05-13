@@ -484,6 +484,36 @@ spec:
 `author` sets `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in both the init container
 and the runner, so in-run `git commit` works without manual `git config`.
 
+### GitHub token (`gh` CLI authentication)
+
+To allow the agent to use `gh` CLI (create PRs, comment on issues, etc.),
+provide a GitHub personal access token stored in a Kubernetes Secret:
+
+```bash
+# From an environment variable:
+GITHUB_TOKEN=ghp_xxxx beatctl github-token create -n percussionist
+
+# Or pass the token directly:
+beatctl github-token create --token ghp_xxxx -n percussionist
+```
+
+Reference it on a project or run spec:
+
+```yaml
+spec:
+  source:
+    git:
+      url: git@github.com:org/repo.git
+      githubTokenSecret:
+        name: git-github-token
+        # key: token   # default
+```
+
+The operator mounts the token read-only at `/etc/git-github/token`, exports
+`GITHUB_TOKEN` into the runner container, and runs `gh auth login --with-token`
+in the init container before cloning. The token is independent of the SSH key —
+both can be set simultaneously (SSH for cloning, token for `gh` CLI operations).
+
 CLI equivalents (flags override project values):
 
 ```bash
@@ -493,6 +523,7 @@ beatctl submit \
   --git-url git@github.com:you/private-repo.git \
   --git-ref main \
   --git-ssh-secret agent-key \
+  --git-github-token-secret git-github-token \
   --git-author-name "Percussionist Agent" \
   --git-author-email "agent@example.com"
 ```

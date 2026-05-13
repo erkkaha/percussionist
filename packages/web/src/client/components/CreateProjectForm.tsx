@@ -26,6 +26,7 @@ export default function CreateProjectForm({
   const [gitUrl, setGitUrl] = useState(initialSpec?.source?.git?.url ?? "");
   const [gitRef, setGitRef] = useState(initialSpec?.source?.git?.ref ?? "");
   const [gitSshSecret, setGitSshSecret] = useState(initialSpec?.source?.git?.sshSecret?.name ?? "");
+  const [gitGithubTokenSecret, setGitGithubTokenSecret] = useState(initialSpec?.source?.git?.githubTokenSecret?.name ?? "");
   const [gitAuthorName, setGitAuthorName] = useState(initialSpec?.source?.git?.author?.name ?? "");
   const [gitAuthorEmail, setGitAuthorEmail] = useState(initialSpec?.source?.git?.author?.email ?? "");
   const [llmKeysSecret, setLlmKeysSecret] = useState(initialSpec?.secrets?.llmKeysSecret ?? "");
@@ -62,6 +63,9 @@ export default function CreateProjectForm({
           ...(gitRef.trim() ? { ref: gitRef.trim() } : {}),
           ...(gitSshSecret.trim()
             ? { sshSecret: { name: gitSshSecret.trim() } }
+            : {}),
+          ...(gitGithubTokenSecret.trim()
+            ? { githubTokenSecret: { name: gitGithubTokenSecret.trim() } }
             : {}),
           ...(gitAuthorName.trim() && gitAuthorEmail.trim()
             ? {
@@ -202,6 +206,21 @@ export default function CreateProjectForm({
                 <code className="font-mono">beatctl ssh-key create</code>
               </p>
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">GitHub Token Secret</label>
+            <input
+              type="text"
+              value={gitGithubTokenSecret}
+              onChange={(e) => setGitGithubTokenSecret(e.target.value)}
+              placeholder="git-github-token"
+              className={monoInputClass}
+            />
+            <p className="text-xs text-text-dim">
+              Secret name from{" "}
+              <code className="font-mono">beatctl github-token create</code>
+              {" "}— authenticates <code className="font-mono">gh</code> CLI in the runner
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
