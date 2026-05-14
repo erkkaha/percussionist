@@ -2,11 +2,11 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { submitProject, updateProject, fetchProjectConfig, fetchDefaultConfig } from "../lib/api";
-import type { CreateProjectRequest, OpenCodeProject } from "../lib/types";
+import type { CreateProjectRequest, OpenCodeProjectDetail } from "../lib/types";
 
 type CreateProjectFormProps = {
   mode?: "create" | "edit";
-  initialProject?: OpenCodeProject;
+  initialProject?: OpenCodeProjectDetail;
 };
 
 // Sidecar row state — env is edited as a single "KEY=value\nKEY=value" text block.
@@ -21,14 +21,33 @@ interface SidecarRow {
 let _sidecarIdSeq = 0;
 function nextSidecarId() { return ++_sidecarIdSeq; }
 
-function initialSidecarRows(spec: OpenCodeProject["spec"] | undefined): SidecarRow[] {
+// Inject file row state.
+interface InjectFileRow {
+  id: number; // local key only
+  filename: string;
+  content: string;
+}
+
+let _injectFileIdSeq = 0;
+function nextInjectFileId() { return ++_injectFileIdSeq; }
+
+function initialInjectFileRows(project: OpenCodeProjectDetail | undefined): InjectFileRow[] {
+  const contents = project?.injectFileContents ?? [];
+  return contents.map((f) => ({
+    id: nextInjectFileId(),
+    filename: f.filename,
+    content: f.content,
+  }));
+}
+
+function initialSidecarRows(spec: OpenCodeProjectDetail["spec"] | undefined): SidecarRow[] {
   if (!spec?.sidecars?.length) return [];
   return spec.sidecars.map((sc) => ({
     id: nextSidecarId(),
     name: sc.name,
     image: sc.image,
     ports: (sc.ports ?? []).join(", "),
-    env: (sc.env ?? []).map((e) => `${e.name}=${e.value}`).join("\n"),
+    env: (sc.env ?? []).map((e: { name: string; value: string }) => `${e.name}=${e.value}`).join("\n"),
   }));
 }
 
@@ -57,6 +76,7 @@ export default function CreateProjectForm({
   const [opencodeConfig, setOpencodeConfig] = useState<string | null>(null);
   const [configExpanded, setConfigExpanded] = useState(false);
   const [sidecars, setSidecars] = useState<SidecarRow[]>(() => initialSidecarRows(initialSpec));
+  const [injectFiles, setInjectFiles] = useState<InjectFileRow[]>(() => initialInjectFileRows(initialProject));
 
   // In edit mode, fetch the current config (per-project or cluster-wide fallback).
   useQuery({
@@ -94,6 +114,17 @@ export default function CreateProjectForm({
     setSidecars((prev) => prev.map((sc) => sc.id === id ? { ...sc, [field]: value } : sc));
   }
 
+  // Inject file helpers
+  function addInjectFile() {
+    setInjectFiles((prev) => [...prev, { id: nextInjectFileId(), filename: "", content: "" }]);
+  }
+  function removeInjectFile(id: number) {
+    setInjectFiles((prev) => prev.filter((f) => f.id !== id));
+  }
+  function updateInjectFile(id: number, field: keyof Omit<InjectFileRow, "id">, value: string) {
+    setInjectFiles((prev) => prev.map((f) => f.id === id ? { ...f, [field]: value } : f));
+  }
+
   // Validate sidecar rows: name and image are required; ports must be valid integers.
   const sidecarErrors: Record<number, string> = {};
   for (const sc of sidecars) {
@@ -105,6 +136,14 @@ export default function CreateProjectForm({
     }
   }
   const hasSidecarErrors = Object.keys(sidecarErrors).length > 0;
+
+  // Validate inject file rows: filename required, no path separators.
+  const injectFileErrors: Record<number, string> = {};
+  for (const f of injectFiles) {
+    if (!f.filename.trim()) { injectFileErrors[f.id] = "Filename is required"; continue; }
+    if (f.filename.includes("/") || f.filename.includes("\\")) { injectFileErrors[f.id] = "Filename must not contain path separators"; continue; }
+  }
+  const hasInjectFileErrors = Object.keys(injectFileErrors).length > 0;
 
   const gitAuthorIncomplete =
     (gitAuthorName.trim().length > 0 && gitAuthorEmail.trim().length === 0) ||
@@ -133,6 +172,7 @@ export default function CreateProjectForm({
     e.preventDefault();
     if (configJsonError) return;
     if (hasSidecarErrors) return;
+    if (hasInjectFileErrors) return;
     const req: CreateProjectRequest = {};
     if (!isEdit && name.trim()) req.name = name.trim();
     if (displayName.trim()) req.displayName = displayName.trim();
@@ -190,6 +230,10 @@ export default function CreateProjectForm({
         };
       });
     }
+    // Always send injectFiles (even empty array) so server can delete orphans on update.
+    req.injectFiles = injectFiles
+      .filter((f) => f.filename.trim())
+      .map((f) => ({ filename: f.filename.trim(), content: f.content }));
     mutation.mutate(req);
   }
 
@@ -558,6 +602,72 @@ export default function CreateProjectForm({
           </button>
         </fieldset>
 
+        {/* Injected Files */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Injected Files</legend>
+          <p className="text-xs text-text-dim">
+            Files written into <code className="font-mono">/workspace/</code> inside every run pod.
+            Content is stored as K8s Secrets. Useful for <code className="font-mono">.env</code> files or other config files the agent needs.
+          </p>
+
+          {injectFiles.length > 0 && (
+            <div className="space-y-4">
+              {injectFiles.map((f, idx) => (
+                <div key={f.id} className="rounded-md border border-border-muted p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-text-muted">File {idx + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeInjectFile(f.id)}
+                      className="text-xs text-text-dim hover:text-phase-failed transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-text-muted">
+                      Filename <span className="text-phase-failed">*</span>
+                      <span className="text-text-dim font-normal ml-1">(mounted at /workspace/&lt;filename&gt;)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={f.filename}
+                      onChange={(e) => updateInjectFile(f.id, "filename", e.target.value)}
+                      placeholder=".env"
+                      className={monoInputClass}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-text-muted">Content</label>
+                    <textarea
+                      value={f.content}
+                      onChange={(e) => updateInjectFile(f.id, "content", e.target.value)}
+                      rows={8}
+                      spellCheck={false}
+                      placeholder={"DATABASE_URL=postgres://...\nAPI_KEY=..."}
+                      className={monoInputClass + " resize-y text-xs leading-5"}
+                    />
+                  </div>
+
+                  {injectFileErrors[f.id] && (
+                    <p className="text-xs text-phase-failed">{injectFileErrors[f.id]}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={addInjectFile}
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-text-muted hover:text-text hover:border-zinc-500 transition-colors"
+          >
+            + Add file
+          </button>
+        </fieldset>
+
         {mutation.error && (
           <div className="rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
             {mutation.error.message}
@@ -567,7 +677,7 @@ export default function CreateProjectForm({
         <div className="flex items-center gap-3 pt-1">
           <button
             type="submit"
-            disabled={(!isEdit && !name.trim()) || mutation.isPending || gitAuthorIncomplete || !!configJsonError || hasSidecarErrors}
+            disabled={(!isEdit && !name.trim()) || mutation.isPending || gitAuthorIncomplete || !!configJsonError || hasSidecarErrors || hasInjectFileErrors}
             className="rounded-md bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
           >
             {mutation.isPending ? (isEdit ? "Saving…" : "Creating…") : (isEdit ? "Save Changes" : "Create Project")}

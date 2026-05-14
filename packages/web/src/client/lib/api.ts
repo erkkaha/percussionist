@@ -6,6 +6,7 @@ import type {
   SessionResponse,
   CreateRunRequest,
   OpenCodeProject,
+  OpenCodeProjectDetail,
   CreateProjectRequest,
   CreateAgentRequest,
   BoardTask,
@@ -78,8 +79,8 @@ export async function fetchProjects(): Promise<OpenCodeProject[]> {
   return data.items;
 }
 
-export async function fetchProject(name: string): Promise<OpenCodeProject> {
-  return fetchJSON<OpenCodeProject>(`/projects/${encodeURIComponent(name)}`);
+export async function fetchProject(name: string): Promise<OpenCodeProjectDetail> {
+  return fetchJSON<OpenCodeProjectDetail>(`/projects/${encodeURIComponent(name)}`);
 }
 
 export async function submitProject(req: CreateProjectRequest): Promise<OpenCodeProject> {

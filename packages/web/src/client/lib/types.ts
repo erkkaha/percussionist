@@ -15,6 +15,13 @@ export type {
 } from "@percussionist/api";
 export { RunPhase, TERMINAL_PHASES } from "@percussionist/api";
 
+import type { OpenCodeProject as _OpenCodeProject } from "@percussionist/api";
+
+/** GET /api/projects/:name augments the CR with inject file contents for UI pre-population. */
+export interface OpenCodeProjectDetail extends _OpenCodeProject {
+  injectFileContents?: Array<{ filename: string; content: string }>;
+}
+
 // ---------------------------------------------------------------------------
 // Run creation request (sent to POST /api/runs)
 
@@ -79,6 +86,8 @@ export interface CreateProjectRequest {
     env?: Array<{ name: string; value: string }>;
     ports?: number[];
   }>;
+  /** Files to inject into /workspace/<filename> — content managed server-side as K8s Secrets. */
+  injectFiles?: Array<{ filename: string; content: string }>;
 }
 
 export interface CreateAgentRequest {

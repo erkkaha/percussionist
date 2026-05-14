@@ -255,6 +255,8 @@ export function renderPod(
       ]
     : undefined;
 
+  const injectFiles = spec.injectFiles ?? [];
+
   const volumes = [
     { name: "workspace", emptyDir: {} },
     ...(sshSecret
@@ -284,6 +286,14 @@ export function renderPod(
     ...(hasAgents
       ? [{ name: "agents-volume", configMap: { name: agentsConfigMapName(run) } }]
       : []),
+    // One volume per injected file — Secret projected via subPath into /workspace.
+    ...injectFiles.map((f, i) => ({
+      name: `inject-file-${i}`,
+      secret: {
+        secretName: f.secretRef.name,
+        items: [{ key: f.secretRef.key, path: f.filename }],
+      },
+    })),
   ];
 
   return {
@@ -421,6 +431,13 @@ export function renderPod(
                   },
                 ]
               : []),
+            // Inject files into /workspace/<filename> via subPath mounts.
+            ...injectFiles.map((f, i) => ({
+              name: `inject-file-${i}`,
+              mountPath: `/workspace/${f.filename}`,
+              subPath: f.filename,
+              readOnly: true,
+            })),
           ],
         },
         {

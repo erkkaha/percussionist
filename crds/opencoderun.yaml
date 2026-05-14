@@ -218,6 +218,30 @@ spec:
                       - name
                       - image
                   maxItems: 5
+                injectFiles:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      filename:
+                        type: string
+                        minLength: 1
+                        maxLength: 255
+                        pattern: ^[^/]+$
+                      secretRef:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            minLength: 1
+                          key:
+                            type: string
+                        required:
+                          - name
+                    required:
+                      - filename
+                      - secretRef
+                  maxItems: 20
                 timeoutSeconds:
                   type: integer
                   exclusiveMinimum: true

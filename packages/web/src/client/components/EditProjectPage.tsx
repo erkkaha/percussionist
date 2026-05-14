@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchProject } from "../lib/api";
+import type { OpenCodeProjectDetail } from "../lib/types";
 import CreateProjectForm from "./CreateProjectForm";
 
 export default function EditProjectPage() {
@@ -10,7 +11,7 @@ export default function EditProjectPage() {
     queryKey: ["projects", name],
     queryFn: () => fetchProject(name ?? ""),
     enabled: Boolean(name),
-  });
+  }) as { data: OpenCodeProjectDetail | undefined; error: Error | null; isLoading: boolean };
 
   if (!name) {
     return (

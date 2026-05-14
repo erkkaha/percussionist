@@ -105,6 +105,23 @@ export const ExposeSchema = z
 // A sidecar container that runs alongside the opencode runner in every pod for
 // a given project. Useful for services the agent needs during its task, e.g. a
 // test database. The agent reaches them via localhost.
+// A reference to a file to inject into the runner pod at /workspace/<filename>.
+// The file content is stored in a K8s Secret and mounted via subPath.
+export const InjectFileRefSchema = z.object({
+  // Filename only (no path separators). The file will be mounted at
+  // /workspace/<filename> inside the runner container.
+  filename: z.string().min(1).max(255).regex(/^[^/]+$/, "filename must not contain path separators"),
+
+  // Reference to a K8s Secret holding the file content.
+  secretRef: z.object({
+    name: z.string().min(1),
+    // Key within the Secret whose value is the raw file content.
+    key: z.string().default("content"),
+  }),
+});
+
+export type InjectFileRef = z.infer<typeof InjectFileRefSchema>;
+
 export const SidecarSpecSchema = z.object({
   // Must be a valid RFC 1123 DNS label (K8s container name rules).
   name: z.string().min(1).max(63),
@@ -238,6 +255,11 @@ export const OpenCodeRunSpecSchema = z
     // Resolved from the parent OpenCodeProject at creation time.
     // opencode will not start until all declared sidecar ports are reachable.
     sidecars: SidecarSpecSchema.array().max(5).optional(),
+
+    // Files to inject into /workspace/<filename> inside the runner container.
+    // Content is stored in K8s Secrets and mounted via subPath volumes.
+    injectFiles: InjectFileRefSchema.array().max(20).optional(),
+
     timeoutSeconds: z.number().int().positive().default(3600),
     ttlSecondsAfterFinished: z.number().int().nonnegative().default(3600),
     expose: ExposeSchema.optional(),
@@ -490,6 +512,10 @@ export const OpenCodeProjectSpecSchema = z.object({
   // reachable.
   sidecars: SidecarSpecSchema.array().max(5).optional(),
 
+  // Files to inject into /workspace/<filename> inside the runner container.
+  // Content is stored in K8s Secrets and mounted via subPath volumes.
+  injectFiles: InjectFileRefSchema.array().max(20).optional(),
+
   // Embedded kanban board configuration.
   board: BoardSpecSchema.optional(),
 });
@@ -559,6 +585,7 @@ export interface ResolvedRunConfig {
   secrets?: SecretsRef;
   source?: { git?: GitSource };
   sidecars?: SidecarSpec[];
+  injectFiles?: InjectFileRef[];
 }
 
 export function resolveRunConfig(
@@ -588,5 +615,6 @@ export function resolveRunConfig(
     secrets: project.secrets,
     source: project.source,
     sidecars: project.sidecars,
+    injectFiles: project.injectFiles,
   };
 }

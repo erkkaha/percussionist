@@ -4,16 +4,25 @@ import {
   OpenCodeProjectSpecSchema,
   API_GROUP_VERSION,
   KIND_PROJECT,
+  type InjectFileRef,
 } from "@percussionist/api";
 
 const projects = new Hono();
 
 const CONFIG_CM_KEY = "opencode.json";
 const CLUSTER_CONFIG_CM = "opencode-config";
+const INJECT_FILE_SECRET_KEY = "content";
 
 /** Name of the per-project opencode config configmap. */
 function projectConfigCmName(projectName: string): string {
   return `${projectName}-opencode-config`;
+}
+
+/** Name of the per-project inject-file Secret for a given filename. */
+function injectFileSecretName(projectName: string, filename: string): string {
+  // Sanitise the filename into a valid K8s name segment (replace dots/underscores, lowercase).
+  const slug = filename.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  return `${projectName}-inject-${slug}`;
 }
 
 /**
@@ -46,6 +55,70 @@ async function deleteProjectConfigCm(projectName: string): Promise<void> {
   } catch {
     // ignore not-found
   }
+}
+
+/**
+ * Upsert a K8s Secret holding a single file's raw content.
+ * Returns the InjectFileRef (secretRef) to store in spec.injectFiles.
+ */
+async function upsertInjectFileSecret(
+  projectName: string,
+  filename: string,
+  content: string,
+): Promise<InjectFileRef> {
+  const name = injectFileSecretName(projectName, filename);
+  const ns = NAMESPACE;
+  const body = {
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: { name, namespace: ns, labels: { "percussionist.dev/project": projectName } },
+    stringData: { [INJECT_FILE_SECRET_KEY]: content },
+  };
+  try {
+    await core().readNamespacedSecret({ name, namespace: ns });
+    await core().replaceNamespacedSecret({ name, namespace: ns, body });
+  } catch {
+    await core().createNamespacedSecret({ namespace: ns, body });
+  }
+  return { filename, secretRef: { name, key: INJECT_FILE_SECRET_KEY } };
+}
+
+/**
+ * Delete inject-file Secrets for filenames that are no longer referenced.
+ */
+async function deleteOrphanedInjectFileSecrets(
+  projectName: string,
+  previousRefs: InjectFileRef[],
+  currentFilenames: Set<string>,
+): Promise<void> {
+  for (const ref of previousRefs) {
+    if (!currentFilenames.has(ref.filename)) {
+      try {
+        await core().deleteNamespacedSecret({ name: ref.secretRef.name, namespace: NAMESPACE });
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+/** Read the content of all inject-file Secrets for a project. */
+async function readInjectFileContents(
+  injectFiles: InjectFileRef[],
+): Promise<Array<{ filename: string; content: string }>> {
+  return Promise.all(
+    injectFiles.map(async (f) => {
+      try {
+        const secret = await core().readNamespacedSecret({ name: f.secretRef.name, namespace: NAMESPACE });
+        // K8s returns Secret data base64-encoded.
+        const raw = secret.data?.[f.secretRef.key] ?? "";
+        const content = typeof raw === "string" ? Buffer.from(raw, "base64").toString("utf8") : "";
+        return { filename: f.filename, content };
+      } catch {
+        return { filename: f.filename, content: "" };
+      }
+    }),
+  );
 }
 
 // GET /api/projects
@@ -94,7 +167,11 @@ projects.get("/:name", async (c) => {
   const name = c.req.param("name");
   try {
     const project = await getProject(name);
-    return c.json(project);
+    // Augment response with inject file contents so the UI can pre-populate.
+    const injectFileContents = project.spec.injectFiles?.length
+      ? await readInjectFileContents(project.spec.injectFiles)
+      : [];
+    return c.json({ ...project, injectFileContents });
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
     const status = anyE.statusCode === 404 ? 404 : 500;
@@ -113,6 +190,8 @@ projects.post("/", async (c) => {
   }
 
   const opencodeConfig = (body as { opencodeConfig?: string }).opencodeConfig ?? "";
+  // Out-of-band inject files: [{ filename, content }]
+  const rawInjectFiles = (body as { injectFiles?: Array<{ filename: string; content: string }> }).injectFiles ?? [];
 
   const parsed = OpenCodeProjectSpecSchema.safeParse(body);
   if (!parsed.success) {
@@ -131,6 +210,16 @@ projects.post("/", async (c) => {
       ...spec.secrets,
       opencodeConfigMap: { name: projectConfigCmName(name), key: CONFIG_CM_KEY },
     };
+  }
+
+  // Upsert inject-file Secrets and wire up spec.injectFiles.
+  if (rawInjectFiles.length > 0) {
+    const refs = await Promise.all(
+      rawInjectFiles
+        .filter((f) => f.filename.trim())
+        .map((f) => upsertInjectFileSecret(name, f.filename.trim(), f.content)),
+    );
+    spec.injectFiles = refs;
   }
 
   const project = {
@@ -162,6 +251,8 @@ projects.put("/:name", async (c) => {
   }
 
   const opencodeConfig = (body as { opencodeConfig?: string }).opencodeConfig ?? "";
+  // Out-of-band inject files: [{ filename, content }]
+  const rawInjectFiles = (body as { injectFiles?: Array<{ filename: string; content: string }> }).injectFiles ?? [];
 
   const parsed = OpenCodeProjectSpecSchema.safeParse(body);
   if (!parsed.success) {
@@ -186,6 +277,20 @@ projects.put("/:name", async (c) => {
     }
   }
 
+  // Manage inject-file Secrets: upsert new/updated, delete orphans.
+  const previousRefs = spec.injectFiles ?? [];
+  const validInjectFiles = rawInjectFiles.filter((f) => f.filename.trim());
+  const currentFilenames = new Set(validInjectFiles.map((f) => f.filename.trim()));
+  await deleteOrphanedInjectFileSecrets(name, previousRefs, currentFilenames);
+  if (validInjectFiles.length > 0) {
+    const refs = await Promise.all(
+      validInjectFiles.map((f) => upsertInjectFileSecret(name, f.filename.trim(), f.content)),
+    );
+    spec.injectFiles = refs;
+  } else {
+    spec.injectFiles = undefined;
+  }
+
   try {
     const updated = await updateProject(name, spec);
     return c.json(updated);
@@ -201,9 +306,25 @@ projects.put("/:name", async (c) => {
 projects.delete("/:name", async (c) => {
   const name = c.req.param("name");
   try {
+    // Fetch project first so we know which inject-file Secrets to clean up.
+    let injectFileRefs: InjectFileRef[] = [];
+    try {
+      const project = await getProject(name);
+      injectFileRefs = project.spec.injectFiles ?? [];
+    } catch {
+      // project not found — proceed with delete anyway
+    }
     await deleteProject(name);
     // Best-effort cleanup of per-project config configmap.
     await deleteProjectConfigCm(name);
+    // Best-effort cleanup of inject-file Secrets.
+    for (const ref of injectFileRefs) {
+      try {
+        await core().deleteNamespacedSecret({ name: ref.secretRef.name, namespace: NAMESPACE });
+      } catch {
+        // ignore
+      }
+    }
     return c.body(null, 204);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
