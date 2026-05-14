@@ -309,7 +309,7 @@ export async function requestChangesTask(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ comment }),
+      body: JSON.stringify({ feedback: comment }),
     },
   );
   if (!res.ok && res.status !== 204) {

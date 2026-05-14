@@ -15,6 +15,7 @@ export function getTasksToPull(
   const workers = boardStatus.workers ?? [];
   const backlog = boardStatus.backlog ?? {};
   const readyTasks = backlog["ready"] ?? [];
+  const blockingBuildId = getBlockingBuildSequenceTask(project, boardStatus);
 
   const activeCount = workers.filter((w) => w.status === "Running").length;
   const availableSlots = maxParallel - activeCount;
@@ -23,6 +24,20 @@ export function getTasksToPull(
   const result: string[] = [];
   for (const taskId of readyTasks) {
     if (result.length >= availableSlots) break;
+
+    // If there is an incomplete BUILD-N chain, only the next required BUILD-N
+    // task is allowed to be pulled. Everything else stays queued.
+    if (blockingBuildId && taskId !== blockingBuildId) {
+      continue;
+    }
+
+    // BUILD-N tasks are sequence-gated: BUILD-(n+1) cannot start until all
+    // existing BUILD-<n tasks are in "done". This prevents overlapping
+    // implementation tasks that should be merged in order.
+    if (isBlockedByBuildSequence(taskId, project, boardStatus)) {
+      continue;
+    }
+
     // Skip if already being worked on (not failed/escalated).
     const existing = workers.find((w) => w.taskId === taskId);
     if (existing && existing.status !== "Failed" && existing.status !== "Escalated") {
@@ -31,6 +46,53 @@ export function getTasksToPull(
     result.push(taskId);
   }
   return result;
+}
+
+function getBlockingBuildSequenceTask(
+  project: OpenCodeProject,
+  boardStatus: BoardStatus,
+): string | null {
+  const done = new Set(boardStatus.backlog?.["done"] ?? []);
+  const tasks = project.spec.board?.tasks ?? [];
+  const buildNumbers = tasks
+    .map((t) => {
+      const m = /^BUILD-(\d+)$/.exec(t.id);
+      if (!m) return null;
+      const n = Number.parseInt(m[1] ?? "", 10);
+      return Number.isFinite(n) ? n : null;
+    })
+    .filter((n): n is number => n !== null)
+    .sort((a, b) => a - b);
+
+  for (const n of buildNumbers) {
+    const id = `BUILD-${n}`;
+    if (!done.has(id)) {
+      return id;
+    }
+  }
+  return null;
+}
+
+function isBlockedByBuildSequence(
+  taskId: string,
+  project: OpenCodeProject,
+  boardStatus: BoardStatus,
+): boolean {
+  const m = /^BUILD-(\d+)$/.exec(taskId);
+  if (!m) return false;
+
+  const current = Number.parseInt(m[1] ?? "", 10);
+  if (!Number.isFinite(current) || current <= 1) return false;
+
+  const done = new Set(boardStatus.backlog?.["done"] ?? []);
+  const allTaskIds = new Set((project.spec.board?.tasks ?? []).map((t) => t.id));
+
+  for (let i = 1; i < current; i++) {
+    const prev = `BUILD-${i}`;
+    if (!allTaskIds.has(prev)) continue;
+    if (!done.has(prev)) return true;
+  }
+  return false;
 }
 
 /**

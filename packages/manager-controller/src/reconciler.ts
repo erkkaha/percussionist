@@ -21,10 +21,11 @@ import {
   fetchSessionMessages,
   getRun,
   getProject,
+  patchProject,
   patchProjectStatus,
   patchProjectSpec,
 } from "@percussionist/kube";
-import { buildWorkerRun, workerRunName, MAX_RETRIES } from "./worker-builder.js";
+import { buildWorkerRun, buildMergeRun, workerRunName, MAX_RETRIES } from "./worker-builder.js";
 import { buildFacilitationRun, buildSuccessReviewRun, parseFacilitationResult, buildBuildTaskGeneratorRun, parseBuildTaskDefinitions } from "./facilitator.js";
 import {
   getTasksToPull,
@@ -313,9 +314,28 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             if (result.recommendedAction === "approve") {
               workers = updateWorker(workers, worker.taskId, {
                 facilitationResult: result,
+                reviewApproved: true,
+                reviewFeedback: undefined,
+                reworkAgent: undefined,
               });
-              backlog = moveTask(backlog, worker.taskId, "done");
-              log(`reviewer approved task ${worker.taskId} → done`);
+              backlog = moveTask(backlog, worker.taskId, "review");
+              log(`reviewer approved task ${worker.taskId} → review (awaiting human approval)`);
+            } else if (result.recommendedAction === "request_changes") {
+              const teamNames = (board.agents ?? []).map((a) => a.name);
+              const suggestedAgent =
+                result.alternativeAgent && teamNames.includes(result.alternativeAgent)
+                  ? result.alternativeAgent
+                  : undefined;
+              const feedback = (result.suggestion ?? result.diagnosis ?? "").trim() || "Please address review feedback.";
+              workers = updateWorker(workers, worker.taskId, {
+                facilitationResult: result,
+                reviewApproved: false,
+                reviewFeedback: feedback,
+                reworkAgent: suggestedAgent,
+                reviewRunName: undefined,
+              });
+              backlog = moveTask(backlog, worker.taskId, "rework");
+              log(`reviewer requested changes for task ${worker.taskId} → rework`);
             } else if (result.recommendedAction === "retry_alternative" && result.alternativeAgent) {
               const teamNames = (board.agents ?? []).map((a) => a.name);
               if (teamNames.includes(result.alternativeAgent)) {
@@ -371,9 +391,14 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             // No result yet — check if the review run is done.
             const reviewPhase = reviewRun?.status?.phase;
             if (reviewPhase === "Succeeded" || reviewPhase === "Failed") {
-              // Review run finished but produced no parseable result — approve by default.
-              backlog = moveTask(backlog, worker.taskId, "done");
-              log(`reviewer produced no result (${reviewPhase}) — defaulting to approve for task ${worker.taskId}`);
+              // Review run finished but produced no parseable result — treat as approved.
+              workers = updateWorker(workers, worker.taskId, {
+                reviewApproved: true,
+                reviewFeedback: undefined,
+                reworkAgent: undefined,
+              });
+              backlog = moveTask(backlog, worker.taskId, "review");
+              log(`reviewer produced no result (${reviewPhase}) — defaulting to review-approved for task ${worker.taskId}`);
             }
             // else: review still running — leave worker as Succeeded, retry next cycle
           }
@@ -652,6 +677,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   for (const taskId of reviewTasks) {
     const taskDef = (board.tasks ?? []).find((t) => t.id === taskId);
     if (!taskDef) continue;
+    const worker = workers.find((w) => w.taskId === taskId);
 
     const approvedAnnotation = fresh.metadata.annotations?.[`percussionist.dev/approved-${taskId}`];
     const requestChangesAnnotation = fresh.metadata.annotations?.[`percussionist.dev/request-changes-${taskId}`];
@@ -696,15 +722,112 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
       }
       
       // Move task to rework
+      workers = updateWorker(workers, taskId, {
+        reviewApproved: false,
+        reviewFeedback: comment,
+        reviewRunName: undefined,
+        reworkAgent: undefined,
+        mergeRunName: undefined,
+        mergeError: undefined,
+      });
       backlog = moveTask(backlog, taskId, "rework");
+      try {
+        await patchProject(projectName, {
+          metadata: {
+            annotations: {
+              [`percussionist.dev/request-changes-${taskId}`]: "false",
+              [`percussionist.dev/approved-${taskId}`]: "false",
+            },
+          },
+        }, ns, k8s);
+      } catch (e) {
+        err(`failed to clear review annotations for ${taskId}:`, (e as Error).message);
+      }
       log(`task ${taskId} moved to rework with feedback`);
+      continue;
+    }
+
+    // BUILD tasks require reviewer approval + explicit human approval + successful merge.
+    if (taskDef.type === "BUILD") {
+      if (worker?.mergeRunName) {
+        let mergeRun: Awaited<ReturnType<typeof getRun>> | null = null;
+        try {
+          mergeRun = await getRun(worker.mergeRunName, ns, k8s);
+        } catch {
+          mergeRun = null;
+        }
+
+        const mergePhase = mergeRun?.status?.phase;
+        if (mergePhase === "Succeeded") {
+          workers = updateWorker(workers, taskId, {
+            mergedAt: new Date().toISOString(),
+            mergeError: undefined,
+            mergeRunName: undefined,
+            status: "Succeeded",
+            completedAt: new Date().toISOString(),
+          });
+          backlog = moveTask(backlog, taskId, "done");
+          try {
+            await patchProject(projectName, {
+              metadata: {
+                annotations: {
+                  [`percussionist.dev/approved-${taskId}`]: "false",
+                },
+              },
+            }, ns, k8s);
+          } catch (e) {
+            err(`failed to reset approved annotation for ${taskId}:`, (e as Error).message);
+          }
+          log(`merge run ${worker.mergeRunName} succeeded for ${taskId} → done`);
+          continue;
+        }
+
+        if (mergePhase === "Failed" || mergePhase === "Cancelled") {
+          const mergeMessage = mergeRun?.status?.message ?? `merge run ended with phase ${mergePhase}`;
+          workers = updateWorker(workers, taskId, {
+            status: "Escalated",
+            mergeError: mergeMessage,
+            escalation: `Merge failed for ${taskId}: ${mergeMessage}`,
+            mergeRunName: undefined,
+          });
+          backlog = moveTask(backlog, taskId, "review");
+          log(`merge run ${worker.mergeRunName} failed for ${taskId} → review`);
+          continue;
+        }
+
+        // Merge run still pending/running.
+        continue;
+      }
+
+      if (approvedAnnotation === "true") {
+        if (!worker?.reviewApproved) {
+          log(`human approved ${taskId} but reviewer has not approved yet — waiting`);
+          continue;
+        }
+
+        const mergeRunName = `${projectName}-merge-${taskId.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${randomBytes(3).toString("hex")}`;
+        const mergeRun = buildMergeRun(fresh, taskDef, mergeRunName);
+        try {
+          await createRun(mergeRun, ns, k8s);
+          workers = updateWorker(workers, taskId, {
+            mergeRunName,
+            mergeError: undefined,
+          });
+          log(`spawned merge run ${mergeRunName} for approved BUILD ${taskId}`);
+        } catch (e) {
+          workers = updateWorker(workers, taskId, {
+            status: "Escalated",
+            mergeError: (e as Error).message,
+            escalation: `Failed to create merge run for ${taskId}: ${(e as Error).message}`,
+          });
+          err(`failed to create merge run for ${taskId}:`, (e as Error).message);
+        }
+      }
       continue;
     }
 
     // Handle approval for PLAN tasks
     if (approvedAnnotation === "true" && taskDef.type === "PLAN") {
-      const worker = workers.find((w) => w.taskId === taskId);
-
       if (!buildgenFacilitatorEnabled) {
         workers = updateWorker(workers, taskId, {
           status: "Escalated",
@@ -861,11 +984,16 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
 
     tasksReworked++;
 
+    const existingFeedback = existingWorker?.reviewFeedback;
     const feedback =
       fresh.metadata.annotations?.[`percussionist.dev/rework-${taskId}`] ??
+      existingFeedback ??
       "Please address the feedback from the previous review.";
     const runName = workerRunName(projectName, taskId, 0);
     const reworkRun = buildWorkerRun(fresh, taskDef, runName, 0, feedback);
+    if (existingWorker?.reworkAgent) {
+      reworkRun.spec.agent = existingWorker.reworkAgent;
+    }
 
     backlog = moveTask(backlog, taskId, "in-progress");
     workers = upsertWorker(workers, {
@@ -876,6 +1004,11 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
       startedAt: new Date().toISOString(),
       retryCount: 0,
       facilitated: false,
+      reviewApproved: false,
+      reviewFeedback: undefined,
+      reworkAgent: undefined,
+      mergeRunName: undefined,
+      mergeError: undefined,
     });
 
     try {

@@ -191,6 +191,7 @@ export const FacilitationAction = {
   RetryAlternative: "retry_alternative",
   Skip: "skip",
   Approve: "approve",
+  RequestChanges: "request_changes",
   Escalate: "escalate",
 } as const;
 export type FacilitationAction =
@@ -214,6 +215,7 @@ export const FacilitationResultSchema = z.object({
     FacilitationAction.RetryAlternative,
     FacilitationAction.Skip,
     FacilitationAction.Approve,
+    FacilitationAction.RequestChanges,
     FacilitationAction.Escalate,
   ]),
   alternativeAgent: z.string().max(63).optional(),
@@ -423,6 +425,12 @@ export const WorkerStatusSchema = z.object({
   buildTasksFacilitatorRun: z.string().optional(),
   buildTasksCreated: z.boolean().optional(),
   createdBuildTasks: z.array(z.string()).optional(),
+  reviewApproved: z.boolean().optional(),
+  reviewFeedback: z.string().max(4096).optional(),
+  reworkAgent: z.string().max(63).optional(),
+  mergeRunName: z.string().optional(),
+  mergedAt: z.string().optional(),
+  mergeError: z.string().max(4096).optional(),
 });
 
 export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;

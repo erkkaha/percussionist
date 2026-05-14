@@ -210,13 +210,15 @@ board.post("/:project/board/tasks/:taskId/approve", async (c) => {
     
     // Add approval annotation
     const annotationKey = `percussionist.dev/approved-${taskId}`;
+    const requestChangesAnnotationKey = `percussionist.dev/request-changes-${taskId}`;
     const currentAnnotations = project.metadata.annotations ?? {};
     
     await patchProject(name, {
       metadata: {
         annotations: {
           ...currentAnnotations,
-          [annotationKey]: new Date().toISOString()
+          [annotationKey]: "true",
+          [requestChangesAnnotationKey]: "false"
         }
       }
     });
@@ -250,15 +252,17 @@ board.post("/:project/board/tasks/:taskId/request-changes", async (c) => {
       return c.json({ error: "Task not found" }, 404);
     }
     
-    // Add rework annotation
-    const annotationKey = `percussionist.dev/rework-${taskId}`;
+    // Add rework and request-changes annotations
+    const reworkAnnotationKey = `percussionist.dev/rework-${taskId}`;
+    const requestChangesAnnotationKey = `percussionist.dev/request-changes-${taskId}`;
     const currentAnnotations = project.metadata.annotations ?? {};
     
     await patchProject(name, {
       metadata: {
         annotations: {
           ...currentAnnotations,
-          [annotationKey]: feedback.trim()
+          [reworkAnnotationKey]: feedback.trim(),
+          [requestChangesAnnotationKey]: "true"
         }
       }
     });

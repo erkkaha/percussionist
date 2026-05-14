@@ -133,12 +133,13 @@ export function buildSuccessReviewRun(
     `Review the session above and output ONLY valid JSON (no markdown, no explanation):`,
     JSON.stringify({
       diagnosis: "(1-2 sentences: did the worker actually complete the task?)",
-      recommendedAction: "(approve | retry_alternative | escalate)",
+      recommendedAction: "(approve | request_changes | retry_alternative | escalate)",
       alternativeAgent: "(required if recommendedAction is retry_alternative — must be one of the AVAILABLE ALTERNATIVE AGENTS listed above)",
       suggestion: "(optional — what to improve or why escalating)",
     }),
     "",
     `Use "approve" if the task was completed satisfactorily.`,
+    `Use "request_changes" if implementation changes are needed before human approval.`,
     `Use "retry_alternative" only if a different agent should redo the task.`,
     `Use "escalate" if human review is needed.`,
   ].join("\n");
@@ -288,7 +289,7 @@ export async function parseFacilitationResult(
   sessionID?: string,
 ): Promise<{
   diagnosis: string;
-  recommendedAction: "retry_same" | "retry_alternative" | "skip" | "approve" | "escalate";
+  recommendedAction: "retry_same" | "retry_alternative" | "skip" | "approve" | "request_changes" | "escalate";
   alternativeAgent?: string;
   suggestion?: string;
 } | null> {
@@ -370,11 +371,12 @@ function extractFacilitationJson(text: string) {
       action === "retry_alternative" ||
       action === "skip" ||
       action === "approve" ||
+      action === "request_changes" ||
       action === "escalate"
     ) {
       return {
         diagnosis: parsed.diagnosis ?? "",
-        recommendedAction: action as "retry_same" | "retry_alternative" | "skip" | "approve" | "escalate",
+        recommendedAction: action as "retry_same" | "retry_alternative" | "skip" | "approve" | "request_changes" | "escalate",
         alternativeAgent: parsed.alternativeAgent,
         suggestion: parsed.suggestion,
       };
