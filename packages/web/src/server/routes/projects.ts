@@ -193,7 +193,11 @@ projects.post("/", async (c) => {
   // Out-of-band inject files: [{ filename, content }]
   const rawInjectFiles = (body as { injectFiles?: Array<{ filename: string; content: string }> }).injectFiles ?? [];
 
-  const parsed = OpenCodeProjectSpecSchema.safeParse(body);
+  // Strip out-of-band fields before schema validation.
+  const { opencodeConfig: _oc, injectFiles: _if, name: _n, ...specBody } = body as Record<string, unknown>;
+  void _oc; void _if; void _n;
+
+  const parsed = OpenCodeProjectSpecSchema.safeParse(specBody);
   if (!parsed.success) {
     return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
   }
@@ -254,7 +258,11 @@ projects.put("/:name", async (c) => {
   // Out-of-band inject files: [{ filename, content }]
   const rawInjectFiles = (body as { injectFiles?: Array<{ filename: string; content: string }> }).injectFiles ?? [];
 
-  const parsed = OpenCodeProjectSpecSchema.safeParse(body);
+  // Strip out-of-band fields before schema validation.
+  const { opencodeConfig: _oc2, injectFiles: _if2, name: _n2, ...specBody2 } = body as Record<string, unknown>;
+  void _oc2; void _if2; void _n2;
+
+  const parsed = OpenCodeProjectSpecSchema.safeParse(specBody2);
   if (!parsed.success) {
     return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
   }
