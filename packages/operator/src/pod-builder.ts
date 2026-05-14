@@ -11,6 +11,7 @@ import {
   LABELS,
   MANAGED_BY,
   CONTAINER_PORT,
+  DISPATCHER_MCP_PORT,
   RUNNER_CONTAINER,
   DISPATCHER_CONTAINER,
   type OpenCodeRun,
@@ -387,6 +388,9 @@ export function renderPod(
                   },
                 ]
               : []),
+            // Note: the MCP stanza for percussionist-dispatcher is included in
+            // the cluster-wide opencode-config ConfigMap so it reaches every pod
+            // without requiring duplicate env var entries here.
             ...gitAuthorEnv,
             ...(githubTokenSecret
               ? [

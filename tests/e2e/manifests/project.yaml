@@ -1,0 +1,40 @@
+# E2E reference manifest for the facilitator test project.
+#
+# This file documents the full project shape. It is NOT applied directly —
+# the e2e-facilitator.sh script generates and applies the project YAML inline
+# so it can conditionally omit the `model` field when MODEL is unset.
+#
+# To apply manually (with a model set):
+#   MODEL=github-copilot/claude-sonnet-4.5 \
+#   LLM_SECRET=llm-keys \
+#   ./tests/e2e/e2e-facilitator.sh
+apiVersion: percussionist.dev/v1alpha1
+kind: OpenCodeProject
+metadata:
+  name: e2e-facilitator-test
+  namespace: percussionist-e2e
+spec:
+  displayName: "E2E Facilitator Test"
+  model: github-copilot/claude-sonnet-4.5   # omitted by the script when MODEL is unset
+  source:
+    git:
+      # Intentionally invalid URL — git-clone init container will fail, causing
+      # the operator to set OpenCodeRun.status.phase = Failed deterministically.
+      url: https://git.invalid/e2e-nonexistent-repo.git
+  secrets:
+    llmKeysSecret: llm-keys                 # overridable via LLM_SECRET env var
+  board:
+    phase: Active
+    maxParallel: 1
+    agents:
+      - name: e2e-failing-worker
+      - name: facilitator
+    overrides:
+      timeoutSeconds: 120
+    tasks:
+      - id: t1
+        title: "Fail intentionally"
+        agent: e2e-failing-worker
+        description: >
+          This task is intentionally designed to time out and fail so that the
+          facilitator agent is triggered to investigate.

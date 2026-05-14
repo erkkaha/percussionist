@@ -254,6 +254,7 @@ export async function runPrompt(
   runName: string,
   runNamespace: string,
   runUid: string,
+  failureSignal: Promise<string>,
 ): Promise<{ sessionID: string; startedAt: string }> {
   const client = createOpencodeClient({ baseUrl: BASE_URL });
   const tokens = new TokenAggregator();
@@ -384,7 +385,15 @@ export async function runPrompt(
   const hardTimeout = setTimeout(() => { err("dispatcher timeout guard"); process.exit(3); }, 3_600_000);
   hardTimeout.unref();
   void streamEvents().catch((e) => { if (!terminate) err("streamEvents fatal:", (e as Error).message); });
-  await pollStatus();
+
+  // Race the normal poll loop against the agent calling fail_run via the MCP
+  // server. If fail_run wins, throw a "session error:" so the standard failure
+  // path in main().catch patches status to Failed.
+  const failureRaced = failureSignal.then((reason) => {
+    terminate = true; // stop poll loop and SSE stream
+    throw new Error(`session error: agent signalled failure — ${reason}`);
+  });
+  await Promise.race([pollStatus(), failureRaced]);
   terminate = true;
   clearTimeout(hardTimeout);
 

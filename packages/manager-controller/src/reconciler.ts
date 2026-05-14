@@ -154,7 +154,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
 
     const existingWorker = workers.find((w) => w.taskId === taskId);
     const retryCount = existingWorker?.retryCount ?? 0;
-    const runName = workerRunName(projectName, taskId);
+    const runName = workerRunName(projectName, taskId, retryCount);
 
     backlog = moveTask(backlog, taskId, "in-progress");
 
@@ -209,12 +209,14 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
           continue;
         }
 
-        // Facilitator-based escalation: on first failure, spawn a
-        // facilitator agent to analyze the failure and recommend an action.
+        // Facilitator-based escalation: on first un-facilitated failure, spawn
+        // a facilitator agent to analyze the failure and recommend an action.
+        // We rely solely on the `facilitated` flag to gate this — retryCount
+        // may have already been incremented by the "not found" catch path
+        // before the run phase was ever observed as Failed.
         if (
           !worker.facilitated &&
-          facilitatorEnabled &&
-          (worker.retryCount ?? 0) === 0
+          facilitatorEnabled
         ) {
           // Read session summary for the facilitator's context.
           let sessionSummary = "";
@@ -282,12 +284,20 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
           worker.facilitated &&
           worker.facilitationRunName
         ) {
-          // Facilitator run exists — check its result.
+          // Facilitator run exists — fetch it once, then parse its result.
+          let facRun: Awaited<ReturnType<typeof getRun>> | null = null;
+          try {
+            facRun = await getRun(worker.facilitationRunName, ns, k8s);
+          } catch {
+            // facilitator run not yet found — will retry next cycle
+          }
           let result: FacilitationResult | null = null;
           try {
             result = await parseFacilitationResult(
               worker.facilitationRunName,
               ns,
+              facRun?.status?.serviceName,
+              facRun?.status?.sessionID,
             );
           } catch (e) {
             err(`failed to parse facilitation result for ${worker.taskId}:`, (e as Error).message);
@@ -308,7 +318,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
               // Validate alternative agent is in the team roster.
               const teamNames = (board.agents ?? []).map((a) => a.name);
               if (teamNames.includes(result.alternativeAgent)) {
-                const newRunName = workerRunName(projectName, worker.taskId);
+                const newRunName = workerRunName(projectName, worker.taskId, (worker.retryCount ?? 0) + 1);
                 const reworkRun = buildWorkerRun(fresh, taskDef, newRunName, (worker.retryCount ?? 0) + 1);
                 reworkRun.spec.agent = result.alternativeAgent;
                 workers = upsertWorker(workers, {
@@ -356,13 +366,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             }
           } else {
             // No parseable result from facilitator — check facilitator run phase.
-            let facilitatorPhase: string | undefined;
-            try {
-              const facRun = await getRun(worker.facilitationRunName, ns, k8s);
-              facilitatorPhase = facRun.status?.phase;
-            } catch {
-              // facilitator run not found
-            }
+            const facilitatorPhase = facRun?.status?.phase;
 
             if (facilitatorPhase === "Succeeded" || facilitatorPhase === "Failed") {
               // Facilitator done but we got nothing useful. Fall back.
@@ -468,7 +472,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
     const feedback =
       fresh.metadata.annotations?.[`percussionist.dev/rework-${taskId}`] ??
       "Please address the feedback from the previous review.";
-    const runName = workerRunName(projectName, taskId);
+    const runName = workerRunName(projectName, taskId, 0);
     const reworkRun = buildWorkerRun(fresh, taskDef, runName, 0, feedback);
 
     backlog = moveTask(backlog, taskId, "in-progress");

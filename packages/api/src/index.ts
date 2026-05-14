@@ -566,6 +566,9 @@ export const LABELS = {
 export const MANAGED_BY = "percussionist";
 
 export const CONTAINER_PORT = 4096;
+// MCP server port served by the dispatcher sidecar. Chosen to be adjacent to
+// CONTAINER_PORT and unlikely to clash with common development tooling.
+export const DISPATCHER_MCP_PORT = 4097;
 export const RUNNER_CONTAINER = "opencode";
 export const DISPATCHER_CONTAINER = "dispatcher";
 export const GIT_CLONE_CONTAINER = "git-clone";

@@ -1,6 +1,6 @@
 // worker-builder.ts — builds OpenCodeRun specs for board tasks.
 
-import { randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   API_GROUP_VERSION,
   KIND_RUN,
@@ -108,10 +108,15 @@ export function buildWorkerRun(
 export function workerRunName(
   projectName: string,
   taskId: string,
+  retryCount: number = 0,
 ): string {
   const sanitized = taskId.toLowerCase().replace(/[^a-z0-9]/g, "-");
-  // Use crypto-random suffix (5 bytes = 10 hex chars) to guarantee uniqueness
-  // even when two reconciles fire in the same millisecond.
-  const suffix = randomBytes(5).toString("hex");
+  // Derive a deterministic suffix from project + task + retryCount so that
+  // re-reconciling after a failed status patch produces the same run name
+  // instead of creating a duplicate. This makes the pull phase idempotent.
+  const suffix = createHash("sha256")
+    .update(`${projectName}:${taskId}:${retryCount}`)
+    .digest("hex")
+    .slice(0, 10);
   return `${projectName}-${sanitized}-${suffix}`;
 }

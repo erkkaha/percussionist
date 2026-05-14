@@ -8,6 +8,13 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 
 - **Declarative runs** — create an `OpenCodeRun` CR; the operator handles pod
   scheduling, auth secrets, service routing, and lifecycle mirroring.
+- **Runner sidecars** — attach auxiliary containers (databases, proxies, etc.)
+  to every run pod via `spec.sidecars[]`; opencode waits for declared TCP ports
+  before starting work. Sidecar config cascades from project defaults to per-run
+  overrides.
+- **Dispatcher MCP** — the dispatcher sidecar exposes an MCP server on port 4097
+  with tools (`fail_run`, `get_status`) so agents can signal failure or query
+  their own run state without cluster API access.
 - **Git workspaces** — clone any repo into `/workspace` before the agent starts,
   with branch/tag/SHA resolution and SSH key support.
 - **Project boards** — each `OpenCodeProject` carries an embedded kanban-style
@@ -36,14 +43,14 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 │   └── web.yaml
 ├── examples/           # Sample OpenCodeProject and OpenCodeRun manifests
 ├── images/
-│   ├── runner/         # opencode + git + ssh on Alpine (used by every run pod)
+│   ├── runner/         # opencode + git + ssh on Alpine (used by every run pod; supports sidecars)
 │   ├── node/           # Shared Node 24 image; builds operator + dispatcher + manager
 │   └── web/            # Bun image; builds + serves the web dashboard
 ├── manifests/          # Raw k8s manifests for standalone smoke testing
 ├── packages/
 │   ├── api/            # Shared Zod schemas, constants, type helpers
 │   ├── operator/       # CRD reconciler (informer + reconciler loop)
-│   ├── dispatcher/     # Sidecar that drives each run via the opencode HTTP API
+│   ├── dispatcher/     # Sidecar: session driver + MCP server (fail_run, get_status)
 │   ├── cli/            # beatctl — user-facing CLI
 │   ├── web/            # Dashboard SPA + Hono server + bun:sqlite stats DB
 │   └── manager-controller/  # Watches OpenCodeProject CRs, drives the embedded board
@@ -180,7 +187,9 @@ flowchart TD
 
     POD --> INIT[git-clone init container\nif spec.source.git set]
     POD --> OC[opencode container\nopencode web :4096]
-    POD --> DISP[dispatcher container\nsidecar]
+    POD --> DISP[dispatcher sidecar\nMCP + session driver]
+    POD --> SC1[sidecar 1\ne.g. test database]
+    POD --> SC2[sidecar N\ndefined in spec.sidecars]
 
     AGCM -->|volume mount\n/root/.config/opencode/agents| OC
     ING -->|routes| SVC
@@ -188,16 +197,27 @@ flowchart TD
 
     DISP -->|HTTP 127.0.0.1:4096| OC
     DISP -->|patches| STATUS[CR .status subresource]
+    DISP -->|MCP :4097\nfail_run, get_status| AGENT[agent]
+
+    SC1 -->|ports ready?\nnc -z polling| OC
+    SC2 -->|ports ready?\nnc -z polling| OC
 ```
 
 - **opencode container** runs `opencode web` on `:4096`. Network-isolated by
   default; exposed via per-run Ingress when configured.
-- **dispatcher container** waits for the runner's health endpoint, creates a
+- **dispatcher sidecar** waits for the runner's health endpoint, creates a
   session, fires `POST /session/:id/prompt_async`, then concurrently polls
   `/session/:id/message` and consumes the SSE `/event` stream for low-latency
   token updates. Once the last assistant message's `time.completed` is set it
   patches the CR to `Succeeded` (or `Failed` on error) and exits. A 1-hour
-  hard timeout guard exits with code 3 if the run stalls indefinitely.
+  hard timeout guard exits with code 3 if the run stalls indefinitely. The
+  dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
+  - `fail_run(reason)` — signal task failure, triggering facilitator analysis
+  - `get_status()` — return current run state (phase, session ID, tokens)
+- **sidecar containers** (`spec.sidecars[]`) are user-defined pods that start
+  alongside opencode. The operator waits for all declared TCP ports on sidecars
+  to become reachable before starting the agent. Up to 5 sidecars per run; config
+  cascades from project-level defaults to per-run overrides.
 - **operator** uses a hand-rolled informer (no kubebuilder for TypeScript),
   creates child objects with `ownerReferences` for cascading deletion, and
   mirrors Pod phase into the CR status every 10 s.
@@ -242,7 +262,7 @@ flowchart LR
     CA[ClusterAgent CR\ncluster-scoped] -->|content served at reconcile| OP[operator]
     OP -->|mounts as ConfigMap| POD[run pod]
 
-    BOARD[project board.agents[]] -->|references by name| CA
+    BOARD[project board.agents] -->|references by name| CA
 ```
 
 `ClusterAgent` is a cluster-scoped resource that defines reusable agent role
@@ -288,7 +308,9 @@ flowchart TD
 
     POD --> INIT[git-clone init container\nif spec.source.git set]
     POD --> OC[opencode container\nopencode web :4096]
-    POD --> DISP[dispatcher container\nsidecar]
+    POD --> DISP[dispatcher sidecar\nMCP + session driver]
+    POD --> SC1[sidecar 1\ne.g. test database]
+    POD --> SC2[sidecar N\ndefined in spec.sidecars]
 
     AGCM -->|volume mount\n/root/.config/opencode/agents| OC
     ING -->|routes| SVC
@@ -296,18 +318,29 @@ flowchart TD
 
     DISP -->|HTTP 127.0.0.1:4096| OC
     DISP -->|patches| STATUS[CR .status subresource]
+    DISP -->|MCP :4097\nfail_run, get_status| AGENT[agent]
 
-    PROJ[OpenCodeProject] -->|spec.project ref| CR
+    SC1 -->|ports ready?\nnc -z polling| OC
+    SC2 -->|ports ready?\nnc -z polling| OC
+
+    PROJ[OpenCodeProject] -->|spec.project ref\ngit, sidecars, model| CR
 ```
 
 - **opencode container** runs `opencode web` on `:4096`. Network-isolated by
   default; exposed via per-run Ingress when configured.
-- **dispatcher container** waits for the runner's health endpoint, creates a
+- **dispatcher sidecar** waits for the runner's health endpoint, creates a
   session, fires `POST /session/:id/prompt_async`, then concurrently polls
   `/session/:id/message` and consumes the SSE `/event` stream for low-latency
   token updates. Once the last assistant message's `time.completed` is set it
   patches the CR to `Succeeded` (or `Failed` on error) and exits. A 1-hour
-  hard timeout guard exits with code 3 if the run stalls indefinitely.
+  hard timeout guard exits with code 3 if the run stalls indefinitely. The
+  dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
+  - `fail_run(reason)` — signal task failure, triggering facilitator analysis
+  - `get_status()` — return current run state (phase, session ID, tokens)
+- **sidecar containers** (`spec.sidecars[]`) are user-defined pods that start
+  alongside opencode. The operator waits for all declared TCP ports on sidecars
+  to become reachable before starting the agent. Up to 5 sidecars per run; config
+  cascades from project-level defaults to per-run overrides.
 - **operator** uses a hand-rolled informer (no kubebuilder for TypeScript),
   creates child objects with `ownerReferences` for cascading deletion, and
   mirrors Pod phase into the CR status every 10 s.
@@ -527,6 +560,57 @@ beatctl submit \
   --git-author-name "Percussionist Agent" \
   --git-author-email "agent@example.com"
 ```
+
+## Runner sidecars
+
+Attach auxiliary containers (databases, proxies, message queues, etc.) to every
+run pod via `spec.sidecars[]`. Sidecar containers start alongside opencode; the
+operator waits for all declared TCP ports on sidecars to become reachable before
+starting the agent. This ensures dependencies are ready when the prompt is fired.
+
+### Spec fields
+
+```yaml
+sidecars:
+  - name: postgres        # RFC 1123 DNS label (K8s container name)
+    image: postgres:16
+    ports:                # opencode waits for these before starting
+      - 5432
+    env:                  # optional environment variables (max 32)
+      - name: POSTGRES_DB
+        value: agentdb
+```
+
+### Project-level defaults
+
+Sidecar configuration cascades from project to run. Define sidecars on the
+`OpenCodeProject` so all worker runs inherit them:
+
+```yaml
+apiVersion: percussionist.dev/v1alpha1
+kind: OpenCodeProject
+metadata:
+  name: my-project
+spec:
+  sidecars:
+    - name: redis
+      image: redis:7-alpine
+      ports:
+        - 6379
+```
+
+Per-run `sidecars[]` overrides project defaults for that specific run. Max **5**
+sidecars per level (project and run).
+
+### How it works
+
+1. The operator renders sidecar containers into the pod spec alongside opencode
+   and the dispatcher sidecar.
+2. Before starting opencode, a startup script polls all declared sidecar ports
+   using `nc -z 127.0.0.1 <port>` — since all containers share the pod network
+   namespace, `localhost` reaches any sidecar.
+3. Once every port is reachable, opencode starts and the dispatcher begins its
+   normal session lifecycle.
 
 ## Project boards
 

@@ -5,21 +5,22 @@
  * Uses Tailwind v4 @theme syntax.
  */
 @theme {
-  --color-surface: #09090b;
-  --color-surface-raised: #18181b;
-  --color-surface-overlay: #27272a;
-  --color-border: #3f3f46;
-  --color-border-muted: #27272a;
-  --color-text: #fafafa;
-  --color-text-muted: #a1a1aa;
-  --color-text-dim: #71717a;
+  --color-surface: #0c0906;
+  --color-surface-raised: #1a1410;
+  --color-surface-overlay: #2a2018;
+  --color-border: #5c4a3a;
+  --color-border-muted: #2a2018;
+  --color-text: #faf5f0;
+  --color-text-muted: #b8a898;
+  --color-text-dim: #7a6a5a;
+  --color-accent: #d97706;
 
-  --color-phase-pending: #facc15;
-  --color-phase-initializing: #38bdf8;
-  --color-phase-running: #818cf8;
-  --color-phase-succeeded: #4ade80;
-  --color-phase-failed: #f87171;
-  --color-phase-cancelled: #a1a1aa;
+  --color-phase-pending: #fbbf24;
+  --color-phase-initializing: #fb923c;
+  --color-phase-running: #d97706;
+  --color-phase-succeeded: #86efac;
+  --color-phase-failed: #fca5a5;
+  --color-phase-cancelled: #7a6a5a;
 }
 
 /* Global themed thin scrollbars */

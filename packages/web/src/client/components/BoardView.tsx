@@ -146,7 +146,7 @@ export default function BoardView() {
         </div>
         <button
           onClick={() => setShowAddTask((v) => !v)}
-          className="rounded-md bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 text-sm font-medium text-text transition-colors"
+          className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] px-3 py-1.5 text-sm font-medium text-text transition-colors"
         >
           {showAddTask ? "Cancel" : "+ Add Task"}
         </button>
@@ -210,7 +210,7 @@ export default function BoardView() {
                 });
               }}
               disabled={addMutation.isPending}
-              className="rounded-md bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 px-3 py-1.5 text-sm font-medium text-text transition-colors"
+              className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] disabled:opacity-40 px-3 py-1.5 text-sm font-medium text-text transition-colors"
             >
               {addMutation.isPending ? "Adding…" : "Add"}
             </button>
@@ -265,7 +265,7 @@ export default function BoardView() {
                       {worker?.runName && (
                         <Link
                           to={`/runs/${encodeURIComponent(worker.runName)}`}
-                          className="text-xs text-zinc-400 hover:text-text transition-colors underline"
+                          className="text-xs text-text-dim hover:text-text transition-colors underline"
                         >
                           {worker.runName}
                         </Link>
@@ -285,7 +285,7 @@ export default function BoardView() {
                         <button
                           onClick={() => retryMutation.mutate(id)}
                           disabled={retryMutation.isPending}
-                          className="text-xs text-zinc-400 hover:text-text disabled:opacity-40 transition-colors"
+                          className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors"
                           title="Reset retries and move back to ready"
                         >
                           {retryMutation.isPending && retryMutation.variables === id ? "Retrying…" : "↺ Retry"}

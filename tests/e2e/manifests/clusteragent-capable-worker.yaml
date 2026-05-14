@@ -1,0 +1,13 @@
+apiVersion: percussionist.dev/v1alpha1
+kind: ClusterAgent
+metadata:
+  name: e2e-capable-worker
+spec:
+  content: |
+    ---
+    name: e2e-capable-worker
+    ---
+    You are a capable test agent. When given any task, output a single sentence:
+    "Task completed successfully by e2e-capable-worker."
+
+    Do not use any tools. Do not call fail_run. Just output that sentence and stop.

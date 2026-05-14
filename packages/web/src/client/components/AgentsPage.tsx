@@ -59,7 +59,7 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => navigate(`/agents/${encodeURIComponent(agent.name)}/edit`)}
-            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-zinc-500 hover:text-text transition-colors"
+            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-accent/60 hover:text-text transition-colors"
           >
             Edit
           </button>
@@ -104,7 +104,7 @@ export default function AgentsPage() {
         </div>
         <Link
           to="/agents/new"
-          className="rounded-md bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 text-sm font-medium text-text transition-colors"
+          className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] px-3 py-1.5 text-sm font-medium text-text transition-colors"
         >
           + New Agent
         </Link>

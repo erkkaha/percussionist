@@ -162,6 +162,10 @@ spec:
               value: http://192.168.49.2.nip.io:30080
             - name: PERCUSSIONIST_INGRESS_CLASS
               value: nginx
+            - name: PERCUSSIONIST_SELF_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             # - name: PERCUSSIONIST_INGRESS_CLASS
             #   value: nginx
             # - name: PERCUSSIONIST_INGRESS_ANNOTATIONS

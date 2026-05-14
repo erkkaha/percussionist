@@ -7,6 +7,8 @@
 //      or `beatctl attach`; observe all sessions that appear.
 //   3. Mirror session activity into the OpenCodeRun status subresource.
 //   4. On completion, snapshot all sessions to a ConfigMap and send analytics.
+//   5. Serve an MCP endpoint on 127.0.0.1:4097 so agents can call fail_run()
+//      or get_status() without cluster API access.
 //
 // Environment (injected by the operator):
 //   RUN_NAME, RUN_NAMESPACE, RUN_UID
@@ -34,6 +36,7 @@ import {
 import { waitForHealthy } from "./session.js";
 import { runInteractive, runPrompt } from "./polling.js";
 import { sendStats } from "./stats-reporter.js";
+import { startMcpServer } from "./mcp-server.js";
 
 const env = (k: string, required = true): string => {
   const v = process.env[k];
@@ -72,7 +75,6 @@ const shutdownSignalled = new Promise<void>((resolve) => {
 function interruptibleSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const t = setTimeout(resolve, ms);
-    t.unref();
     shutdownSignalled.then(() => { clearTimeout(t); resolve(); });
   });
 }
@@ -109,36 +111,74 @@ async function patchStatus(patch: OpenCodeRunStatus): Promise<void> {
 
 let _activeSessionID: string | undefined;
 let _runStartedAt: string | undefined;
+let _lastStatus: { phase: string; session?: string; tokensIn?: number; tokensOut?: number } | null = null;
+
+function wrapPatchStatus(fn: typeof patchStatus) {
+  return async (patch: OpenCodeRunStatus): Promise<void> => {
+    await fn(patch);
+    _lastStatus = {
+      phase: patch.phase ?? _lastStatus?.phase ?? "unknown",
+      session: patch.sessionID ?? _activeSessionID ?? _lastStatus?.session,
+      tokensIn: patch.tokensIn ?? _lastStatus?.tokensIn,
+      tokensOut: patch.tokensOut ?? _lastStatus?.tokensOut,
+    };
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Main
 
 async function main(): Promise<void> {
-  await patchStatus({ phase: RunPhase.Initializing, message: "waiting for opencode" });
-  await waitForHealthy(120_000, () => shuttingDown, interruptibleSleep);
+  // Start the MCP server immediately so fail_run/get_status are available as soon as
+  // opencode accepts connections. The failure signal is a promise that resolves
+  // when the agent calls fail_run; runPrompt races against it.
+  let resolveFailure!: (reason: string) => void;
+  const failureSignal = new Promise<string>((resolve) => { resolveFailure = resolve; });
+  let failureSignalled = false;
 
-  if (INTERACTIVE) {
-    await runInteractive(
-      patchStatus,
-      () => shuttingDown,
-      interruptibleSleep,
-      coreApi,
-      RUN_NAME,
-      RUN_NAMESPACE,
-      RUN_UID,
-    );
-  } else {
-    const result = await runPrompt(
-      patchStatus,
-      () => shuttingDown,
-      interruptibleSleep,
-      coreApi,
-      RUN_NAME,
-      RUN_NAMESPACE,
-      RUN_UID,
-    );
-    _activeSessionID = result.sessionID;
-    _runStartedAt = result.startedAt;
+  const patchedPatchStatus = wrapPatchStatus(patchStatus);
+
+  const mcp = await startMcpServer(
+    (reason) => {
+      if (failureSignalled) return; // only the first call counts
+      failureSignalled = true;
+      log(`fail_run called by agent: ${reason}`);
+      resolveFailure(reason);
+    },
+    () => _lastStatus,
+  );
+  log("MCP server listening on 127.0.0.1:4097");
+
+  try {
+    await patchedPatchStatus({ phase: RunPhase.Initializing, message: "waiting for opencode" });
+    await waitForHealthy(120_000, () => shuttingDown, interruptibleSleep);
+
+    if (INTERACTIVE) {
+      await runInteractive(
+        patchedPatchStatus,
+        () => shuttingDown,
+        interruptibleSleep,
+        coreApi,
+        RUN_NAME,
+        RUN_NAMESPACE,
+        RUN_UID,
+      );
+    } else {
+      const result = await runPrompt(
+        patchedPatchStatus,
+        () => shuttingDown,
+        interruptibleSleep,
+        coreApi,
+        RUN_NAME,
+        RUN_NAMESPACE,
+        RUN_UID,
+        failureSignal,
+      );
+      _activeSessionID = result.sessionID;
+      _runStartedAt = result.startedAt;
+    }
+  } finally {
+    mcp.close();
   }
 }
 

@@ -30,7 +30,7 @@ import {
   shouldCreateIngress,
   webURLFor,
 } from "./pod-builder.js";
-import { NAMESPACE } from "./config.js";
+import { NAMESPACE, SELF_NAMESPACE } from "./config.js";
 
 const log = (...args: unknown[]) =>
   console.log(`[operator ${new Date().toISOString()}]`, ...args);
@@ -72,6 +72,44 @@ async function patchStatus(
 
 // ---------------------------------------------------------------------------
 // Main reconcile function
+
+// Ensure the opencode-config ConfigMap exists in the run namespace by copying
+// it from the operator namespace. This makes the MCP stanza (and provider
+// config) available to every run regardless of which namespace it lands in.
+async function ensureOpencodeConfig(ns: string): Promise<void> {
+  const name = "opencode-config";
+  // Try to read the source from the operator namespace.
+  let source: { data?: Record<string, string> } | null = null;
+  try {
+    source = await core.readNamespacedConfigMap({ name, namespace: SELF_NAMESPACE });
+  } catch {
+    return; // Not present in operator ns — nothing to sync.
+  }
+  if (!source?.data) return;
+  // Check if it already exists in the target namespace.
+  try {
+    await core.readNamespacedConfigMap({ name, namespace: ns });
+    return; // Already exists; leave it alone (user may have customised it).
+  } catch {
+    // Does not exist — create it.
+  }
+  try {
+    await core.createNamespacedConfigMap({
+      namespace: ns,
+      body: {
+        apiVersion: "v1",
+        kind: "ConfigMap",
+        metadata: { name, namespace: ns },
+        data: source.data,
+      },
+    });
+    log(`synced opencode-config to ${ns}`);
+  } catch (e) {
+    if (!/already exists/i.test((e as Error).message)) {
+      err(`failed to sync opencode-config to ${ns}:`, (e as Error).message);
+    }
+  }
+}
 
 export async function reconcile(run: OpenCodeRun): Promise<void> {
   const name = run.metadata.name;
@@ -144,6 +182,7 @@ export async function reconcile(run: OpenCodeRun): Promise<void> {
   }
 
   // Ensure agents ConfigMap.
+  await ensureOpencodeConfig(ns);
   if (resolvedAgents.length > 0) {
     const cmName = `${podName(run)}-agents`;
     try {

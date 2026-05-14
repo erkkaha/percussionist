@@ -1,0 +1,12 @@
+apiVersion: percussionist.dev/v1alpha1
+kind: ClusterAgent
+metadata:
+  name: e2e-failing-worker
+spec:
+  content: |
+    ---
+    name: e2e-failing-worker
+    ---
+    You are a test agent. Do nothing useful. Output a single sentence saying you
+    cannot complete this task, then stop immediately. Do not use any tools.
+    Do not attempt any further work.

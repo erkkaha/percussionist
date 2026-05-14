@@ -75,7 +75,7 @@ export default function AgentForm() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="agent-name (lowercase alphanumeric + hyphens)"
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm font-mono text-text placeholder:text-text-dim focus:outline-none focus:border-zinc-500"
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm font-mono text-text placeholder:text-text-dim focus:outline-none focus:border-accent/60"
           />
         </div>
 
@@ -86,7 +86,7 @@ export default function AgentForm() {
             onChange={(e) => setContent(e.target.value)}
             placeholder={`---\ndescription: What this agent does\nmode: primary\n---\nSystem prompt...`}
             rows={16}
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm font-mono text-text placeholder:text-text-dim focus:outline-none focus:border-zinc-500 resize-y"
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm font-mono text-text placeholder:text-text-dim focus:outline-none focus:border-accent/60 resize-y"
           />
           <div className="flex items-center justify-between text-xs text-text-muted">
             <span>YAML front-matter + system prompt</span>
@@ -99,7 +99,7 @@ export default function AgentForm() {
           <button
             onClick={handleSave}
             disabled={!name.trim() || submitting}
-            className="rounded-md bg-zinc-700 hover:bg-zinc-600 px-4 py-1.5 text-sm font-medium text-text transition-colors disabled:opacity-40"
+            className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] px-4 py-1.5 text-sm font-medium text-text transition-colors disabled:opacity-40"
           >
             {submitting ? "Saving\u2026" : isEdit ? "Save Changes" : "Create Agent"}
           </button>

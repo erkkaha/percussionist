@@ -34,8 +34,11 @@ export function getTasksToPull(
 }
 
 /**
- * Returns task IDs in the "rework" column that have a Succeeded worker
- * and therefore need re-dispatch with human feedback.
+ * Returns task IDs in the "rework" column that should be re-dispatched.
+ * A task is eligible if it has no worker, or its worker has finished
+ * (Succeeded, Failed, or Escalated) — i.e. it is not currently Running.
+ * This covers both the normal review→rework flow (worker Succeeded) and
+ * human-initiated rework of failed/escalated tasks.
  */
 export function getTasksToRework(
   boardStatus: BoardStatus,
@@ -45,7 +48,8 @@ export function getTasksToRework(
 
   return reworkColumn.filter((taskId) => {
     const worker = workers.find((w) => w.taskId === taskId);
-    return worker?.status === "Succeeded";
+    // No worker yet, or worker is in a terminal/non-running state.
+    return !worker || worker.status !== "Running";
   });
 }
 

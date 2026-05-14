@@ -1,6 +1,10 @@
 // config.ts — operator runtime configuration from environment variables.
 
 const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
+// The namespace where the operator itself is deployed and where shared
+// ConfigMaps (e.g. opencode-config) live.  Defaults to "percussionist" and
+// should NOT be changed when patching PERCUSSIONIST_NAMESPACE for tests.
+const SELF_NAMESPACE = process.env.PERCUSSIONIST_SELF_NAMESPACE ?? "percussionist";
 const RUNNER_IMAGE_DEFAULT =
   process.env.RUNNER_IMAGE_DEFAULT ?? "percussionist/runner:dev";
 const DISPATCHER_IMAGE =
@@ -34,6 +38,7 @@ const EXPOSE_WEB_DEFAULT =
 
 export {
   NAMESPACE,
+  SELF_NAMESPACE,
   RUNNER_IMAGE_DEFAULT,
   DISPATCHER_IMAGE,
   DISPATCHER_SERVICE_ACCOUNT,

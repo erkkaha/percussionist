@@ -185,7 +185,7 @@ export default function CreateRunForm() {
   const canSubmit = (interactive || task.trim().length > 0) && !gitAuthorIncomplete && selectedProject.length > 0;
 
   const inputClass =
-    "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-zinc-500 focus:outline-none";
+    "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none";
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -276,7 +276,7 @@ export default function CreateRunForm() {
                 ? "Not required in interactive mode"
                 : "Describe what the agent should do..."
             }
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-zinc-500 focus:outline-none resize-y disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none resize-y disabled:opacity-40 disabled:cursor-not-allowed"
           />
         </div>
 
@@ -327,7 +327,7 @@ export default function CreateRunForm() {
               type="button"
               onClick={addAgent}
               disabled={agents.length >= 5}
-              className="text-xs text-zinc-400 hover:text-text transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              className="text-xs text-text-dim hover:text-text transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               + Add agent ({agents.length}/5)
             </button>
@@ -357,7 +357,7 @@ export default function CreateRunForm() {
                 onChange={(e) => updateAgent(i, "content", e.target.value)}
                 placeholder={`---\ndescription: What this agent does\n---\nSystem prompt...`}
                 rows={6}
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-zinc-500 focus:outline-none resize-y font-mono"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none resize-y font-mono"
               />
               <p className="text-xs text-text-dim">
                 {a.content.length > 0 ? `${(a.content.length / 1024).toFixed(1)} KB` : "Paste agent .md content here"}
@@ -419,7 +419,7 @@ export default function CreateRunForm() {
             min={1}
             value={timeoutSeconds}
             onChange={(e) => setTimeoutSeconds(Number(e.target.value))}
-            className="w-40 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text focus:border-zinc-500 focus:outline-none tabular-nums"
+            className="w-40 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text focus:border-accent/60 focus:outline-none tabular-nums"
           />
         </div>
 
@@ -527,7 +527,7 @@ export default function CreateRunForm() {
           <button
             type="submit"
             disabled={!canSubmit || mutation.isPending}
-            className="rounded-md bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
+            className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
           >
             {mutation.isPending ? "Submitting..." : "Submit Run"}
           </button>

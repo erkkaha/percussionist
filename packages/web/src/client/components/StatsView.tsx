@@ -267,7 +267,7 @@ function ToolUsage({ toolCounts }: { toolCounts: Analytics["toolCounts"] }) {
                   <div className="flex items-center gap-2">
                     <div className="flex-1 bg-surface-overlay rounded-full h-1.5 overflow-hidden">
                       <div
-                        className="h-full bg-zinc-400 rounded-full"
+                        className="h-full bg-[#d97706] rounded-full"
                         style={{ width: `${(count / max) * 100}%` }}
                       />
                     </div>
@@ -326,8 +326,8 @@ function ModelBreakdown({ modelRows }: { modelRows: Analytics["modelRows"] }) {
                       style={{ width: `${barWidth}%`, minWidth: "20px" }}
                       title={`In: ${fmtTokens(tokensIn)} (${inPct.toFixed(0)}%) / Out: ${fmtTokens(tokensOut)} (${outPct.toFixed(0)}%)`}
                     >
-                      <div className="bg-zinc-400" style={{ width: `${inPct}%` }} />
-                      <div className="bg-zinc-600" style={{ width: `${outPct}%` }} />
+                      <div className="bg-[#d97706]" style={{ width: `${inPct}%` }} />
+                      <div className="bg-[#5c4a3a]" style={{ width: `${outPct}%` }} />
                     </div>
                   </td>
                 </tr>
@@ -336,8 +336,8 @@ function ModelBreakdown({ modelRows }: { modelRows: Analytics["modelRows"] }) {
           </tbody>
         </table>
         <p className="px-4 py-2 text-xs text-text-dim border-t border-border-muted">
-          Bar: <span className="text-zinc-400">■</span> tokens in &nbsp;
-          <span className="text-zinc-600">■</span> tokens out
+          Bar: <span className="text-text-dim">■</span> tokens in &nbsp;
+          <span className="text-text-muted">■</span> tokens out
         </p>
       </div>
     </section>
@@ -375,12 +375,12 @@ function TokensChart({ sessions }: { sessions: StatSession[] }) {
               </div>
               <div className="flex-1 flex h-3 rounded-sm overflow-hidden bg-surface-overlay gap-px">
                 <div
-                  className="bg-zinc-400 rounded-l-sm"
+                  className="bg-[#d97706] rounded-l-sm"
                   style={{ width: `${inPct}%` }}
                   title={`In: ${fmtTokens(s.tokensIn)}`}
                 />
                 <div
-                  className="bg-zinc-600 rounded-r-sm"
+                  className="bg-[#5c4a3a] rounded-r-sm"
                   style={{ width: `${outPct}%` }}
                   title={`Out: ${fmtTokens(s.tokensOut)}`}
                 />
@@ -392,8 +392,8 @@ function TokensChart({ sessions }: { sessions: StatSession[] }) {
           );
         })}
         <p className="text-xs text-text-dim pt-1">
-          <span className="text-zinc-400">■</span> tokens in &nbsp;
-          <span className="text-zinc-600">■</span> tokens out
+          <span className="text-text-dim">■</span> tokens in &nbsp;
+          <span className="text-text-muted">■</span> tokens out
         </p>
       </div>
     </section>
@@ -496,7 +496,7 @@ export default function StatsView() {
               onClick={() => setDays(opt.value)}
               className={`rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
                 days === opt.value
-                  ? "border-zinc-500 bg-surface-overlay text-text"
+                  ? "border-accent/60 bg-surface-overlay text-text"
                   : "border-border-muted text-text-dim hover:border-border hover:text-text-muted"
               }`}
             >

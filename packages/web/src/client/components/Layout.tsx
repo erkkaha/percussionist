@@ -63,9 +63,22 @@ export default function Layout() {
     <div className="min-h-screen flex">
       {/* Sidebar */}
       <aside className="w-52 shrink-0 border-r border-border bg-surface-raised flex flex-col">
-        <div className="px-4 py-4 border-b border-border">
-          <span className="text-base font-semibold tracking-tight text-text">percussionist</span>
-          <p className="text-xs text-text-dim mt-0.5">agent orchestration</p>
+        <div className="px-4 py-4 border-b border-border flex items-center gap-2.5">
+          <svg width="24" height="24" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="64" height="64" rx="12" fill="#fbbf24"/>
+            <ellipse cx="32" cy="38" rx="20" ry="14" fill="#92400e" stroke="#78350f" strokeWidth="2"/>
+            <ellipse cx="32" cy="38" rx="16" ry="10" fill="#b45309"/>
+            <ellipse cx="32" cy="28" rx="20" ry="8" fill="#d97706" stroke="#b45309" strokeWidth="1.5"/>
+            <ellipse cx="32" cy="28" rx="16" ry="5" fill="#fbbf24"/>
+            <line x1="14" y1="48" x2="28" y2="20" stroke="#78350f" strokeWidth="3.5" strokeLinecap="round"/>
+            <line x1="50" y1="48" x2="36" y2="20" stroke="#78350f" strokeWidth="3.5" strokeLinecap="round"/>
+            <circle cx="29" cy="19" r="3" fill="#d97706"/>
+            <circle cx="35" cy="19" r="3" fill="#d97706"/>
+          </svg>
+          <div>
+            <span className="text-base font-semibold tracking-tight text-text">percussionist</span>
+            <p className="text-xs text-text-dim mt-0.5">agent orchestration</p>
+          </div>
         </div>
         <nav className="flex-1 px-2 py-3 space-y-0.5">
           <SidebarLink to="/">Runs</SidebarLink>

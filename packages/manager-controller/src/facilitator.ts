@@ -17,7 +17,7 @@ import {
   resolveRunConfig,
   type BoardTask,
 } from "@percussionist/api";
-import { fetchSessionMessages, readPodLog } from "@percussionist/kube";
+import { fetchSessionMessages, readPodLog, core } from "@percussionist/kube";
 
 const FACILITATOR_AGENT_NAME = "facilitator";
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
@@ -41,6 +41,10 @@ export function buildFacilitationRun(
     sessionSummary,
   };
 
+  const alternativeAgents = (board.agents ?? [])
+    .map((a) => a.name)
+    .filter((n) => n !== FACILITATOR_AGENT_NAME);
+
   const promptLines = [
     `You are a facilitator agent that analyzes failed worker runs and recommends actions.`,
     "",
@@ -51,11 +55,20 @@ export function buildFacilitationRun(
     `RECENT SESSION MESSAGES:`,
     sessionSummary || "(none available)",
     "",
+    ...(alternativeAgents.length > 0
+      ? [
+          `AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(", ")}`,
+          `NOTE: If the failure is due to the specific worker agent refusing or being incapable, `,
+          `recommend retry_alternative with one of the available alternative agents.`,
+          `Only recommend skip if the task itself is inherently impossible or harmful.`,
+          "",
+        ]
+      : []),
     `Analyze the failure above and output ONLY valid JSON (no markdown, no explanation):`,
     JSON.stringify({
       diagnosis: "(root cause in 1-2 sentences)",
       recommendedAction: "(retry_same | retry_alternative | skip)",
-      alternativeAgent: "(optional — only if recommendedAction is retry_alternative)",
+      alternativeAgent: "(required if recommendedAction is retry_alternative — must be one of the AVAILABLE ALTERNATIVE AGENTS listed above)",
       suggestion: "(optional — fix suggestion for next attempt)",
     }),
   ].join("\n");
@@ -97,7 +110,8 @@ export function buildFacilitationRun(
       facilitation: facilitationSpec,
       ...(resolved.resources ? { resources: resolved.resources } : {}),
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
-      ...(resolved.source ? { source: resolved.source } : {}),
+      // Facilitator runs do not need a git checkout — they only analyze text.
+      // Omitting source keeps startup fast and avoids inheriting a broken git URL.
       ...(resolved.sidecars?.length ? { sidecars: resolved.sidecars } : {}),
     },
   };
@@ -107,18 +121,52 @@ export function buildFacilitationRun(
 export async function parseFacilitationResult(
   runName: string,
   ns: string,
+  serviceName?: string,
+  sessionID?: string,
 ): Promise<{
   diagnosis: string;
   recommendedAction: "retry_same" | "retry_alternative" | "skip";
   alternativeAgent?: string;
   suggestion?: string;
 } | null> {
-  // Try to read session messages first (if the run got far enough to create a session).
-  let runStatus: unknown = null;
+  // Primary: try the session ConfigMap snapshot saved by the dispatcher.
+  // This works even after the pod has exited.
   try {
-    runStatus = await fetchSessionMessages(runName, "0", ns);
+    const cm = await core().readNamespacedConfigMap({
+      name: `${runName}-session`,
+      namespace: ns,
+    });
+    const data = cm.data ?? {};
+    for (const [key, value] of Object.entries(data)) {
+      if (!key.startsWith("messages-")) continue;
+      const messages: Array<{
+        info: { role: string };
+        parts: Array<{ type: string; text?: string }>;
+      }> = JSON.parse(value);
+      // Walk messages in reverse to find the last assistant text.
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (!msg || msg.info.role !== "assistant") continue;
+        for (const part of msg.parts) {
+          if (part.type === "text" && part.text) {
+            const result = extractFacilitationJson(part.text);
+            if (result) return result;
+          }
+        }
+      }
+    }
   } catch {
-    runStatus = null;
+    // ConfigMap not yet available — fall through to live API.
+  }
+
+  // Fallback: live OpenCode API (works while pod is still running).
+  let runStatus: unknown = null;
+  if (serviceName && sessionID) {
+    try {
+      runStatus = await fetchSessionMessages(serviceName, sessionID, ns);
+    } catch {
+      runStatus = null;
+    }
   }
   if (runStatus && typeof runStatus === "object" && "messages" in runStatus) {
     const messages = (runStatus.messages as Array<{
@@ -133,7 +181,7 @@ export async function parseFacilitationResult(
     }
   }
 
-  // Fallback: try reading pod logs for any JSON output.
+  // Last resort: pod log.
   try {
     const logs = await readPodLog(runName, "opencode", undefined, ns);
     const result = extractFacilitationJson(logs);

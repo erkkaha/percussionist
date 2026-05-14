@@ -100,7 +100,7 @@ export default function RunList() {
         </div>
         <Link
           to="/runs/new"
-          className="rounded-md bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 text-sm font-medium text-text transition-colors"
+          className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] px-3 py-1.5 text-sm font-medium text-text transition-colors"
         >
           + New Run
         </Link>
@@ -265,7 +265,7 @@ function FilterButton({
       onClick={onClick}
       className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
         active
-          ? "border-zinc-500 bg-surface-overlay text-text"
+          ? "border-accent/60 bg-surface-overlay text-text"
           : "border-border-muted text-text-dim hover:border-border hover:text-text-muted"
       }`}
     >

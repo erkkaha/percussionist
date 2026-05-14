@@ -26,8 +26,8 @@ const PHASE_DOTS: Record<string, string> = {
 
 export default function StatusBadge({ phase, title }: { phase?: RunPhase | string; title?: string }) {
   const label = phase ?? "Unknown";
-  const style = PHASE_STYLES[label] ?? "bg-zinc-800 text-zinc-400 border-zinc-700";
-  const dot = PHASE_DOTS[label] ?? "bg-zinc-500";
+  const style = PHASE_STYLES[label] ?? "bg-[#2a2018] text-text-dim border-border-muted";
+  const dot = PHASE_DOTS[label] ?? "bg-[#5c4a3a]";
 
   return (
     <span

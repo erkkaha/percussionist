@@ -54,13 +54,13 @@ function ProjectRow({ project }: { project: OpenCodeProject }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => navigate(`/projects/${encodeURIComponent(project.metadata.name)}/edit`)}
-            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-zinc-500 hover:text-text transition-colors"
+            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-accent/60 hover:text-text transition-colors"
           >
             Edit
           </button>
           <Link
             to={`/projects/${encodeURIComponent(project.metadata.name)}/board`}
-            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-zinc-500 hover:text-text transition-colors"
+            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-accent/60 hover:text-text transition-colors"
           >
             Board
           </Link>
@@ -105,7 +105,7 @@ export default function ProjectsPage() {
         </div>
         <Link
           to="/projects/new"
-          className="rounded-md bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 text-sm font-medium text-text transition-colors"
+          className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] px-3 py-1.5 text-sm font-medium text-text transition-colors"
         >
           + New Project
         </Link>
