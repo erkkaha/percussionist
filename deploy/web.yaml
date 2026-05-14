@@ -62,10 +62,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
-  # Read secrets (needed to authenticate against OpenCode API in run pods).
+  # Read + write secrets (get for auth; create/update/patch/delete for inject-file secrets).
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get"]
+    verbs: ["get", "create", "update", "patch", "delete"]
   # Read session snapshot ConfigMaps (fallback when live proxy is unavailable).
   # create/update/delete for per-project opencode config configmaps.
   - apiGroups: [""]
