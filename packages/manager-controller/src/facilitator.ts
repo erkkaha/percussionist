@@ -1,9 +1,9 @@
 // facilitator.ts — builds and parses facilitator agent runs.
 //
 // When a worker task fails, the manager spawns a facilitator run that analyzes
-// the failure and recommends an escalation action. The facilitator is a normal
-// OpenCodeRun with the facilitator system prompt and structured output
-// instructions embedded in the task description.
+// the failure and recommends an escalation action. When a worker task succeeds,
+// the manager spawns a success-review facilitator that approves the result or
+// redirects it to another agent.
 
 import {
   API_GROUP_VERSION,
@@ -22,7 +22,7 @@ import { fetchSessionMessages, readPodLog, core } from "@percussionist/kube";
 const FACILITATOR_AGENT_NAME = "facilitator";
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
 
-// Build the facilitator OpenCodeRun spec.
+// Build the facilitator OpenCodeRun spec for a FAILED worker run.
 export function buildFacilitationRun(
   project: OpenCodeProject,
   task: BoardTask,
@@ -39,6 +39,7 @@ export function buildFacilitationRun(
     targetTaskId: task.id,
     failureReason: failedRunStatus.message ?? "Unknown failure",
     sessionSummary,
+    successReview: false,
   };
 
   const alternativeAgents = (board.agents ?? [])
@@ -73,6 +74,78 @@ export function buildFacilitationRun(
     }),
   ].join("\n");
 
+  return buildFacilitatorRun(project, task, runName, facilitationSpec, promptLines, resolved);
+}
+
+// Build the facilitator OpenCodeRun spec for a SUCCEEDED worker run (success review).
+export function buildSuccessReviewRun(
+  project: OpenCodeProject,
+  task: BoardTask,
+  succeededRunName: string,
+  succeededRunStatus: OpenCodeRunStatus,
+  sessionSummary: string,
+  runName: string,
+): OpenCodeRun {
+  const board = project.spec.board ?? { maxParallel: 2, phase: "Active" };
+  const resolved = resolveRunConfig(project.spec, board.overrides);
+
+  const completionMessage = succeededRunStatus.message ?? "session completed";
+
+  const facilitationSpec: FacilitationSpec = {
+    targetRunName: succeededRunName,
+    targetTaskId: task.id,
+    failureReason: completionMessage, // reusing field for completion message
+    sessionSummary,
+    successReview: true,
+  };
+
+  const alternativeAgents = (board.agents ?? [])
+    .map((a) => a.name)
+    .filter((n) => n !== FACILITATOR_AGENT_NAME);
+
+  const promptLines = [
+    `You are a reviewer agent that checks whether a completed worker run actually fulfilled its task.`,
+    "",
+    `TASK: ${task.id} — ${task.title}`,
+    `TASK DESCRIPTION: ${task.description ?? "(none)"}`,
+    `WORKER RUN: ${succeededRunName}`,
+    `COMPLETION MESSAGE: ${completionMessage}`,
+    "",
+    `RECENT SESSION MESSAGES:`,
+    sessionSummary || "(none available)",
+    "",
+    ...(alternativeAgents.length > 0
+      ? [
+          `AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(", ")}`,
+          "",
+        ]
+      : []),
+    `Review the session above and output ONLY valid JSON (no markdown, no explanation):`,
+    JSON.stringify({
+      diagnosis: "(1-2 sentences: did the worker actually complete the task?)",
+      recommendedAction: "(approve | retry_alternative | escalate)",
+      alternativeAgent: "(required if recommendedAction is retry_alternative — must be one of the AVAILABLE ALTERNATIVE AGENTS listed above)",
+      suggestion: "(optional — what to improve or why escalating)",
+    }),
+    "",
+    `Use "approve" if the task was completed satisfactorily.`,
+    `Use "retry_alternative" only if a different agent should redo the task.`,
+    `Use "escalate" if human review is needed.`,
+  ].join("\n");
+
+  return buildFacilitatorRun(project, task, runName, facilitationSpec, promptLines, resolved);
+}
+
+// Shared helper — constructs the OpenCodeRun for any facilitator invocation.
+function buildFacilitatorRun(
+  project: OpenCodeProject,
+  task: BoardTask,
+  runName: string,
+  facilitationSpec: FacilitationSpec,
+  promptLines: string,
+  resolved: ReturnType<typeof resolveRunConfig>,
+): OpenCodeRun {
+  const board = project.spec.board ?? { maxParallel: 2, phase: "Active" };
   return {
     apiVersion: API_GROUP_VERSION,
     kind: KIND_RUN,
@@ -110,8 +183,6 @@ export function buildFacilitationRun(
       facilitation: facilitationSpec,
       ...(resolved.resources ? { resources: resolved.resources } : {}),
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
-      // Facilitator runs do not need a git checkout — they only analyze text.
-      // Omitting source keeps startup fast and avoids inheriting a broken git URL.
       ...(resolved.sidecars?.length ? { sidecars: resolved.sidecars } : {}),
     },
   };
@@ -125,7 +196,7 @@ export async function parseFacilitationResult(
   sessionID?: string,
 ): Promise<{
   diagnosis: string;
-  recommendedAction: "retry_same" | "retry_alternative" | "skip";
+  recommendedAction: "retry_same" | "retry_alternative" | "skip" | "approve" | "escalate";
   alternativeAgent?: string;
   suggestion?: string;
 } | null> {
@@ -205,11 +276,13 @@ function extractFacilitationJson(text: string) {
     if (
       action === "retry_same" ||
       action === "retry_alternative" ||
-      action === "skip"
+      action === "skip" ||
+      action === "approve" ||
+      action === "escalate"
     ) {
       return {
         diagnosis: parsed.diagnosis ?? "",
-        recommendedAction: action as "retry_same" | "retry_alternative" | "skip",
+        recommendedAction: action as "retry_same" | "retry_alternative" | "skip" | "approve" | "escalate",
         alternativeAgent: parsed.alternativeAgent,
         suggestion: parsed.suggestion,
       };

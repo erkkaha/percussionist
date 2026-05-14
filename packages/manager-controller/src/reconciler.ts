@@ -24,7 +24,7 @@ import {
   patchProjectStatus,
 } from "@percussionist/kube";
 import { buildWorkerRun, workerRunName, MAX_RETRIES } from "./worker-builder.js";
-import { buildFacilitationRun, parseFacilitationResult } from "./facilitator.js";
+import { buildFacilitationRun, buildSuccessReviewRun, parseFacilitationResult } from "./facilitator.js";
 import {
   getTasksToPull,
   getTasksToRework,
@@ -188,7 +188,9 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
     (a) => a.name === FACILITATOR_AGENT,
   );
 
-  for (const worker of workers.filter((w) => w.status === "Running")) {
+  for (const worker of workers.filter(
+    (w) => w.status === "Running" || (w.status === "Succeeded" && !!w.reviewRunName && !backlog["done"]?.includes(w.taskId)),
+  )) {
     workersMonitored++;
     if (!worker.runName) continue;
     try {
@@ -196,12 +198,152 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
       const runPhase = run.status?.phase;
 
       if (runPhase === "Succeeded") {
-        workers = updateWorker(workers, worker.taskId, {
-          status: "Succeeded",
-          completedAt: new Date().toISOString(),
-        });
-        backlog = moveTask(backlog, worker.taskId, "review");
-        log(`worker ${worker.runName} succeeded → task ${worker.taskId} in review`);
+        const taskDef = (board.tasks ?? []).find((t) => t.id === worker.taskId);
+
+        // Success-review gate: if a reviewer agent is in the team roster,
+        // spawn a success-review facilitator run before moving to done.
+        if (facilitatorEnabled && taskDef && !worker.reviewRunName) {
+          // First time we see this worker Succeeded — spawn a review run.
+          let sessionSummary = "";
+          if (run.status?.sessionID && run.status?.serviceName) {
+            try {
+              const sessionData = await fetchSessionMessages(
+                run.status.serviceName,
+                run.status.sessionID,
+                ns,
+              );
+              if (sessionData && typeof sessionData === "object" && "messages" in sessionData) {
+                const msgs = (sessionData.messages as Array<{ content?: string }>)
+                  .slice(-6)
+                  .map((m) => m.content)
+                  .filter(Boolean)
+                  .join("\n");
+                sessionSummary = msgs.slice(0, 3200);
+              }
+            } catch { /* best effort */ }
+          }
+
+          const reviewRunName = `${projectName}-review-${worker.taskId.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${randomBytes(3).toString("hex")}`;
+          const reviewRun = buildSuccessReviewRun(
+            fresh,
+            taskDef,
+            worker.runName!,
+            run.status ?? {},
+            sessionSummary,
+            reviewRunName,
+          );
+
+          try {
+            await createRun(reviewRun, ns, k8s);
+            workers = updateWorker(workers, worker.taskId, {
+              status: "Succeeded",
+              completedAt: new Date().toISOString(),
+              reviewRunName,
+            });
+            log(`spawned success reviewer ${reviewRunName} for succeeded task ${worker.taskId}`);
+          } catch (e) {
+            // If we can't spawn the reviewer, fall back to moving straight to review.
+            err(`failed to create success review run for ${worker.taskId}:`, (e as Error).message);
+            workers = updateWorker(workers, worker.taskId, {
+              status: "Succeeded",
+              completedAt: new Date().toISOString(),
+            });
+            backlog = moveTask(backlog, worker.taskId, "review");
+            log(`worker ${worker.runName} succeeded (no reviewer) → task ${worker.taskId} in review`);
+          }
+        } else if (facilitatorEnabled && taskDef && worker.reviewRunName) {
+          // Review run already spawned — check its result.
+          let reviewRun: Awaited<ReturnType<typeof getRun>> | null = null;
+          try {
+            reviewRun = await getRun(worker.reviewRunName, ns, k8s);
+          } catch { /* not found yet — wait */ }
+
+          let result = null;
+          try {
+            result = await parseFacilitationResult(
+              worker.reviewRunName,
+              ns,
+              reviewRun?.status?.serviceName,
+              reviewRun?.status?.sessionID,
+            );
+          } catch (e) {
+            err(`failed to parse review result for ${worker.taskId}:`, (e as Error).message);
+          }
+
+          if (result) {
+            if (result.recommendedAction === "approve") {
+              workers = updateWorker(workers, worker.taskId, {
+                facilitationResult: result,
+              });
+              backlog = moveTask(backlog, worker.taskId, "done");
+              log(`reviewer approved task ${worker.taskId} → done`);
+            } else if (result.recommendedAction === "retry_alternative" && result.alternativeAgent) {
+              const teamNames = (board.agents ?? []).map((a) => a.name);
+              if (teamNames.includes(result.alternativeAgent)) {
+                const newRunName = workerRunName(projectName, worker.taskId, (worker.retryCount ?? 0) + 1);
+                const reworkRun = buildWorkerRun(fresh, taskDef, newRunName, (worker.retryCount ?? 0) + 1);
+                reworkRun.spec.agent = result.alternativeAgent;
+                workers = upsertWorker(workers, {
+                  taskId: worker.taskId,
+                  runName: newRunName,
+                  status: "Running",
+                  branch: `feat/${worker.taskId}`,
+                  startedAt: new Date().toISOString(),
+                  retryCount: (worker.retryCount ?? 0) + 1,
+                  facilitated: true,
+                  facilitationResult: result,
+                });
+                backlog = moveTask(backlog, worker.taskId, "ready");
+                try {
+                  await createRun(reworkRun, ns, k8s);
+                  log(`reviewer redirected task ${worker.taskId} to ${result.alternativeAgent}`);
+                } catch (e) {
+                  err(`failed to create reviewer-redirected run for ${worker.taskId}:`, (e as Error).message);
+                  workers = updateWorker(workers, worker.taskId, {
+                    status: "Escalated",
+                    completedAt: new Date().toISOString(),
+                    escalation: `Reviewer recommended retry_alternative with ${result.alternativeAgent} but failed to create run: ${(e as Error).message}`,
+                    facilitationResult: result,
+                  });
+                }
+              } else {
+                workers = updateWorker(workers, worker.taskId, {
+                  status: "Escalated",
+                  completedAt: new Date().toISOString(),
+                  escalation: `Reviewer recommended alternative agent "${result.alternativeAgent}" not in team roster`,
+                  facilitationResult: result,
+                });
+                log(`reviewer: alternative agent ${result.alternativeAgent} not available — escalated`);
+              }
+            } else {
+              // escalate or unrecognized
+              workers = updateWorker(workers, worker.taskId, {
+                status: "Escalated",
+                completedAt: new Date().toISOString(),
+                escalation: `Reviewer escalated task ${worker.taskId}: ${result.diagnosis}. ${result.suggestion ?? ""}`,
+                facilitationResult: result,
+              });
+              log(`reviewer escalated task ${worker.taskId}`);
+            }
+          } else {
+            // No result yet — check if the review run is done.
+            const reviewPhase = reviewRun?.status?.phase;
+            if (reviewPhase === "Succeeded" || reviewPhase === "Failed") {
+              // Review run finished but produced no parseable result — approve by default.
+              backlog = moveTask(backlog, worker.taskId, "done");
+              log(`reviewer produced no result (${reviewPhase}) — defaulting to approve for task ${worker.taskId}`);
+            }
+            // else: review still running — leave worker as Succeeded, retry next cycle
+          }
+        } else {
+          // No reviewer configured — original behavior: move to review column.
+          workers = updateWorker(workers, worker.taskId, {
+            status: "Succeeded",
+            completedAt: new Date().toISOString(),
+          });
+          backlog = moveTask(backlog, worker.taskId, "review");
+          log(`worker ${worker.runName} succeeded → task ${worker.taskId} in review`);
+        }
       } else if (runPhase === "Failed") {
         const taskDef = (board.tasks ?? []).find((t) => t.id === worker.taskId);
         if (!taskDef) {

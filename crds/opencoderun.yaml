@@ -77,6 +77,8 @@ spec:
                     sessionSummary:
                       type: string
                       maxLength: 32768
+                    successReview:
+                      type: boolean
                   required:
                     - targetRunName
                     - targetTaskId

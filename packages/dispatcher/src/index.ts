@@ -129,21 +129,29 @@ function wrapPatchStatus(fn: typeof patchStatus) {
 // Main
 
 async function main(): Promise<void> {
-  // Start the MCP server immediately so fail_run/get_status are available as soon as
-  // opencode accepts connections. The failure signal is a promise that resolves
-  // when the agent calls fail_run; runPrompt races against it.
+  // Start the MCP server immediately so fail_run/complete_run/get_status are
+  // available as soon as opencode accepts connections.
   let resolveFailure!: (reason: string) => void;
   const failureSignal = new Promise<string>((resolve) => { resolveFailure = resolve; });
   let failureSignalled = false;
+
+  let resolveCompletion!: (summary: string) => void;
+  const completionSignal = new Promise<string>((resolve) => { resolveCompletion = resolve; });
+  let completionSignalled = false;
 
   const patchedPatchStatus = wrapPatchStatus(patchStatus);
 
   const mcp = await startMcpServer(
     (reason) => {
-      if (failureSignalled) return; // only the first call counts
+      if (failureSignalled) return;
       failureSignalled = true;
       log(`fail_run called by agent: ${reason}`);
       resolveFailure(reason);
+    },
+    (summary) => {
+      if (completionSignalled) return;
+      completionSignalled = true;
+      resolveCompletion(summary);
     },
     () => _lastStatus,
   );
@@ -173,6 +181,7 @@ async function main(): Promise<void> {
         RUN_NAMESPACE,
         RUN_UID,
         failureSignal,
+        completionSignal,
       );
       _activeSessionID = result.sessionID;
       _runStartedAt = result.startedAt;

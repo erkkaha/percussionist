@@ -1,10 +1,14 @@
 // mcp-server.ts — minimal MCP (Model Context Protocol) HTTP server.
 //
-// Exposes two tools: fail_run(reason), get_status()
+// Exposes three tools: fail_run(reason), complete_run(summary), get_status()
 //
 // fail_run — the agent calls this to signal that it cannot complete its task.
 // The dispatcher detects the call and throws a "session error:" which causes
 // the standard failure path: main().catch → patchStatus(Failed).
+//
+// complete_run — the agent calls this to explicitly signal successful completion
+// with a human-readable summary. The orchestrator spawns a success-review
+// facilitator that approves or redirects the result before closing the task.
 //
 // get_status — returns the current run state (phase, session ID, tokens, etc.)
 // for agent self-awareness without cluster API access.
@@ -38,6 +42,26 @@ const TOOL_FAIL_RUN = {
       },
     },
     required: ["reason"],
+  },
+};
+
+const TOOL_COMPLETE_RUN = {
+  name: "complete_run",
+  description:
+    "Signal that this agent run has completed successfully. " +
+    "The orchestrator will trigger a success review by a facilitator agent, " +
+    "which may approve the result or redirect the task to another agent. " +
+    "Call this when you have finished your work and want an explicit review gate " +
+    "rather than relying on silent session completion.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      summary: {
+        type: "string",
+        description: "Human-readable summary of what was accomplished.",
+      },
+    },
+    required: ["summary"],
   },
 };
 
@@ -99,6 +123,7 @@ type RunStatus = {
 function handleMcp(
   req: JsonRpcRequest,
   onFailRun: (reason: string) => void,
+  onCompleteRun: (summary: string) => void,
   getStatus: () => RunStatus | null,
 ): JsonRpcResponse {
   switch (req.method) {
@@ -115,7 +140,7 @@ function handleMcp(
       return ok(req.id, {});
 
     case "tools/list":
-      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_GET_STATUS] });
+      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_GET_STATUS] });
 
     case "tools/call": {
       const toolName = (req.params?.name as string | undefined) ?? "";
@@ -127,6 +152,17 @@ function handleMcp(
         onFailRun(reason);
         return ok(req.id, {
           content: [{ type: "text", text: "Run marked as failed. The orchestrator will investigate." }],
+        });
+      }
+
+      if (toolName === "complete_run") {
+        const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
+        const summary = typeof args["summary"] === "string"
+          ? args["summary"]
+          : "agent called complete_run without a summary";
+        onCompleteRun(summary);
+        return ok(req.id, {
+          content: [{ type: "text", text: "Run marked as complete. The orchestrator will review the result." }],
         });
       }
 
@@ -159,6 +195,7 @@ export interface McpServer {
 
 export function startMcpServer(
   onFailRun: (reason: string) => void,
+  onCompleteRun: (summary: string) => void,
   getStatus: () => RunStatus | null,
 ): Promise<McpServer> {
   return new Promise((resolve, reject) => {
@@ -183,13 +220,13 @@ export function startMcpServer(
 
           // Notifications have no id — return 202 with empty body.
           if (rpc.id === undefined || rpc.id === null) {
-            handleMcp(rpc, onFailRun, getStatus); // side-effects only (e.g. notifications/initialized)
+            handleMcp(rpc, onFailRun, onCompleteRun, getStatus); // side-effects only (e.g. notifications/initialized)
             res.writeHead(202);
             res.end();
             return;
           }
 
-          const response = handleMcp(rpc, onFailRun, getStatus);
+          const response = handleMcp(rpc, onFailRun, onCompleteRun, getStatus);
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(response));
         })

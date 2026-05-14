@@ -255,6 +255,7 @@ export async function runPrompt(
   runNamespace: string,
   runUid: string,
   failureSignal: Promise<string>,
+  completionSignal: Promise<string>,
 ): Promise<{ sessionID: string; startedAt: string }> {
   const client = createOpencodeClient({ baseUrl: BASE_URL });
   const tokens = new TokenAggregator();
@@ -386,14 +387,24 @@ export async function runPrompt(
   hardTimeout.unref();
   void streamEvents().catch((e) => { if (!terminate) err("streamEvents fatal:", (e as Error).message); });
 
-  // Race the normal poll loop against the agent calling fail_run via the MCP
-  // server. If fail_run wins, throw a "session error:" so the standard failure
+  // Race the normal poll loop against:
+  // - fail_run: agent signals failure → throw "session error:" → Failed
+  // - complete_run: agent signals explicit success → succeed immediately
+  // If fail_run wins, throw a "session error:" so the standard failure
   // path in main().catch patches status to Failed.
+  // If complete_run wins, resolve normally — the caller patches Succeeded
+  // with the agent's summary as the completion message.
+  let agentCompletionSummary: string | undefined;
   const failureRaced = failureSignal.then((reason) => {
-    terminate = true; // stop poll loop and SSE stream
+    terminate = true;
     throw new Error(`session error: agent signalled failure — ${reason}`);
   });
-  await Promise.race([pollStatus(), failureRaced]);
+  const completionRaced = completionSignal.then((summary) => {
+    terminate = true;
+    agentCompletionSummary = summary;
+    log(`complete_run called by agent: ${summary}`);
+  });
+  await Promise.race([pollStatus(), failureRaced, completionRaced]);
   terminate = true;
   clearTimeout(hardTimeout);
 
@@ -410,7 +421,10 @@ export async function runPrompt(
   const completedAt = new Date().toISOString();
   const { tokensIn, tokensOut } = tokens.totals();
   await sendStats(sessionID, RunPhase.Succeeded, runStartedAt, completedAt, tokensIn, tokensOut);
-  await patchStatus({ phase: RunPhase.Succeeded, message: "session completed", completedAt });
+  const completionMessage = agentCompletionSummary
+    ? `agent signalled completion — ${agentCompletionSummary}`
+    : "session completed";
+  await patchStatus({ phase: RunPhase.Succeeded, message: completionMessage, completedAt });
   log("done");
 
   return { sessionID, startedAt: runStartedAt };

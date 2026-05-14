@@ -313,6 +313,8 @@ spec:
                             type: boolean
                           facilitationRunName:
                             type: string
+                          reviewRunName:
+                            type: string
                           facilitationResult:
                             type: object
                             properties:
@@ -325,6 +327,8 @@ spec:
                                   - retry_same
                                   - retry_alternative
                                   - skip
+                                  - approve
+                                  - escalate
                               alternativeAgent:
                                 type: string
                                 maxLength: 63
@@ -374,6 +378,8 @@ spec:
                               - retry_same
                               - retry_alternative
                               - skip
+                              - approve
+                              - escalate
                           alternativeAgent:
                             type: string
                             maxLength: 63

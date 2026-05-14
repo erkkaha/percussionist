@@ -190,6 +190,8 @@ export const FacilitationAction = {
   RetrySame: "retry_same",
   RetryAlternative: "retry_alternative",
   Skip: "skip",
+  Approve: "approve",
+  Escalate: "escalate",
 } as const;
 export type FacilitationAction =
   (typeof FacilitationAction)[keyof typeof FacilitationAction];
@@ -199,6 +201,8 @@ export const FacilitationSpecSchema = z.object({
   targetTaskId: z.string().min(1),
   failureReason: z.string().max(8192),
   sessionSummary: z.string().max(32768),
+  // When true this facilitation run is reviewing a successful run (not a failure).
+  successReview: z.boolean().default(false),
 });
 
 export type FacilitationSpec = z.infer<typeof FacilitationSpecSchema>;
@@ -209,6 +213,8 @@ export const FacilitationResultSchema = z.object({
     FacilitationAction.RetrySame,
     FacilitationAction.RetryAlternative,
     FacilitationAction.Skip,
+    FacilitationAction.Approve,
+    FacilitationAction.Escalate,
   ]),
   alternativeAgent: z.string().max(63).optional(),
   suggestion: z.string().max(4096).optional(),
@@ -400,6 +406,8 @@ export const WorkerStatusSchema = z.object({
   retryCount: z.number().int().min(0).default(0),
   facilitated: z.boolean().default(false),
   facilitationRunName: z.string().optional(),
+  // Name of the success-review facilitator run (set after worker Succeeded).
+  reviewRunName: z.string().optional(),
   facilitationResult: FacilitationResultSchema.optional(),
 });
 
