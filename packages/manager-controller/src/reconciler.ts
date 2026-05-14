@@ -22,9 +22,10 @@ import {
   getRun,
   getProject,
   patchProjectStatus,
+  patchProjectSpec,
 } from "@percussionist/kube";
 import { buildWorkerRun, workerRunName, MAX_RETRIES } from "./worker-builder.js";
-import { buildFacilitationRun, buildSuccessReviewRun, parseFacilitationResult } from "./facilitator.js";
+import { buildFacilitationRun, buildSuccessReviewRun, parseFacilitationResult, buildBuildTaskGeneratorRun, parseBuildTaskDefinitions } from "./facilitator.js";
 import {
   getTasksToPull,
   getTasksToRework,
@@ -42,7 +43,13 @@ const err = (...args: unknown[]) =>
 
 // K8s client
 const kc = new KubeConfig();
-kc.loadFromDefault();
+try {
+  kc.loadFromDefault();
+  console.log("[manager] KubeConfig loaded successfully");
+} catch (e) {
+  console.error("[manager] Failed to load KubeConfig:", (e as Error).message);
+  throw e;
+}
 export const k8s = kc.makeApiClient(CustomObjectsApi);
 export { kc };
 
@@ -133,6 +140,19 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
     backlog = { ...backlog, ready: [...(backlog["ready"] ?? []), ...unplaced] };
   }
 
+  // Clean up: move escalated tasks out of in-progress to unblock WIP slots.
+  const inProgress = backlog["in-progress"] ?? [];
+  const escalatedInProgress = inProgress.filter((taskId) => {
+    const worker = workers.find((w) => w.taskId === taskId);
+    return worker?.status === "Escalated";
+  });
+  if (escalatedInProgress.length > 0) {
+    log(`moving ${escalatedInProgress.length} escalated task(s) from in-progress → review: ${escalatedInProgress.join(", ")}`);
+    for (const taskId of escalatedInProgress) {
+      backlog = moveTask(backlog, taskId, "review");
+    }
+  }
+
   // ------------------------------------------------------------------
   // PULL PHASE: move ready tasks → in-progress, create worker runs.
   // ------------------------------------------------------------------
@@ -183,9 +203,27 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   // ------------------------------------------------------------------
   // MONITOR PHASE: poll each Running worker's OpenCodeRun status.
   // ------------------------------------------------------------------
-  const FACILITATOR_AGENT = process.env.FACILITATOR_AGENT_NAME ?? "facilitator";
-  const facilitatorEnabled = (board.agents ?? []).some(
-    (a) => a.name === FACILITATOR_AGENT,
+  const FAILURE_FACILITATOR_AGENT =
+    process.env.FAILURE_FACILITATOR_AGENT_NAME ??
+    process.env.FACILITATOR_AGENT_NAME ??
+    "facilitator-failure";
+  const REVIEW_FACILITATOR_AGENT =
+    process.env.REVIEW_FACILITATOR_AGENT_NAME ??
+    process.env.FACILITATOR_AGENT_NAME ??
+    "facilitator-review";
+  const BUILDGEN_FACILITATOR_AGENT =
+    process.env.BUILDGEN_FACILITATOR_AGENT_NAME ??
+    process.env.FACILITATOR_AGENT_NAME ??
+    "facilitator-buildgen";
+
+  const failureFacilitatorEnabled = (board.agents ?? []).some(
+    (a) => a.name === FAILURE_FACILITATOR_AGENT,
+  );
+  const reviewFacilitatorEnabled = (board.agents ?? []).some(
+    (a) => a.name === REVIEW_FACILITATOR_AGENT,
+  );
+  const buildgenFacilitatorEnabled = (board.agents ?? []).some(
+    (a) => a.name === BUILDGEN_FACILITATOR_AGENT,
   );
 
   for (const worker of workers.filter(
@@ -202,7 +240,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
 
         // Success-review gate: if a reviewer agent is in the team roster,
         // spawn a success-review facilitator run before moving to done.
-        if (facilitatorEnabled && taskDef && !worker.reviewRunName) {
+        if (reviewFacilitatorEnabled && taskDef && !worker.reviewRunName) {
           // First time we see this worker Succeeded — spawn a review run.
           let sessionSummary = "";
           if (run.status?.sessionID && run.status?.serviceName) {
@@ -231,6 +269,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             run.status ?? {},
             sessionSummary,
             reviewRunName,
+            REVIEW_FACILITATOR_AGENT,
           );
 
           try {
@@ -251,7 +290,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             backlog = moveTask(backlog, worker.taskId, "review");
             log(`worker ${worker.runName} succeeded (no reviewer) → task ${worker.taskId} in review`);
           }
-        } else if (facilitatorEnabled && taskDef && worker.reviewRunName) {
+        } else if (reviewFacilitatorEnabled && taskDef && worker.reviewRunName) {
           // Review run already spawned — check its result.
           let reviewRun: Awaited<ReturnType<typeof getRun>> | null = null;
           try {
@@ -305,6 +344,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                     escalation: `Reviewer recommended retry_alternative with ${result.alternativeAgent} but failed to create run: ${(e as Error).message}`,
                     facilitationResult: result,
                   });
+                  backlog = moveTask(backlog, worker.taskId, "review");
                 }
               } else {
                 workers = updateWorker(workers, worker.taskId, {
@@ -313,6 +353,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                   escalation: `Reviewer recommended alternative agent "${result.alternativeAgent}" not in team roster`,
                   facilitationResult: result,
                 });
+                backlog = moveTask(backlog, worker.taskId, "review");
                 log(`reviewer: alternative agent ${result.alternativeAgent} not available — escalated`);
               }
             } else {
@@ -323,6 +364,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                 escalation: `Reviewer escalated task ${worker.taskId}: ${result.diagnosis}. ${result.suggestion ?? ""}`,
                 facilitationResult: result,
               });
+              backlog = moveTask(backlog, worker.taskId, "review");
               log(`reviewer escalated task ${worker.taskId}`);
             }
           } else {
@@ -358,7 +400,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
         // before the run phase was ever observed as Failed.
         if (
           !worker.facilitated &&
-          facilitatorEnabled
+          failureFacilitatorEnabled
         ) {
           // Read session summary for the facilitator's context.
           let sessionSummary = "";
@@ -391,6 +433,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             run.status ?? {},
             sessionSummary,
             facilitationRunName,
+            FAILURE_FACILITATOR_AGENT,
           );
 
           try {
@@ -418,11 +461,12 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                 completedAt: new Date().toISOString(),
                 escalation: `Task: ${worker.taskId}\nWorker: ${worker.runName}\nError: ${msg}\nFacilitator creation failed.\nRetries exhausted (${MAX_RETRIES}). Human review needed.`,
               });
+              backlog = moveTask(backlog, worker.taskId, "review");
               log(`task ${worker.taskId} escalated after facilitator creation failure and retries exhausted`);
             }
           }
         } else if (
-          facilitatorEnabled &&
+          failureFacilitatorEnabled &&
           worker.facilitated &&
           worker.facilitationRunName
         ) {
@@ -484,6 +528,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                     completedAt: new Date().toISOString(),
                     escalation: `Facilitator recommended retry_alternative with ${result.alternativeAgent} but failed to create run: ${(e as Error).message}`,
                   });
+                  backlog = moveTask(backlog, worker.taskId, "review");
                 }
               } else {
                 // Alternative agent not available — escalate.
@@ -494,6 +539,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                   escalation: `Task: ${worker.taskId}\nWorker: ${worker.runName}\nFacilitator diagnosis: ${result.diagnosis}\nAction: ${msg}`,
                   facilitationResult: result,
                 });
+                backlog = moveTask(backlog, worker.taskId, "review");
                 log(`facilitator: alternative agent ${result.alternativeAgent} not available — escalated`);
               }
             } else {
@@ -504,6 +550,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                 escalation: `Task: ${worker.taskId}\nWorker: ${worker.runName}\nFacilitator diagnosis: ${result.diagnosis}\nAction: skip recommended`,
                 facilitationResult: result,
               });
+              backlog = moveTask(backlog, worker.taskId, "review");
               log(`facilitator recommends skip for ${worker.taskId}`);
             }
           } else {
@@ -527,6 +574,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                   completedAt: new Date().toISOString(),
                   escalation: `Task: ${worker.taskId}\nWorker: ${worker.runName}\nError: ${msg}\nFacilitator returned no actionable result (${facilitatorPhase}).\nHuman review needed.`,
                 });
+                backlog = moveTask(backlog, worker.taskId, "review");
                 log(`task ${worker.taskId} escalated after facilitator returned no result and retries exhausted`);
               }
             }
@@ -556,6 +604,8 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             completedAt: new Date().toISOString(),
             escalation,
           });
+          // Remove escalated task from in-progress to unblock other tasks
+          backlog = moveTask(backlog, worker.taskId, "review");
           log(`task ${worker.taskId} escalated after ${MAX_RETRIES} retries`);
         }
       } else if (runPhase === "Cancelled") {
@@ -591,6 +641,206 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
       } else {
         err(`monitor worker ${worker.runName}:`, msg);
       }
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // REVIEW APPROVAL PHASE: handle approved PLAN tasks and request-changes.
+  // ------------------------------------------------------------------
+  const reviewTasks = backlog["review"] ?? [];
+  
+  for (const taskId of reviewTasks) {
+    const taskDef = (board.tasks ?? []).find((t) => t.id === taskId);
+    if (!taskDef) continue;
+
+    const approvedAnnotation = fresh.metadata.annotations?.[`percussionist.dev/approved-${taskId}`];
+    const requestChangesAnnotation = fresh.metadata.annotations?.[`percussionist.dev/request-changes-${taskId}`];
+
+    // Handle request-changes first
+    if (requestChangesAnnotation === "true") {
+      const comment = fresh.metadata.annotations?.[`percussionist.dev/rework-${taskId}`] ?? "Please address the review feedback.";
+      
+      // If this is a PLAN task with BUILD tasks already created, delete them
+      if (taskDef.type === "PLAN") {
+        const worker = workers.find((w) => w.taskId === taskId);
+        const createdBuildTasks = worker?.createdBuildTasks ?? [];
+        
+        if (createdBuildTasks.length > 0) {
+          log(`deleting ${createdBuildTasks.length} BUILD tasks created from PLAN ${taskId}: ${createdBuildTasks.join(", ")}`);
+          
+          // Remove BUILD tasks from spec
+          const updatedTasks = (board.tasks ?? []).filter((t) => !createdBuildTasks.includes(t.id));
+          
+          // Remove BUILD tasks from backlog
+          for (const col of Object.keys(backlog)) {
+            backlog[col] = (backlog[col] ?? []).filter((id) => !createdBuildTasks.includes(id));
+          }
+          
+          // Clear worker BUILD task tracking
+          if (worker) {
+            workers = updateWorker(workers, taskId, {
+              buildTasksFacilitatorRun: undefined,
+              buildTasksCreated: false,
+              createdBuildTasks: [],
+            });
+          }
+          
+          // Patch project to remove BUILD tasks
+          try {
+            await patchProjectSpec(projectName, { board: { ...board, tasks: updatedTasks } }, ns, k8s);
+            log(`removed BUILD tasks from project spec for PLAN ${taskId}`);
+          } catch (e) {
+            err(`failed to remove BUILD tasks for PLAN ${taskId}:`, (e as Error).message);
+          }
+        }
+      }
+      
+      // Move task to rework
+      backlog = moveTask(backlog, taskId, "rework");
+      log(`task ${taskId} moved to rework with feedback`);
+      continue;
+    }
+
+    // Handle approval for PLAN tasks
+    if (approvedAnnotation === "true" && taskDef.type === "PLAN") {
+      const worker = workers.find((w) => w.taskId === taskId);
+
+      if (!buildgenFacilitatorEnabled) {
+        workers = updateWorker(workers, taskId, {
+          status: "Escalated",
+          escalation: `BUILD generation agent "${BUILDGEN_FACILITATOR_AGENT}" is not configured in board.agents for PLAN ${taskId}.`,
+          buildTasksCreated: true,
+        });
+        log(`BUILD generation agent ${BUILDGEN_FACILITATOR_AGENT} missing for PLAN ${taskId} — escalated`);
+        continue;
+      }
+      
+      // Check if BUILD task generation is needed
+      if (!worker?.buildTasksFacilitatorRun) {
+        // Spawn facilitator to generate BUILD tasks
+        const buildGenRunName = `${projectName}-build-gen-${taskId.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${randomBytes(3).toString("hex")}`;
+        
+        const buildGenRun = buildBuildTaskGeneratorRun(
+          fresh,
+          taskDef,
+          worker?.runName ?? "",
+          buildGenRunName,
+          BUILDGEN_FACILITATOR_AGENT,
+        );
+        
+        try {
+          await createRun(buildGenRun, ns, k8s);
+          workers = updateWorker(workers, taskId, {
+            buildTasksFacilitatorRun: buildGenRunName,
+          });
+          log(`spawned BUILD task generator ${buildGenRunName} for approved PLAN ${taskId}`);
+        } catch (e) {
+          err(`failed to create BUILD task generator for ${taskId}:`, (e as Error).message);
+          workers = updateWorker(workers, taskId, {
+            status: "Escalated",
+            escalation: `Failed to spawn BUILD task generator: ${(e as Error).message}`,
+          });
+        }
+      } else if (!worker.buildTasksCreated) {
+        // BUILD task generator exists, try to parse result
+        let buildGenRun: Awaited<ReturnType<typeof getRun>> | null = null;
+        try {
+          buildGenRun = await getRun(worker.buildTasksFacilitatorRun, ns, k8s);
+        } catch {
+          // Not found yet — wait
+        }
+        
+        let buildTaskDefs: Awaited<ReturnType<typeof parseBuildTaskDefinitions>> | null = null;
+        try {
+          buildTaskDefs = await parseBuildTaskDefinitions(
+            worker.buildTasksFacilitatorRun,
+            ns,
+            buildGenRun?.status?.serviceName,
+            buildGenRun?.status?.sessionID,
+          );
+        } catch (e) {
+          err(`failed to parse BUILD task definitions for ${taskId}:`, (e as Error).message);
+        }
+        
+        if (buildTaskDefs !== null) {
+          // Valid result (array, possibly empty)
+          if (buildTaskDefs.length === 0) {
+            // Empty array — escalate for human review
+            workers = updateWorker(workers, taskId, {
+              status: "Escalated",
+              escalation: `BUILD task generator returned empty array. PLAN ${taskId} may need manual BUILD task creation or should be marked complete as-is.`,
+              buildTasksCreated: true,
+            });
+            log(`BUILD task generator returned empty array for PLAN ${taskId} — escalated`);
+          } else {
+            // Create BUILD tasks
+            const currentSequence = boardStatus.sequences?.BUILD ?? 0;
+            const newBuildTasks: typeof board.tasks = [];
+            const createdIds: string[] = [];
+            
+            for (let i = 0; i < buildTaskDefs.length; i++) {
+              const def = buildTaskDefs[i];
+              if (!def) continue;
+              const buildId = `BUILD-${currentSequence + i + 1}`;
+              createdIds.push(buildId);
+              
+              newBuildTasks.push({
+                id: buildId,
+                type: "BUILD",
+                title: def.title,
+                description: def.description,
+                agent: def.agent ?? "builder",
+                priority: def.priority ?? "medium",
+              });
+            }
+            
+            const updatedTasks = [...(board.tasks ?? []), ...newBuildTasks];
+            const updatedSequences = {
+              ...(boardStatus.sequences ?? {}),
+              BUILD: currentSequence + buildTaskDefs.length,
+            };
+            
+            // Patch project to add BUILD tasks
+            try {
+              await patchProjectSpec(projectName, { board: { ...board, tasks: updatedTasks } }, ns, k8s);
+              
+              // Update worker tracking
+              workers = updateWorker(workers, taskId, {
+                buildTasksCreated: true,
+                createdBuildTasks: createdIds,
+              });
+              
+              // Update sequences in status
+              boardStatus.sequences = updatedSequences;
+              
+              // Move PLAN to done
+              backlog = moveTask(backlog, taskId, "done");
+              
+              log(`created ${newBuildTasks.length} BUILD tasks from PLAN ${taskId}: ${createdIds.join(", ")}`);
+            } catch (e) {
+              err(`failed to create BUILD tasks for PLAN ${taskId}:`, (e as Error).message);
+              workers = updateWorker(workers, taskId, {
+                status: "Escalated",
+                escalation: `Failed to create BUILD tasks: ${(e as Error).message}`,
+              });
+            }
+          }
+        } else {
+          // No result yet — check if facilitator run is done
+          const buildGenPhase = buildGenRun?.status?.phase;
+          if (buildGenPhase === "Succeeded" || buildGenPhase === "Failed") {
+            // Facilitator done but no parseable result
+            workers = updateWorker(workers, taskId, {
+              status: "Escalated",
+              escalation: `BUILD task generator finished (${buildGenPhase}) but produced no valid JSON array. Human review needed.`,
+              buildTasksCreated: true,
+            });
+            log(`BUILD task generator for PLAN ${taskId} produced no valid result (${buildGenPhase}) — escalated`);
+          }
+          // else: facilitator still running, retry next cycle
+        }
+      }
+      // If buildTasksCreated is already true, PLAN should have been moved to done in a previous cycle
     }
   }
 

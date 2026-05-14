@@ -302,6 +302,25 @@ export async function patchProjectSpec(
   )) as OpenCodeProject;
 }
 
+export async function patchProject(
+  name: string,
+  patch: { metadata?: Partial<OpenCodeProject["metadata"]>; spec?: Partial<OpenCodeProject["spec"]> },
+  ns: string = NAMESPACE,
+  client = custom(),
+): Promise<OpenCodeProject> {
+  return (await client.patchNamespacedCustomObject(
+    {
+      group: API_GROUP,
+      version: API_VERSION,
+      namespace: ns,
+      plural: PLURAL_PROJECT,
+      name,
+      body: patch,
+    },
+    setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
+  )) as OpenCodeProject;
+}
+
 export async function patchProjectStatus(
   name: string,
   statusPatch: { board?: Partial<BoardStatus> },

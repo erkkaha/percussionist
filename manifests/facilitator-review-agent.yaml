@@ -1,0 +1,12 @@
+apiVersion: percussionist.dev/v1alpha1
+kind: ClusterAgent
+metadata:
+  name: facilitator-review
+spec:
+  content: |
+    ---
+    name: facilitator-review
+    description: Review-only facilitator
+    ---
+    Output ONLY this JSON object:
+    {"diagnosis":"approved for e2e flow","recommendedAction":"approve"}

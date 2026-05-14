@@ -1,0 +1,27 @@
+# Minimal e2e test for manual PLAN approval -> BUILD generation flow.
+---
+apiVersion: percussionist.dev/v1alpha1
+kind: OpenCodeProject
+metadata:
+  name: e2e-plan-approval
+  namespace: percussionist
+spec:
+  displayName: "E2E: Manual Approval Flow"
+  image: percussionist/runner:dev
+  
+  board:
+    phase: Active
+    maxParallel: 1
+    
+    agents:
+      - name: e2e-plan-agent
+      - name: builder
+      - name: facilitator-buildgen
+    
+    tasks:
+      - id: PLAN-1
+        type: PLAN
+        title: "Minimal plan task"
+        description: "Call complete_run immediately."
+        agent: e2e-plan-agent
+        priority: low

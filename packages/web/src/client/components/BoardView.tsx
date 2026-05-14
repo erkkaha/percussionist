@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchBoard, addBoardTask, deleteBoardTask, fetchAgents, patchBoardSpec, retryEscalatedTask } from "../lib/api";
+import { fetchBoard, addBoardTask, deleteBoardTask, fetchAgents, patchBoardSpec, retryEscalatedTask, fetchNextTaskId, approveTask, requestChangesTask } from "../lib/api";
 import type { BoardTask, ManagerMetrics } from "../lib/types";
 
 const DEFAULT_COLUMNS = ["ready", "in-progress", "review", "rework", "done"];
@@ -75,12 +75,23 @@ export default function BoardView() {
   });
 
   const [showAddTask, setShowAddTask] = useState(false);
-  const [taskId, setTaskId] = useState("");
+  const [taskType, setTaskType] = useState<"PLAN" | "BUILD">("PLAN");
+
+  // Fetch next task ID based on selected type.
+  const { data: nextId = "" } = useQuery({
+    queryKey: ["nextTaskId", projectName, taskType],
+    queryFn: () => fetchNextTaskId(projectName, taskType),
+    enabled: showAddTask,
+  });
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDesc, setTaskDesc] = useState("");
   const [taskAgent, setTaskAgent] = useState("");
   const [taskPriority, setTaskPriority] = useState<"high" | "medium" | "low">("medium");
   const [addError, setAddError] = useState<string | null>(null);
+
+  const [showRequestChanges, setShowRequestChanges] = useState(false);
+  const [requestChangesTaskId, setRequestChangesTaskId] = useState("");
+  const [requestChangesComment, setRequestChangesComment] = useState("");
 
   const addMutation = useMutation({
     mutationFn: async (task: BoardTask) => {
@@ -93,8 +104,9 @@ export default function BoardView() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["board", projectName] });
+      queryClient.invalidateQueries({ queryKey: ["nextTaskId", projectName] });
       setShowAddTask(false);
-      setTaskId(""); setTaskTitle(""); setTaskDesc(""); setTaskAgent(""); setAddError(null);
+      setTaskTitle(""); setTaskDesc(""); setTaskAgent(""); setAddError(null);
     },
     onError: (e) => setAddError((e as Error).message),
   });
@@ -108,6 +120,22 @@ export default function BoardView() {
     mutationFn: (id: string) =>
       retryEscalatedTask(projectName, id, data?.status.workers ?? [], data?.status.backlog ?? {}),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", projectName] }),
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: (taskId: string) => approveTask(projectName, taskId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", projectName] }),
+  });
+
+  const requestChangesMutation = useMutation({
+    mutationFn: ({ taskId, comment }: { taskId: string; comment: string }) =>
+      requestChangesTask(projectName, taskId, comment),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["board", projectName] });
+      setShowRequestChanges(false);
+      setRequestChangesTaskId("");
+      setRequestChangesComment("");
+    },
   });
 
   if (isLoading) return <p className="text-sm text-text-dim">Loading board…</p>;
@@ -156,13 +184,35 @@ export default function BoardView() {
       {showAddTask && (
         <div className="rounded-md border border-border bg-surface p-4 space-y-3 max-w-lg">
           <h2 className="text-sm font-semibold">Add Task</h2>
-          <div className="grid grid-cols-2 gap-3">
-            <input
-              placeholder="ID (e.g. F-104)"
-              value={taskId}
-              onChange={(e) => setTaskId(e.target.value)}
-              className="rounded border border-border bg-surface-raised px-2 py-1.5 text-sm font-mono"
-            />
+          <div className="space-y-2">
+            <label className="text-xs text-text-dim">Task Type</label>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  value="PLAN"
+                  checked={taskType === "PLAN"}
+                  onChange={(e) => setTaskType(e.target.value as "PLAN" | "BUILD")}
+                  className="cursor-pointer"
+                />
+                <span className="text-sm">PLAN</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  value="BUILD"
+                  checked={taskType === "BUILD"}
+                  onChange={(e) => setTaskType(e.target.value as "PLAN" | "BUILD")}
+                  className="cursor-pointer"
+                />
+                <span className="text-sm">BUILD</span>
+              </label>
+            </div>
+            {nextId && (
+              <p className="text-xs text-text-dim font-mono">Next ID: {nextId}</p>
+            )}
+          </div>
+          <div className="grid grid-cols-1 gap-3">
             <select
               value={taskAgent}
               onChange={(e) => setTaskAgent(e.target.value)}
@@ -197,12 +247,13 @@ export default function BoardView() {
             </select>
             <button
               onClick={() => {
-                if (!taskId.trim() || !taskTitle.trim() || !taskAgent) {
-                  setAddError("ID, title, and agent are required");
+                if (!taskTitle.trim() || !taskAgent) {
+                  setAddError("Title and agent are required");
                   return;
                 }
                 addMutation.mutate({
-                  id: taskId.trim(),
+                  id: nextId,
+                  type: taskType,
                   title: taskTitle.trim(),
                   description: taskDesc.trim() || undefined,
                   agent: taskAgent,
@@ -291,6 +342,28 @@ export default function BoardView() {
                           {retryMutation.isPending && retryMutation.variables === id ? "Retrying…" : "↺ Retry"}
                         </button>
                       )}
+                      {col === "review" && (
+                        <div className="flex gap-2 mt-1">
+                          <button
+                            onClick={() => approveMutation.mutate(id)}
+                            disabled={approveMutation.isPending}
+                            className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors font-medium"
+                            title="Approve this task"
+                          >
+                            {approveMutation.isPending && approveMutation.variables === id ? "Approving…" : "✓ Approve"}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setRequestChangesTaskId(id);
+                              setShowRequestChanges(true);
+                            }}
+                            className="text-xs text-text-dim hover:text-phase-failed transition-colors"
+                            title="Request changes"
+                          >
+                            ✕ Request Changes
+                          </button>
+                        </div>
+                      )}
                       <button
                         onClick={() => deleteMutation.mutate(id)}
                         className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-xs text-text-dim hover:text-phase-failed transition-all"
@@ -309,6 +382,50 @@ export default function BoardView() {
           );
         })}
       </div>
+
+      {/* Request Changes Modal */}
+      {showRequestChanges && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="rounded-md border border-border bg-surface p-4 space-y-3 max-w-md w-full mx-4">
+            <h2 className="text-sm font-semibold">Request Changes for {requestChangesTaskId}</h2>
+            <textarea
+              placeholder="Enter your review comments..."
+              value={requestChangesComment}
+              onChange={(e) => setRequestChangesComment(e.target.value)}
+              rows={5}
+              className="w-full rounded border border-border bg-surface-raised px-2 py-1.5 text-sm resize-y"
+              autoFocus
+            />
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowRequestChanges(false);
+                  setRequestChangesTaskId("");
+                  setRequestChangesComment("");
+                }}
+                className="rounded-md border border-border hover:bg-surface-raised px-3 py-1.5 text-sm font-medium text-text transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (!requestChangesComment.trim()) {
+                    return;
+                  }
+                  requestChangesMutation.mutate({
+                    taskId: requestChangesTaskId,
+                    comment: requestChangesComment.trim(),
+                  });
+                }}
+                disabled={requestChangesMutation.isPending || !requestChangesComment.trim()}
+                className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] disabled:opacity-40 px-3 py-1.5 text-sm font-medium text-text transition-colors"
+              >
+                {requestChangesMutation.isPending ? "Submitting…" : "Submit"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

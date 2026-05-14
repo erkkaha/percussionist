@@ -24,6 +24,7 @@ export {
   getProject,
   createProject,
   updateProject,
+  patchProject,
   patchProjectSpec,
   patchProjectStatus,
   deleteProject,

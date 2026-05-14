@@ -107,6 +107,7 @@ export interface BoardTaskAddOpts {
   id: string;
   title: string;
   description?: string;
+  type: "PLAN" | "BUILD";
   priority?: "high" | "medium" | "low";
   agent: string;
   column?: string;
@@ -146,6 +147,7 @@ export async function runBoardTaskAdd(
     id: opts.id,
     title: opts.title,
     description: opts.description,
+    type: opts.type,
     priority: opts.priority ?? "medium",
     agent: opts.agent,
   };

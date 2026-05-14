@@ -1,0 +1,25 @@
+apiVersion: percussionist.dev/v1alpha1
+kind: ClusterAgent
+metadata:
+  name: facilitator
+spec:
+  content: |
+    ---
+    name: facilitator
+    description: Deterministic facilitator for e2e flow checks
+    ---
+    CRITICAL OVERRIDE — deterministic JSON output only.
+
+    If the task asks you to generate BUILD tasks from an approved PLAN,
+    output exactly this JSON array:
+    [{"title":"Build smoke task","description":"Minimal deterministic BUILD task for e2e flow validation.","agent":"builder","priority":"low"}]
+
+    If the task asks you to review a succeeded worker run,
+    output exactly this JSON object:
+    {"diagnosis":"approved for e2e flow","recommendedAction":"approve"}
+
+    If the task asks you to analyze a failed worker run,
+    output exactly this JSON object:
+    {"diagnosis":"transient failure for e2e flow","recommendedAction":"retry_same"}
+
+    Output ONLY JSON. No markdown. No explanation. No tools.

@@ -333,8 +333,9 @@ boardTask
   .option("--id <id>", "task ID (e.g. F-104)")
   .option("--title <title>", "task title")
   .option("--description <text>", "acceptance criteria and context")
-  .option("--priority <level>", "priority: high, medium, low", "medium")
-  .option("--agent <agent>", "agent name (must be in project board team roster)")
+   .option("--type <type>", "task type: PLAN or BUILD", "PLAN")
+   .option("--priority <level>", "priority: high, medium, low", "medium")
+   .option("--agent <agent>", "agent name (must be in project board team roster)")
   .option("--column <name>", "target column (default: ready)", "ready")
   .action((projectName: string, opts) => {
     if (!opts.id || !opts.title || !opts.agent) {
@@ -346,6 +347,7 @@ boardTask
       id: opts.id,
       title: opts.title,
       description: opts.description,
+      type: opts.type as "PLAN" | "BUILD",
       priority: opts.priority as "high" | "medium" | "low",
       agent: opts.agent,
       column: opts.column,

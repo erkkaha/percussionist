@@ -276,3 +276,44 @@ export async function patchBoardSpec(
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
 }
+
+export async function fetchNextTaskId(
+  project: string,
+  type: "PLAN" | "BUILD",
+): Promise<string> {
+  const params = new URLSearchParams({ type });
+  return fetchJSON<string>(`/projects/${encodeURIComponent(project)}/board/next-id?${params}`);
+}
+
+export async function approveTask(
+  project: string,
+  taskId: string,
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskId)}/approve`,
+    { method: "POST" },
+  );
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function requestChangesTask(
+  project: string,
+  taskId: string,
+  comment: string,
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskId)}/request-changes`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comment }),
+    },
+  );
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}

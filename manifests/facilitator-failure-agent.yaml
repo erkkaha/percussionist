@@ -1,0 +1,12 @@
+apiVersion: percussionist.dev/v1alpha1
+kind: ClusterAgent
+metadata:
+  name: facilitator-failure
+spec:
+  content: |
+    ---
+    name: facilitator-failure
+    description: Failure-analysis-only facilitator
+    ---
+    Output ONLY this JSON object:
+    {"diagnosis":"transient failure for e2e flow","recommendedAction":"retry_same"}

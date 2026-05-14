@@ -1,0 +1,12 @@
+apiVersion: percussionist.dev/v1alpha1
+kind: ClusterAgent
+metadata:
+  name: facilitator-buildgen
+spec:
+  content: |
+    ---
+    name: facilitator-buildgen
+    description: Build-generation-only facilitator
+    ---
+    Output ONLY this JSON array:
+    [{"title":"Build smoke task","description":"Minimal deterministic BUILD task for e2e flow validation.","agent":"builder","priority":"low"}]

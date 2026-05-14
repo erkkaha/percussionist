@@ -373,10 +373,20 @@ export type OpenCodeRun = z.infer<typeof OpenCodeRunSchema>;
 // The board is auto-created (empty) when the project is created.
 // The manager-controller watches projects and drives the board lifecycle.
 
+// Task type enum
+export const TaskType = {
+  Plan: "PLAN",
+  Build: "BUILD",
+} as const;
+export type TaskType = (typeof TaskType)[keyof typeof TaskType];
+
 // A task on the board.
 export const BoardTaskSchema = z.object({
-  // Unique identifier (e.g. "F-104", "BUG-42"). Immutable once created.
+  // Unique identifier (e.g. "PLAN-1", "BUILD-5"). Immutable once created.
   id: z.string().min(1).max(32),
+
+  // Task type - PLAN or BUILD.
+  type: z.enum(["PLAN", "BUILD"]),
 
   // Short human-readable title shown on the task card.
   title: z.string().min(1).max(256),
@@ -409,6 +419,10 @@ export const WorkerStatusSchema = z.object({
   // Name of the success-review facilitator run (set after worker Succeeded).
   reviewRunName: z.string().optional(),
   facilitationResult: FacilitationResultSchema.optional(),
+  // BUILD task generation tracking (for PLAN tasks).
+  buildTasksFacilitatorRun: z.string().optional(),
+  buildTasksCreated: z.boolean().optional(),
+  createdBuildTasks: z.array(z.string()).optional(),
 });
 
 export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;
@@ -478,6 +492,8 @@ export const BoardStatusSchema = z.object({
   backlog: z.record(z.string().array()).default({ ready: [] }),
   workers: WorkerStatusSchema.array().default([]),
   activeWorkers: z.number().int().min(0).default(0),
+  // Task ID sequence counters per type (PLAN, BUILD).
+  sequences: z.record(z.number().int().min(0)).optional(),
   escalations: z.string().array().optional(),
   pendingQuestions: PendingQuestionSchema.array().optional(),
   facilitations: FacilitationResultSchema.array().optional(),

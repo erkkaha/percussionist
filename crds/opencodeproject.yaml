@@ -217,6 +217,11 @@ spec:
                             type: string
                             minLength: 1
                             maxLength: 32
+                          type:
+                            type: string
+                            enum:
+                              - PLAN
+                              - BUILD
                           title:
                             type: string
                             minLength: 1
@@ -235,6 +240,7 @@ spec:
                             minLength: 1
                         required:
                           - id
+                          - type
                           - title
                           - agent
                       maxItems: 100
@@ -338,12 +344,23 @@ spec:
                             required:
                               - diagnosis
                               - recommendedAction
+                          buildTasksFacilitatorRun:
+                            type: string
+                          buildTasksCreated:
+                            type: boolean
+                          createdBuildTasks:
+                            type: array
+                            items:
+                              type: string
                         required:
                           - taskId
                           - status
                     activeWorkers:
                       type: integer
                       minimum: 0
+                    sequences:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     escalations:
                       type: array
                       items:
