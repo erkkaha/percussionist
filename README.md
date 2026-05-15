@@ -34,6 +34,7 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
   `kubectl`.
 - **Provider auth** — OAuth tokens (GitHub Copilot, ChatGPT Plus, Claude Pro)
   imported once and shared cluster-wide via Kubernetes Secrets.
+- **Manager agent** — the manager controller embeds an OpenCode agent (opencode-web sidecar) with K8s tool access, a decision engine that diagnoses failures and parses ambiguous output, and an interactive chat API. Chat via the web dashboard or `beatctl chat`.
 
 ## Repo layout
 
@@ -46,6 +47,7 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 ├── deploy/             # Kubernetes Deployment + RBAC manifests
 │   ├── operator.yaml
 │   ├── manager-controller.yaml
+│   ├── agent-config.yaml     # opencode.json config + agent skill for manager decision engine
 │   └── web.yaml
 ├── examples/           # Sample OpenCodeProject and OpenCodeRun manifests
 ├── images/
@@ -57,9 +59,9 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 │   ├── api/            # Shared Zod schemas, constants, type helpers
 │   ├── operator/       # CRD reconciler (informer + reconciler loop)
 │   ├── dispatcher/     # Sidecar: session driver + MCP server (fail_run, get_status)
-│   ├── cli/            # beatctl — user-facing CLI
-│   ├── web/            # Dashboard SPA + Hono server + bun:sqlite stats DB
-│   └── manager-controller/  # Watches OpenCodeProject CRs, drives the embedded board
+│   ├── cli/            # beatctl — user-facing CLI (includes `chat` command)
+│   ├── web/            # Dashboard SPA + Hono server + bun:sqlite stats DB (includes agent-chat proxy)
+│   └── manager-controller/  # Board controller + embedded agent module (decision engine, MCP tools, chat handler)
 └── scripts/            # Cluster image loader + smoke test helpers
 ```
 
@@ -297,6 +299,44 @@ spec:
 
 CLI reference: `beatctl agent list`, `beatctl agent create --name <name> -f agent.yaml`
 
+### Manager Agent
+
+The manager controller embeds an LLM-powered agent that diagnoses board issues,
+parses ambiguous facilitator output, and supports interactive chat. It runs as
+a module inside the manager process alongside an opencode-web sidecar container.
+
+```mermaid
+flowchart TD
+    MGR[manager-controller\nDeployment]
+
+    MGR -->|in-process| DEC[Decision Engine\nfailure analysis\nfacilitation parsing\nreview parsing\nbuild task gen parsing]
+    MGR -->|in-process| MCP[MCP Server :4097\n6 K8s tools]
+    MGR -->|in-process| CHAT[Chat Handler :4098]
+
+    MGR -.->|sidecar| SIDECAR[opencode-web :4096\nghcr.io/anomalyco/opencode]
+
+    SIDECAR -->|raw HTTP| CHAT
+    SIDECAR -->|raw HTTP| DEC
+
+    MCP -->|read/write| K8S[Kubernetes API]
+    CHAT -->|SSE + POST| WEB[Web Dashboard\nvia agent-chat proxy]
+    CHAT -->|port-forward| CLI[beatctl chat]
+
+    K8S -->|session ConfigMap| CM[(manager-chat-history\nConfigMap)]
+    CM -->|restore on restart| CHAT
+
+    AGCFG[deploy/agent-config.yaml\nConfigMap] -->|mounted volume\nagent definition| SIDECAR
+```
+
+The agent module hooks into the board reconcile at four escalation points:
+
+| Decision point | Trigger | Agent fallback |
+|----------------|---------|----------------|
+| **Failure analysis** | Worker run retries exhausted (3+ failures) | Diagnoses root cause, recommends retry_same / retry_alternative / skip / escalate |
+| **Facilitation parse** | Facilitator agent finished but standard JSON parser failed | Reads raw session, reconstructs valid FacilitationResult |
+| **Review parse** | Success-review facilitator finished but no parseable result | Reads raw review session, extracts approval/rejection instead of blind approve |
+| **BUILD task gen parse** | BUILD task generator finished but no valid JSON array | Reads raw session, reconstructs BUILD task definitions, applies them immediately |
+
 ### OpenCodeRun
 
 ```mermaid
@@ -410,6 +450,7 @@ pnpm bundle
 | `beatctl get <name>` | Detailed view of a single run (`-o yaml` / `-o json` supported). |
 | `beatctl logs <name> [-f]` | Stream container logs. `-c dispatcher` to watch the sidecar. |
 | `beatctl attach <name>` | Port-forward the run's Service and launch `opencode attach`; cleans up on exit. |
+| `beatctl chat` | Port-forward the manager agent and start an interactive chat REPL. |
 | `beatctl wait <name>` | Block until terminal phase. Exit 0 = Succeeded, 1 = other terminal or deleted, 2 = timeout, 3 = API error. `--for <phase>` to await a specific phase. |
 | `beatctl cancel <name>` | Delete the run and all owned resources. |
 | `beatctl board get <project>` | Show the board state (columns, workers, escalations) for an OpenCodeProject. |
@@ -775,7 +816,7 @@ phase and a pending question appears on the board status. Reply via the web UI's
 - `.status.backlog` — map of column name → task ID array
 - `.status.workers[]` — per-worker run name, status (`Running/Succeeded/Failed/Escalated`), branch, escalation text
 - `.status.activeWorkers` — count of currently running workers
-- `.status.escalations[]` — human-readable escalation texts for tasks that exhausted retries
+- `.status.escalations[]` — human-readable escalation texts for tasks that exhausted retries (includes agent decisions when the decision engine acted)
 - `.status.pendingQuestions[]` — worker sessions waiting for human input
 
 The web dashboard renders board state on project detail pages under the Board tab.
@@ -801,6 +842,7 @@ warning once on first visit (or add it to your OS trust store).
 | **Projects** | `/projects` | Project templates with embedded board views (tasks, workers, escalations). |
 | **Agents** | `/agents` | Cluster-wide agent catalog — reusable `.md` definitions. |
 | **Stats** | `/stats` | Historical session analytics from the stats DB. |
+| **Agent chat** | (floating button bottom-right) | Interactive chat with the manager agent — ask about board state, task status, or cluster issues. |
 
 > Board detail is accessible via a project's Board tab rather than as a separate page.
 
@@ -983,6 +1025,17 @@ opencode reads before its on-disk `~/.config/opencode/opencode.json`.
 ## Customizing agents and skills
 
 Agents and skills can be delivered through two complementary channels.
+
+### Manager-specific agent skill (ConfigMap-delivered)
+
+The manager controller's decision engine uses a dedicated agent skill defined in
+`deploy/agent-config.yaml`. This ConfigMap contains:
+- `opencode.json` — LLM provider config (separate, cheaper model for diagnostics)
+- `agents/manager-decision.md` — agent definition with structured action schema
+
+The ConfigMap is mounted into the opencode-web sidecar container. The agent skill
+instructs the model to output typed JSON decisions (retry, skip, escalate) rather
+than free-form text, ensuring the decision engine can parse results reliably.
 
 ### Cluster-wide baseline (baked into the runner image)
 

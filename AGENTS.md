@@ -70,6 +70,6 @@ of TypeScript packages under `packages/*`.
 2. `@percussionist/kube` - Shared K8s client; depends on `api`
 3. `@percussionist/operator` - OpenCodeRun reconciler; creates Pod/Service/Ingress/ConfigMap
 4. `@percussionist/dispatcher` - Sidecar; session lifecycle, SSE streaming, analytics
-5. `@percussionist/manager` - OpenCodeProject board controller; creates worker OpenCodeRuns
+5. `@percussionist/manager-controller` - OpenCodeProject board controller + embedded agent module (decision engine, MCP tools on :4097, chat handler on :4098, opencode-web sidecar on :4096)
 6. `@percussionist/web` - Hono + React dashboard; REST APIs, stats DB (SQLite via Drizzle)
-7. `@percussionist/cli` - beatctl CLI; talks to K8s API directly
+7. `@percussionist/cli` - beatctl CLI; talks to K8s API directly (includes `chat` command)
