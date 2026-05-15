@@ -25,11 +25,12 @@ import {
   patchProject,
   patchProjectStatus,
   patchProjectSpec,
+  readSessionConfigMap,
 } from "@percussionist/kube";
 import { buildWorkerRun, buildMergeRun, workerRunName, MAX_RETRIES } from "./worker-builder.js";
 import { buildFacilitationRun, buildSuccessReviewRun, parseFacilitationResult, buildBuildTaskGeneratorRun, parseBuildTaskDefinitions } from "./facilitator.js";
 import { isAgentReady } from "./agent/index.js";
-import { analyzeFailure, parseRawFacilitation } from "./agent/decision-engine.js";
+import { analyzeFailure, parseRawFacilitation, parseRawReview, parseRawBuildTaskGen } from "./agent/decision-engine.js";
 import {
   getTasksToPull,
   getTasksToRework,
@@ -160,17 +161,12 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   // Self-heal: a worker marked Running must have a runName and be present in
   // backlog.in-progress. If not, it blocks scheduling forever.
   // Skip workers that already have a runName - those are handled by the monitor phase.
+  log("=== STARTING REPAIR CHECK ===");
   const inProgressSet = new Set(backlog["in-progress"] ?? []);
-  log(`DEBUG: inProgressSet = ${JSON.stringify([...inProgressSet])}`);
-  const staleRunningWorkers = workers.filter(
-    (w) => {
-      const result = w.status === "Running" && !w.runName && !inProgressSet.has(w.taskId);
-      if (w.status === "Running") {
-        log(`DEBUG: worker ${w.taskId}: status=Running, runName=${w.runName}, inProgress=${inProgressSet.has(w.taskId)}, include=${result}`);
-      }
-      return result;
-    },
-  );
+  const runningWorkers = workers.filter((w) => w.status === "Running");
+  log(`=== REPAIR: ${runningWorkers.length} running workers, inProgressSet=${JSON.stringify([...inProgressSet])} ===`);
+  const staleRunningWorkers = runningWorkers.filter((w) => !w.runName && !inProgressSet.has(w.taskId));
+  log(`=== REPAIR: ${staleRunningWorkers.length} stale workers: ${staleRunningWorkers.map(w => w.taskId).join(", ")} ===`);
   if (staleRunningWorkers.length > 0) {
     log(
       `repairing ${staleRunningWorkers.length} stale running worker(s): ${staleRunningWorkers.map((w) => w.taskId).join(", ")}`,
@@ -450,7 +446,50 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             // No result yet — check if the review run is done.
             const reviewPhase = reviewRun?.status?.phase;
             if (reviewPhase === "Succeeded" || reviewPhase === "Failed") {
-              // Review run finished but produced no parseable result — treat as approved.
+              // Review run finished but produced no parseable result.
+              // Try the agent before defaulting to approve.
+              if (isAgentReady()) {
+                let rawContext = "";
+                try {
+                  const snapshot = await readSessionConfigMap(
+                    worker.reviewRunName,
+                    "",
+                    ns,
+                  );
+                  if (snapshot) {
+                    rawContext = JSON.stringify(snapshot.messages).slice(0, 12000);
+                  }
+                } catch { /* best effort */ }
+                if (!rawContext) {
+                  try {
+                    const { readPodLog } = await import("@percussionist/kube");
+                    rawContext = await readPodLog(worker.reviewRunName, "opencode", 50, ns);
+                  } catch { /* best effort */ }
+                }
+                const taskDef = (board.tasks ?? []).find((t) => t.id === worker.taskId);
+                const parsed = await parseRawReview({
+                  projectName,
+                  taskId: worker.taskId,
+                  taskTitle: taskDef?.title ?? "",
+                  rawContext: rawContext || "no session data available",
+                });
+                if (parsed) {
+                  log(`agent parsed review output for ${worker.taskId}: ${parsed.recommendedAction}`);
+                  // Treat as a successful parse — re-run the outer logic next cycle.
+                  workers = updateWorker(workers, worker.taskId, {
+                    reviewRunName: undefined, // force re-check
+                    facilitationResult: {
+                      diagnosis: parsed.diagnosis,
+                      recommendedAction: parsed.recommendedAction as never,
+                      alternativeAgent: parsed.alternativeAgent,
+                      suggestion: parsed.suggestion,
+                    },
+                  });
+                  continue;
+                }
+                log(`agent could not parse review output for ${worker.taskId} — falling back to approve`);
+              }
+              // Fallback: treat as approved.
               workers = updateWorker(workers, worker.taskId, {
                 reviewApproved: true,
                 reviewFeedback: undefined,
@@ -653,7 +692,6 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                 // the facilitator run's session ConfigMap snapshot.
                 let rawContext = "";
                 try {
-                  const { readSessionConfigMap } = await import("@percussionist/kube");
                   const snapshot = await readSessionConfigMap(
                     worker.facilitationRunName,
                     "",
@@ -1126,7 +1164,79 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
           // No result yet — check if facilitator run is done
           const buildGenPhase = buildGenRun?.status?.phase;
           if (buildGenPhase === "Succeeded" || buildGenPhase === "Failed") {
-            // Facilitator done but no parseable result
+            // Facilitator done but no parseable result.
+            // Try the agent to reconstruct BUILD tasks before escalating.
+            if (isAgentReady()) {
+              let rawContext = "";
+              try {
+                const snapshot = await readSessionConfigMap(
+                  worker.buildTasksFacilitatorRun,
+                  "",
+                  ns,
+                );
+                if (snapshot) {
+                  rawContext = JSON.stringify(snapshot.messages).slice(0, 12000);
+                }
+              } catch { /* best effort */ }
+              if (!rawContext) {
+                try {
+                  const { readPodLog } = await import("@percussionist/kube");
+                  rawContext = await readPodLog(worker.buildTasksFacilitatorRun, "opencode", 50, ns);
+                } catch { /* best effort */ }
+              }
+              const buildTaskDefs = await parseRawBuildTaskGen({
+                projectName,
+                taskId,
+                taskTitle: taskDef?.title ?? "",
+                rawContext: rawContext || "no session data available",
+              });
+              if (buildTaskDefs && buildTaskDefs.length > 0) {
+                log(`agent parsed BUILD task definitions for PLAN ${taskId}: ${buildTaskDefs.length} tasks`);
+                // Apply the agent-parsed definitions immediately.
+                const currentSequence = boardStatus.sequences?.BUILD ?? 0;
+                const newBuildTasks: typeof board.tasks = [];
+                const createdIds: string[] = [];
+                for (let i = 0; i < buildTaskDefs.length; i++) {
+                  const def = buildTaskDefs[i];
+                  if (!def) continue;
+                  const buildId = `BUILD-${currentSequence + i + 1}`;
+                  createdIds.push(buildId);
+                  newBuildTasks.push({
+                    id: buildId,
+                    type: "BUILD",
+                    title: def.title,
+                    description: def.description,
+                    agent: def.agent ?? "builder",
+                    priority: (def.priority === "high" || def.priority === "low" ? def.priority : "medium") as "high" | "medium" | "low",
+                  });
+                }
+                const updatedTasks = [...(board.tasks ?? []), ...newBuildTasks];
+                const updatedSequences = {
+                  ...(boardStatus.sequences ?? {}),
+                  BUILD: currentSequence + buildTaskDefs.length,
+                };
+                try {
+                  await patchProjectSpec(projectName, { board: { ...board, tasks: updatedTasks } }, ns, k8s);
+                  workers = updateWorker(workers, taskId, {
+                    buildTasksCreated: true,
+                    createdBuildTasks: createdIds,
+                  });
+                  boardStatus.sequences = updatedSequences;
+                  backlog = moveTask(backlog, taskId, "done");
+                  log(`created ${newBuildTasks.length} BUILD tasks (via agent) from PLAN ${taskId}: ${createdIds.join(", ")}`);
+                } catch (e) {
+                  err(`failed to create BUILD tasks (via agent) for PLAN ${taskId}:`, (e as Error).message);
+                  workers = updateWorker(workers, taskId, {
+                    status: "Escalated",
+                    escalation: `Failed to create BUILD tasks (via agent): ${(e as Error).message}`,
+                    buildTasksCreated: true,
+                  });
+                }
+                continue;
+              }
+              log(`agent could not parse BUILD task gen output for ${taskId} — falling back to escalate`);
+            }
+            // Fallback: escalate.
             workers = updateWorker(workers, taskId, {
               status: "Escalated",
               escalation: `BUILD task generator finished (${buildGenPhase}) but produced no valid JSON array. Human review needed.`,

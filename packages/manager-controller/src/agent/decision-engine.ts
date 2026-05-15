@@ -181,3 +181,135 @@ function parseFacilitationJson(text: string): {
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Parse unstructured success-review output when the standard parser fails.
+//
+// The agent reads the raw review facilitator session and extracts an approval
+// decision so that a non-parseable review doesn't default to a blind "approve."
+
+export async function parseRawReview(
+  context: ReviewContext,
+): Promise<{ diagnosis: string; recommendedAction: string; alternativeAgent?: string; suggestion?: string } | null> {
+  const prompt = buildReviewParsePrompt(context);
+
+  try {
+    const sessionId = await createSession(`parse-review-${context.taskId}`);
+    await sendPrompt(sessionId, prompt, DECISION_AGENT_NAME);
+
+    const response = await waitForCompletion(sessionId, AGENT_TIMEOUT_MS);
+    if (!response) return null;
+
+    return parseFacilitationJson(response);
+  } catch (e) {
+    err(`agent review parse failed for ${context.taskId}:`, (e as Error).message);
+    return null;
+  }
+}
+
+interface ReviewContext {
+  projectName: string;
+  taskId: string;
+  taskTitle: string;
+  rawContext: string;
+}
+
+function buildReviewParsePrompt(ctx: ReviewContext): string {
+  return [
+    `You are a parse assistant. The standard parser failed to extract a structured approval/rejection from a success-review facilitator run.`,
+    `Read the raw facilitator output below and determine whether the reviewer approved or rejected the work.`,
+    ``,
+    `PROJECT: ${ctx.projectName}`,
+    `TASK: ${ctx.taskId} — ${ctx.taskTitle}`,
+    ``,
+    `RAW REVIEWER OUTPUT:`,
+    ctx.rawContext,
+    ``,
+    `Output ONLY valid JSON (no markdown, no explanation):`,
+    JSON.stringify({
+      diagnosis: "(did the reviewer approve or reject? why?)",
+      recommendedAction: "(approve | request_changes | retry_alternative | escalate)",
+      alternativeAgent: "(if retry_alternative)",
+      suggestion: "(optional)",
+    }),
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Parse unstructured BUILD task generator output when the standard parser fails.
+//
+// The agent reads the raw facilitator session and reconstructs a valid list
+// of BUILD task definitions.
+
+export async function parseRawBuildTaskGen(
+  context: BuildTaskGenContext,
+): Promise<Array<{ title: string; description?: string; agent?: string; priority?: string }> | null> {
+  const prompt = buildBuildTaskGenParsePrompt(context);
+
+  try {
+    const sessionId = await createSession(`parse-build-gen-${context.taskId}`);
+    await sendPrompt(sessionId, prompt, DECISION_AGENT_NAME);
+
+    const response = await waitForCompletion(sessionId, AGENT_TIMEOUT_MS);
+    if (!response) return null;
+
+    return parseBuildTaskGenArray(response);
+  } catch (e) {
+    err(`agent BUILD task gen parse failed for ${context.taskId}:`, (e as Error).message);
+    return null;
+  }
+}
+
+interface BuildTaskGenContext {
+  projectName: string;
+  taskId: string;
+  taskTitle: string;
+  rawContext: string;
+}
+
+function buildBuildTaskGenParsePrompt(ctx: BuildTaskGenContext): string {
+  return [
+    `You are a parse assistant. The standard parser failed to extract a valid JSON array of BUILD task definitions from a BUILD task generator facilitator run.`,
+    `Read the raw facilitator output below and reconstruct a valid list of BUILD tasks.`,
+    ``,
+    `PROJECT: ${ctx.projectName}`,
+    `PLAN TASK: ${ctx.taskId} — ${ctx.taskTitle}`,
+    ``,
+    `RAW FACILITATOR OUTPUT:`,
+    ctx.rawContext,
+    ``,
+    `Output ONLY valid JSON array (no markdown, no explanation):`,
+    JSON.stringify([
+      {
+        title: "(short title for this BUILD task)",
+        description: "(detailed description)",
+        agent: "(optional agent name, default: builder)",
+        priority: "(optional: high | medium | low, default: medium)",
+      },
+    ]),
+    ``,
+    `If the output clearly indicates no BUILD tasks are needed, return empty array: []`,
+    `Return valid JSON array ONLY - no markdown fences, no explanation.`,
+  ].join("\n");
+}
+
+function parseBuildTaskGenArray(text: string): Array<{ title: string; description?: string; agent?: string; priority?: string }> | null {
+  const trimmed = text.trim();
+  const match = trimmed.match(/\[[\s\S]*\]/);
+  if (!match) return null;
+
+  try {
+    const parsed = JSON.parse(match[0]);
+    if (Array.isArray(parsed) && parsed.every((item: unknown) => typeof item === "object" && item !== null && typeof (item as Record<string, unknown>).title === "string")) {
+      return parsed.map((item: Record<string, unknown>) => ({
+        title: item.title as string,
+        description: item.description as string | undefined,
+        agent: item.agent as string | undefined,
+        priority: item.priority as string | undefined,
+      }));
+    }
+  } catch {
+    // Invalid JSON
+  }
+  return null;
+}

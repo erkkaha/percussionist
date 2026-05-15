@@ -4,17 +4,22 @@
 //   POST /chat — send a message, returns the agent's response
 //   GET  /chat/stream — SSE stream of the conversation
 //
-// The web dashboard and CLI connect here to talk to the agent interactively.
+// Conversation history is persisted to a ConfigMap (manager-chat-history)
+// so it survives pod restarts. If the ConfigMap is unavailable the handler
+// degrades gracefully (in-memory only).
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { CHAT_PORT } from "./config.js";
+import { CHAT_PORT, MANAGER_NAMESPACE as NAMESPACE } from "./config.js";
 import {
   createSession,
   sendMessage,
   getMessages,
   waitForCompletion,
-  extractLastAssistantText,
 } from "./session.js";
+import { core } from "@percussionist/kube";
+
+const CONFIGMAP_NAME = "manager-chat-history";
+const SAVE_DEBOUNCE_MS = 2000;
 
 const log = (...args: unknown[]) =>
   console.log(`[agent-chat ${new Date().toISOString()}]`, ...args);
@@ -23,10 +28,85 @@ const err = (...args: unknown[]) =>
 
 let currentSessionId: string | null = null;
 let conversationHistory: Array<{ role: "user" | "assistant"; text: string }> = [];
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+// ---------------------------------------------------------------------------
+// ConfigMap persistence
+
+async function loadHistoryFromConfigMap(): Promise<void> {
+  try {
+    const cm = await core().readNamespacedConfigMap({
+      name: CONFIGMAP_NAME,
+      namespace: NAMESPACE,
+    });
+    const raw = cm.data?.["history.json"];
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.every((m: unknown) => typeof m === "object" && m !== null && (m as Record<string, unknown>).role && (m as Record<string, unknown>).text)) {
+        conversationHistory = parsed;
+        log(`restored ${conversationHistory.length} messages from ConfigMap`);
+      }
+    }
+  } catch (e: unknown) {
+    // 404 = ConfigMap doesn't exist yet (first run). Other errors are logged.
+    if ((e as { statusCode?: number }).statusCode !== 404) {
+      log(`failed to load chat history from ConfigMap: ${(e as Error).message}`);
+    }
+  }
+}
+
+async function saveHistoryToConfigMap(): Promise<void> {
+  const data = JSON.stringify(conversationHistory.slice(-100)); // Keep last 100 messages
+  try {
+    // Try patch first (faster if ConfigMap exists)
+    await core().patchNamespacedConfigMap({
+      name: CONFIGMAP_NAME,
+      namespace: NAMESPACE,
+      body: {
+        data: { "history.json": data },
+      },
+    });
+  } catch (e: unknown) {
+    const status = (e as { statusCode?: number }).statusCode;
+    if (status === 404) {
+      // ConfigMap doesn't exist — create it
+      try {
+        await core().createNamespacedConfigMap({
+          namespace: NAMESPACE,
+          body: {
+            metadata: {
+              name: CONFIGMAP_NAME,
+              labels: {
+                "app.kubernetes.io/name": "percussionist",
+                "app.kubernetes.io/component": "manager",
+              },
+            },
+            data: { "history.json": data },
+          },
+        });
+        return;
+      } catch (createErr) {
+        err(`failed to create chat history ConfigMap: ${(createErr as Error).message}`);
+        return;
+      }
+    }
+    err(`failed to save chat history to ConfigMap: ${(e as Error).message}`);
+  }
+}
+
+function debouncedSave(): void {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    saveHistoryToConfigMap();
+  }, SAVE_DEBOUNCE_MS);
+}
+
+// ---------------------------------------------------------------------------
+// Session management
 
 async function ensureSession(): Promise<string> {
   if (currentSessionId) {
-    // Verify the session still exists
     try {
       const msgs = await getMessages(currentSessionId);
       if (msgs) return currentSessionId;
@@ -59,7 +139,10 @@ interface ChatRequest {
   message: string;
 }
 
-export function startChatServer(): void {
+export async function startChatServer(): Promise<void> {
+  // Restore conversation history from ConfigMap on startup
+  await loadHistoryFromConfigMap();
+
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
       if (req.method === "POST" && req.url === "/chat") {
@@ -106,6 +189,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
 
   conversationHistory.push({ role: "user", text: message });
+  debouncedSave();
 
   try {
     const sessionId = await ensureSession();
@@ -114,6 +198,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
     const response = await waitForCompletion(sessionId, 120_000);
     if (response) {
       conversationHistory.push({ role: "assistant", text: response });
+      debouncedSave();
       sendJson(res, 200, { response, sessionId });
     } else {
       sendJson(res, 200, { response: "Agent did not respond in time. Please try again.", sessionId });
