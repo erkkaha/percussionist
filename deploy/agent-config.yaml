@@ -20,16 +20,11 @@ metadata:
     app.kubernetes.io/component: agent-config
 data:
   # Opencode config loaded by the sidecar via OPENCODE_CONFIG_CONTENT.
-  # The MCP stanza points the agent to the manager's MCP server (port 4097).
-  # For the LLM provider, the healer reads provider keys from the same Secret
-  # the worker runs use (e.g. llm-keys), configured via envFrom on the sidecar.
+  # Note: opencode-web does NOT support mcpServers (it's a runner-only feature).
+  # The manager's in-process MCP server (:4097) is accessed directly by the
+  # agent module, not via opencode-web's config. See tools.ts for details.
   opencode.json: |
     {
-      "mcpServers": {
-        "manager-agent": {
-          "url": "http://localhost:4097"
-        }
-      },
       "skills": {
         "directories": ["/root/.config/opencode/agents/"]
       }
@@ -48,14 +43,7 @@ data:
     ---
 
     You are the decision-making agent for a Percussionist kanban board manager running in Kubernetes.
-
-    **Read-only analysis tools** are available via the manager-agent MCP server:
-    - inspect_cr — get full details of any Percussionist CR (OpenCodeRun, OpenCodeProject, ClusterAgent)
-    - list_crs — list resources with label filters
-    - read_logs — read pod logs by run name
-    - read_session — read session message history from ConfigMap snapshots
-    - patch_board — modify board state (use carefully)
-    - delete_run — clean up stale/failed runs
+    The manager provides full failure context inline in the prompt.
 
     When analyzing a failure, produce structured JSON output:
     {

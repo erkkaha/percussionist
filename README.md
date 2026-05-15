@@ -310,15 +310,15 @@ flowchart TD
     MGR[manager-controller\nDeployment]
 
     MGR -->|in-process| DEC[Decision Engine\nfailure analysis\nfacilitation parsing\nreview parsing\nbuild task gen parsing]
-    MGR -->|in-process| MCP[MCP Server :4097\n6 K8s tools]
     MGR -->|in-process| CHAT[Chat Handler :4098]
 
     MGR -.->|sidecar| SIDECAR[opencode-web :4096\nghcr.io/anomalyco/opencode]
 
-    SIDECAR -->|raw HTTP| CHAT
-    SIDECAR -->|raw HTTP| DEC
+    DEC -->|createSession + sendPrompt| SIDECAR
+    SIDECAR -->|responses| DEC
+    CHAT -->|chat sessions| SIDECAR
+    SIDECAR -->|chat responses| CHAT
 
-    MCP -->|read/write| K8S[Kubernetes API]
     CHAT -->|SSE + POST| WEB[Web Dashboard\nvia agent-chat proxy]
     CHAT -->|port-forward| CLI[beatctl chat]
 
@@ -1030,7 +1030,9 @@ Agents and skills can be delivered through two complementary channels.
 
 The manager controller's decision engine uses a dedicated agent skill defined in
 `deploy/agent-config.yaml`. This ConfigMap contains:
-- `opencode.json` — LLM provider config (separate, cheaper model for diagnostics)
+- `opencode.json` — LLM provider config; note that `opencode-web` does not
+  support `mcpServers` (runner-only feature), so MCP tools are not configured
+  at the config level — the manager provides context inline in prompts.
 - `agents/manager-decision.md` — agent definition with structured action schema
 
 The ConfigMap is mounted into the opencode-web sidecar container. The agent skill

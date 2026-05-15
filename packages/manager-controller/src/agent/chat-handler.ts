@@ -163,8 +163,8 @@ export async function startChatServer(): Promise<void> {
     }
   });
 
-  server.listen(CHAT_PORT, "127.0.0.1", () => {
-    log(`chat handler listening on 127.0.0.1:${CHAT_PORT}`);
+  server.listen(CHAT_PORT, "0.0.0.0", () => {
+    log(`chat handler listening on 0.0.0.0:${CHAT_PORT}`);
   });
 
   server.on("error", (e) => {

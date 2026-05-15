@@ -56,6 +56,7 @@ of TypeScript packages under `packages/*`.
 - CRD YAML is generated from Zod (`packages/api/codegen/`)
 - Operator and Manager use `makeInformer` + in-memory work queue pattern
 - API group: `percussionist.dev/v1alpha1`
+- `opencode-web` does NOT support `mcpServers` in its config (runner-only feature); the manager's agent-config ConfigMap must omit it. The decision engine provides all context inline in the prompt instead of relying on MCP tool discovery.
 
 ## Conventions
 - No linter/formatting tool configured -- do not add one without asking

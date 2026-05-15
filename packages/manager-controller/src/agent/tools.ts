@@ -3,8 +3,9 @@
 // Follows the same JSON-RPC 2.0 / MCP Streamable HTTP pattern as the
 // dispatcher's mcp-server.ts. Runs on AGENT_MCP_PORT (default 4097).
 //
-// The opencode-web sidecar discovers these tools via the `mcpServers` stanza
-// in its config (deployed as the agent-config ConfigMap).
+// The agent module uses these tools internally via direct HTTP calls.
+// opencode-web does NOT support mcpServers config, so tools are not
+// discovered by the sidecar — the module provides context inline.
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { MCP_PORT, MANAGER_NAMESPACE } from "./config.js";
