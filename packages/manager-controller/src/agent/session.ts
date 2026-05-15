@@ -171,7 +171,7 @@ export async function waitForOpencodeWeb(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${OPENCODE_URL}/global/health`);
+      const res = await fetch(`${OPENCODE_URL}/global/health`, { signal: AbortSignal.timeout(5_000) });
       if (res.ok) {
         const body = (await res.json()) as { healthy?: boolean };
         if (body.healthy !== false) return;
