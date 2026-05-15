@@ -17,6 +17,7 @@ import {
   k8s,
   NAMESPACE,
 } from "./reconciler.js";
+import { startAgent } from "./agent/index.js";
 
 const log = (...args: unknown[]) =>
   console.log(`[manager ${new Date().toISOString()}]`, ...args);
@@ -97,6 +98,11 @@ async function main(): Promise<void> {
   void informer.start().then(
     () => log("informer started successfully"),
     (e) => err("informer.start() failed:", (e as Error).message, (e as Error).stack),
+  );
+
+  log("starting agent module...");
+  startAgent().catch((e) =>
+    err("agent module failed to start:", (e as Error).message),
   );
 
   log("starting periodic resync...");

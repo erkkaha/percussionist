@@ -1,0 +1,77 @@
+# Agent configuration for the manager's opencode-web sidecar.
+#
+# Contains:
+#   1. opencode.json — the opencode config for the sidecar (provider, MCP)
+#   2. manager-decision.md — the agent skill definition used for decision-making
+#
+# The sidecar uses OPENCODE_CONFIG_CONTENT to load opencode.json.
+# The agent skill is mounted at /root/.config/opencode/agents/.
+#
+# Override the default provider config by editing opencode.json below.
+# For the healer to use a cheaper/faster model, add a dedicated provider stanza.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/managed-by: percussionist
+    app.kubernetes.io/component: agent-config
+data:
+  # Opencode config loaded by the sidecar via OPENCODE_CONFIG_CONTENT.
+  # The MCP stanza points the agent to the manager's MCP server (port 4097).
+  # For the LLM provider, the healer reads provider keys from the same Secret
+  # the worker runs use (e.g. llm-keys), configured via envFrom on the sidecar.
+  opencode.json: |
+    {
+      "mcpServers": {
+        "manager-agent": {
+          "url": "http://localhost:4097"
+        }
+      },
+      "skills": {
+        "directories": ["/root/.config/opencode/agents/"]
+      }
+    }
+
+  # Agent definition for the manager's decision-making agent role.
+  # Referenced by name when creating sessions for failure analysis,
+  # facilitation parsing, and interactive chat.
+  manager-decision.md: |
+    ---
+    description: Manager decision agent — analyzes failures, parses facilitation output, and assists operators.
+    mode: subagent
+    permission:
+      edit: allow
+      bash: allow
+    ---
+
+    You are the decision-making agent for a Percussionist kanban board manager running in Kubernetes.
+
+    **Read-only analysis tools** are available via the manager-agent MCP server:
+    - inspect_cr — get full details of any Percussionist CR (OpenCodeRun, OpenCodeProject, ClusterAgent)
+    - list_crs — list resources with label filters
+    - read_logs — read pod logs by run name
+    - read_session — read session message history from ConfigMap snapshots
+    - patch_board — modify board state (use carefully)
+    - delete_run — clean up stale/failed runs
+
+    When analyzing a failure, produce structured JSON output:
+    {
+      "action": "retry_same | retry_alternative | skip | escalate",
+      "agent": "(name if retry_alternative)",
+      "reason": "(1-2 sentence explanation)"
+    }
+
+    - retry_same: The same agent should try again (intermittent issue)
+    - retry_alternative: A different agent would be better suited
+    - skip: The task is impossible or harmful; mark it done
+    - escalate: Human expertise is needed
+
+    When parsing facilitator output, extract the structured diagnosis
+    from the raw session text. Output valid JSON matching the expected
+    FacilitationResult schema.
+
+    When chatting with operators, explain your reasoning clearly and
+    offer to take corrective actions using your available tools.

@@ -28,6 +28,8 @@ import {
 } from "@percussionist/kube";
 import { buildWorkerRun, buildMergeRun, workerRunName, MAX_RETRIES } from "./worker-builder.js";
 import { buildFacilitationRun, buildSuccessReviewRun, parseFacilitationResult, buildBuildTaskGeneratorRun, parseBuildTaskDefinitions } from "./facilitator.js";
+import { isAgentReady } from "./agent/index.js";
+import { analyzeFailure, parseRawFacilitation } from "./agent/decision-engine.js";
 import {
   getTasksToPull,
   getTasksToRework,
@@ -159,8 +161,15 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   // backlog.in-progress. If not, it blocks scheduling forever.
   // Skip workers that already have a runName - those are handled by the monitor phase.
   const inProgressSet = new Set(backlog["in-progress"] ?? []);
+  log(`DEBUG: inProgressSet = ${JSON.stringify([...inProgressSet])}`);
   const staleRunningWorkers = workers.filter(
-    (w) => w.status === "Running" && !w.runName && !inProgressSet.has(w.taskId),
+    (w) => {
+      const result = w.status === "Running" && !w.runName && !inProgressSet.has(w.taskId);
+      if (w.status === "Running") {
+        log(`DEBUG: worker ${w.taskId}: status=Running, runName=${w.runName}, inProgress=${inProgressSet.has(w.taskId)}, include=${result}`);
+      }
+      return result;
+    },
   );
   if (staleRunningWorkers.length > 0) {
     log(
@@ -638,7 +647,54 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             const facilitatorPhase = facRun?.status?.phase;
 
             if (facilitatorPhase === "Succeeded" || facilitatorPhase === "Failed") {
-              // Facilitator done but we got nothing useful. Fall back.
+              // Facilitator done but we got nothing useful.
+              if (isAgentReady()) {
+                // Ask the agent to parse the raw facilitator output from
+                // the facilitator run's session ConfigMap snapshot.
+                let rawContext = "";
+                try {
+                  const { readSessionConfigMap } = await import("@percussionist/kube");
+                  const snapshot = await readSessionConfigMap(
+                    worker.facilitationRunName,
+                    "",
+                    ns,
+                  );
+                  if (snapshot) {
+                    rawContext = JSON.stringify(snapshot.messages).slice(0, 12000);
+                  }
+                } catch { /* best effort */ }
+                if (!rawContext) {
+                  // Fallback: try pod logs.
+                  try {
+                    const { readPodLog } = await import("@percussionist/kube");
+                    rawContext = await readPodLog(worker.facilitationRunName, "opencode", 50, ns);
+                  } catch { /* best effort */ }
+                }
+                const parsed = await parseRawFacilitation({
+                  projectName,
+                  taskId: worker.taskId,
+                  rawContext: rawContext || "no session data available",
+                });
+                if (parsed) {
+                  log(`agent parsed facilitator output for ${worker.taskId}: ${parsed.recommendedAction}`);
+                  // Treat as a successful parse — re-run the outer logic by
+                  // enriching the worker state so next cycle picks up the result.
+                  workers = updateWorker(workers, worker.taskId, {
+                    facilitated: true,
+                    facilitationResult: {
+                      diagnosis: parsed.diagnosis,
+                      recommendedAction: parsed.recommendedAction as never,
+                      alternativeAgent: parsed.alternativeAgent,
+                      suggestion: parsed.suggestion,
+                    },
+                  });
+                  // Don't move the task yet — next reconcile cycle will pick up the result.
+                  continue;
+                }
+                log(`agent could not parse facilitator output for ${worker.taskId} — falling back`);
+              }
+
+              // Fall back to standard retry or escalate.
               if ((worker.retryCount ?? 0) < MAX_RETRIES) {
                 workers = updateWorker(workers, worker.taskId, {
                   retryCount: (worker.retryCount ?? 0) + 1,
@@ -670,8 +726,72 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
           log(
             `task ${worker.taskId} failed — retrying (${worker.retryCount! + 1}/${MAX_RETRIES})`,
           );
+        } else if (isAgentReady()) {
+          // Retries exhausted — ask the agent for a decision.
+          const taskDef = (board.tasks ?? []).find((t) => t.id === worker.taskId);
+          let sessionSummary = "";
+          if (run.status?.sessionID && run.status?.serviceName) {
+            try {
+              const sessionData = await fetchSessionMessages(
+                run.status.serviceName,
+                run.status.sessionID,
+                ns,
+              );
+              if (sessionData && typeof sessionData === "object" && "messages" in sessionData) {
+                const msgs = (sessionData.messages as Array<{ content?: string }>)
+                  .slice(-20)
+                  .map((m) => m.content)
+                  .filter(Boolean)
+                  .join("\n");
+                sessionSummary = msgs.slice(0, 8000);
+              }
+            } catch { /* best effort */ }
+          }
+          const decision = await analyzeFailure({
+            projectName,
+            taskId: worker.taskId,
+            taskTitle: taskDef?.title ?? "",
+            taskDescription: taskDef?.description,
+            agent: taskDef?.agent ?? "",
+            retryCount: worker.retryCount ?? 0,
+            maxRetries: MAX_RETRIES,
+            failureMessage: run.status?.message ?? "Unknown failure after retries",
+            sessionSummary,
+            alternativeAgents: (board.agents ?? []).map((a) => a.name),
+          });
+          if (decision.action === "retry_same" || (decision.action === "retry_alternative" && decision.agent && (board.agents ?? []).some((a) => a.name === decision.agent))) {
+            workers = updateWorker(workers, worker.taskId, {
+              retryCount: (worker.retryCount ?? 0) + 1,
+              status: "Running",
+              ...(decision.action === "retry_alternative" ? { reworkAgent: decision.agent } : {}),
+            });
+            backlog = moveTask(backlog, worker.taskId, "ready");
+            log(`agent decision: ${decision.action}${decision.agent ? ` with ${decision.agent}` : ""} for ${worker.taskId} — ${decision.reason}`);
+          } else if (decision.action === "skip") {
+            workers = updateWorker(workers, worker.taskId, {
+              status: "Succeeded",
+              completedAt: new Date().toISOString(),
+            });
+            backlog = moveTask(backlog, worker.taskId, "done");
+            log(`agent decision: skip for ${worker.taskId} — marking done`);
+          } else {
+            // escalate
+            const escalation = [
+              `Task: ${worker.taskId}`,
+              `Worker run: ${worker.runName}`,
+              `Agent analysis: ${decision.reason}`,
+              `Retries exhausted (${MAX_RETRIES}). Agent recommended escalation.`,
+            ].join("\n");
+            workers = updateWorker(workers, worker.taskId, {
+              status: "Escalated",
+              completedAt: new Date().toISOString(),
+              escalation,
+            });
+            backlog = moveTask(backlog, worker.taskId, "review");
+            log(`agent decision: escalate for ${worker.taskId} — ${decision.reason}`);
+          }
         } else {
-          // Retries exhausted → escalate.
+          // Retries exhausted, no agent available → escalate to human.
           const msg = run.status?.message ?? "Unknown failure after retries";
           const escalation = [
             `Task: ${worker.taskId}`,
@@ -684,7 +804,6 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             completedAt: new Date().toISOString(),
             escalation,
           });
-          // Remove escalated task from in-progress to unblock other tasks
           backlog = moveTask(backlog, worker.taskId, "review");
           log(`task ${worker.taskId} escalated after ${MAX_RETRIES} retries`);
         }

@@ -36,6 +36,13 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list"]
+  # Pod logs and events — for the agent's diagnostic MCP tools.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -92,3 +99,44 @@ spec:
               command: ["sh", "-c", "pgrep -f node >/dev/null"]
             initialDelaySeconds: 2
             periodSeconds: 5
+
+        # opencode-web sidecar — runs the agent session for decision-making
+        # and interactive chat. The manager connects to it via localhost:4096.
+        - name: opencode-web
+          image: ghcr.io/anomalyco/opencode:latest
+          imagePullPolicy: IfNotPresent
+          args: ["web", "--hostname", "0.0.0.0", "--port", "4096"]
+          env:
+            - name: OPENCODE_CONFIG_CONTENT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: opencode.json
+            - name: HOME
+              value: /root
+          envFrom:
+            - secretRef:
+                name: llm-keys
+                optional: true
+          ports:
+            - containerPort: 4096
+              name: opencode
+              protocol: TCP
+          volumeMounts:
+            - name: agent-skills
+              mountPath: /root/.config/opencode/agents/
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+          readinessProbe:
+            tcpSocket:
+              port: 4096
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: agent-skills
+          configMap:
+            name: agent-config
+            items:
+              - key: manager-decision.md
+                path: manager-decision.md
