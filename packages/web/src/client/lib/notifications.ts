@@ -2,8 +2,32 @@
 //
 // All audio is synthesized via the Web Audio API — no external files needed.
 // Notification permission is requested lazily on the first notify() call.
+//
+// In-memory history (up to HISTORY_CAP entries, newest first) is maintained
+// in _history and broadcast via a "percussionist:notification" CustomEvent so
+// React components can subscribe without prop-drilling.
 
 export type DrumSound = "success" | "failure" | "cancelled" | "escalated" | "running";
+
+// ---------------------------------------------------------------------------
+// History store
+
+export interface NotificationEntry {
+  key: string;
+  title: string;
+  body?: string;
+  sound: DrumSound;
+  at: number; // Date.now()
+}
+
+const HISTORY_CAP = 50;
+const _history: NotificationEntry[] = [];
+
+export function getNotificationHistory(): NotificationEntry[] {
+  return _history.slice();
+}
+
+const NOTIFICATION_EVENT = "percussionist:notification";
 
 // ---------------------------------------------------------------------------
 // Audio synthesis
@@ -158,10 +182,27 @@ export interface NotifyOptions {
 /**
  * Show a browser OS notification and play the appropriate drum sound.
  * Silently no-ops if permission was denied or the key was already shown.
+ * Always records the notification in the in-memory history.
  */
 export function notify(opts: NotifyOptions): void {
   if (_shown.has(opts.key)) return;
   _shown.add(opts.key);
+
+  // Record in history (newest first, capped).
+  const entry: NotificationEntry = {
+    key: opts.key,
+    title: opts.title,
+    body: opts.body,
+    sound: opts.sound,
+    at: Date.now(),
+  };
+  _history.unshift(entry);
+  if (_history.length > HISTORY_CAP) _history.length = HISTORY_CAP;
+
+  // Broadcast to any React subscribers.
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(NOTIFICATION_EVENT, { detail: entry }));
+  }
 
   playDrum(opts.sound);
 
@@ -179,3 +220,5 @@ export function notify(opts: NotifyOptions): void {
     // Non-fatal.
   }
 }
+
+export { NOTIFICATION_EVENT };

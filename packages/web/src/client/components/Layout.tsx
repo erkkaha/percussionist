@@ -4,6 +4,7 @@ import { useProjects } from "../hooks/useProjects";
 import { useRuns } from "../hooks/useRuns";
 import { useRunNotifications } from "../hooks/useRunNotifications";
 import { TERMINAL_PHASES } from "@percussionist/api";
+import NotificationBell from "./NotificationBell";
 
 function SidebarLink({ to, children }: { to: string; children: React.ReactNode }) {
   return (
@@ -113,6 +114,10 @@ export default function Layout() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
+        {/* Top bar */}
+        <header className="h-11 shrink-0 border-b border-border bg-surface-raised flex items-center justify-end px-4">
+          <NotificationBell />
+        </header>
         <main className="flex-1 p-6">
           <Outlet />
         </main>
