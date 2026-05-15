@@ -452,12 +452,17 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
           }
         } else {
           // No reviewer configured — original behavior: move to review column.
-          workers = updateWorker(workers, worker.taskId, {
-            status: "Succeeded",
-            completedAt: new Date().toISOString(),
-          });
-          backlog = moveTask(backlog, worker.taskId, "review");
-          log(`worker ${worker.runName} succeeded → task ${worker.taskId} in review`);
+          if (!worker.reviewApproved) {
+            workers = updateWorker(workers, worker.taskId, {
+              status: "Succeeded",
+              completedAt: new Date().toISOString(),
+              reviewApproved: true,
+              reviewFeedback: undefined,
+              reworkAgent: undefined,
+            });
+            backlog = moveTask(backlog, worker.taskId, "review");
+            log(`worker ${worker.runName} succeeded → task ${worker.taskId} in review (no reviewer agent configured, auto-approved)`);
+          }
         }
       } else if (runPhase === "Failed") {
         const taskDef = (board.tasks ?? []).find((t) => t.id === worker.taskId);

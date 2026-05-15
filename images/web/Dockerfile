@@ -29,13 +29,14 @@ COPY packages/api/tsconfig.json packages/api/tsconfig.json
 COPY packages/kube/src           packages/kube/src
 COPY packages/kube/tsconfig.json packages/kube/tsconfig.json
 COPY packages/web/src              packages/web/src
+COPY packages/web/src/client/index.html packages/web/src/client/index.html
 COPY packages/web/tsconfig.json    packages/web/tsconfig.json
 COPY packages/web/tsconfig.server.json packages/web/tsconfig.server.json
 COPY packages/web/tsconfig.client.json packages/web/tsconfig.client.json
 COPY packages/web/vite.config.ts   packages/web/vite.config.ts
 RUN ./node_modules/.bin/tsc -p packages/api/tsconfig.json \
  && ./node_modules/.bin/tsc -p packages/kube/tsconfig.json \
- && ./packages/web/node_modules/.bin/vite build --config packages/web/vite.config.ts \
+ && cd packages/web && ./node_modules/.bin/vite build --config vite.config.ts && cd /repo \
  && ./node_modules/.bin/tsc -p packages/web/tsconfig.server.json
 
 # --- runtime (Bun) ------------------------------------------------------------

@@ -29,6 +29,7 @@ import {
   runBoardTaskMove,
   runBoardTaskRemove,
 } from "./board.js";
+import { runWeb } from "./web.js";
 import { DEFAULT_NAMESPACE } from "./kube.js";
 
 const program = new Command();
@@ -47,6 +48,15 @@ program
   .option("--down", "remove deployed resources", false)
   .option("--no-wait", "don't wait for deployment rollout")
   .action(runDeploy);
+
+// web -----------------------------------------------------------------------
+program
+  .command("web")
+  .description("open the percussionist dashboard in your browser via localhost port-forward (enables browser notifications and audio)")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("-p, --port <port>", "local port to bind (default: random free port)")
+  .option("--no-browser", "print the URL but don't open a browser")
+  .action(runWeb);
 
 // submit --------------------------------------------------------------------
 program

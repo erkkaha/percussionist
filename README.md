@@ -26,7 +26,10 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 - **ClusterAgents** — cluster-scoped agent role definitions reusable across
   projects and runs; referenced by name rather than inlined per-run.
 - **Web dashboard** — real-time run table, project/board views, agent catalog,
-  and historical session analytics.
+  and historical session analytics. Browser OS notifications and drum audio fire
+  on run phase changes and board worker transitions; use `beatctl web` to serve
+  the dashboard from `localhost` (a secure context) so these features work
+  without HTTPS.
 - **`beatctl` CLI** — submit, watch, attach, and cancel runs without touching
   `kubectl`.
 - **Provider auth** — OAuth tokens (GitHub Copilot, ChatGPT Plus, Claude Pro)
@@ -398,6 +401,7 @@ pnpm bundle
 |---------|-------------|
 | `beatctl deploy` | Install CRDs and apply operator + manager controller + web manifests; waits for rollouts. |
 | `beatctl deploy --down` | Delete all operator/web/manager resources and CRDs. |
+| `beatctl web` | Port-forward the dashboard to `localhost` and open it in your browser. `localhost` is a secure context so browser notifications and drum audio work without HTTPS. |
 | `beatctl submit -t "<task>" --project <name>` | Create an `OpenCodeRun` with an inline task prompt (requires a project name). |
 | `beatctl submit -i --project <name>` | Interactive run — no prompt; runner stays alive for `beatctl attach`. |
 | `beatctl submit ... -a` | After submit, poll until `Running` then hand off to attach. |

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Outlet, NavLink } from "react-router-dom";
 import { useProjects } from "../hooks/useProjects";
 import { useRuns } from "../hooks/useRuns";
+import { useRunNotifications } from "../hooks/useRunNotifications";
 import { TERMINAL_PHASES } from "@percussionist/api";
 
 function SidebarLink({ to, children }: { to: string; children: React.ReactNode }) {
@@ -89,6 +90,7 @@ function DrumLogo({ playing }: { playing: boolean }) {
 export default function Layout() {
   const { data: runs } = useRuns();
   const hasInProgress = (runs ?? []).some((r) => r.status?.phase != null && !TERMINAL_PHASES.has(r.status.phase));
+  useRunNotifications(runs);
 
   return (
     <div className="min-h-screen flex">

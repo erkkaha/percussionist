@@ -9,6 +9,7 @@ import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchBoard, addBoardTask, deleteBoardTask, fetchAgents, patchBoardSpec, retryEscalatedTask, fetchNextTaskId, approveTask, requestChangesTask } from "../lib/api";
 import type { BoardTask, ManagerMetrics } from "../lib/types";
+import { useBoardNotifications } from "../hooks/useBoardNotifications";
 
 const DEFAULT_COLUMNS = ["ready", "in-progress", "review", "rework", "done"];
 
@@ -137,6 +138,9 @@ export default function BoardView() {
       setRequestChangesComment("");
     },
   });
+
+  // Notify on worker status transitions (must be called before early returns per React rules).
+  useBoardNotifications(projectName, data?.status.workers ?? []);
 
   if (isLoading) return <p className="text-sm text-text-dim">Loading board…</p>;
   if (error || !data) return <p className="text-sm text-phase-failed">Failed to load board.</p>;
