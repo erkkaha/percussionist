@@ -29,7 +29,10 @@ export async function sendStats(
   let rawMessages: RawMessage[] = [];
   try {
     const res = await fetch(`${BASE_URL}/session/${sessionID}/message`);
-    if (res.ok) rawMessages = (await res.json()) as RawMessage[];
+    if (res.ok) {
+      const data = (await res.json()) as RawMessage[] | { items?: RawMessage[] };
+      rawMessages = Array.isArray(data) ? data : (data.items ?? []);
+    }
   } catch (e) {
     err("sendStats: failed to fetch messages:", (e as Error).message);
   }

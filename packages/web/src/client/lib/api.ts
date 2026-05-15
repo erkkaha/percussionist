@@ -180,7 +180,11 @@ export async function deleteAgent(name: string): Promise<void> {
 
 export async function fetchBoard(
   project: string,
-): Promise<{ spec: BoardSpec; status: BoardStatus }> {
+): Promise<{
+  spec: BoardSpec;
+  status: BoardStatus;
+  approvals?: Record<string, { approved: boolean; requestChanges: boolean }>;
+}> {
   return fetchJSON(`/projects/${encodeURIComponent(project)}/board`);
 }
 

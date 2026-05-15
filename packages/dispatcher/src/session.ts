@@ -54,8 +54,8 @@ export async function listSessions(): Promise<SessionEntry[]> {
     if (!res.ok) return [];
     const data = (await res.json()) as
       | SessionEntry[]
-      | { sessions?: SessionEntry[] };
-    return Array.isArray(data) ? data : (data.sessions ?? []);
+      | { items?: SessionEntry[]; sessions?: SessionEntry[] };
+    return Array.isArray(data) ? data : (data.items ?? data.sessions ?? []);
   } catch {
     return [];
   }
@@ -65,7 +65,8 @@ export async function fetchMessages(sessionID: string): Promise<RawMessage[]> {
   try {
     const res = await fetch(`${BASE_URL}/session/${sessionID}/message`);
     if (!res.ok) return [];
-    return (await res.json()) as RawMessage[];
+    const data = (await res.json()) as RawMessage[] | { items?: RawMessage[] };
+    return Array.isArray(data) ? data : (data.items ?? []);
   } catch {
     return [];
   }
