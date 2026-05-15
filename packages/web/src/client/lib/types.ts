@@ -88,6 +88,8 @@ export interface CreateProjectRequest {
   }>;
   /** Files to inject into /workspace/<filename> — content managed server-side as K8s Secrets. */
   injectFiles?: Array<{ filename: string; content: string }>;
+  /** Shell script to run after git clone, before opencode starts. */
+  initScript?: string;
 }
 
 export interface CreateAgentRequest {

@@ -73,6 +73,7 @@ export default function CreateProjectForm({
   const [gitAuthorEmail, setGitAuthorEmail] = useState(initialSpec?.source?.git?.author?.email ?? "");
   const [llmKeysSecret, setLlmKeysSecret] = useState(initialSpec?.secrets?.llmKeysSecret ?? "");
   const [authSecret, setAuthSecret] = useState(initialSpec?.secrets?.opencodeAuthSecret?.name ?? "");
+  const [initScript, setInitScript] = useState(initialSpec?.initScript ?? "");
   const [opencodeConfig, setOpencodeConfig] = useState<string | null>(null);
   const [configExpanded, setConfigExpanded] = useState(false);
   const [sidecars, setSidecars] = useState<SidecarRow[]>(() => initialSidecarRows(initialSpec));
@@ -208,6 +209,9 @@ export default function CreateProjectForm({
           ? { opencodeAuthSecret: { name: authSecret.trim() } }
           : {}),
       };
+    }
+    if (initScript.trim()) {
+      req.initScript = initScript.trim();
     }
     if (sidecars.length > 0) {
       req.sidecars = sidecars.map((sc) => {
@@ -666,6 +670,24 @@ export default function CreateProjectForm({
           >
             + Add file
           </button>
+        </fieldset>
+
+        {/* Init Script */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Init script</legend>
+          <p className="text-xs text-text-dim">
+            Shell script to run after git clone completes, before opencode starts.
+            Runs in the init container — failure (non-zero exit) will prevent the pod from starting.
+            Working directory is <code className="font-mono">/workspace</code> (the cloned repo root).
+          </p>
+          <textarea
+            value={initScript}
+            onChange={(e) => setInitScript(e.target.value)}
+            rows={6}
+            spellCheck={false}
+            placeholder={"npm ci\nnpm run build"}
+            className={monoInputClass + " resize-y text-xs leading-5 font-mono"}
+          />
         </fieldset>
 
         {mutation.error && (

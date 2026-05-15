@@ -101,6 +101,7 @@ export function buildWorkerRun(
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
       ...(resolved.source ? { source: resolved.source } : {}),
       ...(resolved.sidecars?.length ? { sidecars: resolved.sidecars } : {}),
+      ...(resolved.initScript ? { initScript: resolved.initScript } : {}),
     },
   };
 }
@@ -172,6 +173,7 @@ export function buildMergeRun(
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
       ...(resolved.source ? { source: resolved.source } : {}),
       ...(resolved.sidecars?.length ? { sidecars: resolved.sidecars } : {}),
+      ...(resolved.initScript ? { initScript: resolved.initScript } : {}),
     },
   };
 }

@@ -265,12 +265,26 @@ export const OpenCodeRunSpecSchema = z
     sidecars: SidecarSpecSchema.array().max(5).optional(),
 
     // Files to inject into /workspace/<filename> inside the runner container.
-    // Content is stored in K8s Secrets and mounted via subPath volumes.
-    injectFiles: InjectFileRefSchema.array().max(20).optional(),
+  // Content is stored in K8s Secrets and mounted via subPath volumes.
+  injectFiles: InjectFileRefSchema.array().max(20).optional(),
+
+  // Shell script to run after git clone completes, before opencode starts.
+  // Inherited from the parent OpenCodeProject at creation time.
+  initScript: z.string().optional(),
 
     timeoutSeconds: z.number().int().positive().default(3600),
     ttlSecondsAfterFinished: z.number().int().nonnegative().default(3600),
     expose: ExposeSchema.optional(),
+
+    // Cache configuration for package manager stores and build artifacts.
+    // Backed by a PVC shared across all runs in the same project.
+    cache: z
+      .object({
+        pvcName: z.string().optional(), // defaults to `{project}-cache`
+        mountPath: z.string().default("/cache"),
+        storageClass: z.string().optional(), // defaults to cluster default
+      })
+      .optional(),
   })
   .refine((s) => s.interactive || !!s.task, {
     message: "spec.task is required unless spec.interactive is true",
@@ -548,6 +562,11 @@ export const OpenCodeProjectSpecSchema = z.object({
   // Content is stored in K8s Secrets and mounted via subPath volumes.
   injectFiles: InjectFileRefSchema.array().max(20).optional(),
 
+  // Shell script to run after git clone completes, before opencode starts.
+  // Runs as part of the git-clone init container. Failure (non-zero exit)
+  // will cause the pod to fail and not start.
+  initScript: z.string().optional(),
+
   // Embedded kanban board configuration.
   board: BoardSpecSchema.optional(),
 });
@@ -621,6 +640,7 @@ export interface ResolvedRunConfig {
   source?: { git?: GitSource };
   sidecars?: SidecarSpec[];
   injectFiles?: InjectFileRef[];
+  initScript?: string;
 }
 
 export function resolveRunConfig(
@@ -651,5 +671,6 @@ export function resolveRunConfig(
     source: project.source,
     sidecars: project.sidecars,
     injectFiles: project.injectFiles,
+    initScript: project.initScript,
   };
 }

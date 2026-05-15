@@ -13,10 +13,12 @@ import {
   API_GROUP,
   API_VERSION,
   PLURAL_RUN,
+  PLURAL_PROJECT,
   RunPhase,
   TERMINAL_PHASES,
   type OpenCodeRun,
   type OpenCodeRunStatus,
+  type OpenCodeProject,
 } from "@percussionist/api";
 import { resolveAgents } from "./agent-resolver.js";
 import {
@@ -31,6 +33,7 @@ import {
   webURLFor,
 } from "./pod-builder.js";
 import { NAMESPACE, SELF_NAMESPACE } from "./config.js";
+import { ensureCachePVC, isPVCBound } from "./pvc-helper.js";
 
 const log = (...args: unknown[]) =>
   console.log(`[operator ${new Date().toISOString()}]`, ...args);
@@ -199,6 +202,60 @@ export async function reconcile(run: OpenCodeRun): Promise<void> {
       } catch (e) {
         if (!/already exists/i.test((e as Error).message)) throw e;
       }
+    }
+  }
+
+  // Ensure cache PVC exists for the project.
+  const projectName = run.metadata.labels?.["percussionist.dev/project"];
+  if (projectName) {
+    try {
+      // Fetch the OpenCodeProject CR to get its UID for owner reference.
+      const project = (await co.getNamespacedCustomObject({
+        group: API_GROUP,
+        version: API_VERSION,
+        namespace: ns,
+        plural: PLURAL_PROJECT,
+        name: projectName,
+      })) as OpenCodeProject;
+
+      const projectUid = project.metadata?.uid;
+      if (!projectUid) {
+        throw new Error(
+          `OpenCodeProject ${ns}/${projectName} missing UID (newly created?)`,
+        );
+      }
+
+      const cachePvcName = run.spec.cache?.pvcName ?? `${projectName}-cache`;
+      const storageClass = run.spec.cache?.storageClass;
+
+      // Ensure PVC exists (idempotent).
+      await ensureCachePVC({
+        projectName,
+        namespace: ns,
+        projectUid,
+        storageClass,
+        pvcName: cachePvcName,
+      });
+
+      // Check if PVC is bound and ready.
+      const bound = await isPVCBound(ns, cachePvcName);
+      if (!bound) {
+        // PVC exists but not yet bound — requeue and wait.
+        await patchStatus(run, {
+          phase: RunPhase.Pending,
+          message: `waiting for cache PVC ${cachePvcName} to be bound`,
+        });
+        log(`cache PVC ${ns}/${cachePvcName} not yet bound, requeuing...`);
+        return; // Exit early, will be requeued by informer.
+      }
+    } catch (e) {
+      const msg = (e as Error).message;
+      await patchStatus(run, {
+        phase: RunPhase.Failed,
+        message: `failed to ensure cache PVC: ${msg}`,
+      });
+      err(`cache PVC error for ${ns}/${name}:`, msg);
+      throw e;
     }
   }
 

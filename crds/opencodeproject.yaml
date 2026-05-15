@@ -190,6 +190,8 @@ spec:
                       - filename
                       - secretRef
                   maxItems: 20
+                initScript:
+                  type: string
                 board:
                   type: object
                   properties:
@@ -334,6 +336,7 @@ spec:
                                   - retry_alternative
                                   - skip
                                   - approve
+                                  - request_changes
                                   - escalate
                               alternativeAgent:
                                 type: string
@@ -352,6 +355,21 @@ spec:
                             type: array
                             items:
                               type: string
+                          reviewApproved:
+                            type: boolean
+                          reviewFeedback:
+                            type: string
+                            maxLength: 4096
+                          reworkAgent:
+                            type: string
+                            maxLength: 63
+                          mergeRunName:
+                            type: string
+                          mergedAt:
+                            type: string
+                          mergeError:
+                            type: string
+                            maxLength: 4096
                         required:
                           - taskId
                           - status
@@ -396,6 +414,7 @@ spec:
                               - retry_alternative
                               - skip
                               - approve
+                              - request_changes
                               - escalate
                           alternativeAgent:
                             type: string

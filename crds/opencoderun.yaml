@@ -244,6 +244,8 @@ spec:
                       - filename
                       - secretRef
                   maxItems: 20
+                initScript:
+                  type: string
                 timeoutSeconds:
                   type: integer
                   exclusiveMinimum: true
@@ -256,6 +258,15 @@ spec:
                   properties:
                     web:
                       type: boolean
+                cache:
+                  type: object
+                  properties:
+                    pvcName:
+                      type: string
+                    mountPath:
+                      type: string
+                    storageClass:
+                      type: string
               required:
                 - project
             status:

@@ -277,6 +277,7 @@ function buildFacilitatorRun(
       ...(resolved.resources ? { resources: resolved.resources } : {}),
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
       ...(resolved.sidecars?.length ? { sidecars: resolved.sidecars } : {}),
+      ...(resolved.initScript ? { initScript: resolved.initScript } : {}),
     },
   };
 }

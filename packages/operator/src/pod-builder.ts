@@ -170,13 +170,27 @@ export function renderPod(
   sidecars: SidecarSpec[] = [],
 ): V1Pod {
   const spec = run.spec;
+
+  // Validate project label is present (required for cache PVC)
+  const projectName = run.metadata.labels?.["percussionist.dev/project"];
+  if (!projectName) {
+    throw new Error(
+      `OpenCodeRun ${run.metadata.namespace}/${run.metadata.name} missing required label: percussionist.dev/project`,
+    );
+  }
+
   const llmKeysSecret = spec.secrets?.llmKeysSecret;
   const image = spec.image ?? RUNNER_IMAGE_DEFAULT;
   const git = spec.source?.git;
   const sshSecret = git?.sshSecret;
   const githubTokenSecret = git?.githubTokenSecret;
+  const initScript = spec.initScript;
   const hasAgents = resolvedAgents.length > 0;
   const hasSidecars = sidecars.length > 0;
+  const initContainerResources = spec.resources ?? {
+    requests: { cpu: "200m", memory: "512Mi" },
+    limits: { cpu: "2", memory: "2Gi" },
+  };
 
   // Build the wait-for-sidecars prefix: for each sidecar port, loop until nc
   // succeeds. This runs inside the opencode container so all pods share the
@@ -230,6 +244,15 @@ export function renderPod(
               '  git clone --depth=1 --branch "${GIT_REF}" "${GIT_URL}" .',
               'fi',
               'echo "[git-clone] HEAD=$(git rev-parse HEAD)"',
+              ...(initScript ? [
+                '',
+                '# Run init script if present.',
+                'if [ -n "${INIT_SCRIPT}" ]; then',
+                '  echo "[git-clone] running init script"',
+                '  eval "${INIT_SCRIPT}"',
+                '  echo "[git-clone] init script completed successfully"',
+                'fi',
+              ] : []),
             ].join("\n"),
           ],
           env: [
@@ -237,6 +260,7 @@ export function renderPod(
             ...(git.ref ? [{ name: "GIT_REF", value: git.ref }] : []),
             { name: "GIT_TERMINAL_PROMPT", value: "0" },
             ...gitAuthorEnv,
+            ...(initScript ? [{ name: "INIT_SCRIPT", value: initScript }] : []),
           ],
           volumeMounts: [
             { name: "workspace", mountPath: "/workspace" },
@@ -247,18 +271,21 @@ export function renderPod(
               ? [{ name: "git-github", mountPath: "/etc/git-github", readOnly: true }]
               : []),
           ],
-          resources: {
-            requests: { cpu: "50m", memory: "128Mi" },
-            limits: { cpu: "500m", memory: "512Mi" },
-          },
+          resources: initContainerResources,
         },
       ]
     : undefined;
 
   const injectFiles = spec.injectFiles ?? [];
 
+  // Cache PVC configuration
+  const cachePvcName = spec.cache?.pvcName ?? `${projectName}-cache`;
+  const cacheMountPath = spec.cache?.mountPath ?? "/cache";
+
   const volumes = [
     { name: "workspace", emptyDir: {} },
+    // Cache PVC for package managers and build artifacts (RWX for parallel workers)
+    { name: "cache", persistentVolumeClaim: { claimName: cachePvcName } },
     ...(sshSecret
       ? [
           {
@@ -336,6 +363,12 @@ export function renderPod(
           ports: [{ name: "http", containerPort: CONTAINER_PORT }],
           env: [
             { name: "NODE_OPTIONS", value: "--max-old-space-size=1536" },
+            // Package manager cache configuration
+            { name: "PNPM_HOME", value: `${cacheMountPath}/pnpm` },
+            { name: "npm_config_store_dir", value: `${cacheMountPath}/pnpm-store` },
+            { name: "NPM_CONFIG_CACHE", value: `${cacheMountPath}/npm` },
+            { name: "BUN_INSTALL_CACHE_DIR", value: `${cacheMountPath}/bun` },
+            { name: "TURBO_CACHE_DIR", value: `${cacheMountPath}/turbo` },
             sshSecret
               ? {
                   name: "GIT_SSH_COMMAND",
@@ -420,6 +453,8 @@ export function renderPod(
           },
           volumeMounts: [
             { name: "workspace", mountPath: "/workspace" },
+            // Cache volume for package managers and build artifacts
+            { name: "cache", mountPath: cacheMountPath },
             ...(sshSecret
               ? [{ name: "git-ssh", mountPath: "/etc/git-ssh", readOnly: true }]
               : []),

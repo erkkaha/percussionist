@@ -13,14 +13,14 @@ ARG BUN_VERSION=1.3.13
 # --- deps stage ---------------------------------------------------------------
 FROM node:${NODE_VERSION}-alpine AS deps
 RUN apk add --no-cache libc6-compat
-RUN corepack enable && corepack prepare pnpm@10.30.2 --activate
+RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
 
 WORKDIR /repo
-COPY pnpm-workspace.yaml package.json tsconfig.base.json ./
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/api/package.json packages/api/package.json
 COPY packages/kube/package.json packages/kube/package.json
 COPY packages/web/package.json packages/web/package.json
-RUN pnpm install --frozen-lockfile=false && pnpm approve-builds esbuild
+RUN pnpm install --frozen-lockfile --config.strict-dep-builds=false
 
 # --- build stage --------------------------------------------------------------
 FROM deps AS build
@@ -33,9 +33,10 @@ COPY packages/web/tsconfig.json    packages/web/tsconfig.json
 COPY packages/web/tsconfig.server.json packages/web/tsconfig.server.json
 COPY packages/web/tsconfig.client.json packages/web/tsconfig.client.json
 COPY packages/web/vite.config.ts   packages/web/vite.config.ts
-RUN pnpm -C packages/api run build \
- && pnpm -C packages/kube run build \
- && pnpm -C packages/web run build
+RUN ./node_modules/.bin/tsc -p packages/api/tsconfig.json \
+ && ./node_modules/.bin/tsc -p packages/kube/tsconfig.json \
+ && ./packages/web/node_modules/.bin/vite build --config packages/web/vite.config.ts \
+ && ./node_modules/.bin/tsc -p packages/web/tsconfig.server.json
 
 # --- runtime (Bun) ------------------------------------------------------------
 FROM oven/bun:${BUN_VERSION}-alpine AS runtime

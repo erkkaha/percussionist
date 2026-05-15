@@ -17,7 +17,7 @@ export function getTasksToPull(
   const readyTasks = backlog["ready"] ?? [];
   const blockingBuildId = getBlockingBuildSequenceTask(project, boardStatus);
 
-  const activeCount = workers.filter((w) => w.status === "Running").length;
+  const activeCount = workers.filter((w) => w.status === "Running" && !!w.runName).length;
   const availableSlots = maxParallel - activeCount;
   if (availableSlots <= 0) return [];
 
@@ -40,6 +40,13 @@ export function getTasksToPull(
 
     // Skip if already being worked on (not failed/escalated).
     const existing = workers.find((w) => w.taskId === taskId);
+    const isStaleRunningWithoutRun = existing?.status === "Running" && !existing.runName;
+    if (isStaleRunningWithoutRun) {
+      // Corrupt/stale status entry: task marked Running but no runName exists.
+      // Allow a fresh pull so the board can self-heal.
+      result.push(taskId);
+      continue;
+    }
     if (existing && existing.status !== "Failed" && existing.status !== "Escalated") {
       continue;
     }

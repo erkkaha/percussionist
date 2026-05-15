@@ -11,13 +11,13 @@
 FROM ghcr.io/anomalyco/opencode:latest
 
 ARG BUN_VERSION=1.3.14
-ARG PNPM_VERSION=10.30.2
+ARG PNPM_VERSION=11.1.2
 
 # Pin locale-related env for deterministic number/date formatting in tests
 # and agent runs (avoid host-dependent snapshot drift).
 ENV LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8 \
-    LC_NUMERIC=C.UTF-8
+  LC_ALL=C.UTF-8 \
+  LC_NUMERIC=C.UTF-8
 
 # Tools the agent will need at runtime.
 #  - git, openssh-client: clone repos, push branches, SSH auth
@@ -32,22 +32,22 @@ ENV LANG=C.UTF-8 \
 #  - icu-data-full: full ICU locale data so Intl number/date formatting supports
 #                   non-English locales (e.g. fi-FI decimal comma)
 RUN apk add --no-cache \
-      git \
-      openssh-client \
-      ca-certificates \
-      tini \
-      nodejs \
-      npm \
-      bash \
-      curl \
-      unzip \
-      github-cli \
-      icu-data-full \
-      gcompat \
-      gcc \
-      musl-dev \
-    && mkdir -p /workspace /root/.ssh \
-    && chmod 700 /root/.ssh
+  git \
+  openssh-client \
+  ca-certificates \
+  tini \
+  nodejs \
+  npm \
+  bash \
+  curl \
+  unzip \
+  github-cli \
+  icu-data-full \
+  gcompat \
+  gcc \
+  musl-dev \
+  && mkdir -p /workspace /root/.ssh \
+  && chmod 700 /root/.ssh
 
 # Compile and install the glibc symbol stub, then remove the compiler.
 # gnu_get_libc_version is referenced by glibc-linked .so files that Bun FFI
@@ -55,8 +55,8 @@ RUN apk add --no-cache \
 # not expose this symbol; the stub satisfies the dynamic linker.
 COPY gnu_stub.c /tmp/gnu_stub.c
 RUN gcc -shared -fPIC -o /usr/local/lib/libgnustub.so /tmp/gnu_stub.c \
-    && rm /tmp/gnu_stub.c \
-    && apk del gcc musl-dev
+  && rm /tmp/gnu_stub.c \
+  && apk del gcc musl-dev
 
 # Preload the stub so every dlopen() call in the process can resolve the symbol.
 ENV LD_PRELOAD=/usr/local/lib/libgnustub.so
@@ -64,10 +64,10 @@ ENV LD_PRELOAD=/usr/local/lib/libgnustub.so
 # Install Bun and pnpm (via Corepack) so workspace agents can run test/build
 # workflows in modern monorepos without ad-hoc bootstrapping.
 RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION} \
-    && ln -sf /root/.bun/bin/bun /usr/local/bin/bun \
-    && npm install -g corepack \
-    && corepack enable \
-    && corepack prepare pnpm@${PNPM_VERSION} --activate
+  && ln -sf /root/.bun/bin/bun /usr/local/bin/bun \
+  && npm install -g corepack \
+  && corepack enable \
+  && corepack prepare pnpm@${PNPM_VERSION} --activate
 
 # Small diagnostics helper for fast runtime preflight checks in agent sessions.
 RUN cat > /usr/local/bin/runner-doctor <<'EOF'

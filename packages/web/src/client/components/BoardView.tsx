@@ -284,6 +284,9 @@ export default function BoardView() {
                 {taskIds.map((id) => {
                   const task = taskById(id);
                   const worker = workerByTask(id);
+                  const isBuildTask = task?.type === "BUILD";
+                  const reviewerDecisionKnown = worker?.reviewApproved !== undefined || !!worker?.reviewFeedback;
+                  const canApproveNow = !isBuildTask || worker?.reviewApproved === true;
                   return (
                     <div
                       key={id}
@@ -321,6 +324,38 @@ export default function BoardView() {
                           {worker.runName}
                         </Link>
                       )}
+                      {col === "review" && isBuildTask && worker?.reviewRunName && (
+                        <Link
+                          to={`/runs/${encodeURIComponent(worker.reviewRunName)}`}
+                          className="text-xs text-text-dim hover:text-text transition-colors underline"
+                          title="Agent reviewer run"
+                        >
+                          reviewer: {worker.reviewRunName}
+                        </Link>
+                      )}
+                      {col === "review" && isBuildTask && worker?.mergeRunName && (
+                        <Link
+                          to={`/runs/${encodeURIComponent(worker.mergeRunName)}`}
+                          className="text-xs text-text-dim hover:text-text transition-colors underline"
+                          title="Merge run"
+                        >
+                          merge: {worker.mergeRunName}
+                        </Link>
+                      )}
+                      {col === "review" && isBuildTask && !reviewerDecisionKnown && !worker?.reviewRunName && (
+                        <p className="text-xs text-text-dim">
+                          Agent review status: not started. If this persists, add reviewer agent to board roster.
+                        </p>
+                      )}
+                      {col === "review" && isBuildTask && worker?.reviewRunName && !reviewerDecisionKnown && (
+                        <p className="text-xs text-text-dim">Agent review in progress.</p>
+                      )}
+                      {col === "review" && isBuildTask && worker?.reviewApproved === true && (
+                        <p className="text-xs text-phase-running">Agent review approved. Ready for human approve.</p>
+                      )}
+                      {col === "review" && isBuildTask && worker?.reviewFeedback && (
+                        <p className="text-xs text-phase-failed whitespace-pre-wrap">Agent review feedback: {worker.reviewFeedback}</p>
+                      )}
                       {worker?.status === "Escalated" && (
                         <details className="text-xs text-phase-failed">
                           <summary className="cursor-pointer list-none hover:opacity-80 transition-opacity [&::-webkit-details-marker]:hidden flex items-center gap-1.5">
@@ -346,9 +381,9 @@ export default function BoardView() {
                         <div className="flex gap-2 mt-1">
                           <button
                             onClick={() => approveMutation.mutate(id)}
-                            disabled={approveMutation.isPending}
+                            disabled={approveMutation.isPending || !canApproveNow}
                             className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors font-medium"
-                            title="Approve this task"
+                            title={canApproveNow ? "Approve this task" : "Wait for agent review approval first"}
                           >
                             {approveMutation.isPending && approveMutation.variables === id ? "Approving…" : "✓ Approve"}
                           </button>

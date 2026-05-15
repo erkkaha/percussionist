@@ -154,6 +154,54 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
     }
   }
 
+  // Self-heal: a worker marked Running must have a runName and be present in
+  // backlog.in-progress. If not, it blocks scheduling forever.
+  const inProgressSet = new Set(backlog["in-progress"] ?? []);
+  const staleRunningWorkers = workers.filter(
+    (w) => w.status === "Running" && (!w.runName || !inProgressSet.has(w.taskId)),
+  );
+  if (staleRunningWorkers.length > 0) {
+    log(
+      `repairing ${staleRunningWorkers.length} stale running worker(s): ${staleRunningWorkers.map((w) => w.taskId).join(", ")}`,
+    );
+    for (const stale of staleRunningWorkers) {
+      if (stale.runName) {
+        try {
+          const staleRun = await getRun(stale.runName, ns, k8s);
+          const stalePhase = staleRun.status?.phase;
+          if (stalePhase === "Succeeded") {
+            workers = updateWorker(workers, stale.taskId, {
+              status: "Succeeded",
+              completedAt: new Date().toISOString(),
+            });
+            backlog = moveTask(backlog, stale.taskId, "review");
+            continue;
+          }
+          if (stalePhase === "Failed" || stalePhase === "Cancelled") {
+            workers = updateWorker(workers, stale.taskId, {
+              status: "Failed",
+              completedAt: new Date().toISOString(),
+            });
+            backlog = moveTask(backlog, stale.taskId, "rework");
+            continue;
+          }
+
+          // Run is still active; reattach the task into in-progress.
+          backlog = moveTask(backlog, stale.taskId, "in-progress");
+          continue;
+        } catch {
+          // Fall through to mark failed below.
+        }
+      }
+
+      workers = updateWorker(workers, stale.taskId, {
+        status: "Failed",
+        completedAt: new Date().toISOString(),
+      });
+      backlog = moveTask(backlog, stale.taskId, "rework");
+    }
+  }
+
   // ------------------------------------------------------------------
   // PULL PHASE: move ready tasks → in-progress, create worker runs.
   // ------------------------------------------------------------------
@@ -228,7 +276,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   );
 
   for (const worker of workers.filter(
-    (w) => w.status === "Running" || (w.status === "Succeeded" && !!w.reviewRunName && !backlog["done"]?.includes(w.taskId)),
+    (w) => w.status === "Running" || (w.status === "Succeeded" && !backlog["done"]?.includes(w.taskId)),
   )) {
     workersMonitored++;
     if (!worker.runName) continue;
@@ -1015,15 +1063,25 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
       await createRun(reworkRun, ns, k8s);
       log(`re-dispatched rework for task ${taskId}`);
     } catch (e) {
-      err(`failed to create rework run for ${taskId}:`, (e as Error).message);
-      backlog = moveTask(backlog, taskId, "rework");
+      const msg = (e as Error).message;
+      if (/AlreadyExists/i.test(msg)) {
+        // Idempotent recovery: run name is deterministic, so this often means
+        // the run already exists from a previous reconcile race.
+        log(`rework run already exists for ${taskId}; keeping task in in-progress`);
+      } else {
+        err(`failed to create rework run for ${taskId}:`, msg);
+        backlog = moveTask(backlog, taskId, "rework");
+      }
     }
   }
 
   // ------------------------------------------------------------------
   // UPDATE PHASE: patch project board status.
   // ------------------------------------------------------------------
-  const activeWorkers = workers.filter((w) => w.status === "Running").length;
+  const inProgressFinal = new Set(backlog["in-progress"] ?? []);
+  const activeWorkers = workers.filter(
+    (w) => w.status === "Running" && !!w.runName && inProgressFinal.has(w.taskId),
+  ).length;
   const pendingQuestions = (boardStatus.pendingQuestions ?? []).filter((q) =>
     workers.some((w) => w.taskId === q.workerId && w.status === "Running"),
   );

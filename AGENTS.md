@@ -31,6 +31,24 @@ of TypeScript packages under `packages/*`.
 - All deployments are single-replica with `Recreate` strategy (no leader election)
 - In-cluster config by default, falls back to kubeconfig
 
+## Caching
+- All runs require `metadata.labels["percussionist.dev/project"]` label
+- Cache PVC (`{project}-cache`) is auto-created per project with RWX access mode
+- Cache structure:
+  - `/cache/pnpm/` - pnpm home and global bins
+  - `/cache/pnpm-store/` - pnpm store directory
+  - `/cache/npm/` - npm cache
+  - `/cache/bun/` - bun install cache
+  - `/cache/turbo/` - Turbo build cache
+- Cache size: 5Gi (default, configurable via `spec.cache` in future)
+- Cache lifecycle: Tied to OpenCodeProject (auto-deleted when project is deleted)
+- Storage: Uses cluster default storage class with ReadWriteMany access mode
+  - For RWX support on minikube/k3s, requires NFS or similar provisioner
+  - Falls back gracefully if PVC creation fails
+- Override PVC name via `spec.cache.pvcName` (optional)
+- Override storage class via `spec.cache.storageClass` (optional)
+- Override mount path via `spec.cache.mountPath` (defaults to `/cache`)
+
 ## Architecture
 - All packages are ESM (`"type": "module"`)
 - Strict TypeScript everywhere (`noUncheckedIndexedAccess`, `noImplicitOverride`)

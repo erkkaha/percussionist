@@ -10,7 +10,7 @@ ARG NODE_VERSION=24
 # --- deps stage: install workspace deps once ---------------------------------
 FROM node:${NODE_VERSION}-alpine AS deps
 RUN apk add --no-cache libc6-compat
-RUN corepack enable && corepack prepare pnpm@10.30.2 --activate
+RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
 
 WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
@@ -19,17 +19,26 @@ COPY packages/kube/package.json             packages/kube/package.json
 COPY packages/operator/package.json         packages/operator/package.json
 COPY packages/dispatcher/package.json       packages/dispatcher/package.json
 COPY packages/manager-controller/package.json packages/manager-controller/package.json
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --config.strict-dep-builds=false
 
 # --- build stage: compile TS --------------------------------------------------
 FROM deps AS build
 ARG PKG
-COPY packages ./packages
-RUN pnpm -C packages/api              run build \
- && pnpm -C packages/kube             run build \
- && pnpm -C packages/operator         run build \
- && pnpm -C packages/dispatcher       run build \
- && pnpm -C packages/manager-controller run build
+COPY packages/api/src                        packages/api/src
+COPY packages/api/tsconfig.json              packages/api/tsconfig.json
+COPY packages/kube/src                       packages/kube/src
+COPY packages/kube/tsconfig.json             packages/kube/tsconfig.json
+COPY packages/operator/src                   packages/operator/src
+COPY packages/operator/tsconfig.json         packages/operator/tsconfig.json
+COPY packages/dispatcher/src                 packages/dispatcher/src
+COPY packages/dispatcher/tsconfig.json       packages/dispatcher/tsconfig.json
+COPY packages/manager-controller/src         packages/manager-controller/src
+COPY packages/manager-controller/tsconfig.json packages/manager-controller/tsconfig.json
+RUN pnpm --config.strict-dep-builds=false -C packages/api              run build \
+ && pnpm --config.strict-dep-builds=false -C packages/kube             run build \
+ && pnpm --config.strict-dep-builds=false -C packages/operator         run build \
+ && pnpm --config.strict-dep-builds=false -C packages/dispatcher       run build \
+ && pnpm --config.strict-dep-builds=false -C packages/manager-controller run build
 
 # --- runtime: minimal node image with all built packages --------------------
 FROM node:${NODE_VERSION}-alpine AS runtime
