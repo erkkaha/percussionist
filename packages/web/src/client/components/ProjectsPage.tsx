@@ -84,9 +84,9 @@ function ProjectRow({ project }: { project: OpenCodeProject }) {
 
 export default function ProjectsPage() {
   const { connected: projectsSseConnected, eventTick } = useProjectsEvents();
+  void eventTick;
   const { data: projects, error, isLoading, isFetching } = useProjects(
     projectsSseConnected ? false : 10_000,
-    eventTick,
   );
 
   if (error) {

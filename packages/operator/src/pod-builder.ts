@@ -187,9 +187,14 @@ export function renderPod(
   const initScript = spec.initScript;
   const hasAgents = resolvedAgents.length > 0;
   const hasSidecars = sidecars.length > 0;
+
+  // Cache PVC configuration (declared early so initContainers can reference it)
+  const cachePvcName = spec.cache?.pvcName ?? `${projectName}-cache`;
+  const cacheMountPath = spec.cache?.mountPath ?? "/cache";
+
   const initContainerResources = spec.resources ?? {
     requests: { cpu: "200m", memory: "512Mi" },
-    limits: { cpu: "2", memory: "2Gi" },
+    limits: { cpu: "2", memory: "4Gi" },
   };
 
   // Build the wait-for-sidecars prefix: for each sidecar port, loop until nc
@@ -261,9 +266,16 @@ export function renderPod(
             { name: "GIT_TERMINAL_PROMPT", value: "0" },
             ...gitAuthorEnv,
             ...(initScript ? [{ name: "INIT_SCRIPT", value: initScript }] : []),
+            // Cache env vars so init scripts (e.g. pnpm install) use the cache PVC
+            { name: "PNPM_HOME", value: `${cacheMountPath}/pnpm` },
+            { name: "npm_config_store_dir", value: `${cacheMountPath}/pnpm-store` },
+            { name: "NPM_CONFIG_CACHE", value: `${cacheMountPath}/npm` },
+            { name: "BUN_INSTALL_CACHE_DIR", value: `${cacheMountPath}/bun` },
+            { name: "TURBO_CACHE_DIR", value: `${cacheMountPath}/turbo` },
           ],
           volumeMounts: [
             { name: "workspace", mountPath: "/workspace" },
+            { name: "cache", mountPath: cacheMountPath },
             ...(sshSecret
               ? [{ name: "git-ssh", mountPath: "/etc/git-ssh", readOnly: true }]
               : []),
@@ -277,10 +289,6 @@ export function renderPod(
     : undefined;
 
   const injectFiles = spec.injectFiles ?? [];
-
-  // Cache PVC configuration
-  const cachePvcName = spec.cache?.pvcName ?? `${projectName}-cache`;
-  const cacheMountPath = spec.cache?.mountPath ?? "/cache";
 
   const volumes = [
     { name: "workspace", emptyDir: {} },

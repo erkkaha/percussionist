@@ -15,7 +15,7 @@ COPY packages/api/package.json packages/api/tsconfig.json ./packages/api/
 COPY packages/kube/package.json packages/kube/tsconfig.json ./packages/kube/
 COPY packages/manager-controller/package.json packages/manager-controller/tsconfig.json ./packages/manager-controller/
 
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN corepack enable && pnpm install --frozen-lockfile --ignore-scripts
 
 COPY packages/api/src/ packages/api/src/
 COPY packages/kube/src/ packages/kube/src/

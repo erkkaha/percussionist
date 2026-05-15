@@ -52,7 +52,9 @@ export async function ensureCachePVC(
     );
     return existing;
   } catch (err: unknown) {
-    const statusCode = (err as { statusCode?: number }).statusCode;
+    const statusCode =
+      (err as { statusCode?: number }).statusCode ??
+      (err as { code?: number }).code;
     if (statusCode !== 404) {
       throw err; // Unexpected error
     }
@@ -106,7 +108,9 @@ export async function ensureCachePVC(
     );
     return created;
   } catch (err: unknown) {
-    const statusCode = (err as { statusCode?: number }).statusCode;
+    const statusCode =
+      (err as { statusCode?: number }).statusCode ??
+      (err as { code?: number }).code;
     // If PVC was created by another reconcile loop concurrently, treat as success
     if (statusCode === 409) {
       console.log(
@@ -139,7 +143,9 @@ export async function isPVCBound(
     });
     return pvc.status?.phase === "Bound";
   } catch (err: unknown) {
-    const statusCode = (err as { statusCode?: number }).statusCode;
+    const statusCode =
+      (err as { statusCode?: number }).statusCode ??
+      (err as { code?: number }).code;
     if (statusCode === 404) {
       return false; // PVC doesn't exist
     }

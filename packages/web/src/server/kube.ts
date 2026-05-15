@@ -35,6 +35,11 @@ export {
   postSessionMessage,
   postPermissionReply,
   readSessionConfigMap,
+  // Metrics helpers
+  listNodeMetrics,
+  listPodMetrics,
+  type NodeMetric,
+  type PodMetric,
 } from "@percussionist/kube";
 
 // Convenience helper used by session.ts.

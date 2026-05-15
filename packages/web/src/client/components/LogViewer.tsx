@@ -23,6 +23,7 @@ export default function LogViewer({
   sseConnected,
   eventTick,
 }: LogViewerProps) {
+  void eventTick;
   const [container, setContainer] = useState<string>(defaultContainer);
   const [tailLines, setTailLines] = useState<number>(500);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -41,7 +42,6 @@ export default function LogViewer({
     tailLines,
     true,
     active && !sseConnected ? 5_000 : false,
-    eventTick,
   );
 
   const containers = [...BASE_CONTAINERS];

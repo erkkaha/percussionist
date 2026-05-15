@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { submitProject, updateProject, fetchProjectConfig, fetchDefaultConfig } from "../lib/api";
@@ -80,14 +80,17 @@ export default function CreateProjectForm({
   const [injectFiles, setInjectFiles] = useState<InjectFileRow[]>(() => initialInjectFileRows(initialProject));
 
   // In edit mode, fetch the current config (per-project or cluster-wide fallback).
-  useQuery({
+  const { data: projectConfig } = useQuery({
     queryKey: ["project-config", initialProject?.metadata.name],
     queryFn: () => fetchProjectConfig(initialProject!.metadata.name),
     enabled: isEdit && !!initialProject,
-    onSuccess: (data: string) => {
-      if (opencodeConfig === null) setOpencodeConfig(data);
-    },
-  } as Parameters<typeof useQuery>[0]);
+  });
+
+  useEffect(() => {
+    if (isEdit && opencodeConfig === null && projectConfig !== undefined) {
+      setOpencodeConfig(projectConfig);
+    }
+  }, [isEdit, opencodeConfig, projectConfig]);
 
   // Fetch cluster-wide config to use as default when the textarea is first opened in create mode.
   const { data: clusterConfig } = useQuery({

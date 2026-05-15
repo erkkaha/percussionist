@@ -137,7 +137,17 @@ projects.get("/", async (c) => {
 projects.get("/events", async (c) => {
   return createPollingSseResponse({
     signal: c.req.raw.signal,
-    getSignature: async () => JSON.stringify(await listProjects()),
+    getSignature: async () => JSON.stringify((await listProjects()).map((p) => ({
+      resourceVersion: p.metadata.resourceVersion,
+      generation: p.metadata.generation,
+      name: p.metadata.name,
+      namespace: p.metadata.namespace,
+      displayName: p.spec.displayName,
+      model: p.spec.model,
+      agent: p.spec.agent,
+      gitUrl: p.spec.source?.git?.url,
+      gitRef: p.spec.source?.git?.ref,
+    }))),
     updatedEvent: "projects.updated",
     errorEvent: "projects.error",
     readyEvent: { event: "ready", data: { collection: "projects" } },
@@ -312,6 +322,15 @@ projects.put("/:name", async (c) => {
   }
 
   try {
+    // Preserve spec.board — the form UI does not manage board config, so a
+    // full spec replace must not wipe out an existing board definition.
+    try {
+      const existing = await getProject(name);
+      if (existing.spec.board && !spec.board) {
+        spec.board = existing.spec.board;
+      }
+    } catch { /* if project not found, proceed without board */ }
+
     const updated = await updateProject(name, spec);
     return c.json(updated);
   } catch (e: unknown) {

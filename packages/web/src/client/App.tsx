@@ -10,6 +10,7 @@ import EditProjectPage from "./components/EditProjectPage";
 import AgentsPage from "./components/AgentsPage";
 import AgentForm from "./components/AgentForm";
 import BoardView from "./components/BoardView";
+import MetricsView from "./components/MetricsView";
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/runs/new" element={<CreateRunForm />} />
         <Route path="/runs/:name" element={<RunDetail />} />
         <Route path="/stats" element={<StatsView />} />
+        <Route path="/metrics" element={<MetricsView />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/new" element={<CreateProjectForm />} />
         <Route path="/projects/:name/edit" element={<EditProjectPage />} />

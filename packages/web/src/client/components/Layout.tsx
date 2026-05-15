@@ -7,6 +7,7 @@ import { useRunsEvents } from "../hooks/useRunsEvents";
 import { useRunNotifications } from "../hooks/useRunNotifications";
 import { TERMINAL_PHASES } from "@percussionist/api";
 import NotificationBell from "./NotificationBell";
+import { BarChart3, Terminal, Bot, TrendingUp, Folder } from "lucide-react";
 
 function SidebarLink({ to, children }: { to: string; children: React.ReactNode }) {
   return (
@@ -43,9 +44,9 @@ function Chevron({ open }: { open: boolean }) {
 function ProjectNav() {
   const [open, setOpen] = useState(true);
   const { connected: projectsSseConnected, eventTick } = useProjectsEvents();
+  void eventTick;
   const { data: projects } = useProjects(
     projectsSseConnected ? false : 10_000,
-    eventTick,
   );
 
   if (!projects || projects.length === 0) return null;
@@ -56,7 +57,7 @@ function ProjectNav() {
         onClick={() => setOpen((v) => !v)}
         className={`flex items-center justify-between w-full rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${open ? "text-text bg-surface-overlay" : "text-text-dim hover:bg-surface-raised hover:text-text-muted"}`}
       >
-        <span>Projects</span>
+        <span className="flex items-center gap-2"><Folder className="w-4 h-4" />Projects</span>
         <Chevron open={open} />
       </button>
       {open && projects.map((p) => (
@@ -96,7 +97,8 @@ function DrumLogo({ playing }: { playing: boolean }) {
 
 export default function Layout() {
   const { connected: runsSseConnected, eventTick } = useRunsEvents();
-  const { data: runs } = useRuns(runsSseConnected ? false : 5_000, eventTick);
+  void eventTick;
+  const { data: runs } = useRuns(runsSseConnected ? false : 5_000);
   const hasInProgress = (runs ?? []).some((r) => r.status?.phase != null && !TERMINAL_PHASES.has(r.status.phase));
   useRunNotifications(runs);
 
@@ -112,10 +114,23 @@ export default function Layout() {
           </div>
         </div>
         <nav className="flex-1 px-2 py-3 space-y-0.5">
-          <SidebarLink to="/">Runs</SidebarLink>
+          <SidebarLink to="/">
+            <Terminal className="w-4 h-4" />
+            Runs
+          </SidebarLink>
           <ProjectNav />
-          <SidebarLink to="/agents">Agents</SidebarLink>
-          <SidebarLink to="/stats">Stats</SidebarLink>
+          <SidebarLink to="/agents">
+            <Bot className="w-4 h-4" />
+            Agents
+          </SidebarLink>
+          <SidebarLink to="/stats">
+            <TrendingUp className="w-4 h-4" />
+            Stats
+          </SidebarLink>
+          <SidebarLink to="/metrics">
+            <BarChart3 className="w-4 h-4" />
+            Metrics
+          </SidebarLink>
         </nav>
       </aside>
 

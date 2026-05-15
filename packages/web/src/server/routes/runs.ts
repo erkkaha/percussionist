@@ -25,7 +25,20 @@ runs.get("/", async (c) => {
 runs.get("/events", async (c) => {
   return createPollingSseResponse({
     signal: c.req.raw.signal,
-    getSignature: async () => JSON.stringify(await listRuns()),
+    getSignature: async () => JSON.stringify((await listRuns()).map((r) => ({
+      resourceVersion: r.metadata.resourceVersion,
+      generation: r.metadata.generation,
+      name: r.metadata.name,
+      namespace: r.metadata.namespace,
+      phase: r.status?.phase,
+      completedAt: r.status?.completedAt,
+      startedAt: r.status?.startedAt,
+      sessionID: r.status?.sessionID,
+      tokensIn: r.status?.tokensIn,
+      tokensOut: r.status?.tokensOut,
+      lastEventAt: r.status?.lastEventAt,
+      message: r.status?.message,
+    }))),
     updatedEvent: "runs.updated",
     errorEvent: "runs.error",
     readyEvent: { event: "ready", data: { collection: "runs" } },

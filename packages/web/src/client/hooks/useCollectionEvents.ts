@@ -7,6 +7,7 @@ interface UseCollectionEventsOptions {
   eventName?: string;
   eventNames?: string[];
   queryKey?: readonly unknown[];
+  queryKeys?: Array<readonly unknown[]>;
   invalidateQuery?: boolean;
   enabled?: boolean;
 }
@@ -16,6 +17,7 @@ export function useCollectionEvents({
   eventName,
   eventNames,
   queryKey,
+  queryKeys,
   invalidateQuery,
   enabled = true,
 }: UseCollectionEventsOptions): { connected: boolean; eventTick: number } {
@@ -23,7 +25,10 @@ export function useCollectionEvents({
   const [eventTick, setEventTick] = useState(0);
   const queryKeyRef = useRef<readonly unknown[] | undefined>(queryKey);
   queryKeyRef.current = queryKey;
-  const shouldInvalidate = invalidateQuery ?? !!queryKey;
+  const queryKeysRef = useRef<Array<readonly unknown[]> | undefined>(queryKeys);
+  queryKeysRef.current = queryKeys;
+  const hasAnyQueryKey = !!queryKey || !!queryKeys?.length;
+  const shouldInvalidate = invalidateQuery ?? hasAnyQueryKey;
 
   const names = useMemo(() => {
     if (eventNames && eventNames.length > 0) return eventNames;
@@ -33,8 +38,16 @@ export function useCollectionEvents({
 
   const onEvent = useCallback(() => {
     setEventTick((n) => n + 1);
-    if (shouldInvalidate && queryKeyRef.current) {
-      queryClient.invalidateQueries({ queryKey: queryKeyRef.current });
+    if (!shouldInvalidate) return;
+
+    if (queryKeyRef.current) {
+      queryClient.refetchQueries({ queryKey: queryKeyRef.current, type: "active" });
+    }
+
+    if (queryKeysRef.current) {
+      for (const key of queryKeysRef.current) {
+        queryClient.refetchQueries({ queryKey: key, type: "active" });
+      }
     }
   }, [queryClient, shouldInvalidate]);
 

@@ -32,7 +32,12 @@ agents.get("/events", async (c) => {
     signal: c.req.raw.signal,
     getSignature: async () => {
       const items = await listClusterAgents();
-      return JSON.stringify(items.map((a) => ({ name: a.metadata.name, content: a.spec.content })));
+      return JSON.stringify(items.map((a) => ({
+        resourceVersion: a.metadata.resourceVersion,
+        generation: a.metadata.generation,
+        name: a.metadata.name,
+        content: a.spec.content,
+      })));
     },
     updatedEvent: "agents.updated",
     errorEvent: "agents.error",

@@ -356,6 +356,7 @@ export async function patchProjectStatus(
         Accept: "application/json",
       },
       body: JSON.stringify({ status: statusPatch }),
+      signal: AbortSignal.timeout(15_000),
     });
     if (res.ok) return res.json() as Promise<OpenCodeProject>;
     const body = await res.text();
@@ -520,6 +521,75 @@ export function fatal(prefix: string, e: unknown): never {
   const msg = anyE?.body?.message ?? anyE?.message ?? String(e);
   console.error(`beatctl: ${prefix}: ${msg}`);
   process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// Metrics helpers (metrics.k8s.io/v1beta1 — requires metrics-server addon).
+
+export interface NodeMetric {
+  name: string;
+  timestamp: string;
+  window: string;
+  usage: { cpu: string; memory: string };
+}
+
+export interface PodMetric {
+  name: string;
+  namespace: string;
+  timestamp: string;
+  window: string;
+  containers: { name: string; usage: { cpu: string; memory: string } }[];
+}
+
+export async function listNodeMetrics(): Promise<NodeMetric[]> {
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error("No service account token available");
+
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const url = `https://${host}:${port}/apis/metrics.k8s.io/v1beta1/nodes`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`metrics API ${res.status}: ${await res.text().catch(() => "")}`);
+  const body = (await res.json()) as { items?: Array<{ metadata: { name: string }; timestamp: string; window: string; usage: { cpu: string; memory: string } }> };
+  return (body.items ?? []).map((item) => ({
+    name: item.metadata.name,
+    timestamp: item.timestamp,
+    window: item.window,
+    usage: item.usage,
+  }));
+}
+
+export async function listPodMetrics(ns: string = NAMESPACE): Promise<PodMetric[]> {
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error("No service account token available");
+
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const url = `https://${host}:${port}/apis/metrics.k8s.io/v1beta1/namespaces/${ns}/pods`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`metrics API ${res.status}: ${await res.text().catch(() => "")}`);
+  const body = (await res.json()) as { items?: Array<{ metadata: { name: string; namespace: string }; timestamp: string; window: string; containers: Array<{ name: string; usage: { cpu: string; memory: string } }> }> };
+  return (body.items ?? []).map((item) => ({
+    name: item.metadata.name,
+    namespace: item.metadata.namespace,
+    timestamp: item.timestamp,
+    window: item.window,
+    containers: item.containers,
+  }));
 }
 
 // ---------------------------------------------------------------------------

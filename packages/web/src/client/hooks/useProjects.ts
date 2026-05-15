@@ -4,10 +4,9 @@ import type { OpenCodeProject } from "../lib/types";
 
 export function useProjects(
   refetchInterval: number | false = 10_000,
-  eventTick: number = 0,
 ) {
   return useQuery<OpenCodeProject[], Error>({
-    queryKey: ["projects", eventTick],
+    queryKey: ["projects"],
     queryFn: fetchProjects,
     refetchInterval,
   });

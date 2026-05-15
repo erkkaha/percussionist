@@ -75,7 +75,22 @@ board.get("/:project/board/events", async (c) => {
       const spec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
       const status = project.status?.board ?? {};
       const annotations = project.metadata.annotations ?? {};
-      return JSON.stringify({ spec, status, annotations });
+      const taskApprovalAnnotations = Object.keys(annotations)
+        .filter((k) =>
+          k.startsWith("percussionist.dev/approved-") ||
+          k.startsWith("percussionist.dev/request-changes-") ||
+          k.startsWith("percussionist.dev/rework-"),
+        )
+        .sort()
+        .map((k) => [k, annotations[k]]);
+
+      return JSON.stringify({
+        resourceVersion: project.metadata.resourceVersion,
+        generation: project.metadata.generation,
+        boardSpec: spec,
+        boardStatus: status,
+        taskApprovalAnnotations,
+      });
     },
     updatedEvent: "board.updated",
     errorEvent: "board.error",

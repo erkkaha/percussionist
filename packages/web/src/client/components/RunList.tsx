@@ -35,9 +35,9 @@ type SortDir = "asc" | "desc";
 
 export default function RunList() {
   const { connected: runsSseConnected, eventTick } = useRunsEvents();
+  void eventTick;
   const { data: runs, error, isLoading, isFetching } = useRuns(
     runsSseConnected ? false : 5_000,
-    eventTick,
   );
   const [phaseFilter, setPhaseFilter] = useState<RunPhase | "All">("All");
   const [sortField, setSortField] = useState<SortField>("age");

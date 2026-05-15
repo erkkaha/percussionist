@@ -59,8 +59,8 @@ session.get("/:name/session", async (c) => {
   );
 });
 
-// GET /api/runs/:name/events — proxy OpenCode SSE stream from the run service.
-session.get("/:name/events", async (c) => {
+// GET /api/runs/:name/session/events — proxy OpenCode SSE stream from the run service.
+session.get("/:name/session/events", async (c) => {
   const name = c.req.param("name");
 
   let serviceName: string;

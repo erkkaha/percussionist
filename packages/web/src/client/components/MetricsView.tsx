@@ -1,0 +1,185 @@
+import { useMetrics, type NodeMetricRow, type PodMetricRow } from "../hooks/useMetrics";
+import { useMetricsEvents } from "../hooks/useMetricsEvents";
+import { BarChart3 } from "lucide-react";
+
+// ---------------------------------------------------------------------------
+// Helpers
+
+function fmtCpu(millicores: number): string {
+  if (millicores >= 1000) return `${(millicores / 1000).toFixed(1)} CPU`;
+  return `${millicores}m`;
+}
+
+function fmtMemory(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MiB`;
+  return `${(bytes / 1024).toFixed(0)} KiB`;
+}
+
+function age(iso: string | null): string {
+  if (!iso) return "-";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms) || ms < 0) return "-";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h`;
+}
+
+// ---------------------------------------------------------------------------
+// Node card
+
+function NodeCard({ node }: { node: NodeMetricRow }) {
+  const cpuPct = Math.min((node.cpuMillicores / 1000) * 100, 100);
+  const memPct = Math.min((node.memoryBytes / (2 * 1024 * 1024 * 1024)) * 100, 100);
+
+  return (
+    <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="font-mono text-sm text-text truncate" title={node.name}>{node.name}</h3>
+        <span className="text-xs text-text-dim">{age(node.timestamp)} ago</span>
+      </div>
+      <MetricBar label="CPU" value={fmtCpu(node.cpuMillicores)} pct={cpuPct} />
+      <MetricBar label="Memory" value={fmtMemory(node.memoryBytes)} pct={memPct} />
+    </div>
+  );
+}
+
+function MetricBar({ label, value, pct }: { label: string; value: string; pct: number }) {
+  const color = pct > 80 ? "bg-red-500" : pct > 50 ? "bg-amber-500" : "bg-[#d97706]";
+  return (
+    <div>
+      <div className="flex items-center justify-between text-xs mb-1">
+        <span className="text-text-muted">{label}</span>
+        <span className="font-mono text-text">{value}</span>
+      </div>
+      <div className="h-1.5 bg-surface-overlay rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pod table
+
+function PodTable({ pods }: { pods: PodMetricRow[] }) {
+  const sorted = [...pods].sort((a, b) => b.totalCpuMillicores - a.totalCpuMillicores);
+
+  if (sorted.length === 0) {
+    return (
+      <div className="rounded-lg border border-border-muted bg-surface-raised p-8 text-center text-text-muted">
+        No pod metrics available.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-border overflow-hidden">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
+            <th className="px-4 py-2.5 font-medium">Pod</th>
+            <th className="px-4 py-2.5 font-medium">CPU</th>
+            <th className="px-4 py-2.5 font-medium">Memory</th>
+            <th className="px-4 py-2.5 font-medium">Containers</th>
+            <th className="px-4 py-2.5 font-medium">Age</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border-muted">
+          {sorted.map((p) => (
+            <tr key={p.name} className="hover:bg-surface-raised/60 transition-colors">
+              <td className="px-4 py-3 font-mono text-xs text-text max-w-[240px] truncate" title={p.name}>
+                {p.name}
+              </td>
+              <td className="px-4 py-3 tabular-nums font-mono text-xs text-text-muted">
+                {fmtCpu(p.totalCpuMillicores)}
+              </td>
+              <td className="px-4 py-3 tabular-nums font-mono text-xs text-text-muted">
+                {fmtMemory(p.totalMemoryBytes)}
+              </td>
+              <td className="px-4 py-3 text-text-muted">
+                <span className="text-xs">{p.containers.length}</span>
+              </td>
+              <td className="px-4 py-3 text-text-muted tabular-nums text-xs">
+                {age(p.timestamp)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main view
+
+export default function MetricsView() {
+  const { connected, eventTick } = useMetricsEvents();
+  void eventTick;
+  const { data, error, isLoading, isFetching } = useMetrics(connected ? false : 15_000);
+
+  const unavailable = error != null && !isLoading;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-text-muted" />
+            Metrics
+          </h1>
+          <p className="text-sm text-text-muted">
+            {data ? `${data.nodes.length} node${data.nodes.length !== 1 ? "s" : ""}, ${data.pods.length} pod${data.pods.length !== 1 ? "s" : ""}` : "Loading..."}
+            {isFetching && !isLoading && (
+              <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
+            )}
+          </p>
+        </div>
+      </div>
+
+      {unavailable && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-6 text-amber-600">
+          <h2 className="text-lg font-semibold mb-1">Metrics server not available</h2>
+          <p className="text-sm">
+            The Kubernetes metrics-server addon is required for this view.
+            Install it with: <code className="px-1.5 py-0.5 bg-amber-500/20 rounded text-xs font-mono">kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml</code>
+          </p>
+        </div>
+      )}
+
+      {isLoading && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="rounded-lg border border-border bg-surface-raised p-4 h-28 animate-pulse" />
+            ))}
+          </div>
+          <div className="rounded-lg border border-border bg-surface-raised h-48 animate-pulse" />
+        </div>
+      )}
+
+      {data && (
+        <>
+          {data.nodes.length > 0 && (
+            <section>
+              <h2 className="text-sm font-semibold text-text-muted mb-3">Nodes</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {data.nodes.map((n) => (
+                  <NodeCard key={n.name} node={n} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section>
+            <h2 className="text-sm font-semibold text-text-muted mb-3">Pods</h2>
+            <PodTable pods={data.pods} />
+          </section>
+        </>
+      )}
+    </div>
+  );
+}

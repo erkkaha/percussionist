@@ -83,9 +83,9 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
 
 export default function AgentsPage() {
   const { connected: agentsSseConnected, eventTick } = useAgentsEvents();
+  void eventTick;
   const { data: agents, error, isLoading, isFetching } = useAgents(
     agentsSseConnected ? false : 10_000,
-    eventTick,
   );
 
   if (error) {

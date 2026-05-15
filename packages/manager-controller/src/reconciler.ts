@@ -18,6 +18,7 @@ import {
 } from "@percussionist/api";
 import {
   createRun,
+  deleteRun,
   fetchSessionMessages,
   getRun,
   getProject,
@@ -156,9 +157,10 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
 
   // Self-heal: a worker marked Running must have a runName and be present in
   // backlog.in-progress. If not, it blocks scheduling forever.
+  // Skip workers that already have a runName - those are handled by the monitor phase.
   const inProgressSet = new Set(backlog["in-progress"] ?? []);
   const staleRunningWorkers = workers.filter(
-    (w) => w.status === "Running" && (!w.runName || !inProgressSet.has(w.taskId)),
+    (w) => w.status === "Running" && !w.runName && !inProgressSet.has(w.taskId),
   );
   if (staleRunningWorkers.length > 0) {
     log(
@@ -301,11 +303,11 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
               );
               if (sessionData && typeof sessionData === "object" && "messages" in sessionData) {
                 const msgs = (sessionData.messages as Array<{ content?: string }>)
-                  .slice(-6)
+                  .slice(-20)
                   .map((m) => m.content)
                   .filter(Boolean)
                   .join("\n");
-                sessionSummary = msgs.slice(0, 3200);
+                sessionSummary = msgs.slice(0, 8000);
               }
             } catch { /* best effort */ }
           }
@@ -495,11 +497,11 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             }
             if (sessionData && typeof sessionData === "object" && "messages" in sessionData) {
               const msgs = (sessionData.messages as Array<{ content?: string }>)
-                .slice(-6)
+                .slice(-20)
                 .map((m) => m.content)
                 .filter(Boolean)
                 .join("\n");
-              sessionSummary = msgs.slice(0, 3200);
+              sessionSummary = msgs.slice(0, 8000);
             }
           }
 
@@ -1042,8 +1044,10 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
       fresh.metadata.annotations?.[`percussionist.dev/rework-${taskId}`] ??
       existingFeedback ??
       "Please address the feedback from the previous review.";
-    const runName = workerRunName(projectName, taskId, 0);
-    const reworkRun = buildWorkerRun(fresh, taskDef, runName, 0, feedback);
+    const currentRetryCount = existingWorker?.retryCount ?? 0;
+    const newRetryCount = currentRetryCount + 1;
+    const runName = workerRunName(projectName, taskId, newRetryCount);
+    const reworkRun = buildWorkerRun(fresh, taskDef, runName, newRetryCount, feedback);
     if (existingWorker?.reworkAgent) {
       reworkRun.spec.agent = existingWorker.reworkAgent;
     }
@@ -1055,7 +1059,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
       status: "Running",
       branch: `feat/${taskId}`,
       startedAt: new Date().toISOString(),
-      retryCount: 0,
+      retryCount: newRetryCount,
       facilitated: false,
       reviewApproved: false,
       reviewFeedback: undefined,
@@ -1065,14 +1069,32 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
     });
 
     try {
+      log(`DEBUG: about to createRun for ${taskId} with runName=${runName}, newRetryCount=${newRetryCount}`);
       await createRun(reworkRun, ns, k8s);
       log(`re-dispatched rework for task ${taskId}`);
     } catch (e) {
       const msg = (e as Error).message;
+      log(`DEBUG: createRun failed for ${taskId}: ${msg}`);
       if (/AlreadyExists/i.test(msg)) {
-        // Idempotent recovery: run name is deterministic, so this often means
-        // the run already exists from a previous reconcile race.
-        log(`rework run already exists for ${taskId}; keeping task in in-progress`);
+        // Run already exists - check if it's in a failed state.
+        // If failed, delete it so we can recreate with a fresh pod.
+        try {
+          const existingRun = await getRun(runName, ns, k8s);
+          log(`DEBUG: getRun succeeded for ${taskId} runName=${runName}, phase=${existingRun?.status?.phase}`);
+          const existingPhase = existingRun?.status?.phase;
+          if (existingPhase === "Failed" || existingPhase === "Cancelled") {
+            log(`rework run ${runName} is ${existingPhase}; deleting and recreating`);
+            await deleteRun(runName, ns, k8s);
+            await createRun(reworkRun, ns, k8s);
+            log(`re-dispatched rework for task ${taskId} after cleaning up failed run`);
+          } else {
+            log(`rework run already exists for ${taskId} (phase: ${existingPhase}); keeping task in in-progress`);
+          }
+        } catch (checkErr) {
+          log(`DEBUG: catch block hit for ${taskId} runName=${runName} error=${(checkErr as Error).message}`);
+          err(`failed to check existing run for ${taskId} (runName=${runName}):`, (checkErr as Error).message);
+          log(`rework run already exists for ${taskId}; keeping task in in-progress`);
+        }
       } else {
         err(`failed to create rework run for ${taskId}:`, msg);
         backlog = moveTask(backlog, taskId, "rework");

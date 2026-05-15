@@ -154,12 +154,36 @@ export interface StepFinishPart {
   tokens: { input: number; output: number; reasoning: number };
 }
 
+export interface SubtaskPart {
+  id: string;
+  messageID: string;
+  type: "subtask";
+  todos: Array<{
+    content: string;
+    status: "pending" | "in_progress" | "completed" | "cancelled";
+    priority: "high" | "medium" | "low";
+  }>;
+}
+
+export interface FilePart {
+  id: string;
+  messageID: string;
+  type: "file";
+  filename: string;
+  path?: string;
+  diff?: string;
+  beforeContent?: string;
+  afterContent?: string;
+}
+
 export type SessionPart =
   | TextPart
   | ToolPart
   | ReasoningPart
   | StepStartPart
   | StepFinishPart
+  | SubtaskPart
+  | FilePart
   | { id: string; messageID: string; type: string; [key: string]: unknown };
 
 export interface SessionMessageInfo {

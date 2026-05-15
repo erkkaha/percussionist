@@ -59,6 +59,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
+  # Read pod metrics (for observability view).
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
@@ -96,6 +100,16 @@ rules:
     resources: ["clusteragents"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
 ---
+# ClusterRole for node metrics (observability view).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: percussionist-web-nodemetrics
+rules:
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -108,6 +122,19 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: percussionist-web-clusteragents
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: percussionist-web-nodemetrics
+subjects:
+  - kind: ServiceAccount
+    name: percussionist-web
+    namespace: percussionist
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: percussionist-web-nodemetrics
 ---
 apiVersion: v1
 kind: Service

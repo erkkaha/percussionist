@@ -115,6 +115,9 @@ export function buildSuccessReviewRun(
 
   const promptLines = [
     `You are a reviewer agent that checks whether a completed worker run actually fulfilled its task.`,
+    `A previous failure mode in this system is that worker output sounds complete but does not mention creating or opening a PR.`,
+    `For BUILD tasks, only approve if evidence in the session shows a PR was created/opened (for example: a PR URL, gh output, or explicit creation confirmation).`,
+    `If a PR is missing or unclear, do NOT approve; use request_changes and ask for the PR creation step explicitly.`,
     "",
     `TASK: ${task.id} — ${task.title}`,
     `TASK DESCRIPTION: ${task.description ?? "(none)"}`,
