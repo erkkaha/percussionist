@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { FileText, Wrench, Flag, User, ExternalLink, Trash2, Check, X, ChevronDown } from "lucide-react";
 import { fetchBoard, addBoardTask, deleteBoardTask, fetchAgents, patchBoardSpec, retryEscalatedTask, fetchNextTaskId, approveTask, requestChangesTask } from "../lib/api";
 import type { BoardTask, ManagerMetrics } from "../lib/types";
 import { useBoardNotifications } from "../hooks/useBoardNotifications";
@@ -301,55 +302,84 @@ export default function BoardView() {
                   return (
                     <div
                       key={id}
-                      className="rounded-md border border-border bg-surface p-2.5 space-y-1 group relative"
+                      className="rounded-md border border-border bg-surface p-3 space-y-2 group relative"
                     >
-                      <div className="flex items-start justify-between gap-1">
-                        <span className="text-xs font-mono text-text-dim">{id}</span>
+                      {/* Header: ID + type icon, priority badge */}
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-mono text-text-dim flex items-center gap-1">
+                          {task?.type === "BUILD" ? (
+                            <Wrench className="h-3 w-3 text-accent" />
+                          ) : (
+                            <FileText className="h-3 w-3 text-phase-pending" />
+                          )}
+                          {id}
+                        </span>
                         {task?.priority && (
-                          <span className={`text-[10px] px-1 rounded ${
+                          <span className={`text-[10px] px-1.5 py-0 rounded flex items-center gap-0.5 font-medium ${
                             task.priority === "high" ? "text-phase-failed bg-phase-failed/10" :
                             task.priority === "low" ? "text-text-dim bg-surface-overlay" :
                             "text-phase-running bg-phase-running/10"
                           }`}>
+                            <Flag className="h-2.5 w-2.5" />
                             {task.priority}
                           </span>
                         )}
                       </div>
-                      <p className="text-sm text-text leading-snug">{task?.title ?? id}</p>
+                      {/* Title + delete button */}
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm text-text leading-snug flex-1">{task?.title ?? id}</p>
+                        <button
+                          onClick={() => deleteMutation.mutate(id)}
+                          className="opacity-0 group-hover:opacity-100 shrink-0 text-text-dim hover:text-phase-failed transition-all p-0.5"
+                          title="Remove task"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      {/* Description with expand affordance */}
                       {task?.description && (
-                        <details className="text-xs text-text-dim">
-                          <summary className="cursor-pointer line-clamp-2 list-none hover:text-text transition-colors [&::-webkit-details-marker]:hidden">
-                            {task.description}
+                        <details className="text-xs text-text-dim group/desc">
+                          <summary className="cursor-pointer line-clamp-2 list-none hover:text-text transition-colors flex items-center gap-1 [&::-webkit-details-marker]:hidden">
+                            <ChevronDown className="h-3 w-3 shrink-0 transition-transform duration-200 group-open/desc:rotate-180" />
+                            <span>Show more</span>
                           </summary>
-                          <p className="mt-1 whitespace-pre-wrap">{task.description}</p>
+                          <p className="mt-1.5 whitespace-pre-wrap leading-relaxed">{task.description}</p>
                         </details>
                       )}
+                      {/* Agent */}
                       {task?.agent && (
-                        <p className="text-xs text-text-dim">{task.agent}</p>
+                        <p className="text-xs text-text-dim flex items-center gap-1">
+                          <User className="h-3 w-3" />
+                          {task.agent}
+                        </p>
                       )}
+                      {/* Run links — each on its own line */}
                       {worker?.runName && (
                         <Link
                           to={`/runs/${encodeURIComponent(worker.runName)}`}
-                          className="text-xs text-text-dim hover:text-text transition-colors underline"
+                          className="text-xs text-text-dim hover:text-text transition-colors underline flex items-center gap-1 block"
                         >
+                          <ExternalLink className="h-3 w-3 shrink-0" />
                           {worker.runName}
                         </Link>
                       )}
                       {col === "review" && isBuildTask && worker?.reviewRunName && (
                         <Link
                           to={`/runs/${encodeURIComponent(worker.reviewRunName)}`}
-                          className="text-xs text-text-dim hover:text-text transition-colors underline"
+                          className="text-xs text-text-dim hover:text-text transition-colors underline flex items-center gap-1 block"
                           title="Agent reviewer run"
                         >
+                          <ExternalLink className="h-3 w-3 shrink-0" />
                           reviewer: {worker.reviewRunName}
                         </Link>
                       )}
                       {col === "review" && isBuildTask && worker?.mergeRunName && (
                         <Link
                           to={`/runs/${encodeURIComponent(worker.mergeRunName)}`}
-                          className="text-xs text-text-dim hover:text-text transition-colors underline"
+                          className="text-xs text-text-dim hover:text-text transition-colors underline flex items-center gap-1 block"
                           title="Merge run"
                         >
+                          <ExternalLink className="h-3 w-3 shrink-0" />
                           merge: {worker.mergeRunName}
                         </Link>
                       )}
@@ -393,32 +423,26 @@ export default function BoardView() {
                           <button
                             onClick={() => approveMutation.mutate(id)}
                             disabled={approveMutation.isPending || !canApproveNow}
-                            className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors font-medium"
+                            className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors font-medium flex items-center gap-1"
                             title={alreadyApproved ? "Already approved" : (canApproveNow ? "Approve this task" : "Wait for agent review approval first")}
                           >
                             {alreadyApproved
-                              ? "✓ Approved"
-                              : (approveMutation.isPending && approveMutation.variables === id ? "Approving…" : "✓ Approve")}
+                              ? <><Check className="h-3 w-3" /> Approved</>
+                              : (approveMutation.isPending && approveMutation.variables === id ? "Approving…" : <><Check className="h-3 w-3" /> Approve</>)
+                            }
                           </button>
                           <button
                             onClick={() => {
                               setRequestChangesTaskId(id);
                               setShowRequestChanges(true);
                             }}
-                            className="text-xs text-text-dim hover:text-phase-failed transition-colors"
+                            className="text-xs text-text-dim hover:text-phase-failed transition-colors flex items-center gap-1"
                             title="Request changes"
                           >
-                            ✕ Request Changes
+                            <X className="h-3 w-3" /> Request Changes
                           </button>
                         </div>
                       )}
-                      <button
-                        onClick={() => deleteMutation.mutate(id)}
-                        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-xs text-text-dim hover:text-phase-failed transition-all"
-                        title="Remove task"
-                      >
-                        ×
-                      </button>
                     </div>
                   );
                 })}
