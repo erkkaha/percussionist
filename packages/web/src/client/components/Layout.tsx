@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Outlet, NavLink } from "react-router-dom";
 import { useProjects } from "../hooks/useProjects";
 import { useRuns } from "../hooks/useRuns";
+import { useProjectsEvents } from "../hooks/useProjectsEvents";
+import { useRunsEvents } from "../hooks/useRunsEvents";
 import { useRunNotifications } from "../hooks/useRunNotifications";
 import { TERMINAL_PHASES } from "@percussionist/api";
 import NotificationBell from "./NotificationBell";
@@ -40,7 +42,11 @@ function Chevron({ open }: { open: boolean }) {
 
 function ProjectNav() {
   const [open, setOpen] = useState(true);
-  const { data: projects } = useProjects();
+  const { connected: projectsSseConnected, eventTick } = useProjectsEvents();
+  const { data: projects } = useProjects(
+    projectsSseConnected ? false : 10_000,
+    eventTick,
+  );
 
   if (!projects || projects.length === 0) return null;
 
@@ -89,7 +95,8 @@ function DrumLogo({ playing }: { playing: boolean }) {
 }
 
 export default function Layout() {
-  const { data: runs } = useRuns();
+  const { connected: runsSseConnected, eventTick } = useRunsEvents();
+  const { data: runs } = useRuns(runsSseConnected ? false : 5_000, eventTick);
   const hasInProgress = (runs ?? []).some((r) => r.status?.phase != null && !TERMINAL_PHASES.has(r.status.phase));
   useRunNotifications(runs);
 

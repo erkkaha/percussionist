@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { listProjects, getProject, createProject, updateProject, deleteProject, core, NAMESPACE } from "../kube.js";
+import { createPollingSseResponse } from "../lib/sse.js";
 import {
   OpenCodeProjectSpecSchema,
   API_GROUP_VERSION,
@@ -130,6 +131,17 @@ projects.get("/", async (c) => {
     const msg = (e as { body?: { message?: string } })?.body?.message ?? String(e);
     return c.json({ error: msg }, 500);
   }
+});
+
+// GET /api/projects/events — SSE stream for project list changes.
+projects.get("/events", async (c) => {
+  return createPollingSseResponse({
+    signal: c.req.raw.signal,
+    getSignature: async () => JSON.stringify(await listProjects()),
+    updatedEvent: "projects.updated",
+    errorEvent: "projects.error",
+    readyEvent: { event: "ready", data: { collection: "projects" } },
+  });
 });
 
 // GET /api/projects/config/default — returns cluster-wide opencode-config content

@@ -6,9 +6,10 @@ export function useSession(
   name: string,
   enabled: boolean = true,
   refetchInterval: number | false = 5_000,
+  eventTick: number = 0,
 ) {
   return useQuery<SessionResponse, Error>({
-    queryKey: ["session", name],
+    queryKey: ["session", name, eventTick],
     queryFn: () => fetchSession(name),
     enabled,
     refetchInterval,

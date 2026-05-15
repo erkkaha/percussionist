@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useRuns } from "../hooks/useRuns";
+import { useRunsEvents } from "../hooks/useRunsEvents";
 import StatusBadge from "./StatusBadge";
 import TokenCounter from "./TokenCounter";
 import OpenOpencodeButton from "./OpenOpencodeButton";
@@ -33,7 +34,11 @@ type SortField = "name" | "phase" | "age" | "tokensIn";
 type SortDir = "asc" | "desc";
 
 export default function RunList() {
-  const { data: runs, error, isLoading, isFetching } = useRuns();
+  const { connected: runsSseConnected, eventTick } = useRunsEvents();
+  const { data: runs, error, isLoading, isFetching } = useRuns(
+    runsSseConnected ? false : 5_000,
+    eventTick,
+  );
   const [phaseFilter, setPhaseFilter] = useState<RunPhase | "All">("All");
   const [sortField, setSortField] = useState<SortField>("age");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -96,6 +101,9 @@ export default function RunList() {
             {isFetching && !isLoading && (
               <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
             )}
+          </p>
+          <p className="text-xs text-text-dim mt-0.5">
+            Updates: {runsSseConnected ? "live stream" : "polling fallback"}
           </p>
         </div>
         <Link

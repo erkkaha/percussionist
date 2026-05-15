@@ -6,9 +6,12 @@ interface AgentListItem {
   content: string;
 }
 
-export function useAgents(refetchInterval = 10_000) {
+export function useAgents(
+  refetchInterval: number | false = 10_000,
+  eventTick: number = 0,
+) {
   return useQuery<AgentListItem[], Error>({
-    queryKey: ["agents"],
+    queryKey: ["agents", eventTick],
     queryFn: fetchAgents,
     refetchInterval,
   });

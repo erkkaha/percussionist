@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAgents } from "../hooks/useAgents";
+import { useAgentsEvents } from "../hooks/useAgentsEvents";
 import { deleteAgent } from "../lib/api";
 
 interface AgentListItem {
@@ -81,7 +82,11 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
 }
 
 export default function AgentsPage() {
-  const { data: agents, error, isLoading } = useAgents();
+  const { connected: agentsSseConnected, eventTick } = useAgentsEvents();
+  const { data: agents, error, isLoading, isFetching } = useAgents(
+    agentsSseConnected ? false : 10_000,
+    eventTick,
+  );
 
   if (error) {
     return (
@@ -100,6 +105,12 @@ export default function AgentsPage() {
           <h1 className="text-xl font-semibold">Agents</h1>
           <p className="text-sm text-text-muted">
             Cluster-scoped reusable agent definitions.
+            {isFetching && !isLoading && (
+              <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
+            )}
+          </p>
+          <p className="text-xs text-text-dim mt-0.5">
+            Updates: {agentsSseConnected ? "live stream" : "polling fallback"}
           </p>
         </div>
         <Link

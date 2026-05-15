@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../hooks/useProjects";
+import { useProjectsEvents } from "../hooks/useProjectsEvents";
 import { deleteProject } from "../lib/api";
 import type { OpenCodeProject } from "../lib/types";
 
@@ -82,7 +83,11 @@ function ProjectRow({ project }: { project: OpenCodeProject }) {
 }
 
 export default function ProjectsPage() {
-  const { data: projects, error, isLoading } = useProjects();
+  const { connected: projectsSseConnected, eventTick } = useProjectsEvents();
+  const { data: projects, error, isLoading, isFetching } = useProjects(
+    projectsSseConnected ? false : 10_000,
+    eventTick,
+  );
 
   if (error) {
     return (
@@ -101,6 +106,12 @@ export default function ProjectsPage() {
           <h1 className="text-xl font-semibold">Projects</h1>
           <p className="text-sm text-text-muted">
             Reusable templates for run defaults (git, secrets, model).
+            {isFetching && !isLoading && (
+              <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
+            )}
+          </p>
+          <p className="text-xs text-text-dim mt-0.5">
+            Updates: {projectsSseConnected ? "live stream" : "polling fallback"}
           </p>
         </div>
         <Link

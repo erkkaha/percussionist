@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { randomBytes } from "node:crypto";
 import { listRuns, getRun, createRun, deleteRun, postSessionMessage } from "../kube.js";
+import { createPollingSseResponse } from "../lib/sse.js";
 import {
   OpenCodeRunSpecSchema,
   API_GROUP_VERSION,
@@ -18,6 +19,17 @@ runs.get("/", async (c) => {
     const msg = (e as { body?: { message?: string } })?.body?.message ?? String(e);
     return c.json({ error: msg }, 500);
   }
+});
+
+// GET /api/runs/events — SSE stream for run list changes.
+runs.get("/events", async (c) => {
+  return createPollingSseResponse({
+    signal: c.req.raw.signal,
+    getSignature: async () => JSON.stringify(await listRuns()),
+    updatedEvent: "runs.updated",
+    errorEvent: "runs.error",
+    readyEvent: { event: "ready", data: { collection: "runs" } },
+  });
 });
 
 // GET /api/runs/:name — get a single OpenCodeRun by name.

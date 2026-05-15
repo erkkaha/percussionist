@@ -21,7 +21,7 @@ async function fetchClusterAgents(): Promise<ClusterAgent[]> {
 export default function CreateRunForm() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: projects } = useProjects(0);
+  const { data: projects } = useProjects(false);
   const [searchParams] = useSearchParams();
   const copyFromName = searchParams.get("copyFrom") ?? undefined;
 

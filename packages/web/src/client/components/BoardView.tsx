@@ -10,6 +10,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchBoard, addBoardTask, deleteBoardTask, fetchAgents, patchBoardSpec, retryEscalatedTask, fetchNextTaskId, approveTask, requestChangesTask } from "../lib/api";
 import type { BoardTask, ManagerMetrics } from "../lib/types";
 import { useBoardNotifications } from "../hooks/useBoardNotifications";
+import { useBoardEvents } from "../hooks/useBoardEvents";
 
 const DEFAULT_COLUMNS = ["ready", "in-progress", "review", "rework", "done"];
 
@@ -62,11 +63,12 @@ export default function BoardView() {
   const { name } = useParams<{ name: string }>();
   const projectName = name!;
   const queryClient = useQueryClient();
+  const { connected: boardSseConnected, eventTick } = useBoardEvents(projectName, true);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["board", projectName],
+    queryKey: ["board", projectName, eventTick],
     queryFn: () => fetchBoard(projectName),
-    refetchInterval: 10_000,
+    refetchInterval: boardSseConnected ? false : 10_000,
   });
 
   // All ClusterAgents available in the cluster — used for the agent dropdown.
@@ -173,6 +175,9 @@ export default function BoardView() {
             Team: {roster.join(", ") || "(no agents configured)"}
             {" · "}Max parallel: {spec.maxParallel ?? 2}
             {" · "}Phase: {spec.phase ?? "Active"}
+          </p>
+          <p className="text-xs text-text-dim mt-1">
+            Updates: {boardSseConnected ? "live stream" : "polling fallback"}
           </p>
           {status.managerMetrics && <MetricsBadge metrics={status.managerMetrics} />}
         </div>
@@ -290,7 +295,9 @@ export default function BoardView() {
                   const worker = workerByTask(id);
                   const isBuildTask = task?.type === "BUILD";
                   const reviewerDecisionKnown = worker?.reviewApproved !== undefined || !!worker?.reviewFeedback;
-                  const canApproveNow = !isBuildTask || worker?.reviewApproved === true;
+                  const approvalState = data.approvals?.[id];
+                  const alreadyApproved = approvalState?.approved === true;
+                  const canApproveNow = !alreadyApproved && (!isBuildTask || worker?.reviewApproved === true);
                   return (
                     <div
                       key={id}
@@ -387,9 +394,11 @@ export default function BoardView() {
                             onClick={() => approveMutation.mutate(id)}
                             disabled={approveMutation.isPending || !canApproveNow}
                             className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors font-medium"
-                            title={canApproveNow ? "Approve this task" : "Wait for agent review approval first"}
+                            title={alreadyApproved ? "Already approved" : (canApproveNow ? "Approve this task" : "Wait for agent review approval first")}
                           >
-                            {approveMutation.isPending && approveMutation.variables === id ? "Approving…" : "✓ Approve"}
+                            {alreadyApproved
+                              ? "✓ Approved"
+                              : (approveMutation.isPending && approveMutation.variables === id ? "Approving…" : "✓ Approve")}
                           </button>
                           <button
                             onClick={() => {

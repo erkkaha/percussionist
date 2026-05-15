@@ -11,6 +11,7 @@
 import { Hono } from "hono";
 import { getProject, patchProjectSpec, patchProjectStatus, patchProject } from "../kube.js";
 import type { BoardTask, BoardSpec, BoardStatus, TaskType } from "@percussionist/api";
+import { createPollingSseResponse } from "../lib/sse.js";
 
 const board = new Hono();
 
@@ -25,6 +26,14 @@ board.get("/:project/board", async (c) => {
     const project = await getProject(name);
     const spec: BoardSpec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
     const status: Partial<BoardStatus> = project.status?.board ?? {};
+    const annotations = project.metadata.annotations ?? {};
+    const approvals: Record<string, { approved: boolean; requestChanges: boolean }> = {};
+    for (const task of spec.tasks ?? []) {
+      approvals[task.id] = {
+        approved: annotations[`percussionist.dev/approved-${task.id}`] === "true",
+        requestChanges: annotations[`percussionist.dev/request-changes-${task.id}`] === "true",
+      };
+    }
 
     // Reconcile: any task in spec.tasks that isn't in any backlog column gets
     // placed into "ready". This repairs boards where the status patch failed
@@ -39,11 +48,39 @@ board.get("/:project/board", async (c) => {
       patchProjectStatus(name, { board: { ...status, backlog } }).catch(() => {});
     }
 
-    return c.json({ spec, status: { ...status, backlog } });
+    return c.json({ spec, status: { ...status, backlog }, approvals });
   } catch (e) {
     const ke = e as KubeError;
     return c.json({ error: errMsg(ke) }, errStatus(ke));
   }
+});
+
+// GET /api/projects/:project/board/events
+// Server-Sent Events stream that emits when board state changes.
+board.get("/:project/board/events", async (c) => {
+  const name = c.req.param("project");
+
+  // Fail fast if project does not exist.
+  try {
+    await getProject(name);
+  } catch (e) {
+    const ke = e as KubeError;
+    return c.json({ error: errMsg(ke) }, errStatus(ke));
+  }
+
+  return createPollingSseResponse({
+    signal: c.req.raw.signal,
+    getSignature: async () => {
+      const project = await getProject(name);
+      const spec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
+      const status = project.status?.board ?? {};
+      const annotations = project.metadata.annotations ?? {};
+      return JSON.stringify({ spec, status, annotations });
+    },
+    updatedEvent: "board.updated",
+    errorEvent: "board.error",
+    readyEvent: { event: "ready", data: { project: name } },
+  });
 });
 
 // PATCH /api/projects/:project/board/spec

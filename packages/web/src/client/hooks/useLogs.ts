@@ -8,9 +8,10 @@ export function useLogs(
   tailLines: number = 500,
   enabled: boolean = true,
   refetchInterval: number | false = 5_000,
+  eventTick: number = 0,
 ) {
   return useQuery<LogsResponse, Error>({
-    queryKey: ["logs", name, container, tailLines],
+    queryKey: ["logs", name, container, tailLines, eventTick],
     queryFn: () => fetchLogs(name, container, tailLines),
     enabled,
     refetchInterval,

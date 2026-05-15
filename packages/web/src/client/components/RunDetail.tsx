@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRun } from "../hooks/useRun";
+import { useRunEvents } from "../hooks/useRunEvents";
 import { deleteRun } from "../lib/api";
 import StatusBadge from "./StatusBadge";
 import TokenCounter from "./TokenCounter";
@@ -91,6 +92,9 @@ export default function RunDetail() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: run, error, isLoading, isFetching } = useRun(name!);
+  const runPhase = run?.status?.phase;
+  const runIsActive = !!run && (!runPhase || !TERMINAL_PHASES.has(runPhase));
+  const { connected: sseConnected, eventTick } = useRunEvents(name ?? "", runIsActive);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const deleteMutation = useMutation({
@@ -345,6 +349,8 @@ export default function RunDetail() {
           name={name!}
           hasSession={!!run.status?.sessionID}
           active={isActive}
+          sseConnected={sseConnected}
+          eventTick={eventTick}
         />
       </Card>
 
@@ -354,6 +360,8 @@ export default function RunDetail() {
           name={name!}
           active={isActive}
           defaultContainer={defaultLogContainer}
+          sseConnected={sseConnected}
+          eventTick={eventTick}
         />
       </Card>
     </div>

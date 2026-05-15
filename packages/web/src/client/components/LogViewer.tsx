@@ -7,6 +7,10 @@ interface LogViewerProps {
   active: boolean;
   /** Container to select by default. Defaults to "opencode". */
   defaultContainer?: string;
+  /** Whether SSE stream is currently connected. */
+  sseConnected: boolean;
+  /** Increments whenever relevant SSE events arrive. */
+  eventTick: number;
 }
 
 const BASE_CONTAINERS = ["bootstrap", "opencode", "dispatcher"] as const;
@@ -16,6 +20,8 @@ export default function LogViewer({
   name,
   active,
   defaultContainer = "bootstrap",
+  sseConnected,
+  eventTick,
 }: LogViewerProps) {
   const [container, setContainer] = useState<string>(defaultContainer);
   const [tailLines, setTailLines] = useState<number>(500);
@@ -34,7 +40,8 @@ export default function LogViewer({
     container,
     tailLines,
     true,
-    active ? 5_000 : false,
+    active && !sseConnected ? 5_000 : false,
+    eventTick,
   );
 
   const containers = [...BASE_CONTAINERS];
@@ -96,6 +103,11 @@ export default function LogViewer({
 
         {isFetching && (
           <span className="text-xs text-text-dim animate-pulse">refreshing...</span>
+        )}
+        {active && (
+          <span className="text-xs text-text-dim">
+            updates: {sseConnected ? "live stream" : "polling fallback"}
+          </span>
         )}
       </div>
 

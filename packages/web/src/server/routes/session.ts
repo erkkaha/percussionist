@@ -59,4 +59,49 @@ session.get("/:name/session", async (c) => {
   );
 });
 
+// GET /api/runs/:name/events — proxy OpenCode SSE stream from the run service.
+session.get("/:name/events", async (c) => {
+  const name = c.req.param("name");
+
+  let serviceName: string;
+  let ns: string;
+  try {
+    const run = await getRun(name);
+    serviceName = run.status?.serviceName ?? name;
+    ns = run.metadata.namespace ?? "percussionist";
+  } catch (e: unknown) {
+    const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
+    const status = anyE.statusCode === 404 ? 404 : 500;
+    return c.json({ error: anyE.body?.message ?? anyE.message ?? String(e) }, status);
+  }
+
+  const url = `http://${serviceName}.${ns}.svc.cluster.local:4096/event`;
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(url, {
+      headers: { Accept: "text/event-stream" },
+      signal: c.req.raw.signal,
+    });
+  } catch (e) {
+    return c.json({ error: `Failed to connect to event stream: ${(e as Error).message}` }, 502);
+  }
+
+  if (!upstream.ok || !upstream.body) {
+    const body = await upstream.text().catch(() => "");
+    return c.json({ error: `OpenCode event stream ${upstream.status}: ${body}` }, 502);
+  }
+
+  const headers = new Headers();
+  headers.set("Content-Type", "text/event-stream");
+  headers.set("Cache-Control", "no-cache, no-transform");
+  headers.set("Connection", "keep-alive");
+  headers.set("X-Accel-Buffering", "off");
+
+  return new Response(upstream.body, {
+    status: 200,
+    headers,
+  });
+});
+
 export default session;

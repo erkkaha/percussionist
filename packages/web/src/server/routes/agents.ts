@@ -6,6 +6,7 @@ import {
   updateClusterAgent,
   deleteClusterAgent,
 } from "../kube.js";
+import { createPollingSseResponse } from "../lib/sse.js";
 import {
   ClusterAgentSpecSchema,
   API_GROUP_VERSION,
@@ -23,6 +24,20 @@ agents.get("/", async (c) => {
     const msg = (e as { body?: { message?: string } })?.body?.message ?? String(e);
     return c.json({ error: msg }, 500);
   }
+});
+
+// GET /api/agents/events — SSE stream for agent list changes.
+agents.get("/events", async (c) => {
+  return createPollingSseResponse({
+    signal: c.req.raw.signal,
+    getSignature: async () => {
+      const items = await listClusterAgents();
+      return JSON.stringify(items.map((a) => ({ name: a.metadata.name, content: a.spec.content })));
+    },
+    updatedEvent: "agents.updated",
+    errorEvent: "agents.error",
+    readyEvent: { event: "ready", data: { collection: "agents" } },
+  });
 });
 
 // GET /api/agents/:name — get a single agent.
