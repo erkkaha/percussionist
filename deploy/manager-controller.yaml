@@ -44,6 +44,27 @@ rules:
     resources: ["events"]
     verbs: ["get", "list"]
 ---
+---
+# ClusterIP Service exposing the manager's chat handler (port 4098)
+# so the web dashboard can proxy interactive conversations.
+apiVersion: v1
+kind: Service
+metadata:
+  name: percussionist-manager
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: manager
+spec:
+  selector:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: manager
+  ports:
+    - name: chat
+      port: 4098
+      targetPort: 4098
+      protocol: TCP
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:

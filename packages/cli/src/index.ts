@@ -10,6 +10,7 @@ import { runSubmit } from "./submit.js";
 import { runLs, runGet } from "./view.js";
 import { runLogs } from "./logs.js";
 import { runAttach } from "./attach.js";
+import { runChat } from "./chat.js";
 import { runCancel } from "./cancel.js";
 import { runWait } from "./wait.js";
 import { runDeploy } from "./deploy.js";
@@ -142,6 +143,14 @@ program
   .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
   .option("--local-port <port>", "local port to bind (default: random free port)")
   .action((name: string, opts) => runAttach(name, opts));
+
+// chat ----------------------------------------------------------------------
+program
+  .command("chat")
+  .description("interactive chat with the manager agent")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("--local-port <port>", "local port to bind (default: random free port)")
+  .action((opts) => runChat(opts));
 
 // cancel --------------------------------------------------------------------
 program

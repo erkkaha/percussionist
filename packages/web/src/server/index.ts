@@ -19,6 +19,7 @@ import projects from "./routes/projects.js";
 import agents from "./routes/agents.js";
 import board from "./routes/board.js";
 import metrics from "./routes/metrics.js";
+import agentChat from "./routes/agent-chat.js";
 import { NAMESPACE } from "./kube.js";
 import { getDb } from "./db.js";
 
@@ -40,6 +41,7 @@ app.route("/api/projects", projects);
 app.route("/api/agents", agents);
 app.route("/api/projects", board);
 app.route("/api/metrics", metrics);
+app.route("/api/agent", agentChat);
 
 // Health check
 app.get("/api/health", (c) => c.json({ ok: true, namespace: NAMESPACE }));
