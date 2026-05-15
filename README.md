@@ -783,14 +783,15 @@ The web dashboard renders board state on project detail pages under the Board ta
 ## Web dashboard
 
 The dashboard (`percussionist-web`) is exposed via Ingress at a stable URL.
-For minikube with the default IP:
+`beatctl deploy` automatically configures TLS, so for minikube with the default IP:
 
 ```
-http://app.192.168.49.2.nip.io:30080/
+https://app.192.168.49.2.nip.io:30443/
 ```
 
 [nip.io](https://nip.io) resolves `*.192.168.49.2.nip.io` to `192.168.49.2` —
-no `/etc/hosts` edits needed.
+no `/etc/hosts` edits needed. The cert is self-signed; accept the browser
+warning once on first visit (or add it to your OS trust store).
 
 ### Pages
 
@@ -821,9 +822,11 @@ A day-range selector (7d / 30d / 90d / All) refetches from `/api/stats/export?da
    ```sh
    minikube addons enable ingress
    ```
-2. Run `scripts/minikube-load.sh` — it pins the ingress-nginx HTTP NodePort to
-   `30080` automatically (idempotent).
-3. `beatctl deploy` applies `deploy/web.yaml` as part of the full deployment.
+2. Run `beatctl deploy` — it generates a self-signed wildcard TLS cert for
+   `*.<node-ip>.nip.io`, stores it as a Secret in the `ingress-nginx` namespace,
+   patches `ingress-nginx-controller` to use it as the default SSL certificate,
+   pins the HTTPS NodePort to `30443`, and applies all manifests with the
+   correct `https://` ingress base URL.
 
 > **Note:** the web server runs under Bun. Bun's TLS stack does not pick up
 > the custom `https.Agent` that `@kubernetes/client-node` configures for the
@@ -851,8 +854,8 @@ Set these environment variables on the operator Deployment (see commented-out
 examples in `deploy/operator.yaml`):
 
 ```sh
-# Required: enables per-run Ingress creation (scheme://host[:port])
-PERCUSSIONIST_INGRESS_BASE_URL=http://192.168.49.2.nip.io:30080
+# Set automatically by `beatctl deploy` — shown here for manual overrides
+PERCUSSIONIST_INGRESS_BASE_URL=https://192.168.49.2.nip.io:30443
 
 # Optional: ingress class name
 PERCUSSIONIST_INGRESS_CLASS=nginx
@@ -866,7 +869,7 @@ DNS options for minikube:
 
 ```sh
 # nip.io wildcard DNS (recommended — no local config needed)
-PERCUSSIONIST_INGRESS_BASE_URL=http://$(minikube ip).nip.io:30080
+PERCUSSIONIST_INGRESS_BASE_URL=https://$(minikube ip).nip.io:30443
 
 # *.localhost (Linux with systemd-resolved, macOS Ventura+, Windows 11)
 PERCUSSIONIST_INGRESS_BASE_URL=http://percussionist.localhost
@@ -884,8 +887,8 @@ spec:
 ### URL format
 
 ```
-http://<run-name>.<base-host>:<port>/
-# e.g. http://run-abc123.192.168.49.2.nip.io:30080/
+https://<run-name>.<base-host>:<port>/
+# e.g. https://run-abc123.192.168.49.2.nip.io:30443/
 ```
 
 > **Security note:** the opencode server runs without a password. The Ingress
@@ -1052,10 +1055,10 @@ and never delays run completion.
 
 ```bash
 # Last 30 days (default)
-curl http://app.<minikube-ip>.nip.io:30080/api/stats/export > sessions.json
+curl https://app.<minikube-ip>.nip.io:30443/api/stats/export > sessions.json
 
 # All time
-curl http://app.<minikube-ip>.nip.io:30080/api/stats/export?days=0 > sessions.json
+curl https://app.<minikube-ip>.nip.io:30443/api/stats/export?days=0 > sessions.json
 
 # Pipe into an LLM
 curl .../api/stats/export | llm "find patterns in agent tool usage and prompt effectiveness"

@@ -329,7 +329,9 @@ fi
 MINIKUBE_IP=$(minikube ip 2>/dev/null || echo "192.168.49.2")
 echo ""
 echo "================================================================"
-echo "  Dashboard:  http://app.${MINIKUBE_IP}.traefik.me:30080/"
-echo "  Runs:       http://<run>.${MINIKUBE_IP}.traefik.me:30080/"
+echo "  Dashboard:  https://app.${MINIKUBE_IP}.nip.io:30443/"
+echo "  Runs:       https://<run>.${MINIKUBE_IP}.nip.io:30443/"
 echo "  (requires: minikube addons enable ingress)"
+echo "  Note: accept the self-signed cert on first visit"
+echo "        or run: beatctl deploy  (sets up TLS automatically)"
 echo "================================================================"
