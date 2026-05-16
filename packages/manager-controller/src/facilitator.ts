@@ -94,6 +94,7 @@ export function buildSuccessReviewRun(
   succeededRunStatus: OpenCodeRunStatus,
   sessionSummary: string,
   runName: string,
+  branchName?: string,
   facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
 ): OpenCodeRun {
   const board = project.spec.board ?? { maxParallel: 2, phase: "Active" };
@@ -113,6 +114,8 @@ export function buildSuccessReviewRun(
     .map((a) => a.name)
     .filter((n) => n !== facilitatorAgentName);
 
+  const branch = branchName ?? "feat/${task.id}";
+
   const promptLines = [
     `You are a reviewer agent that checks whether a completed worker run actually fulfilled its task.`,
     `A previous failure mode in this system is that worker output sounds complete but does not mention creating or opening a PR.`,
@@ -122,7 +125,14 @@ export function buildSuccessReviewRun(
     `TASK: ${task.id} — ${task.title}`,
     `TASK DESCRIPTION: ${task.description ?? "(none)"}`,
     `WORKER RUN: ${succeededRunName}`,
+    `BRANCH: ${branch}`,
     `COMPLETION MESSAGE: ${completionMessage}`,
+    "",
+    `This work was done on branch "${branch}". To review the actual changes:`,
+    `git fetch origin ${branch} && git checkout ${branch}`,
+    `git diff origin/master...${branch}  # see what was changed`,
+    `git log --oneline origin/master..${branch}  # see commit history`,
+    `ls -la  # browse workspace files`,
     "",
     `RECENT SESSION MESSAGES:`,
     sessionSummary || "(none available)",

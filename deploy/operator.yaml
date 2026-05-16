@@ -40,9 +40,13 @@ rules:
   - apiGroups: ["percussionist.dev"]
     resources: ["opencoderuns/status"]
     verbs: ["get", "update", "patch"]
+  # Read OpenCodeProject CRs to get project UID for cache PVC owner references.
+  - apiGroups: ["percussionist.dev"]
+    resources: ["opencodeprojects"]
+    verbs: ["get"]
   # Child resources the operator creates per run.
   - apiGroups: [""]
-    resources: ["pods", "services"]
+    resources: ["pods", "services", "persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["pods/log"]

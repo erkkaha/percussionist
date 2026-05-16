@@ -211,21 +211,21 @@ function computeAnalytics(sessions: StatSession[]): Analytics {
 function SummaryCards({ a }: { a: Analytics }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-      <Card label="Total Runs" value={a.total} />
-      <Card label="Succeeded" value={a.succeeded} color="text-phase-succeeded" />
-      <Card label="Failed" value={a.failed} color="text-phase-failed" />
-      <Card
+      <MetricCard label="Total Runs" value={a.total} />
+      <MetricCard label="Succeeded" value={a.succeeded} color="text-phase-succeeded" />
+      <MetricCard label="Failed" value={a.failed} color="text-phase-failed" />
+      <MetricCard
         label="Success Rate"
         value={a.successRate != null ? `${a.successRate}%` : "-"}
         color={a.successRate != null && a.successRate >= 80 ? "text-phase-succeeded" : "text-phase-failed"}
       />
-      <Card label="Avg Duration" value={fmtDuration(a.avgDurationMs)} />
-      <Card label="Tokens In / Out" value={`${fmtTokens(a.totalTokensIn)} / ${fmtTokens(a.totalTokensOut)}`} mono />
+      <MetricCard label="Avg Duration" value={fmtDuration(a.avgDurationMs)} />
+      <MetricCard label="Tokens In / Out" value={`${fmtTokens(a.totalTokensIn)} / ${fmtTokens(a.totalTokensOut)}`} mono />
     </div>
   );
 }
 
-function Card({
+function MetricCard({
   label, value, color = "text-text", mono = false,
 }: {
   label: string; value: string | number; color?: string; mono?: boolean;

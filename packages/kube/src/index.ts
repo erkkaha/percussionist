@@ -15,6 +15,7 @@ import {
   CustomObjectsApi,
   PatchStrategy,
   setHeaderOptions,
+  V1Pod,
 } from "@kubernetes/client-node";
 import fs from "node:fs";
 import {
@@ -385,7 +386,7 @@ export async function deleteProject(
 }
 
 // ---------------------------------------------------------------------------
-// Pod log helper
+// Pod helpers
 
 export async function readPodLog(
   podName: string,
@@ -400,6 +401,49 @@ export async function readPodLog(
     tailLines,
   });
   return res ?? "";
+}
+
+export async function getPod(
+  name: string,
+  ns: string = NAMESPACE,
+): Promise<V1Pod> {
+  return await core().readNamespacedPod({ name, namespace: ns });
+}
+
+export async function listPodsByLabels(
+  labels: Record<string, string>,
+  ns: string = NAMESPACE,
+): Promise<V1Pod[]> {
+  const labelSelector = Object.entries(labels).map(([k, v]) => `${k}=${v}`).join(",");
+  const res = await core().listNamespacedPod({ namespace: ns, labelSelector });
+  return res.items ?? [];
+}
+
+export async function listPodEvents(
+  podName: string,
+  ns: string = NAMESPACE,
+): Promise<Array<{
+  type: string;
+  reason: string;
+  message: string;
+  count: number;
+  firstTimestamp: string;
+  lastTimestamp: string;
+  source: string;
+}>> {
+  const res = await core().listNamespacedEvent({
+    namespace: ns,
+    fieldSelector: `involvedObject.name=${podName}`,
+  });
+  return (res.items ?? []).map((e) => ({
+    type: e.type ?? "",
+    reason: e.reason ?? "",
+    message: e.message ?? "",
+    count: e.count ?? 1,
+    firstTimestamp: e.firstTimestamp?.toISOString() ?? "",
+    lastTimestamp: e.lastTimestamp?.toISOString() ?? "",
+    source: e.source ? `${e.source.component ?? ""}/${e.source.host ?? ""}` : "",
+  }));
 }
 
 // ---------------------------------------------------------------------------

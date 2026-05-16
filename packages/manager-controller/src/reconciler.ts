@@ -325,6 +325,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             run.status ?? {},
             sessionSummary,
             reviewRunName,
+            worker.branch,
             REVIEW_FACILITATOR_AGENT,
           );
 

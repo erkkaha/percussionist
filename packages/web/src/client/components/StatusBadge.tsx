@@ -1,41 +1,22 @@
+import { Badge, BadgeDot } from "./ui/badge";
 import type { RunPhase } from "../lib/types";
 
-const PHASE_STYLES: Record<string, string> = {
-  Pending:
-    "bg-phase-pending/15 text-phase-pending border-phase-pending/30",
-  Initializing:
-    "bg-phase-initializing/15 text-phase-initializing border-phase-initializing/30",
-  Running:
-    "bg-phase-running/15 text-phase-running border-phase-running/30",
-  Succeeded:
-    "bg-phase-succeeded/15 text-phase-succeeded border-phase-succeeded/30",
-  Failed:
-    "bg-phase-failed/15 text-phase-failed border-phase-failed/30",
-  Cancelled:
-    "bg-phase-cancelled/15 text-phase-cancelled border-phase-cancelled/30",
-};
-
-const PHASE_DOTS: Record<string, string> = {
-  Pending: "bg-phase-pending",
-  Initializing: "bg-phase-initializing animate-pulse",
-  Running: "bg-phase-running animate-pulse",
-  Succeeded: "bg-phase-succeeded",
-  Failed: "bg-phase-failed",
-  Cancelled: "bg-phase-cancelled",
+const VARIANT_MAP: Record<string, "pending" | "initializing" | "running" | "succeeded" | "failed" | "cancelled"> = {
+  Pending: "pending",
+  Initializing: "initializing",
+  Running: "running",
+  Succeeded: "succeeded",
+  Failed: "failed",
+  Cancelled: "cancelled",
 };
 
 export default function StatusBadge({ phase, title }: { phase?: RunPhase | string; title?: string }) {
   const label = phase ?? "Unknown";
-  const style = PHASE_STYLES[label] ?? "bg-[#2a2018] text-text-dim border-border-muted";
-  const dot = PHASE_DOTS[label] ?? "bg-[#5c4a3a]";
-
+  const variant = VARIANT_MAP[label] ?? "outline";
   return (
-    <span
-      title={title}
-      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium ${style} ${title ? "cursor-help" : ""}`}
-    >
-      <span className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
+    <Badge variant={variant} title={title} className={title ? "cursor-help" : ""}>
+      <BadgeDot variant={variant} />
       {label}
-    </span>
+    </Badge>
   );
 }

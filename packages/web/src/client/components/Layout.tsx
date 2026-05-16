@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Outlet, NavLink } from "react-router-dom";
 import { useProjects } from "../hooks/useProjects";
 import { useRuns } from "../hooks/useRuns";
@@ -102,6 +102,14 @@ export default function Layout() {
   const hasInProgress = (runs ?? []).some((r) => r.status?.phase != null && !TERMINAL_PHASES.has(r.status.phase));
   useRunNotifications(runs);
 
+  const [managerAvailable, setManagerAvailable] = useState<boolean | null>(null);
+  useEffect(() => {
+    fetch("/api/agent/status")
+      .then((r) => r.json())
+      .then((d) => setManagerAvailable(d.available === true))
+      .catch(() => setManagerAvailable(false));
+  }, []);
+
   return (
     <div className="min-h-screen flex">
       {/* Sidebar */}
@@ -132,6 +140,12 @@ export default function Layout() {
             Metrics
           </SidebarLink>
         </nav>
+        <div className="px-3 py-2 border-t border-border-muted">
+          <p className="text-[10px] text-text-dim/60 select-none flex items-center gap-1">
+            <span className={`inline-block w-1.5 h-1.5 rounded-full ${managerAvailable === null ? "bg-phase-pending" : managerAvailable ? "bg-phase-succeeded" : "bg-phase-failed"}`} />
+            v{__APP_VERSION__}
+          </p>
+        </div>
       </aside>
 
       {/* Main content */}

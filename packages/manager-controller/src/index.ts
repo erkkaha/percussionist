@@ -18,6 +18,7 @@ import {
   NAMESPACE,
 } from "./reconciler.js";
 import { startAgent } from "./agent/index.js";
+import { startMcpServer } from "./agent/tools.js";
 
 const log = (...args: unknown[]) =>
   console.log(`[manager ${new Date().toISOString()}]`, ...args);
@@ -93,6 +94,13 @@ async function main(): Promise<void> {
       });
     }, 2000);
   });
+
+  // Start MCP server before the informer / opencode-web health check so the
+  // sidecar can discover K8s tools when it loads the mcp config at startup.
+  log("starting MCP server...");
+  startMcpServer().catch((e) =>
+    err("MCP server failed to start:", (e as Error).message),
+  );
 
   log("starting informer...");
   void informer.start().then(

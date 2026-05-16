@@ -24,6 +24,8 @@ RUN pnpm install --frozen-lockfile --config.strict-dep-builds=false
 
 # --- build stage --------------------------------------------------------------
 FROM deps AS build
+ARG VERSION=0.0.0-dev
+ENV VERSION=$VERSION
 COPY packages/api/src           packages/api/src
 COPY packages/api/tsconfig.json packages/api/tsconfig.json
 COPY packages/kube/src           packages/kube/src

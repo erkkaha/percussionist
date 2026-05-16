@@ -1,26 +1,42 @@
 @import "tailwindcss";
+@plugin "tailwindcss-animate";
 
-/*
- * Custom theme tokens — dark-first palette inspired by terminal tooling.
- * Uses Tailwind v4 @theme syntax.
- */
+@custom-variant dark (&:is(.dark *));
+
 @theme {
-  --color-surface: #0c0906;
-  --color-surface-raised: #1a1410;
-  --color-surface-overlay: #2a2018;
-  --color-border: #5c4a3a;
-  --color-border-muted: #2a2018;
-  --color-text: #faf5f0;
-  --color-text-muted: #b8a898;
-  --color-text-dim: #7a6a5a;
-  --color-accent: #d97706;
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-border: var(--border);
+  --color-border-muted: var(--border-muted);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-dim: var(--text-dim);
+  --color-accent: var(--accent);
+  --color-phase-pending: var(--phase-pending);
+  --color-phase-initializing: var(--phase-initializing);
+  --color-phase-running: var(--phase-running);
+  --color-phase-succeeded: var(--phase-succeeded);
+  --color-phase-failed: var(--phase-failed);
+  --color-phase-cancelled: var(--phase-cancelled);
+}
 
-  --color-phase-pending: #fbbf24;
-  --color-phase-initializing: #fb923c;
-  --color-phase-running: #d97706;
-  --color-phase-succeeded: #86efac;
-  --color-phase-failed: #fca5a5;
-  --color-phase-cancelled: #7a6a5a;
+:root {
+  --surface: #0c0906;
+  --surface-raised: #1a1410;
+  --surface-overlay: #2a2018;
+  --border: #5c4a3a;
+  --border-muted: #2a2018;
+  --text: #faf5f0;
+  --text-muted: #b8a898;
+  --text-dim: #7a6a5a;
+  --accent: #d97706;
+  --phase-pending: #fbbf24;
+  --phase-initializing: #fb923c;
+  --phase-running: #d97706;
+  --phase-succeeded: #86efac;
+  --phase-failed: #fca5a5;
+  --phase-cancelled: #7a6a5a;
 }
 
 /* Global themed thin scrollbars */

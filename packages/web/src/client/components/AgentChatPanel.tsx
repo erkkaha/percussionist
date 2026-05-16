@@ -1,9 +1,13 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { MessageCircle, X, Send, Loader2 } from "lucide-react";
 
 interface ChatMessage {
   role: "user" | "assistant" | "system";
   text: string;
+}
+
+function messageKey(m: ChatMessage): string {
+  return `${m.role}\0${m.text}`;
 }
 
 export default function AgentChatPanel() {
@@ -14,6 +18,20 @@ export default function AgentChatPanel() {
   const [available, setAvailable] = useState<boolean | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const seenKeysRef = useRef<Set<string>>(new Set());
+
+  const addMessageIfNew = useCallback((msg: ChatMessage) => {
+    const key = messageKey(msg);
+    setMessages((prev) => {
+      if (seenKeysRef.current.has(key)) return prev;
+      seenKeysRef.current.add(key);
+      return [...prev, msg];
+    });
+  }, []);
+
+  const resetSeen = useCallback(() => {
+    seenKeysRef.current = new Set();
+  }, []);
 
   // Check agent availability on mount
   useEffect(() => {
@@ -26,13 +44,19 @@ export default function AgentChatPanel() {
   // Load history when panel opens
   useEffect(() => {
     if (!open) return;
+    resetSeen();
     fetch("/api/agent/chat/history")
       .then((r) => r.json())
       .then((d) => {
-        if (d.history?.length) setMessages(d.history);
+        if (d.history?.length) {
+          setMessages(d.history);
+          for (const m of d.history) {
+            seenKeysRef.current.add(messageKey(m as ChatMessage));
+          }
+        }
       })
       .catch(() => {});
-  }, [open]);
+  }, [open, resetSeen]);
 
   // SSE stream for real-time updates
   useEffect(() => {
@@ -43,11 +67,7 @@ export default function AgentChatPanel() {
     es.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data) as ChatMessage;
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === msg.role && last.text === msg.text) return prev;
-          return [...prev, msg];
-        });
+        addMessageIfNew(msg);
       } catch { /* ignore parse errors */ }
     };
 
@@ -57,7 +77,7 @@ export default function AgentChatPanel() {
       es.close();
       eventSourceRef.current = null;
     };
-  }, [open]);
+  }, [open, addMessageIfNew]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -69,7 +89,7 @@ export default function AgentChatPanel() {
     if (!text || sending) return;
     setInput("");
     setSending(true);
-    setMessages((prev) => [...prev, { role: "user", text }]);
+    addMessageIfNew({ role: "user", text });
 
     try {
       const res = await fetch("/api/agent/chat", {
@@ -79,12 +99,12 @@ export default function AgentChatPanel() {
       });
       const data = await res.json();
       if (data.response) {
-        setMessages((prev) => [...prev, { role: "assistant", text: data.response }]);
+        addMessageIfNew({ role: "assistant", text: data.response });
       } else if (data.error) {
-        setMessages((prev) => [...prev, { role: "system", text: `Error: ${data.error}` }]);
+        addMessageIfNew({ role: "system", text: `Error: ${data.error}` });
       }
     } catch (e) {
-      setMessages((prev) => [...prev, { role: "system", text: `Error: ${(e as Error).message}` }]);
+      addMessageIfNew({ role: "system", text: `Error: ${(e as Error).message}` });
     } finally {
       setSending(false);
     }
@@ -98,7 +118,7 @@ export default function AgentChatPanel() {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-4 right-4 z-50 w-12 h-12 rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 flex items-center justify-center"
+          className="fixed bottom-4 right-4 z-50 w-12 h-12 rounded-full bg-accent text-surface shadow-lg hover:bg-accent/80 flex items-center justify-center"
           title="Chat with manager agent"
         >
           <MessageCircle className="w-6 h-6" />
@@ -107,14 +127,14 @@ export default function AgentChatPanel() {
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-4 right-4 z-50 w-96 h-[32rem] bg-white rounded-lg shadow-xl border border-gray-200 flex flex-col">
+        <div className="fixed bottom-4 right-4 z-50 w-96 h-[32rem] bg-surface rounded-lg shadow-xl border border-border flex flex-col">
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50 rounded-t-lg">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface-raised rounded-t-lg">
             <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${available === null ? "bg-yellow-400" : available ? "bg-green-500" : "bg-red-500"}`} />
-              <span className="font-medium text-sm">Manager Agent</span>
+              <div className={`w-2 h-2 rounded-full ${available === null ? "bg-phase-pending" : available ? "bg-phase-succeeded" : "bg-phase-failed"}`} />
+              <span className="font-medium text-sm text-text">Manager Agent</span>
             </div>
-            <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600">
+            <button onClick={() => setOpen(false)} className="text-text-dim hover:text-text-muted transition-colors">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -122,19 +142,19 @@ export default function AgentChatPanel() {
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
             {messages.length === 0 && (
-              <p className="text-gray-400 text-sm text-center mt-8">
+              <p className="text-text-dim text-sm text-center mt-8">
                 Ask the manager agent about board state, task status, or cluster issues.
               </p>
             )}
             {messages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div key={`${messageKey(msg)}-${i}`} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
                   className={`max-w-[80%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${
                     msg.role === "user"
-                      ? "bg-blue-600 text-white"
+                      ? "bg-accent/15 text-text border border-accent/30"
                       : msg.role === "system"
-                        ? "bg-red-50 text-red-700 border border-red-200"
-                        : "bg-gray-100 text-gray-900"
+                        ? "bg-phase-failed/10 text-phase-failed border border-phase-failed/30"
+                        : "bg-surface-raised text-text border border-border-muted"
                   }`}
                 >
                   {msg.text}
@@ -145,7 +165,7 @@ export default function AgentChatPanel() {
           </div>
 
           {/* Input */}
-          <div className="border-t border-gray-200 px-4 py-3">
+          <div className="border-t border-border px-4 py-3">
             <form
               onSubmit={(e) => { e.preventDefault(); handleSend(); }}
               className="flex gap-2"
@@ -155,13 +175,13 @@ export default function AgentChatPanel() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Ask the agent..."
-                className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
                 disabled={sending}
               />
               <button
                 type="submit"
                 disabled={sending || !input.trim()}
-                className="rounded-md bg-blue-600 px-3 py-2 text-white text-sm hover:bg-blue-700 disabled:opacity-50"
+                className="rounded-md bg-accent text-surface px-3 py-2 text-sm font-medium hover:bg-accent/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </button>

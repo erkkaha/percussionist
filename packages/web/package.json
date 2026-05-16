@@ -1,6 +1,6 @@
 {
   "name": "@percussionist/web",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Web dashboard for percussionist",
@@ -20,7 +20,10 @@
     "@kubernetes/client-node": "^1.4.0",
     "@percussionist/api": "workspace:*",
     "@percussionist/kube": "workspace:*",
+    "@radix-ui/react-slot": "^1.2.4",
     "@tanstack/react-query": "^5.62.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "diff": "^7.0.0",
     "drizzle-orm": "^0.41.0",
     "hono": "^4.6.0",
@@ -35,7 +38,9 @@
     "rehype-mermaid": "^3.0.0",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "shiki": "^1.29.0"
+    "shiki": "^1.29.0",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.0",

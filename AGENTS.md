@@ -97,6 +97,40 @@ kubectl -n percussionist exec deployment/percussionist-manager -c opencode-web \
 
 If the status is anything other than `"connected"`, the URL or path is wrong.
 
+### Available MCP Tools
+
+| Tool | Purpose |
+|------|---------|
+| `inspect_cr` | Get full details of a CR (OpenCodeRun, OpenCodeProject, ClusterAgent) |
+| `list_crs` | List CRs of a given kind with optional labelSelector |
+| `read_logs` | Read pod logs for a run (default: opencode container, last 100 lines) |
+| `read_session` | Read session messages (tries live API first, falls back to ConfigMap) |
+| `read_session_live` | Incremental session messages with `since`/`nextSince` for polling |
+| `patch_board` | Modify board state (backlog columns, workers) via status subresource |
+| `delete_run` | Delete an OpenCodeRun by name |
+| `create_run` | Create a new run for a board task (task must be in "ready" column) |
+| `force_retry` | Clean terminal-phase runs, reset board state, create fresh run |
+
+**`create_run`** — Direct run creation without waiting for reconcile cycle.
+- Requires: `project`, `task` (board task ID)
+- Optional: `agent`, `model`, `retryCount`, `reworkFeedback`, `namespace`
+- Errors if the task is not in the "ready" column (use `force_retry` first)
+- Moves task to "in-progress" and updates board status atomically
+
+**`force_retry`** — One-shot cleanup and restart for stuck tasks.
+- Requires: `project`, `task` (board task ID)
+- Optional: `createRun` (default `true`), `namespace`
+- Deletes all terminal-phase runs (Succeeded/Failed/Cancelled) for the task
+- Resets board state: removes worker entry, moves task to "ready"
+- If `createRun: true`, immediately creates a fresh run with retryCount=0
+
+**`read_session_live`** — Real-time session message streaming.
+- Requires: `runName`
+- Optional: `sessionID` (auto-discovered), `since` (message index, default 0), `namespace`
+- Returns `{ messages, total, nextSince, runPhase, sessionID, source }`
+- Poll with `since = prev.nextSince` for incremental reads
+- Falls back to ConfigMap snapshot if run pod is gone
+
 ## Image Build & Load Pitfalls
 
 ### 1. New source files may be silently excluded from Docker images

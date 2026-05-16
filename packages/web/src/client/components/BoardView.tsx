@@ -9,9 +9,192 @@ import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { FileText, Wrench, Flag, User, ExternalLink, Trash2, Check, X, ChevronDown } from "lucide-react";
 import { fetchBoard, addBoardTask, deleteBoardTask, fetchAgents, patchBoardSpec, retryEscalatedTask, fetchNextTaskId, approveTask, requestChangesTask } from "../lib/api";
-import type { BoardTask, ManagerMetrics } from "../lib/types";
+import type { BoardTask, ManagerMetrics, WorkerStatus } from "../lib/types";
 import { useBoardNotifications } from "../hooks/useBoardNotifications";
 import { useBoardEvents } from "../hooks/useBoardEvents";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./ui/card";
+
+interface TaskCardProps {
+  task: BoardTask;
+  worker: WorkerStatus | undefined;
+  col: string;
+  data: { approvals?: Record<string, { approved: boolean }> };
+  deleteMutation: { mutate: (id: string) => void; isPending: boolean; variables: string | undefined };
+  retryMutation: { mutate: (id: string) => void; isPending: boolean; variables: string | undefined };
+  approveMutation: { mutate: (taskId: string) => void; isPending: boolean; variables: string | undefined };
+  requestChangesMutation: { mutate: ({ taskId, comment }: { taskId: string; comment: string }) => void; isPending: boolean; variables: { taskId: string; comment: string } | undefined };
+  projectName: string;
+  taskById: (id: string) => BoardTask | undefined;
+  setShowRequestChanges: (v: boolean) => void;
+  setRequestChangesTaskId: (id: string) => void;
+}
+
+function TaskCard({
+  task, worker, col, data,
+  deleteMutation, retryMutation, approveMutation, requestChangesMutation,
+  projectName, taskById, setShowRequestChanges, setRequestChangesTaskId,
+}: TaskCardProps) {
+  const isBuildTask = task.type === "BUILD";
+  const reviewerDecisionKnown = worker?.reviewApproved !== undefined || !!worker?.reviewFeedback;
+  const approvalState = data.approvals?.[task.id];
+  const alreadyApproved = approvalState?.approved === true;
+  const canApproveNow = !alreadyApproved && (!isBuildTask || worker?.reviewApproved === true);
+
+  return (
+    <Card className="group relative">
+      <CardHeader className="space-y-0 p-3 pb-2">
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-xs font-mono text-text-dim flex items-center gap-1">
+            {task.type === "BUILD" ? (
+              <Wrench className="h-3 w-3 text-accent" />
+            ) : (
+              <FileText className="h-3 w-3 text-phase-pending" />
+            )}
+            {task.id}
+          </span>
+          {task.priority && (
+            <span className={`text-[10px] px-1.5 py-0 rounded flex items-center gap-0.5 font-medium ${
+              task.priority === "high" ? "text-phase-failed bg-phase-failed/10" :
+              task.priority === "low" ? "text-text-dim bg-surface-overlay" :
+              "text-phase-running bg-phase-running/10"
+            }`}>
+              <Flag className="h-2.5 w-2.5" />
+              {task.priority}
+            </span>
+          )}
+        </div>
+        <CardTitle className="flex items-start justify-between gap-2 text-sm">
+          <span className="leading-snug flex-1">{task.title}</span>
+          <button
+            onClick={() => deleteMutation.mutate(task.id)}
+            className="opacity-0 group-hover:opacity-100 shrink-0 text-text-dim hover:text-phase-failed transition-all p-0.5"
+            title="Remove task"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </CardTitle>
+        {task.agent && (
+          <CardDescription className="flex items-center gap-1">
+            <User className="h-3 w-3" />
+            {task.agent}
+          </CardDescription>
+        )}
+      </CardHeader>
+
+      <CardContent className="p-3 pt-0 space-y-2">
+        {/* Description with expand affordance */}
+        {task.description && (
+          <details className="text-xs text-text-dim group/desc">
+            <summary className="cursor-pointer line-clamp-2 list-none hover:text-text transition-colors flex items-center gap-1 [&::-webkit-details-marker]:hidden">
+              <ChevronDown className="h-3 w-3 shrink-0 transition-transform duration-200 group-open/desc:rotate-180" />
+              <span>Show more</span>
+            </summary>
+            <p className="mt-1.5 whitespace-pre-wrap leading-relaxed">{task.description}</p>
+          </details>
+        )}
+
+        {/* Run links */}
+        {worker?.runName && (
+          <Link
+            to={`/runs/${encodeURIComponent(worker.runName)}`}
+            className="text-xs text-text-dim hover:text-text transition-colors underline flex items-center gap-1 block"
+          >
+            <ExternalLink className="h-3 w-3 shrink-0" />
+            {worker.runName}
+          </Link>
+        )}
+        {col === "review" && isBuildTask && worker?.reviewRunName && (
+          <Link
+            to={`/runs/${encodeURIComponent(worker.reviewRunName)}`}
+            className="text-xs text-text-dim hover:text-text transition-colors underline flex items-center gap-1 block"
+            title="Agent reviewer run"
+          >
+            <ExternalLink className="h-3 w-3 shrink-0" />
+            reviewer: {worker.reviewRunName}
+          </Link>
+        )}
+        {col === "review" && isBuildTask && worker?.mergeRunName && (
+          <Link
+            to={`/runs/${encodeURIComponent(worker.mergeRunName)}`}
+            className="text-xs text-text-dim hover:text-text transition-colors underline flex items-center gap-1 block"
+            title="Merge run"
+          >
+            <ExternalLink className="h-3 w-3 shrink-0" />
+            merge: {worker.mergeRunName}
+          </Link>
+        )}
+
+        {/* Review status */}
+        {col === "review" && isBuildTask && !reviewerDecisionKnown && !worker?.reviewRunName && (
+          <p className="text-xs text-text-dim">
+            Agent review status: not started. If this persists, add reviewer agent to board roster.
+          </p>
+        )}
+        {col === "review" && isBuildTask && worker?.reviewRunName && !reviewerDecisionKnown && (
+          <p className="text-xs text-text-dim">Agent review in progress.</p>
+        )}
+        {col === "review" && isBuildTask && worker?.reviewApproved === true && (
+          <p className="text-xs text-phase-running">Agent review approved. Ready for human approve.</p>
+        )}
+        {col === "review" && isBuildTask && worker?.reviewFeedback && (
+          <p className="text-xs text-phase-failed whitespace-pre-wrap">Agent review feedback: {worker.reviewFeedback}</p>
+        )}
+
+        {/* Escalation */}
+        {worker?.status === "Escalated" && (
+          <details className="text-xs text-phase-failed">
+            <summary className="cursor-pointer list-none hover:opacity-80 transition-opacity [&::-webkit-details-marker]:hidden flex items-center gap-1.5">
+              <span>Escalated</span>
+              {worker.escalation && <span className="text-text-dim">(show reason)</span>}
+            </summary>
+            {worker.escalation && (
+              <p className="mt-1 whitespace-pre-wrap text-text-dim">{worker.escalation}</p>
+            )}
+          </details>
+        )}
+
+        {/* Retry button */}
+        {worker?.status === "Escalated" && (
+          <button
+            onClick={() => retryMutation.mutate(task.id)}
+            disabled={retryMutation.isPending}
+            className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors"
+            title="Reset retries and move back to ready"
+          >
+            {retryMutation.isPending && retryMutation.variables === task.id ? "Retrying…" : "↺ Retry"}
+          </button>
+        )}
+
+        {/* Approve / Request Changes */}
+        {col === "review" && (
+          <div className="flex gap-2">
+            <button
+              onClick={() => approveMutation.mutate(task.id)}
+              disabled={approveMutation.isPending || !canApproveNow}
+              className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors font-medium flex items-center gap-1"
+              title={alreadyApproved ? "Already approved" : (canApproveNow ? "Approve this task" : "Wait for agent review approval first")}
+            >
+              {alreadyApproved
+                ? <><Check className="h-3 w-3" /> Approved</>
+                : (approveMutation.isPending && approveMutation.variables === task.id ? "Approving…" : <><Check className="h-3 w-3" /> Approve</>)
+              }
+            </button>
+            <button
+              onClick={() => {
+                setRequestChangesTaskId(task.id);
+                setShowRequestChanges(true);
+              }}
+              className="text-xs text-text-dim hover:text-phase-failed transition-colors flex items-center gap-1"
+              title="Request changes"
+            >
+              <X className="h-3 w-3" /> Request Changes
+            </button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 const DEFAULT_COLUMNS = ["ready", "in-progress", "review", "rework", "done"];
 
@@ -294,156 +477,23 @@ export default function BoardView() {
                 {taskIds.map((id) => {
                   const task = taskById(id);
                   const worker = workerByTask(id);
-                  const isBuildTask = task?.type === "BUILD";
-                  const reviewerDecisionKnown = worker?.reviewApproved !== undefined || !!worker?.reviewFeedback;
-                  const approvalState = data.approvals?.[id];
-                  const alreadyApproved = approvalState?.approved === true;
-                  const canApproveNow = !alreadyApproved && (!isBuildTask || worker?.reviewApproved === true);
+                  if (!task || !worker) return null;
                   return (
-                    <div
+                    <TaskCard
                       key={id}
-                      className="rounded-md border border-border bg-surface p-3 space-y-2 group relative"
-                    >
-                      {/* Header: ID + type icon, priority badge */}
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="text-xs font-mono text-text-dim flex items-center gap-1">
-                          {task?.type === "BUILD" ? (
-                            <Wrench className="h-3 w-3 text-accent" />
-                          ) : (
-                            <FileText className="h-3 w-3 text-phase-pending" />
-                          )}
-                          {id}
-                        </span>
-                        {task?.priority && (
-                          <span className={`text-[10px] px-1.5 py-0 rounded flex items-center gap-0.5 font-medium ${
-                            task.priority === "high" ? "text-phase-failed bg-phase-failed/10" :
-                            task.priority === "low" ? "text-text-dim bg-surface-overlay" :
-                            "text-phase-running bg-phase-running/10"
-                          }`}>
-                            <Flag className="h-2.5 w-2.5" />
-                            {task.priority}
-                          </span>
-                        )}
-                      </div>
-                      {/* Title + delete button */}
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-sm text-text leading-snug flex-1">{task?.title ?? id}</p>
-                        <button
-                          onClick={() => deleteMutation.mutate(id)}
-                          className="opacity-0 group-hover:opacity-100 shrink-0 text-text-dim hover:text-phase-failed transition-all p-0.5"
-                          title="Remove task"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                      {/* Description with expand affordance */}
-                      {task?.description && (
-                        <details className="text-xs text-text-dim group/desc">
-                          <summary className="cursor-pointer line-clamp-2 list-none hover:text-text transition-colors flex items-center gap-1 [&::-webkit-details-marker]:hidden">
-                            <ChevronDown className="h-3 w-3 shrink-0 transition-transform duration-200 group-open/desc:rotate-180" />
-                            <span>Show more</span>
-                          </summary>
-                          <p className="mt-1.5 whitespace-pre-wrap leading-relaxed">{task.description}</p>
-                        </details>
-                      )}
-                      {/* Agent */}
-                      {task?.agent && (
-                        <p className="text-xs text-text-dim flex items-center gap-1">
-                          <User className="h-3 w-3" />
-                          {task.agent}
-                        </p>
-                      )}
-                      {/* Run links — each on its own line */}
-                      {worker?.runName && (
-                        <Link
-                          to={`/runs/${encodeURIComponent(worker.runName)}`}
-                          className="text-xs text-text-dim hover:text-text transition-colors underline flex items-center gap-1 block"
-                        >
-                          <ExternalLink className="h-3 w-3 shrink-0" />
-                          {worker.runName}
-                        </Link>
-                      )}
-                      {col === "review" && isBuildTask && worker?.reviewRunName && (
-                        <Link
-                          to={`/runs/${encodeURIComponent(worker.reviewRunName)}`}
-                          className="text-xs text-text-dim hover:text-text transition-colors underline flex items-center gap-1 block"
-                          title="Agent reviewer run"
-                        >
-                          <ExternalLink className="h-3 w-3 shrink-0" />
-                          reviewer: {worker.reviewRunName}
-                        </Link>
-                      )}
-                      {col === "review" && isBuildTask && worker?.mergeRunName && (
-                        <Link
-                          to={`/runs/${encodeURIComponent(worker.mergeRunName)}`}
-                          className="text-xs text-text-dim hover:text-text transition-colors underline flex items-center gap-1 block"
-                          title="Merge run"
-                        >
-                          <ExternalLink className="h-3 w-3 shrink-0" />
-                          merge: {worker.mergeRunName}
-                        </Link>
-                      )}
-                      {col === "review" && isBuildTask && !reviewerDecisionKnown && !worker?.reviewRunName && (
-                        <p className="text-xs text-text-dim">
-                          Agent review status: not started. If this persists, add reviewer agent to board roster.
-                        </p>
-                      )}
-                      {col === "review" && isBuildTask && worker?.reviewRunName && !reviewerDecisionKnown && (
-                        <p className="text-xs text-text-dim">Agent review in progress.</p>
-                      )}
-                      {col === "review" && isBuildTask && worker?.reviewApproved === true && (
-                        <p className="text-xs text-phase-running">Agent review approved. Ready for human approve.</p>
-                      )}
-                      {col === "review" && isBuildTask && worker?.reviewFeedback && (
-                        <p className="text-xs text-phase-failed whitespace-pre-wrap">Agent review feedback: {worker.reviewFeedback}</p>
-                      )}
-                      {worker?.status === "Escalated" && (
-                        <details className="text-xs text-phase-failed">
-                          <summary className="cursor-pointer list-none hover:opacity-80 transition-opacity [&::-webkit-details-marker]:hidden flex items-center gap-1.5">
-                            <span>Escalated</span>
-                            {worker.escalation && <span className="text-text-dim">(show reason)</span>}
-                          </summary>
-                          {worker.escalation && (
-                            <p className="mt-1 whitespace-pre-wrap text-text-dim">{worker.escalation}</p>
-                          )}
-                        </details>
-                      )}
-                      {worker?.status === "Escalated" && (
-                        <button
-                          onClick={() => retryMutation.mutate(id)}
-                          disabled={retryMutation.isPending}
-                          className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors"
-                          title="Reset retries and move back to ready"
-                        >
-                          {retryMutation.isPending && retryMutation.variables === id ? "Retrying…" : "↺ Retry"}
-                        </button>
-                      )}
-                      {col === "review" && (
-                        <div className="flex gap-2 mt-1">
-                          <button
-                            onClick={() => approveMutation.mutate(id)}
-                            disabled={approveMutation.isPending || !canApproveNow}
-                            className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors font-medium flex items-center gap-1"
-                            title={alreadyApproved ? "Already approved" : (canApproveNow ? "Approve this task" : "Wait for agent review approval first")}
-                          >
-                            {alreadyApproved
-                              ? <><Check className="h-3 w-3" /> Approved</>
-                              : (approveMutation.isPending && approveMutation.variables === id ? "Approving…" : <><Check className="h-3 w-3" /> Approve</>)
-                            }
-                          </button>
-                          <button
-                            onClick={() => {
-                              setRequestChangesTaskId(id);
-                              setShowRequestChanges(true);
-                            }}
-                            className="text-xs text-text-dim hover:text-phase-failed transition-colors flex items-center gap-1"
-                            title="Request changes"
-                          >
-                            <X className="h-3 w-3" /> Request Changes
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                      task={task}
+                      worker={worker}
+                      col={col}
+                      data={data}
+                      deleteMutation={deleteMutation}
+                      retryMutation={retryMutation}
+                      approveMutation={approveMutation}
+                      requestChangesMutation={requestChangesMutation}
+                      projectName={projectName}
+                      taskById={taskById}
+                      setShowRequestChanges={setShowRequestChanges}
+                      setRequestChangesTaskId={setRequestChangesTaskId}
+                    />
                   );
                 })}
                 {taskIds.length === 0 && (

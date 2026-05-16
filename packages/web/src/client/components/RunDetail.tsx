@@ -10,6 +10,7 @@ import LogViewer from "./LogViewer";
 import SessionView from "./SessionView";
 import { TERMINAL_PHASES } from "../lib/types";
 import OpenOpencodeButton from "./OpenOpencodeButton";
+import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 
 const GIT_CLONE_CONTAINER = "git-clone";
 const DEFAULT_NAMESPACE = "percussionist";
@@ -221,7 +222,7 @@ export default function RunDetail() {
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Status card */}
-        <Card title="Status">
+        <Card><CardHeader className="border-b border-border-muted"><CardTitle className="text-sm font-medium text-text-muted">Status</CardTitle></CardHeader><CardContent className="space-y-2">
           <Field label="Phase" value={phase ?? "Unknown"} />
           <Field label="Session ID" value={run.status?.sessionID} mono />
           <Field label="Pod" value={run.status?.podName} mono />
@@ -247,10 +248,10 @@ export default function RunDetail() {
             value={duration(run.status?.startedAt, run.status?.completedAt)}
           />
           <Field label="Last Event" value={formatTime(run.status?.lastEventAt)} />
-        </Card>
+        </CardContent></Card>
 
         {/* Spec card */}
-        <Card title="Spec">
+        <Card><CardHeader className="border-b border-border-muted"><CardTitle className="text-sm font-medium text-text-muted">Spec</CardTitle></CardHeader><CardContent className="space-y-2">
           <Field label="Image" value={run.spec.image} mono />
           <Field label="Agent" value={run.spec.agent} />
           {run.spec.agents && run.spec.agents.length > 0 && (
@@ -287,21 +288,21 @@ export default function RunDetail() {
               )}
             </>
           )}
-        </Card>
+        </CardContent></Card>
       </div>
 
       {/* Task */}
       {run.spec.task && (
-        <Card title="Task">
+        <Card><CardHeader className="border-b border-border-muted"><CardTitle className="text-sm font-medium text-text-muted">Task</CardTitle></CardHeader><CardContent>
           <p className="text-sm text-text whitespace-pre-wrap leading-relaxed">
             {run.spec.task}
           </p>
-        </Card>
+        </CardContent></Card>
       )}
 
       {/* Conditions */}
       {run.status?.conditions && run.status.conditions.length > 0 && (
-        <Card title="Conditions">
+        <Card><CardHeader className="border-b border-border-muted"><CardTitle className="text-sm font-medium text-text-muted">Conditions</CardTitle></CardHeader><CardContent>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -340,11 +341,11 @@ export default function RunDetail() {
               </tbody>
             </table>
           </div>
-        </Card>
+        </CardContent></Card>
       )}
 
       {/* Session conversation */}
-      <Card title="Session">
+      <Card><CardHeader className="border-b border-border-muted"><CardTitle className="text-sm font-medium text-text-muted">Session</CardTitle></CardHeader><CardContent>
         <SessionView
           name={name!}
           hasSession={!!run.status?.sessionID}
@@ -352,10 +353,10 @@ export default function RunDetail() {
           sseConnected={sseConnected}
           eventTick={eventTick}
         />
-      </Card>
+      </CardContent></Card>
 
       {/* Logs */}
-      <Card title="Logs">
+      <Card><CardHeader className="border-b border-border-muted"><CardTitle className="text-sm font-medium text-text-muted">Logs</CardTitle></CardHeader><CardContent>
         <LogViewer
           name={name!}
           active={isActive}
@@ -363,7 +364,7 @@ export default function RunDetail() {
           sseConnected={sseConnected}
           eventTick={eventTick}
         />
-      </Card>
+      </CardContent></Card>
     </div>
   );
 }
@@ -382,22 +383,7 @@ function BackLink() {
   );
 }
 
-function Card({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-surface-raised">
-      <div className="border-b border-border-muted px-4 py-2.5">
-        <h2 className="text-sm font-medium text-text-muted">{title}</h2>
-      </div>
-      <div className="p-4 space-y-2">{children}</div>
-    </div>
-  );
-}
+
 
 function Field({
   label,
