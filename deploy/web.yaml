@@ -23,6 +23,20 @@ spec:
     requests:
       storage: 1Gi
 ---
+# Tailscale auth key Secret — create the actual secret with:
+#   kubectl create secret generic tailscale-auth -n percussionist --from-literal=key=tskey-auth-xxxxx
+# This placeholder is for reference; the real secret must be created separately.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tailscale-auth
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: web
+stringData:
+  key: ""
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -217,6 +231,42 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 15
+
+        - name: tailscale
+          image: tailscale/tailscale:latest
+          imagePullPolicy: Always
+          env:
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: tailscale-auth
+                  key: key
+            - name: TS_HOSTNAME
+              value: percussionist-web
+            - name: TS_KUBE_SECRET
+              value: tailscale-state-web
+            - name: TS_USERSPACE
+              value: "true"
+            - name: TS_EXTRA_ARGS
+              value: "--accept-dns=false"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              /usr/local/bin/tailscaled --tun=userspace-networking &
+              sleep 3
+              tailscale up --authkey=${TS_AUTHKEY} --hostname=${TS_HOSTNAME} --accept-dns=false
+              echo "Waiting for Tailscale IP..."
+              for i in $(seq 1 30); do
+                IP=$(tailscale ip -4 2>/dev/null) && [ -n "$IP" ] && break
+                sleep 2
+              done
+              echo "Tailscale IP: $IP"
+              tailscale serve --https=443 http://127.0.0.1:8080 && echo "HTTPS serve enabled"
+              wait
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
       volumes:
         - name: stats-db
           persistentVolumeClaim:

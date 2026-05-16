@@ -116,11 +116,12 @@ export function buildSuccessReviewRun(
 
   const branch = branchName ?? "feat/${task.id}";
 
+  const taskTypeLabel = task.type ? `TASK TYPE: ${task.type}` : "";
+  const isBuildTask = task.type === "BUILD";
+
   const promptLines = [
     `You are a reviewer agent that checks whether a completed worker run actually fulfilled its task.`,
-    `A previous failure mode in this system is that worker output sounds complete but does not mention creating or opening a PR.`,
-    `For BUILD tasks, only approve if evidence in the session shows a PR was created/opened (for example: a PR URL, gh output, or explicit creation confirmation).`,
-    `If a PR is missing or unclear, do NOT approve; use request_changes and ask for the PR creation step explicitly.`,
+    ...(taskTypeLabel ? [taskTypeLabel] : []),
     "",
     `TASK: ${task.id} — ${task.title}`,
     `TASK DESCRIPTION: ${task.description ?? "(none)"}`,
@@ -128,12 +129,20 @@ export function buildSuccessReviewRun(
     `BRANCH: ${branch}`,
     `COMPLETION MESSAGE: ${completionMessage}`,
     "",
-    `This work was done on branch "${branch}". To review the actual changes:`,
-    `git fetch origin ${branch} && git checkout ${branch}`,
-    `git diff origin/master...${branch}  # see what was changed`,
-    `git log --oneline origin/master..${branch}  # see commit history`,
-    `ls -la  # browse workspace files`,
-    "",
+    ...(isBuildTask
+      ? [
+          `This is a BUILD task. The worker was validated by the dispatcher to have committed, pushed, and created a PR before calling complete_run.`,
+          `The COMPLETION MESSAGE above contains the worker's summary and should reference the PR that was created.`,
+          `Check the completion message for evidence of PR creation (URL, number, or explicit confirmation).`,
+          `If the completion message clearly indicates a PR was created, approve the task.`,
+          `If the completion message is missing or unclear, use request_changes.`,
+          "",
+        ]
+      : [
+          `The COMPLETION MESSAGE above summarizes what the worker accomplished.`,
+          `Check the completion message and session data to verify the task was completed.`,
+          "",
+        ]),
     `RECENT SESSION MESSAGES:`,
     sessionSummary || "(none available)",
     "",
@@ -143,7 +152,7 @@ export function buildSuccessReviewRun(
           "",
         ]
       : []),
-    `Review the session above and output ONLY valid JSON (no markdown, no explanation):`,
+    `Review the above and output ONLY valid JSON (no markdown, no explanation):`,
     JSON.stringify({
       diagnosis: "(1-2 sentences: did the worker actually complete the task?)",
       recommendedAction: "(approve | request_changes | retry_alternative | escalate)",

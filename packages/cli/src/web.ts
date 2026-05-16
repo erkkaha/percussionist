@@ -5,7 +5,7 @@
 // Web Notifications API and AudioContext used for run/task notifications.
 //
 // Flow:
-//   1. Pick a free local port (or honour --port).
+//   1. Use default port 8080 (or honour --port), fall back to a free port if occupied.
 //   2. Start `kubectl port-forward svc/percussionist-web <local>:8080`.
 //   3. Wait for "Forwarding from" on stdout/stderr.
 //   4. Open http://localhost:<local>/ in the default browser.
@@ -17,6 +17,7 @@ import { DEFAULT_NAMESPACE } from "./kube.js";
 
 const WEB_SERVICE = "percussionist-web";
 const WEB_PORT = 8080;
+const DEFAULT_LOCAL_PORT = 8080;
 
 export interface WebOpts {
   namespace?: string;
@@ -41,6 +42,23 @@ async function pickFreePort(): Promise<number> {
       }
     });
   });
+}
+
+async function resolveLocalPort(explicit?: string): Promise<number> {
+  if (explicit) return Number(explicit);
+
+  const available = await new Promise<boolean>((resolve) => {
+    const srv = createServer();
+    srv.unref();
+    srv.on("error", () => resolve(false));
+    srv.listen(DEFAULT_LOCAL_PORT, "127.0.0.1", () => {
+      srv.close(() => resolve(true));
+    });
+  });
+
+  if (available) return DEFAULT_LOCAL_PORT;
+  console.log(`beatctl: port ${DEFAULT_LOCAL_PORT} in use, picking a free port`);
+  return pickFreePort();
 }
 
 async function startPortForward(
@@ -105,7 +123,7 @@ function openBrowser(url: string): void {
 
 export async function runWeb(opts: WebOpts): Promise<void> {
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
-  const localPort = opts.port ? Number(opts.port) : await pickFreePort();
+  const localPort = await resolveLocalPort(opts.port);
   const url = `http://localhost:${localPort}/`;
 
   console.log(`beatctl: port-forwarding svc/${WEB_SERVICE} -> localhost:${localPort}`);
