@@ -25,3 +25,6 @@ packages/cli/bin/
 # Kubernetes
 kubeconfig
 *.kubeconfig
+
+# Runtime data (SQLite stats DB, etc.)
+packages/web/data/
