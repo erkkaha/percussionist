@@ -66,6 +66,37 @@ of TypeScript packages under `packages/*`.
 - CamelCase for TS, kebab-case for YAML
 - `runXxx` prefix for CLI action functions in `@percussionist/cli`
 
+## MCP Server Configuration
+
+The manager runs an in-process MCP server (`packages/manager-controller/src/agent/tools.ts`)
+on port 4097 serving tools at `POST /mcp` (Streamable HTTP, JSON-RPC 2.0).
+
+The opencode-web sidecar discovers it via the `agent-config` ConfigMap's `opencode.json`
+under the `mcp.manager-agent` key. The URL **must** include the full path:
+
+```json
+{
+  "mcp": {
+    "manager-agent": {
+      "type": "remote",
+      "url": "http://127.0.0.1:4097/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+The `/mcp` path is required — the server returns 404 on all other paths. After updating
+the ConfigMap, verify the sidecar is connected:
+
+```bash
+kubectl -n percussionist exec deployment/percussionist-manager -c opencode-web \
+  -- wget -qO- http://127.0.0.1:4096/mcp
+# Expected: {"manager-agent":{"status":"connected"}}
+```
+
+If the status is anything other than `"connected"`, the URL or path is wrong.
+
 ## Image Build & Load Pitfalls
 
 ### 1. New source files may be silently excluded from Docker images

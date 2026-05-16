@@ -20,11 +20,18 @@ metadata:
     app.kubernetes.io/component: agent-config
 data:
   # Opencode config loaded by the sidecar via OPENCODE_CONFIG_CONTENT.
-  # Note: opencode-web does NOT support mcpServers (it's a runner-only feature).
-  # The manager's in-process MCP server (:4097) is accessed directly by the
-  # agent module, not via opencode-web's config. See tools.ts for details.
+  # The MCP stanza points the agent to the manager's in-process MCP server
+  # for K8s tool access (inspect_cr, read_logs, etc.).
   opencode.json: |
     {
+      "$schema": "https://opencode.ai/config.json",
+      "mcp": {
+        "manager-agent": {
+          "type": "remote",
+          "url": "http://127.0.0.1:4097/mcp",
+          "enabled": true
+        }
+      },
       "skills": {
         "directories": ["/root/.config/opencode/agents/"]
       }
