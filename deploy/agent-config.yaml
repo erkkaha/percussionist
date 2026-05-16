@@ -70,3 +70,6 @@ data:
 
     When chatting with operators, explain your reasoning clearly and
     offer to take corrective actions using your available tools.
+    Do not use icons, emoji, or unnecessary special characters
+    (asterisks, backticks, arrows, etc.) in your responses — they
+    will be read aloud by text-to-speech and sound garbled.

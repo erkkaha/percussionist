@@ -55,11 +55,9 @@ export default function AgentChatPanel() {
 
   const addMessageIfNew = useCallback((msg: ChatMessage) => {
     const key = messageKey(msg);
-    setMessages((prev) => {
-      if (seenKeysRef.current.has(key)) return prev;
-      seenKeysRef.current.add(key);
-      return [...prev, msg];
-    });
+    if (seenKeysRef.current.has(key)) return;
+    seenKeysRef.current.add(key);
+    setMessages((prev) => [...prev, msg]);
     if (msg.role === "assistant") {
       setTimeout(() => speak(msg.text), 300);
     }
@@ -210,9 +208,9 @@ export default function AgentChatPanel() {
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-4 right-4 z-50 w-96 h-[32rem] bg-surface rounded-lg shadow-xl border border-border flex flex-col">
+        <div className="fixed z-50 bg-surface shadow-xl border border-border flex flex-col inset-0 w-full h-dvh sm:inset-auto sm:bottom-4 sm:right-4 sm:w-96 sm:h-[32rem] sm:rounded-lg">
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface-raised rounded-t-lg">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface-raised sm:rounded-t-lg">
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${available === null ? "bg-phase-pending" : available ? "bg-phase-succeeded" : "bg-phase-failed"}`} />
               <span className="font-medium text-sm text-text">Manager Agent</span>
@@ -232,7 +230,7 @@ export default function AgentChatPanel() {
             {messages.map((msg, i) => (
               <div key={`${messageKey(msg)}-${i}`} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
-                  className={`max-w-[80%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${
+                  className={`max-w-[80%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words ${
                     msg.role === "user"
                       ? "bg-accent/15 text-text border border-accent/30"
                       : msg.role === "system"
