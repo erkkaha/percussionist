@@ -56,7 +56,7 @@ of TypeScript packages under `packages/*`.
 - CRD YAML is generated from Zod (`packages/api/codegen/`)
 - Operator and Manager use `makeInformer` + in-memory work queue pattern
 - API group: `percussionist.dev/v1alpha1`
-- `opencode-web` does NOT support `mcpServers` in its config (runner-only feature); the manager's agent-config ConfigMap must omit it. The decision engine provides all context inline in the prompt instead of relying on MCP tool discovery.
+- `opencode-web` supports MCP servers via the `mcp` config key (not `mcpServers` — that was a legacy format); the manager's agent-config ConfigMap uses `mcp` with `type: "remote"` pointing at the in-process MCP server on :4097.
 
 ## Conventions
 - No linter/formatting tool configured -- do not add one without asking
@@ -65,6 +65,59 @@ of TypeScript packages under `packages/*`.
 - Console-based logging with timestamps (no structured logger)
 - CamelCase for TS, kebab-case for YAML
 - `runXxx` prefix for CLI action functions in `@percussionist/cli`
+
+## Image Build & Load Pitfalls
+
+### 1. New source files may be silently excluded from Docker images
+The `images/node/Dockerfile` cleans `dist/` before each `pnpm build` to avoid tsc
+incremental compilation skipping newly-added files. If you see a running pod
+missing expected code (e.g., `dist/agent/` directory doesn't exist), rebuild
+with `--no-cache`:
+```
+docker build --no-cache --build-arg PKG=manager-controller -f images/node/Dockerfile -t percussionist/manager:dev .
+```
+
+### 2. `minikube image load --overwrite=true` silently fails when old image is in use
+When a running container references the old image, Docker refuses to untag it.
+The `--overwrite=true` flag exits 0 but does **not** update the tag. To verify:
+```bash
+# Check if the pod's image ID matches what you just built
+docker image inspect --format '{{.Id}}' percussionist/manager:dev | cut -d: -f2 | cut -c1-12
+minikube image ls --format table | grep manager
+```
+If they differ, the old image is pinned. Fix (scale to 0, rm, load, scale back):
+```bash
+kubectl -n percussionist scale deploy/percussionist-manager --replicas=0
+kubectl -n percussionist wait --for=delete pod -l app.kubernetes.io/component=manager --timeout=60s
+minikube image rm docker.io/percussionist/manager:dev
+minikube image load percussionist/manager:dev
+kubectl -n percussionist scale deploy/percussionist-manager --replicas=1
+```
+Or simply use `--force` with `scripts/minikube-load.sh` which handles eviction
+automatically:
+```
+./scripts/minikube-load.sh --force --only manager
+```
+
+### 3. Debugging: exec into the pod to check dist/ contents
+If changes don't appear in a running pod, check the actual files:
+```bash
+kubectl -n percussionist exec deployment/percussionist-manager -c manager -- ls -la /app/packages/manager-controller/dist/agent/
+```
+If the directory is missing, the image was built from old code (see #1 above).
+If it exists but the pod still behaves wrong, the service/endpoint may need
+verification:
+```bash
+kubectl -n percussionist exec deployment/percussionist-web -- wget -qO- --timeout=5 http://percussionist-manager.percussionist.svc.cluster.local:4098/chat/history
+```
+
+### 4. Eviction labels in `scripts/minikube-load.sh`
+The `--force` path scales deployments to 0 before reloading images. The pod
+label selectors used are:
+- Manager: `app.kubernetes.io/component=manager`
+- Operator: `app.kubernetes.io/component=operator`
+- Web: `app.kubernetes.io/component=web`
+These match the `matchLabels` in each Deployment's spec.selector.
 
 ## Packages (dependency order)
 1. `@percussionist/api` - Zod schemas, constants, type helpers

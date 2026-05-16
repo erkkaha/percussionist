@@ -34,7 +34,10 @@ COPY packages/dispatcher/src                 packages/dispatcher/src
 COPY packages/dispatcher/tsconfig.json       packages/dispatcher/tsconfig.json
 COPY packages/manager-controller/src         packages/manager-controller/src
 COPY packages/manager-controller/tsconfig.json packages/manager-controller/tsconfig.json
-RUN pnpm --config.strict-dep-builds=false -C packages/api              run build \
+# Clean dist dirs first to avoid tsc incremental compilation skipping new files
+RUN rm -rf packages/api/dist packages/kube/dist packages/operator/dist \
+         packages/dispatcher/dist packages/manager-controller/dist \
+ && pnpm --config.strict-dep-builds=false -C packages/api              run build \
  && pnpm --config.strict-dep-builds=false -C packages/kube             run build \
  && pnpm --config.strict-dep-builds=false -C packages/operator         run build \
  && pnpm --config.strict-dep-builds=false -C packages/dispatcher       run build \

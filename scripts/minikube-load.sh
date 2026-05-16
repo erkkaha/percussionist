@@ -73,7 +73,10 @@ build_one() {
         -f "$REPO_ROOT/images/node/Dockerfile" "$REPO_ROOT"
       ;;
     web)
+      local web_version
+      web_version="$(node -p "require('$REPO_ROOT/packages/web/package.json').version")"
       docker build "${extra[@]}" -t "$tag" \
+        --build-arg VERSION="$web_version" \
         -f "$REPO_ROOT/images/web/Dockerfile" "$REPO_ROOT"
       ;;
     manager)
@@ -127,7 +130,7 @@ evict_for() {
         echo ">> --force: scaling deploy/percussionist-operator to 0"
         kubectl -n percussionist scale deploy/percussionist-operator --replicas=0
         kubectl -n percussionist wait --for=delete pod \
-          -l app.kubernetes.io/name=percussionist-operator \
+          -l app.kubernetes.io/component=operator \
           --timeout=60s 2>/dev/null || true
       fi
       ;;
@@ -184,7 +187,7 @@ evict_for() {
         echo ">> --force: scaling deploy/percussionist-manager to 0"
         kubectl -n percussionist scale deploy/percussionist-manager --replicas=0
         kubectl -n percussionist wait --for=delete pod \
-          -l app.kubernetes.io/name=percussionist-manager \
+          -l app.kubernetes.io/component=manager \
           --timeout=60s 2>/dev/null || true
       fi
       ;;
@@ -254,20 +257,38 @@ process_one() {
   # Sanity-check: `minikube image load --overwrite=true` silently no-ops when
   # a running container inside minikube is still referencing the previous
   # image ID (docker refuses to untag a referenced image). Compare IDs and
-  # tell the user what to do. With --force this should always pass.
+  # auto-recover when possible.
   local host_id mk_id
   host_id="$(host_image_id "$tag")"
   mk_id="$(minikube_image_id "$tag")"
   if [[ -n "$host_id" && -n "$mk_id" && "$host_id" != "$mk_id" ]]; then
-    echo "!! WARNING: $tag image-ID mismatch after load" >&2
+    if ! $FORCE; then
+      echo ">> image-ID mismatch — retrying with rm + load" >&2
+      force_reload "$tag"
+      host_id="$(host_image_id "$tag")"
+      mk_id="$(minikube_image_id "$tag")"
+    fi
+  fi
+
+  # If still mismatched, the image is pinned by a running container.
+  if [[ -n "$host_id" && -n "$mk_id" && "$host_id" != "$mk_id" ]]; then
+    echo "!! ERROR: $tag image-ID mismatch" >&2
     echo "     host:     $host_id" >&2
     echo "     minikube: $mk_id" >&2
-    echo "   A running container inside minikube is pinning the old image." >&2
-    echo "   Re-run with --force to auto-evict." >&2
-    if $FORCE; then
-      echo "   (this shouldn't happen under --force; please report)" >&2
-      return 1
+    echo "" >&2
+    echo "   A running container is pinning the old image." >&2
+    if ! $FORCE; then
+      echo "   Re-run with --force to auto-evict and reload." >&2
+    else
+      echo "   (auto-eviction may have failed; check if the deployment is scaled to 0)" >&2
+      echo "" >&2
+      echo "   Manual fix:" >&2
+      echo "   kubectl -n percussionist scale deploy/percussionist-${name} --replicas=0" >&2
+      echo "   minikube image rm docker.io/$tag" >&2
+      echo "   minikube image load $tag" >&2
+      echo "   kubectl -n percussionist scale deploy/percussionist-${name} --replicas=1" >&2
     fi
+    return 1
   fi
 }
 
