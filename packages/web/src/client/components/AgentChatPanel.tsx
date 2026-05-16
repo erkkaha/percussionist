@@ -1,10 +1,29 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { MessageCircle, X, Send, Loader2 } from "lucide-react";
+import { X, Send, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
+import { DrumLogo } from "./app-sidebar";
 
 interface ChatMessage {
   role: "user" | "assistant" | "system";
   text: string;
 }
+
+type SpeechRecognitionType = new () => {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
+  onresult: ((e: unknown) => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+const SpeechRecognitionAPI =
+  typeof window !== "undefined"
+    ? ((window as unknown as { SpeechRecognition?: SpeechRecognitionType; webkitSpeechRecognition?: SpeechRecognitionType }).SpeechRecognition ||
+       (window as unknown as { webkitSpeechRecognition?: SpeechRecognitionType }).webkitSpeechRecognition)
+    : null;
 
 function messageKey(m: ChatMessage): string {
   return `${m.role}\0${m.text}`;
@@ -16,9 +35,23 @@ export default function AgentChatPanel() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [available, setAvailable] = useState<boolean | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const seenKeysRef = useRef<Set<string>>(new Set());
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+  const sttSupported = !!SpeechRecognitionAPI;
+
+  const speak = useCallback((text: string) => {
+    if (!ttsEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.1;
+    utterance.pitch = 1;
+    window.speechSynthesis.speak(utterance);
+  }, [ttsEnabled]);
 
   const addMessageIfNew = useCallback((msg: ChatMessage) => {
     const key = messageKey(msg);
@@ -27,10 +60,50 @@ export default function AgentChatPanel() {
       seenKeysRef.current.add(key);
       return [...prev, msg];
     });
-  }, []);
+    if (msg.role === "assistant") {
+      setTimeout(() => speak(msg.text), 300);
+    }
+  }, [speak]);
 
   const resetSeen = useCallback(() => {
     seenKeysRef.current = new Set();
+  }, []);
+
+  const startRecording = useCallback(() => {
+    if (!sttSupported || recording) return;
+    const SpeechRecognition = SpeechRecognitionAPI;
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onstart = () => setRecording(true);
+    recognition.onend = () => setRecording(false);
+    recognition.onerror = () => setRecording(false);
+
+    recognition.onresult = (event: unknown) => {
+      const e = event as { results: { length: number; [i: number]: { isFinal: boolean; [i: number]: { transcript: string } } } };
+      const results = e.results;
+      if (!results || results.length === 0) return;
+      const result = results[results.length - 1];
+      if (!result) return;
+      if (result.isFinal) {
+        const transcript = result[0];
+        if (transcript) {
+          setInput((prev) => prev + transcript.transcript);
+        }
+      }
+    };
+
+    recognition.start();
+    recognitionRef.current = recognition;
+  }, [sttSupported, recording]);
+
+  const stopRecording = useCallback(() => {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
   }, []);
 
   // Check agent availability on mount
@@ -84,6 +157,16 @@ export default function AgentChatPanel() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Cleanup speech and recognition on close/unmount
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+      recognitionRef.current?.stop();
+    };
+  }, []);
+
   async function handleSend() {
     const text = input.trim();
     if (!text || sending) return;
@@ -118,10 +201,10 @@ export default function AgentChatPanel() {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-4 right-4 z-50 w-12 h-12 rounded-full bg-accent text-surface shadow-lg hover:bg-accent/80 flex items-center justify-center"
+          className="fixed bottom-4 right-4 z-50 w-12 h-12 rounded-md bg-accent text-surface shadow-lg hover:bg-accent/80 flex items-center justify-center"
           title="Chat with manager agent"
         >
-          <MessageCircle className="w-6 h-6" />
+          <DrumLogo playing={false} size={40} />
         </button>
       )}
 
@@ -168,7 +251,7 @@ export default function AgentChatPanel() {
           <div className="border-t border-border px-4 py-3">
             <form
               onSubmit={(e) => { e.preventDefault(); handleSend(); }}
-              className="flex gap-2"
+              className="flex gap-2 items-center"
             >
               <input
                 type="text"
@@ -178,12 +261,36 @@ export default function AgentChatPanel() {
                 className="flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
                 disabled={sending}
               />
+              {sttSupported && (
+                <button
+                  type="button"
+                  onClick={recording ? stopRecording : startRecording}
+                  className={`p-2 rounded-md transition-colors ${
+                    recording
+                      ? "bg-phase-failed/20 text-phase-failed animate-pulse"
+                      : "hover:bg-surface-raised text-text-dim hover:text-text"
+                  }`}
+                  title={recording ? "Stop recording" : "Voice input"}
+                >
+                  {recording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setTtsEnabled((v) => !v)}
+                className={`p-2 rounded-md transition-colors hover:bg-surface-raised ${
+                  ttsEnabled ? "text-accent" : "text-text-dim"
+                }`}
+                title={ttsEnabled ? "Disable voice" : "Enable voice"}
+              >
+                {ttsEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              </button>
               <button
                 type="submit"
                 disabled={sending || !input.trim()}
-                className="rounded-md bg-accent text-surface px-3 py-2 text-sm font-medium hover:bg-accent/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="rounded-md bg-[#fbbf24] text-[#451a03] px-3 py-2 text-sm font-medium hover:bg-[#f59e0b] disabled:cursor-not-allowed transition-colors"
               >
-                {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                {sending ? <DrumLogo playing size={16} /> : <Send className="w-4 h-4" />}
               </button>
             </form>
           </div>
