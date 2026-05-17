@@ -24,10 +24,10 @@ of TypeScript packages under `packages/*`.
 - Images are built locally (no external registry) and loaded into cluster via `scripts/minikube-load.sh`
 
 ## Deployment
-- CRDs: `kubectl apply -f crds/` (must be applied first)
-- Manifests: `kubectl apply -f deploy/` (operator, manager, web, RBAC)
+- CRDs: `kubectl apply -f k8s/crds/` (must be applied first)
+- Manifests: `kubectl apply -f k8s/deploy/` (operator, manager, web, RBAC)
 - Default namespace: `percussionist` (overridable via `PERCUSSIONIST_NAMESPACE`)
-- Smoke test: `kubectl apply -f manifests/m1-smoke.yaml`
+- Smoke test: `kubectl apply -f k8s/samples/m1-smoke.yaml`
 - All deployments are single-replica with `Recreate` strategy (no leader election)
 - In-cluster config by default, falls back to kubeconfig
 
@@ -222,7 +222,7 @@ https://percussionist-web.<your-tailnet>.ts.net
 
 ### Sidecar details
 
-- Defined in `deploy/web.yaml` under the `percussionist-web` Deployment
+- Defined in `k8s/deploy/web.yaml` under the `percussionist-web` Deployment
 - Runs `tailscale serve --https=443 http://127.0.0.1:8080`
 - State persisted in K8s Secret `tailscale-state-web`
 - Userspace networking only (no kernel TUN required)

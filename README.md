@@ -40,22 +40,20 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 
 ```
 .
-├── crds/               # CustomResourceDefinitions (v1alpha1)
-│   ├── opencoderun.yaml
-│   ├── opencodeproject.yaml
-│   └── clusteragent.yaml
-├── deploy/             # Kubernetes Deployment + RBAC manifests
-│   ├── operator.yaml
-│   ├── manager-controller.yaml
-│   ├── agent-config.yaml     # opencode.json config + agent skill for manager decision engine
-│   └── web.yaml
-├── examples/           # Sample OpenCodeProject and OpenCodeRun manifests
+├── k8s/                # All Kubernetes manifests
+│   ├── crds/           # CustomResourceDefinitions (v1alpha1)
+│   │   ├── opencoderun.yaml
+│   │   ├── opencodeproject.yaml
+│   │   └── clusteragent.yaml
+│   ├── deploy/         # Kubernetes Deployment + RBAC manifests
+│   │   ├── operator.yaml
+│   │   ├── manager-controller.yaml
+│   │   ├── agent-config.yaml  # opencode.json config + agent skill for manager decision engine
+│   │   └── web.yaml
+│   ├── agents/         # Production ClusterAgent definitions
+│   ├── samples/        # Example manifests and smoke test
+│   └── tests/          # E2E test manifests
 ├── images/
-│   ├── runner/         # opencode + git + ssh on Alpine (used by every run pod; supports sidecars)
-│   ├── node/           # Shared Node 24 image; builds operator + dispatcher + manager
-│   └── web/            # Bun image; builds + serves the web dashboard
-├── manifests/          # Raw k8s manifests for standalone smoke testing
-├── packages/
 │   ├── api/            # Shared Zod schemas, constants, type helpers
 │   ├── operator/       # CRD reconciler (informer + reconciler loop)
 │   ├── dispatcher/     # Sidecar: session driver + MCP server (fail_run, get_status)
@@ -114,12 +112,12 @@ Installs all three CRDs, the operator, manager controller, and web dashboard,
 then waits for rollouts to complete. Equivalent manual flow:
 
 ```sh
-kubectl apply -f crds/opencoderun.yaml
-kubectl apply -f crds/opencodeproject.yaml
-kubectl apply -f crds/clusteragent.yaml
-kubectl apply -f deploy/operator.yaml
-kubectl apply -f deploy/manager-controller.yaml
-kubectl apply -f deploy/web.yaml
+kubectl apply -f k8s/crds/opencoderun.yaml
+kubectl apply -f k8s/crds/opencodeproject.yaml
+kubectl apply -f k8s/crds/clusteragent.yaml
+kubectl apply -f k8s/deploy/operator.yaml
+kubectl apply -f k8s/deploy/manager-controller.yaml
+kubectl apply -f k8s/deploy/web.yaml
 kubectl -n percussionist rollout status deploy/percussionist-operator
 kubectl -n percussionist rollout status deploy/percussionist-manager
 kubectl -n percussionist rollout status deploy/percussionist-web
@@ -325,7 +323,7 @@ flowchart TD
     K8S -->|session ConfigMap| CM[(manager-chat-history\nConfigMap)]
     CM -->|restore on restart| CHAT
 
-    AGCFG[deploy/agent-config.yaml\nConfigMap] -->|mounted volume\nagent definition| SIDECAR
+    AGCFG[k8s/deploy/agent-config.yaml\nConfigMap] -->|mounted volume\nagent definition| SIDECAR
 ```
 
 The agent module hooks into the board reconcile at four escalation points:
@@ -872,7 +870,7 @@ A day-range selector (7d / 30d / 90d / All) refetches from `/api/stats/export?da
 
 > **Note:** the web server runs under Bun. Bun's TLS stack does not pick up
 > the custom `https.Agent` that `@kubernetes/client-node` configures for the
-> in-cluster CA. `deploy/web.yaml` sets `NODE_EXTRA_CA_CERTS` to the service
+> in-cluster CA. `k8s/deploy/web.yaml` sets `NODE_EXTRA_CA_CERTS` to the service
 > account CA bundle path so Bun trusts the cluster API server certificate.
 
 ## Per-run web UI (subdomains)
@@ -893,7 +891,7 @@ that routes `http://<run>.<baseDomain>/` to the run's Service.
 ### Operator configuration
 
 Set these environment variables on the operator Deployment (see commented-out
-examples in `deploy/operator.yaml`):
+examples in `k8s/deploy/operator.yaml`):
 
 ```sh
 # Set automatically by `beatctl deploy` — shown here for manual overrides
@@ -1029,7 +1027,7 @@ Agents and skills can be delivered through two complementary channels.
 ### Manager-specific agent skill (ConfigMap-delivered)
 
 The manager controller's decision engine uses a dedicated agent skill defined in
-`deploy/agent-config.yaml`. This ConfigMap contains:
+`k8s/deploy/agent-config.yaml`. This ConfigMap contains:
 - `opencode.json` — LLM provider config; note that `opencode-web` does not
   support `mcpServers` (runner-only feature), so MCP tools are not configured
   at the config level — the manager provides context inline in prompts.
@@ -1128,7 +1126,7 @@ Sessions are deleted after **30 days** by an hourly cleanup job in the web pod.
 Override via `RETENTION_DAYS` on the `percussionist-web` Deployment (`0` = keep forever):
 
 ```yaml
-# deploy/web.yaml — under the web container env:
+# k8s/deploy/web.yaml — under the web container env:
 - name: RETENTION_DAYS
   value: "90"
 ```
@@ -1140,7 +1138,7 @@ Override via `RETENTION_DAYS` on the `percussionist-web` Deployment (`0` = keep 
 | `DATA_DIR` | `/app/data` | Directory for `stats.db` |
 | `RETENTION_DAYS` | `30` | Days to retain session data (`0` = forever) |
 
-The PVC (`percussionist-web-stats`, 1 Gi) is created by `deploy/web.yaml` and
+The PVC (`percussionist-web-stats`, 1 Gi) is created by `k8s/deploy/web.yaml` and
 survives pod restarts and redeployments.
 
 ### Operator configuration

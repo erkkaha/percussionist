@@ -37,7 +37,7 @@ LLM_SECRET="${LLM_SECRET:-llm-keys}"
 MODEL="${MODEL:-}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-MANIFESTS="$(dirname "$0")/manifests"
+MANIFESTS="$REPO_ROOT/k8s/tests"
 
 # ---------------------------------------------------------------------------
 # Colours
@@ -97,7 +97,7 @@ green "    Preflight OK"
 # ---------------------------------------------------------------------------
 
 bold "==> Step 1: Apply CRDs"
-kubectl apply -f "$REPO_ROOT/crds/" --server-side 2>&1 | grep -v "^$" || true
+kubectl apply -f "$REPO_ROOT/k8s/crds/" --server-side 2>&1 | grep -v "^$" || true
 green "    CRDs applied"
 
 # ---------------------------------------------------------------------------
@@ -105,8 +105,8 @@ green "    CRDs applied"
 # ---------------------------------------------------------------------------
 
 bold "==> Step 2: Deploy operator and manager"
-kubectl apply -f "$REPO_ROOT/deploy/operator.yaml"
-kubectl apply -f "$REPO_ROOT/deploy/manager-controller.yaml"
+kubectl apply -f "$REPO_ROOT/k8s/deploy/operator.yaml"
+kubectl apply -f "$REPO_ROOT/k8s/deploy/manager-controller.yaml"
 green "    Deployments applied"
 
 # ---------------------------------------------------------------------------

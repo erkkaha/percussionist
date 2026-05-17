@@ -46,7 +46,7 @@ program
   .command("deploy")
   .description("install or remove percussionist CRDs and deployments")
   .option("-n, --namespace <ns>", "namespace for rollout checks", DEFAULT_NAMESPACE)
-  .option("--repo-root <path>", "repo root containing crds/ and deploy/", process.cwd())
+  .option("--repo-root <path>", "repo root containing k8s/crds and k8s/deploy", process.cwd())
   .option("--down", "remove deployed resources", false)
   .option("--no-wait", "don't wait for deployment rollout")
   .action(runDeploy);

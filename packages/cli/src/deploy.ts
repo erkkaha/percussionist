@@ -63,8 +63,8 @@ function resolveManifest(repoRoot: string, rel: string): string {
 
 function looksLikeRepoRoot(dir: string): boolean {
   return (
-    existsSync(path.join(dir, "crds", "opencoderun.yaml")) &&
-    existsSync(path.join(dir, "deploy", "operator.yaml"))
+    existsSync(path.join(dir, "k8s", "crds", "opencoderun.yaml")) &&
+    existsSync(path.join(dir, "k8s", "deploy", "operator.yaml"))
   );
 }
 
@@ -87,7 +87,7 @@ function findRepoRoot(hint?: string): string {
   }
 
   throw new Error(
-    "could not locate repo root with crds/ and deploy/ (pass --repo-root)",
+    "could not locate repo root with k8s/crds and k8s/deploy (pass --repo-root)",
   );
 }
 
@@ -340,12 +340,12 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
   const repoRoot = findRepoRoot(opts.repoRoot);
 
   const manifests = {
-    runCrd: resolveManifest(repoRoot, "crds/opencoderun.yaml"),
-    projectCrd: resolveManifest(repoRoot, "crds/opencodeproject.yaml"),
-    clusterAgentCrd: resolveManifest(repoRoot, "crds/clusteragent.yaml"),
-    operator: resolveManifest(repoRoot, "deploy/operator.yaml"),
-    managerController: resolveManifest(repoRoot, "deploy/manager-controller.yaml"),
-    web: resolveManifest(repoRoot, "deploy/web.yaml"),
+    runCrd: resolveManifest(repoRoot, "k8s/crds/opencoderun.yaml"),
+    projectCrd: resolveManifest(repoRoot, "k8s/crds/opencodeproject.yaml"),
+    clusterAgentCrd: resolveManifest(repoRoot, "k8s/crds/clusteragent.yaml"),
+    operator: resolveManifest(repoRoot, "k8s/deploy/operator.yaml"),
+    managerController: resolveManifest(repoRoot, "k8s/deploy/manager-controller.yaml"),
+    web: resolveManifest(repoRoot, "k8s/deploy/web.yaml"),
   };
 
   if (opts.down) {

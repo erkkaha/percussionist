@@ -4,9 +4,9 @@
 // Usage: node codegen/gen-crds.mjs [--out <dir>]
 //
 // Reads the compiled API package (packages/api/dist/index.js) and produces:
-//   crds/opencoderun.yaml
-//   crds/opencodeproject.yaml
-//   crds/clusteragent.yaml
+//   k8s/crds/opencoderun.yaml
+//   k8s/crds/opencodeproject.yaml
+//   k8s/crds/clusteragent.yaml
 //
 // Requires the api package to have been built first:
 //   pnpm --filter @percussionist/api build
@@ -26,7 +26,7 @@ const apiDist = path.resolve(repoRoot, "packages/api/dist/index.js");
 
 // Parse --out flag.
 const outIdx = process.argv.indexOf("--out");
-const outDir = outIdx >= 0 ? path.resolve(process.argv[outIdx + 1]) : path.resolve(repoRoot, "crds");
+const outDir = outIdx >= 0 ? path.resolve(process.argv[outIdx + 1]) : path.resolve(repoRoot, "k8s/crds");
 mkdirSync(outDir, { recursive: true });
 
 // Load compiled API.

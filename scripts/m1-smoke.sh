@@ -23,7 +23,7 @@ POD="opencode-smoke"
 SVC="opencode-smoke"
 LOCAL_PORT="${LOCAL_PORT:-4096}"
 IMAGE="${IMAGE:-percussionist/runner:dev}"
-MANIFEST="$(cd "$(dirname "$0")/.." && pwd)/manifests/m1-smoke.yaml"
+MANIFEST="$(cd "$(dirname "$0")/.." && pwd)/k8s/samples/m1-smoke.yaml"
 
 red()    { printf '\033[31m%s\033[0m\n' "$*"; }
 green()  { printf '\033[32m%s\033[0m\n' "$*"; }

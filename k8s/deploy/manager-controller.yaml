@@ -44,7 +44,6 @@ rules:
     resources: ["events"]
     verbs: ["get", "list"]
 ---
----
 # ClusterIP Service exposing the manager's chat handler (port 4098)
 # so the web dashboard can proxy interactive conversations.
 apiVersion: v1
