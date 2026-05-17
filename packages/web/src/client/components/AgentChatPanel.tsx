@@ -57,6 +57,7 @@ function sanitizeForSpeech(text: string): string {
     if (!ttsEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(sanitizeForSpeech(text));
+    utterance.lang = "en-US";
     utterance.rate = 1.1;
     utterance.pitch = 1;
     window.speechSynthesis.speak(utterance);
