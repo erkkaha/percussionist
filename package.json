@@ -12,7 +12,8 @@
     "codegen": "pnpm --filter @percussionist/api codegen",
     "beatctl": "pnpm --filter @percussionist/cli exec tsx src/index.ts",
     "web": "pnpm --filter @percussionist/web dev",
-    "web:client": "pnpm --filter @percussionist/web dev:client"
+    "web:client": "pnpm --filter @percussionist/web dev:client",
+    "test": "pnpm --filter @percussionist/web test"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

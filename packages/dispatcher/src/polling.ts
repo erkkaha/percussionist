@@ -364,6 +364,12 @@ export async function runPrompt(
             try { evt = JSON.parse(dataLines.join("\n")); } catch { continue; }
             if ((evt.type === "permission.updated" || evt.type === "session.idle") && !waitingForInput) {
               waitingForInput = true;
+              // Snapshot sessions immediately when entering WaitingForInput so
+              // the manager can read the conversation context even if this pod
+              // is killed while waiting.
+              snapshotAllSessions(coreApi, runName, runNamespace, runUid).catch((e) =>
+                err("WaitingForInput snapshot failed:", (e as Error).message),
+              );
             }
             if (evt.type === "message.updated") {
               const p = (evt.properties ?? {}) as { info?: { sessionID?: string; tokens?: { input?: number; output?: number } } };
@@ -404,7 +410,14 @@ export async function runPrompt(
     agentCompletionSummary = summary;
     log(`complete_run called by agent: ${summary}`);
   });
-  await Promise.race([pollStatus(), failureRaced, completionRaced]);
+  // Capture any failure thrown by pollStatus() or failureRaced so we can
+  // still snapshot + persist stats before re-throwing.
+  let raceError: Error | undefined;
+  try {
+    await Promise.race([pollStatus(), failureRaced, completionRaced]);
+  } catch (e) {
+    raceError = e as Error;
+  }
   terminate = true;
   clearTimeout(hardTimeout);
 
@@ -415,11 +428,28 @@ export async function runPrompt(
     return { sessionID, startedAt: runStartedAt };
   }
 
+  // Always flush tokens, snapshot, and persist stats — whether the run
+  // succeeded or failed.  This ensures the manager always has a ConfigMap
+  // to read for facilitation context and SQLite always has a record.
   await tokens.flush(patchStatus, true);
   await snapshotAllSessions(coreApi, runName, runNamespace, runUid);
 
   const completedAt = new Date().toISOString();
   const { tokensIn, tokensOut } = tokens.totals();
+
+  if (raceError) {
+    await sendStats(
+      sessionID,
+      RunPhase.Failed,
+      runStartedAt,
+      completedAt,
+      tokensIn,
+      tokensOut,
+      raceError.message,
+    );
+    throw raceError;
+  }
+
   await sendStats(sessionID, RunPhase.Succeeded, runStartedAt, completedAt, tokensIn, tokensOut);
   const completionMessage = agentCompletionSummary
     ? `agent signalled completion — ${agentCompletionSummary}`

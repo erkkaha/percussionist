@@ -58,6 +58,29 @@ of TypeScript packages under `packages/*`.
 - API group: `percussionist.dev/v1alpha1`
 - `opencode-web` supports MCP servers via the `mcp` config key (not `mcpServers` — that was a legacy format); the manager's agent-config ConfigMap uses `mcp` with `type: "remote"` pointing at the in-process MCP server on :4097.
 
+## Database (SQLite — `@percussionist/web`)
+
+The web server uses bun:sqlite via Drizzle ORM. Schema and migrations are managed by drizzle-kit.
+
+**Key files:**
+- `packages/web/src/server/schema.ts` — Drizzle table definitions (single source of truth; no driver imports, safe for drizzle-kit)
+- `packages/web/src/server/db.ts` — DB singleton; calls `migrate()` on first open
+- `packages/web/migrations/` — generated SQL migration files (committed to git)
+- `packages/web/drizzle.config.ts` — drizzle-kit config
+
+**Workflow for schema changes:**
+```bash
+# 1. Edit packages/web/src/server/schema.ts
+# 2. Generate migration SQL
+cd packages/web && npx drizzle-kit generate
+# 3. Commit schema.ts + the new migration file together
+git add src/server/schema.ts migrations/
+```
+The server applies all pending migrations automatically on startup via `migrate()` in `getDb()`. No manual ALTER TABLE blocks.
+
+**Adding columns — what NOT to do:**
+Do not add `ALTER TABLE` try/catch blocks to `db.ts`. Do not duplicate DDL as raw SQL strings in `db.ts`. Always use drizzle-kit generate to produce a migration file.
+
 ## Conventions
 - No linter/formatting tool configured -- do not add one without asking
 - No test framework -- do not add tests without asking

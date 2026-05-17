@@ -24,7 +24,16 @@ import {
 } from "@percussionist/kube";
 import { LABELS } from "@percussionist/api";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
-import { moveTask, upsertWorker } from "../task-scheduler.js";
+import { moveTask as moveTaskLocal, upsertWorker as upsertWorkerLocal } from "../task-scheduler.js";
+import {
+  syncBoard,
+  workerStatusToUpsertBody,
+  boardWorkerRowToWorkerStatus,
+  moveTask as boardMoveTask,
+  upsertWorker as boardUpsertWorker,
+  removeWorker as boardRemoveWorker,
+  getBoard,
+} from "../board-client.js";
 import { setPaused, getPauseStatus } from "../reconciler.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
@@ -516,8 +525,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const taskDef = (board.tasks ?? []).find((t) => t.id === taskId);
       if (!taskDef) throw new Error(`Task ${taskId} not found in project ${projectName} board`);
 
-      const boardStatus = project.status?.board;
-      const backlog = boardStatus?.backlog ?? { ready: [] };
+      // Read board state from SQLite.
+      const fullBoard = await getBoard(projectName);
+      const backlog = fullBoard.columns;
       const readyColumn = (backlog["ready"] ?? []) as string[];
       if (!readyColumn.includes(taskId)) {
         const currentCol = Object.entries(backlog).find(([, ids]) =>
@@ -526,7 +536,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         throw new Error(`Task ${taskId} is in column "${currentCol}", not "ready". Use force_retry to clean up first.`);
       }
 
-      const existingWorker = (boardStatus?.workers ?? []).find((w) => w.taskId === taskId);
+      const existingWorkerRow = fullBoard.workers[taskId] ?? null;
+      const existingWorker = existingWorkerRow ? boardWorkerRowToWorkerStatus(existingWorkerRow) : null;
       const retryCount = args.retryCount !== undefined
         ? Number(args.retryCount)
         : (existingWorker?.retryCount ?? 0);
@@ -554,26 +565,15 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         }
       }
 
-      const newBacklog = moveTask(backlog, taskId, "in-progress");
-      const workers = [...(boardStatus?.workers ?? [])];
-      const newWorkers = upsertWorker(workers, {
-        taskId,
+      // Update board state in SQLite atomically.
+      await boardMoveTask(projectName, taskId, "in-progress");
+      await boardUpsertWorker(projectName, taskId, {
         runName,
         status: "Running",
         branch: `feat/${taskId}`,
-        startedAt: new Date().toISOString(),
         retryCount,
         facilitated: false,
       });
-
-      await patchProjectStatus(projectName, {
-        board: {
-          backlog: newBacklog,
-          workers: newWorkers,
-          activeWorkers: newWorkers.filter((w) => w.status === "Running" && !!w.runName).length,
-          lastEventAt: new Date().toISOString(),
-        },
-      }, resourceNs);
 
       return { runName, project: projectName, task: taskId, phase: "Created", namespace: resourceNs };
     }
@@ -600,18 +600,6 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       }
 
       const project = await getProject(projectName, resourceNs);
-      const boardStatus = project.status?.board ?? { backlog: { ready: [] }, workers: [] };
-      const currentWorkers = (boardStatus.workers ?? []).filter((w) => w.taskId !== taskId);
-      const newBacklog = moveTask(boardStatus.backlog ?? { ready: [] }, taskId, "ready");
-
-      await patchProjectStatus(projectName, {
-        board: {
-          backlog: newBacklog,
-          workers: currentWorkers,
-          activeWorkers: currentWorkers.filter((w) => w.status === "Running" && !!w.runName).length,
-          lastEventAt: new Date().toISOString(),
-        },
-      }, resourceNs);
 
       let createdRunName: string | undefined;
       if (shouldCreate) {
@@ -641,26 +629,22 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
           }
         }
 
-        const newWorkers = upsertWorker(currentWorkers, {
-          taskId,
+        // Atomic update: remove old worker, move task to in-progress, create new worker.
+        await boardRemoveWorker(projectName, taskId).catch(() => {});
+        await boardMoveTask(projectName, taskId, "in-progress");
+        await boardUpsertWorker(projectName, taskId, {
           runName,
           status: "Running",
           branch: `feat/${taskId}`,
-          startedAt: new Date().toISOString(),
           retryCount: 0,
           facilitated: false,
         });
 
-        await patchProjectStatus(projectName, {
-          board: {
-            backlog: moveTask(newBacklog, taskId, "in-progress"),
-            workers: newWorkers,
-            activeWorkers: newWorkers.filter((w) => w.status === "Running" && !!w.runName).length,
-            lastEventAt: new Date().toISOString(),
-          },
-        }, resourceNs);
-
         createdRunName = runName;
+      } else {
+        // No run creation — just reset to ready.
+        await boardRemoveWorker(projectName, taskId).catch(() => {});
+        await boardMoveTask(projectName, taskId, "ready");
       }
 
       return {
@@ -760,39 +744,33 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         }
       }
 
-      const boardStatus = project.status?.board ?? { backlog: { ready: [] }, workers: [] };
-      const newBacklog = moveTask(boardStatus.backlog ?? { ready: [] }, taskId, targetColumn);
-      let newWorkers = (boardStatus.workers ?? []).filter((w) => w.taskId !== taskId);
+      // Update board state in SQLite.
+      await boardMoveTask(projectName, taskId, targetColumn);
 
+      let workerCleared = true;
       if (targetColumn === "in-progress") {
-        const existingWorker = boardStatus.workers?.find((w) => w.taskId === taskId);
-        const retryCount = existingWorker?.retryCount ?? 0;
-        newWorkers = upsertWorker(newWorkers, {
-          taskId,
+        const fullBoard = await getBoard(projectName);
+        const existingWorkerRow = fullBoard.workers[taskId] ?? null;
+        const retryCount = existingWorkerRow?.retryCount ?? 0;
+        await boardUpsertWorker(projectName, taskId, {
           runName: "",
           status: "Running",
           branch: `feat/${taskId}`,
-          startedAt: new Date().toISOString(),
           retryCount,
           facilitated: false,
         });
+        workerCleared = false;
+      } else {
+        // Clear worker for non-in-progress transitions.
+        await boardRemoveWorker(projectName, taskId).catch(() => {});
       }
-
-      await patchProjectStatus(projectName, {
-        board: {
-          backlog: newBacklog,
-          workers: newWorkers,
-          activeWorkers: newWorkers.filter((w) => w.status === "Running" && !!w.runName).length,
-          lastEventAt: new Date().toISOString(),
-        },
-      }, resourceNs);
 
       return {
         project: projectName,
         task: taskId,
         targetColumn,
         deletedRuns,
-        workerCleared: !newWorkers.some((w) => w.taskId === taskId && targetColumn !== "in-progress"),
+        workerCleared,
       };
     }
 

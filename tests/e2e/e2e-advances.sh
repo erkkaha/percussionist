@@ -11,7 +11,7 @@
 #   3. The reviewer (e2e-reviewer agent) outputs:
 #        { "recommendedAction": "approve", "diagnosis": "..." }
 #   4. The manager parses the result → moves task to "done" in board status.
-#   5. The test asserts the task is in board.backlog.done. Exit 0 = pass.
+#   5. The test asserts the task is in board columns["done"]. Exit 0 = pass.
 #
 # Prerequisites:
 #   - Operator, manager, and dispatcher images built and loaded into minikube.
@@ -47,6 +47,14 @@ red()    { printf '\033[31m%s\033[0m\n' "$*"; }
 green()  { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
 bold()   { printf '\033[1m%s\033[0m\n' "$*"; }
+
+# Board state is stored in SQLite, not in CR status.board.
+# Query the web API via kubectl exec.
+board_json() {
+  local project="${1:-$PROJECT}"
+  kubectl exec -n "$OPERATOR_NS" deployment/percussionist-web -c web -- \
+    wget -qO- "http://127.0.0.1:8080/api/board/${project}" 2>/dev/null || echo "{}"
+}
 
 # ---------------------------------------------------------------------------
 # --down teardown
@@ -363,24 +371,23 @@ done
 green "    Review run $review_run completed: $review_phase"
 
 # ---------------------------------------------------------------------------
-# Step 13: Wait for task to appear in board.backlog.done
+# Step 13: Wait for task to appear in board columns["done"]
 # ---------------------------------------------------------------------------
 
-bold "==> Step 13: Waiting for task $TASK_ID to appear in board.backlog.done..."
+bold "==> Step 13: Waiting for task $TASK_ID to appear in board columns[done]..."
 bold "    (manager parses approve → moves task to done)"
 
 deadline=$(( $(date +%s) + 180 ))
 while true; do
-  board_json=$(kubectl get opencodeproject "$PROJECT" -n "$NS" \
-    -o jsonpath='{.status.board}' 2>/dev/null || echo "{}")
+  board_json=$(board_json "$PROJECT")
   done_tasks=$(echo "$board_json" | python3 -c \
-    "import sys,json; b=json.load(sys.stdin); print(' '.join(b.get('backlog',{}).get('done',[])))" \
+    "import sys,json; b=json.load(sys.stdin); print(' '.join(b.get('columns',{}).get('done',[])))" \
     2>/dev/null || echo "")
   if echo "$done_tasks" | grep -qw "$TASK_ID"; then
     break
   fi
   [[ $(date +%s) -gt $deadline ]] && {
-    red "FAIL: task $TASK_ID not in board.backlog.done within 180s"
+    red "FAIL: task $TASK_ID not in board columns[done] within 180s"
     echo "Current board:"
     echo "$board_json" | python3 -m json.tool 2>/dev/null || echo "$board_json"
     exit 1
@@ -408,9 +415,7 @@ kubectl get opencoderuns -n "$NS" -l "$TASK_LABEL=$TASK_ID" \
 
 bold ""
 bold "Board status:"
-kubectl get opencodeproject "$PROJECT" -n "$NS" \
-  -o jsonpath='{.status.board}' 2>/dev/null \
-  | python3 -m json.tool 2>/dev/null || true
+board_json "$PROJECT" | python3 -m json.tool 2>/dev/null || true
 
 yellow ""
 yellow "Tear down with:  tests/e2e/e2e-advances.sh --down"

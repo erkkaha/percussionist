@@ -138,20 +138,35 @@ export async function sendStats(
     fileOps: fileOpsPayload,
   };
 
-  try {
-    const res = await fetch(`${WEB_STATS_URL}/api/stats/session`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!res.ok) {
-      err(`sendStats: web pod HTTP ${res.status}: ${await res.text().catch(() => "")}`);
-    } else {
-      log(`sendStats: persisted ${sessionID} — ${messagesPayload.length} messages, ${toolCallsPayload.length} tool calls`);
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(`${WEB_STATS_URL}/api/stats/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        if (attempt < MAX_ATTEMPTS) {
+          err(`sendStats: web pod HTTP ${res.status} (attempt ${attempt}/${MAX_ATTEMPTS}), retrying: ${body}`);
+          await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
+          continue;
+        }
+        err(`sendStats: web pod HTTP ${res.status} (all ${MAX_ATTEMPTS} attempts failed): ${body}`);
+      } else {
+        log(`sendStats: persisted ${sessionID} — ${messagesPayload.length} messages, ${toolCallsPayload.length} tool calls`);
+      }
+      return;
+    } catch (e) {
+      if (attempt < MAX_ATTEMPTS) {
+        err(`sendStats: POST failed (attempt ${attempt}/${MAX_ATTEMPTS}), retrying:`, (e as Error).message);
+        await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
+        continue;
+      }
+      err("sendStats: POST failed (all attempts exhausted, non-fatal):", (e as Error).message);
     }
-  } catch (e) {
-    err("sendStats: POST failed (non-fatal):", (e as Error).message);
   }
 }
 

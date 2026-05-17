@@ -54,6 +54,14 @@ green()  { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
 bold()   { printf '\033[1m%s\033[0m\n' "$*"; }
 
+# Board state is stored in SQLite, not in CR status.board.
+# Query the web API via kubectl exec.
+board_json() {
+  local project="${1:-$PROJECT}"
+  kubectl exec -n "$OPERATOR_NS" deployment/percussionist-web -c web -- \
+    wget -qO- "http://127.0.0.1:8080/api/board/${project}" 2>/dev/null || echo "{}"
+}
+
 # ---------------------------------------------------------------------------
 # --down teardown
 # ---------------------------------------------------------------------------
@@ -388,8 +396,7 @@ while true; do
   (( $(date +%s) >= deadline )) && {
     red "TIMEOUT: no e2e-capable-worker run appeared after 180s"
     red "Board status:"
-    kubectl get opencodeproject "$PROJECT" -n "$NS" \
-      -o jsonpath='{.status.board}' 2>/dev/null | python3 -m json.tool 2>/dev/null || true
+    board_json "$PROJECT" | python3 -m json.tool 2>/dev/null || true
     exit 1
   }
   printf '.'
@@ -446,12 +453,7 @@ FACILITATION:.spec.facilitation.targetRunName \
 
 echo
 bold "Board status (workers + facilitation result):"
-kubectl get opencodeproject "$PROJECT" -n "$NS" \
-  -o jsonpath='{.status.board}' 2>/dev/null \
-  | python3 -m json.tool 2>/dev/null \
-  || kubectl get opencodeproject "$PROJECT" -n "$NS" \
-       -o jsonpath='{.status.board}' 2>/dev/null \
-  || true
+board_json "$PROJECT" | python3 -m json.tool 2>/dev/null || true
 
 echo
 yellow "Tear down with:  $0 --down"

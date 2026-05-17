@@ -48,6 +48,14 @@ green()  { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
 bold()   { printf '\033[1m%s\033[0m\n' "$*"; }
 
+# Board state is stored in SQLite, not in CR status.board.
+# Query the web API via kubectl exec.
+board_json() {
+  local project="${1:-$PROJECT}"
+  kubectl exec -n "$OPERATOR_NS" deployment/percussionist-web -c web -- \
+    wget -qO- "http://127.0.0.1:8080/api/board/${project}" 2>/dev/null || echo "{}"
+}
+
 # ---------------------------------------------------------------------------
 # --down: tear everything down
 # ---------------------------------------------------------------------------
@@ -297,8 +305,7 @@ while true; do
   if (( $(date +%s) >= deadline )); then
     red "TIMEOUT: no worker run appeared for taskId=$TASK_ID after 120s"
     red "Board status:"
-    kubectl get opencodeproject "$PROJECT" -n "$NS" \
-      -o jsonpath='{.status.board}' 2>/dev/null | python3 -m json.tool 2>/dev/null || true
+    board_json "$PROJECT" | python3 -m json.tool 2>/dev/null || true
     exit 1
   fi
   printf '.'
@@ -366,8 +373,7 @@ while true; do
     kubectl get opencoderuns -n "$NS" \
       -l "$TASK_LABEL=$TASK_ID" 2>/dev/null || true
     red "Board status:"
-    kubectl get opencodeproject "$PROJECT" -n "$NS" \
-      -o jsonpath='{.status.board}' 2>/dev/null | python3 -m json.tool 2>/dev/null || true
+    board_json "$PROJECT" | python3 -m json.tool 2>/dev/null || true
     exit 1
   fi
   printf '.'
@@ -395,12 +401,7 @@ TARGET:.spec.facilitation.targetRunName \
 
 echo
 bold "Board status (${PROJECT}):"
-kubectl get opencodeproject "$PROJECT" -n "$NS" \
-  -o jsonpath='{.status.board}' 2>/dev/null \
-  | python3 -m json.tool 2>/dev/null \
-  || kubectl get opencodeproject "$PROJECT" -n "$NS" \
-       -o jsonpath='{.status.board}' 2>/dev/null \
-  || true
+board_json "$PROJECT" | python3 -m json.tool 2>/dev/null || true
 
 echo
 bold "All runs for task $TASK_ID:"

@@ -38,6 +38,12 @@ import {
   updateWorker,
   upsertWorker,
 } from "./task-scheduler.js";
+import {
+  syncBoard,
+  ensureAndGetBoard,
+  boardWorkerRowToWorkerStatus,
+} from "./board-client.js";
+import { backfillStats } from "./stats-backfill.js";
 
 const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
 
@@ -111,24 +117,45 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   if (!board) return;
   if (board.phase === "Archived") return;
 
-  // Initialise board status if missing (first reconcile after project creation).
-  const boardStatus: BoardStatus = fresh.status?.board ?? {
-    columns: ["ready", "in-progress", "review", "rework", "done"],
-    backlog: { ready: [] },
-    workers: [],
-    activeWorkers: 0,
-  };
+  // Read authoritative board state from SQLite (web server's DB).
+  // Falls back to CR status on SQLite error so the reconciler degrades gracefully.
+  const specTaskIds = (board.tasks ?? []).map((t) => t.id);
+  let boardStatus: BoardStatus;
+  let backlog: Record<string, string[]>;
+  let workers: WorkerStatus[];
 
-  let backlog = boardStatus.backlog ?? { ready: [] };
-  let workers = boardStatus.workers ?? [];
+  try {
+    const fullBoard = await ensureAndGetBoard(projectName, specTaskIds);
+    backlog = fullBoard.columns;
+    workers = Object.values(fullBoard.workers).map(boardWorkerRowToWorkerStatus);
+    boardStatus = fresh.status?.board ?? {
+      columns: ["ready", "in-progress", "review", "rework", "done"],
+      backlog,
+      workers,
+      activeWorkers: fullBoard.activeWorkers,
+    };
+    // Sync in-memory boardStatus backlog/workers from SQLite source-of-truth.
+    boardStatus = { ...boardStatus, backlog, workers };
+  } catch (e) {
+    log(`SQLite board read failed, falling back to CR status: ${(e as Error).message}`);
+    // Fallback: use CR status (old behaviour).
+    boardStatus = fresh.status?.board ?? {
+      columns: ["ready", "in-progress", "review", "rework", "done"],
+      backlog: { ready: [] },
+      workers: [],
+      activeWorkers: 0,
+    };
+    backlog = boardStatus.backlog ?? { ready: [] };
+    workers = boardStatus.workers ?? [];
+  }
 
-  const specTaskIds = new Set((board.tasks ?? []).map((t) => t.id));
+  const specTaskIdsSet = new Set(specTaskIds);
 
   // Prune: remove tasks from the backlog that no longer exist in spec.board.tasks.
   const prunedBacklog: Record<string, string[]> = {};
   for (const [col, ids] of Object.entries(backlog)) {
-    const kept = (ids as string[]).filter((id) => specTaskIds.has(id));
-    const pruned = (ids as string[]).filter((id) => !specTaskIds.has(id));
+    const kept = (ids as string[]).filter((id) => specTaskIdsSet.has(id));
+    const pruned = (ids as string[]).filter((id) => !specTaskIdsSet.has(id));
     if (pruned.length > 0) {
       log(`pruning ${pruned.join(", ")} from backlog column "${col}" — not in spec.board.tasks`);
     }
@@ -139,7 +166,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   // Repair: any task in spec.board.tasks not present in any backlog column
   // gets placed into "ready".
   const placedIds = new Set(Object.values(backlog).flat());
-  const unplaced = [...specTaskIds].filter((id) => !placedIds.has(id));
+  const unplaced = [...specTaskIdsSet].filter((id) => !placedIds.has(id));
   if (unplaced.length > 0) {
     log(`repairing ${unplaced.length} unplaced task(s) → ready: ${unplaced.join(", ")}`);
     backlog = { ...backlog, ready: [...(backlog["ready"] ?? []), ...unplaced] };
@@ -247,8 +274,29 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
 
     const workerRun = buildWorkerRun(fresh, taskDef, runName, retryCount);
     try {
-      await createRun(workerRun, ns, k8s);
-      log(`created worker run ${runName} for task ${taskId}`);
+      // Guard against duplicate runs: check if the run already exists before
+      // creating it.  Two reconcile cycles can overlap when a status patch is
+      // delayed, so we must not blindly create and rely on AlreadyExists.
+      let skipCreate = false;
+      try {
+        const existing = await getRun(runName, ns, k8s);
+        const existingPhase = existing.status?.phase;
+        if (existingPhase === "Failed" || existingPhase === "Cancelled") {
+          log(`deleting stale ${existingPhase} run ${runName} before recreating for task ${taskId}`);
+          await deleteRun(runName, ns, k8s);
+        } else {
+          // Run exists and is active — reattach rather than duplicate.
+          log(`run ${runName} already exists (phase: ${existingPhase ?? "pending"}), reattaching for task ${taskId}`);
+          skipCreate = true;
+        }
+      } catch {
+        // 404 — run does not exist, proceed with creation.
+      }
+
+      if (!skipCreate) {
+        await createRun(workerRun, ns, k8s);
+        log(`created worker run ${runName} for task ${taskId}`);
+      }
     } catch (e) {
       err(`failed to create worker run for ${taskId}:`, (e as Error).message);
       backlog = moveTask(backlog, taskId, "ready");
@@ -292,6 +340,21 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
       const runPhase = run.status?.phase;
 
       if (runPhase === "Succeeded") {
+        // Best-effort stats backfill: if the dispatcher missed sending stats
+        // (e.g., pod killed), post them now from the session ConfigMap.
+        if (run.status?.sessionID) {
+          backfillStats(
+            worker.runName,
+            run.status.sessionID,
+            ns,
+            "Succeeded",
+            (board.tasks ?? []).find((t) => t.id === worker.taskId)?.id,
+            run.spec.model,
+            run.spec.agent,
+            run.status.startedAt,
+            run.status.completedAt,
+          ).catch(() => {});
+        }
         const taskDef = (board.tasks ?? []).find((t) => t.id === worker.taskId);
 
         // Success-review gate: if a reviewer agent is in the team roster,
@@ -516,6 +579,20 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
           }
         }
       } else if (runPhase === "Failed") {
+        // Best-effort stats backfill for failed runs.
+        if (run.status?.sessionID) {
+          backfillStats(
+            worker.runName,
+            run.status.sessionID,
+            ns,
+            "Failed",
+            (board.tasks ?? []).find((t) => t.id === worker.taskId)?.id,
+            run.spec.model,
+            run.spec.agent,
+            run.status.startedAt,
+            run.status.completedAt,
+          ).catch(() => {});
+        }
         const taskDef = (board.tasks ?? []).find((t) => t.id === worker.taskId);
         if (!taskDef) {
           err(`task ${worker.taskId} not found in spec.board.tasks during failure handling`);
@@ -864,7 +941,10 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
           ...existingQs,
           { workerId: worker.taskId, sessionID, messageText },
         ];
-        await patchProjectStatus(projectName, { board: { ...boardStatus, pendingQuestions: updatedQs } }, ns);
+        // Update in-memory boardStatus.pendingQuestions for the end-of-cycle flush.
+        boardStatus.pendingQuestions = updatedQs;
+        // Write only the pendingQuestions field to K8s status (not the full board blob).
+        await patchProjectStatus(projectName, { board: { pendingQuestions: updatedQs } as Partial<BoardStatus> }, ns);
       }
     } catch (e) {
       const msg = (e as Error).message;
@@ -1333,7 +1413,9 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   }
 
   // ------------------------------------------------------------------
-  // UPDATE PHASE: patch project board status.
+  // UPDATE PHASE: sync board state to SQLite, then write summary metrics
+  // to K8s CR status. The authoritative board state now lives in SQLite;
+  // K8s status only carries lightweight summary fields + manager metrics.
   // ------------------------------------------------------------------
   const inProgressFinal = new Set(backlog["in-progress"] ?? []);
   const activeWorkers = workers.filter(
@@ -1345,23 +1427,26 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
 
   const reconcileDuration = Date.now() - startTime;
 
+  // 1. Sync board state to SQLite (atomic, no merge-patch races).
+  try {
+    await syncBoard(projectName, backlog, workers);
+  } catch (e) {
+    err(`syncBoard failed for ${projectName}: ${(e as Error).message} — continuing with K8s status flush`);
+  }
+
+  // 2. Write only summary + metrics to K8s CR status (no full board blob).
   try {
     await patchProjectStatus(
       projectName,
       {
         board: {
-          columns: boardStatus.columns,
-          backlog,
-          workers,
+          // Summary fields for kubectl visibility.
           activeWorkers,
+          lastEventAt: new Date().toISOString(),
+          pendingQuestions,
           escalations: workers
             .filter((w) => w.escalation)
             .map((w) => w.escalation!),
-          facilitations: workers
-            .filter((w) => w.facilitationResult)
-            .map((w) => w.facilitationResult!),
-          pendingQuestions,
-          lastEventAt: new Date().toISOString(),
           managerMetrics: {
             lastReconcileAt: new Date().toISOString(),
             lastReconcileDurationMs: reconcileDuration,
@@ -1370,28 +1455,18 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             workersMonitored,
             tasksReworked,
           },
-        },
+        } as Partial<BoardStatus>,
       },
       ns,
     );
   } catch (e) {
-    const msg = `patchProjectStatus failed after ${reconcileDuration}ms: ${(e as Error).message}`;
+    const msg = `patchProjectStatus metrics failed after ${reconcileDuration}ms: ${(e as Error).message}`;
     err(msg);
     await patchProjectStatus(
       projectName,
       {
         board: {
-          columns: boardStatus.columns,
-          backlog,
-          workers,
           activeWorkers,
-          escalations: workers
-            .filter((w) => w.escalation)
-            .map((w) => w.escalation!),
-          facilitations: workers
-            .filter((w) => w.facilitationResult)
-            .map((w) => w.facilitationResult!),
-          pendingQuestions,
           lastEventAt: new Date().toISOString(),
           managerMetrics: {
             lastReconcileAt: new Date().toISOString(),
@@ -1402,7 +1477,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             workersMonitored,
             tasksReworked,
           },
-        },
+        } as Partial<BoardStatus>,
       },
       ns,
     ).catch(() => {});

@@ -7,46 +7,21 @@
 // Stats DB is initialised eagerly on startup so the first POST from a
 // dispatcher doesn't pay the schema-creation cost.
 
-import { Hono } from "hono";
-import { logger } from "hono/logger";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import runs from "./routes/runs.js";
-import logs from "./routes/logs.js";
-import session from "./routes/session.js";
+import { createApp } from "./app.js";
 import stats, { runRetentionCleanup, RETENTION_DAYS } from "./routes/stats.js";
-import projects from "./routes/projects.js";
-import agents from "./routes/agents.js";
-import board from "./routes/board.js";
-import metrics from "./routes/metrics.js";
-import agentChat from "./routes/agent-chat.js";
-import settings from "./routes/settings.js";
 import { NAMESPACE } from "./kube.js";
 import { getDb } from "./db.js";
+
+void stats; // imported for side-effect registration only (retention helpers)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // In dev (tsx):   src/server/index.ts  -> ../../dist/client
 // In production:  dist/server/index.js -> ../client
 const clientDir = path.resolve(__dirname, "../client");
 
-const app = new Hono();
-
-app.use("*", logger());
-
-// API routes
-app.route("/api/runs", runs);
-app.route("/api/runs", logs);
-app.route("/api/runs", session);
-app.route("/api/stats", stats);
-app.route("/api/projects", projects);
-app.route("/api/agents", agents);
-app.route("/api/projects", board);
-app.route("/api/metrics", metrics);
-app.route("/api/agent", agentChat);
-app.route("/api/settings", settings);
-
-// Health check
-app.get("/api/health", (c) => c.json({ ok: true, namespace: NAMESPACE }));
+const app = createApp();
 
 // Serve the Vite-built SPA for all non-API routes.
 // Under Bun we use its built-in static file serving; under Node we fall back
@@ -93,15 +68,10 @@ const port = parseInt(process.env.PORT ?? "8080", 10);
 // ---------------------------------------------------------------------------
 // Stats DB — initialise eagerly so schema is ready before first request.
 
-try {
-  getDb();
-  console.log(
-    `[stats] retention policy: ${RETENTION_DAYS > 0 ? `${RETENTION_DAYS} days` : "disabled (keep forever)"}`,
-  );
-} catch (e) {
-  console.error("[stats] DB init failed:", (e as Error).message);
-  // Non-fatal — stats collection degrades gracefully; core API still works.
-}
+getDb();
+console.log(
+  `[stats] retention policy: ${RETENTION_DAYS > 0 ? `${RETENTION_DAYS} days` : "disabled (keep forever)"}`,
+);
 
 // ---------------------------------------------------------------------------
 // Retention cron — run hourly.

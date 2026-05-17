@@ -36,6 +36,7 @@ COPY packages/web/tsconfig.json    packages/web/tsconfig.json
 COPY packages/web/tsconfig.server.json packages/web/tsconfig.server.json
 COPY packages/web/tsconfig.client.json packages/web/tsconfig.client.json
 COPY packages/web/vite.config.ts   packages/web/vite.config.ts
+COPY packages/web/migrations       packages/web/migrations
 RUN ./node_modules/.bin/tsc -p packages/api/tsconfig.json \
  && ./node_modules/.bin/tsc -p packages/kube/tsconfig.json \
  && cd packages/web && ./node_modules/.bin/vite build --config vite.config.ts && cd /repo \
@@ -55,10 +56,11 @@ COPY --from=build /repo/packages/kube/dist              /app/packages/kube/dist
 COPY --from=build /repo/packages/kube/package.json      /app/packages/kube/package.json
 COPY --from=build /repo/packages/kube/node_modules      /app/packages/kube/node_modules
 COPY --from=build /repo/packages/web/dist               /app/packages/web/dist
+COPY --from=build /repo/packages/web/migrations         /app/packages/web/migrations
 COPY --from=build /repo/packages/web/package.json       /app/packages/web/package.json
 COPY --from=build /repo/packages/web/node_modules       /app/packages/web/node_modules
 
-# Data directory for stats.db (override DATA_DIR to mount a PVC here).
+# Data directory for percussionist.db (override DATA_DIR to mount a PVC here).
 ENV DATA_DIR=/app/data
 RUN mkdir -p /app/data
 

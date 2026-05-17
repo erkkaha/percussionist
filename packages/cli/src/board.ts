@@ -1,30 +1,108 @@
 // board.ts — `beatctl board` subcommands.
 //
 // Manages the kanban board embedded in an OpenCodeProject.
-// The board always lives at project.spec.board and project.status.board.
+// The board always lives at project.spec.board (K8s) and the web service's
+// SQLite DB for runtime state (backlog columns + worker status).
 //
 // Subcommands:
 //   get <project>                  — show board state (columns, workers, escalations)
 //   task add <project>             — add a task to the board
 //   task move <project>            — move a task between columns
 //   task remove <project>          — remove a task from the board
+//
+// Board state is read/written via the web service API (PERCUSSIONIST_WEB_URL).
+// Defaults to http://localhost:8080 for local use with `kubectl port-forward`.
 
 import YAML from "yaml";
 import {
   type OpenCodeProject,
   type BoardTask,
   type BoardSpec,
+  type WorkerStatus,
 } from "@percussionist/api";
 import {
   NAMESPACE,
   getProject,
   patchProjectSpec,
-  patchProjectStatus,
   age,
   padCols,
   fatal,
   loadFromKubeconfig,
 } from "@percussionist/kube";
+
+// ---------------------------------------------------------------------------
+// Web API client (board state)
+
+const WEB_URL =
+  process.env.PERCUSSIONIST_WEB_URL ??
+  process.env.WEB_SERVICE_URL ??
+  "http://localhost:8080";
+
+interface FullBoard {
+  columns: Record<string, string[]>;
+  workers: Record<string, {
+    taskId: string;
+    runName: string;
+    retryCount: number;
+    status: string;
+    branch: string | null;
+    facilitated: boolean;
+    extra: Record<string, unknown> | null;
+  }>;
+  activeWorkers: number;
+}
+
+async function boardApiRequest(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<unknown> {
+  const url = `${WEB_URL}${path}`;
+  const res = await fetch(url, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`board API ${method} ${path} → HTTP ${res.status}: ${text}`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+async function getBoardFromApi(project: string): Promise<FullBoard | null> {
+  try {
+    return (await boardApiRequest("GET", `/api/board/${encodeURIComponent(project)}`)) as FullBoard;
+  } catch {
+    return null;
+  }
+}
+
+async function moveBoardTask(project: string, taskId: string, column: string): Promise<void> {
+  await boardApiRequest(
+    "POST",
+    `/api/board/${encodeURIComponent(project)}/tasks/${encodeURIComponent(taskId)}/move`,
+    { column },
+  );
+}
+
+async function seedBoardTask(project: string, taskId: string, column: string): Promise<void> {
+  await boardApiRequest("POST", `/api/board/${encodeURIComponent(project)}/seed`, {
+    tasks: [{ taskId, column }],
+  });
+}
+
+async function removeBoardTaskFromDb(project: string, taskId: string): Promise<void> {
+  // The sync endpoint would handle removal, but for a single task we call move
+  // then let the reconciler prune it on next cycle. For now, we can call the
+  // seed endpoint with just the remaining tasks — but that's expensive.
+  // Simpler: the reconciler will prune it from SQLite on next cycle since it's
+  // removed from spec.board.tasks. No immediate API call needed.
+  void project;
+  void taskId;
+}
 
 // ---------------------------------------------------------------------------
 // board get
@@ -47,20 +125,56 @@ export async function runBoardGet(
     fatal("get project failed", e);
   }
 
+  // Try to read board state from SQLite via web API.
+  const sqliteBoard = await getBoardFromApi(projectName);
+
   if (opts.output === "json") {
-    console.log(JSON.stringify({ spec: project.spec.board, status: project.status?.board }, null, 2));
+    const output: Record<string, unknown> = { spec: project.spec.board };
+    if (sqliteBoard) {
+      output.board = sqliteBoard;
+    } else {
+      output.board = project.status?.board;
+      output.boardSource = "k8s-status (web API unavailable)";
+    }
+    console.log(JSON.stringify(output, null, 2));
     return;
   }
   if (opts.output === "yaml") {
-    console.log(YAML.stringify({ spec: { board: project.spec.board }, status: { board: project.status?.board } }));
+    const output: Record<string, unknown> = { spec: { board: project.spec.board } };
+    if (sqliteBoard) {
+      output.board = sqliteBoard;
+    } else {
+      output.board = { status: project.status?.board };
+      output.boardSource = "k8s-status (web API unavailable)";
+    }
+    console.log(YAML.stringify(output));
     return;
   }
 
   const board = project.spec.board;
-  const boardStatus = project.status?.board;
-  const backlog = boardStatus?.backlog ?? {};
-  const columns = boardStatus?.columns ?? ["ready", "in-progress", "review", "rework", "done"];
-  const workers = boardStatus?.workers ?? [];
+
+  // Use SQLite board if available, fall back to K8s status.
+  const backlog: Record<string, string[]> = sqliteBoard?.columns ?? project.status?.board?.backlog ?? {};
+  const columns = ["ready", "in-progress", "review", "rework", "done"];
+
+  // Build workers list from SQLite or K8s.
+  let workers: WorkerStatus[];
+  if (sqliteBoard) {
+    workers = Object.values(sqliteBoard.workers).map((w) => ({
+      taskId: w.taskId,
+      runName: w.runName || undefined,
+      status: w.status as WorkerStatus["status"],
+      branch: w.branch ?? undefined,
+      retryCount: w.retryCount,
+      facilitated: w.facilitated,
+      ...(w.extra as Partial<WorkerStatus> ?? {}),
+    }));
+  } else {
+    workers = project.status?.board?.workers ?? [];
+    if (!sqliteBoard) {
+      console.error(`  (web API unavailable at ${WEB_URL} — showing K8s status; set PERCUSSIONIST_WEB_URL or run kubectl port-forward)`);
+    }
+  }
 
   console.log(`Board: ${projectName}`);
   console.log(`Phase: ${board?.phase ?? "Active"}`);
@@ -160,25 +274,16 @@ export async function runBoardTaskAdd(
     fatal("patch project spec failed", e);
   }
 
-  // Add task ID to status.board.backlog[column].
+  // Add task to SQLite board state via web API.
   const column = opts.column ?? "ready";
-  const boardStatus = project.status?.board ?? {
-    columns: ["ready", "in-progress", "review", "rework", "done"],
-    backlog: { ready: [] },
-    workers: [],
-    activeWorkers: 0,
-  };
-  const backlog = boardStatus.backlog ?? {};
-  if (!backlog[column]) backlog[column] = [];
-  backlog[column]!.push(opts.id);
-
   try {
-    await patchProjectStatus(projectName, { board: { ...boardStatus, backlog } }, ns);
+    await seedBoardTask(projectName, opts.id, column);
+    console.log(`task ${opts.id} added to "${column}" on project ${projectName} board`);
   } catch (e) {
-    fatal("patch project status failed", e);
+    console.error(`beatctl: task added to spec but failed to write to web API: ${(e as Error).message}`);
+    console.error(`  The reconciler will seed the task on next cycle.`);
+    console.log(`task ${opts.id} added to spec (board state will sync on next reconcile)`);
   }
-
-  console.log(`task ${opts.id} added to "${column}" on project ${projectName} board`);
 }
 
 // ---------------------------------------------------------------------------
@@ -195,28 +300,13 @@ export async function runBoardTaskMove(
   opts: BoardTaskMoveOpts,
 ): Promise<void> {
   const ns = opts.namespace ?? NAMESPACE;
-  const { custom } = loadFromKubeconfig();
-
-  let project: OpenCodeProject;
-  try {
-    project = await getProject(projectName, ns, custom);
-  } catch (e) {
-    fatal("get project failed", e);
-  }
-
-  const boardStatus = project.status?.board ?? { backlog: {}, columns: [], workers: [], activeWorkers: 0 };
-  const backlog = { ...boardStatus.backlog };
-  for (const col of Object.keys(backlog)) {
-    backlog[col] = (backlog[col] ?? []).filter((id) => id !== opts.taskId);
-  }
-  if (!backlog[opts.to]) backlog[opts.to] = [];
-  backlog[opts.to]!.push(opts.taskId);
+  void ns;
 
   try {
-    await patchProjectStatus(projectName, { board: { ...boardStatus, backlog } }, ns);
+    await moveBoardTask(projectName, opts.taskId, opts.to);
     console.log(`task ${opts.taskId} moved to "${opts.to}" on project ${projectName} board`);
   } catch (e) {
-    fatal("patch project status failed", e);
+    fatal(`board task move failed — ensure web API is accessible at ${WEB_URL}`, e);
   }
 }
 
@@ -248,14 +338,8 @@ export async function runBoardTaskRemove(
     (e) => fatal("patch spec failed", e),
   );
 
-  const boardStatus = project.status?.board ?? { backlog: {}, columns: [], workers: [], activeWorkers: 0 };
-  const backlog = { ...boardStatus.backlog };
-  for (const col of Object.keys(backlog)) {
-    backlog[col] = (backlog[col] ?? []).filter((id) => id !== opts.taskId);
-  }
-  await patchProjectStatus(projectName, { board: { ...boardStatus, backlog } }, ns).catch(
-    (e) => fatal("patch status failed", e),
-  );
-
+  // The reconciler will prune the task from SQLite on its next cycle since
+  // it's no longer in spec.board.tasks.  No immediate web API call needed.
   console.log(`task ${opts.taskId} removed from project ${projectName} board`);
+  console.log(`  (board state will sync on next reconcile cycle)`);
 }

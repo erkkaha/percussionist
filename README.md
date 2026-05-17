@@ -407,7 +407,7 @@ flowchart TD
 flowchart LR
     POD[OpenCodeRun Pod\ndispatcher sidecar]
     POD -->|POST /api/stats/session\nfire-and-forget, non-fatal| WEB[percussionist-web pod]
-    WEB --> DB[(bun:sqlite\n/app/data/stats.db\n1 Gi PVC)]
+    WEB --> DB[(bun:sqlite\n/app/data/percussionist.db\n1 Gi PVC)]
     DB -->|hourly cleanup\nRETENTION_DAYS| DB
     USER[user / LLM CLI]
     USER -->|GET /api/stats/export| WEB
@@ -1135,10 +1135,10 @@ Override via `RETENTION_DAYS` on the `percussionist-web` Deployment (`0` = keep 
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `DATA_DIR` | `/app/data` | Directory for `stats.db` |
+| `DATA_DIR` | `/app/data` | Directory for `percussionist.db` |
 | `RETENTION_DAYS` | `30` | Days to retain session data (`0` = forever) |
 
-The PVC (`percussionist-web-stats`, 1 Gi) is created by `k8s/deploy/web.yaml` and
+The PVC (`percussionist-web-db`, 1 Gi) is created by `k8s/deploy/web.yaml` and
 survives pod restarts and redeployments.
 
 ### Operator configuration

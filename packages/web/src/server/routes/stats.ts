@@ -3,7 +3,7 @@
 // POST /api/stats/session
 //   Called by the dispatcher sidecar after a session completes. Persists the
 //   full session — run metadata, every message (with full content), tool
-//   invocations, and file accesses — to stats.db.
+//   invocations, and file accesses — to percussionist.db.
 //
 // GET /api/stats/export
 //   Returns all sessions (within a configurable look-back window) as a single
@@ -92,94 +92,104 @@ stats.post("/session", async (c) => {
   const db = getDb();
 
   try {
-    // Upsert the run row (idempotent — dispatcher may retry on network hiccup).
-    db.insert(runs)
-      .values({
-        id: sessionID,
-        name: runPayload.name,
-        namespace: runPayload.namespace,
-        task: runPayload.task,
-        model: runPayload.model,
-        agent: runPayload.agent,
-        phase: runPayload.phase,
-        startedAt: runPayload.startedAt,
-        completedAt: runPayload.completedAt,
-        tokensIn: runPayload.tokensIn ?? 0,
-        tokensOut: runPayload.tokensOut ?? 0,
-        error: runPayload.error,
-      })
-      .onConflictDoUpdate({
-        target: runs.id,
-        set: {
+    db.transaction((tx) => {
+      // Upsert the run row (idempotent — dispatcher may retry on network hiccup).
+      tx.insert(runs)
+        .values({
+          id: sessionID,
+          name: runPayload.name,
+          namespace: runPayload.namespace,
+          task: runPayload.task,
+          model: runPayload.model,
+          agent: runPayload.agent,
           phase: runPayload.phase,
+          startedAt: runPayload.startedAt,
           completedAt: runPayload.completedAt,
           tokensIn: runPayload.tokensIn ?? 0,
           tokensOut: runPayload.tokensOut ?? 0,
           error: runPayload.error,
-        },
-      })
-      .run();
+        })
+        .onConflictDoUpdate({
+          target: runs.id,
+          set: {
+            phase: runPayload.phase,
+            completedAt: runPayload.completedAt,
+            tokensIn: runPayload.tokensIn ?? 0,
+            tokensOut: runPayload.tokensOut ?? 0,
+            error: runPayload.error,
+          },
+        })
+        .run();
 
-    // Messages — delete+re-insert so retries don't duplicate rows.
-    if (body.messages?.length) {
-      db.delete(messages).where(eq(messages.sessionId, sessionID)).run();
-      for (const m of body.messages) {
-        db.insert(messages)
-          .values({
-            id: m.id ?? randomUUID(),
-            sessionId: sessionID,
-            idx: m.idx,
-            role: m.role,
-            content: m.content,
-            model: m.model,
-            tokensIn: m.tokensIn,
-            tokensOut: m.tokensOut,
-            createdAt: m.createdAt,
-            completedAt: m.completedAt,
-          })
-          .run();
+      // Messages — delete+re-insert so retries don't duplicate rows.
+      if (body.messages?.length) {
+        tx.delete(messages).where(eq(messages.sessionId, sessionID)).run();
+        for (const m of body.messages) {
+          tx.insert(messages)
+            .values({
+              id: m.id ?? randomUUID(),
+              sessionId: sessionID,
+              idx: m.idx,
+              role: m.role,
+              content: m.content,
+              model: m.model,
+              tokensIn: m.tokensIn,
+              tokensOut: m.tokensOut,
+              createdAt: m.createdAt,
+              completedAt: m.completedAt,
+            })
+            .run();
+        }
       }
-    }
 
-    // Tool calls
-    if (body.toolCalls?.length) {
-      db.delete(toolCalls).where(eq(toolCalls.sessionId, sessionID)).run();
-      for (const t of body.toolCalls) {
-        db.insert(toolCalls)
-          .values({
-            id: t.id ?? randomUUID(),
-            sessionId: sessionID,
-            messageIdx: t.messageIdx,
-            tool: t.tool,
-            args: t.args,
-            success: t.success,
-            error: t.error,
-            durationMs: t.durationMs,
-          })
-          .run();
+      // Tool calls
+      if (body.toolCalls?.length) {
+        tx.delete(toolCalls).where(eq(toolCalls.sessionId, sessionID)).run();
+        for (const t of body.toolCalls) {
+          tx.insert(toolCalls)
+            .values({
+              id: t.id ?? randomUUID(),
+              sessionId: sessionID,
+              messageIdx: t.messageIdx,
+              tool: t.tool,
+              args: t.args,
+              success: t.success,
+              error: t.error,
+              durationMs: t.durationMs,
+            })
+            .run();
+        }
       }
-    }
 
-    // File ops
-    if (body.fileOps?.length) {
-      db.delete(fileOps).where(eq(fileOps.sessionId, sessionID)).run();
-      for (const f of body.fileOps) {
-        db.insert(fileOps)
-          .values({
-            sessionId: sessionID,
-            messageIdx: f.messageIdx,
-            filePath: f.filePath,
-            operation: f.operation,
-          })
-          .run();
+      // File ops
+      if (body.fileOps?.length) {
+        tx.delete(fileOps).where(eq(fileOps.sessionId, sessionID)).run();
+        for (const f of body.fileOps) {
+          tx.insert(fileOps)
+            .values({
+              sessionId: sessionID,
+              messageIdx: f.messageIdx,
+              filePath: f.filePath,
+              operation: f.operation,
+            })
+            .run();
+        }
       }
-    }
+    });
   } catch (e) {
     console.error("[stats] failed to persist session:", (e as Error).message);
     return c.json({ error: "failed to persist session" }, 500);
   }
 
   return c.json({ ok: true });
+});
+
+// GET /api/stats/exists/:sessionID — check if a session row exists (for backfill guard).
+stats.get("/exists/:sessionID", (c) => {
+  const { sessionID } = c.req.param();
+  const db = getDb();
+  const row = db.select({ id: runs.id }).from(runs).where(eq(runs.id, sessionID)).get();
+  return c.json({ exists: row !== undefined });
 });
 
 // GET /api/stats/export?days=30 — full dump for LLM analysis.
