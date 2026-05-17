@@ -85,8 +85,8 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
 
   return (
     <Sidebar collapsible="icon" {...props}>
-      <SidebarHeader className="border-b border-sidebar-border">
-        <div className="flex h-14 items-center gap-2.5 px-1 py-1 group-data-[collapsible=icon]:justify-center">
+      <SidebarHeader className="border-b border-sidebar-border p-0">
+        <div className="flex h-14 items-center gap-2.5 px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
           <DrumLogo playing={!!playing} />
           <div className="group-data-[collapsible=icon]:hidden">
             <p className="text-sm font-semibold tracking-tight text-sidebar-foreground">percussionist</p>
