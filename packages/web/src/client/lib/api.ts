@@ -286,7 +286,8 @@ export async function fetchNextTaskId(
   type: "PLAN" | "BUILD",
 ): Promise<string> {
   const params = new URLSearchParams({ type });
-  return fetchJSON<string>(`/projects/${encodeURIComponent(project)}/board/next-id?${params}`);
+  const data = await fetchJSON<{ nextId: string }>(`/projects/${encodeURIComponent(project)}/board/next-id?${params}`);
+  return data.nextId;
 }
 
 export async function approveTask(
