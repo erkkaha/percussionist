@@ -5,7 +5,7 @@ ignoredBuiltDependencies:
   - esbuild
 
 minimumReleaseAge: 10080
-trustPolicy: allow-downgrades
+trustPolicy: no-downgrade
 blockExoticSubdeps: true
 allowBuilds:
   esbuild: set this to true or false
