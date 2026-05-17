@@ -1,7 +1,14 @@
-// Operator entrypoint — watches OpenCodeRun CRs and reconciles them.
+// Operator entrypoint — watches OpenCodeRun CRs and ClusterSettings.
 
 import { makeInformer } from "@kubernetes/client-node";
-import { API_GROUP, API_VERSION, PLURAL_RUN, type OpenCodeRun } from "@percussionist/api";
+import {
+  API_GROUP,
+  API_VERSION,
+  PLURAL_RUN,
+  PLURAL_CLUSTER_SETTINGS,
+  type OpenCodeRun,
+  type ClusterSettings,
+} from "@percussionist/api";
 import {
   enqueue,
   dequeue,
@@ -10,6 +17,7 @@ import {
   kc,
   co,
   NAMESPACE,
+  reconcileClusterSettings,
 } from "./reconciler.js";
 import { INGRESS_BASE_URL, INGRESS_CLASS } from "./config.js";
 
@@ -26,8 +34,9 @@ async function main(): Promise<void> {
     log("no PERCUSSIONIST_INGRESS_BASE_URL set — per-run ingress disabled");
   }
 
-  const path = `/apis/${API_GROUP}/${API_VERSION}/namespaces/${NAMESPACE}/${PLURAL_RUN}`;
-  const listFn = async () => {
+  // Watch OpenCodeRun CRs.
+  const runPath = `/apis/${API_GROUP}/${API_VERSION}/namespaces/${NAMESPACE}/${PLURAL_RUN}`;
+  const listRunsFn = async () => {
     const res = await co.listNamespacedCustomObject({
       group: API_GROUP,
       version: API_VERSION,
@@ -37,19 +46,43 @@ async function main(): Promise<void> {
     return res as unknown as { items: OpenCodeRun[] };
   };
 
-  const informer = makeInformer(kc, path, listFn as never);
-  informer.on("add", (obj) => enqueue(obj as unknown as OpenCodeRun));
-  informer.on("update", (obj) => enqueue(obj as unknown as OpenCodeRun));
-  informer.on("delete", (obj) => {
+  const runInformer = makeInformer(kc, runPath, listRunsFn as never);
+  runInformer.on("add", (obj) => enqueue(obj as unknown as OpenCodeRun));
+  runInformer.on("update", (obj) => enqueue(obj as unknown as OpenCodeRun));
+  runInformer.on("delete", (obj) => {
     const md = (obj as { metadata?: { namespace?: string; name?: string } })
       .metadata;
     dequeue(`${md?.namespace}/${md?.name}`);
   });
-  informer.on("error", (e) => {
-    err("informer error:", (e as Error).message);
-    setTimeout(() => informer.start().catch(console.error), 2000);
+  runInformer.on("error", (e) => {
+    err("run informer error:", (e as Error).message);
+    setTimeout(() => runInformer.start().catch(console.error), 2000);
   });
-  await informer.start();
+  await runInformer.start();
+
+  // Watch ClusterSettings CR (cluster-scoped, singleton "default").
+  const csPath = `/apis/${API_GROUP}/${API_VERSION}/clustersettings`;
+  const listCsFn = async () => {
+    const res = await co.listClusterCustomObject({
+      group: API_GROUP,
+      version: API_VERSION,
+      plural: PLURAL_CLUSTER_SETTINGS,
+    });
+    return res as unknown as { items: ClusterSettings[] };
+  };
+
+  const csInformer = makeInformer(kc, csPath, listCsFn as never);
+  csInformer.on("add", (obj) => {
+    void reconcileClusterSettings(obj as unknown as ClusterSettings);
+  });
+  csInformer.on("update", (obj) => {
+    void reconcileClusterSettings(obj as unknown as ClusterSettings);
+  });
+  csInformer.on("error", (e) => {
+    err("cluster-settings informer error:", (e as Error).message);
+    setTimeout(() => csInformer.start().catch(console.error), 2000);
+  });
+  await csInformer.start();
 
   startPeriodicResync();
   await runWorker();

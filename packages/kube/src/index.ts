@@ -25,12 +25,15 @@ import {
   KIND_RUN,
   KIND_PROJECT,
   KIND_CLUSTER_AGENT,
+  KIND_CLUSTER_SETTINGS,
   PLURAL_RUN,
   PLURAL_PROJECT,
   PLURAL_CLUSTER_AGENT,
+  PLURAL_CLUSTER_SETTINGS,
   type OpenCodeRun,
   type OpenCodeProject,
   type ClusterAgent,
+  type ClusterSettings,
   type BoardStatus,
 } from "@percussionist/api";
 
@@ -216,6 +219,50 @@ export async function deleteClusterAgent(
     plural: PLURAL_CLUSTER_AGENT,
     name,
   });
+}
+
+// ---------------------------------------------------------------------------
+// ClusterSettings helpers (cluster-scoped singleton — name is always "default")
+
+export async function getClusterSettings(
+  name = "default",
+  client = custom(),
+): Promise<ClusterSettings> {
+  return (await client.getClusterCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    plural: PLURAL_CLUSTER_SETTINGS,
+    name,
+  })) as ClusterSettings;
+}
+
+export async function updateClusterSettings(
+  name: string,
+  spec: ClusterSettings["spec"],
+  client = custom(),
+): Promise<ClusterSettings> {
+  const existing = await getClusterSettings(name, client).catch(() => null);
+  const body = {
+    apiVersion: API_GROUP_VERSION,
+    kind: KIND_CLUSTER_SETTINGS,
+    metadata: { name, resourceVersion: existing?.metadata.resourceVersion },
+    spec,
+  };
+  if (existing) {
+    return (await client.replaceClusterCustomObject({
+      group: API_GROUP,
+      version: API_VERSION,
+      plural: PLURAL_CLUSTER_SETTINGS,
+      name,
+      body,
+    })) as ClusterSettings;
+  }
+  return (await client.createClusterCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    plural: PLURAL_CLUSTER_SETTINGS,
+    body,
+  })) as ClusterSettings;
 }
 
 // ---------------------------------------------------------------------------

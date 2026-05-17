@@ -1410,6 +1410,35 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
 }
 
 // ---------------------------------------------------------------------------
+// Pause mechanism — agent can pause reconciliation for manual board surgery.
+
+let paused = false;
+let pausedAt = 0;
+let pauseTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function setPaused(v: boolean, durationMs = 0): void {
+  paused = v;
+  pausedAt = v ? Date.now() : 0;
+  if (pauseTimer !== null) {
+    clearTimeout(pauseTimer);
+    pauseTimer = null;
+  }
+  if (v && durationMs > 0) {
+    pauseTimer = setTimeout(() => {
+      paused = false;
+      pausedAt = 0;
+      pauseTimer = null;
+      log("auto-resumed reconciliation after pause timeout");
+    }, durationMs).unref();
+  }
+}
+
+export function getPauseStatus(): { paused: boolean; elapsedMs: number; remainingMs: number } {
+  const elapsedMs = pausedAt ? Date.now() - pausedAt : 0;
+  return { paused, elapsedMs, remainingMs: 0 };
+}
+
+// ---------------------------------------------------------------------------
 // Work queue
 
 const queue: string[] = [];
@@ -1442,6 +1471,10 @@ export async function runWorker(): Promise<void> {
       continue;
     }
     try {
+      if (paused) {
+        pending.delete(key);
+        continue;
+      }
       await reconcile(project);
     } catch (e) {
       err(`reconcile(${key}) failed:`, (e as Error).message);

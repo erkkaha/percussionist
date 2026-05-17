@@ -25,11 +25,13 @@ interface SessionMessage {
 // ---------------------------------------------------------------------------
 // Session lifecycle
 
-export async function createSession(title: string): Promise<string> {
+export async function createSession(title: string, agentName?: string): Promise<string> {
+  const body: Record<string, unknown> = { title };
+  if (agentName) body.agent = agentName;
   const res = await fetch(`${OPENCODE_URL}/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -71,11 +73,13 @@ export async function getMessages(sessionId: string): Promise<SessionMessage[]> 
   return Array.isArray(data) ? data : (data.items ?? []);
 }
 
-export async function sendMessage(sessionId: string, text: string): Promise<void> {
+export async function sendMessage(sessionId: string, text: string, agentName?: string): Promise<void> {
+  const body: Record<string, unknown> = { parts: [{ type: "text", text }] };
+  if (agentName) body.agent = agentName;
   const res = await fetch(`${OPENCODE_URL}/session/${sessionId}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ parts: [{ type: "text", text }] }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");

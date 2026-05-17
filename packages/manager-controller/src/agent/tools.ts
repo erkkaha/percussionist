@@ -19,10 +19,13 @@ import {
   deleteRun,
   fetchSessionMessages,
   patchProjectStatus,
+  listClusterAgents,
+  listPodsByLabels,
 } from "@percussionist/kube";
 import { LABELS } from "@percussionist/api";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { moveTask, upsertWorker } from "../task-scheduler.js";
+import { setPaused, getPauseStatus } from "../reconciler.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-manager-agent";
@@ -55,21 +58,21 @@ const TOOLS = [
   {
     name: "list_crs",
     description:
-      "List Percussionist custom resources of a given kind. Returns summary of matching resources.",
+      "List Percussionist custom resources of a given kind. Supports OpenCodeRun, OpenCodeProject, and ClusterAgent. Label selector uses comma-separated k=v pairs (e.g. 'percussionist.dev/project=my-project,percussionist.dev/task-id=BUILD-4'). Note: the correct task label key is 'percussionist.dev/task-id' (not 'task').",
     inputSchema: {
       type: "object",
       properties: {
         kind: {
           type: "string",
-          description: "CR kind: OpenCodeRun or OpenCodeProject",
+          description: "CR kind: OpenCodeRun, OpenCodeProject, or ClusterAgent",
         },
         namespace: {
           type: "string",
-          description: "Namespace (optional, defaults to percussionist)",
+          description: "Namespace (optional, defaults to percussionist). Ignored for ClusterAgent.",
         },
         labelSelector: {
           type: "string",
-          description: "Label selector filter (e.g. 'percussionist.dev/project=my-project')",
+          description: "Label selector filter (comma-separated k=v, e.g. 'percussionist.dev/project=my-project')",
         },
       },
       required: ["kind"],
@@ -116,7 +119,7 @@ const TOOLS = [
   {
     name: "patch_board",
     description:
-      "Modify board state for a project. Patches the project status subresource.",
+      "Modify board state for a project. Uses Kubernetes merge-patch on the status.board subresource. At the top level of 'board', omitted keys are preserved, but nested objects (e.g. backlog columns) are fully replaced. Best practice: always include backlog, workers, activeWorkers, and lastEventAt in every patch to avoid losing state. For atomic task state changes, prefer set_task_state instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -124,7 +127,7 @@ const TOOLS = [
         patch: {
           type: "object",
           description:
-            "Status board patch. E.g. { backlog: { ready: [...], 'in-progress': [...] }, workers: [...] }",
+            "Status board patch. E.g. { backlog: { ready: [...], 'in-progress': [...] }, workers: [...] }. Omitted top-level board keys are preserved; nested objects are replaced.",
         },
       },
       required: ["project", "patch"],
@@ -224,6 +227,95 @@ const TOOLS = [
       required: ["runName"],
     },
   },
+  {
+    name: "set_task_state",
+    description:
+      "Atomically transition a board task to a target state. Cleans up terminal-phase runs, optionally cancels running runs, moves the task in the backlog, and updates the worker entry in a single patch. This avoids race conditions with the manager's reconciliation loop.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name" },
+        task: { type: "string", description: "Board task ID (e.g. 'BUILD-4')" },
+        targetColumn: {
+          type: "string",
+          enum: ["ready", "in-progress", "review", "rework", "done"],
+          description: "Target backlog column for the task",
+        },
+        cancelRunning: {
+          type: "boolean",
+          description: "Delete any active (Running/Pending) runs for this task (default: false)",
+        },
+        namespace: {
+          type: "string",
+          description: "Namespace (optional, defaults to percussionist)",
+        },
+      },
+      required: ["project", "task", "targetColumn"],
+    },
+  },
+  {
+    name: "read_manager_logs",
+    description:
+      "Read logs from the manager controller pod. Useful for debugging reconciliation decisions and seeing what the manager is doing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tailLines: {
+          type: "number",
+          description: "Number of recent lines to fetch (default: 100)",
+        },
+        namespace: {
+          type: "string",
+          description: "Namespace (optional, defaults to percussionist)",
+        },
+      },
+    },
+  },
+  {
+    name: "pause_reconciliation",
+    description:
+      "Pause the manager's reconciliation loop for a project. Prevents the manager from overriding your board patches during manual board surgery. Auto-resumes after the specified duration (default: 5 minutes).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name" },
+        durationSeconds: {
+          type: "number",
+          description: "How long to pause for in seconds (default: 300 = 5 minutes)",
+        },
+        namespace: {
+          type: "string",
+          description: "Namespace (optional, defaults to percussionist)",
+        },
+      },
+      required: ["project"],
+    },
+  },
+  {
+    name: "resume_reconciliation",
+    description:
+      "Resume the manager's reconciliation loop after a pause. The manager will pick up any pending changes on the next cycle.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name" },
+        namespace: {
+          type: "string",
+          description: "Namespace (optional, defaults to percussionist)",
+        },
+      },
+      required: ["project"],
+    },
+  },
+  {
+    name: "get_reconcile_status",
+    description:
+      "Check whether the manager's reconciliation loop is paused or active, and when it was last paused.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -294,16 +386,21 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const kind = String(args.kind ?? "");
       const resourceNs = String(args.namespace ?? ns);
       const labelSelector = String(args.labelSelector ?? "");
-      const runs = await listRuns(resourceNs);
+
       switch (kind) {
         case "OpenCodeRun": {
+          const runs = await listRuns(resourceNs);
           let filtered = runs;
           if (labelSelector) {
             filtered = runs.filter((r) => {
               const labels = r.metadata.labels ?? {};
               for (const part of labelSelector.split(",")) {
-                const [k, v] = part.split("=");
-                if (k && v && labels[k] !== v) return false;
+                const trimmed = part.trim();
+                const eqIdx = trimmed.indexOf("=");
+                if (eqIdx < 0) continue;
+                const k = trimmed.slice(0, eqIdx).trim();
+                const v = trimmed.slice(eqIdx + 1).trim();
+                if (k && labels[k] !== v) return false;
               }
               return true;
             });
@@ -315,19 +412,45 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
             task: r.spec.boardTask,
             startedAt: r.status?.startedAt,
             completedAt: r.status?.completedAt,
+            labels: r.metadata.labels,
           }));
         }
         case "OpenCodeProject": {
           const { listProjects } = await import("@percussionist/kube");
-          const projects = await listProjects(resourceNs);
+          let projects = await listProjects(resourceNs);
+          if (labelSelector) {
+            projects = projects.filter((p) => {
+              const labels = p.metadata.labels ?? {};
+              for (const part of labelSelector.split(",")) {
+                const trimmed = part.trim();
+                const eqIdx = trimmed.indexOf("=");
+                if (eqIdx < 0) continue;
+                const k = trimmed.slice(0, eqIdx).trim();
+                const v = trimmed.slice(eqIdx + 1).trim();
+                if (k && labels[k] !== v) return false;
+              }
+              return true;
+            });
+          }
           return projects.map((p) => ({
             name: p.metadata.name,
             tasks: p.spec.board?.tasks?.length ?? 0,
             boardPhase: p.spec.board?.phase,
+            labels: p.metadata.labels,
+          }));
+        }
+        case "ClusterAgent": {
+          const agents = await listClusterAgents();
+          return agents.map((a) => ({
+            name: a.metadata.name,
+            contentPreview: a.spec.content.slice(0, 200) + (a.spec.content.length > 200 ? "..." : ""),
+            contentLength: a.spec.content.length,
+            createdAt: a.metadata.creationTimestamp,
+            labels: a.metadata.labels,
           }));
         }
         default:
-          throw new Error(`unknown kind: ${kind}`);
+          throw new Error(`unknown kind: ${kind}. Supported: OpenCodeRun, OpenCodeProject, ClusterAgent`);
       }
     }
 
@@ -598,6 +721,159 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         nextSince: 0,
         runPhase,
         note: "no session data available yet — run may still be initializing",
+      };
+    }
+
+    case "set_task_state": {
+      const projectName = String(args.project ?? "");
+      const taskId = String(args.task ?? "");
+      const targetColumn = String(args.targetColumn ?? "");
+      const cancelRunning = args.cancelRunning === true;
+      const resourceNs = String(args.namespace ?? ns);
+
+      const validColumns = ["ready", "in-progress", "review", "rework", "done"];
+      if (!validColumns.includes(targetColumn)) {
+        throw new Error(`Invalid targetColumn: ${targetColumn}. Must be one of: ${validColumns.join(", ")}`);
+      }
+
+      const project = await getProject(projectName, resourceNs);
+      const boardTasks = project.spec.board?.tasks ?? [];
+      const taskDef = boardTasks.find((t) => t.id === taskId);
+      if (!taskDef) throw new Error(`Task ${taskId} not found in project ${projectName} board`);
+
+      const allRuns = await listRuns(resourceNs);
+      const taskRuns = allRuns.filter((r) => {
+        const labels = r.metadata.labels ?? {};
+        return labels[LABELS.projectName] === projectName && labels[LABELS.taskId] === taskId;
+      });
+
+      const deletedRuns: string[] = [];
+      for (const run of taskRuns) {
+        const name = run.metadata.name!;
+        const phase = run.status?.phase;
+        if (!phase || phase === "Succeeded" || phase === "Failed" || phase === "Cancelled") {
+          await deleteRun(name, resourceNs);
+          deletedRuns.push(name);
+        } else if (cancelRunning && (phase === "Running" || phase === "Pending")) {
+          await deleteRun(name, resourceNs);
+          deletedRuns.push(name);
+        }
+      }
+
+      const boardStatus = project.status?.board ?? { backlog: { ready: [] }, workers: [] };
+      const newBacklog = moveTask(boardStatus.backlog ?? { ready: [] }, taskId, targetColumn);
+      let newWorkers = (boardStatus.workers ?? []).filter((w) => w.taskId !== taskId);
+
+      if (targetColumn === "in-progress") {
+        const existingWorker = boardStatus.workers?.find((w) => w.taskId === taskId);
+        const retryCount = existingWorker?.retryCount ?? 0;
+        newWorkers = upsertWorker(newWorkers, {
+          taskId,
+          runName: "",
+          status: "Running",
+          branch: `feat/${taskId}`,
+          startedAt: new Date().toISOString(),
+          retryCount,
+          facilitated: false,
+        });
+      }
+
+      await patchProjectStatus(projectName, {
+        board: {
+          backlog: newBacklog,
+          workers: newWorkers,
+          activeWorkers: newWorkers.filter((w) => w.status === "Running" && !!w.runName).length,
+          lastEventAt: new Date().toISOString(),
+        },
+      }, resourceNs);
+
+      return {
+        project: projectName,
+        task: taskId,
+        targetColumn,
+        deletedRuns,
+        workerCleared: !newWorkers.some((w) => w.taskId === taskId && targetColumn !== "in-progress"),
+      };
+    }
+
+    case "read_manager_logs": {
+      const tailLines = args.tailLines ? Number(args.tailLines) : 100;
+      const resourceNs = String(args.namespace ?? ns);
+
+      const pods = await listPodsByLabels(
+        { "app.kubernetes.io/component": "manager" },
+        resourceNs,
+      );
+      if (pods.length === 0) throw new Error("No manager pods found");
+
+      const podName = pods[0]!.metadata!.name!;
+      const logs = await readPodLog(podName, "manager", tailLines, resourceNs);
+      return { podName, container: "manager", tailLines, logs };
+    }
+
+    case "pause_reconciliation": {
+      const projectName = String(args.project ?? "");
+      const durationSeconds = args.durationSeconds ? Number(args.durationSeconds) : 300;
+      const resourceNs = String(args.namespace ?? ns);
+
+      setPaused(true, durationSeconds * 1000);
+
+      try {
+        const { patchProject } = await import("@percussionist/kube");
+        await patchProject(projectName, {
+          metadata: {
+            annotations: {
+              "percussionist.dev/reconcile-paused": "true",
+              "percussionist.dev/reconcile-paused-at": new Date().toISOString(),
+              "percussionist.dev/reconcile-paused-duration": String(durationSeconds),
+            },
+          },
+        }, resourceNs);
+      } catch {
+        // Annotation failed but in-memory pause still works
+      }
+
+      return {
+        project: projectName,
+        paused: true,
+        durationSeconds,
+        autoResumeAt: new Date(Date.now() + durationSeconds * 1000).toISOString(),
+      };
+    }
+
+    case "resume_reconciliation": {
+      const projectName = String(args.project ?? "");
+      const resourceNs = String(args.namespace ?? ns);
+
+      setPaused(false);
+
+      try {
+        const { patchProject } = await import("@percussionist/kube");
+        await patchProject(projectName, {
+          metadata: {
+            annotations: {
+              "percussionist.dev/reconcile-paused": null as unknown as string,
+              "percussionist.dev/reconcile-paused-at": null as unknown as string,
+              "percussionist.dev/reconcile-paused-duration": null as unknown as string,
+            },
+          },
+        }, resourceNs);
+      } catch {
+        // Annotation failed but in-memory resume still works
+      }
+
+      return {
+        project: projectName,
+        paused: false,
+      };
+    }
+
+    case "get_reconcile_status": {
+      const pauseInfo = getPauseStatus();
+      return {
+        paused: pauseInfo.paused,
+        elapsedMs: pauseInfo.elapsedMs,
+        lastReconcile: new Date().toISOString(),
       };
     }
 

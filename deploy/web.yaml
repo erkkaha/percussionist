@@ -23,20 +23,6 @@ spec:
     requests:
       storage: 1Gi
 ---
-# Tailscale auth key Secret — create the actual secret with:
-#   kubectl create secret generic tailscale-auth -n percussionist --from-literal=key=tskey-auth-xxxxx
-# This placeholder is for reference; the real secret must be created separately.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: tailscale-auth
-  namespace: percussionist
-  labels:
-    app.kubernetes.io/name: percussionist
-    app.kubernetes.io/component: web
-stringData:
-  key: ""
----
 apiVersion: v1
 kind: ServiceAccount
 metadata:

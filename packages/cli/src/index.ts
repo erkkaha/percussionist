@@ -17,6 +17,7 @@ import { runDeploy } from "./deploy.js";
 import { runAuthImport } from "./auth.js";
 import { runSshKeyCreate } from "./ssh-key.js";
 import { runGithubTokenCreate } from "./github-token.js";
+import { runTailscaleAuthCreate } from "./tailscale-auth.js";
 import {
   runProjectCreate,
   runProjectDelete,
@@ -215,6 +216,25 @@ githubToken
   )
   .option("--dry-run", "print what would be created; don't touch the cluster")
   .action(runGithubTokenCreate);
+
+// tailscale-auth ------------------------------------------------------------
+// Subcommand group for managing Tailscale auth key Secrets used by the web
+// pod's tailscale sidecar for HTTPS access.
+const tailscaleAuth = program
+  .command("tailscale-auth")
+  .description("manage Tailscale auth key Secrets for the web pod sidecar");
+
+tailscaleAuth
+  .command("create")
+  .description("create or update an Opaque Secret holding a Tailscale auth key")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("--name <name>", "Secret name to create/update", "tailscale-auth")
+  .option(
+    "--key <key>",
+    "Tailscale auth key (default: $TS_AUTHKEY env var)",
+  )
+  .option("--dry-run", "print what would be created; don't touch the cluster")
+  .action(runTailscaleAuthCreate);
 
 // auth ----------------------------------------------------------------------
 // Subcommand group so we can grow `beatctl auth list/rotate/revoke` later

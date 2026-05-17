@@ -44,10 +44,19 @@ export default function AgentChatPanel() {
   const recognitionRef = useRef<any>(null);
   const sttSupported = !!SpeechRecognitionAPI;
 
+function sanitizeForSpeech(text: string): string {
+  return text
+    .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{23CF}\u{23E9}-\u{23F3}\u{23F8}-\u{23FA}\u{231A}-\u{231B}\u{2328}\u{2934}\u{2935}\u{25AA}\u{25AB}\u{25FB}-\u{25FE}\u{2B05}-\u{2B07}\u{2B1B}\u{2B1C}\u{2B50}\u{2B55}\u{3030}\u{303D}\u{3297}\u{3299}]/gu, "")
+    .replace(/[*_~`#>|]/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\s{3,}/g, " ")
+    .trim();
+}
+
   const speak = useCallback((text: string) => {
     if (!ttsEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(sanitizeForSpeech(text));
     utterance.rate = 1.1;
     utterance.pitch = 1;
     window.speechSynthesis.speak(utterance);

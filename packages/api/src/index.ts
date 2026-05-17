@@ -23,9 +23,15 @@ export const KIND_PROJECT = "OpenCodeProject";
 export const PLURAL_PROJECT = "opencodeprojects";
 export const KIND_CLUSTER_AGENT = "ClusterAgent";
 export const PLURAL_CLUSTER_AGENT = "clusteragents";
+export const KIND_CLUSTER_SETTINGS = "ClusterSettings";
+export const PLURAL_CLUSTER_SETTINGS = "clustersettings";
 
 // ---------------------------------------------------------------------------
 // Shared building blocks
+//
+// DEPRECATED: The secrets schema is kept for backwards compatibility.
+// All secrets are now managed at the cluster level via ClusterSettings.
+// Project-level secrets are ignored — use ClusterSettings instead.
 
 export const ResourceRequirementsSchema = z
   .object({
@@ -36,6 +42,8 @@ export const ResourceRequirementsSchema = z
 
 export type ResourceRequirements = z.infer<typeof ResourceRequirementsSchema>;
 
+// DEPRECATED — cluster-level secrets are managed via ClusterSettings.
+// This schema is kept for backwards compatibility only.
 export const SecretsRefSchema = z
   .object({
     // All keys in this Secret are exposed as environment variables verbatim
@@ -182,6 +190,71 @@ export const ClusterAgentSchema = z.object({
 });
 
 export type ClusterAgent = z.infer<typeof ClusterAgentSchema>;
+
+// ---------------------------------------------------------------------------
+// ClusterSettings — cluster-wide singleton for global configuration.
+//
+// There is only one instance, named "default". It replaces the manually-managed
+// opencode-config and agent-config ConfigMaps with a typed, validated CR that
+// the operator reconciles into those ConfigMaps.
+//
+// Resolution order for any run:
+//   OpenCodeRun.spec  →  BoardSpec.overrides  →  OpenCodeProject.spec  →  ClusterSettings.spec
+
+export const ClusterSettingsSpecSchema = z.object({
+  secrets: SecretsRefSchema.optional(),
+
+  opencode: z
+    .object({
+      config: z.string().optional(),
+      configMapRef: z
+        .object({
+          name: z.string().min(1),
+          key: z.string().default("opencode.json"),
+        })
+        .optional(),
+    })
+    .optional(),
+
+  manager: z
+    .object({
+      agentName: z.string().default("manager-agent"),
+      decisionAgentName: z.string().default("manager-decision"),
+      model: z.string().optional(),
+      decisionAgentContent: z.string().max(102400).optional(),
+      timeoutMs: z.number().int().positive().default(30000),
+    })
+    .optional(),
+
+  runner: z
+    .object({
+      image: z.string().default("percussionist/runner:dev"),
+      timeoutSeconds: z.number().int().positive().default(3600),
+      resources: ResourceRequirementsSchema.optional(),
+    })
+    .optional(),
+});
+
+export type ClusterSettingsSpec = z.infer<typeof ClusterSettingsSpecSchema>;
+
+export const ClusterSettingsSchema = z.object({
+  apiVersion: z.literal(API_GROUP_VERSION),
+  kind: z.literal(KIND_CLUSTER_SETTINGS),
+  metadata: z
+    .object({
+      name: z.string(),
+      uid: z.string().optional(),
+      resourceVersion: z.string().optional(),
+      labels: z.record(z.string()).optional(),
+      annotations: z.record(z.string()).optional(),
+      creationTimestamp: z.string().optional(),
+      deletionTimestamp: z.string().optional(),
+    })
+    .passthrough(),
+  spec: ClusterSettingsSpecSchema,
+});
+
+export type ClusterSettings = z.infer<typeof ClusterSettingsSchema>;
 
 // ---------------------------------------------------------------------------
 // Facilitation types — must come before OpenCodeRunSpec which references them.
@@ -643,10 +716,17 @@ export interface ResolvedRunConfig {
   initScript?: string;
 }
 
+// clusterBase — optional cluster-level defaults from ClusterSettings.spec.
+// When provided, its runner defaults and secrets fill gaps in the hierarchy:
+//   runOverrides  >  boardOverrides  >  project  >  clusterBase
 export function resolveRunConfig(
   project: OpenCodeProjectSpec,
   boardOverrides?: BoardSpec["overrides"],
   runOverrides?: Partial<ResolvedRunConfig>,
+  clusterBase?: {
+    runner?: { image?: string; timeoutSeconds?: number; resources?: ResourceRequirements };
+    secrets?: SecretsRef;
+  },
 ): ResolvedRunConfig {
   return {
     model:
@@ -657,17 +737,20 @@ export function resolveRunConfig(
       runOverrides?.image ??
       boardOverrides?.image ??
       project.image ??
+      clusterBase?.runner?.image ??
       "percussionist/runner:dev",
     timeoutSeconds:
       runOverrides?.timeoutSeconds ??
       boardOverrides?.timeoutSeconds ??
       project.timeoutSeconds ??
+      clusterBase?.runner?.timeoutSeconds ??
       3600,
     resources:
       runOverrides?.resources ??
       boardOverrides?.resources ??
-      project.resources,
-    secrets: project.secrets,
+      project.resources ??
+      clusterBase?.runner?.resources,
+    secrets: runOverrides?.secrets ?? project.secrets ?? clusterBase?.secrets,
     source: project.source,
     sidecars: project.sidecars,
     injectFiles: project.injectFiles,

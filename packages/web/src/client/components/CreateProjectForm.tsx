@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { submitProject, updateProject, fetchProjectConfig, fetchDefaultConfig } from "../lib/api";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { submitProject, updateProject } from "../lib/api";
 import type { CreateProjectRequest, OpenCodeProjectDetail } from "../lib/types";
 
 type CreateProjectFormProps = {
@@ -74,38 +74,9 @@ export default function CreateProjectForm({
   const [llmKeysSecret, setLlmKeysSecret] = useState(initialSpec?.secrets?.llmKeysSecret ?? "");
   const [authSecret, setAuthSecret] = useState(initialSpec?.secrets?.opencodeAuthSecret?.name ?? "");
   const [initScript, setInitScript] = useState(initialSpec?.initScript ?? "");
-  const [opencodeConfig, setOpencodeConfig] = useState<string | null>(null);
-  const [configExpanded, setConfigExpanded] = useState(false);
+  const [opencodeConfig, setOpencodeConfig] = useState("");
   const [sidecars, setSidecars] = useState<SidecarRow[]>(() => initialSidecarRows(initialSpec));
   const [injectFiles, setInjectFiles] = useState<InjectFileRow[]>(() => initialInjectFileRows(initialProject));
-
-  // In edit mode, fetch the current config (per-project or cluster-wide fallback).
-  const { data: projectConfig } = useQuery({
-    queryKey: ["project-config", initialProject?.metadata.name],
-    queryFn: () => fetchProjectConfig(initialProject!.metadata.name),
-    enabled: isEdit && !!initialProject,
-  });
-
-  useEffect(() => {
-    if (isEdit && opencodeConfig === null && projectConfig !== undefined) {
-      setOpencodeConfig(projectConfig);
-    }
-  }, [isEdit, opencodeConfig, projectConfig]);
-
-  // Fetch cluster-wide config to use as default when the textarea is first opened in create mode.
-  const { data: clusterConfig } = useQuery({
-    queryKey: ["project-config-default"],
-    queryFn: fetchDefaultConfig,
-    enabled: !isEdit,
-  });
-
-  function handleConfigExpand() {
-    setConfigExpanded(true);
-    // Pre-populate with cluster-wide config when first opened in create mode.
-    if (!isEdit && opencodeConfig === null) {
-      setOpencodeConfig(clusterConfig ?? "");
-    }
-  }
 
   // Sidecar helpers
   function addSidecar() {
@@ -406,40 +377,6 @@ export default function CreateProjectForm({
           )}
         </fieldset>
 
-        {/* Secrets section */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Secrets</legend>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">LLM Keys Secret</label>
-              <input
-                type="text"
-                value={llmKeysSecret}
-                onChange={(e) => setLlmKeysSecret(e.target.value)}
-                placeholder="llm-keys"
-                className={monoInputClass}
-              />
-              <p className="text-xs text-text-dim">
-                Secret with provider API keys (ANTHROPIC_API_KEY, etc.)
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">Auth Secret</label>
-              <input
-                type="text"
-                value={authSecret}
-                onChange={(e) => setAuthSecret(e.target.value)}
-                placeholder="opencode-auth"
-                className={monoInputClass}
-              />
-              <p className="text-xs text-text-dim">
-                Secret from{" "}
-                <code className="font-mono">beatctl auth import</code>
-              </p>
-            </div>
-          </div>
-        </fieldset>
-
         {/* Model + Agent */}
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
@@ -465,47 +402,22 @@ export default function CreateProjectForm({
         </div>
 
         {/* OpenCode Config */}
-        <fieldset className="rounded-md border border-border">
-          <button
-            type="button"
-            onClick={() => configExpanded ? setConfigExpanded(false) : handleConfigExpand()}
-            className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-text-muted hover:text-text transition-colors"
-          >
-            <span>
-              OpenCode config
-              {isEdit && initialSpec?.secrets?.opencodeConfigMap && (
-                <span className="ml-2 text-xs font-normal text-phase-running">per-project</span>
-              )}
-            </span>
-            <span className="text-text-dim">{configExpanded ? "▲" : "▼"}</span>
-          </button>
-
-          {configExpanded && (
-            <div className="border-t border-border p-4 space-y-2">
-              <p className="text-xs text-text-dim">
-                Override <code className="font-mono">opencode.json</code> for this project.
-                Leave empty to use the cluster-wide <code className="font-mono">opencode-config</code> configmap.
-              </p>
-              <textarea
-                value={opencodeConfig ?? ""}
-                onChange={(e) => setOpencodeConfig(e.target.value)}
-                rows={14}
-                spellCheck={false}
-                placeholder={'{\n  "$schema": "https://opencode.ai/config.json",\n  "provider": { ... }\n}'}
-                className={monoInputClass + " resize-y text-xs leading-5"}
-              />
-              {configJsonError && (
-                <p className="text-xs text-phase-failed">Invalid JSON: {configJsonError}</p>
-              )}
-              {opencodeConfig?.trim() && !configJsonError && (
-                <p className="text-xs text-phase-succeeded">Valid JSON</p>
-              )}
-              {opencodeConfig !== null && opencodeConfig.trim() === "" && isEdit && (
-                <p className="text-xs text-text-dim">
-                  Saving with an empty config will remove the per-project override and revert to the cluster-wide default.
-                </p>
-              )}
-            </div>
+        <fieldset className="rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">OpenCode config</legend>
+          <p className="text-xs text-text-dim mb-2">
+            Configure OpenCode at the project level. To set cluster-wide OpenCode config, use{" "}
+            <Link to="/settings" className="underline hover:text-text">Settings</Link>.
+          </p>
+          <textarea
+            value={opencodeConfig ?? ""}
+            onChange={(e) => setOpencodeConfig(e.target.value)}
+            rows={10}
+            spellCheck={false}
+            placeholder={'{\n  "providers": [...],\n  "mcp": {...}\n}'}
+            className={monoInputClass + " resize-y text-xs leading-5 w-full"}
+          />
+          {configJsonError && (
+            <p className="text-xs text-phase-failed mt-1">Invalid JSON: {configJsonError}</p>
           )}
         </fieldset>
 

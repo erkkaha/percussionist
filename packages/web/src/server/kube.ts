@@ -19,6 +19,9 @@ export {
   createClusterAgent,
   updateClusterAgent,
   deleteClusterAgent,
+  // ClusterSettings helpers
+  getClusterSettings,
+  updateClusterSettings,
   // Project helpers
   listProjects,
   getProject,

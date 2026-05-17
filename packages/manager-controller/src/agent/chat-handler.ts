@@ -16,6 +16,7 @@ import {
   getMessages,
   waitForCompletion,
 } from "./session.js";
+import { DECISION_AGENT_NAME } from "./config.js";
 import { core } from "@percussionist/kube";
 
 const CONFIGMAP_NAME = "manager-chat-history";
@@ -114,7 +115,7 @@ async function ensureSession(): Promise<string> {
       // Session gone — create new one
     }
   }
-  const id = await createSession("manager-interactive");
+  const id = await createSession("manager-interactive", DECISION_AGENT_NAME);
   currentSessionId = id;
   conversationHistory = [];
   log(`created interactive session ${id}`);
@@ -193,7 +194,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
 
   try {
     const sessionId = await ensureSession();
-    await sendMessage(sessionId, message);
+    await sendMessage(sessionId, message, DECISION_AGENT_NAME);
 
     const response = await waitForCompletion(sessionId, 120_000);
     if (response) {

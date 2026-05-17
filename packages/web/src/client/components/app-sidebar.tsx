@@ -6,6 +6,7 @@ import {
   TrendingUp,
   Folder,
   ChevronRight,
+  Settings,
 } from "lucide-react";
 import { useProjects } from "../hooks/useProjects";
 import { useProjectsEvents } from "../hooks/useProjectsEvents";
@@ -35,6 +36,7 @@ const topNavItems = [
 ];
 
 const bottomNavItems = [
+  { title: "Settings", url: "/settings", icon: Settings },
   { title: "Agents", url: "/agents", icon: Bot },
   { title: "Stats", url: "/stats", icon: TrendingUp },
   { title: "Metrics", url: "/metrics", icon: BarChart3 },

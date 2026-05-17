@@ -13,7 +13,7 @@ import type {
   BoardSpec,
   BoardStatus,
 } from "./types";
-import type { ClusterAgent } from "@percussionist/api";
+import type { ClusterAgent, ClusterSettings } from "@percussionist/api";
 
 const BASE = "/api";
 
@@ -316,6 +316,68 @@ export async function requestChangesTask(
       body: JSON.stringify({ feedback: comment }),
     },
   );
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+
+export async function fetchSettings(): Promise<ClusterSettings> {
+  return fetchJSON<ClusterSettings>("/settings");
+}
+
+export async function saveSettings(spec: Record<string, unknown>): Promise<ClusterSettings> {
+  const res = await fetch(`${BASE}/settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ spec }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return body as ClusterSettings;
+}
+
+export async function fetchOpencodeConfig(): Promise<string> {
+  return fetchJSON<string>("/settings/opencode-config");
+}
+
+export async function listSecrets(): Promise<{ items: Array<{ name: string; keys: string[] }> }> {
+  return fetchJSON<{ items: Array<{ name: string; keys: string[] }> }>("/settings/secrets");
+}
+
+export async function createSecret(name: string, data: Record<string, string>): Promise<void> {
+  const res = await fetch(`${BASE}/settings/secrets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, data }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function updateSecret(name: string, data: Record<string, string>): Promise<void> {
+  const res = await fetch(`${BASE}/settings/secrets/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function deleteSecret(name: string): Promise<void> {
+  const res = await fetch(`${BASE}/settings/secrets/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
   if (!res.ok && res.status !== 204) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);

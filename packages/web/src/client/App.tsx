@@ -12,6 +12,7 @@ import AgentForm from "./components/AgentForm";
 import BoardView from "./components/BoardView";
 import MetricsView from "./components/MetricsView";
 import AgentChatPanel from "./components/AgentChatPanel";
+import SettingsPage from "./components/SettingsPage";
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/agents/new" element={<AgentForm />} />
           <Route path="/agents/:name/edit" element={<AgentForm />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Routes>
       <AgentChatPanel />

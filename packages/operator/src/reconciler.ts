@@ -19,6 +19,7 @@ import {
   type OpenCodeRun,
   type OpenCodeRunStatus,
   type OpenCodeProject,
+  type ClusterSettings,
 } from "@percussionist/api";
 import { resolveAgents } from "./agent-resolver.js";
 import {
@@ -110,6 +111,147 @@ async function ensureOpencodeConfig(ns: string): Promise<void> {
   } catch (e) {
     if (!/already exists/i.test((e as Error).message)) {
       err(`failed to sync opencode-config to ${ns}:`, (e as Error).message);
+    }
+  }
+}
+
+// Reconcile ClusterSettings spec into the two managed ConfigMaps:
+//   1. opencode-config  — copied to every namespace that has a run
+//   2. agent-config     — used by the manager's opencode-web sidecar
+//
+// If ClusterSettings is absent (never created), existing ConfigMaps are left
+// alone so manually-managed configurations continue to work.
+//
+// ConfigMap sources of truth (in priority order):
+//   opencode.config  >  opencode.configMapRef  >  existing opencode-config CM
+//   manager.*        >  existing agent-config CM
+export async function reconcileClusterSettings(
+  cs: ClusterSettings,
+): Promise<void> {
+  const { spec } = cs;
+  if (!spec) return;
+
+  // --- opencode-config ---
+  // If spec.opencode.config is set, it becomes the data source.
+  // Otherwise use configMapRef if set. If neither, leave existing CM alone.
+  if (spec.opencode?.config) {
+    await upsertConfigMap(SELF_NAMESPACE, "opencode-config", {
+      "opencode.json": spec.opencode.config,
+    });
+    log(`reconciled opencode-config from ClusterSettings (config string)`);
+  } else if (spec.opencode?.configMapRef) {
+    // Mirror the referenced ConfigMap into our namespace as opencode-config.
+    try {
+      const ref = spec.opencode.configMapRef;
+      const source = await core.readNamespacedConfigMap({
+        name: ref.name,
+        namespace: SELF_NAMESPACE,
+      });
+      const data = source.data ?? {};
+      if (data["opencode.json"]) {
+        await upsertConfigMap(SELF_NAMESPACE, "opencode-config", {
+          "opencode.json": data["opencode.json"],
+        });
+        log(`reconciled opencode-config from ref ${ref.name}/${ref.key}`);
+      }
+    } catch (e) {
+      err(`failed to mirror configMapRef for opencode-config:`, (e as Error).message);
+    }
+  }
+  // If neither config nor configMapRef is set, do nothing — existing CM kept as-is.
+
+  // --- agent-config ---
+  // Reconstruct agent-config from spec.manager fields + a default opencode.json
+  // that keeps the MCP/manager-agent stanza working.
+  if (spec.manager) {
+    const agentName = spec.manager.agentName ?? "manager-agent";
+    const decisionAgentName = spec.manager.decisionAgentName ?? "manager-decision";
+    const decisionContent =
+      spec.manager.decisionAgentContent ??
+      `---
+description: Manager decision agent — analyzes failures, parses facilitation output, and assists operators.
+mode: subagent
+permission:
+  edit: allow
+  bash: allow
+---
+
+You are the decision-making agent for a Percussionist kanban board manager running in Kubernetes.
+The manager provides full failure context inline in the prompt.
+
+When analyzing a failure, produce structured JSON output:
+{
+  "action": "retry_same | retry_alternative | skip | escalate",
+  "agent": "(name if retry_alternative)",
+  "reason": "(1-2 sentence explanation)"
+}
+
+- retry_same: The same agent should try again (intermittent issue)
+- retry_alternative: A different agent would be better suited
+- skip: The task is impossible or harmful; mark it done
+- escalate: Human expertise is needed
+
+When parsing facilitator output, extract the structured diagnosis
+from the raw session text. Output valid JSON matching the expected
+FacilitationResult schema.
+
+When chatting with operators, explain your reasoning clearly and
+offer to take corrective actions using your available tools.
+Do not use icons, emoji, or unnecessary special characters
+(asterisks, backticks, arrows, etc.) in your responses — they
+will be read aloud by text-to-speech and sound garbled.`;
+
+    // Build opencode.json for the manager sidecar. It always needs the MCP
+    // manager-agent entry; the rest (providers, skills) come from the config.
+    let opencodeJson = `{\n  "$schema": "https://opencode.ai/config.json",\n  "mcp": {\n    "manager-agent": {\n      "type": "remote",\n      "url": "http://127.0.0.1:4097/mcp",\n      "enabled": true\n    }\n  }`;
+    if (spec.opencode?.config) {
+      try {
+        const parsed = JSON.parse(spec.opencode.config) as {
+          providers?: unknown;
+          skills?: unknown;
+        };
+        if (parsed.providers) {
+          opencodeJson += `,\n  "providers": ${JSON.stringify(parsed.providers)}`;
+        }
+        if (parsed.skills) {
+          opencodeJson += `,\n  "skills": ${JSON.stringify(parsed.skills)}`;
+        }
+      } catch {
+        // ignore parse errors — just use the minimal config
+      }
+    }
+    opencodeJson += `\n}`;
+
+    await upsertConfigMap(SELF_NAMESPACE, "agent-config", {
+      "opencode.json": opencodeJson,
+      [`${decisionAgentName}.md`]: decisionContent,
+    });
+    log(
+      `reconciled agent-config from ClusterSettings (agentName=${agentName}, decisionAgentName=${decisionAgentName})`,
+    );
+  }
+}
+
+async function upsertConfigMap(
+  ns: string,
+  name: string,
+  data: Record<string, string>,
+): Promise<void> {
+  try {
+    await core.createNamespacedConfigMap({
+      namespace: ns,
+      body: {
+        apiVersion: "v1",
+        kind: "ConfigMap",
+        metadata: { name, namespace: ns },
+        data,
+      },
+    });
+  } catch (e) {
+    if (/already exists/i.test((e as Error).message)) {
+      await core.replaceNamespacedConfigMap({ name, namespace: ns, body: { data } });
+    } else {
+      err(`upsertConfigMap(${ns}/${name}):`, (e as Error).message);
     }
   }
 }
