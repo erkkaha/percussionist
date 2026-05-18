@@ -218,6 +218,17 @@ spec:
                           minimum: 1
                           maximum: 65535
                         maxItems: 8
+                      securityContext:
+                        type: object
+                        properties:
+                          privileged:
+                            type: boolean
+                          runAsUser:
+                            type: integer
+                          runAsGroup:
+                            type: integer
+                          allowPrivilegeEscalation:
+                            type: boolean
                     required:
                       - name
                       - image

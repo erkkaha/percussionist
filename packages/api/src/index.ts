@@ -246,6 +246,15 @@ export const SidecarSpecSchema = z.object({
   // TCP ports the sidecar listens on. The operator will wait for all of these
   // to be reachable on localhost before starting opencode.
   ports: z.array(z.number().int().min(1).max(65535)).max(8).optional(),
+  // Security context for the sidecar container (e.g. privileged mode for DinD).
+  securityContext: z
+    .object({
+      privileged: z.boolean().optional(),
+      runAsUser: z.number().int().optional(),
+      runAsGroup: z.number().int().optional(),
+      allowPrivilegeEscalation: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export type SidecarSpec = z.infer<typeof SidecarSpecSchema>;

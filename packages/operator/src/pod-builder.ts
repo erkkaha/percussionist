@@ -665,6 +665,7 @@ export function renderPod(
           ...(sc.ports
             ? { ports: sc.ports.map((p) => ({ containerPort: p })) }
             : {}),
+          ...(sc.securityContext ? { securityContext: sc.securityContext } : {}),
         })),
       ],
       volumes,

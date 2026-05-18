@@ -45,7 +45,7 @@ spec:
   model: github-copilot/claude-sonnet-4.5
 
   secrets:
-    opencodeAuthSecret:
+    authSecret:
       name: opencode-auth
 
   # 2 hours — enough time for image builds and e2e smoke tests.
@@ -53,9 +53,8 @@ spec:
 
   # DinD sidecar — available to all tasks, required by meta-smoke-tester.
   # Builder and planner tasks simply ignore the idle Docker daemon.
-  # securityContext and volumeMounts are not in the CRD schema — DinD runs
-  # with the container's default settings; privileged mode must be enabled
-  # cluster-wide or via a separate admission policy.
+  # Privileged mode is required for DinD to load kernel modules, mount special
+  # filesystems, and create network interfaces.
   sidecars:
     - name: docker
       image: docker:24-dind
@@ -64,6 +63,8 @@ spec:
       env:
         - name: DOCKER_TLS_CERTDIR
           value: ""
+      securityContext:
+        privileged: true
 
   # Larger PVC: git mirrors + pnpm store + Docker layer cache.
   data:
