@@ -12,6 +12,7 @@
 .vscode/
 .idea/
 *.swp
+.opencode/
 
 # Node (for upcoming M2+ packages)
 node_modules/
