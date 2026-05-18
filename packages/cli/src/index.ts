@@ -114,7 +114,7 @@ program
 program
   .command("ls")
   .alias("list")
-  .description("list OpenCodeRuns in a namespace")
+  .description("list Runs in a namespace")
   .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
   .option("-A, --all-namespaces", "not yet implemented")
   .action(runLs);

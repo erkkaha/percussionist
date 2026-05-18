@@ -390,11 +390,11 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     console.log("beatctl: waiting for CRDs to establish...");
     await runKubectl([
       "wait", "--for=condition=Established",
-      "crd/opencoderuns.percussionist.dev", "--timeout=30s",
+      "crd/runs.percussionist.dev", "--timeout=30s",
     ]);
     await runKubectl([
       "wait", "--for=condition=Established",
-      "crd/opencodeprojects.percussionist.dev", "--timeout=30s",
+      "crd/projects.percussionist.dev", "--timeout=30s",
     ]);
     await runKubectl([
       "wait", "--for=condition=Established",

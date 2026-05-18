@@ -144,7 +144,7 @@ export default function RunList() {
       ) : sorted.length === 0 ? (
         <div className="rounded-lg border border-border-muted bg-surface-raised p-8 text-center text-text-muted">
           {runs?.length === 0
-            ? "No OpenCodeRuns in this namespace."
+            ? "No Runs in this namespace."
             : `No runs matching phase "${phaseFilter}".`}
         </div>
       ) : (

@@ -6,7 +6,7 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 
 ## Features
 
-- **Declarative runs** — create an `OpenCodeRun` CR; the operator handles pod
+- **Declarative runs** — create an `Run` CR; the operator handles pod
   scheduling, auth secrets, service routing, and lifecycle mirroring.
 - **Runner sidecars** — attach auxiliary containers (databases, proxies, etc.)
   to every run pod via `spec.sidecars[]`; opencode waits for declared TCP ports
@@ -20,7 +20,7 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 - **Persistent caching** — project-scoped PVCs automatically cache package manager
   stores (pnpm, npm, bun) and build artifacts (Turbo) across all runs, dramatically
   reducing install time for monorepos and repeated builds.
-- **Project boards** — each `OpenCodeProject` carries an embedded kanban-style
+- **Project boards** — each `Project` carries an embedded kanban-style
   board: parallel worker dispatch, automatic retries, human-in-the-loop review,
   and rework. The manager controller drives task execution from the board.
 - **ClusterAgents** — cluster-scoped agent role definitions reusable across
@@ -176,11 +176,11 @@ beatctl deploy --down       # removes the operator, CRDs, and web dashboard
 
 ## Architecture
 
-### OpenCodeRun
+### Run
 
 ```mermaid
 flowchart TD
-    CR[OpenCodeRun CR]
+    CR[Run CR]
 
     CR -->|watched by| OP[operator\nDeployment]
 
@@ -228,18 +228,18 @@ flowchart TD
   creates child objects with `ownerReferences` for cascading deletion, and
   mirrors Pod phase into the CR status every 10 s.
 
-### OpenCodeProject + Board
+### Project + Board
 
 ```mermaid
 flowchart TD
-    PCR[OpenCodeProject CR\nspec.agents, maxParallel, phase]
-    TASK[OpenCodeTask CR\nstatus.column, status.worker]
+    PCR[Project CR\nspec.agents, maxParallel, phase]
+    TASK[Task CR\nstatus.column, status.worker]
 
     PCR -->|watched by| MGR[manager\nDeployment]
     TASK -->|watched by| MGR
 
     MGR -->|pulls ready tasks\nup to maxParallel|MGR
-    MGR -->|creates worker CRs| WRK[OpenCodeRun\nworker CR]
+    MGR -->|creates worker CRs| WRK[Run\nworker CR]
     MGR -->|reads worker status| WRK
     MGR -->|patches task status| TASK
 
@@ -253,15 +253,15 @@ flowchart TD
 
 - **Projects** are the canonical home for environment config (git, secrets, model,
   image, resources). Every run and board worker inherits from its project.
-- **Tasks** are first-class `OpenCodeTask` CRs with their own `spec` (title, type,
+- **Tasks** are first-class `Task` CRs with their own `spec` (title, type,
   description, agent, priority) and `status` (column, worker state). They are not
   embedded in the project spec — `spec.agents`, `spec.maxParallel`, and `spec.phase`
   are top-level project fields.
 - **The manager controller** reconciles projects in a continuous loop: pulls ready tasks
-  up to `maxParallel`, monitors active workers (polling OpenCodeRun status), retries
+  up to `maxParallel`, monitors active workers (polling Run status), retries
   failed tasks (up to 3 retries), escalates when exhausted, and re-dispatches rework
   tasks with feedback context.
-- **Worker runs** are `OpenCodeRun` CRs created by the manager; they reference their
+- **Worker runs** are `Run` CRs created by the manager; they reference their
   parent project via `spec.project` for provenance and config resolution.
 
 ### ClusterAgent
@@ -338,11 +338,11 @@ The agent module hooks into the board reconcile at four escalation points:
 | **Review parse** | Success-review facilitator finished but no parseable result | Reads raw review session, extracts approval/rejection instead of blind approve |
 | **BUILD task gen parse** | BUILD task generator finished but no valid JSON array | Reads raw session, reconstructs BUILD task definitions, applies them immediately |
 
-### OpenCodeRun
+### Run
 
 ```mermaid
 flowchart TD
-    CR[OpenCodeRun CR]
+    CR[Run CR]
 
     CR -->|watched by| OP[operator\nDeployment]
 
@@ -370,7 +370,7 @@ flowchart TD
     SC1 -->|ports ready?\nnc -z polling| OC
     SC2 -->|ports ready?\nnc -z polling| OC
 
-    PROJ[OpenCodeProject] -->|spec.project ref\ngit, sidecars, model| CR
+    PROJ[Project] -->|spec.project ref\ngit, sidecars, model| CR
 ```
 
 - **opencode container** runs `opencode web` on `:4096`. Network-isolated by
@@ -408,7 +408,7 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    POD[OpenCodeRun Pod\ndispatcher sidecar]
+    POD[Run Pod\ndispatcher sidecar]
     POD -->|POST /api/stats/session\nfire-and-forget, non-fatal| WEB[percussionist-web pod]
     WEB --> DB[(bun:sqlite\n/app/data/percussionist.db\n1 Gi PVC)]
     DB -->|hourly cleanup\nRETENTION_DAYS| DB
@@ -443,7 +443,7 @@ pnpm bundle
 | `beatctl deploy` | Install CRDs and apply operator + manager controller + web manifests; waits for rollouts. |
 | `beatctl deploy --down` | Delete all operator/web/manager resources and CRDs. |
 | `beatctl web` | Port-forward the dashboard to `localhost` and open it in your browser. `localhost` is a secure context so browser notifications and drum audio work without HTTPS. |
-| `beatctl submit -t "<task>" --project <name>` | Create an `OpenCodeRun` with an inline task prompt (requires a project name). |
+| `beatctl submit -t "<task>" --project <name>` | Create an `Run` with an inline task prompt (requires a project name). |
 | `beatctl submit -i --project <name>` | Interactive run — no prompt; runner stays alive for `beatctl attach`. |
 | `beatctl submit ... -a` | After submit, poll until `Running` then hand off to attach. |
 | `beatctl submit -f run.yaml` | Create from a YAML file (requires `-t` or `-i`; project is resolved via `spec.project` in the file). |
@@ -454,11 +454,11 @@ pnpm bundle
 | `beatctl chat` | Port-forward the manager agent and start an interactive chat REPL. |
 | `beatctl wait <name>` | Block until terminal phase. Exit 0 = Succeeded, 1 = other terminal or deleted, 2 = timeout, 3 = API error. `--for <phase>` to await a specific phase. |
 | `beatctl cancel <name>` | Delete the run and all owned resources. |
-| `beatctl board get <project>` | Show the board state (columns, workers, escalations) for an OpenCodeProject. |
+| `beatctl board get <project>` | Show the board state (columns, workers, escalations) for an Project. |
 | `beatctl board task add <project> --id X --title Y --agent Z` | Add a task to the project's board. |
 | `beatctl board task move <project> --task-id X --to column` | Move a task between columns. |
 | `beatctl board task remove <project> --task-id X` | Remove a task from the board (spec + status). |
-| `beatctl project list` / `get` / `create` / `delete` | Manage OpenCodeProject templates. |
+| `beatctl project list` / `get` / `create` / `delete` | Manage Project templates. |
 | `beatctl agent list` / `get` / `create` / `delete` | Manage ClusterAgent resources (cluster-scoped). |
 
 Global flags: `-n, --namespace <ns>` (default: `percussionist` or `$PERCUSSIONIST_NAMESPACE`).
@@ -487,12 +487,12 @@ or the CR was deleted mid-wait · `2` timeout · `3` Kubernetes API error (non-4
 Point a run at a repo and the operator clones it into `/workspace` before the
 agent starts. The runner's working directory is `/workspace`.
 
-Git configuration is normally set on an `OpenCodeProject` so all runs from that
+Git configuration is normally set on an `Project` so all runs from that
 project inherit it:
 
 ```yaml
 apiVersion: percussionist.dev/v1alpha1
-kind: OpenCodeProject
+kind: Project
 metadata:
   name: my-project
 spec:
@@ -507,7 +507,7 @@ just references its project:
 
 ```yaml
 apiVersion: percussionist.dev/v1alpha1
-kind: OpenCodeRun
+kind: Run
 metadata:
   name: hello
 spec:
@@ -521,7 +521,7 @@ You can pin a different repo or branch on a per-run basis:
 
 ```yaml
 apiVersion: percussionist.dev/v1alpha1
-kind: OpenCodeRun
+kind: Run
 metadata:
   name: explore-branch
 spec:
@@ -574,7 +574,7 @@ monorepos and repeated builds.
 
 ### How it works
 
-- Each `OpenCodeProject` gets a dedicated **5Gi PersistentVolumeClaim** mounted
+- Each `Project` gets a dedicated **5Gi PersistentVolumeClaim** mounted
   at `/cache` in all runner pods.
 - The PVC uses **ReadWriteMany (RWX)** access mode, allowing parallel workers
   to share the cache simultaneously.
@@ -601,7 +601,7 @@ monorepos and repeated builds.
 - **Created**: Automatically when the first run in a project starts.
 - **Shared**: All runs with the same `metadata.labels["percussionist.dev/project"]`
   label share the cache.
-- **Deleted**: Automatically when the `OpenCodeProject` is deleted (via owner
+- **Deleted**: Automatically when the `Project` is deleted (via owner
   references).
 
 ### Storage requirements
@@ -621,7 +621,7 @@ Override defaults per-run via `spec.cache`:
 
 ```yaml
 apiVersion: percussionist.dev/v1alpha1
-kind: OpenCodeRun
+kind: Run
 metadata:
   name: my-run
   labels:
@@ -711,11 +711,11 @@ sidecars:
 ### Project-level defaults
 
 Sidecar configuration cascades from project to run. Define sidecars on the
-`OpenCodeProject` so all worker runs inherit them:
+`Project` so all worker runs inherit them:
 
 ```yaml
 apiVersion: percussionist.dev/v1alpha1
-kind: OpenCodeProject
+kind: Project
 metadata:
   name: my-project
 spec:
@@ -741,11 +741,11 @@ sidecars per level (project and run).
 
 ## Project boards
 
-An `OpenCodeProject` coordinates multi-task agentic development through a
+An `Project` coordinates multi-task agentic development through a
 five-column flow: `ready → in-progress → review → rework → done`.
-Tasks are standalone `OpenCodeTask` CRs (not embedded in the project spec).
+Tasks are standalone `Task` CRs (not embedded in the project spec).
 
-### Project board fields (on OpenCodeProject)
+### Project board fields (on Project)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -753,7 +753,7 @@ Tasks are standalone `OpenCodeTask` CRs (not embedded in the project spec).
 | `spec.agents[]` | AgentRef[] | — | ClusterAgent names available as task assignees |
 | `spec.phase` | enum | Active | Board lifecycle: Active / Complete / Archived |
 
-### OpenCodeTask fields
+### Task fields
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -812,16 +812,16 @@ phase and a pending question appears on the board status. Reply via the web UI's
 
 ### Status fields
 
-Task state is authoritative in `OpenCodeTask.status`:
+Task state is authoritative in `Task.status`:
 
 - `.status.column` — current column: `ready`, `in-progress`, `review`, `rework`, `done`, `blocked`
-- `.status.worker.runName` — active OpenCodeRun name
+- `.status.worker.runName` — active Run name
 - `.status.worker.status` — `Running / Succeeded / Failed / Escalated`
 - `.status.worker.branch` — git branch used by the worker
 - `.status.worker.escalation` — escalation text when status is `Escalated`
 - `.status.worker.retryCount` — number of attempts so far
 
-Project-level aggregates in `OpenCodeProject.status.board`:
+Project-level aggregates in `Project.status.board`:
 
 - `.status.board.activeWorkers` — count of currently running workers
 - `.status.board.escalations[]` — escalation texts for tasks needing human attention
@@ -846,8 +846,8 @@ warning once on first visit (or add it to your OS trust store).
 
 | Page | URL | What it shows |
 |------|-----|---------------|
-| **Runs** | `/` | Live `OpenCodeRun` list — phase badges, token totals, age, attach button. |
-| **Projects** | `/projects` | Project templates with board views (OpenCodeTask cards per column, worker status, escalations). |
+| **Runs** | `/` | Live `Run` list — phase badges, token totals, age, attach button. |
+| **Projects** | `/projects` | Project templates with board views (Task cards per column, worker status, escalations). |
 | **Agents** | `/agents` | Cluster-wide agent catalog — reusable `.md` definitions. |
 | **Stats** | `/stats` | Historical session analytics from the stats DB. |
 | **Agent chat** | (floating button bottom-right) | Interactive chat with the manager agent — ask about board state, task status, or cluster issues. |
@@ -1110,7 +1110,7 @@ timing. Intended for periodic LLM-assisted pattern analysis.
 | `messages` | full part list (JSON), role, model, per-message token counts, timing |
 | `tool_calls` | tool name, arguments (JSON), success, error, duration |
 | `file_ops` | file path, operation (`read`/`write`/`delete`), message index |
-| `task_events` | append-only audit log of `OpenCodeTask` column transitions (task name, from/to column, timestamp) |
+| `task_events` | append-only audit log of `Task` column transitions (task name, from/to column, timestamp) |
 
 Stats are sent for both succeeded and failed runs. The call is fire-and-forget
 and never delays run completion.

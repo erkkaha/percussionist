@@ -9,7 +9,7 @@
 #   LLM_SECRET=llm-keys \
 #   ./tests/e2e/e2e-facilitator.sh
 apiVersion: percussionist.dev/v1alpha1
-kind: OpenCodeProject
+kind: Project
 metadata:
   name: e2e-facilitator-test
   namespace: percussionist-e2e
@@ -19,7 +19,7 @@ spec:
   source:
     git:
       # Intentionally invalid URL — git-clone init container will fail, causing
-      # the operator to set OpenCodeRun.status.phase = Failed deterministically.
+      # the operator to set Run.status.phase = Failed deterministically.
       url: https://git.invalid/e2e-nonexistent-repo.git
   secrets:
     llmKeysSecret: llm-keys                 # overridable via LLM_SECRET env var

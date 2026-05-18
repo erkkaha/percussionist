@@ -10,7 +10,7 @@ import {
 
 const runs = new Hono();
 
-// GET /api/runs — list all OpenCodeRuns in the namespace.
+// GET /api/runs — list all Runs in the namespace.
 runs.get("/", async (c) => {
   try {
     const items = await listRuns();

@@ -25,8 +25,8 @@
 #     Dockerfile actually pick up package changes)
 #   * if the operator image changed: scale deploy/percussionist-operator to 0
 #     until the image is loaded, then back to 1
-#   * if the runner/dispatcher image changed and any OpenCodeRun pods are
-#     pinning the old ID: delete those OpenCodeRun CRs (cascades to pods).
+#   * if the runner/dispatcher image changed and any Run pods are
+#     pinning the old ID: delete those Run CRs (cascades to pods).
 #     The script prints what it's about to delete and asks for confirmation
 #     unless --yes is also passed.
 

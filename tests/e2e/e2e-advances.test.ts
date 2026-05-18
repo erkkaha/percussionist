@@ -4,7 +4,7 @@
  * Scenario:
  *   1. Shared cluster setup.
  *   2. Apply ClusterAgents: e2e-complete-worker, facilitator (reviewer).
- *   3. Apply OpenCodeProject (no source — worker calls complete_run immediately).
+ *   3. Apply Project (no source — worker calls complete_run immediately).
  *   4. Assert: worker run reaches Succeeded via complete_run MCP tool.
  *   5. Assert: manager spawns a success-review facilitation run.
  *   6. Assert: review run completes (Succeeded or Failed).
@@ -38,9 +38,9 @@ const LLM_SECRET = process.env["LLM_SECRET"] ?? "llm-keys";
 
 /** Find the initial worker run (no .spec.facilitation.targetRunName). */
 async function findWorkerRun(ns: string, taskId: string): Promise<string | null> {
-  const names = await kubectlGetNames("opencoderuns", ns, `${TASK_LABEL}=${taskId}`);
+  const names = await kubectlGetNames("runs", ns, `${TASK_LABEL}=${taskId}`);
   for (const name of names) {
-    const target = await kubectlGetField("opencoderuns", name, ns, "{.spec.facilitation.targetRunName}");
+    const target = await kubectlGetField("runs", name, ns, "{.spec.facilitation.targetRunName}");
     if (!target) return name;
   }
   return null;
@@ -55,10 +55,10 @@ async function findReviewRun(
   taskId: string,
   workerRun: string,
 ): Promise<string | null> {
-  const names = await kubectlGetNames("opencoderuns", ns, `${TASK_LABEL}=${taskId}`);
+  const names = await kubectlGetNames("runs", ns, `${TASK_LABEL}=${taskId}`);
   for (const name of names) {
     if (name === workerRun) continue;
-    const target = await kubectlGetField("opencoderuns", name, ns, "{.spec.facilitation.targetRunName}");
+    const target = await kubectlGetField("runs", name, ns, "{.spec.facilitation.targetRunName}");
     if (target) return name;
   }
   return null;
@@ -66,7 +66,7 @@ async function findReviewRun(
 
 /** Poll until a run is in a terminal phase (Succeeded or Failed). */
 async function pollTerminal(runName: string, ns: string): Promise<string | null> {
-  const phase = await kubectlGetField("opencoderuns", runName, ns, "{.status.phase}");
+  const phase = await kubectlGetField("runs", runName, ns, "{.status.phase}");
   return phase === "Succeeded" || phase === "Failed" ? phase : null;
 }
 
@@ -96,7 +96,7 @@ describe("advances", () => {
       "clusteragent-reviewer.yaml",
     ]);
 
-    console.log(`==> Step 8: Apply OpenCodeProject ${PROJECT}`);
+    console.log(`==> Step 8: Apply Project ${PROJECT}`);
     await applyProject({
       name: PROJECT,
       ns: NS,
@@ -149,12 +149,12 @@ describe("advances", () => {
         180,
         3,
         async () => {
-          const phase = await kubectlGetField("opencoderuns", workerRun, NS, "{.status.phase}");
+          const phase = await kubectlGetField("runs", workerRun, NS, "{.status.phase}");
           if (phase === "Failed") throw new Error(`Worker run reached Failed unexpectedly`);
           return phase === "Succeeded" ? phase : null;
         },
       );
-      const msg = await kubectlGetField("opencoderuns", workerRun, NS, "{.status.message}");
+      const msg = await kubectlGetField("runs", workerRun, NS, "{.status.message}");
       if (msg.includes("agent signalled completion")) {
         console.log("    Confirmed: completion triggered via complete_run MCP tool");
       } else {

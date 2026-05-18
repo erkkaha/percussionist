@@ -14,21 +14,21 @@ kind: ClusterRole
 metadata:
   name: percussionist-manager
 rules:
-  # Watch and patch OpenCodeProject CRs (the boards the manager orchestrates).
+  # Watch and patch Project CRs (the boards the manager orchestrates).
   - apiGroups: ["percussionist.dev"]
     resources: ["projects"]
     verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["percussionist.dev"]
     resources: ["projects/status"]
     verbs: ["get", "update", "patch"]
-  # Create and monitor OpenCodeRun worker pods (child resources).
+  # Create and monitor Run worker pods (child resources).
   - apiGroups: ["percussionist.dev"]
     resources: ["runs"]
     verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: ["percussionist.dev"]
     resources: ["runs/status"]
     verbs: ["get"]
-  # OpenCodeTask — first-class task CRs; manager owns their lifecycle.
+  # Task — first-class task CRs; manager owns their lifecycle.
   - apiGroups: ["percussionist.dev"]
     resources: ["tasks"]
     verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]

@@ -1,4 +1,4 @@
-# Sample OpenCodeProject with local git workspace (no remote).
+# Sample Project with local git workspace (no remote).
 #
 # Use when you want agents to work on files that don't have a remote git
 # remote — e.g. a scratch workspace, generated code, or internal documents.

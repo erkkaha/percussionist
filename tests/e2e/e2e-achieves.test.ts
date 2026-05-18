@@ -4,7 +4,7 @@
  * Scenario:
  *   1. Shared cluster setup.
  *   2. Apply ClusterAgents: e2e-stubborn-worker, e2e-capable-worker, facilitator.
- *   3. Apply OpenCodeProject with stubborn-worker as the initial agent.
+ *   3. Apply Project with stubborn-worker as the initial agent.
  *   4. Assert: stubborn-worker calls fail_run → run reaches Failed.
  *   5. Assert: manager spawns a facilitator run.
  *   6. Assert: facilitator completes (LLM outputs retry_alternative JSON).
@@ -39,9 +39,9 @@ const LLM_SECRET = process.env["LLM_SECRET"] ?? "llm-keys";
 
 /** Find the initial worker run (no .spec.facilitation.targetRunName). */
 async function findWorkerRun(ns: string, taskId: string): Promise<string | null> {
-  const names = await kubectlGetNames("opencoderuns", ns, `${TASK_LABEL}=${taskId}`);
+  const names = await kubectlGetNames("runs", ns, `${TASK_LABEL}=${taskId}`);
   for (const name of names) {
-    const target = await kubectlGetField("opencoderuns", name, ns, "{.spec.facilitation.targetRunName}");
+    const target = await kubectlGetField("runs", name, ns, "{.spec.facilitation.targetRunName}");
     if (!target) return name;
   }
   return null;
@@ -49,9 +49,9 @@ async function findWorkerRun(ns: string, taskId: string): Promise<string | null>
 
 /** Find the first facilitation run for the task. */
 async function findFacilitatorRun(ns: string, taskId: string): Promise<string | null> {
-  const names = await kubectlGetNames("opencoderuns", ns, `${TASK_LABEL}=${taskId}`);
+  const names = await kubectlGetNames("runs", ns, `${TASK_LABEL}=${taskId}`);
   for (const name of names) {
-    const target = await kubectlGetField("opencoderuns", name, ns, "{.spec.facilitation.targetRunName}");
+    const target = await kubectlGetField("runs", name, ns, "{.spec.facilitation.targetRunName}");
     if (target) return name;
   }
   return null;
@@ -61,10 +61,10 @@ async function findFacilitatorRun(ns: string, taskId: string): Promise<string | 
  * Find the alternative worker run: agent=e2e-capable-worker with no facilitation.
  */
 async function findAltRun(ns: string, taskId: string): Promise<string | null> {
-  const names = await kubectlGetNames("opencoderuns", ns, `${TASK_LABEL}=${taskId}`);
+  const names = await kubectlGetNames("runs", ns, `${TASK_LABEL}=${taskId}`);
   for (const name of names) {
-    const agent = await kubectlGetField("opencoderuns", name, ns, "{.spec.agent}");
-    const fac = await kubectlGetField("opencoderuns", name, ns, "{.spec.facilitation.targetRunName}");
+    const agent = await kubectlGetField("runs", name, ns, "{.spec.agent}");
+    const fac = await kubectlGetField("runs", name, ns, "{.spec.facilitation.targetRunName}");
     if (agent === "e2e-capable-worker" && !fac) return name;
   }
   return null;
@@ -72,7 +72,7 @@ async function findAltRun(ns: string, taskId: string): Promise<string | null> {
 
 /** Poll until a run reaches a terminal phase (Succeeded or Failed). */
 async function pollTerminal(runName: string, ns: string): Promise<string | null> {
-  const phase = await kubectlGetField("opencoderuns", runName, ns, "{.status.phase}");
+  const phase = await kubectlGetField("runs", runName, ns, "{.status.phase}");
   return phase === "Succeeded" || phase === "Failed" ? phase : null;
 }
 
@@ -90,7 +90,7 @@ describe("achieves", () => {
       "clusteragent-facilitator-failure.yaml",
     ]);
 
-    console.log(`==> Step 8: Apply OpenCodeProject ${PROJECT}`);
+    console.log(`==> Step 8: Apply Project ${PROJECT}`);
     await applyProject({
       name: PROJECT,
       ns: NS,
@@ -147,7 +147,7 @@ describe("achieves", () => {
         5,
         () => pollTerminal(workerRun, NS).then((p) => (p === "Failed" ? p : null)),
       );
-      const msg = await kubectlGetField("opencoderuns", workerRun, NS, "{.status.message}");
+      const msg = await kubectlGetField("runs", workerRun, NS, "{.status.message}");
       if (msg.includes("agent signalled failure")) {
         console.log("    Confirmed: failure triggered via fail_run MCP tool");
       } else {
@@ -214,7 +214,7 @@ describe("achieves", () => {
         300,
         10,
         async () => {
-          const p = await kubectlGetField("opencoderuns", altRun, NS, "{.status.phase}");
+          const p = await kubectlGetField("runs", altRun, NS, "{.status.phase}");
           if (p === "Failed") {
             throw new Error(
               `e2e-capable-worker run reached Failed — check agent system prompt and MCP config`,

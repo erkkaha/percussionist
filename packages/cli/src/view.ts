@@ -30,7 +30,7 @@ export async function runLs(opts: LsOpts): Promise<void> {
   }
 
   if (runs.length === 0) {
-    console.log(`No OpenCodeRuns in namespace ${ns || DEFAULT_NAMESPACE}.`);
+    console.log(`No Runs in namespace ${ns || DEFAULT_NAMESPACE}.`);
     return;
   }
 

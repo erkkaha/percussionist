@@ -4,9 +4,9 @@
  * Scenario:
  *   1. Shared cluster setup (CRDs, operator, manager, namespace, RBAC, LLM secret).
  *   2. Apply ClusterAgents: e2e-failing-worker, facilitator.
- *   3. Apply OpenCodeProject with an intentionally invalid git URL so the
+ *   3. Apply Project with an intentionally invalid git URL so the
  *      git-clone init container fails deterministically.
- *   4. Assert: worker OpenCodeRun reaches phase=Failed.
+ *   4. Assert: worker Run reaches phase=Failed.
  *   5. Assert: manager spawns a facilitator run (has .spec.facilitation.targetRunName).
  */
 
@@ -38,9 +38,9 @@ const LLM_SECRET = process.env["LLM_SECRET"] ?? "llm-keys";
 
 /** Find the first worker run for a task (no .spec.facilitation.targetRunName). */
 async function findWorkerRun(ns: string, taskId: string): Promise<string | null> {
-  const names = await kubectlGetNames("opencoderuns", ns, `${TASK_LABEL}=${taskId}`);
+  const names = await kubectlGetNames("runs", ns, `${TASK_LABEL}=${taskId}`);
   for (const name of names) {
-    const target = await kubectlGetField("opencoderuns", name, ns, "{.spec.facilitation.targetRunName}");
+    const target = await kubectlGetField("runs", name, ns, "{.spec.facilitation.targetRunName}");
     if (!target) return name;
   }
   return null;
@@ -48,9 +48,9 @@ async function findWorkerRun(ns: string, taskId: string): Promise<string | null>
 
 /** Find the first facilitation run for a task (has .spec.facilitation.targetRunName). */
 async function findFacilitatorRun(ns: string, taskId: string): Promise<string | null> {
-  const names = await kubectlGetNames("opencoderuns", ns, `${TASK_LABEL}=${taskId}`);
+  const names = await kubectlGetNames("runs", ns, `${TASK_LABEL}=${taskId}`);
   for (const name of names) {
-    const target = await kubectlGetField("opencoderuns", name, ns, "{.spec.facilitation.targetRunName}");
+    const target = await kubectlGetField("runs", name, ns, "{.spec.facilitation.targetRunName}");
     if (target) return name;
   }
   return null;
@@ -62,7 +62,7 @@ async function pollPhase(
   ns: string,
   expected: string,
 ): Promise<string | null> {
-  const phase = await kubectlGetField("opencoderuns", runName, ns, "{.status.phase}");
+  const phase = await kubectlGetField("runs", runName, ns, "{.status.phase}");
   return phase === expected ? phase : null;
 }
 
@@ -79,7 +79,7 @@ describe("facilitator", () => {
       "clusteragent-facilitator-failure.yaml",
     ]);
 
-    console.log(`==> Step 8: Apply OpenCodeProject ${PROJECT}`);
+    console.log(`==> Step 8: Apply Project ${PROJECT}`);
     await applyProject({
       name: PROJECT,
       ns: NS,
@@ -141,7 +141,7 @@ describe("facilitator", () => {
         10,
         () => pollPhase(workerRun, NS, "Failed"),
       );
-      const phase = await kubectlGetField("opencoderuns", workerRun, NS, "{.status.phase}");
+      const phase = await kubectlGetField("runs", workerRun, NS, "{.status.phase}");
       expect(phase).toBe("Failed");
     },
     305_000,
@@ -161,7 +161,7 @@ describe("facilitator", () => {
       console.log(`    Facilitator run spawned: ${facilitatorRun}`);
 
       const target = await kubectlGetField(
-        "opencoderuns",
+        "runs",
         facilitatorRun,
         NS,
         "{.spec.facilitation.targetRunName}",

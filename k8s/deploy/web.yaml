@@ -1,6 +1,6 @@
 # RBAC, Service, Deployment, and PVC for the percussionist web dashboard.
 #
-# The web server reads OpenCodeRun resources and pod logs, and also hosts
+# The web server reads Run resources and pod logs, and also hosts
 # the stats SQLite database (bun:sqlite) on a PersistentVolumeClaim.
 # Dispatcher sidecars POST session data to /api/stats/session after each run.
 #
@@ -35,23 +35,23 @@ metadata:
   name: percussionist-web
   namespace: percussionist
 rules:
-  # Read + write OpenCodeRun resources (list, detail, create, delete).
+  # Read + write Run resources (list, detail, create, delete).
   - apiGroups: ["percussionist.dev"]
     resources: ["runs"]
     verbs: ["get", "list", "watch", "create", "delete"]
-  # Read + write OpenCodeProject resources (list, detail, create, update, delete).
+  # Read + write Project resources (list, detail, create, update, delete).
   - apiGroups: ["percussionist.dev"]
     resources: ["projects"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Patch OpenCodeProject status subresource (for board status updates from UI).
+  # Patch Project status subresource (for board status updates from UI).
   - apiGroups: ["percussionist.dev"]
     resources: ["projects/status"]
     verbs: ["get", "patch"]
-  # Read + write OpenCodeTask resources (board task CRs).
+  # Read + write Task resources (board task CRs).
   - apiGroups: ["percussionist.dev"]
     resources: ["tasks"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Patch OpenCodeTask status subresource.
+  # Patch Task status subresource.
   - apiGroups: ["percussionist.dev"]
     resources: ["tasks/status"]
     verbs: ["get", "patch"]

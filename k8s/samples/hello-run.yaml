@@ -1,4 +1,4 @@
-# Sample OpenCodeRun referencing an OpenCodeProject for defaults (git, secrets, model).
+# Sample Run referencing an Project for defaults (git, secrets, model).
 # Prerequisite: create the project first:
 #   kubectl apply -f examples/my-project.yaml  (or use beatctl project create)
 #
@@ -14,6 +14,6 @@ spec:
   task: |
     Say hello, then explain in one sentence what opencode is. Do not use any
     tools. Keep the response under 40 words.
-  project: my-project   # references OpenCodeProject for git/secrets/model defaults
+  project: my-project   # references Project for git/secrets/model defaults
   timeoutSeconds: 600
   ttlSecondsAfterFinished: 3600

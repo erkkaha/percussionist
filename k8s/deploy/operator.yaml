@@ -10,7 +10,7 @@
 #       any namespace we watch. (M2 watches a single namespace but the
 #       permissions model stays cluster-wide for simplicity.)
 #   - Role "percussionist-dispatcher":
-#       patch status on OpenCodeRun resources in its own namespace only.
+#       patch status on Run resources in its own namespace only.
 ---
 apiVersion: v1
 kind: Namespace
@@ -40,7 +40,7 @@ rules:
   - apiGroups: ["percussionist.dev"]
     resources: ["runs/status"]
     verbs: ["get", "update", "patch"]
-  # Read OpenCodeProject CRs to get project UID for cache PVC owner references.
+  # Read Project CRs to get project UID for cache PVC owner references.
   - apiGroups: ["percussionist.dev"]
     resources: ["projects"]
     verbs: ["get"]

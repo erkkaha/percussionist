@@ -1,4 +1,4 @@
-# Sample OpenCodeProject — reusable template for run defaults (git, secrets, model).
+# Sample Project — reusable template for run defaults (git, secrets, model).
 #
 # Create from the CLI:
 #   beatctl project create --name my-project --display-name "My Project" \

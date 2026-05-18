@@ -1,4 +1,4 @@
-# OpenCodeRun with a git workspace reference.
+# Run with a git workspace reference.
 #
 # Prerequisite: create a project first (or set `source.git` on an existing one).
 # For example via CLI:
@@ -27,7 +27,7 @@ spec:
   task: |
     List the top-level files and folders in the workspace, then summarise
     what this repository is for in one sentence. Do not modify anything.
-  project: my-project   # references OpenCodeProject (inherit git source from there)
+  project: my-project   # references Project (inherit git source from there)
 
   # Override the project's git source with a different repo/branch if needed:
   # source:

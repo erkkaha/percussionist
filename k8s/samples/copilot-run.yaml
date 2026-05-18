@@ -1,4 +1,4 @@
-# OpenCodeRun using a GitHub Copilot subscription.
+# Run using a GitHub Copilot subscription.
 #
 # Prerequisite: create the project first (e.g. `beatctl project create --name my-project`)
 # and an auth Secret via `beatctl auth import`.
@@ -16,7 +16,7 @@ spec:
   task: |
     In one short sentence, tell me which model and provider you are running.
     Do not use any tools.
-  project: my-project   # references OpenCodeProject for git/secrets/model defaults
+  project: my-project   # references Project for git/secrets/model defaults
   secrets:
     opencodeAuthSecret:
       name: opencode-auth

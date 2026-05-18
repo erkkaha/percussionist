@@ -1,7 +1,7 @@
 # Minimal e2e test for manual PLAN approval -> BUILD generation flow.
 ---
 apiVersion: percussionist.dev/v1alpha1
-kind: OpenCodeProject
+kind: Project
 metadata:
   name: e2e-plan-approval
   namespace: percussionist

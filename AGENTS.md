@@ -44,7 +44,7 @@ of TypeScript packages under `packages/*`.
   - `/data/worktrees/{run-name}/` - per-run worktree checkout (remote git)
   - `/data/workspace/` - persistent local git workspace (`source.local: true`)
 - PVC size: 10Gi (default)
-- PVC lifecycle: Tied to OpenCodeProject (auto-deleted when project is deleted)
+- PVC lifecycle: Tied to Project (auto-deleted when project is deleted)
 - Storage: Uses cluster default storage class with ReadWriteMany access mode
   - For RWX support on minikube/k3s, requires NFS or similar provisioner
   - Falls back gracefully if PVC creation fails
@@ -71,18 +71,18 @@ of TypeScript packages under `packages/*`.
 ## Architecture
 - All packages are ESM (`"type": "module"`)
 - Strict TypeScript everywhere (`noUncheckedIndexedAccess`, `noImplicitOverride`)
-- Zod schemas in `@percussionist/api` are the single source of truth for CRDs (5 CRDs: `OpenCodeRun`, `OpenCodeProject`, `OpenCodeTask`, `ClusterAgent`, `ClusterSettings`)
+- Zod schemas in `@percussionist/api` are the single source of truth for CRDs (5 CRDs: `Run`, `Project`, `Task`, `ClusterAgent`, `ClusterSettings`)
 - CRD YAML is generated from Zod (`packages/api/codegen/`)
 - Operator and Manager use `makeInformer` + in-memory work queue pattern
 - API group: `percussionist.dev/v1alpha1`
-- Tasks are first-class `OpenCodeTask` CRs (not embedded in project spec); task state is authoritative in `OpenCodeTask.status`; project `spec.agents`, `spec.maxParallel`, `spec.phase` are top-level (no `spec.board` key)
+- Tasks are first-class `Task` CRs (not embedded in project spec); task state is authoritative in `Task.status`; project `spec.agents`, `spec.maxParallel`, `spec.phase` are top-level (no `spec.board` key)
 - `opencode-web` supports MCP servers via the `mcp` config key (not `mcpServers` — that was a legacy format); the manager's agent-config ConfigMap uses `mcp` with `type: "remote"` pointing at the in-process MCP server on :4097.
 
 ## Database (SQLite — `@percussionist/web`)
 
 The web server uses bun:sqlite via Drizzle ORM. Schema and migrations are managed by drizzle-kit.
 
-**Tables:** `runs`, `messages`, `toolCalls`, `fileOps`, `taskEvents` (append-only audit log of `OpenCodeTask` state transitions — live task state is authoritative in the CRD status subresource).
+**Tables:** `runs`, `messages`, `toolCalls`, `fileOps`, `taskEvents` (append-only audit log of `Task` state transitions — live task state is authoritative in the CRD status subresource).
 
 **Key files:**
 - `packages/web/src/server/schema.ts` — Drizzle table definitions (single source of truth; no driver imports, safe for drizzle-kit)
@@ -146,15 +146,15 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 
 | Tool | Purpose |
 |------|---------|
-| `inspect_cr` | Get full details of a CR (OpenCodeRun, OpenCodeProject, OpenCodeTask, ClusterAgent) |
+| `inspect_cr` | Get full details of a CR (Run, Project, Task, ClusterAgent) |
 | `list_crs` | List CRs of a given kind with optional labelSelector |
 | `read_logs` | Read pod logs for a run (default: opencode container, last 100 lines) |
 | `read_session` | Read session messages from a completed run's ConfigMap snapshot |
 | `read_session_live` | Incremental session messages with `since`/`nextSince` for polling (tries live API first, falls back to ConfigMap) |
-| `patch_board` | Merge-patch `OpenCodeProject.status.board` (escalations, pendingQuestions, facilitations, managerMetrics) |
-| `delete_run` | Delete an OpenCodeRun by name |
-| `create_run` | Create a new run for a task (task must be in "ready" column); updates `OpenCodeTask.status` atomically |
-| `force_retry` | Clean terminal-phase runs, reset task to ready or in-progress via `OpenCodeTask.status` |
+| `patch_board` | Merge-patch `Project.status.board` (escalations, pendingQuestions, facilitations, managerMetrics) |
+| `delete_run` | Delete an Run by name |
+| `create_run` | Create a new run for a task (task must be in "ready" column); updates `Task.status` atomically |
+| `force_retry` | Clean terminal-phase runs, reset task to ready or in-progress via `Task.status` |
 | `set_task_state` | Atomically move a task to a target column, clean up runs, optionally cancel running runs |
 | `read_manager_logs` | Read logs from the manager controller pod |
 | `pause_reconciliation` | Pause the manager reconcile loop for a project (auto-resumes after timeout) |
@@ -162,24 +162,24 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `get_reconcile_status` | Check whether the reconcile loop is paused and when it was last paused |
 
 **`create_run`** — Direct run creation without waiting for reconcile cycle.
-- Requires: `project`, `task` (OpenCodeTask CR name)
+- Requires: `project`, `task` (Task CR name)
 - Optional: `agent`, `model`, `retryCount`, `reworkFeedback`, `namespace`
 - Errors if the task is not in the "ready" column (use `force_retry` first)
-- Moves task to "in-progress" and patches `OpenCodeTask.status.worker` atomically
+- Moves task to "in-progress" and patches `Task.status.worker` atomically
 
 **`force_retry`** — One-shot cleanup and restart for stuck tasks.
-- Requires: `project`, `task` (OpenCodeTask CR name)
+- Requires: `project`, `task` (Task CR name)
 - Optional: `createRun` (default `true`), `namespace`
 - Deletes all terminal-phase runs (Succeeded/Failed/Cancelled) for the task
 - If `createRun: true`: resets task to "in-progress" with fresh worker via `patchTaskStatus`
 - If `createRun: false`: resets task column to "ready" via `patchTaskStatus`
 
 **`set_task_state`** — Atomic task column transition.
-- Requires: `project`, `task` (OpenCodeTask CR name), `targetColumn`
+- Requires: `project`, `task` (Task CR name), `targetColumn`
 - Optional: `cancelRunning` (default `false`), `namespace`
 - Valid columns: `ready`, `in-progress`, `review`, `rework`, `done`, `blocked`
 - Deletes terminal-phase runs; if `cancelRunning: true` also deletes active runs
-- Patches `OpenCodeTask.status.column` (and worker for `in-progress`)
+- Patches `Task.status.column` (and worker for `in-progress`)
 
 **`read_session_live`** — Real-time session message streaming.
 - Requires: `runName`
@@ -306,8 +306,8 @@ kubectl -n percussionist logs deploy/percussionist-web -c tailscale
 ## Packages (dependency order)
 1. `@percussionist/api` - Zod schemas, constants, type helpers
 2. `@percussionist/kube` - Shared K8s client; depends on `api`
-3. `@percussionist/operator` - OpenCodeRun reconciler; creates Pod/Service/Ingress/ConfigMap
+3. `@percussionist/operator` - Run reconciler; creates Pod/Service/Ingress/ConfigMap
 4. `@percussionist/dispatcher` - Sidecar; session lifecycle, SSE streaming, analytics
-5. `@percussionist/manager-controller` - OpenCodeProject board controller + embedded agent module (decision engine, MCP tools on :4097, chat handler on :4098, opencode-web sidecar on :4096)
+5. `@percussionist/manager-controller` - Project board controller + embedded agent module (decision engine, MCP tools on :4097, chat handler on :4098, opencode-web sidecar on :4096)
 6. `@percussionist/web` - Hono + React dashboard; REST APIs, stats DB (SQLite via Drizzle)
 7. `@percussionist/cli` - beatctl CLI; talks to K8s API directly (includes `chat` command)

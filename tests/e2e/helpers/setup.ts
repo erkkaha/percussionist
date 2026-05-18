@@ -116,10 +116,10 @@ metadata:
   namespace: ${ns}
 rules:
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencoderuns"]
+    resources: ["runs"]
     verbs: ["get", "list"]
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencoderuns/status"]
+    resources: ["runs/status"]
     verbs: ["get", "update", "patch"]
   - apiGroups: [""]
     resources: ["configmaps"]
@@ -175,7 +175,7 @@ export async function applyClusterAgents(fileNames: string[]): Promise<void> {
 }
 
 /**
- * Apply an OpenCodeProject manifest inline.
+ * Apply an Project manifest inline.
  * `model` is omitted from the YAML if not provided.
  */
 export async function applyProject(opts: {
@@ -191,7 +191,7 @@ export async function applyProject(opts: {
   const sourceLine = opts.sourceYaml ? `${opts.sourceYaml}\n` : "";
   await kubectlApply(`\
 apiVersion: percussionist.dev/v1alpha1
-kind: OpenCodeProject
+kind: Project
 metadata:
   name: ${opts.name}
   namespace: ${opts.ns}
