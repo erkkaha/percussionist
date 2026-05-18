@@ -4,10 +4,12 @@
 // in the scripts/ package. When they disagree the Zod definition wins at
 // admission time inside the operator.
 //
-// Three CRDs:
+// Five CRDs:
 //   ClusterAgent       — cluster-scoped agent role definitions
-//   OpenCodeProject    — namespace-scoped project config + embedded kanban board
-//   OpenCodeRun        — namespace-scoped task execution
+//   ClusterSettings    — cluster-wide singleton for global configuration
+//   Project            — namespace-scoped project config + settings
+//   Task               — namespace-scoped task (PLAN or BUILD), references a project
+//   Run                — namespace-scoped task execution
 
 import { z } from "zod";
 
@@ -17,14 +19,108 @@ import { z } from "zod";
 export const API_GROUP = "percussionist.dev";
 export const API_VERSION = "v1alpha1";
 export const API_GROUP_VERSION = `${API_GROUP}/${API_VERSION}`;
-export const KIND_RUN = "OpenCodeRun";
-export const PLURAL_RUN = "opencoderuns";
-export const KIND_PROJECT = "OpenCodeProject";
-export const PLURAL_PROJECT = "opencodeprojects";
+export const KIND_RUN = "Run";
+export const PLURAL_RUN = "runs";
+export const KIND_PROJECT = "Project";
+export const PLURAL_PROJECT = "projects";
+export const KIND_TASK = "Task";
+export const PLURAL_TASK = "tasks";
 export const KIND_CLUSTER_AGENT = "ClusterAgent";
 export const PLURAL_CLUSTER_AGENT = "clusteragents";
 export const KIND_CLUSTER_SETTINGS = "ClusterSettings";
 export const PLURAL_CLUSTER_SETTINGS = "clustersettings";
+
+// ---------------------------------------------------------------------------
+// Runner adapter interface
+//
+// Abstraction over any agent runtime (opencode, nanocoder, etc.).
+// The dispatcher receives a RunnerAdapter at startup and never calls
+// runner-specific HTTP endpoints directly.
+
+export interface RunnerMessage {
+  id?: string;
+  sessionID?: string;
+  role?: "user" | "assistant";
+  time?: { created?: number; completed?: number };
+  tokens?: { input?: number; output?: number };
+  error?: unknown;
+  textContent?: string; // pre-extracted concatenated text from all text parts
+}
+
+export type RunnerEvent =
+  | {
+      type: "message.updated";
+      sessionId: string;
+      tokens?: { input: number; output: number };
+    }
+  | { type: "idle"; sessionId: string }
+  | { type: "permission.required"; sessionId: string; permissionId: string };
+
+export interface RunnerAdapter {
+  /** Returns true when the runner HTTP server is accepting requests. */
+  healthCheck(): Promise<boolean>;
+  /** Create a new session. Returns the session id. */
+  createSession(title: string, agent?: string): Promise<{ id: string }>;
+  /** Fire-and-forget: dispatch the initial prompt to an existing session. */
+  sendPrompt(
+    sessionId: string,
+    text: string,
+    opts?: { agent?: string; model?: string },
+  ): Promise<void>;
+  /** Fetch all messages for a session. */
+  getMessages(sessionId: string): Promise<RunnerMessage[]>;
+  /** Post a follow-up text message to an existing session. */
+  sendMessage(sessionId: string, text: string): Promise<void>;
+  /** Respond to a pending permission request. */
+  approvePermission(
+    sessionId: string,
+    permissionId: string,
+    response: "once" | "always" | "reject",
+  ): Promise<void>;
+  /** Async-iterable SSE event stream. Yields events until the signal fires. */
+  streamEvents(signal?: AbortSignal): AsyncIterable<RunnerEvent>;
+  /** List all active session ids (used by interactive mode). */
+  listSessions(): Promise<Array<{ id: string; title?: string }>>;
+}
+
+// ---------------------------------------------------------------------------
+// Runner image / runtime spec
+//
+// Describes how the operator should launch the runner container.
+// Set as ClusterSettings.spec.runnerAdapter to override the opencode defaults.
+
+export interface RunnerImageSpec {
+  /** Container image. Defaults to ghcr.io/anomalyco/opencode:latest */
+  image: string;
+  /** HTTP port the runner listens on. Defaults to 4096. */
+  port: number;
+  /** Command to launch the runner. Defaults to ["opencode","web","--hostname","0.0.0.0","--port","<port>"]. */
+  command?: string[];
+  /** Env var name for the auth blob. Defaults to OPENCODE_AUTH_CONTENT. */
+  authEnvVar: string;
+  /** Env var name for the config blob. Defaults to OPENCODE_CONFIG_CONTENT. */
+  configEnvVar: string;
+  /** Env var name passed to the dispatcher. Defaults to OPENCODE_BASE_URL. */
+  baseUrlEnvVar: string;
+  /** Absolute path inside the container where config is mounted. Defaults to /root/.config/opencode. */
+  configMountPath: string;
+  /** Relative path under configMountPath for agents dir. Defaults to agents. */
+  agentsDirRelative: string;
+  /** Name of the ConfigMap key that holds the runner config JSON. Defaults to opencode.json. */
+  configMapKey: string;
+}
+
+/** Default RunnerImageSpec — points at the opencode runtime. */
+export const OPENCODE_RUNNER_DEFAULTS: RunnerImageSpec = {
+  image: "ghcr.io/anomalyco/opencode:latest",
+  port: 4096,
+  authEnvVar: "OPENCODE_AUTH_CONTENT",
+  configEnvVar: "OPENCODE_CONFIG_CONTENT",
+  baseUrlEnvVar: "OPENCODE_BASE_URL",
+  configMountPath: "/root/.config/opencode",
+  agentsDirRelative: "agents",
+  configMapKey: "opencode.json",
+};
 
 // ---------------------------------------------------------------------------
 // Shared building blocks
@@ -100,9 +196,17 @@ export const GitSourceSchema = z.object({
 
 export type GitSource = z.infer<typeof GitSourceSchema>;
 
-export const SourceSchema = z.object({
-  git: GitSourceSchema.optional(),
-});
+export const SourceSchema = z
+  .object({
+    git: GitSourceSchema.optional(),
+    // When true, no remote is cloned. The workspace is initialised with
+    // `git init` on first use and persisted in the project data PVC at
+    // /data/workspace/.  Mutually exclusive with source.git.
+    local: z.boolean().optional(),
+  })
+  .refine((s) => !(s.git && s.local), {
+    message: "source.git and source.local are mutually exclusive",
+  });
 
 export const ExposeSchema = z
   .object({
@@ -199,7 +303,7 @@ export type ClusterAgent = z.infer<typeof ClusterAgentSchema>;
 // the operator reconciles into those ConfigMaps.
 //
 // Resolution order for any run:
-//   OpenCodeRun.spec  →  BoardSpec.overrides  →  OpenCodeProject.spec  →  ClusterSettings.spec
+//   Run.spec  →  Project.spec (maxParallel/agents overrides)  →  Project.spec  →  ClusterSettings.spec
 
 export const ClusterSettingsSpecSchema = z.object({
   secrets: SecretsRefSchema.optional(),
@@ -231,6 +335,22 @@ export const ClusterSettingsSpecSchema = z.object({
       image: z.string().default("percussionist/runner:dev"),
       timeoutSeconds: z.number().int().positive().default(3600),
       resources: ResourceRequirementsSchema.optional(),
+    })
+    .optional(),
+
+  // Optional override for the runner container image / runtime spec.
+  // When absent, the opencode defaults (OPENCODE_RUNNER_DEFAULTS) are used.
+  runnerAdapter: z
+    .object({
+      image: z.string().optional(),
+      port: z.number().int().min(1).max(65535).optional(),
+      command: z.array(z.string()).optional(),
+      authEnvVar: z.string().optional(),
+      configEnvVar: z.string().optional(),
+      baseUrlEnvVar: z.string().optional(),
+      configMountPath: z.string().optional(),
+      agentsDirRelative: z.string().optional(),
+      configMapKey: z.string().optional(),
     })
     .optional(),
 });
@@ -298,9 +418,9 @@ export const FacilitationResultSchema = z.object({
 export type FacilitationResult = z.infer<typeof FacilitationResultSchema>;
 
 // ---------------------------------------------------------------------------
-// OpenCodeRun — the core CRD reconciled by the operator.
+// Run — the core CRD reconciled by the operator.
 
-export const OpenCodeRunSpecSchema = z
+export const RunSpecSchema = z
   .object({
     // Required: references an OpenCodeProject in the same namespace.
     // Provides provenance and is used to resolve defaults at creation time.
@@ -349,13 +469,24 @@ export const OpenCodeRunSpecSchema = z
     ttlSecondsAfterFinished: z.number().int().nonnegative().default(3600),
     expose: ExposeSchema.optional(),
 
-    // Cache configuration for package manager stores and build artifacts.
-    // Backed by a PVC shared across all runs in the same project.
-    cache: z
+    // Data PVC configuration — backs package manager caches, git mirrors,
+    // worktrees, and local workspaces for the project.
+    data: z
       .object({
-        pvcName: z.string().optional(), // defaults to `{project}-cache`
-        mountPath: z.string().default("/cache"),
+        pvcName: z.string().optional(),    // defaults to `{project}-data`
+        mountPath: z.string().default("/data"),
         storageClass: z.string().optional(), // defaults to cluster default
+      })
+      .optional(),
+
+    // Git workspace caching and persistence options.
+    gitCache: z
+      .object({
+        // When true (default), runs reuse an existing worktree from a previous
+        // run for the same task rather than creating a fresh one.  The init
+        // container runs `git fetch` to update the mirror and then resumes the
+        // worktree as-is.  Set to false to always start with a clean checkout.
+        worktreeReuse: z.boolean().default(true),
       })
       .optional(),
   })
@@ -364,7 +495,7 @@ export const OpenCodeRunSpecSchema = z
     path: ["task"],
   });
 
-export type OpenCodeRunSpec = z.infer<typeof OpenCodeRunSpecSchema>;
+export type RunSpec = z.infer<typeof RunSpecSchema>;
 
 export const RunPhase = {
   Pending: "Pending",
@@ -383,7 +514,7 @@ export const TERMINAL_PHASES: ReadonlySet<RunPhase> = new Set([
   RunPhase.Cancelled,
 ]);
 
-export const OpenCodeRunStatusSchema = z
+export const RunStatusSchema = z
   .object({
     phase: z.enum([
       RunPhase.Pending,
@@ -419,9 +550,9 @@ export const OpenCodeRunStatusSchema = z
   })
   .partial();
 
-export type OpenCodeRunStatus = z.infer<typeof OpenCodeRunStatusSchema>;
+export type RunStatus = z.infer<typeof RunStatusSchema>;
 
-export const OpenCodeRunSchema = z.object({
+export const RunSchema = z.object({
   apiVersion: z.literal(API_GROUP_VERSION),
   kind: z.literal(KIND_RUN),
   metadata: z
@@ -450,17 +581,17 @@ export const OpenCodeRunSchema = z.object({
         .optional(),
     })
     .passthrough(),
-  spec: OpenCodeRunSpecSchema,
-  status: OpenCodeRunStatusSchema.optional(),
+  spec: RunSpecSchema,
+  status: RunStatusSchema.optional(),
 });
 
-export type OpenCodeRun = z.infer<typeof OpenCodeRunSchema>;
+export type Run = z.infer<typeof RunSchema>;
 
 // ---------------------------------------------------------------------------
-// OpenCodeProject — project config + embedded kanban board.
+// Project — project config and settings.
 //
-// The board is auto-created (empty) when the project is created.
-// The manager-controller watches projects and drives the board lifecycle.
+// Tasks are no longer embedded in the project spec. They live as separate
+// Task CRs that reference the project via spec.projectRef.
 
 // Task type enum
 export const TaskType = {
@@ -469,32 +600,28 @@ export const TaskType = {
 } as const;
 export type TaskType = (typeof TaskType)[keyof typeof TaskType];
 
-// A task on the board.
-export const BoardTaskSchema = z.object({
-  // Unique identifier (e.g. "PLAN-1", "BUILD-5"). Immutable once created.
-  id: z.string().min(1).max(32),
+// Task column enum
+export const TaskColumn = {
+  Ready: "ready",
+  InProgress: "in-progress",
+  Review: "review",
+  Rework: "rework",
+  Done: "done",
+  Blocked: "blocked",
+} as const;
+export type TaskColumn = (typeof TaskColumn)[keyof typeof TaskColumn];
 
-  // Task type - PLAN or BUILD.
-  type: z.enum(["PLAN", "BUILD"]),
+// Task phase enum (for kubectl visibility)
+export const TaskPhase = {
+  Pending: "Pending",
+  Active: "Active",
+  Done: "Done",
+  Escalated: "Escalated",
+} as const;
+export type TaskPhase = (typeof TaskPhase)[keyof typeof TaskPhase];
 
-  // Short human-readable title shown on the task card.
-  title: z.string().min(1).max(256),
-
-  // Detailed context + acceptance criteria sent to the worker agent.
-  description: z.string().max(8192).optional(),
-
-  // Priority for ordering within a column.
-  priority: z.enum(["high", "medium", "low"]).default("medium"),
-
-  // Required: which ClusterAgent from board.agents[] handles this task.
-  agent: z.string().min(1),
-});
-
-export type BoardTask = z.infer<typeof BoardTaskSchema>;
-
-// Per-worker execution tracking in board status.
+// Per-worker execution tracking — now lives in Task.status.worker.
 export const WorkerStatusSchema = z.object({
-  taskId: z.string().min(1),
   runName: z.string().optional(),
   status: z.enum(["Running", "Succeeded", "Failed", "Escalated"]),
   branch: z.string().optional(),
@@ -511,7 +638,8 @@ export const WorkerStatusSchema = z.object({
   // BUILD task generation tracking (for PLAN tasks).
   buildTasksFacilitatorRun: z.string().optional(),
   buildTasksCreated: z.boolean().optional(),
-  createdBuildTasks: z.array(z.string()).optional(),
+  // CR names (metadata.name) of BUILD tasks created from this PLAN task.
+  createdBuildTaskRefs: z.array(z.string()).optional(),
   reviewApproved: z.boolean().optional(),
   reviewFeedback: z.string().max(4096).optional(),
   reworkAgent: z.string().max(63).optional(),
@@ -529,34 +657,6 @@ export const PendingQuestionSchema = z.object({
 });
 
 export type PendingQuestion = z.infer<typeof PendingQuestionSchema>;
-
-// Board spec — embedded in OpenCodeProject.
-export const BoardSpecSchema = z.object({
-  // WIP limit: max concurrent worker runs. Default 2.
-  maxParallel: z.number().int().min(1).max(20).default(2),
-
-  // Team roster: which ClusterAgents are available to this board.
-  // Task.agent must reference a name from this list.
-  agents: AgentRefSchema.array().optional(),
-
-  // The task backlog. Placement in columns is tracked in status.board.
-  tasks: BoardTaskSchema.array().max(100).optional(),
-
-  // Overrides for project-level defaults applied to all worker runs.
-  overrides: z
-    .object({
-      model: z.string().optional(),
-      image: z.string().optional(),
-      timeoutSeconds: z.number().int().positive().optional(),
-      resources: ResourceRequirementsSchema.optional(),
-    })
-    .optional(),
-
-  // Board lifecycle.
-  phase: z.enum(["Active", "Complete", "Archived"]).default("Active"),
-});
-
-export type BoardSpec = z.infer<typeof BoardSpecSchema>;
 
 // Manager reconciliation metrics — written by manager-controller on each cycle.
 export const ManagerMetricsSchema = z.object({
@@ -578,17 +678,10 @@ export const ManagerMetricsSchema = z.object({
 
 export type ManagerMetrics = z.infer<typeof ManagerMetricsSchema>;
 
-// Board status — tracked by manager-controller.
+// Project-level board status summary — only lightweight metrics remain here.
+// Full task state lives in Task CRs.
 export const BoardStatusSchema = z.object({
-  columns: z
-    .string()
-    .array()
-    .default(["ready", "in-progress", "review", "rework", "done"]),
-  backlog: z.record(z.string().array()).default({ ready: [] }),
-  workers: WorkerStatusSchema.array().default([]),
   activeWorkers: z.number().int().min(0).default(0),
-  // Task ID sequence counters per type (PLAN, BUILD).
-  sequences: z.record(z.number().int().min(0)).optional(),
   escalations: z.string().array().optional(),
   pendingQuestions: PendingQuestionSchema.array().optional(),
   facilitations: FacilitationResultSchema.array().optional(),
@@ -599,8 +692,8 @@ export const BoardStatusSchema = z.object({
 
 export type BoardStatus = z.infer<typeof BoardStatusSchema>;
 
-// OpenCodeProject spec.
-export const OpenCodeProjectSpecSchema = z.object({
+// Project spec — project config and settings.
+export const ProjectSpecSchema = z.object({
   // Human-readable label for the UI. Falls back to metadata.name.
   displayName: z.string().optional(),
 
@@ -640,21 +733,43 @@ export const OpenCodeProjectSpecSchema = z.object({
   // will cause the pod to fail and not start.
   initScript: z.string().optional(),
 
-  // Embedded kanban board configuration.
-  board: BoardSpecSchema.optional(),
+  // WIP limit: max concurrent worker runs. Default 2.
+  maxParallel: z.number().int().min(1).max(20).default(2),
+
+  // Team roster: which ClusterAgents are available to this project's tasks.
+  // Task.agent must reference a name from this list.
+  agents: AgentRefSchema.array().optional(),
+
+  // Board lifecycle phase.
+  phase: z.enum(["Active", "Complete", "Archived"]).default("Active"),
+
+  // Data PVC configuration — shared cache, git mirrors and worktrees.
+  data: z
+    .object({
+      pvcName: z.string().optional(),    // defaults to `{project}-data`
+      mountPath: z.string().default("/data"),
+      storageClass: z.string().optional(),
+    })
+    .optional(),
+
+  // Git workspace caching and persistence options.
+  gitCache: z
+    .object({
+      worktreeReuse: z.boolean().default(true),
+    })
+    .optional(),
 });
 
-export type OpenCodeProjectSpec = z.infer<typeof OpenCodeProjectSpecSchema>;
+export type ProjectSpec = z.infer<typeof ProjectSpecSchema>;
 
-// OpenCodeProject status.
-export const OpenCodeProjectStatusSchema = z.object({
-  // Embedded board operational state.
+// Project status — summary only; full task state lives in Task CRs.
+export const ProjectStatusSchema = z.object({
   board: BoardStatusSchema.optional(),
 });
 
-export type OpenCodeProjectStatus = z.infer<typeof OpenCodeProjectStatusSchema>;
+export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
 
-export const OpenCodeProjectSchema = z.object({
+export const ProjectSchema = z.object({
   apiVersion: z.literal(API_GROUP_VERSION),
   kind: z.literal(KIND_PROJECT),
   metadata: z
@@ -670,11 +785,104 @@ export const OpenCodeProjectSchema = z.object({
       deletionTimestamp: z.string().optional(),
     })
     .passthrough(),
-  spec: OpenCodeProjectSpecSchema,
-  status: OpenCodeProjectStatusSchema.optional(),
+  spec: ProjectSpecSchema,
+  status: ProjectStatusSchema.optional(),
 });
 
-export type OpenCodeProject = z.infer<typeof OpenCodeProjectSchema>;
+export type Project = z.infer<typeof ProjectSchema>;
+
+// ---------------------------------------------------------------------------
+// Task — a PLAN or BUILD task belonging to a project.
+//
+// Tasks are namespaced CRs that reference their parent Project via
+// spec.projectRef. They carry an ownerReference to the project so they are
+// automatically garbage-collected when the project is deleted.
+//
+// CR naming convention: {project}-plan-{random6} / {project}-build-{random6}
+// The CR metadata.name is the canonical task identifier everywhere.
+
+export const TaskSpecSchema = z.object({
+  // Name of the parent Project in the same namespace.
+  projectRef: z.string().min(1),
+
+  // Task type.
+  type: z.enum(["PLAN", "BUILD"]),
+
+  // Short human-readable title shown on the task card.
+  title: z.string().min(1).max(256),
+
+  // Detailed context + acceptance criteria sent to the worker agent.
+  description: z.string().max(8192).optional(),
+
+  // Priority for ordering within a column.
+  priority: z.enum(["high", "medium", "low"]).default("medium"),
+
+  // Which ClusterAgent from the project's agents list handles this task.
+  agent: z.string().min(1),
+
+  // BUILD only: CR name of the PLAN task that generated this BUILD task.
+  parentTaskRef: z.string().optional(),
+
+  // BUILD only: CR name of the preceding BUILD task in the serial chain.
+  // This BUILD task will remain blocked until its predecessor reaches "done".
+  predecessorRef: z.string().optional(),
+
+  // BUILD only: CR name of the following BUILD task in the serial chain.
+  successorRef: z.string().optional(),
+});
+
+export type TaskSpec = z.infer<typeof TaskSpecSchema>;
+
+export const TaskStatusSchema = z.object({
+  // Kanban column.
+  column: z
+    .enum(["ready", "in-progress", "review", "rework", "done", "blocked"])
+    .default("ready"),
+
+  // High-level phase for kubectl visibility.
+  phase: z
+    .enum(["Pending", "Active", "Done", "Escalated"])
+    .default("Pending"),
+
+  // Worker execution state — set when column is in-progress or beyond.
+  worker: WorkerStatusSchema.optional(),
+});
+
+export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+
+export const TaskSchema = z.object({
+  apiVersion: z.literal(API_GROUP_VERSION),
+  kind: z.literal(KIND_TASK),
+  metadata: z
+    .object({
+      name: z.string(),
+      namespace: z.string().optional(),
+      uid: z.string().optional(),
+      resourceVersion: z.string().optional(),
+      generation: z.number().optional(),
+      labels: z.record(z.string()).optional(),
+      annotations: z.record(z.string()).optional(),
+      creationTimestamp: z.string().optional(),
+      deletionTimestamp: z.string().optional(),
+      ownerReferences: z
+        .array(
+          z.object({
+            apiVersion: z.string(),
+            kind: z.string(),
+            name: z.string(),
+            uid: z.string(),
+            controller: z.boolean().optional(),
+            blockOwnerDeletion: z.boolean().optional(),
+          }),
+        )
+        .optional(),
+    })
+    .passthrough(),
+  spec: TaskSpecSchema,
+  status: TaskStatusSchema.optional(),
+});
+
+export type Task = z.infer<typeof TaskSchema>;
 
 // ---------------------------------------------------------------------------
 // Well-known label/annotation keys and container naming.
@@ -695,13 +903,13 @@ export const CONTAINER_PORT = 4096;
 export const DISPATCHER_MCP_PORT = 4097;
 export const RUNNER_CONTAINER = "opencode";
 export const DISPATCHER_CONTAINER = "dispatcher";
-export const GIT_CLONE_CONTAINER = "git-clone";
+export const GIT_CLONE_CONTAINER = "workspace-init";
 
 // ---------------------------------------------------------------------------
 // Config resolution helpers.
 //
-// Resolves the effective run config by merging project defaults,
-// board overrides (if kanban-spawned), and explicit run-level values.
+// Resolves the effective run config by merging project defaults and
+// explicit run-level values.
 // Called at creation time in CLI and manager-controller.
 
 export interface ResolvedRunConfig {
@@ -710,18 +918,20 @@ export interface ResolvedRunConfig {
   timeoutSeconds: number;
   resources?: ResourceRequirements;
   secrets?: SecretsRef;
-  source?: { git?: GitSource };
+  source?: { git?: GitSource; local?: boolean };
   sidecars?: SidecarSpec[];
   injectFiles?: InjectFileRef[];
   initScript?: string;
+  data?: { pvcName?: string; mountPath?: string; storageClass?: string };
+  gitCache?: { worktreeReuse?: boolean };
 }
 
 // clusterBase — optional cluster-level defaults from ClusterSettings.spec.
 // When provided, its runner defaults and secrets fill gaps in the hierarchy:
-//   runOverrides  >  boardOverrides  >  project  >  clusterBase
+//   runOverrides  >  project  >  clusterBase
 export function resolveRunConfig(
-  project: OpenCodeProjectSpec,
-  boardOverrides?: BoardSpec["overrides"],
+  project: ProjectSpec,
+  boardOverrides?: { model?: string; image?: string; timeoutSeconds?: number; resources?: ResourceRequirements },
   runOverrides?: Partial<ResolvedRunConfig>,
   clusterBase?: {
     runner?: { image?: string; timeoutSeconds?: number; resources?: ResourceRequirements };
@@ -755,5 +965,50 @@ export function resolveRunConfig(
     sidecars: project.sidecars,
     injectFiles: project.injectFiles,
     initScript: project.initScript,
+    data: runOverrides?.data ?? project.data,
+    gitCache: runOverrides?.gitCache ?? project.gitCache,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Backward-compatibility type aliases (deprecated — use the new names above).
+// These will be removed in a future release.
+
+/** @deprecated Use Run */
+export type OpenCodeRun = Run;
+/** @deprecated Use RunSpec */
+export type OpenCodeRunSpec = RunSpec;
+/** @deprecated Use RunStatus */
+export type OpenCodeRunStatus = RunStatus;
+/** @deprecated Use RunSchema */
+export const OpenCodeRunSchema = RunSchema;
+/** @deprecated Use RunSpecSchema */
+export const OpenCodeRunSpecSchema = RunSpecSchema;
+/** @deprecated Use RunStatusSchema */
+export const OpenCodeRunStatusSchema = RunStatusSchema;
+
+/** @deprecated Use Project */
+export type OpenCodeProject = Project;
+/** @deprecated Use ProjectSpec */
+export type OpenCodeProjectSpec = ProjectSpec;
+/** @deprecated Use ProjectStatus */
+export type OpenCodeProjectStatus = ProjectStatus;
+/** @deprecated Use ProjectSchema */
+export const OpenCodeProjectSchema = ProjectSchema;
+/** @deprecated Use ProjectSpecSchema */
+export const OpenCodeProjectSpecSchema = ProjectSpecSchema;
+/** @deprecated Use ProjectStatusSchema */
+export const OpenCodeProjectStatusSchema = ProjectStatusSchema;
+
+/** @deprecated Use Task */
+export type OpenCodeTask = Task;
+/** @deprecated Use TaskSpec */
+export type OpenCodeTaskSpec = TaskSpec;
+/** @deprecated Use TaskStatus */
+export type OpenCodeTaskStatus = TaskStatus;
+/** @deprecated Use TaskSchema */
+export const OpenCodeTaskSchema = TaskSchema;
+/** @deprecated Use TaskSpecSchema */
+export const OpenCodeTaskSpecSchema = TaskSpecSchema;
+/** @deprecated Use TaskStatusSchema */
+export const OpenCodeTaskStatusSchema = TaskStatusSchema;

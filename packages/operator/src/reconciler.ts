@@ -1,4 +1,4 @@
-// reconciler.ts — core reconcile loop for OpenCodeRun CRs.
+// reconciler.ts — core reconcile loop for Run CRs.
 
 import {
   KubeConfig,
@@ -14,11 +14,12 @@ import {
   API_VERSION,
   PLURAL_RUN,
   PLURAL_PROJECT,
+  PLURAL_CLUSTER_SETTINGS,
   RunPhase,
   TERMINAL_PHASES,
-  type OpenCodeRun,
-  type OpenCodeRunStatus,
-  type OpenCodeProject,
+  type Run,
+  type RunStatus,
+  type Project,
   type ClusterSettings,
 } from "@percussionist/api";
 import { resolveAgents } from "./agent-resolver.js";
@@ -34,7 +35,8 @@ import {
   webURLFor,
 } from "./pod-builder.js";
 import { NAMESPACE, SELF_NAMESPACE } from "./config.js";
-import { ensureCachePVC, isPVCBound } from "./pvc-helper.js";
+import { ensureDataPVC, isPVCBound } from "./pvc-helper.js";
+import { resolveRunnerSpec } from "./adapters/opencode-config.js";
 
 const log = (...args: unknown[]) =>
   console.log(`[operator ${new Date().toISOString()}]`, ...args);
@@ -54,8 +56,8 @@ const networking = kc.makeApiClient(NetworkingV1Api);
 // Status writer
 
 async function patchStatus(
-  run: OpenCodeRun,
-  patch: OpenCodeRunStatus,
+  run: Run,
+  patch: RunStatus,
 ): Promise<void> {
   try {
     await co.patchNamespacedCustomObjectStatus(
@@ -256,10 +258,19 @@ async function upsertConfigMap(
   }
 }
 
-export async function reconcile(run: OpenCodeRun): Promise<void> {
+export async function reconcile(run: Run): Promise<void> {
   const name = run.metadata.name;
   const ns = run.metadata.namespace!;
   const currentPhase = run.status?.phase;
+
+  if (currentPhase && TERMINAL_PHASES.has(currentPhase)) return;
+
+  // Resolve runner spec from ClusterSettings (falls back to opencode defaults).
+  const cs = await co.getClusterCustomObject({
+    group: API_GROUP, version: API_VERSION,
+    plural: PLURAL_CLUSTER_SETTINGS, name: "default",
+  }).then((r) => r as ClusterSettings).catch(() => undefined);
+  const runnerSpec = resolveRunnerSpec(cs);
 
   if (currentPhase && TERMINAL_PHASES.has(currentPhase)) return;
 
@@ -290,7 +301,7 @@ export async function reconcile(run: OpenCodeRun): Promise<void> {
     try {
       await core.createNamespacedService({
         namespace: ns,
-        body: renderService(run),
+        body: renderService(run, runnerSpec),
       });
       log(`created service ${ns}/${serviceName(run)}`);
     } catch (e) {
@@ -309,7 +320,7 @@ export async function reconcile(run: OpenCodeRun): Promise<void> {
       try {
         await networking.createNamespacedIngress({
           namespace: ns,
-          body: renderIngress(run),
+          body: renderIngress(run, runnerSpec),
         });
         log(
           `created ingress ${ns}/${ingressName(run)} → ${webURLFor(run)}`,
@@ -347,56 +358,56 @@ export async function reconcile(run: OpenCodeRun): Promise<void> {
     }
   }
 
-  // Ensure cache PVC exists for the project.
+  // Ensure data PVC exists for the project.
   const projectName = run.metadata.labels?.["percussionist.dev/project"];
   if (projectName) {
     try {
-      // Fetch the OpenCodeProject CR to get its UID for owner reference.
+      // Fetch the Project CR to get its UID for owner reference.
       const project = (await co.getNamespacedCustomObject({
         group: API_GROUP,
         version: API_VERSION,
         namespace: ns,
         plural: PLURAL_PROJECT,
         name: projectName,
-      })) as OpenCodeProject;
+      })) as Project;
 
       const projectUid = project.metadata?.uid;
       if (!projectUid) {
         throw new Error(
-          `OpenCodeProject ${ns}/${projectName} missing UID (newly created?)`,
+          `Project ${ns}/${projectName} missing UID (newly created?)`,
         );
       }
 
-      const cachePvcName = run.spec.cache?.pvcName ?? `${projectName}-cache`;
-      const storageClass = run.spec.cache?.storageClass;
+      const dataPvcName = run.spec.data?.pvcName ?? `${projectName}-data`;
+      const storageClass = run.spec.data?.storageClass;
 
       // Ensure PVC exists (idempotent).
-      await ensureCachePVC({
+      await ensureDataPVC({
         projectName,
         namespace: ns,
         projectUid,
         storageClass,
-        pvcName: cachePvcName,
+        pvcName: dataPvcName,
       });
 
       // Check if PVC is bound and ready.
-      const bound = await isPVCBound(ns, cachePvcName);
+      const bound = await isPVCBound(ns, dataPvcName);
       if (!bound) {
         // PVC exists but not yet bound — requeue and wait.
         await patchStatus(run, {
           phase: RunPhase.Pending,
-          message: `waiting for cache PVC ${cachePvcName} to be bound`,
+          message: `waiting for data PVC ${dataPvcName} to be bound`,
         });
-        log(`cache PVC ${ns}/${cachePvcName} not yet bound, requeuing...`);
+        log(`data PVC ${ns}/${dataPvcName} not yet bound, requeuing...`);
         return; // Exit early, will be requeued by informer.
       }
     } catch (e) {
       const msg = (e as Error).message;
       await patchStatus(run, {
         phase: RunPhase.Failed,
-        message: `failed to ensure cache PVC: ${msg}`,
+        message: `failed to ensure data PVC: ${msg}`,
       });
-      err(`cache PVC error for ${ns}/${name}:`, msg);
+      err(`data PVC error for ${ns}/${name}:`, msg);
       throw e;
     }
   }
@@ -409,7 +420,7 @@ export async function reconcile(run: OpenCodeRun): Promise<void> {
     try {
       pod = await core.createNamespacedPod({
         namespace: ns,
-        body: renderPod(run, resolvedAgents, run.spec.sidecars ?? []),
+        body: renderPod(run, resolvedAgents, run.spec.sidecars ?? [], runnerSpec),
       });
       log(`created pod ${ns}/${podName(run)}`);
       await patchStatus(run, {
@@ -491,9 +502,9 @@ function summarizePodFailure(pod?: V1Pod): string {
 
 const queue: string[] = [];
 const pending = new Set<string>();
-const seen = new Map<string, OpenCodeRun>();
+const seen = new Map<string, Run>();
 
-export function enqueue(run: OpenCodeRun): void {
+export function enqueue(run: Run): void {
   const key = `${run.metadata.namespace}/${run.metadata.name}`;
   seen.set(key, run);
   if (!pending.has(key)) {

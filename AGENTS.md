@@ -15,7 +15,7 @@ of TypeScript packages under `packages/*`.
 
 ## Building
 - All packages build with `tsc` (ESM output, ES2022 target, NodeNext module)
-- Web client is built separately via Vite (`pnpm build:client`)
+- Web client is built separately via Vite (run `pnpm build:client` inside `packages/web`, or just use `pnpm build` from the root which handles it)
 - Docker images live in `images/` with multi-stage Dockerfiles:
   - `images/runner/` - opencode + git + ssh + node (Alpine-based)
   - `images/node/` - Shared Node 24 base
@@ -31,36 +31,58 @@ of TypeScript packages under `packages/*`.
 - All deployments are single-replica with `Recreate` strategy (no leader election)
 - In-cluster config by default, falls back to kubeconfig
 
-## Caching
+## Data PVC (Caching + Git)
 - All runs require `metadata.labels["percussionist.dev/project"]` label
-- Cache PVC (`{project}-cache`) is auto-created per project with RWX access mode
-- Cache structure:
-  - `/cache/pnpm/` - pnpm home and global bins
-  - `/cache/pnpm-store/` - pnpm store directory
-  - `/cache/npm/` - npm cache
-  - `/cache/bun/` - bun install cache
-  - `/cache/turbo/` - Turbo build cache
-- Cache size: 5Gi (default, configurable via `spec.cache` in future)
-- Cache lifecycle: Tied to OpenCodeProject (auto-deleted when project is deleted)
+- Data PVC (`{project}-data`) is auto-created per project with RWX access mode
+- PVC layout:
+  - `/data/cache/pnpm/` - pnpm home and global bins
+  - `/data/cache/pnpm-store/` - pnpm store directory
+  - `/data/cache/npm/` - npm cache
+  - `/data/cache/bun/` - bun install cache
+  - `/data/cache/turbo/` - Turbo build cache
+  - `/data/git-mirrors/{url-hash}/` - bare git mirror (one per remote repo URL)
+  - `/data/worktrees/{run-name}/` - per-run worktree checkout (remote git)
+  - `/data/workspace/` - persistent local git workspace (`source.local: true`)
+- PVC size: 10Gi (default)
+- PVC lifecycle: Tied to OpenCodeProject (auto-deleted when project is deleted)
 - Storage: Uses cluster default storage class with ReadWriteMany access mode
   - For RWX support on minikube/k3s, requires NFS or similar provisioner
   - Falls back gracefully if PVC creation fails
-- Override PVC name via `spec.cache.pvcName` (optional)
-- Override storage class via `spec.cache.storageClass` (optional)
-- Override mount path via `spec.cache.mountPath` (defaults to `/cache`)
+- Override PVC name via `spec.data.pvcName` (optional)
+- Override storage class via `spec.data.storageClass` (optional)
+- Override mount path via `spec.data.mountPath` (defaults to `/data`)
+
+## Git Workspace Modes
+
+### Remote git (`source.git`)
+- First run: clones a bare mirror to `/data/git-mirrors/{hash}/` then creates a worktree at `/data/worktrees/{run-name}/`
+- Subsequent runs: `git fetch` updates the mirror; worktree is reused by default (`gitCache.worktreeReuse: true`)
+- Set `gitCache.worktreeReuse: false` to always start from a clean checkout
+- Agent can push to the real remote — `remote set-url` restores the real URL after mirror-based setup
+- Mirror fetches are serialized with `flock` so parallel runs don't corrupt the bare repo
+- Worktree cleanup: when a task moves to `done` the manager spawns a short-lived cleanup pod that removes the worktree dir and calls `git worktree prune` on the mirror
+
+### Local git (`source.local: true`)
+- No remote URL required — mutually exclusive with `source.git`
+- Workspace initialised with `git init` + empty commit on first use
+- Persists across runs at `/data/workspace/` — agent commits accumulate
+- Sample: `k8s/samples/local-git-project.yaml`
 
 ## Architecture
 - All packages are ESM (`"type": "module"`)
 - Strict TypeScript everywhere (`noUncheckedIndexedAccess`, `noImplicitOverride`)
-- Zod schemas in `@percussionist/api` are the single source of truth for CRDs
+- Zod schemas in `@percussionist/api` are the single source of truth for CRDs (5 CRDs: `OpenCodeRun`, `OpenCodeProject`, `OpenCodeTask`, `ClusterAgent`, `ClusterSettings`)
 - CRD YAML is generated from Zod (`packages/api/codegen/`)
 - Operator and Manager use `makeInformer` + in-memory work queue pattern
 - API group: `percussionist.dev/v1alpha1`
+- Tasks are first-class `OpenCodeTask` CRs (not embedded in project spec); task state is authoritative in `OpenCodeTask.status`; project `spec.agents`, `spec.maxParallel`, `spec.phase` are top-level (no `spec.board` key)
 - `opencode-web` supports MCP servers via the `mcp` config key (not `mcpServers` — that was a legacy format); the manager's agent-config ConfigMap uses `mcp` with `type: "remote"` pointing at the in-process MCP server on :4097.
 
 ## Database (SQLite — `@percussionist/web`)
 
 The web server uses bun:sqlite via Drizzle ORM. Schema and migrations are managed by drizzle-kit.
+
+**Tables:** `runs`, `messages`, `toolCalls`, `fileOps`, `taskEvents` (append-only audit log of `OpenCodeTask` state transitions — live task state is authoritative in the CRD status subresource).
 
 **Key files:**
 - `packages/web/src/server/schema.ts` — Drizzle table definitions (single source of truth; no driver imports, safe for drizzle-kit)
@@ -124,28 +146,40 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 
 | Tool | Purpose |
 |------|---------|
-| `inspect_cr` | Get full details of a CR (OpenCodeRun, OpenCodeProject, ClusterAgent) |
+| `inspect_cr` | Get full details of a CR (OpenCodeRun, OpenCodeProject, OpenCodeTask, ClusterAgent) |
 | `list_crs` | List CRs of a given kind with optional labelSelector |
 | `read_logs` | Read pod logs for a run (default: opencode container, last 100 lines) |
-| `read_session` | Read session messages (tries live API first, falls back to ConfigMap) |
-| `read_session_live` | Incremental session messages with `since`/`nextSince` for polling |
-| `patch_board` | Modify board state (backlog columns, workers) via status subresource |
+| `read_session` | Read session messages from a completed run's ConfigMap snapshot |
+| `read_session_live` | Incremental session messages with `since`/`nextSince` for polling (tries live API first, falls back to ConfigMap) |
+| `patch_board` | Merge-patch `OpenCodeProject.status.board` (escalations, pendingQuestions, facilitations, managerMetrics) |
 | `delete_run` | Delete an OpenCodeRun by name |
-| `create_run` | Create a new run for a board task (task must be in "ready" column) |
-| `force_retry` | Clean terminal-phase runs, reset board state, create fresh run |
+| `create_run` | Create a new run for a task (task must be in "ready" column); updates `OpenCodeTask.status` atomically |
+| `force_retry` | Clean terminal-phase runs, reset task to ready or in-progress via `OpenCodeTask.status` |
+| `set_task_state` | Atomically move a task to a target column, clean up runs, optionally cancel running runs |
+| `read_manager_logs` | Read logs from the manager controller pod |
+| `pause_reconciliation` | Pause the manager reconcile loop for a project (auto-resumes after timeout) |
+| `resume_reconciliation` | Resume a paused reconcile loop |
+| `get_reconcile_status` | Check whether the reconcile loop is paused and when it was last paused |
 
 **`create_run`** — Direct run creation without waiting for reconcile cycle.
-- Requires: `project`, `task` (board task ID)
+- Requires: `project`, `task` (OpenCodeTask CR name)
 - Optional: `agent`, `model`, `retryCount`, `reworkFeedback`, `namespace`
 - Errors if the task is not in the "ready" column (use `force_retry` first)
-- Moves task to "in-progress" and updates board status atomically
+- Moves task to "in-progress" and patches `OpenCodeTask.status.worker` atomically
 
 **`force_retry`** — One-shot cleanup and restart for stuck tasks.
-- Requires: `project`, `task` (board task ID)
+- Requires: `project`, `task` (OpenCodeTask CR name)
 - Optional: `createRun` (default `true`), `namespace`
 - Deletes all terminal-phase runs (Succeeded/Failed/Cancelled) for the task
-- Resets board state: removes worker entry, moves task to "ready"
-- If `createRun: true`, immediately creates a fresh run with retryCount=0
+- If `createRun: true`: resets task to "in-progress" with fresh worker via `patchTaskStatus`
+- If `createRun: false`: resets task column to "ready" via `patchTaskStatus`
+
+**`set_task_state`** — Atomic task column transition.
+- Requires: `project`, `task` (OpenCodeTask CR name), `targetColumn`
+- Optional: `cancelRunning` (default `false`), `namespace`
+- Valid columns: `ready`, `in-progress`, `review`, `rework`, `done`, `blocked`
+- Deletes terminal-phase runs; if `cancelRunning: true` also deletes active runs
+- Patches `OpenCodeTask.status.column` (and worker for `in-progress`)
 
 **`read_session_live`** — Real-time session message streaming.
 - Requires: `runName`
@@ -153,6 +187,11 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 - Returns `{ messages, total, nextSince, runPhase, sessionID, source }`
 - Poll with `since = prev.nextSince` for incremental reads
 - Falls back to ConfigMap snapshot if run pod is gone
+
+**`pause_reconciliation`** — Prevent the manager from overriding manual board patches.
+- Requires: `project`
+- Optional: `durationSeconds` (default: 300), `namespace`
+- Auto-resumes after the specified duration
 
 ## Image Build & Load Pitfalls
 

@@ -1,20 +1,21 @@
-// reconciler.ts — reconciles a single OpenCodeProject's board.
+// reconciler.ts — reconciles a single Project's board.
+//
+// Task state is authoritative in Task CRs (status subresource).
+// The project CR status carries only lightweight summary metrics.
 
 import { randomBytes } from "node:crypto";
 import {
   KubeConfig,
   CustomObjectsApi,
-  makeInformer,
 } from "@kubernetes/client-node";
 import {
-  API_GROUP,
-  API_VERSION,
-  PLURAL_PROJECT,
-  type OpenCodeProject,
-  type BoardStatus,
+  API_GROUP_VERSION,
+  PLURAL_TASK,
+  type Project,
+  type Task,
   type WorkerStatus,
+  type BoardStatus,
   type FacilitationResult,
-  type ManagerMetrics,
 } from "@percussionist/api";
 import {
   createRun,
@@ -24,26 +25,27 @@ import {
   getProject,
   patchProject,
   patchProjectStatus,
-  patchProjectSpec,
+  listTasks,
+  createTask,
+  deleteTask,
+  patchTaskStatus,
+  buildTask,
   readSessionConfigMap,
 } from "@percussionist/kube";
-import { buildWorkerRun, buildMergeRun, workerRunName, MAX_RETRIES } from "./worker-builder.js";
-import { buildFacilitationRun, buildSuccessReviewRun, parseFacilitationResult, buildBuildTaskGeneratorRun, parseBuildTaskDefinitions } from "./facilitator.js";
+import { buildWorkerRun, buildMergeRun, workerRunName, auxiliaryRunName, MAX_RETRIES } from "./worker-builder.js";
+import { spawnWorktreeCleanupPod } from "./worktree-cleanup.js";
+import {
+  buildFacilitationRun,
+  buildSuccessReviewRun,
+  parseFacilitationResult,
+  buildBuildTaskGeneratorRun,
+  parseBuildTaskDefinitions,
+} from "./facilitator.js";
 import { isAgentReady } from "./agent/index.js";
 import { analyzeFailure, parseRawFacilitation, parseRawReview, parseRawBuildTaskGen } from "./agent/decision-engine.js";
-import {
-  getTasksToPull,
-  getTasksToRework,
-  moveTask,
-  updateWorker,
-  upsertWorker,
-} from "./task-scheduler.js";
-import {
-  syncBoard,
-  ensureAndGetBoard,
-  boardWorkerRowToWorkerStatus,
-} from "./board-client.js";
+import { getTasksToPull, getTasksToRework } from "./task-scheduler.js";
 import { backfillStats } from "./stats-backfill.js";
+import { emitEvent } from "./events.js";
 
 const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
 
@@ -65,15 +67,70 @@ export const k8s = kc.makeApiClient(CustomObjectsApi);
 export { kc };
 
 // ---------------------------------------------------------------------------
+// Helpers
+
+/** Patch just the worker field on a task status. Best-effort — logs errors. */
+async function patchWorker(
+  taskName: string,
+  patch: Partial<WorkerStatus>,
+  existingWorker: WorkerStatus | undefined,
+  ns: string,
+): Promise<void> {
+  try {
+    await patchTaskStatus(taskName, { worker: { ...(existingWorker ?? { status: "Running", retryCount: 0, facilitated: false }), ...patch } }, ns);
+  } catch (e) {
+    err(`patchWorker(${taskName}) failed:`, (e as Error).message);
+  }
+}
+
+/** Move a task to a new column. */
+async function moveTaskColumn(
+  taskName: string,
+  column: string,
+  ns: string,
+): Promise<void> {
+  try {
+    await patchTaskStatus(taskName, { column: column as "ready" | "in-progress" | "review" | "rework" | "done" | "blocked" }, ns);
+  } catch (e) {
+    err(`moveTaskColumn(${taskName} → ${column}) failed:`, (e as Error).message);
+  }
+}
+
+/**
+ * Spawns a worktree cleanup pod for a completed task (fire-and-forget).
+ * Only triggers when the task has a remote git source (worktrees live under
+ * /data/worktrees/{runName}/).  Local workspaces (/data/workspace/) are
+ * persistent and must not be cleaned up.
+ */
+async function cleanupWorktree(
+  task: Task,
+  runName: string,
+  project: { name: string; image: string; gitUrl?: string; dataPvcName?: string; dataMountPath?: string },
+  ns: string,
+): Promise<void> {
+  // Only clean up if there is a remote git source — local workspaces persist.
+  if (!project.gitUrl) return;
+  await spawnWorktreeCleanupPod({
+    task,
+    runName,
+    projectName: project.name,
+    namespace: ns,
+    image: project.image,
+    dataMountPath: project.dataMountPath,
+    dataPvcName: project.dataPvcName,
+    gitUrl: project.gitUrl,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main reconcile
 
-export async function reconcile(project: OpenCodeProject): Promise<void> {
+export async function reconcile(project: Project): Promise<void> {
   const startTime = Date.now();
 
   try {
     await runReconcileCycle(project, startTime);
   } catch (e) {
-    // On any unrecoverable error, still attempt to write failure metrics.
     const projectName = project.metadata.name;
     const ns = project.metadata.namespace ?? NAMESPACE;
     const reconcileDuration = Date.now() - startTime;
@@ -87,8 +144,11 @@ export async function reconcile(project: OpenCodeProject): Promise<void> {
               lastReconcileDurationMs: reconcileDuration,
               lastReconcileResult: "error",
               lastError: (e as Error).message,
+              tasksPulled: 0,
+              workersMonitored: 0,
+              tasksReworked: 0,
             },
-          } as Partial<BoardStatus>,
+          },
         },
         ns,
       ).catch(() => {});
@@ -99,7 +159,7 @@ export async function reconcile(project: OpenCodeProject): Promise<void> {
   }
 }
 
-async function runReconcileCycle(project: OpenCodeProject, startTime: number): Promise<void> {
+async function runReconcileCycle(project: Project, startTime: number): Promise<void> {
   const projectName = project.metadata.name;
   const ns = project.metadata.namespace ?? NAMESPACE;
 
@@ -107,206 +167,24 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
   let workersMonitored = 0;
   let tasksReworked = 0;
 
-  // Always fetch a fresh copy — the informer object may be stale relative to
-  // status subresource updates (status patches don't bump metadata.resourceVersion
-  // seen by the informer cache in all K8s versions).
+  // Always fetch a fresh copy of the project.
   const fresh = await getProject(projectName, ns, k8s);
-  const board = fresh.spec.board;
 
-  // No board config — nothing to drive.
-  if (!board) return;
-  if (board.phase === "Archived") return;
+  // Build the project context used by worktree cleanup helpers.
+  const cleanupProject = {
+    name: projectName,
+    image: fresh.spec.image ?? "percussionist/runner:dev",
+    gitUrl: fresh.spec.source?.git?.url,
+    dataPvcName: fresh.spec.data?.pvcName ?? `${projectName}-data`,
+    dataMountPath: fresh.spec.data?.mountPath ?? "/data",
+  };
 
-  // Read authoritative board state from SQLite (web server's DB).
-  // Falls back to CR status on SQLite error so the reconciler degrades gracefully.
-  const specTaskIds = (board.tasks ?? []).map((t) => t.id);
-  let boardStatus: BoardStatus;
-  let backlog: Record<string, string[]>;
-  let workers: WorkerStatus[];
+  // No phase or Archived → nothing to drive.
+  if (fresh.spec.phase === "Archived") return;
 
-  try {
-    const fullBoard = await ensureAndGetBoard(projectName, specTaskIds);
-    backlog = fullBoard.columns;
-    workers = Object.values(fullBoard.workers).map(boardWorkerRowToWorkerStatus);
-    boardStatus = fresh.status?.board ?? {
-      columns: ["ready", "in-progress", "review", "rework", "done"],
-      backlog,
-      workers,
-      activeWorkers: fullBoard.activeWorkers,
-    };
-    // Sync in-memory boardStatus backlog/workers from SQLite source-of-truth.
-    boardStatus = { ...boardStatus, backlog, workers };
-  } catch (e) {
-    log(`SQLite board read failed, falling back to CR status: ${(e as Error).message}`);
-    // Fallback: use CR status (old behaviour).
-    boardStatus = fresh.status?.board ?? {
-      columns: ["ready", "in-progress", "review", "rework", "done"],
-      backlog: { ready: [] },
-      workers: [],
-      activeWorkers: 0,
-    };
-    backlog = boardStatus.backlog ?? { ready: [] };
-    workers = boardStatus.workers ?? [];
-  }
+  // Load all task CRs for this project.
+  const tasks = await listTasks(projectName, ns);
 
-  const specTaskIdsSet = new Set(specTaskIds);
-
-  // Prune: remove tasks from the backlog that no longer exist in spec.board.tasks.
-  const prunedBacklog: Record<string, string[]> = {};
-  for (const [col, ids] of Object.entries(backlog)) {
-    const kept = (ids as string[]).filter((id) => specTaskIdsSet.has(id));
-    const pruned = (ids as string[]).filter((id) => !specTaskIdsSet.has(id));
-    if (pruned.length > 0) {
-      log(`pruning ${pruned.join(", ")} from backlog column "${col}" — not in spec.board.tasks`);
-    }
-    prunedBacklog[col] = kept;
-  }
-  backlog = prunedBacklog;
-
-  // Repair: any task in spec.board.tasks not present in any backlog column
-  // gets placed into "ready".
-  const placedIds = new Set(Object.values(backlog).flat());
-  const unplaced = [...specTaskIdsSet].filter((id) => !placedIds.has(id));
-  if (unplaced.length > 0) {
-    log(`repairing ${unplaced.length} unplaced task(s) → ready: ${unplaced.join(", ")}`);
-    backlog = { ...backlog, ready: [...(backlog["ready"] ?? []), ...unplaced] };
-  }
-
-  // Clean up: move escalated tasks out of in-progress to unblock WIP slots.
-  const inProgress = backlog["in-progress"] ?? [];
-  const escalatedInProgress = inProgress.filter((taskId) => {
-    const worker = workers.find((w) => w.taskId === taskId);
-    return worker?.status === "Escalated";
-  });
-  if (escalatedInProgress.length > 0) {
-    log(`moving ${escalatedInProgress.length} escalated task(s) from in-progress → review: ${escalatedInProgress.join(", ")}`);
-    for (const taskId of escalatedInProgress) {
-      backlog = moveTask(backlog, taskId, "review");
-    }
-  }
-
-  // Self-heal: a worker marked Running must have a runName and be present in
-  // backlog.in-progress. If not, it blocks scheduling forever.
-  // Skip workers that already have a runName - those are handled by the monitor phase.
-  log("=== STARTING REPAIR CHECK ===");
-  const inProgressSet = new Set(backlog["in-progress"] ?? []);
-  const runningWorkers = workers.filter((w) => w.status === "Running");
-  log(`=== REPAIR: ${runningWorkers.length} running workers, inProgressSet=${JSON.stringify([...inProgressSet])} ===`);
-  const staleRunningWorkers = runningWorkers.filter((w) => !w.runName && !inProgressSet.has(w.taskId));
-  log(`=== REPAIR: ${staleRunningWorkers.length} stale workers: ${staleRunningWorkers.map(w => w.taskId).join(", ")} ===`);
-  if (staleRunningWorkers.length > 0) {
-    log(
-      `repairing ${staleRunningWorkers.length} stale running worker(s): ${staleRunningWorkers.map((w) => w.taskId).join(", ")}`,
-    );
-    for (const stale of staleRunningWorkers) {
-      if (stale.runName) {
-        try {
-          const staleRun = await getRun(stale.runName, ns, k8s);
-          const stalePhase = staleRun.status?.phase;
-          if (stalePhase === "Succeeded") {
-            workers = updateWorker(workers, stale.taskId, {
-              status: "Succeeded",
-              completedAt: new Date().toISOString(),
-            });
-            backlog = moveTask(backlog, stale.taskId, "review");
-            continue;
-          }
-          if (stalePhase === "Failed" || stalePhase === "Cancelled") {
-            workers = updateWorker(workers, stale.taskId, {
-              status: "Failed",
-              completedAt: new Date().toISOString(),
-            });
-            backlog = moveTask(backlog, stale.taskId, "rework");
-            continue;
-          }
-
-          // Run is still active; reattach the task into in-progress.
-          backlog = moveTask(backlog, stale.taskId, "in-progress");
-          continue;
-        } catch {
-          // Fall through to mark failed below.
-        }
-      }
-
-      workers = updateWorker(workers, stale.taskId, {
-        status: "Failed",
-        completedAt: new Date().toISOString(),
-      });
-      backlog = moveTask(backlog, stale.taskId, "rework");
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // PULL PHASE: move ready tasks → in-progress, create worker runs.
-  // ------------------------------------------------------------------
-  const tasksToPull = getTasksToPull(fresh, { ...boardStatus, backlog });
-
-  for (const taskId of tasksToPull) {
-    tasksPulled++;
-    const taskDef = (board.tasks ?? []).find((t) => t.id === taskId);
-    if (!taskDef) {
-      err(`task ${taskId} in backlog but not in spec.board.tasks — skipping`);
-      continue;
-    }
-
-    const teamNames = (board.agents ?? []).map((a) => a.name);
-    if (!teamNames.includes(taskDef.agent)) {
-      err(`task ${taskId} agent "${taskDef.agent}" not in board.agents roster — skipping`);
-      continue;
-    }
-
-    const existingWorker = workers.find((w) => w.taskId === taskId);
-    const retryCount = existingWorker?.retryCount ?? 0;
-    const runName = workerRunName(projectName, taskId, retryCount);
-
-    backlog = moveTask(backlog, taskId, "in-progress");
-
-    const newWorker: WorkerStatus = {
-      taskId,
-      runName,
-      status: "Running",
-      branch: `feat/${taskId}`,
-      startedAt: new Date().toISOString(),
-      retryCount,
-      facilitated: false,
-    };
-    workers = upsertWorker(workers, newWorker);
-
-    const workerRun = buildWorkerRun(fresh, taskDef, runName, retryCount);
-    try {
-      // Guard against duplicate runs: check if the run already exists before
-      // creating it.  Two reconcile cycles can overlap when a status patch is
-      // delayed, so we must not blindly create and rely on AlreadyExists.
-      let skipCreate = false;
-      try {
-        const existing = await getRun(runName, ns, k8s);
-        const existingPhase = existing.status?.phase;
-        if (existingPhase === "Failed" || existingPhase === "Cancelled") {
-          log(`deleting stale ${existingPhase} run ${runName} before recreating for task ${taskId}`);
-          await deleteRun(runName, ns, k8s);
-        } else {
-          // Run exists and is active — reattach rather than duplicate.
-          log(`run ${runName} already exists (phase: ${existingPhase ?? "pending"}), reattaching for task ${taskId}`);
-          skipCreate = true;
-        }
-      } catch {
-        // 404 — run does not exist, proceed with creation.
-      }
-
-      if (!skipCreate) {
-        await createRun(workerRun, ns, k8s);
-        log(`created worker run ${runName} for task ${taskId}`);
-      }
-    } catch (e) {
-      err(`failed to create worker run for ${taskId}:`, (e as Error).message);
-      backlog = moveTask(backlog, taskId, "ready");
-      workers = workers.filter((w) => w.taskId !== taskId);
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // MONITOR PHASE: poll each Running worker's OpenCodeRun status.
-  // ------------------------------------------------------------------
   const FAILURE_FACILITATOR_AGENT =
     process.env.FAILURE_FACILITATOR_AGENT_NAME ??
     process.env.FACILITATOR_AGENT_NAME ??
@@ -320,47 +198,132 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
     process.env.FACILITATOR_AGENT_NAME ??
     "facilitator-buildgen";
 
-  const failureFacilitatorEnabled = (board.agents ?? []).some(
+  const failureFacilitatorEnabled = (fresh.spec.agents ?? []).some(
     (a) => a.name === FAILURE_FACILITATOR_AGENT,
   );
-  const reviewFacilitatorEnabled = (board.agents ?? []).some(
+  const reviewFacilitatorEnabled = (fresh.spec.agents ?? []).some(
     (a) => a.name === REVIEW_FACILITATOR_AGENT,
   );
-  const buildgenFacilitatorEnabled = (board.agents ?? []).some(
+  const buildgenFacilitatorEnabled = (fresh.spec.agents ?? []).some(
     (a) => a.name === BUILDGEN_FACILITATOR_AGENT,
   );
 
-  for (const worker of workers.filter(
-    (w) => w.status === "Running" || (w.status === "Succeeded" && !backlog["done"]?.includes(w.taskId)),
-  )) {
-    workersMonitored++;
-    if (!worker.runName) continue;
+  // Clean up: move escalated tasks out of in-progress to unblock WIP slots.
+  const escalatedInProgress = tasks.filter(
+    (t) => t.status?.column === "in-progress" && t.status?.worker?.status === "Escalated",
+  );
+  for (const task of escalatedInProgress) {
+    log(`moving escalated task ${task.metadata.name} from in-progress → review`);
+    await moveTaskColumn(task.metadata.name, "review", ns);
+    emitEvent(projectName, task.metadata.name, task.spec.type, "column.changed", { from: "in-progress", to: "review", reason: "escalated" });
+  }
+
+  // Reload tasks after potential column moves above.
+  const freshTasks = await listTasks(projectName, ns);
+
+  // ------------------------------------------------------------------
+  // PULL PHASE: move ready tasks → in-progress, create worker runs.
+  // ------------------------------------------------------------------
+  const tasksToPull = getTasksToPull(fresh, freshTasks);
+
+  for (const task of tasksToPull) {
+    tasksPulled++;
+    const taskName = task.metadata.name;
+    const teamNames = (fresh.spec.agents ?? []).map((a) => a.name);
+    if (task.spec.agent && !teamNames.includes(task.spec.agent)) {
+      err(`task ${taskName} agent "${task.spec.agent}" not in agents roster — skipping`);
+      continue;
+    }
+
+    const existingWorker = task.status?.worker;
+    const retryCount = existingWorker?.retryCount ?? 0;
+    const runName = workerRunName(projectName, taskName, retryCount);
+
+    // Move to in-progress and update worker state.
+    await patchTaskStatus(taskName, {
+      column: "in-progress",
+      worker: {
+        ...(existingWorker ?? {}),
+        runName,
+        status: "Running",
+        branch: `feat/${taskName}`,
+        startedAt: new Date().toISOString(),
+        retryCount,
+        facilitated: false,
+      },
+    }, ns);
+
+    const workerRun = buildWorkerRun(fresh, task, runName, retryCount);
     try {
-      const run = await getRun(worker.runName, ns, k8s);
+      let skipCreate = false;
+      try {
+        const existing = await getRun(runName, ns, k8s);
+        const existingPhase = existing.status?.phase;
+        if (existingPhase === "Failed" || existingPhase === "Cancelled") {
+          log(`deleting stale ${existingPhase} run ${runName} before recreating for task ${taskName}`);
+          await deleteRun(runName, ns, k8s);
+        } else {
+          log(`run ${runName} already exists (phase: ${existingPhase ?? "pending"}), reattaching for task ${taskName}`);
+          skipCreate = true;
+        }
+      } catch {
+        // 404 — run does not exist, proceed.
+      }
+
+      if (!skipCreate) {
+        await createRun(workerRun, ns, k8s);
+        log(`created worker run ${runName} for task ${taskName}`);
+        emitEvent(projectName, taskName, task.spec.type, "run.created", { runName, agent: task.spec.agent ?? "", retryCount });
+      }
+    } catch (e) {
+      err(`failed to create worker run for ${taskName}:`, (e as Error).message);
+      // Roll back: move task back to ready.
+      await patchTaskStatus(taskName, { column: "ready" }, ns);
+      emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "ready", reason: "run-create-failed" });
+    }
+  }
+
+  // Reload tasks again after pull phase mutations.
+  const postPullTasks = await listTasks(projectName, ns);
+
+  // ------------------------------------------------------------------
+  // MONITOR PHASE: poll each Running worker's Run status.
+  // ------------------------------------------------------------------
+  const runningTasks = postPullTasks.filter(
+    (t) =>
+      (t.status?.worker?.status === "Running" ||
+        (t.status?.worker?.status === "Succeeded" && t.status?.column !== "done")) &&
+      !!t.status?.worker?.runName,
+  );
+
+  for (const task of runningTasks) {
+    workersMonitored++;
+    const taskName = task.metadata.name;
+    const worker = task.status!.worker!;
+    const runName = worker.runName!;
+
+    try {
+      const run = await getRun(runName, ns, k8s);
       const runPhase = run.status?.phase;
 
       if (runPhase === "Succeeded") {
-        // Best-effort stats backfill: if the dispatcher missed sending stats
-        // (e.g., pod killed), post them now from the session ConfigMap.
+        // Best-effort stats backfill.
         if (run.status?.sessionID) {
           backfillStats(
-            worker.runName,
+            runName,
             run.status.sessionID,
             ns,
             "Succeeded",
-            (board.tasks ?? []).find((t) => t.id === worker.taskId)?.id,
+            taskName,
             run.spec.model,
             run.spec.agent,
             run.status.startedAt,
             run.status.completedAt,
           ).catch(() => {});
         }
-        const taskDef = (board.tasks ?? []).find((t) => t.id === worker.taskId);
 
-        // Success-review gate: if a reviewer agent is in the team roster,
-        // spawn a success-review facilitator run before moving to done.
-        if (reviewFacilitatorEnabled && taskDef && !worker.reviewRunName) {
-          // First time we see this worker Succeeded — spawn a review run.
+        // Success-review gate.
+        if (reviewFacilitatorEnabled && !worker.reviewRunName) {
           let sessionSummary = "";
           if (run.status?.sessionID && run.status?.serviceName) {
             try {
@@ -371,158 +334,133 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
               );
               if (sessionData && typeof sessionData === "object" && "messages" in sessionData) {
                 const msgs = (sessionData.messages as Array<{ content?: string }>)
-                  .slice(-20)
-                  .map((m) => m.content)
-                  .filter(Boolean)
-                  .join("\n");
+                  .slice(-20).map((m) => m.content).filter(Boolean).join("\n");
                 sessionSummary = msgs.slice(0, 8000);
               }
             } catch { /* best effort */ }
           }
 
-          const reviewRunName = `${projectName}-review-${worker.taskId.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${randomBytes(3).toString("hex")}`;
+          const reviewRunName = auxiliaryRunName(projectName, "review", taskName, randomBytes(3).toString("hex"));
           const reviewRun = buildSuccessReviewRun(
-            fresh,
-            taskDef,
-            worker.runName!,
-            run.status ?? {},
-            sessionSummary,
-            reviewRunName,
-            worker.branch,
-            REVIEW_FACILITATOR_AGENT,
+            fresh, task, runName, run.status ?? {}, sessionSummary,
+            reviewRunName, worker.branch, REVIEW_FACILITATOR_AGENT,
           );
 
           try {
             await createRun(reviewRun, ns, k8s);
-            workers = updateWorker(workers, worker.taskId, {
+            await patchWorker(taskName, {
               status: "Succeeded",
               completedAt: new Date().toISOString(),
               reviewRunName,
-            });
-            log(`spawned success reviewer ${reviewRunName} for succeeded task ${worker.taskId}`);
+            }, worker, ns);
+            log(`spawned success reviewer ${reviewRunName} for task ${taskName}`);
+            emitEvent(projectName, taskName, task.spec.type, "reviewer.spawned", { runName: reviewRunName, agent: REVIEW_FACILITATOR_AGENT });
           } catch (e) {
-            // If we can't spawn the reviewer, fall back to moving straight to review.
-            err(`failed to create success review run for ${worker.taskId}:`, (e as Error).message);
-            workers = updateWorker(workers, worker.taskId, {
-              status: "Succeeded",
-              completedAt: new Date().toISOString(),
-            });
-            backlog = moveTask(backlog, worker.taskId, "review");
-            log(`worker ${worker.runName} succeeded (no reviewer) → task ${worker.taskId} in review`);
+            err(`failed to create success review run for ${taskName}:`, (e as Error).message);
+            await patchWorker(taskName, { status: "Succeeded", completedAt: new Date().toISOString() }, worker, ns);
+            await moveTaskColumn(taskName, "review", ns);
+            log(`worker ${runName} succeeded (no reviewer) → task ${taskName} in review`);
+            emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "review", reason: "succeeded" });
           }
-        } else if (reviewFacilitatorEnabled && taskDef && worker.reviewRunName) {
-          // Review run already spawned — check its result.
+        } else if (reviewFacilitatorEnabled && worker.reviewRunName) {
           let reviewRun: Awaited<ReturnType<typeof getRun>> | null = null;
           try {
             reviewRun = await getRun(worker.reviewRunName, ns, k8s);
-          } catch { /* not found yet — wait */ }
+          } catch { /* not found yet */ }
 
-          let result = null;
+          let result: FacilitationResult | null = null;
           try {
             result = await parseFacilitationResult(
-              worker.reviewRunName,
-              ns,
-              reviewRun?.status?.serviceName,
-              reviewRun?.status?.sessionID,
+              worker.reviewRunName, ns,
+              reviewRun?.status?.serviceName, reviewRun?.status?.sessionID,
             );
           } catch (e) {
-            err(`failed to parse review result for ${worker.taskId}:`, (e as Error).message);
+            err(`failed to parse review result for ${taskName}:`, (e as Error).message);
           }
 
           if (result) {
             if (result.recommendedAction === "approve") {
-              workers = updateWorker(workers, worker.taskId, {
-                facilitationResult: result,
-                reviewApproved: true,
-                reviewFeedback: undefined,
-                reworkAgent: undefined,
-              });
-              backlog = moveTask(backlog, worker.taskId, "review");
-              log(`reviewer approved task ${worker.taskId} → review (awaiting human approval)`);
+              await patchWorker(taskName, { facilitationResult: result, reviewApproved: true, reviewFeedback: undefined, reworkAgent: undefined }, worker, ns);
+              await moveTaskColumn(taskName, "review", ns);
+              log(`reviewer approved task ${taskName} → review`);
+              emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "review", reason: "reviewer-approved" });
             } else if (result.recommendedAction === "request_changes") {
-              const teamNames = (board.agents ?? []).map((a) => a.name);
-              const suggestedAgent =
-                result.alternativeAgent && teamNames.includes(result.alternativeAgent)
-                  ? result.alternativeAgent
-                  : undefined;
+              const teamNames = (fresh.spec.agents ?? []).map((a) => a.name);
+              const suggestedAgent = result.alternativeAgent && teamNames.includes(result.alternativeAgent) ? result.alternativeAgent : undefined;
               const feedback = (result.suggestion ?? result.diagnosis ?? "").trim() || "Please address review feedback.";
-              workers = updateWorker(workers, worker.taskId, {
+              await patchWorker(taskName, {
                 facilitationResult: result,
                 reviewApproved: false,
                 reviewFeedback: feedback,
                 reworkAgent: suggestedAgent,
                 reviewRunName: undefined,
-              });
-              backlog = moveTask(backlog, worker.taskId, "rework");
-              log(`reviewer requested changes for task ${worker.taskId} → rework`);
+              }, worker, ns);
+              await moveTaskColumn(taskName, "rework", ns);
+              log(`reviewer requested changes for ${taskName} → rework`);
+              emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "rework", reason: "reviewer-request-changes", feedback: feedback.slice(0, 200) });
             } else if (result.recommendedAction === "retry_alternative" && result.alternativeAgent) {
-              const teamNames = (board.agents ?? []).map((a) => a.name);
+              const teamNames = (fresh.spec.agents ?? []).map((a) => a.name);
               if (teamNames.includes(result.alternativeAgent)) {
-                const newRunName = workerRunName(projectName, worker.taskId, (worker.retryCount ?? 0) + 1);
-                const reworkRun = buildWorkerRun(fresh, taskDef, newRunName, (worker.retryCount ?? 0) + 1);
+                const newRunName = workerRunName(projectName, taskName, (worker.retryCount ?? 0) + 1);
+                const reworkRun = buildWorkerRun(fresh, task, newRunName, (worker.retryCount ?? 0) + 1);
                 reworkRun.spec.agent = result.alternativeAgent;
-                workers = upsertWorker(workers, {
-                  taskId: worker.taskId,
-                  runName: newRunName,
-                  status: "Running",
-                  branch: `feat/${worker.taskId}`,
-                  startedAt: new Date().toISOString(),
-                  retryCount: (worker.retryCount ?? 0) + 1,
-                  facilitated: true,
-                  facilitationResult: result,
-                });
-                backlog = moveTask(backlog, worker.taskId, "ready");
+                await patchTaskStatus(taskName, {
+                  column: "ready",
+                  worker: {
+                    ...worker,
+                    runName: newRunName,
+                    status: "Running",
+                    branch: `feat/${taskName}`,
+                    startedAt: new Date().toISOString(),
+                    retryCount: (worker.retryCount ?? 0) + 1,
+                    facilitated: true,
+                    facilitationResult: result,
+                  },
+                }, ns);
                 try {
                   await createRun(reworkRun, ns, k8s);
-                  log(`reviewer redirected task ${worker.taskId} to ${result.alternativeAgent}`);
+                  log(`reviewer redirected task ${taskName} to ${result.alternativeAgent}`);
+                  emitEvent(projectName, taskName, task.spec.type, "run.created", { runName: newRunName, agent: result.alternativeAgent, retryCount: (worker.retryCount ?? 0) + 1, reason: "reviewer-retry-alternative" });
                 } catch (e) {
-                  err(`failed to create reviewer-redirected run for ${worker.taskId}:`, (e as Error).message);
-                  workers = updateWorker(workers, worker.taskId, {
+                  err(`failed to create reviewer-redirected run for ${taskName}:`, (e as Error).message);
+                  await patchWorker(taskName, {
                     status: "Escalated",
                     completedAt: new Date().toISOString(),
-                    escalation: `Reviewer recommended retry_alternative with ${result.alternativeAgent} but failed to create run: ${(e as Error).message}`,
+                    escalation: `Reviewer recommended retry_alternative with ${result.alternativeAgent} but failed: ${(e as Error).message}`,
                     facilitationResult: result,
-                  });
-                  backlog = moveTask(backlog, worker.taskId, "review");
+                  }, worker, ns);
+                  await moveTaskColumn(taskName, "review", ns);
+                  emitEvent(projectName, taskName, task.spec.type, "escalated", { reason: `Reviewer recommended retry_alternative but run creation failed` });
                 }
               } else {
-                workers = updateWorker(workers, worker.taskId, {
+                await patchWorker(taskName, {
                   status: "Escalated",
                   completedAt: new Date().toISOString(),
-                  escalation: `Reviewer recommended alternative agent "${result.alternativeAgent}" not in team roster`,
+                  escalation: `Reviewer recommended alternative agent "${result.alternativeAgent}" not in roster`,
                   facilitationResult: result,
-                });
-                backlog = moveTask(backlog, worker.taskId, "review");
-                log(`reviewer: alternative agent ${result.alternativeAgent} not available — escalated`);
+                }, worker, ns);
+                await moveTaskColumn(taskName, "review", ns);
+                emitEvent(projectName, taskName, task.spec.type, "escalated", { reason: `Reviewer recommended unknown agent "${result.alternativeAgent}"` });
               }
             } else {
-              // escalate or unrecognized
-              workers = updateWorker(workers, worker.taskId, {
+              await patchWorker(taskName, {
                 status: "Escalated",
                 completedAt: new Date().toISOString(),
-                escalation: `Reviewer escalated task ${worker.taskId}: ${result.diagnosis}. ${result.suggestion ?? ""}`,
+                escalation: `Reviewer escalated ${taskName}: ${result.diagnosis}. ${result.suggestion ?? ""}`,
                 facilitationResult: result,
-              });
-              backlog = moveTask(backlog, worker.taskId, "review");
-              log(`reviewer escalated task ${worker.taskId}`);
+              }, worker, ns);
+              await moveTaskColumn(taskName, "review", ns);
+              log(`reviewer escalated task ${taskName}`);
+              emitEvent(projectName, taskName, task.spec.type, "escalated", { reason: result.diagnosis ?? "reviewer escalated" });
             }
           } else {
-            // No result yet — check if the review run is done.
             const reviewPhase = reviewRun?.status?.phase;
             if (reviewPhase === "Succeeded" || reviewPhase === "Failed") {
-              // Review run finished but produced no parseable result.
-              // Try the agent before defaulting to approve.
               if (isAgentReady()) {
                 let rawContext = "";
                 try {
-                  const snapshot = await readSessionConfigMap(
-                    worker.reviewRunName,
-                    "",
-                    ns,
-                  );
-                  if (snapshot) {
-                    rawContext = JSON.stringify(snapshot.messages).slice(0, 12000);
-                  }
+                  const snapshot = await readSessionConfigMap(worker.reviewRunName, "", ns);
+                  if (snapshot) rawContext = JSON.stringify(snapshot.messages).slice(0, 12000);
                 } catch { /* best effort */ }
                 if (!rawContext) {
                   try {
@@ -530,257 +468,178 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                     rawContext = await readPodLog(worker.reviewRunName, "opencode", 50, ns);
                   } catch { /* best effort */ }
                 }
-                const taskDef = (board.tasks ?? []).find((t) => t.id === worker.taskId);
                 const parsed = await parseRawReview({
                   projectName,
-                  taskId: worker.taskId,
-                  taskTitle: taskDef?.title ?? "",
+                  taskId: taskName,
+                  taskTitle: task.spec.title,
                   rawContext: rawContext || "no session data available",
                 });
                 if (parsed) {
-                  log(`agent parsed review output for ${worker.taskId}: ${parsed.recommendedAction}`);
-                  // Treat as a successful parse — re-run the outer logic next cycle.
-                  workers = updateWorker(workers, worker.taskId, {
-                    reviewRunName: undefined, // force re-check
+                  log(`agent parsed review output for ${taskName}: ${parsed.recommendedAction}`);
+                  await patchWorker(taskName, {
+                    reviewRunName: undefined,
                     facilitationResult: {
                       diagnosis: parsed.diagnosis,
                       recommendedAction: parsed.recommendedAction as never,
                       alternativeAgent: parsed.alternativeAgent,
                       suggestion: parsed.suggestion,
                     },
-                  });
+                  }, worker, ns);
                   continue;
                 }
-                log(`agent could not parse review output for ${worker.taskId} — falling back to approve`);
               }
-              // Fallback: treat as approved.
-              workers = updateWorker(workers, worker.taskId, {
-                reviewApproved: true,
-                reviewFeedback: undefined,
-                reworkAgent: undefined,
-              });
-              backlog = moveTask(backlog, worker.taskId, "review");
-              log(`reviewer produced no result (${reviewPhase}) — defaulting to review-approved for task ${worker.taskId}`);
+              await patchWorker(taskName, { reviewApproved: true, reviewFeedback: undefined, reworkAgent: undefined }, worker, ns);
+              await moveTaskColumn(taskName, "review", ns);
+              log(`reviewer produced no result (${reviewPhase}) — defaulting approved for ${taskName}`);
+              emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "review", reason: "reviewer-no-result-default-approved" });
             }
-            // else: review still running — leave worker as Succeeded, retry next cycle
           }
         } else {
-          // No reviewer configured — original behavior: move to review column.
           if (!worker.reviewApproved) {
-            workers = updateWorker(workers, worker.taskId, {
+            await patchWorker(taskName, {
               status: "Succeeded",
               completedAt: new Date().toISOString(),
               reviewApproved: true,
               reviewFeedback: undefined,
               reworkAgent: undefined,
-            });
-            backlog = moveTask(backlog, worker.taskId, "review");
-            log(`worker ${worker.runName} succeeded → task ${worker.taskId} in review (no reviewer agent configured, auto-approved)`);
+            }, worker, ns);
+            await moveTaskColumn(taskName, "review", ns);
+            log(`worker ${runName} succeeded → ${taskName} in review (no reviewer, auto-approved)`);
+            emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "review", reason: "succeeded-auto-approved" });
           }
         }
       } else if (runPhase === "Failed") {
-        // Best-effort stats backfill for failed runs.
+        // Best-effort stats backfill.
         if (run.status?.sessionID) {
           backfillStats(
-            worker.runName,
-            run.status.sessionID,
-            ns,
-            "Failed",
-            (board.tasks ?? []).find((t) => t.id === worker.taskId)?.id,
-            run.spec.model,
-            run.spec.agent,
-            run.status.startedAt,
-            run.status.completedAt,
+            runName, run.status.sessionID, ns, "Failed",
+            taskName, run.spec.model, run.spec.agent,
+            run.status.startedAt, run.status.completedAt,
           ).catch(() => {});
         }
-        const taskDef = (board.tasks ?? []).find((t) => t.id === worker.taskId);
-        if (!taskDef) {
-          err(`task ${worker.taskId} not found in spec.board.tasks during failure handling`);
-          continue;
-        }
 
-        // Facilitator-based escalation: on first un-facilitated failure, spawn
-        // a facilitator agent to analyze the failure and recommend an action.
-        // We rely solely on the `facilitated` flag to gate this — retryCount
-        // may have already been incremented by the "not found" catch path
-        // before the run phase was ever observed as Failed.
-        if (
-          !worker.facilitated &&
-          failureFacilitatorEnabled
-        ) {
-          // Read session summary for the facilitator's context.
+        if (!worker.facilitated && failureFacilitatorEnabled) {
           let sessionSummary = "";
           if (run.status?.sessionID && run.status?.serviceName) {
-            let sessionData: unknown = null;
             try {
-              sessionData = await fetchSessionMessages(
-                run.status.serviceName,
-                run.status.sessionID,
-                ns,
-              );
-            } catch {
-              sessionData = null;
-            }
-            if (sessionData && typeof sessionData === "object" && "messages" in sessionData) {
-              const msgs = (sessionData.messages as Array<{ content?: string }>)
-                .slice(-20)
-                .map((m) => m.content)
-                .filter(Boolean)
-                .join("\n");
-              sessionSummary = msgs.slice(0, 8000);
-            }
+              const sessionData = await fetchSessionMessages(run.status.serviceName, run.status.sessionID, ns);
+              if (sessionData && typeof sessionData === "object" && "messages" in sessionData) {
+                const msgs = (sessionData.messages as Array<{ content?: string }>)
+                  .slice(-20).map((m) => m.content).filter(Boolean).join("\n");
+                sessionSummary = msgs.slice(0, 8000);
+              }
+            } catch { /* best effort */ }
           }
 
-          const facilitationRunName = `${projectName}-facilitator-${worker.taskId.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${randomBytes(3).toString("hex")}`;
+          const facilitationRunName = auxiliaryRunName(projectName, "facilitator", taskName, randomBytes(3).toString("hex"));
           const facilitationRun = buildFacilitationRun(
-            fresh,
-            taskDef,
-            worker.runName!,
-            run.status ?? {},
-            sessionSummary,
-            facilitationRunName,
-            FAILURE_FACILITATOR_AGENT,
+            fresh, task, runName, run.status ?? {}, sessionSummary,
+            facilitationRunName, FAILURE_FACILITATOR_AGENT,
           );
 
           try {
             await createRun(facilitationRun, ns, k8s);
-            workers = updateWorker(workers, worker.taskId, {
-              facilitated: true,
-              facilitationRunName,
-            });
-            log(`spawned facilitator ${facilitationRunName} for failed task ${worker.taskId}`);
+            await patchWorker(taskName, { facilitated: true, facilitationRunName }, worker, ns);
+            log(`spawned facilitator ${facilitationRunName} for failed task ${taskName}`);
+            emitEvent(projectName, taskName, task.spec.type, "facilitator.spawned", { runName: facilitationRunName, agent: FAILURE_FACILITATOR_AGENT });
           } catch (e) {
-            err(`failed to create facilitator run for ${worker.taskId}:`, (e as Error).message);
-            // Fall through to standard retry behavior.
+            err(`failed to create facilitator run for ${taskName}:`, (e as Error).message);
             if ((worker.retryCount ?? 0) < MAX_RETRIES) {
-              workers = updateWorker(workers, worker.taskId, {
-                retryCount: (worker.retryCount ?? 0) + 1,
-                status: "Running",
-              });
-              log(`facilitator creation failed — standard retry (${worker.retryCount! + 1}/${MAX_RETRIES})`);
-              // Re-queue the task for retry
-              backlog = moveTask(backlog, worker.taskId, "ready");
+              await patchWorker(taskName, { retryCount: (worker.retryCount ?? 0) + 1, status: "Running" }, worker, ns);
+              await moveTaskColumn(taskName, "ready", ns);
+              emitEvent(projectName, taskName, task.spec.type, "run.failed", { runName, retryCount: (worker.retryCount ?? 0) + 1, error: (e as Error).message });
             } else {
-              const msg = run.status?.message ?? "Unknown failure";
-              workers = updateWorker(workers, worker.taskId, {
+              await patchWorker(taskName, {
                 status: "Escalated",
                 completedAt: new Date().toISOString(),
-                escalation: `Task: ${worker.taskId}\nWorker: ${worker.runName}\nError: ${msg}\nFacilitator creation failed.\nRetries exhausted (${MAX_RETRIES}). Human review needed.`,
-              });
-              backlog = moveTask(backlog, worker.taskId, "review");
-              log(`task ${worker.taskId} escalated after facilitator creation failure and retries exhausted`);
+                escalation: `Task: ${taskName}\nWorker: ${runName}\nError: ${run.status?.message ?? "Unknown"}\nFacilitator creation failed, retries exhausted (${MAX_RETRIES}).`,
+              }, worker, ns);
+              await moveTaskColumn(taskName, "review", ns);
+              emitEvent(projectName, taskName, task.spec.type, "escalated", { retryCount: worker.retryCount ?? 0, reason: "facilitator-creation-failed-retries-exhausted" });
             }
           }
-        } else if (
-          failureFacilitatorEnabled &&
-          worker.facilitated &&
-          worker.facilitationRunName
-        ) {
-          // Facilitator run exists — fetch it once, then parse its result.
+        } else if (failureFacilitatorEnabled && worker.facilitated && worker.facilitationRunName) {
           let facRun: Awaited<ReturnType<typeof getRun>> | null = null;
           try {
             facRun = await getRun(worker.facilitationRunName, ns, k8s);
-          } catch {
-            // facilitator run not yet found — will retry next cycle
-          }
+          } catch { /* not found yet */ }
+
           let result: FacilitationResult | null = null;
           try {
             result = await parseFacilitationResult(
-              worker.facilitationRunName,
-              ns,
-              facRun?.status?.serviceName,
-              facRun?.status?.sessionID,
+              worker.facilitationRunName, ns,
+              facRun?.status?.serviceName, facRun?.status?.sessionID,
             );
           } catch (e) {
-            err(`failed to parse facilitation result for ${worker.taskId}:`, (e as Error).message);
+            err(`failed to parse facilitation result for ${taskName}:`, (e as Error).message);
           }
 
           if (result) {
-            // Apply the facilitator's recommendation.
             if (result.recommendedAction === "retry_same") {
-              workers = updateWorker(workers, worker.taskId, {
-                retryCount: (worker.retryCount ?? 0) + 1,
-                status: "Running",
-                facilitated: true,
-                facilitationResult: result,
-              });
-              backlog = moveTask(backlog, worker.taskId, "ready");
-              log(`facilitator recommends retry_same for ${worker.taskId}`);
+              await patchWorker(taskName, { retryCount: (worker.retryCount ?? 0) + 1, status: "Running", facilitated: true, facilitationResult: result }, worker, ns);
+              await moveTaskColumn(taskName, "ready", ns);
+              emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "ready", reason: "facilitator-retry-same" });
             } else if (result.recommendedAction === "retry_alternative" && result.alternativeAgent) {
-              // Validate alternative agent is in the team roster.
-              const teamNames = (board.agents ?? []).map((a) => a.name);
+              const teamNames = (fresh.spec.agents ?? []).map((a) => a.name);
               if (teamNames.includes(result.alternativeAgent)) {
-                const newRunName = workerRunName(projectName, worker.taskId, (worker.retryCount ?? 0) + 1);
-                const reworkRun = buildWorkerRun(fresh, taskDef, newRunName, (worker.retryCount ?? 0) + 1);
+                const newRunName = workerRunName(projectName, taskName, (worker.retryCount ?? 0) + 1);
+                const reworkRun = buildWorkerRun(fresh, task, newRunName, (worker.retryCount ?? 0) + 1);
                 reworkRun.spec.agent = result.alternativeAgent;
-                workers = upsertWorker(workers, {
-                  taskId: worker.taskId,
-                  runName: newRunName,
-                  status: "Running",
-                  branch: `feat/${worker.taskId}`,
-                  startedAt: new Date().toISOString(),
-                  retryCount: (worker.retryCount ?? 0) + 1,
-                  facilitated: true,
-                  facilitationResult: result,
-                });
-                backlog = moveTask(backlog, worker.taskId, "ready");
+                await patchTaskStatus(taskName, {
+                  column: "ready",
+                  worker: {
+                    ...worker,
+                    runName: newRunName,
+                    status: "Running",
+                    branch: `feat/${taskName}`,
+                    startedAt: new Date().toISOString(),
+                    retryCount: (worker.retryCount ?? 0) + 1,
+                    facilitated: true,
+                    facilitationResult: result,
+                  },
+                }, ns);
                 try {
                   await createRun(reworkRun, ns, k8s);
-                  log(`facilitator recommends retry_alternative with ${result.alternativeAgent} for ${worker.taskId}`);
                 } catch (e) {
-                  err(`failed to create alternative-agent run for ${worker.taskId}:`, (e as Error).message);
-                  workers = updateWorker(workers, worker.taskId, {
+                  err(`failed to create alternative-agent run for ${taskName}:`, (e as Error).message);
+                  await patchWorker(taskName, {
                     status: "Escalated",
                     completedAt: new Date().toISOString(),
-                    escalation: `Facilitator recommended retry_alternative with ${result.alternativeAgent} but failed to create run: ${(e as Error).message}`,
-                  });
-                  backlog = moveTask(backlog, worker.taskId, "review");
+                    escalation: `Facilitator recommended retry_alternative with ${result.alternativeAgent} but run creation failed: ${(e as Error).message}`,
+                  }, worker, ns);
+                  await moveTaskColumn(taskName, "review", ns);
+                  emitEvent(projectName, taskName, task.spec.type, "escalated", { reason: `Facilitator retry_alternative run creation failed` });
                 }
               } else {
-                // Alternative agent not available — escalate.
-                const msg = result.suggestion ?? `Facilitator recommended alternative agent "${result.alternativeAgent}" not in team roster`;
-                workers = updateWorker(workers, worker.taskId, {
+                await patchWorker(taskName, {
                   status: "Escalated",
                   completedAt: new Date().toISOString(),
-                  escalation: `Task: ${worker.taskId}\nWorker: ${worker.runName}\nFacilitator diagnosis: ${result.diagnosis}\nAction: ${msg}`,
+                  escalation: `Task: ${taskName}\nFacilitator: ${result.diagnosis}\nAlternative agent "${result.alternativeAgent}" not in roster`,
                   facilitationResult: result,
-                });
-                backlog = moveTask(backlog, worker.taskId, "review");
-                log(`facilitator: alternative agent ${result.alternativeAgent} not available — escalated`);
+                }, worker, ns);
+                await moveTaskColumn(taskName, "review", ns);
+                emitEvent(projectName, taskName, task.spec.type, "escalated", { reason: `Facilitator recommended unknown agent "${result.alternativeAgent}"` });
               }
             } else {
-              // "skip" or unrecognized action → escalate with diagnosis.
-              workers = updateWorker(workers, worker.taskId, {
+              await patchWorker(taskName, {
                 status: "Escalated",
                 completedAt: new Date().toISOString(),
-                escalation: `Task: ${worker.taskId}\nWorker: ${worker.runName}\nFacilitator diagnosis: ${result.diagnosis}\nAction: skip recommended`,
+                escalation: `Task: ${taskName}\nFacilitator: ${result.diagnosis}\nAction: skip`,
                 facilitationResult: result,
-              });
-              backlog = moveTask(backlog, worker.taskId, "review");
-              log(`facilitator recommends skip for ${worker.taskId}`);
+              }, worker, ns);
+              await moveTaskColumn(taskName, "review", ns);
+              emitEvent(projectName, taskName, task.spec.type, "escalated", { reason: result.diagnosis ?? "facilitator-skip" });
             }
           } else {
-            // No parseable result from facilitator — check facilitator run phase.
             const facilitatorPhase = facRun?.status?.phase;
-
             if (facilitatorPhase === "Succeeded" || facilitatorPhase === "Failed") {
-              // Facilitator done but we got nothing useful.
               if (isAgentReady()) {
-                // Ask the agent to parse the raw facilitator output from
-                // the facilitator run's session ConfigMap snapshot.
                 let rawContext = "";
                 try {
-                  const snapshot = await readSessionConfigMap(
-                    worker.facilitationRunName,
-                    "",
-                    ns,
-                  );
-                  if (snapshot) {
-                    rawContext = JSON.stringify(snapshot.messages).slice(0, 12000);
-                  }
+                  const snapshot = await readSessionConfigMap(worker.facilitationRunName, "", ns);
+                  if (snapshot) rawContext = JSON.stringify(snapshot.messages).slice(0, 12000);
                 } catch { /* best effort */ }
                 if (!rawContext) {
-                  // Fallback: try pod logs.
                   try {
                     const { readPodLog } = await import("@percussionist/kube");
                     rawContext = await readPodLog(worker.facilitationRunName, "opencode", 50, ns);
@@ -788,14 +647,12 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                 }
                 const parsed = await parseRawFacilitation({
                   projectName,
-                  taskId: worker.taskId,
+                  taskId: taskName,
                   rawContext: rawContext || "no session data available",
                 });
                 if (parsed) {
-                  log(`agent parsed facilitator output for ${worker.taskId}: ${parsed.recommendedAction}`);
-                  // Treat as a successful parse — re-run the outer logic by
-                  // enriching the worker state so next cycle picks up the result.
-                  workers = updateWorker(workers, worker.taskId, {
+                  log(`agent parsed facilitator output for ${taskName}: ${parsed.recommendedAction}`);
+                  await patchWorker(taskName, {
                     facilitated: true,
                     facilitationResult: {
                       diagnosis: parsed.diagnosis,
@@ -803,461 +660,361 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                       alternativeAgent: parsed.alternativeAgent,
                       suggestion: parsed.suggestion,
                     },
-                  });
-                  // Don't move the task yet — next reconcile cycle will pick up the result.
+                  }, worker, ns);
                   continue;
                 }
-                log(`agent could not parse facilitator output for ${worker.taskId} — falling back`);
               }
-
-              // Fall back to standard retry or escalate.
               if ((worker.retryCount ?? 0) < MAX_RETRIES) {
-                workers = updateWorker(workers, worker.taskId, {
-                  retryCount: (worker.retryCount ?? 0) + 1,
-                  status: "Running",
-                  facilitated: true,
-                });
-                backlog = moveTask(backlog, worker.taskId, "ready");
-                log(`facilitator returned no result (${facilitatorPhase}) — standard retry (${worker.retryCount! + 1}/${MAX_RETRIES})`);
+                await patchWorker(taskName, { retryCount: (worker.retryCount ?? 0) + 1, status: "Running", facilitated: true }, worker, ns);
+                await moveTaskColumn(taskName, "ready", ns);
+                emitEvent(projectName, taskName, task.spec.type, "run.failed", { runName, retryCount: (worker.retryCount ?? 0) + 1, reason: "facilitator-no-result" });
               } else {
-                const msg = run.status?.message ?? "Unknown failure after retries";
-                workers = updateWorker(workers, worker.taskId, {
+                await patchWorker(taskName, {
                   status: "Escalated",
                   completedAt: new Date().toISOString(),
-                  escalation: `Task: ${worker.taskId}\nWorker: ${worker.runName}\nError: ${msg}\nFacilitator returned no actionable result (${facilitatorPhase}).\nHuman review needed.`,
-                });
-                backlog = moveTask(backlog, worker.taskId, "review");
-                log(`task ${worker.taskId} escalated after facilitator returned no result and retries exhausted`);
+                  escalation: `Task: ${taskName}\nWorker: ${runName}\nFacilitator returned no result (${facilitatorPhase}), retries exhausted.`,
+                }, worker, ns);
+                await moveTaskColumn(taskName, "review", ns);
+                emitEvent(projectName, taskName, task.spec.type, "escalated", { retryCount: worker.retryCount ?? 0, reason: "facilitator-no-result-retries-exhausted" });
               }
             }
-            // else: facilitator still Running — leave worker as Failed, retry next cycle
           }
         } else if ((worker.retryCount ?? 0) < MAX_RETRIES) {
-          // Standard retry (no facilitator configured or already facilitated).
-          workers = updateWorker(workers, worker.taskId, {
-            retryCount: (worker.retryCount ?? 0) + 1,
-            status: "Running",
-          });
-          backlog = moveTask(backlog, worker.taskId, "ready");
-          log(
-            `task ${worker.taskId} failed — retrying (${worker.retryCount! + 1}/${MAX_RETRIES})`,
-          );
+          await patchWorker(taskName, { retryCount: (worker.retryCount ?? 0) + 1, status: "Running" }, worker, ns);
+          await moveTaskColumn(taskName, "ready", ns);
+          log(`task ${taskName} failed — retrying (${(worker.retryCount ?? 0) + 1}/${MAX_RETRIES})`);
+          emitEvent(projectName, taskName, task.spec.type, "run.failed", { runName, retryCount: (worker.retryCount ?? 0) + 1, error: run.status?.message ?? "Unknown" });
         } else if (isAgentReady()) {
-          // Retries exhausted — ask the agent for a decision.
-          const taskDef = (board.tasks ?? []).find((t) => t.id === worker.taskId);
           let sessionSummary = "";
           if (run.status?.sessionID && run.status?.serviceName) {
             try {
-              const sessionData = await fetchSessionMessages(
-                run.status.serviceName,
-                run.status.sessionID,
-                ns,
-              );
+              const sessionData = await fetchSessionMessages(run.status.serviceName, run.status.sessionID, ns);
               if (sessionData && typeof sessionData === "object" && "messages" in sessionData) {
                 const msgs = (sessionData.messages as Array<{ content?: string }>)
-                  .slice(-20)
-                  .map((m) => m.content)
-                  .filter(Boolean)
-                  .join("\n");
+                  .slice(-20).map((m) => m.content).filter(Boolean).join("\n");
                 sessionSummary = msgs.slice(0, 8000);
               }
             } catch { /* best effort */ }
           }
           const decision = await analyzeFailure({
             projectName,
-            taskId: worker.taskId,
-            taskTitle: taskDef?.title ?? "",
-            taskDescription: taskDef?.description,
-            agent: taskDef?.agent ?? "",
+            taskId: taskName,
+            taskTitle: task.spec.title,
+            taskDescription: task.spec.description,
+            agent: task.spec.agent ?? "",
             retryCount: worker.retryCount ?? 0,
             maxRetries: MAX_RETRIES,
             failureMessage: run.status?.message ?? "Unknown failure after retries",
             sessionSummary,
-            alternativeAgents: (board.agents ?? []).map((a) => a.name),
+            alternativeAgents: (fresh.spec.agents ?? []).map((a) => a.name),
           });
-          if (decision.action === "retry_same" || (decision.action === "retry_alternative" && decision.agent && (board.agents ?? []).some((a) => a.name === decision.agent))) {
-            workers = updateWorker(workers, worker.taskId, {
+          if (
+            decision.action === "retry_same" ||
+            (decision.action === "retry_alternative" && decision.agent &&
+              (fresh.spec.agents ?? []).some((a) => a.name === decision.agent))
+          ) {
+            await patchWorker(taskName, {
               retryCount: (worker.retryCount ?? 0) + 1,
               status: "Running",
               ...(decision.action === "retry_alternative" ? { reworkAgent: decision.agent } : {}),
-            });
-            backlog = moveTask(backlog, worker.taskId, "ready");
-            log(`agent decision: ${decision.action}${decision.agent ? ` with ${decision.agent}` : ""} for ${worker.taskId} — ${decision.reason}`);
-          } else if (decision.action === "skip") {
-            workers = updateWorker(workers, worker.taskId, {
-              status: "Succeeded",
-              completedAt: new Date().toISOString(),
-            });
-            backlog = moveTask(backlog, worker.taskId, "done");
-            log(`agent decision: skip for ${worker.taskId} — marking done`);
+            }, worker, ns);
+            await moveTaskColumn(taskName, "ready", ns);
+            emitEvent(projectName, taskName, task.spec.type, "decision", { action: decision.action, agent: decision.agent, reason: decision.reason });
+           } else if (decision.action === "skip") {
+            await patchWorker(taskName, { status: "Succeeded", completedAt: new Date().toISOString() }, worker, ns);
+            await moveTaskColumn(taskName, "done", ns);
+            if (worker.runName) await cleanupWorktree(task, worker.runName, cleanupProject, ns);
+            emitEvent(projectName, taskName, task.spec.type, "decision", { action: "skip", reason: decision.reason });
           } else {
-            // escalate
-            const escalation = [
-              `Task: ${worker.taskId}`,
-              `Worker run: ${worker.runName}`,
-              `Agent analysis: ${decision.reason}`,
-              `Retries exhausted (${MAX_RETRIES}). Agent recommended escalation.`,
-            ].join("\n");
-            workers = updateWorker(workers, worker.taskId, {
+            await patchWorker(taskName, {
               status: "Escalated",
               completedAt: new Date().toISOString(),
-              escalation,
-            });
-            backlog = moveTask(backlog, worker.taskId, "review");
-            log(`agent decision: escalate for ${worker.taskId} — ${decision.reason}`);
+              escalation: `Task: ${taskName}\nWorker: ${runName}\nAgent: ${decision.reason}\nRetries exhausted (${MAX_RETRIES}).`,
+            }, worker, ns);
+            await moveTaskColumn(taskName, "review", ns);
+            emitEvent(projectName, taskName, task.spec.type, "escalated", { retryCount: worker.retryCount ?? 0, reason: decision.reason });
           }
         } else {
-          // Retries exhausted, no agent available → escalate to human.
-          const msg = run.status?.message ?? "Unknown failure after retries";
-          const escalation = [
-            `Task: ${worker.taskId}`,
-            `Worker run: ${worker.runName}`,
-            `Error: ${msg}`,
-            `Retries exhausted (${MAX_RETRIES}). Human review needed.`,
-          ].join("\n");
-          workers = updateWorker(workers, worker.taskId, {
+          await patchWorker(taskName, {
             status: "Escalated",
             completedAt: new Date().toISOString(),
-            escalation,
-          });
-          backlog = moveTask(backlog, worker.taskId, "review");
-          log(`task ${worker.taskId} escalated after ${MAX_RETRIES} retries`);
+            escalation: `Task: ${taskName}\nWorker: ${runName}\nError: ${run.status?.message ?? "Unknown"}\nRetries exhausted (${MAX_RETRIES}).`,
+          }, worker, ns);
+          await moveTaskColumn(taskName, "review", ns);
+          log(`task ${taskName} escalated after ${MAX_RETRIES} retries`);
+          emitEvent(projectName, taskName, task.spec.type, "escalated", { retryCount: worker.retryCount ?? 0, reason: run.status?.message ?? "retries exhausted" });
         }
       } else if (runPhase === "Cancelled") {
-        workers = updateWorker(workers, worker.taskId, {
-          status: "Failed",
-          completedAt: new Date().toISOString(),
-        });
-        backlog = moveTask(backlog, worker.taskId, "ready");
+        await patchWorker(taskName, { status: "Failed", completedAt: new Date().toISOString() }, worker, ns);
+        await moveTaskColumn(taskName, "ready", ns);
+        emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "ready", reason: "cancelled" });
       } else if (runPhase === "WaitingForInput") {
         const sessionID = run.status?.sessionID ?? "";
-        const messageText =
-          run.status?.message ?? `Worker ${worker.taskId} is waiting for input`;
-        // Surface pending question on board status.
-        const existingQs = (boardStatus.pendingQuestions ?? []).filter(
-          (q) => q.workerId !== worker.taskId,
+        const messageText = run.status?.message ?? `Worker ${taskName} is waiting for input`;
+        // Reload pending questions from project status.
+        const freshProj = await getProject(projectName, ns, k8s);
+        const existingQs = (freshProj.status?.board?.pendingQuestions ?? []).filter(
+          (q) => q.workerId !== taskName,
         );
-        const updatedQs = [
-          ...existingQs,
-          { workerId: worker.taskId, sessionID, messageText },
-        ];
-        // Update in-memory boardStatus.pendingQuestions for the end-of-cycle flush.
-        boardStatus.pendingQuestions = updatedQs;
-        // Write only the pendingQuestions field to K8s status (not the full board blob).
-        await patchProjectStatus(projectName, { board: { pendingQuestions: updatedQs } as Partial<BoardStatus> }, ns);
+        const updatedQs = [...existingQs, { workerId: taskName, sessionID, messageText }];
+        await patchProjectStatus(projectName, { board: { pendingQuestions: updatedQs } }, ns);
       }
     } catch (e) {
       const msg = (e as Error).message;
       if (/not found/i.test(msg)) {
-        workers = updateWorker(workers, worker.taskId, {
+        await patchWorker(taskName, {
           retryCount: (worker.retryCount ?? 0) + 1,
           status: "Failed",
           completedAt: new Date().toISOString(),
-        });
-        backlog = moveTask(backlog, worker.taskId, "ready");
-        log(`worker run ${worker.runName} not found — task ${worker.taskId} returned to ready (retry ${(worker.retryCount ?? 0) + 1})`);
+        }, worker, ns);
+        await moveTaskColumn(taskName, "ready", ns);
+        log(`worker run ${runName} not found — ${taskName} returned to ready`);
+        emitEvent(projectName, taskName, task.spec.type, "run.failed", { runName, reason: "run-not-found" });
       } else {
-        err(`monitor worker ${worker.runName}:`, msg);
+        err(`monitor worker ${runName}:`, msg);
       }
     }
   }
 
+  // Reload after monitor phase.
+  const postMonitorTasks = await listTasks(projectName, ns);
+
   // ------------------------------------------------------------------
   // REVIEW APPROVAL PHASE: handle approved PLAN tasks and request-changes.
   // ------------------------------------------------------------------
-  const reviewTasks = backlog["review"] ?? [];
-  
-  for (const taskId of reviewTasks) {
-    const taskDef = (board.tasks ?? []).find((t) => t.id === taskId);
-    if (!taskDef) continue;
-    const worker = workers.find((w) => w.taskId === taskId);
+  const reviewTasks = postMonitorTasks.filter((t) => t.status?.column === "review");
 
-    const approvedAnnotation = fresh.metadata.annotations?.[`percussionist.dev/approved-${taskId}`];
-    const requestChangesAnnotation = fresh.metadata.annotations?.[`percussionist.dev/request-changes-${taskId}`];
+  for (const task of reviewTasks) {
+    const taskName = task.metadata.name;
+    const worker = task.status?.worker;
 
-    // Handle request-changes first
+    const approvedAnnotation = fresh.metadata.annotations?.[`percussionist.dev/approved-${taskName}`];
+    const requestChangesAnnotation = fresh.metadata.annotations?.[`percussionist.dev/request-changes-${taskName}`];
+
     if (requestChangesAnnotation === "true") {
-      const comment = fresh.metadata.annotations?.[`percussionist.dev/rework-${taskId}`] ?? "Please address the review feedback.";
-      
-      // If this is a PLAN task with BUILD tasks already created, delete them
-      if (taskDef.type === "PLAN") {
-        const worker = workers.find((w) => w.taskId === taskId);
-        const createdBuildTasks = worker?.createdBuildTasks ?? [];
-        
-        if (createdBuildTasks.length > 0) {
-          log(`deleting ${createdBuildTasks.length} BUILD tasks created from PLAN ${taskId}: ${createdBuildTasks.join(", ")}`);
-          
-          // Remove BUILD tasks from spec
-          const updatedTasks = (board.tasks ?? []).filter((t) => !createdBuildTasks.includes(t.id));
-          
-          // Remove BUILD tasks from backlog
-          for (const col of Object.keys(backlog)) {
-            backlog[col] = (backlog[col] ?? []).filter((id) => !createdBuildTasks.includes(id));
+      const comment = fresh.metadata.annotations?.[`percussionist.dev/rework-${taskName}`] ?? "Please address the review feedback.";
+
+      // If this is a PLAN task with BUILD tasks already created, delete them.
+      if (task.spec.type === "PLAN") {
+        const createdBuildTaskRefs = worker?.createdBuildTaskRefs ?? [];
+        if (createdBuildTaskRefs.length > 0) {
+          log(`deleting ${createdBuildTaskRefs.length} BUILD task CRs from PLAN ${taskName}`);
+          for (const buildTaskRef of createdBuildTaskRefs) {
+            try {
+              await deleteTask(buildTaskRef, ns);
+            } catch (e) {
+              err(`failed to delete BUILD task ${buildTaskRef}:`, (e as Error).message);
+            }
           }
-          
-          // Clear worker BUILD task tracking
-          if (worker) {
-            workers = updateWorker(workers, taskId, {
-              buildTasksFacilitatorRun: undefined,
-              buildTasksCreated: false,
-              createdBuildTasks: [],
-            });
-          }
-          
-          // Patch project to remove BUILD tasks
-          try {
-            await patchProjectSpec(projectName, { board: { ...board, tasks: updatedTasks } }, ns, k8s);
-            log(`removed BUILD tasks from project spec for PLAN ${taskId}`);
-          } catch (e) {
-            err(`failed to remove BUILD tasks for PLAN ${taskId}:`, (e as Error).message);
-          }
+          await patchWorker(taskName, {
+            buildTasksFacilitatorRun: undefined,
+            buildTasksCreated: false,
+            createdBuildTaskRefs: [],
+          }, worker, ns);
         }
       }
-      
-      // Move task to rework
-      workers = updateWorker(workers, taskId, {
+
+      await patchWorker(taskName, {
         reviewApproved: false,
         reviewFeedback: comment,
         reviewRunName: undefined,
         reworkAgent: undefined,
         mergeRunName: undefined,
         mergeError: undefined,
-      });
-      backlog = moveTask(backlog, taskId, "rework");
+      }, worker, ns);
+      await moveTaskColumn(taskName, "rework", ns);
       try {
         await patchProject(projectName, {
           metadata: {
             annotations: {
-              [`percussionist.dev/request-changes-${taskId}`]: "false",
-              [`percussionist.dev/approved-${taskId}`]: "false",
+              [`percussionist.dev/request-changes-${taskName}`]: "false",
+              [`percussionist.dev/approved-${taskName}`]: "false",
             },
           },
         }, ns, k8s);
       } catch (e) {
-        err(`failed to clear review annotations for ${taskId}:`, (e as Error).message);
+        err(`failed to clear review annotations for ${taskName}:`, (e as Error).message);
       }
-      log(`task ${taskId} moved to rework with feedback`);
+      log(`task ${taskName} moved to rework with feedback`);
+      emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "review", to: "rework", reason: "request-changes" });
       continue;
     }
 
-    // BUILD tasks require reviewer approval + explicit human approval + successful merge.
-    if (taskDef.type === "BUILD") {
+    // BUILD tasks: require reviewer approval + human approval + successful merge.
+    if (task.spec.type === "BUILD") {
       if (worker?.mergeRunName) {
         let mergeRun: Awaited<ReturnType<typeof getRun>> | null = null;
         try {
           mergeRun = await getRun(worker.mergeRunName, ns, k8s);
-        } catch {
-          mergeRun = null;
-        }
+        } catch { mergeRun = null; }
 
         const mergePhase = mergeRun?.status?.phase;
         if (mergePhase === "Succeeded") {
-          workers = updateWorker(workers, taskId, {
+          await patchWorker(taskName, {
             mergedAt: new Date().toISOString(),
             mergeError: undefined,
             mergeRunName: undefined,
             status: "Succeeded",
             completedAt: new Date().toISOString(),
-          });
-          backlog = moveTask(backlog, taskId, "done");
+          }, worker, ns);
+          await moveTaskColumn(taskName, "done", ns);
+          if (worker.runName) await cleanupWorktree(task, worker.runName, cleanupProject, ns);
           try {
             await patchProject(projectName, {
-              metadata: {
-                annotations: {
-                  [`percussionist.dev/approved-${taskId}`]: "false",
-                },
-              },
+              metadata: { annotations: { [`percussionist.dev/approved-${taskName}`]: "false" } },
             }, ns, k8s);
           } catch (e) {
-            err(`failed to reset approved annotation for ${taskId}:`, (e as Error).message);
+            err(`failed to reset approved annotation for ${taskName}:`, (e as Error).message);
           }
-          log(`merge run ${worker.mergeRunName} succeeded for ${taskId} → done`);
+          log(`merge run ${worker.mergeRunName} succeeded for ${taskName} → done`);
+          emitEvent(projectName, taskName, task.spec.type, "merged", { runName: worker.mergeRunName ?? "" });
           continue;
         }
 
         if (mergePhase === "Failed" || mergePhase === "Cancelled") {
-          const mergeMessage = mergeRun?.status?.message ?? `merge run ended with phase ${mergePhase}`;
-          workers = updateWorker(workers, taskId, {
+          const mergeMessage = mergeRun?.status?.message ?? `merge run ended with ${mergePhase}`;
+          await patchWorker(taskName, {
             status: "Escalated",
             mergeError: mergeMessage,
-            escalation: `Merge failed for ${taskId}: ${mergeMessage}`,
+            escalation: `Merge failed for ${taskName}: ${mergeMessage}`,
             mergeRunName: undefined,
-          });
-          backlog = moveTask(backlog, taskId, "review");
-          log(`merge run ${worker.mergeRunName} failed for ${taskId} → review`);
+          }, worker, ns);
+          await moveTaskColumn(taskName, "review", ns);
+          emitEvent(projectName, taskName, task.spec.type, "escalated", { reason: `Merge ${mergePhase}: ${mergeMessage}` });
           continue;
         }
-
-        // Merge run still pending/running.
+        // Merge still pending/running.
         continue;
       }
 
       if (approvedAnnotation === "true") {
         if (!worker?.reviewApproved) {
-          log(`human approved ${taskId} but reviewer has not approved yet — waiting`);
+          log(`human approved ${taskName} but reviewer has not approved yet — waiting`);
           continue;
         }
 
-        const mergeRunName = `${projectName}-merge-${taskId.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${randomBytes(3).toString("hex")}`;
-        const mergeRun = buildMergeRun(fresh, taskDef, mergeRunName);
+        const mergeRunName = auxiliaryRunName(projectName, "merge", taskName, randomBytes(3).toString("hex"));
+        const mergeRun = buildMergeRun(fresh, task, mergeRunName);
         try {
           await createRun(mergeRun, ns, k8s);
-          workers = updateWorker(workers, taskId, {
-            mergeRunName,
-            mergeError: undefined,
-          });
-          log(`spawned merge run ${mergeRunName} for approved BUILD ${taskId}`);
+          await patchWorker(taskName, { mergeRunName, mergeError: undefined }, worker, ns);
+          log(`spawned merge run ${mergeRunName} for approved BUILD ${taskName}`);
+          emitEvent(projectName, taskName, task.spec.type, "run.created", { runName: mergeRunName, reason: "merge" });
         } catch (e) {
-          workers = updateWorker(workers, taskId, {
+          await patchWorker(taskName, {
             status: "Escalated",
             mergeError: (e as Error).message,
-            escalation: `Failed to create merge run for ${taskId}: ${(e as Error).message}`,
-          });
-          err(`failed to create merge run for ${taskId}:`, (e as Error).message);
+            escalation: `Failed to create merge run for ${taskName}: ${(e as Error).message}`,
+          }, worker, ns);
+          err(`failed to create merge run for ${taskName}:`, (e as Error).message);
+          emitEvent(projectName, taskName, task.spec.type, "escalated", { reason: `Merge run creation failed: ${(e as Error).message}` });
         }
       }
       continue;
     }
 
-    // Handle approval for PLAN tasks
-    if (approvedAnnotation === "true" && taskDef.type === "PLAN") {
+    // PLAN task approval.
+    if (approvedAnnotation === "true" && task.spec.type === "PLAN") {
       if (!buildgenFacilitatorEnabled) {
-        workers = updateWorker(workers, taskId, {
+        await patchWorker(taskName, {
           status: "Escalated",
-          escalation: `BUILD generation agent "${BUILDGEN_FACILITATOR_AGENT}" is not configured in board.agents for PLAN ${taskId}.`,
+          escalation: `BUILD generation agent "${BUILDGEN_FACILITATOR_AGENT}" not configured for PLAN ${taskName}.`,
           buildTasksCreated: true,
-        });
-        log(`BUILD generation agent ${BUILDGEN_FACILITATOR_AGENT} missing for PLAN ${taskId} — escalated`);
+        }, worker, ns);
         continue;
       }
-      
-      // Check if BUILD task generation is needed
+
       if (!worker?.buildTasksFacilitatorRun) {
-        // Spawn facilitator to generate BUILD tasks
-        const buildGenRunName = `${projectName}-build-gen-${taskId.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${randomBytes(3).toString("hex")}`;
-        
+        const buildGenRunName = auxiliaryRunName(projectName, "build-gen", taskName, randomBytes(3).toString("hex"));
         const buildGenRun = buildBuildTaskGeneratorRun(
-          fresh,
-          taskDef,
-          worker?.runName ?? "",
-          buildGenRunName,
-          BUILDGEN_FACILITATOR_AGENT,
+          fresh, task, worker?.runName ?? "", buildGenRunName, BUILDGEN_FACILITATOR_AGENT,
         );
-        
         try {
           await createRun(buildGenRun, ns, k8s);
-          workers = updateWorker(workers, taskId, {
-            buildTasksFacilitatorRun: buildGenRunName,
-          });
-          log(`spawned BUILD task generator ${buildGenRunName} for approved PLAN ${taskId}`);
+          await patchWorker(taskName, { buildTasksFacilitatorRun: buildGenRunName }, worker, ns);
+          log(`spawned BUILD task generator ${buildGenRunName} for PLAN ${taskName}`);
+          emitEvent(projectName, taskName, task.spec.type, "facilitator.spawned", { runName: buildGenRunName, agent: BUILDGEN_FACILITATOR_AGENT, reason: "build-task-generation" });
         } catch (e) {
-          err(`failed to create BUILD task generator for ${taskId}:`, (e as Error).message);
-          workers = updateWorker(workers, taskId, {
+          err(`failed to create BUILD task generator for ${taskName}:`, (e as Error).message);
+          await patchWorker(taskName, {
             status: "Escalated",
             escalation: `Failed to spawn BUILD task generator: ${(e as Error).message}`,
-          });
+          }, worker, ns);
+          emitEvent(projectName, taskName, task.spec.type, "escalated", { reason: `BUILD task generator spawn failed` });
         }
       } else if (!worker.buildTasksCreated) {
-        // BUILD task generator exists, try to parse result
         let buildGenRun: Awaited<ReturnType<typeof getRun>> | null = null;
         try {
           buildGenRun = await getRun(worker.buildTasksFacilitatorRun, ns, k8s);
-        } catch {
-          // Not found yet — wait
-        }
-        
+        } catch { /* not found yet */ }
+
         let buildTaskDefs: Awaited<ReturnType<typeof parseBuildTaskDefinitions>> | null = null;
         try {
           buildTaskDefs = await parseBuildTaskDefinitions(
-            worker.buildTasksFacilitatorRun,
-            ns,
-            buildGenRun?.status?.serviceName,
-            buildGenRun?.status?.sessionID,
+            worker.buildTasksFacilitatorRun, ns,
+            buildGenRun?.status?.serviceName, buildGenRun?.status?.sessionID,
           );
         } catch (e) {
-          err(`failed to parse BUILD task definitions for ${taskId}:`, (e as Error).message);
+          err(`failed to parse BUILD task definitions for ${taskName}:`, (e as Error).message);
         }
-        
+
         if (buildTaskDefs !== null) {
-          // Valid result (array, possibly empty)
           if (buildTaskDefs.length === 0) {
-            // Empty array — escalate for human review
-            workers = updateWorker(workers, taskId, {
+            await patchWorker(taskName, {
               status: "Escalated",
-              escalation: `BUILD task generator returned empty array. PLAN ${taskId} may need manual BUILD task creation or should be marked complete as-is.`,
+              escalation: `BUILD task generator returned empty array for PLAN ${taskName}. Manual BUILD task creation needed.`,
               buildTasksCreated: true,
-            });
-            log(`BUILD task generator returned empty array for PLAN ${taskId} — escalated`);
+            }, worker, ns);
           } else {
-            // Create BUILD tasks
-            const currentSequence = boardStatus.sequences?.BUILD ?? 0;
-            const newBuildTasks: typeof board.tasks = [];
-            const createdIds: string[] = [];
-            
+            const createdRefs: string[] = [];
+            let prevTaskName: string | undefined;
             for (let i = 0; i < buildTaskDefs.length; i++) {
               const def = buildTaskDefs[i];
               if (!def) continue;
-              const buildId = `BUILD-${currentSequence + i + 1}`;
-              createdIds.push(buildId);
-              
-              newBuildTasks.push({
-                id: buildId,
-                type: "BUILD",
-                title: def.title,
-                description: def.description,
-                agent: def.agent ?? "builder",
-                priority: def.priority ?? "medium",
+              const suffix = randomBytes(3).toString("hex");
+              const buildTaskName = `${projectName}-build-${suffix}`;
+              createdRefs.push(buildTaskName);
+              const newTask = buildTask({
+                name: buildTaskName,
+                projectName,
+                projectUid: fresh.metadata.uid!,
+                ns,
+                spec: {
+                  projectRef: projectName,
+                  type: "BUILD",
+                  title: def.title,
+                  description: def.description,
+                  agent: def.agent ?? "builder",
+                  priority: def.priority ?? "medium",
+                  parentTaskRef: taskName,
+                  ...(prevTaskName ? { predecessorRef: prevTaskName } : {}),
+                },
               });
+              try {
+                await createTask(newTask, ns);
+                prevTaskName = buildTaskName;
+                log(`created BUILD task CR ${buildTaskName} from PLAN ${taskName}`);
+              } catch (e) {
+                err(`failed to create BUILD task ${buildTaskName}:`, (e as Error).message);
+              }
             }
-            
-            const updatedTasks = [...(board.tasks ?? []), ...newBuildTasks];
-            const updatedSequences = {
-              ...(boardStatus.sequences ?? {}),
-              BUILD: currentSequence + buildTaskDefs.length,
-            };
-            
-            // Patch project to add BUILD tasks
-            try {
-              await patchProjectSpec(projectName, { board: { ...board, tasks: updatedTasks } }, ns, k8s);
-              
-              // Update worker tracking
-              workers = updateWorker(workers, taskId, {
-                buildTasksCreated: true,
-                createdBuildTasks: createdIds,
-              });
-              
-              // Update sequences in status
-              boardStatus.sequences = updatedSequences;
-              
-              // Move PLAN to done
-              backlog = moveTask(backlog, taskId, "done");
-              
-              log(`created ${newBuildTasks.length} BUILD tasks from PLAN ${taskId}: ${createdIds.join(", ")}`);
-            } catch (e) {
-              err(`failed to create BUILD tasks for PLAN ${taskId}:`, (e as Error).message);
-              workers = updateWorker(workers, taskId, {
-                status: "Escalated",
-                escalation: `Failed to create BUILD tasks: ${(e as Error).message}`,
-              });
-            }
+            await patchWorker(taskName, {
+              buildTasksCreated: true,
+              createdBuildTaskRefs: createdRefs,
+            }, worker, ns);
+            await moveTaskColumn(taskName, "done", ns);
+            if (worker.runName) await cleanupWorktree(task, worker.runName, cleanupProject, ns);
+            log(`created ${createdRefs.length} BUILD task CRs from PLAN ${taskName}`);
+            emitEvent(projectName, taskName, task.spec.type, "merged", { buildTaskCount: createdRefs.length, buildTasks: createdRefs });
           }
         } else {
-          // No result yet — check if facilitator run is done
           const buildGenPhase = buildGenRun?.status?.phase;
           if (buildGenPhase === "Succeeded" || buildGenPhase === "Failed") {
-            // Facilitator done but no parseable result.
-            // Try the agent to reconstruct BUILD tasks before escalating.
             if (isAgentReady()) {
               let rawContext = "";
               try {
-                const snapshot = await readSessionConfigMap(
-                  worker.buildTasksFacilitatorRun,
-                  "",
-                  ns,
-                );
-                if (snapshot) {
-                  rawContext = JSON.stringify(snapshot.messages).slice(0, 12000);
-                }
+                const snapshot = await readSessionConfigMap(worker.buildTasksFacilitatorRun, "", ns);
+                if (snapshot) rawContext = JSON.stringify(snapshot.messages).slice(0, 12000);
               } catch { /* best effort */ }
               if (!rawContext) {
                 try {
@@ -1265,85 +1022,73 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
                   rawContext = await readPodLog(worker.buildTasksFacilitatorRun, "opencode", 50, ns);
                 } catch { /* best effort */ }
               }
-              const buildTaskDefs = await parseRawBuildTaskGen({
+              const agentDefs = await parseRawBuildTaskGen({
                 projectName,
-                taskId,
-                taskTitle: taskDef?.title ?? "",
+                taskId: taskName,
+                taskTitle: task.spec.title,
                 rawContext: rawContext || "no session data available",
               });
-              if (buildTaskDefs && buildTaskDefs.length > 0) {
-                log(`agent parsed BUILD task definitions for PLAN ${taskId}: ${buildTaskDefs.length} tasks`);
-                // Apply the agent-parsed definitions immediately.
-                const currentSequence = boardStatus.sequences?.BUILD ?? 0;
-                const newBuildTasks: typeof board.tasks = [];
-                const createdIds: string[] = [];
-                for (let i = 0; i < buildTaskDefs.length; i++) {
-                  const def = buildTaskDefs[i];
+              if (agentDefs && agentDefs.length > 0) {
+                const createdRefs: string[] = [];
+                let prevTaskName: string | undefined;
+                for (const def of agentDefs) {
                   if (!def) continue;
-                  const buildId = `BUILD-${currentSequence + i + 1}`;
-                  createdIds.push(buildId);
-                  newBuildTasks.push({
-                    id: buildId,
-                    type: "BUILD",
-                    title: def.title,
-                    description: def.description,
-                    agent: def.agent ?? "builder",
-                    priority: (def.priority === "high" || def.priority === "low" ? def.priority : "medium") as "high" | "medium" | "low",
+                  const suffix = randomBytes(3).toString("hex");
+                  const buildTaskName = `${projectName}-build-${suffix}`;
+                  createdRefs.push(buildTaskName);
+                  const newTask = buildTask({
+                    name: buildTaskName,
+                    projectName,
+                    projectUid: fresh.metadata.uid!,
+                    ns,
+                    spec: {
+                      projectRef: projectName,
+                      type: "BUILD",
+                      title: def.title,
+                      description: def.description,
+                      agent: def.agent ?? "builder",
+                      priority: (def.priority === "high" || def.priority === "low" ? def.priority : "medium") as "high" | "medium" | "low",
+                      parentTaskRef: taskName,
+                      ...(prevTaskName ? { predecessorRef: prevTaskName } : {}),
+                    },
                   });
+                  try {
+                    await createTask(newTask, ns);
+                    prevTaskName = buildTaskName;
+                  } catch (e) {
+                    err(`failed to create BUILD task ${buildTaskName}:`, (e as Error).message);
+                  }
                 }
-                const updatedTasks = [...(board.tasks ?? []), ...newBuildTasks];
-                const updatedSequences = {
-                  ...(boardStatus.sequences ?? {}),
-                  BUILD: currentSequence + buildTaskDefs.length,
-                };
-                try {
-                  await patchProjectSpec(projectName, { board: { ...board, tasks: updatedTasks } }, ns, k8s);
-                  workers = updateWorker(workers, taskId, {
-                    buildTasksCreated: true,
-                    createdBuildTasks: createdIds,
-                  });
-                  boardStatus.sequences = updatedSequences;
-                  backlog = moveTask(backlog, taskId, "done");
-                  log(`created ${newBuildTasks.length} BUILD tasks (via agent) from PLAN ${taskId}: ${createdIds.join(", ")}`);
-                } catch (e) {
-                  err(`failed to create BUILD tasks (via agent) for PLAN ${taskId}:`, (e as Error).message);
-                  workers = updateWorker(workers, taskId, {
-                    status: "Escalated",
-                    escalation: `Failed to create BUILD tasks (via agent): ${(e as Error).message}`,
-                    buildTasksCreated: true,
-                  });
-                }
+                await patchWorker(taskName, { buildTasksCreated: true, createdBuildTaskRefs: createdRefs }, worker, ns);
+                await moveTaskColumn(taskName, "done", ns);
+                if (worker.runName) await cleanupWorktree(task, worker.runName, cleanupProject, ns);
+                log(`created ${createdRefs.length} BUILD tasks (via agent) from PLAN ${taskName}`);
                 continue;
               }
-              log(`agent could not parse BUILD task gen output for ${taskId} — falling back to escalate`);
             }
-            // Fallback: escalate.
-            workers = updateWorker(workers, taskId, {
+            await patchWorker(taskName, {
               status: "Escalated",
-              escalation: `BUILD task generator finished (${buildGenPhase}) but produced no valid JSON array. Human review needed.`,
+              escalation: `BUILD task generator (${buildGenPhase}) produced no valid result for PLAN ${taskName}.`,
               buildTasksCreated: true,
-            });
-            log(`BUILD task generator for PLAN ${taskId} produced no valid result (${buildGenPhase}) — escalated`);
+            }, worker, ns);
           }
-          // else: facilitator still running, retry next cycle
         }
       }
-      // If buildTasksCreated is already true, PLAN should have been moved to done in a previous cycle
     }
   }
 
   // ------------------------------------------------------------------
   // REWORK PHASE: re-dispatch tasks in the "rework" column.
   // ------------------------------------------------------------------
-  const tasksToRework = getTasksToRework({ ...boardStatus, backlog, workers });
+  const postReviewTasks = await listTasks(projectName, ns);
+  const tasksToRework = getTasksToRework(postReviewTasks);
 
-  for (const taskId of tasksToRework) {
-    const taskDef = (board.tasks ?? []).find((t) => t.id === taskId);
-    if (!taskDef) continue;
+  for (const task of tasksToRework) {
+    const taskName = task.metadata.name;
+    const existingWorker = task.status?.worker;
 
-    const existingWorker = workers.find((w) => w.taskId === taskId);
     if (existingWorker?.status === "Running") {
-      log(`task ${taskId} already has a running worker (${existingWorker.runName}) — skipping rework dispatch`);
+      log(`task ${taskName} already has a running worker (${existingWorker.runName}) — skipping rework`);
       continue;
     }
 
@@ -1351,102 +1096,90 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
 
     const existingFeedback = existingWorker?.reviewFeedback;
     const feedback =
-      fresh.metadata.annotations?.[`percussionist.dev/rework-${taskId}`] ??
+      fresh.metadata.annotations?.[`percussionist.dev/rework-${taskName}`] ??
       existingFeedback ??
       "Please address the feedback from the previous review.";
     const currentRetryCount = existingWorker?.retryCount ?? 0;
     const newRetryCount = currentRetryCount + 1;
-    const runName = workerRunName(projectName, taskId, newRetryCount);
-    const reworkRun = buildWorkerRun(fresh, taskDef, runName, newRetryCount, feedback);
+    const runName = workerRunName(projectName, taskName, newRetryCount);
+    const reworkRun = buildWorkerRun(fresh, task, runName, newRetryCount, feedback);
     if (existingWorker?.reworkAgent) {
       reworkRun.spec.agent = existingWorker.reworkAgent;
     }
 
-    backlog = moveTask(backlog, taskId, "in-progress");
-    workers = upsertWorker(workers, {
-      taskId,
-      runName,
-      status: "Running",
-      branch: `feat/${taskId}`,
-      startedAt: new Date().toISOString(),
-      retryCount: newRetryCount,
-      facilitated: false,
-      reviewApproved: false,
-      reviewFeedback: undefined,
-      reworkAgent: undefined,
-      mergeRunName: undefined,
-      mergeError: undefined,
-    });
+    await patchTaskStatus(taskName, {
+      column: "in-progress",
+      worker: {
+        runName,
+        status: "Running",
+        branch: `feat/${taskName}`,
+        startedAt: new Date().toISOString(),
+        retryCount: newRetryCount,
+        facilitated: false,
+        reviewApproved: false,
+        reviewFeedback: undefined,
+        reworkAgent: undefined,
+        mergeRunName: undefined,
+        mergeError: undefined,
+      },
+    }, ns);
 
     try {
-      log(`DEBUG: about to createRun for ${taskId} with runName=${runName}, newRetryCount=${newRetryCount}`);
       await createRun(reworkRun, ns, k8s);
-      log(`re-dispatched rework for task ${taskId}`);
+      log(`re-dispatched rework for task ${taskName}`);
+      emitEvent(projectName, taskName, task.spec.type, "run.created", { runName, agent: reworkRun.spec.agent ?? "", retryCount: newRetryCount, reason: "rework" });
     } catch (e) {
       const msg = (e as Error).message;
-      log(`DEBUG: createRun failed for ${taskId}: ${msg}`);
       if (/AlreadyExists/i.test(msg)) {
-        // Run already exists - check if it's in a failed state.
-        // If failed, delete it so we can recreate with a fresh pod.
         try {
           const existingRun = await getRun(runName, ns, k8s);
-          log(`DEBUG: getRun succeeded for ${taskId} runName=${runName}, phase=${existingRun?.status?.phase}`);
           const existingPhase = existingRun?.status?.phase;
           if (existingPhase === "Failed" || existingPhase === "Cancelled") {
-            log(`rework run ${runName} is ${existingPhase}; deleting and recreating`);
             await deleteRun(runName, ns, k8s);
             await createRun(reworkRun, ns, k8s);
-            log(`re-dispatched rework for task ${taskId} after cleaning up failed run`);
+            log(`re-dispatched rework for ${taskName} after cleaning up failed run`);
           } else {
-            log(`rework run already exists for ${taskId} (phase: ${existingPhase}); keeping task in in-progress`);
+            log(`rework run already exists for ${taskName} (phase: ${existingPhase})`);
           }
         } catch (checkErr) {
-          log(`DEBUG: catch block hit for ${taskId} runName=${runName} error=${(checkErr as Error).message}`);
-          err(`failed to check existing run for ${taskId} (runName=${runName}):`, (checkErr as Error).message);
-          log(`rework run already exists for ${taskId}; keeping task in in-progress`);
+          err(`failed to check existing run for ${taskName}:`, (checkErr as Error).message);
         }
       } else {
-        err(`failed to create rework run for ${taskId}:`, msg);
-        backlog = moveTask(backlog, taskId, "rework");
+        err(`failed to create rework run for ${taskName}:`, msg);
+        await moveTaskColumn(taskName, "rework", ns);
       }
     }
   }
 
   // ------------------------------------------------------------------
-  // UPDATE PHASE: sync board state to SQLite, then write summary metrics
-  // to K8s CR status. The authoritative board state now lives in SQLite;
-  // K8s status only carries lightweight summary fields + manager metrics.
+  // UPDATE PHASE: write summary metrics to project CR status.
   // ------------------------------------------------------------------
-  const inProgressFinal = new Set(backlog["in-progress"] ?? []);
-  const activeWorkers = workers.filter(
-    (w) => w.status === "Running" && !!w.runName && inProgressFinal.has(w.taskId),
+  const finalTasks = await listTasks(projectName, ns);
+  const activeWorkers = finalTasks.filter(
+    (t) => t.status?.column === "in-progress" && t.status?.worker?.status === "Running" && !!t.status?.worker?.runName,
   ).length;
-  const pendingQuestions = (boardStatus.pendingQuestions ?? []).filter((q) =>
-    workers.some((w) => w.taskId === q.workerId && w.status === "Running"),
+
+  const pendingQuestions = (fresh.status?.board?.pendingQuestions ?? []).filter((q: { workerId: string }) =>
+    finalTasks.some(
+      (t) => t.metadata.name === q.workerId && t.status?.worker?.status === "Running",
+    ),
   );
+
+  const escalations = finalTasks
+    .filter((t) => t.status?.worker?.escalation)
+    .map((t) => t.status!.worker!.escalation!);
 
   const reconcileDuration = Date.now() - startTime;
 
-  // 1. Sync board state to SQLite (atomic, no merge-patch races).
-  try {
-    await syncBoard(projectName, backlog, workers);
-  } catch (e) {
-    err(`syncBoard failed for ${projectName}: ${(e as Error).message} — continuing with K8s status flush`);
-  }
-
-  // 2. Write only summary + metrics to K8s CR status (no full board blob).
   try {
     await patchProjectStatus(
       projectName,
       {
         board: {
-          // Summary fields for kubectl visibility.
           activeWorkers,
           lastEventAt: new Date().toISOString(),
           pendingQuestions,
-          escalations: workers
-            .filter((w) => w.escalation)
-            .map((w) => w.escalation!),
+          escalations,
           managerMetrics: {
             lastReconcileAt: new Date().toISOString(),
             lastReconcileDurationMs: reconcileDuration,
@@ -1455,29 +1188,27 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
             workersMonitored,
             tasksReworked,
           },
-        } as Partial<BoardStatus>,
+        },
       },
       ns,
     );
   } catch (e) {
-    const msg = `patchProjectStatus metrics failed after ${reconcileDuration}ms: ${(e as Error).message}`;
-    err(msg);
+    err(`patchProjectStatus failed: ${(e as Error).message}`);
     await patchProjectStatus(
       projectName,
       {
-        board: {
-          activeWorkers,
-          lastEventAt: new Date().toISOString(),
-          managerMetrics: {
-            lastReconcileAt: new Date().toISOString(),
-            lastReconcileDurationMs: reconcileDuration,
-            lastReconcileResult: "error",
-            lastError: (e as Error).message,
-            tasksPulled,
-            workersMonitored,
-            tasksReworked,
+          board: {
+            activeWorkers,
+            managerMetrics: {
+              lastReconcileAt: new Date().toISOString(),
+              lastReconcileDurationMs: reconcileDuration,
+              lastReconcileResult: "error",
+              lastError: (e as Error).message,
+              tasksPulled: 0,
+              workersMonitored: 0,
+              tasksReworked: 0,
+            },
           },
-        } as Partial<BoardStatus>,
       },
       ns,
     ).catch(() => {});
@@ -1485,7 +1216,7 @@ async function runReconcileCycle(project: OpenCodeProject, startTime: number): P
 }
 
 // ---------------------------------------------------------------------------
-// Pause mechanism — agent can pause reconciliation for manual board surgery.
+// Pause mechanism
 
 let paused = false;
 let pausedAt = 0;
@@ -1518,9 +1249,9 @@ export function getPauseStatus(): { paused: boolean; elapsedMs: number; remainin
 
 const queue: string[] = [];
 const pending = new Set<string>();
-const seen = new Map<string, OpenCodeProject>();
+const seen = new Map<string, Project>();
 
-export function enqueue(project: OpenCodeProject): void {
+export function enqueue(project: Project): void {
   const key = `${project.metadata.namespace}/${project.metadata.name}`;
   seen.set(key, project);
   if (!pending.has(key)) {

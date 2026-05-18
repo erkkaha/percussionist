@@ -1,13 +1,13 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: opencodeprojects.percussionist.dev
+  name: projects.percussionist.dev
 spec:
   group: percussionist.dev
   names:
-    kind: OpenCodeProject
-    plural: opencodeprojects
-    singular: opencodeproject
+    kind: Project
+    plural: projects
+    singular: project
   scope: Namespaced
   versions:
     - name: v1alpha1
@@ -18,7 +18,7 @@ spec:
       additionalPrinterColumns:
         - name: Phase
           type: string
-          jsonPath: .status.board.phase
+          jsonPath: .spec.phase
         - name: Workers
           type: integer
           jsonPath: .status.board.activeWorkers
@@ -85,6 +85,8 @@ spec:
                             - email
                       required:
                         - url
+                    local:
+                      type: boolean
                 secrets:
                   type: object
                   properties:
@@ -192,193 +194,50 @@ spec:
                   maxItems: 20
                 initScript:
                   type: string
-                board:
+                maxParallel:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+                agents:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 63
+                    required:
+                      - name
+                phase:
+                  type: string
+                  enum:
+                    - Active
+                    - Complete
+                    - Archived
+                data:
                   type: object
                   properties:
-                    maxParallel:
-                      type: integer
-                      minimum: 1
-                      maximum: 20
-                    agents:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          name:
-                            type: string
-                            minLength: 1
-                            maxLength: 63
-                        required:
-                          - name
-                    tasks:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          id:
-                            type: string
-                            minLength: 1
-                            maxLength: 32
-                          type:
-                            type: string
-                            enum:
-                              - PLAN
-                              - BUILD
-                          title:
-                            type: string
-                            minLength: 1
-                            maxLength: 256
-                          description:
-                            type: string
-                            maxLength: 8192
-                          priority:
-                            type: string
-                            enum:
-                              - high
-                              - medium
-                              - low
-                          agent:
-                            type: string
-                            minLength: 1
-                        required:
-                          - id
-                          - type
-                          - title
-                          - agent
-                      maxItems: 100
-                    overrides:
-                      type: object
-                      properties:
-                        model:
-                          type: string
-                        image:
-                          type: string
-                        timeoutSeconds:
-                          type: integer
-                          exclusiveMinimum: true
-                          minimum: 0
-                        resources:
-                          type: object
-                          properties:
-                            requests:
-                              type: object
-                              x-kubernetes-preserve-unknown-fields: true
-                            limits:
-                              type: object
-                              x-kubernetes-preserve-unknown-fields: true
-                    phase:
+                    pvcName:
                       type: string
-                      enum:
-                        - Active
-                        - Complete
-                        - Archived
+                    mountPath:
+                      type: string
+                    storageClass:
+                      type: string
+                gitCache:
+                  type: object
+                  properties:
+                    worktreeReuse:
+                      type: boolean
             status:
               type: object
               properties:
                 board:
                   type: object
                   properties:
-                    columns:
-                      type: array
-                      items:
-                        type: string
-                    backlog:
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    workers:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          taskId:
-                            type: string
-                            minLength: 1
-                          runName:
-                            type: string
-                          status:
-                            type: string
-                            enum:
-                              - Running
-                              - Succeeded
-                              - Failed
-                              - Escalated
-                          branch:
-                            type: string
-                          prNumber:
-                            type: integer
-                            minimum: 1
-                          startedAt:
-                            type: string
-                          completedAt:
-                            type: string
-                          escalation:
-                            type: string
-                            maxLength: 4096
-                          retryCount:
-                            type: integer
-                            minimum: 0
-                          facilitated:
-                            type: boolean
-                          facilitationRunName:
-                            type: string
-                          reviewRunName:
-                            type: string
-                          facilitationResult:
-                            type: object
-                            properties:
-                              diagnosis:
-                                type: string
-                                maxLength: 1024
-                              recommendedAction:
-                                type: string
-                                enum:
-                                  - retry_same
-                                  - retry_alternative
-                                  - skip
-                                  - approve
-                                  - request_changes
-                                  - escalate
-                              alternativeAgent:
-                                type: string
-                                maxLength: 63
-                              suggestion:
-                                type: string
-                                maxLength: 4096
-                            required:
-                              - diagnosis
-                              - recommendedAction
-                          buildTasksFacilitatorRun:
-                            type: string
-                          buildTasksCreated:
-                            type: boolean
-                          createdBuildTasks:
-                            type: array
-                            items:
-                              type: string
-                          reviewApproved:
-                            type: boolean
-                          reviewFeedback:
-                            type: string
-                            maxLength: 4096
-                          reworkAgent:
-                            type: string
-                            maxLength: 63
-                          mergeRunName:
-                            type: string
-                          mergedAt:
-                            type: string
-                          mergeError:
-                            type: string
-                            maxLength: 4096
-                        required:
-                          - taskId
-                          - status
                     activeWorkers:
                       type: integer
                       minimum: 0
-                    sequences:
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
                     escalations:
                       type: array
                       items:

@@ -1,4 +1,4 @@
-// pod-builder.ts — renders the Pod, Service, and Ingress for an OpenCodeRun.
+// pod-builder.ts — renders the Pod, Service, and Ingress for an Run.
 
 import {
   type V1Pod,
@@ -10,13 +10,14 @@ import {
   KIND_RUN,
   LABELS,
   MANAGED_BY,
-  CONTAINER_PORT,
   DISPATCHER_MCP_PORT,
   RUNNER_CONTAINER,
   DISPATCHER_CONTAINER,
-  type OpenCodeRun,
+  OPENCODE_RUNNER_DEFAULTS,
+  type Run,
   type AgentDef,
   type SidecarSpec,
+  type RunnerImageSpec,
 } from "@percussionist/api";
 import {
   RUNNER_IMAGE_DEFAULT,
@@ -32,16 +33,16 @@ import {
 // ---------------------------------------------------------------------------
 // Naming helpers
 
-export const serviceName = (run: OpenCodeRun) => run.metadata.name;
-export const podName = (run: OpenCodeRun) => run.metadata.name;
-export const ingressName = (run: OpenCodeRun) => run.metadata.name;
-export const agentsConfigMapName = (run: OpenCodeRun) =>
+export const serviceName = (run: Run) => run.metadata.name;
+export const podName = (run: Run) => run.metadata.name;
+export const ingressName = (run: Run) => run.metadata.name;
+export const agentsConfigMapName = (run: Run) =>
   `${run.metadata.name}-agents`;
 
 // ---------------------------------------------------------------------------
 // Shared metadata helpers
 
-const ownerRefsFor = (run: OpenCodeRun) => [
+const ownerRefsFor = (run: Run) => [
   {
     apiVersion: API_GROUP_VERSION,
     kind: KIND_RUN,
@@ -52,7 +53,7 @@ const ownerRefsFor = (run: OpenCodeRun) => [
   },
 ];
 
-const commonLabels = (run: OpenCodeRun) => ({
+const commonLabels = (run: Run) => ({
   [LABELS.managedBy]: MANAGED_BY,
   [LABELS.runName]: run.metadata.name,
   ...(run.spec.project
@@ -63,13 +64,13 @@ const commonLabels = (run: OpenCodeRun) => ({
 // ---------------------------------------------------------------------------
 // Ingress helpers
 
-export function shouldCreateIngress(run: OpenCodeRun): boolean {
+export function shouldCreateIngress(run: Run): boolean {
   if (!INGRESS_BASE_URL) return false;
   const exposeWeb = run.spec?.expose?.web;
   return exposeWeb === undefined ? EXPOSE_WEB_DEFAULT : exposeWeb;
 }
 
-export function webURLFor(run: OpenCodeRun): string {
+export function webURLFor(run: Run): string {
   const url = new URL(INGRESS_BASE_URL);
   url.hostname = `${run.metadata.name}.${url.hostname}`;
   url.pathname = "/";
@@ -79,7 +80,8 @@ export function webURLFor(run: OpenCodeRun): string {
 // ---------------------------------------------------------------------------
 // Renderers
 
-export function renderService(run: OpenCodeRun): V1Service {
+export function renderService(run: Run, runner: RunnerImageSpec = OPENCODE_RUNNER_DEFAULTS): V1Service {
+  const containerPort = runner.port;
   return {
     apiVersion: "v1",
     kind: "Service",
@@ -96,7 +98,7 @@ export function renderService(run: OpenCodeRun): V1Service {
       ports: [
         {
           name: "http",
-          port: CONTAINER_PORT,
+          port: containerPort,
           targetPort: "http" as unknown as number,
         },
       ],
@@ -104,7 +106,8 @@ export function renderService(run: OpenCodeRun): V1Service {
   };
 }
 
-export function renderIngress(run: OpenCodeRun): V1Ingress {
+export function renderIngress(run: Run, runner: RunnerImageSpec = OPENCODE_RUNNER_DEFAULTS): V1Ingress {
+  const containerPort = runner.port;
   const host = new URL(INGRESS_BASE_URL).hostname;
   const runHost = `${run.metadata.name}.${host}`;
   const ingress: V1Ingress = {
@@ -129,7 +132,7 @@ export function renderIngress(run: OpenCodeRun): V1Ingress {
                 backend: {
                   service: {
                     name: serviceName(run),
-                    port: { number: CONTAINER_PORT },
+                    port: { number: containerPort },
                   },
                 },
               },
@@ -144,7 +147,7 @@ export function renderIngress(run: OpenCodeRun): V1Ingress {
 }
 
 export function renderAgentsConfigMap(
-  run: OpenCodeRun,
+  run: Run,
   agents: AgentDef[],
 ): object {
   const data: Record<string, string> = {};
@@ -165,32 +168,35 @@ export function renderAgentsConfigMap(
 }
 
 export function renderPod(
-  run: OpenCodeRun,
+  run: Run,
   resolvedAgents: AgentDef[],
   sidecars: SidecarSpec[] = [],
+  runner: RunnerImageSpec = OPENCODE_RUNNER_DEFAULTS,
 ): V1Pod {
   const spec = run.spec;
+  const containerPort = runner.port;
 
-  // Validate project label is present (required for cache PVC)
+  // Validate project label is present (required for data PVC)
   const projectName = run.metadata.labels?.["percussionist.dev/project"];
   if (!projectName) {
     throw new Error(
-      `OpenCodeRun ${run.metadata.namespace}/${run.metadata.name} missing required label: percussionist.dev/project`,
+      `Run ${run.metadata.namespace}/${run.metadata.name} missing required label: percussionist.dev/project`,
     );
   }
 
   const llmKeysSecret = spec.secrets?.llmKeysSecret;
-  const image = spec.image ?? RUNNER_IMAGE_DEFAULT;
+  const image = spec.image ?? runner.image ?? RUNNER_IMAGE_DEFAULT;
   const git = spec.source?.git;
+  const localGit = spec.source?.local === true;
   const sshSecret = git?.sshSecret;
   const githubTokenSecret = git?.githubTokenSecret;
   const initScript = spec.initScript;
   const hasAgents = resolvedAgents.length > 0;
   const hasSidecars = sidecars.length > 0;
 
-  // Cache PVC configuration (declared early so initContainers can reference it)
-  const cachePvcName = spec.cache?.pvcName ?? `${projectName}-cache`;
-  const cacheMountPath = spec.cache?.mountPath ?? "/cache";
+  // Data PVC configuration
+  const dataPvcName = spec.data?.pvcName ?? `${projectName}-data`;
+  const dataMountPath = spec.data?.mountPath ?? "/data";
 
   const initContainerResources = spec.resources ?? {
     requests: { cpu: "200m", memory: "512Mi" },
@@ -217,83 +223,212 @@ export function renderPod(
       ]
     : [];
 
-  const initContainers = git
-    ? [
-        {
-          name: "git-clone",
-          image,
-          imagePullPolicy: "IfNotPresent" as const,
-          command: ["/bin/sh", "-c"],
-          args: [
-             [
-              "set -e",
-              'echo "[git-clone] cloning ${GIT_URL} ref=${GIT_REF:-<default>} into /workspace"',
-              'if [ -f /etc/git-ssh/id ]; then',
-              '  export GIT_SSH_COMMAND="ssh -i /etc/git-ssh/id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"',
-              '  echo "[git-clone] using ssh key from secret"',
-              'else',
-              '  export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"',
-              'fi',
-              'if [ -f /etc/git-github/token ]; then',
-              '  GITHUB_TOKEN=$(cat /etc/git-github/token)',
-              '  export GITHUB_TOKEN',
-              '  echo "[git-clone] GitHub token loaded for gh CLI"',
-              'fi',
-              'cd /workspace',
-              'if [ -z "${GIT_REF}" ]; then',
-              '  git clone --depth=1 "${GIT_URL}" .',
-              'elif echo "${GIT_REF}" | grep -Eq "^[0-9a-f]{7,40}$"; then',
-              '  git clone "${GIT_URL}" .',
-              '  git checkout --detach "${GIT_REF}"',
-              'else',
-              '  git clone --depth=1 --branch "${GIT_REF}" "${GIT_URL}" .',
-              'fi',
-              'echo "[git-clone] HEAD=$(git rev-parse HEAD)"',
-              ...(initScript ? [
-                '',
-                '# Run init script if present.',
-                'if [ -n "${INIT_SCRIPT}" ]; then',
-                '  echo "[git-clone] running init script"',
-                '  eval "${INIT_SCRIPT}"',
-                '  echo "[git-clone] init script completed successfully"',
-                'fi',
-              ] : []),
-            ].join("\n"),
-          ],
-          env: [
-            { name: "GIT_URL", value: git.url },
-            ...(git.ref ? [{ name: "GIT_REF", value: git.ref }] : []),
-            { name: "GIT_TERMINAL_PROMPT", value: "0" },
-            ...gitAuthorEnv,
-            ...(initScript ? [{ name: "INIT_SCRIPT", value: initScript }] : []),
-            // Cache env vars so init scripts (e.g. pnpm install) use the cache PVC
-            { name: "PNPM_HOME", value: `${cacheMountPath}/pnpm` },
-            { name: "npm_config_store_dir", value: `${cacheMountPath}/pnpm-store` },
-            { name: "NPM_CONFIG_CACHE", value: `${cacheMountPath}/npm` },
-            { name: "BUN_INSTALL_CACHE_DIR", value: `${cacheMountPath}/bun` },
-            { name: "TURBO_CACHE_DIR", value: `${cacheMountPath}/turbo` },
-          ],
-          volumeMounts: [
-            { name: "workspace", mountPath: "/workspace" },
-            { name: "cache", mountPath: cacheMountPath },
-            ...(sshSecret
-              ? [{ name: "git-ssh", mountPath: "/etc/git-ssh", readOnly: true }]
-              : []),
-            ...(githubTokenSecret
-              ? [{ name: "git-github", mountPath: "/etc/git-github", readOnly: true }]
-              : []),
-          ],
-          resources: initContainerResources,
-        },
-      ]
-    : undefined;
+  // ---------------------------------------------------------------------------
+  // workspace-init init container
+  //
+  // Runs when the source is a remote git repo OR a local-only git workspace.
+  //
+  // Remote git (source.git):
+  //   1. flock on the mirror dir to serialize concurrent fetches
+  //   2. Clone --mirror if not present, otherwise git fetch --prune
+  //   3. Add a worktree at /data/worktrees/{run-name}/ if not present,
+  //      or resume the existing one (worktreeReuse=true, the default)
+  //   4. Set the remote URL so the agent can push
+  //   5. Run initScript if set
+  //
+  // Local git (source.local):
+  //   1. git init /data/workspace/ if not already a git repo
+  //   2. Run initScript if set
+  //
+  // The main container's workspace volume is a subPath mount backed by the
+  // data PVC, pointing at the prepared directory.
+
+  const runName = run.metadata.name;
+  // Stable 8-char hash of the git URL used to name the bare mirror directory.
+  // Computed at pod-render time so it is deterministic and embeddable in the
+  // shell script without a runtime dependency on external tools.
+  const urlHash = git?.url
+    ? (() => {
+        // Simple djb2-style hex hash — good enough for directory naming.
+        let h = 5381;
+        for (let i = 0; i < git.url.length; i++) {
+          h = ((h << 5) + h + git.url.charCodeAt(i)) >>> 0;
+        }
+        return h.toString(16).padStart(8, "0");
+      })()
+    : "";
+
+  const worktreeReuse = spec.gitCache?.worktreeReuse ?? true;
+
+  const initContainers =
+    git || localGit
+      ? [
+          {
+            name: "workspace-init",
+            image,
+            imagePullPolicy: "IfNotPresent" as const,
+            command: ["/bin/sh", "-c"],
+            args: [
+              git
+                ? // ── Remote git ──────────────────────────────────────────
+                  [
+                    "set -e",
+                    `MIRROR_DIR="${dataMountPath}/git-mirrors/${urlHash}"`,
+                    `WORKTREE_DIR="${dataMountPath}/worktrees/${runName}"`,
+                    `LOCK_FILE="${dataMountPath}/git-mirrors/${urlHash}.lock"`,
+                    "",
+                    "# SSH key setup",
+                    'if [ -f /etc/git-ssh/id ]; then',
+                    '  export GIT_SSH_COMMAND="ssh -i /etc/git-ssh/id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"',
+                    '  echo "[workspace-init] using ssh key from secret"',
+                    "else",
+                    '  export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"',
+                    "fi",
+                    "",
+                    "# GitHub token",
+                    'if [ -f /etc/git-github/token ]; then',
+                    "  GITHUB_TOKEN=$(cat /etc/git-github/token)",
+                    "  export GITHUB_TOKEN",
+                    '  echo "[workspace-init] GitHub token loaded"',
+                    "fi",
+                    "",
+                    "# Ensure mirror directories exist",
+                    `mkdir -p "${dataMountPath}/git-mirrors" "${dataMountPath}/worktrees"`,
+                    "",
+                    "# Update or create bare mirror (serialised with flock on lock file)",
+                    `mkdir -p "$(dirname "$LOCK_FILE")"`,
+                    "(",
+                    "  flock -x 200",
+                    "  if [ -d \"$MIRROR_DIR\" ]; then",
+                    "    echo \"[workspace-init] updating mirror $MIRROR_DIR\"",
+                    "    git -C \"$MIRROR_DIR\" fetch --prune || echo \"[workspace-init] fetch failed, using stale mirror\"",
+                    "  else",
+                    `    echo "[workspace-init] cloning mirror from ${git.url}"`,
+                    `    git clone --mirror "${git.url}" "$MIRROR_DIR"`,
+                    "  fi",
+                     "  # Prune worktree metadata for directories that no longer exist",
+                    "  git -C \"$MIRROR_DIR\" worktree prune --expire=now 2>/dev/null || true",
+                    ') 200>"$LOCK_FILE"',
+                    "",
+                    "# Set up worktree",
+                    ...(worktreeReuse
+                      ? [
+                          `if [ -d "$WORKTREE_DIR/.git" ] || [ -f "$WORKTREE_DIR/.git" ]; then`,
+                          `  echo "[workspace-init] resuming existing worktree $WORKTREE_DIR"`,
+                          `  git -C "$WORKTREE_DIR" fetch --all --prune || echo "[workspace-init] fetch in worktree failed, continuing"`,
+                          ...(git.ref
+                            ? [
+                                `  git -C "$WORKTREE_DIR" checkout "${git.ref}" 2>/dev/null || git -C "$WORKTREE_DIR" checkout -b "${git.ref}" "origin/${git.ref}" 2>/dev/null || true`,
+                              ]
+                            : []),
+                          `else`,
+                          `  echo "[workspace-init] creating worktree $WORKTREE_DIR"`,
+                          ...(git.ref
+                            ? [`  git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null || git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "origin/${git.ref}"`]
+                            : [`  git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR"`]),
+                          `fi`,
+                        ]
+                      : [
+                          `# freshWorktree mode: always recreate`,
+                          `if [ -d "$WORKTREE_DIR" ]; then`,
+                          `  git -C "$MIRROR_DIR" worktree remove --force "$WORKTREE_DIR" 2>/dev/null || rm -rf "$WORKTREE_DIR"`,
+                          `fi`,
+                          ...(git.ref
+                            ? [`git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null || git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "origin/${git.ref}"`]
+                            : [`git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR"`]),
+                        ]),
+                    "",
+                    "# Ensure remote URL points to real remote (not file://) so agent can push",
+                    `git -C "$WORKTREE_DIR" remote set-url origin "${git.url}" 2>/dev/null || true`,
+                    `echo "[workspace-init] HEAD=$(git -C "$WORKTREE_DIR" rev-parse HEAD)"`,
+                    "",
+                    ...(initScript
+                      ? [
+                          "# Run init script",
+                          'if [ -n "${INIT_SCRIPT}" ]; then',
+                          `  echo "[workspace-init] running init script"`,
+                          "  cd \"$WORKTREE_DIR\"",
+                          "  eval \"${INIT_SCRIPT}\"",
+                          `  echo "[workspace-init] init script completed"`,
+                          "fi",
+                        ]
+                      : []),
+                  ].join("\n")
+                : // ── Local git ──────────────────────────────────────────
+                  [
+                    "set -e",
+                    `WORKSPACE_DIR="${dataMountPath}/workspace"`,
+                    `mkdir -p "$WORKSPACE_DIR"`,
+                    `if [ ! -d "$WORKSPACE_DIR/.git" ]; then`,
+                    `  echo "[workspace-init] initialising local git repo at $WORKSPACE_DIR"`,
+                    `  git init "$WORKSPACE_DIR"`,
+                    `  git -C "$WORKSPACE_DIR" commit --allow-empty -m "Initial commit"`,
+                    `else`,
+                    `  echo "[workspace-init] resuming existing local workspace at $WORKSPACE_DIR"`,
+                    `fi`,
+                    "",
+                    ...(initScript
+                      ? [
+                          'if [ -n "${INIT_SCRIPT}" ]; then',
+                          `  echo "[workspace-init] running init script"`,
+                          `  cd "$WORKSPACE_DIR"`,
+                          "  eval \"${INIT_SCRIPT}\"",
+                          `  echo "[workspace-init] init script completed"`,
+                          "fi",
+                        ]
+                      : []),
+                  ].join("\n"),
+            ],
+            env: [
+              ...(git
+                ? [
+                    { name: "GIT_TERMINAL_PROMPT", value: "0" },
+                    ...gitAuthorEnv,
+                  ]
+                : gitAuthorEnv),
+              ...(initScript ? [{ name: "INIT_SCRIPT", value: initScript }] : []),
+              // Cache env vars so init scripts (e.g. pnpm install) use the data PVC
+              { name: "PNPM_HOME", value: `${dataMountPath}/cache/pnpm` },
+              { name: "npm_config_store_dir", value: `${dataMountPath}/cache/pnpm-store` },
+              { name: "NPM_CONFIG_CACHE", value: `${dataMountPath}/cache/npm` },
+              { name: "BUN_INSTALL_CACHE_DIR", value: `${dataMountPath}/cache/bun` },
+              { name: "TURBO_CACHE_DIR", value: `${dataMountPath}/cache/turbo` },
+            ],
+            volumeMounts: [
+              { name: "data", mountPath: dataMountPath },
+              ...(sshSecret
+                ? [{ name: "git-ssh", mountPath: "/etc/git-ssh", readOnly: true }]
+                : []),
+              ...(githubTokenSecret
+                ? [{ name: "git-github", mountPath: "/etc/git-github", readOnly: true }]
+                : []),
+            ],
+            resources: initContainerResources,
+          },
+        ]
+      : undefined;
 
   const injectFiles = spec.injectFiles ?? [];
 
+  // Determine the workspace backing:
+  //   - remote git → /data/worktrees/{run-name}/ via PVC subPath
+  //   - local git  → /data/workspace/ via PVC subPath
+  //   - no source  → ephemeral emptyDir (current behaviour)
+  const workspaceSubPath = git
+    ? `worktrees/${runName}`
+    : localGit
+      ? "workspace"
+      : undefined;
+
   const volumes = [
-    { name: "workspace", emptyDir: {} },
-    // Cache PVC for package managers and build artifacts (RWX for parallel workers)
-    { name: "cache", persistentVolumeClaim: { claimName: cachePvcName } },
+    workspaceSubPath
+      ? {
+          name: "workspace",
+          persistentVolumeClaim: { claimName: dataPvcName },
+        }
+      : { name: "workspace", emptyDir: {} },
+    // Data PVC for caches, git mirrors, worktrees, and local workspace (RWX for parallel workers)
+    { name: "data", persistentVolumeClaim: { claimName: dataPvcName } },
     ...(sshSecret
       ? [
           {
@@ -355,28 +490,28 @@ export function renderPod(
             ? {
                 command: ["/bin/sh", "-c"],
                 args: [
-                  `${waitScript}exec opencode web --hostname 0.0.0.0 --port ${CONTAINER_PORT}`,
+                  `${waitScript}exec ${(runner.command ?? [`opencode`, `web`, `--hostname`, `0.0.0.0`, `--port`, String(containerPort)]).join(" ")}`,
                 ],
               }
             : {
-                command: [
+                command: runner.command ?? [
                   "opencode",
                   "web",
                   "--hostname",
                   "0.0.0.0",
                   "--port",
-                  String(CONTAINER_PORT),
+                  String(containerPort),
                 ],
               }),
-          ports: [{ name: "http", containerPort: CONTAINER_PORT }],
+          ports: [{ name: "http", containerPort }],
           env: [
             { name: "NODE_OPTIONS", value: "--max-old-space-size=1536" },
             // Package manager cache configuration
-            { name: "PNPM_HOME", value: `${cacheMountPath}/pnpm` },
-            { name: "npm_config_store_dir", value: `${cacheMountPath}/pnpm-store` },
-            { name: "NPM_CONFIG_CACHE", value: `${cacheMountPath}/npm` },
-            { name: "BUN_INSTALL_CACHE_DIR", value: `${cacheMountPath}/bun` },
-            { name: "TURBO_CACHE_DIR", value: `${cacheMountPath}/turbo` },
+            { name: "PNPM_HOME", value: `${dataMountPath}/cache/pnpm` },
+            { name: "npm_config_store_dir", value: `${dataMountPath}/cache/pnpm-store` },
+            { name: "NPM_CONFIG_CACHE", value: `${dataMountPath}/cache/npm` },
+            { name: "BUN_INSTALL_CACHE_DIR", value: `${dataMountPath}/cache/bun` },
+            { name: "TURBO_CACHE_DIR", value: `${dataMountPath}/cache/turbo` },
             sshSecret
               ? {
                   name: "GIT_SSH_COMMAND",
@@ -391,7 +526,7 @@ export function renderPod(
             ...(spec.secrets?.opencodeAuthSecret
               ? [
                   {
-                    name: "OPENCODE_AUTH_CONTENT",
+                    name: runner.authEnvVar,
                     valueFrom: {
                       secretKeyRef: {
                         name: spec.secrets.opencodeAuthSecret.name,
@@ -401,15 +536,15 @@ export function renderPod(
                   },
                 ]
               : []),
-            // Always inject the cluster-wide opencode config (providers, models, etc.)
-            // from the well-known "lmstudio-config" configmap.  Optional so pods start
+            // Always inject the cluster-wide runner config (providers, models, etc.)
+            // from the well-known "opencode-config" configmap.  Optional so pods start
             // cleanly even if the configmap hasn't been created.
             {
-              name: "OPENCODE_CONFIG_CONTENT",
+              name: runner.configEnvVar,
               valueFrom: {
                 configMapKeyRef: {
                   name: "opencode-config",
-                  key: "opencode.json",
+                  key: runner.configMapKey,
                   optional: true,
                 },
               },
@@ -418,7 +553,7 @@ export function renderPod(
             ...(spec.secrets?.opencodeConfigMap
               ? [
                   {
-                    name: "OPENCODE_CONFIG_CONTENT",
+                    name: runner.configEnvVar,
                     valueFrom: {
                       configMapKeyRef: {
                         name: spec.secrets.opencodeConfigMap.name,
@@ -460,9 +595,13 @@ export function renderPod(
             limits: { cpu: "2", memory: "2Gi" },
           },
           volumeMounts: [
-            { name: "workspace", mountPath: "/workspace" },
-            // Cache volume for package managers and build artifacts
-            { name: "cache", mountPath: cacheMountPath },
+            {
+              name: "workspace",
+              mountPath: "/workspace",
+              ...(workspaceSubPath ? { subPath: workspaceSubPath } : {}),
+            },
+            // Data volume for package manager caches, git mirrors, worktrees
+            { name: "data", mountPath: dataMountPath },
             ...(sshSecret
               ? [{ name: "git-ssh", mountPath: "/etc/git-ssh", readOnly: true }]
               : []),
@@ -473,7 +612,7 @@ export function renderPod(
               ? [
                   {
                     name: "agents-volume",
-                    mountPath: "/root/.config/opencode/agents",
+                    mountPath: `${runner.configMountPath}/${runner.agentsDirRelative}`,
                   },
                 ]
               : []),
@@ -495,8 +634,8 @@ export function renderPod(
             { name: "RUN_NAMESPACE", value: run.metadata.namespace! },
             { name: "RUN_UID", value: run.metadata.uid! },
             {
-              name: "OPENCODE_BASE_URL",
-              value: `http://127.0.0.1:${CONTAINER_PORT}`,
+              name: runner.baseUrlEnvVar,
+              value: `http://127.0.0.1:${containerPort}`,
             },
             { name: "WEB_STATS_URL", value: WEB_STATS_URL },
             ...(spec.task && !spec.interactive

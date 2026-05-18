@@ -1,15 +1,19 @@
-// PVC helper for creating and managing cache PersistentVolumeClaims.
+// PVC helper for creating and managing data PersistentVolumeClaims.
 //
-// Each OpenCodeProject gets a shared cache PVC for package manager stores
-// (pnpm, npm, bun) and build artifacts (turbo cache). The PVC is owned by
-// the OpenCodeProject CR and is automatically garbage-collected when the
-// project is deleted.
+// Each Project gets a shared data PVC that holds:
+//   - Package manager caches  (/data/cache/pnpm, /data/cache/npm, etc.)
+//   - Git bare mirrors         (/data/git-mirrors/{url-hash}/)
+//   - Per-run worktrees        (/data/worktrees/{run-name}/)
+//   - Local git workspace      (/data/workspace/)
+//
+// The PVC is owned by the Project CR and is automatically garbage-collected
+// when the project is deleted.
 
 import { core } from "@percussionist/kube";
 import type { V1PersistentVolumeClaim } from "@kubernetes/client-node";
 import { API_GROUP_VERSION, KIND_PROJECT } from "@percussionist/api";
 
-export interface CachePVCOptions {
+export interface DataPVCOptions {
   projectName: string;
   namespace: string;
   projectUid: string;
@@ -19,24 +23,24 @@ export interface CachePVCOptions {
 }
 
 /**
- * Ensures a cache PVC exists for the given project. Idempotent — succeeds if
+ * Ensures a data PVC exists for the given project. Idempotent — succeeds if
  * PVC already exists. Creates the PVC with:
  *   - RWX (ReadWriteMany) access mode for parallel worker execution
- *   - Owner reference to the OpenCodeProject CR (auto-cleanup on project deletion)
- *   - 5Gi default size
+ *   - Owner reference to the Project CR (auto-cleanup on project deletion)
+ *   - 10Gi default size
  *
  * @throws If PVC creation fails or project UID is invalid
  */
-export async function ensureCachePVC(
-  opts: CachePVCOptions,
+export async function ensureDataPVC(
+  opts: DataPVCOptions,
 ): Promise<V1PersistentVolumeClaim> {
   const {
     projectName,
     namespace,
     projectUid,
     storageClass,
-    size = "5Gi",
-    pvcName = `${projectName}-cache`,
+    size = "10Gi",
+    pvcName = `${projectName}-data`,
   } = opts;
 
   const coreApi = core();
@@ -70,7 +74,7 @@ export async function ensureCachePVC(
       namespace,
       labels: {
         "percussionist.dev/project": projectName,
-        "percussionist.dev/component": "cache",
+        "percussionist.dev/component": "data",
       },
       ownerReferences: [
         {
@@ -96,7 +100,7 @@ export async function ensureCachePVC(
 
   // Create PVC
   console.log(
-    `[pvc-helper] Creating cache PVC ${namespace}/${pvcName} (${size}, RWX)`,
+    `[pvc-helper] Creating data PVC ${namespace}/${pvcName} (${size}, RWX)`,
   );
   try {
     const created = await coreApi.createNamespacedPersistentVolumeClaim({
@@ -104,7 +108,7 @@ export async function ensureCachePVC(
       body: pvc,
     });
     console.log(
-      `[pvc-helper] Cache PVC ${namespace}/${pvcName} created successfully`,
+      `[pvc-helper] Data PVC ${namespace}/${pvcName} created successfully`,
     );
     return created;
   } catch (err: unknown) {
