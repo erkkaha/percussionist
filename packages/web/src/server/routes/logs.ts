@@ -74,11 +74,11 @@ async function listBootstrapContainers(
 
 // GET /api/runs/:name/logs?container=opencode&tailLines=500
 //
-// container defaults to "opencode" but can be "dispatcher", "git-clone",
-// or "bootstrap" (combined startup logs from git-clone/opencode/dispatcher).
+// container defaults to "opencode" but can be "dispatcher", "workspace-init",
+// or "bootstrap" (combined startup logs from workspace-init/opencode/dispatcher).
 // When the requested container is still waiting (init failed, pod never
 // started) and no explicit container was requested, we auto-fall-back to
-// the git-clone init container so the caller always gets useful output.
+// the workspace-init init container so the caller always gets useful output.
 logs.get("/:name/logs", async (c) => {
   const name = c.req.param("name");
   const explicitContainer = c.req.query("container");
@@ -137,7 +137,7 @@ logs.get("/:name/logs", async (c) => {
 
     // If the main container was never started (init container failure) and
     // the caller didn't explicitly request a specific container, automatically
-    // retry with the git-clone init container — that's where the failure is.
+    // retry with the workspace-init init container — that's where the failure is.
     const errStr = kubeErrMsg(e);
     const isWaiting =
       !explicitContainer &&

@@ -112,6 +112,12 @@ spec:
                         - Escalated
                     branch:
                       type: string
+                    gitBranch:
+                      type: string
+                    parentBranch:
+                      type: string
+                    mergeIntoBranch:
+                      type: string
                     prNumber:
                       type: integer
                       minimum: 1

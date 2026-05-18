@@ -171,6 +171,9 @@ export type SecretsRef = z.infer<typeof SecretsRefSchema>;
 export const GitSourceSchema = z.object({
   url: z.string().min(1),
   ref: z.string().optional(),
+  // Parent ref for feature branching — when creating a new branch, create it from this ref.
+  // Used by workspace-init when gitBranch doesn't exist yet.
+  parentRef: z.string().optional(),
   sshSecret: z
     .object({
       name: z.string().min(1),
@@ -634,6 +637,10 @@ export const WorkerStatusSchema = z.object({
   runName: z.string().optional(),
   status: z.enum(["Running", "Succeeded", "Failed", "Escalated"]),
   branch: z.string().optional(),
+  // Feature branching metadata (when featureBranchingEnabled: true).
+  gitBranch: z.string().optional(),
+  parentBranch: z.string().optional(),
+  mergeIntoBranch: z.string().optional(),
   prNumber: z.number().int().min(1).optional(),
   startedAt: z.string().optional(),
   completedAt: z.string().optional(),
@@ -738,7 +745,7 @@ export const ProjectSpecSchema = z.object({
   injectFiles: InjectFileRefSchema.array().max(20).optional(),
 
   // Shell script to run after git clone completes, before opencode starts.
-  // Runs as part of the git-clone init container. Failure (non-zero exit)
+  // Runs as part of the workspace-init init container. Failure (non-zero exit)
   // will cause the pod to fail and not start.
   initScript: z.string().optional(),
 
@@ -767,6 +774,11 @@ export const ProjectSpecSchema = z.object({
       worktreeReuse: z.boolean().default(true),
     })
     .optional(),
+
+  // Feature branch workflow — when true, tasks work on isolated feature branches.
+  // PLAN tasks use feature/{plan-id}, BUILD tasks use feature/{plan-id}/{build-id}.
+  // Default: false (all tasks work on main branch).
+  featureBranchingEnabled: z.boolean().default(false),
 });
 
 export type ProjectSpec = z.infer<typeof ProjectSpecSchema>;

@@ -149,6 +149,8 @@ spec:
                           minLength: 1
                         ref:
                           type: string
+                        parentRef:
+                          type: string
                         sshSecret:
                           type: object
                           properties:

@@ -12,7 +12,7 @@ import { TERMINAL_PHASES } from "../lib/types";
 import OpenOpencodeButton from "./OpenOpencodeButton";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 
-const GIT_CLONE_CONTAINER = "git-clone";
+const WORKSPACE_INIT_CONTAINER = "workspace-init";
 const DEFAULT_NAMESPACE = "percussionist";
 
 function attachCommand(name: string, namespace: string | undefined): string {
@@ -131,12 +131,12 @@ export default function RunDetail() {
   const isActive = !phase || !TERMINAL_PHASES.has(phase);
   const isFailed = phase === "Failed";
 
-  // When the run failed on an init container (git-clone), default the log
+  // When the run failed on an init container (workspace-init), default the log
   // viewer to that container so the error is immediately visible.
   const failedOnInit =
     isFailed &&
     run.status?.message?.startsWith("init container");
-  const defaultLogContainer = failedOnInit ? GIT_CLONE_CONTAINER : "bootstrap";
+  const defaultLogContainer = failedOnInit ? WORKSPACE_INIT_CONTAINER : "bootstrap";
 
   return (
     <div className="space-y-6">

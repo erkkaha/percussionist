@@ -93,7 +93,7 @@ const TOOLS = [
         container: {
           type: "string",
           description:
-            "Container name: opencode, dispatcher, git-clone, or bootstrap (default: opencode)",
+            "Container name: opencode, dispatcher, workspace-init, or bootstrap (default: opencode)",
         },
         tailLines: {
           type: "number",

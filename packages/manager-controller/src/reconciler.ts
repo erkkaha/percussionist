@@ -33,7 +33,12 @@ import {
   readSessionConfigMap,
 } from "@percussionist/kube";
 import { buildWorkerRun, buildMergeRun, workerRunName, auxiliaryRunName, MAX_RETRIES } from "./worker-builder.js";
-import { spawnWorktreeCleanupPod } from "./worktree-cleanup.js";
+import { spawnWorktreeCleanupPod, spawnTaskWorktreeCleanupPod } from "./worktree-cleanup.js";
+import {
+  resolveTaskBranch,
+  resolveParentBranch,
+  resolveMergeBranch,
+} from "./branch-resolver.js";
 import {
   buildFacilitationRun,
   buildSuccessReviewRun,
@@ -113,6 +118,29 @@ async function cleanupWorktree(
   await spawnWorktreeCleanupPod({
     task,
     runName,
+    projectName: project.name,
+    namespace: ns,
+    image: project.image,
+    dataMountPath: project.dataMountPath,
+    dataPvcName: project.dataPvcName,
+    gitUrl: project.gitUrl,
+  });
+}
+
+/**
+ * Spawns a cleanup pod that removes ALL worktrees for a task.
+ * Used when task moves to "done" to clean up all runs (retries/rework).
+ * Only cleans up remote git workspaces — local workspaces are persistent.
+ */
+async function cleanupTaskWorktrees(
+  task: Task,
+  project: { name: string; image: string; gitUrl?: string; dataPvcName?: string; dataMountPath?: string },
+  ns: string,
+): Promise<void> {
+  // Only clean up if there is a remote git source — local workspaces persist.
+  if (!project.gitUrl) return;
+  await spawnTaskWorktreeCleanupPod({
+    task,
     projectName: project.name,
     namespace: ns,
     image: project.image,
@@ -239,6 +267,11 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
     const retryCount = existingWorker?.retryCount ?? 0;
     const runName = workerRunName(projectName, taskName, retryCount);
 
+    // Resolve feature branch metadata (if enabled).
+    const gitBranch = resolveTaskBranch(task, fresh, freshTasks);
+    const parentBranch = resolveParentBranch(task, fresh, freshTasks);
+    const mergeIntoBranch = resolveMergeBranch(task, fresh, freshTasks);
+
     // Move to in-progress and update worker state.
     await patchTaskStatus(taskName, {
       column: "in-progress",
@@ -246,14 +279,17 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
         ...(existingWorker ?? {}),
         runName,
         status: "Running",
-        branch: `feat/${taskName}`,
+        branch: gitBranch ?? `feat/${taskName}`, // Legacy fallback
+        gitBranch,
+        parentBranch,
+        mergeIntoBranch,
         startedAt: new Date().toISOString(),
         retryCount,
         facilitated: false,
       },
     }, ns);
 
-    const workerRun = buildWorkerRun(fresh, task, runName, retryCount);
+    const workerRun = buildWorkerRun(fresh, task, runName, retryCount, undefined, freshTasks);
     try {
       let skipCreate = false;
       try {
@@ -402,7 +438,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
               const teamNames = (fresh.spec.agents ?? []).map((a) => a.name);
               if (teamNames.includes(result.alternativeAgent)) {
                 const newRunName = workerRunName(projectName, taskName, (worker.retryCount ?? 0) + 1);
-                const reworkRun = buildWorkerRun(fresh, task, newRunName, (worker.retryCount ?? 0) + 1);
+                const reworkRun = buildWorkerRun(fresh, task, newRunName, (worker.retryCount ?? 0) + 1, undefined, freshTasks);
                 reworkRun.spec.agent = result.alternativeAgent;
                 await patchTaskStatus(taskName, {
                   column: "ready",
@@ -583,7 +619,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
               const teamNames = (fresh.spec.agents ?? []).map((a) => a.name);
               if (teamNames.includes(result.alternativeAgent)) {
                 const newRunName = workerRunName(projectName, taskName, (worker.retryCount ?? 0) + 1);
-                const reworkRun = buildWorkerRun(fresh, task, newRunName, (worker.retryCount ?? 0) + 1);
+                const reworkRun = buildWorkerRun(fresh, task, newRunName, (worker.retryCount ?? 0) + 1, undefined, freshTasks);
                 reworkRun.spec.agent = result.alternativeAgent;
                 await patchTaskStatus(taskName, {
                   column: "ready",
@@ -720,11 +756,11 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
             }, worker, ns);
             await moveTaskColumn(taskName, "ready", ns);
             emitEvent(projectName, taskName, task.spec.type, "decision", { action: decision.action, agent: decision.agent, reason: decision.reason });
-           } else if (decision.action === "skip") {
-            await patchWorker(taskName, { status: "Succeeded", completedAt: new Date().toISOString() }, worker, ns);
-            await moveTaskColumn(taskName, "done", ns);
-            if (worker.runName) await cleanupWorktree(task, worker.runName, cleanupProject, ns);
-            emitEvent(projectName, taskName, task.spec.type, "decision", { action: "skip", reason: decision.reason });
+            } else if (decision.action === "skip") {
+             await patchWorker(taskName, { status: "Succeeded", completedAt: new Date().toISOString() }, worker, ns);
+             await moveTaskColumn(taskName, "done", ns);
+             await cleanupTaskWorktrees(task, cleanupProject, ns);
+             emitEvent(projectName, taskName, task.spec.type, "decision", { action: "skip", reason: decision.reason });
           } else {
             await patchWorker(taskName, {
               status: "Escalated",
@@ -858,7 +894,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
             completedAt: new Date().toISOString(),
           }, worker, ns);
           await moveTaskColumn(taskName, "done", ns);
-          if (worker.runName) await cleanupWorktree(task, worker.runName, cleanupProject, ns);
+          await cleanupTaskWorktrees(task, cleanupProject, ns);
           try {
             await patchProject(projectName, {
               metadata: { annotations: { [`percussionist.dev/approved-${taskName}`]: "false" } },
@@ -894,7 +930,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
         }
 
         const mergeRunName = auxiliaryRunName(projectName, "merge", taskName, randomBytes(3).toString("hex"));
-        const mergeRun = buildMergeRun(fresh, task, mergeRunName);
+        const mergeRun = buildMergeRun(fresh, task, mergeRunName, freshTasks);
         try {
           await createRun(mergeRun, ns, k8s);
           await patchWorker(taskName, { mergeRunName, mergeError: undefined }, worker, ns);
@@ -1006,7 +1042,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
               createdBuildTaskRefs: createdRefs,
             }, worker, ns);
             await moveTaskColumn(taskName, "done", ns);
-            if (worker.runName) await cleanupWorktree(task, worker.runName, cleanupProject, ns);
+            await cleanupTaskWorktrees(task, cleanupProject, ns);
             log(`created ${createdRefs.length} BUILD task CRs from PLAN ${taskName}`);
             emitEvent(projectName, taskName, task.spec.type, "merged", { buildTaskCount: createdRefs.length, buildTasks: createdRefs });
           }
@@ -1068,7 +1104,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
                 }
                 await patchWorker(taskName, { buildTasksCreated: true, createdBuildTaskRefs: createdRefs }, worker, ns);
                 await moveTaskColumn(taskName, "done", ns);
-                if (worker.runName) await cleanupWorktree(task, worker.runName, cleanupProject, ns);
+                await cleanupTaskWorktrees(task, cleanupProject, ns);
                 log(`created ${createdRefs.length} BUILD tasks (via agent) from PLAN ${taskName}`);
                 continue;
               }
@@ -1109,17 +1145,25 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
     const currentRetryCount = existingWorker?.retryCount ?? 0;
     const newRetryCount = currentRetryCount + 1;
     const runName = workerRunName(projectName, taskName, newRetryCount);
-    const reworkRun = buildWorkerRun(fresh, task, runName, newRetryCount, feedback);
+    const reworkRun = buildWorkerRun(fresh, task, runName, newRetryCount, feedback, freshTasks);
     if (existingWorker?.reworkAgent) {
       reworkRun.spec.agent = existingWorker.reworkAgent;
     }
+
+    // Resolve branch metadata for rework (reuse existing if present).
+    const gitBranch = existingWorker?.gitBranch ?? resolveTaskBranch(task, fresh, freshTasks);
+    const parentBranch = existingWorker?.parentBranch ?? resolveParentBranch(task, fresh, freshTasks);
+    const mergeIntoBranch = existingWorker?.mergeIntoBranch ?? resolveMergeBranch(task, fresh, freshTasks);
 
     await patchTaskStatus(taskName, {
       column: "in-progress",
       worker: {
         runName,
         status: "Running",
-        branch: `feat/${taskName}`,
+        branch: gitBranch ?? `feat/${taskName}`, // Legacy fallback
+        gitBranch,
+        parentBranch,
+        mergeIntoBranch,
         startedAt: new Date().toISOString(),
         retryCount: newRetryCount,
         facilitated: false,

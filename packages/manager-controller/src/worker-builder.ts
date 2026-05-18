@@ -12,6 +12,11 @@ import {
   type RunSpec,
   resolveRunConfig,
 } from "@percussionist/api";
+import {
+  resolveTaskBranch,
+  resolveParentBranch,
+  resolveMergeBranch,
+} from "./branch-resolver.js";
 
 const MAX_RETRIES = 3;
 
@@ -21,6 +26,7 @@ export { MAX_RETRIES };
  * Builds a fully-resolved Run for an Task CR.
  *
  * Config resolution order: project defaults → task-specific overrides.
+ * When featureBranchingEnabled: true, overrides git ref with task's feature branch.
  */
 export function buildWorkerRun(
   project: Project,
@@ -28,6 +34,7 @@ export function buildWorkerRun(
   runName: string,
   retryCount: number,
   reworkFeedback?: string,
+  allTasks?: Task[]
 ): Run {
   const resolved = resolveRunConfig(project.spec);
 
@@ -55,6 +62,19 @@ export function buildWorkerRun(
   }
 
   const projectName = project.metadata.name;
+
+  // Feature branching: override git ref with task's branch.
+  if (project.spec.featureBranchingEnabled && resolved.source?.git) {
+    const gitBranch = resolveTaskBranch(task, project, allTasks ?? []);
+    const parentBranch = resolveParentBranch(task, project, allTasks ?? []);
+    
+    if (gitBranch) {
+      resolved.source.git.ref = gitBranch;
+    }
+    if (parentBranch) {
+      resolved.source.git.parentRef = parentBranch;
+    }
+  }
 
   return {
     apiVersion: API_GROUP_VERSION,
@@ -103,27 +123,48 @@ export function buildMergeRun(
   project: Project,
   task: Task,
   runName: string,
+  allTasks?: Task[]
 ): Run {
   const resolved = resolveRunConfig(project.spec);
   const projectName = project.metadata.name;
   const taskName = task.metadata.name;
-  const branchName = `feat/${taskName}`;
+  
+  // Determine source and target branches based on feature branching config.
+  let sourceBranch: string;
+  let targetBranch: string;
+  
+  if (project.spec.featureBranchingEnabled) {
+    const gitBranch = resolveTaskBranch(task, project, allTasks ?? []);
+    const mergeBranch = resolveMergeBranch(task, project, allTasks ?? []);
+    
+    if (!gitBranch) {
+      throw new Error(`Task ${taskName} has no git branch (feature branching enabled but branch not resolved)`);
+    }
+    
+    sourceBranch = gitBranch;
+    targetBranch = mergeBranch ?? "main"; // Fallback to main if no merge target
+  } else {
+    // Legacy: use feat/{taskName} branch
+    sourceBranch = `feat/${taskName}`;
+    targetBranch = "main";
+  }
 
   const promptLines = [
     `TASK: Merge approved PR for ${taskName}`,
     "",
     `Task title: ${task.spec.title}`,
-    `Expected branch: ${branchName}`,
+    `Source branch: ${sourceBranch}`,
+    `Target branch: ${targetBranch}`,
     "",
     "Requirements:",
     "- Use GitHub CLI and repository context in this workspace.",
-    "- Find the open PR for the expected branch.",
-    "- Merge it with SQUASH strategy.",
+    "- Find the open PR for the source branch.",
+    "- Merge it with SQUASH strategy into the target branch.",
     "- Do not perform any code changes.",
     "- If no matching open PR exists, fail with a clear reason.",
     "",
     "Suggested commands:",
-    `- gh pr list --head \"${branchName}\" --state open --json number,title,headRefName,baseRefName,url`,
+    `- gh pr list --head \"${sourceBranch}\" --state open --json number,title,headRefName,baseRefName,url`,
     "- gh pr merge <number> --squash --delete-branch",
   ];
 

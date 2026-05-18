@@ -829,6 +829,92 @@ Project-level aggregates in `Project.status.board`:
 
 The web dashboard renders board state on project detail pages under the Board tab.
 
+## Feature branch workflow
+
+Projects can optionally enable isolated feature branch development by setting `spec.featureBranchingEnabled: true`. This prevents git mirror conflicts when multiple tasks work in parallel, and enables incremental feature development.
+
+### Branch structure
+
+```mermaid
+gitGraph
+    commit id: "main"
+    branch feature/plan-abc
+    checkout feature/plan-abc
+    commit id: "plan work"
+    
+    branch feature/plan-abc/build-001
+    checkout feature/plan-abc/build-001
+    commit id: "build-001 work"
+    commit id: "build-001 complete"
+    
+    checkout feature/plan-abc
+    merge feature/plan-abc/build-001 tag: "build-001 merged"
+    
+    branch feature/plan-abc/build-002
+    checkout feature/plan-abc/build-002
+    commit id: "build-002 work"
+    commit id: "build-002 complete"
+    
+    checkout feature/plan-abc
+    merge feature/plan-abc/build-002 tag: "build-002 merged"
+    
+    checkout main
+    commit id: "other work"
+```
+
+**Branch naming:**
+- PLAN tasks: `feature/{plan-task-id}`
+- BUILD tasks (with parent PLAN): `feature/{plan-task-id}/{build-task-id}`
+- Standalone BUILD tasks: `feature/{build-task-id}`
+
+### Workflow
+
+1. **PLAN task** works on `feature/plan-abc` (created from `main`)
+   - Multiple runs (retries/rework) continue on same branch
+   - PLAN branch persists after completion for manual merge later
+
+2. **BUILD tasks** created by approved PLAN
+   - Each BUILD gets nested branch: `feature/plan-abc/build-001`
+   - BUILD branches created from parent PLAN branch
+
+3. **BUILD approval & merge**
+   - On approval, merge run merges BUILD → parent PLAN branch
+   - BUILD branch deleted after successful merge
+   - Next BUILD in sequence sees predecessor's changes
+
+4. **Predecessor dependencies**
+   - BUILD tasks with `spec.predecessorRef` wait for predecessor merge
+   - Reconciler blocks start until predecessor is `done` AND `mergedAt` exists
+   - Ensures correct build order
+
+5. **Feature merge** (manual)
+   - PLAN's `feature/{plan-id}` branch contains all BUILD changes
+   - Manual merge to `main` when feature is complete
+
+### Benefits
+
+- **No worktree conflicts**: Each task uses unique branch
+- **Incremental progress**: Retries continue from previous work
+- **Feature isolation**: All work stays on feature branch until ready
+- **Clean history**: Features merge as cohesive units
+
+### Enabling
+
+```yaml
+apiVersion: percussionist.dev/v1alpha1
+kind: Project
+metadata:
+  name: my-project
+spec:
+  featureBranchingEnabled: true  # Enable feature branches
+  # ... rest of project spec
+```
+
+When enabled:
+- New tasks use feature branches
+- Existing tasks continue on `main` (backward compatible)
+- Default: `false` (work on `main`)
+
 ## Web dashboard
 
 The dashboard (`percussionist-web`) is exposed via Ingress at a stable URL.

@@ -9,6 +9,7 @@ import type { Project, Task, WorkerStatus } from "@percussionist/api";
  * Returns tasks that should be pulled from "ready" this reconcile cycle.
  * Respects the project's maxParallel WIP limit.
  * BUILD tasks with a predecessorRef not yet "done" are skipped (blocked).
+ * When featureBranchingEnabled: true, BUILD predecessors must also be merged.
  */
 export function getTasksToPull(
   project: Project,
@@ -39,11 +40,20 @@ export function getTasksToPull(
     if (result.length >= availableSlots) break;
 
     // BUILD tasks: check predecessorRef — must be "done" before we can pull.
+    // When feature branching is enabled, predecessor must also be merged.
     if (task.spec.type === "BUILD" && task.spec.predecessorRef) {
       const predecessor = taskByName.get(task.spec.predecessorRef);
       if (!predecessor || predecessor.status?.column !== "done") {
         // Not ready yet — skip (leave as "ready", will be picked up after predecessor finishes).
         continue;
+      }
+      
+      // Feature branching: predecessor must be merged before dependent task can start.
+      if (project.spec.featureBranchingEnabled) {
+        if (!predecessor.status?.worker?.mergedAt) {
+          // Predecessor done but not merged yet — skip.
+          continue;
+        }
       }
     }
 

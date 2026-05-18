@@ -45,6 +45,20 @@ export interface WorktreeCleanupOptions {
   gitUrl?: string;
 }
 
+export interface TaskWorktreeCleanupOptions {
+  task: Task;
+  projectName: string;
+  namespace: string;
+  /** Runner image — must have git and sh available. */
+  image: string;
+  /** Mount path of the data PVC (default /data). */
+  dataMountPath?: string;
+  /** PVC name (default {project}-data). */
+  dataPvcName?: string;
+  /** Git URL, used to derive the mirror directory hash. Omit for local workspaces. */
+  gitUrl?: string;
+}
+
 /**
  * Spawns a cleanup pod that:
  *  1. Removes /data/worktrees/{runName}/ from the data PVC
@@ -148,5 +162,121 @@ export async function spawnWorktreeCleanupPod(
     }
     // Log but don't re-throw — cleanup failure must not block task transition.
     err(`failed to create cleanup pod for run ${runName}:`, (e as Error).message);
+  }
+}
+
+/**
+ * Spawns a cleanup pod that removes ALL worktrees for a task from the data PVC.
+ * Used when a task moves to "done" to clean up all runs (retries/rework).
+ *
+ * The pod:
+ *  1. Removes all /data/worktrees/{projectName}-* directories matching the task
+ *  2. Calls `git worktree prune` on the bare mirror (if gitUrl is set)
+ *
+ * Fire-and-forget — errors are logged but not surfaced to avoid blocking task transitions.
+ */
+export async function spawnTaskWorktreeCleanupPod(
+  opts: TaskWorktreeCleanupOptions,
+): Promise<void> {
+  const {
+    task,
+    projectName,
+    namespace,
+    image,
+    dataMountPath = "/data",
+    dataPvcName = `${projectName}-data`,
+    gitUrl,
+  } = opts;
+
+  const taskName = task.metadata.name;
+  const podName = `cleanup-task-${taskName}`.slice(0, 63).replace(/[^a-z0-9-]/g, "-");
+  const mirrorDir = gitUrl
+    ? `${dataMountPath}/git-mirrors/${urlHash(gitUrl)}`
+    : undefined;
+  const worktreeDir = `${dataMountPath}/worktrees`;
+
+  // Remove all worktrees for this task (matching pattern: {projectName}-*-{taskId}-*)
+  const script = [
+    "set -e",
+    `echo "[cleanup] removing all worktrees for task ${taskName}"`,
+    `cd "${worktreeDir}" || exit 0`, // Exit gracefully if worktree dir doesn't exist
+    `for dir in ${projectName}-*; do`,
+    `  # Check if the directory name contains the task name`,
+    `  if echo "$dir" | grep -q "${taskName}"; then`,
+    `    echo "[cleanup] removing $dir"`,
+    `    rm -rf "$dir"`,
+    `  fi`,
+    `done`,
+    ...(mirrorDir
+      ? [
+          `echo "[cleanup] pruning git worktree metadata in ${mirrorDir}"`,
+          `if [ -d "${mirrorDir}" ]; then`,
+          `  git -C "${mirrorDir}" worktree prune --expire=now 2>/dev/null || true`,
+          `fi`,
+        ]
+      : []),
+    `echo "[cleanup] done"`,
+  ].join("\n");
+
+  const pod = {
+    apiVersion: "v1",
+    kind: "Pod",
+    metadata: {
+      name: podName,
+      namespace,
+      labels: {
+        [LABELS.managedBy]: MANAGED_BY,
+        [LABELS.projectName]: projectName,
+        "percussionist.dev/component": "worktree-cleanup",
+        "percussionist.dev/task": taskName,
+      },
+      ownerReferences: [
+        {
+          apiVersion: API_GROUP_VERSION,
+          kind: KIND_TASK,
+          name: taskName,
+          uid: task.metadata.uid!,
+          controller: false,
+          blockOwnerDeletion: false,
+        },
+      ],
+    },
+    spec: {
+      restartPolicy: "Never",
+      containers: [
+        {
+          name: "cleanup",
+          image,
+          imagePullPolicy: "IfNotPresent",
+          command: ["/bin/sh", "-c"],
+          args: [script],
+          resources: {
+            requests: { cpu: "50m", memory: "64Mi" },
+            limits: { cpu: "200m", memory: "256Mi" },
+          },
+          volumeMounts: [
+            { name: "data", mountPath: dataMountPath },
+          ],
+        },
+      ],
+      volumes: [
+        { name: "data", persistentVolumeClaim: { claimName: dataPvcName } },
+      ],
+    },
+  };
+
+  try {
+    await core().createNamespacedPod({ namespace, body: pod });
+    log(`task cleanup pod ${namespace}/${podName} created for task ${taskName}`);
+  } catch (e: unknown) {
+    const statusCode =
+      (e as { statusCode?: number }).statusCode ??
+      (e as { code?: number }).code;
+    if (statusCode === 409) {
+      log(`task cleanup pod ${namespace}/${podName} already exists, skipping`);
+      return;
+    }
+    // Log but don't re-throw — cleanup failure must not block task transition.
+    err(`failed to create task cleanup pod for task ${taskName}:`, (e as Error).message);
   }
 }

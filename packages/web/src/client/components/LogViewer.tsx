@@ -30,7 +30,7 @@ export default function LogViewer({
   const scrollRef = useRef<HTMLPreElement>(null);
 
   // When defaultContainer changes (e.g. run loads and we know it failed on
-  // git-clone), switch to it — but only if the user hasn't manually picked
+  // workspace-init), switch to it — but only if the user hasn't manually picked
   // a different container yet.
   useEffect(() => {
     setContainer(defaultContainer);

@@ -60,13 +60,70 @@ of TypeScript packages under `packages/*`.
 - Set `gitCache.worktreeReuse: false` to always start from a clean checkout
 - Agent can push to the real remote — `remote set-url` restores the real URL after mirror-based setup
 - Mirror fetches are serialized with `flock` so parallel runs don't corrupt the bare repo
-- Worktree cleanup: when a task moves to `done` the manager spawns a short-lived cleanup pod that removes the worktree dir and calls `git worktree prune` on the mirror
+- Worktree cleanup: when a task moves to `done` the manager spawns a short-lived cleanup pod that removes all worktrees for that task and calls `git worktree prune` on the mirror
 
 ### Local git (`source.local: true`)
 - No remote URL required — mutually exclusive with `source.git`
 - Workspace initialised with `git init` + empty commit on first use
 - Persists across runs at `/data/workspace/` — agent commits accumulate
 - Sample: `k8s/samples/local-git-project.yaml`
+
+## Feature Branch Workflow (Optional)
+
+Projects can enable isolated feature branch development by setting `spec.featureBranchingEnabled: true`. This creates a nested branch structure that prevents worktree conflicts and enables incremental feature development.
+
+### Branch Structure
+
+When enabled, tasks work on dedicated feature branches instead of `main`:
+
+- **PLAN tasks** work on: `feature/{plan-task-id}`
+- **BUILD tasks** (with parent PLAN) work on: `feature/{plan-task-id}/{build-task-id}`
+- **Standalone BUILD tasks** work on: `feature/{build-task-id}`
+
+Each run gets its own worktree at `/data/worktrees/{run-name}/` checking out the task's branch.
+
+### Workflow
+
+1. **PLAN Task Creation**
+   - Task assigned branch `feature/plan-abc`
+   - First run creates branch from `main`
+   - Subsequent runs (retries/rework) continue on same branch
+   - PLAN branch persists after completion (for future manual merge to main)
+
+2. **BUILD Task Generation**
+   - When PLAN is approved, BUILD tasks are created
+   - Each BUILD branches from parent: `feature/plan-abc/build-123`
+   - BUILD branches are created from the parent PLAN branch
+
+3. **BUILD Review & Merge**
+   - Agent works on BUILD branch, commits and pushes
+   - On approval, merge run merges BUILD branch → parent PLAN branch
+   - BUILD branch is deleted after successful merge
+   - Next BUILD in sequence can now start (sees predecessor's changes)
+
+4. **Predecessor Dependencies**
+   - BUILD tasks with `spec.predecessorRef` wait for predecessor to merge
+   - Reconciler blocks task from starting until predecessor is in `done` column AND has `mergedAt` timestamp
+   - Ensures correct build order and that dependent tasks see predecessor's changes
+
+5. **Feature Branch Merge** (Manual)
+   - PLAN's `feature/{plan-id}` branch contains all merged BUILD changes
+   - Manual merge to `main` when feature is complete (workflow TBD)
+   - Feature branch kept indefinitely for now
+
+### Benefits
+
+- **No worktree conflicts**: Each task has unique branch, eliminating "refusing to fetch" errors
+- **Incremental progress**: Retries/rework continue from previous work on same branch
+- **Feature isolation**: All related work stays on feature branch until complete
+- **Clean history**: Features merge as cohesive units
+
+### Backward Compatibility
+
+- Default: `featureBranchingEnabled: false` (work on `main`)
+- Existing tasks continue on `main` when flag is enabled
+- Only new tasks use feature branches
+- Projects can migrate gradually
 
 ## Architecture
 - All packages are ESM (`"type": "module"`)
