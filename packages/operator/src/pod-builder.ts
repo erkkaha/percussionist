@@ -523,14 +523,14 @@ export function renderPod(
                   value:
                     "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
                 },
-            ...(spec.secrets?.opencodeAuthSecret
+            ...(spec.secrets?.authSecret
               ? [
                   {
                     name: runner.authEnvVar,
                     valueFrom: {
                       secretKeyRef: {
-                        name: spec.secrets.opencodeAuthSecret.name,
-                        key: spec.secrets.opencodeAuthSecret.key,
+                        name: spec.secrets.authSecret.name,
+                        key: spec.secrets.authSecret.key,
                       },
                     },
                   },
@@ -549,15 +549,15 @@ export function renderPod(
                 },
               },
             },
-            // Per-run override from spec.secrets.opencodeConfigMap (takes precedence).
-            ...(spec.secrets?.opencodeConfigMap
+            // Per-run override from spec.secrets.configMap (takes precedence).
+            ...(spec.secrets?.configMap
               ? [
                   {
                     name: runner.configEnvVar,
                     valueFrom: {
                       configMapKeyRef: {
-                        name: spec.secrets.opencodeConfigMap.name,
-                        key: spec.secrets.opencodeConfigMap.key,
+                        name: spec.secrets.configMap.name,
+                        key: spec.secrets.configMap.key,
                       },
                     },
                   },

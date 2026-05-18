@@ -12,7 +12,7 @@
 //
 //   workstation: `opencode auth login github-copilot`   (once, interactively)
 //   workstation: `beatctl auth import`                  (copy into cluster)
-//   cluster:     spec.secrets.opencodeAuthSecret        (operator wires env)
+//   cluster:     spec.secrets.authSecret        (operator wires env)
 //   pod:         opencode reads OPENCODE_AUTH_CONTENT   (zero config)
 //
 // Default behaviour is "import every provider found locally" because
@@ -194,7 +194,7 @@ export async function runAuthImport(opts: AuthImportOpts): Promise<void> {
   console.error(`\nReference it in Run specs with:`);
   console.error(`  spec:`);
   console.error(`    secrets:`);
-  console.error(`      opencodeAuthSecret:`);
+  console.error(`      authSecret:`);
   console.error(`        name: ${opts.name}`);
   if (opts.key !== "auth.json") {
     console.error(`        key: ${opts.key}`);

@@ -72,7 +72,7 @@ export default function CreateProjectForm({
   const [gitAuthorName, setGitAuthorName] = useState(initialSpec?.source?.git?.author?.name ?? "");
   const [gitAuthorEmail, setGitAuthorEmail] = useState(initialSpec?.source?.git?.author?.email ?? "");
   const [llmKeysSecret, setLlmKeysSecret] = useState(initialSpec?.secrets?.llmKeysSecret ?? "");
-  const [authSecret, setAuthSecret] = useState(initialSpec?.secrets?.opencodeAuthSecret?.name ?? "");
+  const [authSecret, setAuthSecret] = useState(initialSpec?.secrets?.authSecret?.name ?? "");
   const [initScript, setInitScript] = useState(initialSpec?.initScript ?? "");
   const [opencodeConfig, setOpencodeConfig] = useState("");
   const [sidecars, setSidecars] = useState<SidecarRow[]>(() => initialSidecarRows(initialSpec));
@@ -190,7 +190,7 @@ export default function CreateProjectForm({
       req.secrets = {
         ...(llmKeysSecret.trim() ? { llmKeysSecret: llmKeysSecret.trim() } : {}),
         ...(authSecret.trim()
-          ? { opencodeAuthSecret: { name: authSecret.trim() } }
+          ? { authSecret: { name: authSecret.trim() } }
           : {}),
       };
     }

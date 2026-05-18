@@ -39,7 +39,7 @@ export default function CreateRunForm() {
   const [gitAuthorName, setGitAuthorName] = useState("");
   const [gitAuthorEmail, setGitAuthorEmail] = useState("");
   const [llmKeysSecret, setLlmKeysSecret] = useState("");
-  const [opencodeAuthSecretName, setOpencodeAuthSecretName] = useState("");
+  const [authSecretName, setOpencodeAuthSecretName] = useState("");
   const [seeded, setSeeded] = useState(false);
   const [agents, setAgents] = useState<AgentDef[]>([]);
   const [clusterAgents, setClusterAgents] = useState<ClusterAgent[]>([]);
@@ -114,8 +114,8 @@ export default function CreateRunForm() {
       setGitAuthorEmail(run.spec.source.git.author.email);
     if (run.spec.secrets?.llmKeysSecret)
       setLlmKeysSecret(run.spec.secrets.llmKeysSecret);
-    if (run.spec.secrets?.opencodeAuthSecret?.name)
-      setOpencodeAuthSecretName(run.spec.secrets.opencodeAuthSecret.name);
+    if (run.spec.secrets?.authSecret?.name)
+      setOpencodeAuthSecretName(run.spec.secrets.authSecret.name);
   }
 
   function applyProject(proj: Project) {
@@ -136,8 +136,8 @@ export default function CreateRunForm() {
       setGitAuthorEmail(proj.spec.source.git.author.email);
     if (proj.spec.secrets?.llmKeysSecret)
       setLlmKeysSecret(proj.spec.secrets.llmKeysSecret);
-    if (proj.spec.secrets?.opencodeAuthSecret?.name)
-      setOpencodeAuthSecretName(proj.spec.secrets.opencodeAuthSecret.name);
+    if (proj.spec.secrets?.authSecret?.name)
+      setOpencodeAuthSecretName(proj.spec.secrets.authSecret.name);
   }
 
   // Cluster agents visible in the dropdown — filtered to project roster when a project is selected.
@@ -184,10 +184,10 @@ export default function CreateRunForm() {
         };
       }
     }
-    if (llmKeysSecret.trim() || opencodeAuthSecretName.trim()) {
+    if (llmKeysSecret.trim() || authSecretName.trim()) {
       req.secrets = {};
       if (llmKeysSecret.trim()) req.secrets.llmKeysSecret = llmKeysSecret.trim();
-      if (opencodeAuthSecretName.trim()) req.secrets.opencodeAuthSecret = { name: opencodeAuthSecretName.trim() };
+      if (authSecretName.trim()) req.secrets.authSecret = { name: authSecretName.trim() };
     }
     mutation.mutate(req);
   }
@@ -406,7 +406,7 @@ export default function CreateRunForm() {
               </label>
               <input
                 type="text"
-                value={opencodeAuthSecretName}
+                value={authSecretName}
                 onChange={(e) => setOpencodeAuthSecretName(e.target.value)}
                 placeholder="opencode-auth"
                 className={inputClass + " font-mono"}

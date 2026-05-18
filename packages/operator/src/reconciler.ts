@@ -134,17 +134,17 @@ export async function reconcileClusterSettings(
   if (!spec) return;
 
   // --- opencode-config ---
-  // If spec.opencode.config is set, it becomes the data source.
+  // If spec.runnerConfig?.config is set, it becomes the data source.
   // Otherwise use configMapRef if set. If neither, leave existing CM alone.
-  if (spec.opencode?.config) {
+  if (spec.runnerConfig?.config) {
     await upsertConfigMap(SELF_NAMESPACE, "opencode-config", {
-      "opencode.json": spec.opencode.config,
+      "opencode.json": spec.runnerConfig?.config,
     });
     log(`reconciled opencode-config from ClusterSettings (config string)`);
-  } else if (spec.opencode?.configMapRef) {
+  } else if (spec.runnerConfig?.configMapRef) {
     // Mirror the referenced ConfigMap into our namespace as opencode-config.
     try {
-      const ref = spec.opencode.configMapRef;
+      const ref = spec.runnerConfig?.configMapRef;
       const source = await core.readNamespacedConfigMap({
         name: ref.name,
         namespace: SELF_NAMESPACE,
@@ -205,27 +205,27 @@ will be read aloud by text-to-speech and sound garbled.`;
 
     // Build opencode.json for the manager sidecar. It always needs the MCP
     // manager-agent entry; the rest (providers, skills) come from the config.
-    let opencodeJson = `{\n  "$schema": "https://opencode.ai/config.json",\n  "mcp": {\n    "manager-agent": {\n      "type": "remote",\n      "url": "http://127.0.0.1:4097/mcp",\n      "enabled": true\n    }\n  }`;
-    if (spec.opencode?.config) {
+    let runnerConfigJson = `{\n  "$schema": "https://opencode.ai/config.json",\n  "mcp": {\n    "manager-agent": {\n      "type": "remote",\n      "url": "http://127.0.0.1:4097/mcp",\n      "enabled": true\n    }\n  }`;
+    if (spec.runnerConfig?.config) {
       try {
-        const parsed = JSON.parse(spec.opencode.config) as {
+        const parsed = JSON.parse(spec.runnerConfig?.config) as {
           providers?: unknown;
           skills?: unknown;
         };
         if (parsed.providers) {
-          opencodeJson += `,\n  "providers": ${JSON.stringify(parsed.providers)}`;
+          runnerConfigJson += `,\n  "providers": ${JSON.stringify(parsed.providers)}`;
         }
         if (parsed.skills) {
-          opencodeJson += `,\n  "skills": ${JSON.stringify(parsed.skills)}`;
+          runnerConfigJson += `,\n  "skills": ${JSON.stringify(parsed.skills)}`;
         }
       } catch {
         // ignore parse errors — just use the minimal config
       }
     }
-    opencodeJson += `\n}`;
+    runnerConfigJson += `\n}`;
 
     await upsertConfigMap(SELF_NAMESPACE, "agent-config", {
-      "opencode.json": opencodeJson,
+      "opencode.json": runnerConfigJson,
       [`${decisionAgentName}.md`]: decisionContent,
     });
     log(

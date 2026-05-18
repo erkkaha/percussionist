@@ -148,7 +148,7 @@ export const SecretsRefSchema = z
 
     // Reference to a Secret whose `key` holds opencode's auth.json.
     // Projected as OPENCODE_AUTH_CONTENT env var into the runner.
-    opencodeAuthSecret: z
+    authSecret: z
       .object({
         name: z.string().min(1),
         key: z.string().default("auth.json"),
@@ -157,7 +157,7 @@ export const SecretsRefSchema = z
 
     // Reference to a ConfigMap whose `key` holds an opencode.json config.
     // Projected as OPENCODE_CONFIG_CONTENT env var into the runner.
-    opencodeConfigMap: z
+    configMap: z
       .object({
         name: z.string().min(1),
         key: z.string().default("opencode.json"),
@@ -308,7 +308,7 @@ export type ClusterAgent = z.infer<typeof ClusterAgentSchema>;
 export const ClusterSettingsSpecSchema = z.object({
   secrets: SecretsRefSchema.optional(),
 
-  opencode: z
+  runnerConfig: z
     .object({
       config: z.string().optional(),
       configMapRef: z
@@ -970,45 +970,3 @@ export function resolveRunConfig(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Backward-compatibility type aliases (deprecated — use the new names above).
-// These will be removed in a future release.
-
-/** @deprecated Use Run */
-export type OpenCodeRun = Run;
-/** @deprecated Use RunSpec */
-export type OpenCodeRunSpec = RunSpec;
-/** @deprecated Use RunStatus */
-export type OpenCodeRunStatus = RunStatus;
-/** @deprecated Use RunSchema */
-export const OpenCodeRunSchema = RunSchema;
-/** @deprecated Use RunSpecSchema */
-export const OpenCodeRunSpecSchema = RunSpecSchema;
-/** @deprecated Use RunStatusSchema */
-export const OpenCodeRunStatusSchema = RunStatusSchema;
-
-/** @deprecated Use Project */
-export type OpenCodeProject = Project;
-/** @deprecated Use ProjectSpec */
-export type OpenCodeProjectSpec = ProjectSpec;
-/** @deprecated Use ProjectStatus */
-export type OpenCodeProjectStatus = ProjectStatus;
-/** @deprecated Use ProjectSchema */
-export const OpenCodeProjectSchema = ProjectSchema;
-/** @deprecated Use ProjectSpecSchema */
-export const OpenCodeProjectSpecSchema = ProjectSpecSchema;
-/** @deprecated Use ProjectStatusSchema */
-export const OpenCodeProjectStatusSchema = ProjectStatusSchema;
-
-/** @deprecated Use Task */
-export type OpenCodeTask = Task;
-/** @deprecated Use TaskSpec */
-export type OpenCodeTaskSpec = TaskSpec;
-/** @deprecated Use TaskStatus */
-export type OpenCodeTaskStatus = TaskStatus;
-/** @deprecated Use TaskSchema */
-export const OpenCodeTaskSchema = TaskSchema;
-/** @deprecated Use TaskSpecSchema */
-export const OpenCodeTaskSpecSchema = TaskSpecSchema;
-/** @deprecated Use TaskStatusSchema */
-export const OpenCodeTaskStatusSchema = TaskStatusSchema;

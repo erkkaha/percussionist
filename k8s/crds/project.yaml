@@ -92,7 +92,7 @@ spec:
                   properties:
                     llmKeysSecret:
                       type: string
-                    opencodeAuthSecret:
+                    authSecret:
                       type: object
                       properties:
                         name:
@@ -102,7 +102,7 @@ spec:
                           type: string
                       required:
                         - name
-                    opencodeConfigMap:
+                    configMap:
                       type: object
                       properties:
                         name:

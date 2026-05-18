@@ -22,6 +22,6 @@ spec:
 
   secrets:
     llmKeysSecret: llm-keys                  # Secret with provider API keys
-    opencodeAuthSecret:                      # OAuth tokens (from `beatctl auth import`)
+    authSecret:                      # OAuth tokens (from `beatctl auth import`)
       name: opencode-auth
       # key: auth.json   # default

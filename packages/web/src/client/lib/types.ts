@@ -52,7 +52,7 @@ export interface CreateRunRequest {
   };
   secrets?: {
     llmKeysSecret?: string;
-    opencodeAuthSecret?: { name: string; key?: string };
+    authSecret?: { name: string; key?: string };
   };
   timeoutSeconds?: number;
   name?: string;
@@ -70,7 +70,7 @@ export interface CreateProjectRequest {
   opencodeConfig?: string;
   secrets?: {
     llmKeysSecret?: string;
-    opencodeAuthSecret?: { name: string; key?: string };
+    authSecret?: { name: string; key?: string };
   };
   source?: {
     git?: {

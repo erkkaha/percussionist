@@ -234,7 +234,7 @@ projects.post("/", async (c) => {
     await upsertProjectConfigCm(name, opencodeConfig.trim());
     spec.secrets = {
       ...spec.secrets,
-      opencodeConfigMap: { name: projectConfigCmName(name), key: CONFIG_CM_KEY },
+      configMap: { name: projectConfigCmName(name), key: CONFIG_CM_KEY },
     };
   }
 
@@ -295,13 +295,13 @@ projects.put("/:name", async (c) => {
     await upsertProjectConfigCm(name, opencodeConfig.trim());
     spec.secrets = {
       ...spec.secrets,
-      opencodeConfigMap: { name: projectConfigCmName(name), key: CONFIG_CM_KEY },
+      configMap: { name: projectConfigCmName(name), key: CONFIG_CM_KEY },
     };
   } else {
     // Clear: remove configmap and unset the field.
     await deleteProjectConfigCm(name);
-    if (spec.secrets?.opencodeConfigMap) {
-      const { opencodeConfigMap: _, ...rest } = spec.secrets;
+    if (spec.secrets?.configMap) {
+      const { configMap: _, ...rest } = spec.secrets;
       void _;
       spec.secrets = Object.keys(rest).length ? rest : undefined;
     }

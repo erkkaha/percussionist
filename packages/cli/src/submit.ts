@@ -83,8 +83,8 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
   const resolvedAgent = opts.agent;
   const resolvedModel = opts.model ?? pd?.model;
   const resolvedLlmSecret = opts.llmKeysSecret ?? pd?.secrets?.llmKeysSecret;
-  const resolvedAuthSecret = opts.authSecret ?? pd?.secrets?.opencodeAuthSecret?.name;
-  const resolvedAuthKey = opts.authKey ?? pd?.secrets?.opencodeAuthSecret?.key;
+  const resolvedAuthSecret = opts.authSecret ?? pd?.secrets?.authSecret?.name;
+  const resolvedAuthKey = opts.authKey ?? pd?.secrets?.authSecret?.key;
   const resolvedGitUrl = opts.gitUrl ?? pd?.source?.git?.url;
   const resolvedGitRef = opts.gitRef ?? pd?.source?.git?.ref;
   const resolvedGitSshSecret = opts.gitSshSecret ?? pd?.source?.git?.sshSecret?.name;
@@ -139,7 +139,7 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
                 : {}),
               ...(resolvedAuthSecret
                 ? {
-                    opencodeAuthSecret: {
+                    authSecret: {
                       name: resolvedAuthSecret,
                       ...(resolvedAuthKey ? { key: resolvedAuthKey } : {}),
                     },

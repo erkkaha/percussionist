@@ -131,7 +131,7 @@ export default function SettingsPage() {
       {!settingsLoading && activeTab === "opencode" && (
         <OpencodePanel
           config={(opencodeConfig as string) ?? ""}
-          onSave={(config) => saveMutation.mutate({ ...spec, opencode: { config } })}
+          onSave={(config) => saveMutation.mutate({ ...spec, runnerConfig: { config } })}
           saving={saveMutation.isPending}
         />
       )}
@@ -171,7 +171,7 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
     (spec.secrets as Record<string, unknown> | undefined)?.llmKeysSecret as string ?? "llm-keys"
   );
   const [authSecretName, setAuthSecretName] = useState(
-    (spec.secrets as Record<string, unknown> | undefined)?.opencodeAuthSecret as string ?? ""
+    (spec.secrets as Record<string, unknown> | undefined)?.authSecret as string ?? ""
   );
   const [showCreateModal, setShowCreateModal] = useState(false);
 
@@ -247,7 +247,7 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
       <CardFooter>
         <Button
           onClick={() =>
-            onSave({ ...spec, secrets: { llmKeysSecret: llmKeysSecret.trim() || undefined, opencodeAuthSecret: authSecretName.trim() ? { name: authSecretName.trim(), key: "auth.json" } : undefined } })
+            onSave({ ...spec, secrets: { llmKeysSecret: llmKeysSecret.trim() || undefined, authSecret: authSecretName.trim() ? { name: authSecretName.trim(), key: "auth.json" } : undefined } })
           }
           disabled={saving}
         >

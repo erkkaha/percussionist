@@ -68,7 +68,7 @@ function buildProjectFromFlags(opts: ProjectCreateOpts): Project {
                 : {}),
               ...(opts.authSecret
                 ? {
-                    opencodeAuthSecret: {
+                    authSecret: {
                       name: opts.authSecret,
                       ...(opts.authKey ? { key: opts.authKey } : {}),
                     },
