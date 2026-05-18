@@ -225,13 +225,17 @@ export function buildBuildTaskGeneratorRun(
         description: "(detailed description with context from PLAN session)",
         agent: "(optional: name from AVAILABLE AGENTS list, defaults to 'builder')",
         priority: "(optional: 'high' | 'medium' | 'low', defaults to 'medium')",
+        predecessorIndex: "(optional: 0-based index of the task in this array that must complete first, or omit/null if independent)",
       },
     ]),
     "",
     `Requirements:`,
-    `- Each BUILD task should be concrete and actionable`,
+    `- Each BUILD task should be concrete and actionable — one logical concern per task (roughly 1-4 hours of work)`,
+    `- Split large PLAN items into multiple smaller BUILD tasks`,
     `- Include relevant context from the PLAN session in each description`,
-    `- Order tasks logically (dependencies first)`,
+    `- Tasks that are independent MUST omit predecessorIndex so they run in parallel`,
+    `- Only set predecessorIndex when a task genuinely cannot start until another is done (imports code it creates, migrates schema it defines, etc.)`,
+    `- predecessorIndex must be a 0-based index strictly less than the task's own index (no forward references, no cycles)`,
     `- If the PLAN requires no BUILD tasks (was purely research/planning), return empty array: []`,
     `- Return valid JSON array ONLY - no markdown fences, no explanation`,
   ].join("\n");
@@ -417,6 +421,7 @@ export async function parseBuildTaskDefinitions(
   description?: string;
   agent?: string;
   priority?: "high" | "medium" | "low";
+  predecessorIndex?: number | null;
 }> | null> {
   // Primary: try the session ConfigMap snapshot saved by the dispatcher.
   try {
@@ -500,12 +505,14 @@ function extractBuildTasksJson(text: string): Array<{
   description?: string;
   agent?: string;
   priority?: "high" | "medium" | "low";
+  predecessorIndex?: number | null;
 }> | null {
   const validateBuildTasks = (value: unknown): Array<{
     title: string;
     description?: string;
     agent?: string;
     priority?: "high" | "medium" | "low";
+    predecessorIndex?: number | null;
   }> | null => {
     try {
       const parsed = value;
@@ -519,12 +526,20 @@ function extractBuildTasksJson(text: string): Array<{
             item.title.length > 0
         );
         if (valid) {
-          return parsed.map((item) => ({
-            title: item.title,
-            description: item.description,
-            agent: item.agent,
-            priority: item.priority === "high" || item.priority === "low" ? item.priority : "medium",
-          }));
+          return parsed.map((item, idx) => {
+            // Validate predecessorIndex: must be a non-negative integer less than current index
+            let predecessorIndex: number | null = null;
+            if (typeof item.predecessorIndex === "number" && Number.isInteger(item.predecessorIndex) && item.predecessorIndex >= 0 && item.predecessorIndex < idx) {
+              predecessorIndex = item.predecessorIndex;
+            }
+            return {
+              title: item.title,
+              description: item.description,
+              agent: item.agent,
+              priority: item.priority === "high" || item.priority === "low" ? item.priority : "medium",
+              predecessorIndex,
+            };
+          });
         }
       }
     } catch {

@@ -243,7 +243,7 @@ function buildReviewParsePrompt(ctx: ReviewContext): string {
 
 export async function parseRawBuildTaskGen(
   context: BuildTaskGenContext,
-): Promise<Array<{ title: string; description?: string; agent?: string; priority?: string }> | null> {
+): Promise<Array<{ title: string; description?: string; agent?: string; priority?: string; predecessorIndex?: number | null }> | null> {
   const prompt = buildBuildTaskGenParsePrompt(context);
 
   try {
@@ -285,6 +285,7 @@ function buildBuildTaskGenParsePrompt(ctx: BuildTaskGenContext): string {
         description: "(detailed description)",
         agent: "(optional agent name, default: builder)",
         priority: "(optional: high | medium | low, default: medium)",
+        predecessorIndex: "(optional: 0-based index of task in this array that must complete first, or omit if independent)",
       },
     ]),
     ``,
@@ -293,7 +294,7 @@ function buildBuildTaskGenParsePrompt(ctx: BuildTaskGenContext): string {
   ].join("\n");
 }
 
-function parseBuildTaskGenArray(text: string): Array<{ title: string; description?: string; agent?: string; priority?: string }> | null {
+function parseBuildTaskGenArray(text: string): Array<{ title: string; description?: string; agent?: string; priority?: string; predecessorIndex?: number | null }> | null {
   const trimmed = text.trim();
   const match = trimmed.match(/\[[\s\S]*\]/);
   if (!match) return null;
@@ -301,12 +302,17 @@ function parseBuildTaskGenArray(text: string): Array<{ title: string; descriptio
   try {
     const parsed = JSON.parse(match[0]);
     if (Array.isArray(parsed) && parsed.every((item: unknown) => typeof item === "object" && item !== null && typeof (item as Record<string, unknown>).title === "string")) {
-      return parsed.map((item: Record<string, unknown>) => ({
-        title: item.title as string,
-        description: item.description as string | undefined,
-        agent: item.agent as string | undefined,
-        priority: item.priority as string | undefined,
-      }));
+      return parsed.map((item: Record<string, unknown>, idx: number) => {
+        const pi = item.predecessorIndex;
+        const predecessorIndex = typeof pi === "number" && Number.isInteger(pi) && pi >= 0 && pi < idx ? pi : null;
+        return {
+          title: item.title as string,
+          description: item.description as string | undefined,
+          agent: item.agent as string | undefined,
+          priority: item.priority as string | undefined,
+          predecessorIndex,
+        };
+      });
     }
   } catch {
     // Invalid JSON

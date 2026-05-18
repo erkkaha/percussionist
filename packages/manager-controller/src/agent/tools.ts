@@ -15,9 +15,11 @@ import {
   listRuns,
   readPodLog,
   readSessionConfigMap,
+  readAllSessionsFromConfigMap,
   createRun,
   deleteRun,
   fetchSessionMessages,
+  fetchAllSessionMessages,
   patchProjectStatus,
   listClusterAgents,
   listPodsByLabels,
@@ -108,12 +110,12 @@ const TOOLS = [
   {
     name: "read_session",
     description:
-      "Read session messages from a completed run's ConfigMap snapshot. Returns the conversation history.",
+      "Read session messages from a completed run's ConfigMap snapshot. If sessionID is omitted, returns messages from all sessions. Returns the conversation history.",
     inputSchema: {
       type: "object",
       properties: {
         runName: { type: "string", description: "Name of the Run" },
-        sessionID: { type: "string", description: "Session ID (optional if only one session)" },
+        sessionID: { type: "string", description: "Session ID (optional; if omitted returns all sessions)" },
       },
       required: ["runName"],
     },
@@ -208,14 +210,14 @@ const TOOLS = [
   {
     name: "read_session_live",
     description:
-      "Read session messages from a running or completed run in real-time. Returns incremental messages since the given index. Use with 'since' parameter for polling.",
+      "Read session messages from a running or completed run in real-time. If sessionID is omitted, returns messages from all sessions on the pod. Returns incremental messages since the given index. Use with 'since' parameter for polling.",
     inputSchema: {
       type: "object",
       properties: {
         runName: { type: "string", description: "Name of the Run" },
         sessionID: {
           type: "string",
-          description: "Session ID (auto-discovered from run if not provided)",
+          description: "Session ID (optional; if omitted returns all sessions from the pod)",
         },
         since: {
           type: "number",
@@ -474,7 +476,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const serviceName = run.status?.serviceName;
       const runSessionID = sessionID ?? run.status?.sessionID;
 
-      if (serviceName && runSessionID) {
+      // If sessionID is specified, try to fetch that specific session
+      if (runSessionID && serviceName) {
         try {
           const data = await fetchSessionMessages(serviceName, runSessionID, resourceNs) as { messages?: unknown[] };
           return { runName, messages: data.messages ?? [], source: "live", runPhase: run.status?.phase };
@@ -483,9 +486,44 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         }
       }
 
-      const result = await readSessionConfigMap(runName, runSessionID ?? "", resourceNs);
-      if (!result) return { runName, messages: [], note: "no session snapshot found" };
-      return { runName, messages: result.messages, truncated: result.truncated, source: "configmap" };
+      // If sessionID is specified, try ConfigMap for that session
+      if (runSessionID) {
+        const result = await readSessionConfigMap(runName, runSessionID, resourceNs);
+        if (result) {
+          return { runName, messages: result.messages, truncated: result.truncated, source: "configmap", sessionID: runSessionID };
+        }
+      }
+
+      // No sessionID specified or specific session not found — fetch all sessions
+      if (serviceName) {
+        try {
+          const allData = await fetchAllSessionMessages(serviceName, resourceNs);
+          return {
+            runName,
+            sessions: allData.sessions,
+            messages: allData.allMessages,
+            source: "live",
+            runPhase: run.status?.phase,
+            note: sessionID ? `Specific session ${sessionID} not found; returning all sessions` : undefined,
+          };
+        } catch {
+          // Fall through to ConfigMap
+        }
+      }
+
+      // Fallback: all sessions from ConfigMap
+      const allResult = await readAllSessionsFromConfigMap(runName, resourceNs);
+      if (allResult) {
+        return {
+          runName,
+          sessions: allResult.sessions,
+          messages: allResult.allMessages,
+          source: "configmap",
+          note: sessionID ? `Specific session ${sessionID} not found; returning all sessions` : undefined,
+        };
+      }
+
+      return { runName, messages: [], note: "no session snapshot found" };
     }
 
     case "patch_board": {
@@ -648,7 +686,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const serviceName = run.status?.serviceName;
       const runSessionID = sessionID ?? run.status?.sessionID;
 
-      if (serviceName && runSessionID) {
+      // If sessionID is specified, try to fetch that specific session
+      if (runSessionID && serviceName) {
         try {
           const data = await fetchSessionMessages(serviceName, runSessionID, resourceNs) as { messages?: unknown[] };
           const messages = data.messages ?? [];
@@ -660,23 +699,57 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
             sessionID: runSessionID,
             source: "live",
           };
-        } catch (e) {
-          // Service unreachable — fall through to ConfigMap
+        } catch {
+          // Service unreachable — fall through
         }
       }
 
-      // Fallback: ConfigMap snapshot (completed run)
-      const fallbackSessionID = runSessionID ?? "";
-      const cmData = await readSessionConfigMap(runName, fallbackSessionID, resourceNs);
-      if (cmData) {
+      // No sessionID specified or specific session not found — fetch all sessions
+      if (serviceName) {
+        try {
+          const allData = await fetchAllSessionMessages(serviceName, resourceNs);
+          const messages = allData.allMessages;
+          return {
+            sessions: allData.sessions,
+            messages: messages.slice(since),
+            total: messages.length,
+            nextSince: messages.length,
+            runPhase,
+            source: "live",
+            note: sessionID ? `Specific session ${sessionID} not found; returning all sessions` : undefined,
+          };
+        } catch {
+          // Fall through to ConfigMap
+        }
+      }
+
+      // Fallback: try specific session from ConfigMap if sessionID was provided
+      if (runSessionID) {
+        const cmData = await readSessionConfigMap(runName, runSessionID, resourceNs);
+        if (cmData) {
+          return {
+            messages: cmData.messages.slice(since),
+            total: cmData.messages.length,
+            nextSince: cmData.messages.length,
+            runPhase,
+            sessionID: runSessionID,
+            source: "configmap",
+            truncated: cmData.truncated,
+          };
+        }
+      }
+
+      // Fallback: all sessions from ConfigMap
+      const allResult = await readAllSessionsFromConfigMap(runName, resourceNs);
+      if (allResult) {
         return {
-          messages: cmData.messages.slice(since),
-          total: cmData.messages.length,
-          nextSince: cmData.messages.length,
+          sessions: allResult.sessions,
+          messages: allResult.allMessages.slice(since),
+          total: allResult.allMessages.length,
+          nextSince: allResult.allMessages.length,
           runPhase,
-          sessionID: fallbackSessionID,
           source: "configmap",
-          truncated: cmData.truncated,
+          note: sessionID ? `Specific session ${sessionID} not found; returning all sessions` : undefined,
         };
       }
 

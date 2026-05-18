@@ -690,6 +690,50 @@ export async function postPermissionReply(
   if (!res.ok) throw new Error(`OpenCode permission API ${res.status}: ${await res.text().catch(() => "")}`);
 }
 
+// Fetch all sessions and their messages from a live run pod.
+// Returns combined messages from all sessions, ordered by session discovery.
+export async function fetchAllSessionMessages(
+  serviceName: string,
+  ns: string = NAMESPACE,
+): Promise<{ sessions: Array<{ id: string; messages: unknown[] }>; allMessages: unknown[] }> {
+  const listUrl = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session`;
+  const listRes = await fetch(listUrl, {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!listRes.ok) {
+    throw new Error(`OpenCode session list API ${listRes.status}: ${await listRes.text().catch(() => "")}`);
+  }
+  const listData = (await listRes.json()) as unknown;
+  const sessionList: Array<{ id: string }> = Array.isArray(listData)
+    ? listData
+    : ((listData as Record<string, unknown>).items ?? (listData as Record<string, unknown>).sessions ?? []) as Array<{ id: string }>;
+
+  const sessions: Array<{ id: string; messages: unknown[] }> = [];
+  const allMessages: unknown[] = [];
+
+  for (const session of sessionList) {
+    try {
+      const msgUrl = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session/${session.id}/message`;
+      const msgRes = await fetch(msgUrl, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!msgRes.ok) continue;
+      const msgData = (await msgRes.json()) as unknown;
+      const messages: unknown[] = Array.isArray(msgData)
+        ? msgData
+        : ((msgData as Record<string, unknown>).items ?? []) as unknown[];
+      sessions.push({ id: session.id, messages });
+      allMessages.push(...messages);
+    } catch {
+      // Skip sessions that fail to fetch
+    }
+  }
+
+  return { sessions, allMessages };
+}
+
 // Session snapshot from ConfigMap (fallback when pod is gone).
 export async function readSessionConfigMap(
   runName: string,
@@ -711,6 +755,40 @@ export async function readSessionConfigMap(
       messages: JSON.parse(raw),
       truncated: cm.data?.[`truncated-${sessionID}`] === "true",
     };
+  } catch (e: unknown) {
+    if ((e as { statusCode?: number }).statusCode === 404) return null;
+    throw e;
+  }
+}
+
+// Read all sessions from ConfigMap snapshot (fallback when pod is gone).
+// Returns all sessions with their messages combined.
+export async function readAllSessionsFromConfigMap(
+  runName: string,
+  ns: string = NAMESPACE,
+): Promise<{ sessions: Array<{ id: string; messages: unknown[]; truncated: boolean }>; allMessages: unknown[] } | null> {
+  try {
+    const cm = await core().readNamespacedConfigMap({
+      name: `${runName}-session`,
+      namespace: ns,
+    });
+    const sessionsRaw = cm.data?.["sessions.json"];
+    if (!sessionsRaw) return null;
+    const sessionIDs: string[] = JSON.parse(sessionsRaw);
+
+    const sessions: Array<{ id: string; messages: unknown[]; truncated: boolean }> = [];
+    const allMessages: unknown[] = [];
+
+    for (const sessionID of sessionIDs) {
+      const raw = cm.data?.[`messages-${sessionID}.json`];
+      if (!raw) continue;
+      const messages: unknown[] = JSON.parse(raw);
+      const truncated = cm.data?.[`truncated-${sessionID}`] === "true";
+      sessions.push({ id: sessionID, messages, truncated });
+      allMessages.push(...messages);
+    }
+
+    return { sessions, allMessages };
   } catch (e: unknown) {
     if ((e as { statusCode?: number }).statusCode === 404) return null;
     throw e;

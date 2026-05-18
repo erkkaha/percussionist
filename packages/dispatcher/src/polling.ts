@@ -318,13 +318,16 @@ export async function runPrompt(
           if (t?.input || t?.output) tokens.update(sessionID, t.input ?? 0, t.output ?? 0);
           await tokens.flush(patchStatus);
           if (last.info.time?.completed) {
+            // Check for errors first, before any other logic
+            if (last.info.error) {
+              throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
+            }
+
             const totalTokens = tokens.totals();
             if (waitingForInput) {
               if (totalTokens.tokensIn > 0 || totalTokens.tokensOut > 0) {
                 waitingForInput = false;
               }
-            } else if (last.info.error) {
-              throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
             } else if (totalTokens.tokensIn === 0 && totalTokens.tokensOut === 0) {
               if (!sawBusy) {
                 throw new Error("opencode produced an assistant response with zero token usage before any work was done");
@@ -396,6 +399,19 @@ export async function runPrompt(
   const hardTimeout = setTimeout(() => { err("dispatcher timeout guard"); process.exit(3); }, 3_600_000);
   hardTimeout.unref();
   void streamEvents().catch((e) => { if (!terminate) err("streamEvents fatal:", (e as Error).message); });
+
+  // Periodic snapshot every 60s for visibility during long-running tasks
+  const periodicSnapshot = async (): Promise<void> => {
+    while (!terminate) {
+      await sleep(60_000);
+      if (!terminate) {
+        snapshotAllSessions(coreApi, runName, runNamespace, runUid).catch((e) =>
+          err("periodic snapshot failed:", (e as Error).message),
+        );
+      }
+    }
+  };
+  void periodicSnapshot().catch((e) => { if (!terminate) err("periodicSnapshot fatal:", (e as Error).message); });
 
   // Race the normal poll loop against:
   // - fail_run: agent signals failure → throw "session error:" → Failed

@@ -18,6 +18,7 @@ import {
 } from "./session.js";
 import { DECISION_AGENT_NAME } from "./config.js";
 import { core } from "@percussionist/kube";
+import { PatchStrategy, setHeaderOptions } from "@kubernetes/client-node";
 
 const CONFIGMAP_NAME = "manager-chat-history";
 const SAVE_DEBOUNCE_MS = 2000;
@@ -60,13 +61,16 @@ async function saveHistoryToConfigMap(): Promise<void> {
   const data = JSON.stringify(conversationHistory.slice(-100)); // Keep last 100 messages
   try {
     // Try patch first (faster if ConfigMap exists)
-    await core().patchNamespacedConfigMap({
-      name: CONFIGMAP_NAME,
-      namespace: NAMESPACE,
-      body: {
-        data: { "history.json": data },
+    await core().patchNamespacedConfigMap(
+      {
+        name: CONFIGMAP_NAME,
+        namespace: NAMESPACE,
+        body: {
+          data: { "history.json": data },
+        },
       },
-    });
+      setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
+    );
   } catch (e: unknown) {
     const status = (e as { statusCode?: number }).statusCode;
     if (status === 404) {
