@@ -1,12 +1,12 @@
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   BarChart3,
   Terminal,
-  Bot,
   TrendingUp,
   Folder,
-  ChevronRight,
   Settings,
+  Activity,
+  Plus,
 } from "lucide-react";
 import { useProjects } from "../hooks/useProjects";
 import { useProjectsEvents } from "../hooks/useProjectsEvents";
@@ -17,27 +17,20 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupLabel,
+  SidebarGroupAction,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
   SidebarRail,
 } from "./ui/sidebar";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "./ui/collapsible";
 
 const topNavItems = [
-  { title: "Runs", url: "/", icon: Terminal },
+  { title: "Activity", url: "/", icon: Activity },
+  { title: "Runs", url: "/runs", icon: Terminal },
 ];
 
 const bottomNavItems = [
   { title: "Settings", url: "/settings", icon: Settings },
-  { title: "Agents", url: "/agents", icon: Bot },
   { title: "Stats", url: "/stats", icon: TrendingUp },
   { title: "Metrics", url: "/metrics", icon: BarChart3 },
 ];
@@ -77,6 +70,7 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
 
 export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarProps) {
   const location = useLocation();
+  const navigate = useNavigate();
   const { connected: projectsSseConnected, eventTick } = useProjectsEvents();
   void eventTick;
   const { data: projects } = useProjects(
@@ -112,47 +106,57 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                 </SidebarMenuButton>
               </SidebarMenuItem>
             ))}
-            <Collapsible defaultOpen className="group/collapsible">
+          </SidebarMenu>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Projects</SidebarGroupLabel>
+          <SidebarGroupAction
+            title="New project"
+            onClick={() => navigate("/projects/new")}
+          >
+            <Plus />
+            <span className="sr-only">New project</span>
+          </SidebarGroupAction>
+          <SidebarMenu>
+            {projects && projects.length > 0 ? (
+              projects.map((p) => {
+                const name = p.metadata.name;
+                const url = `/projects/${encodeURIComponent(name)}/board`;
+                return (
+                  <SidebarMenuItem key={name}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname.startsWith(`/projects/${encodeURIComponent(name)}`)}
+                      tooltip={p.spec.displayName || name}
+                    >
+                      <NavLink to={url}>
+                        <Folder />
+                        <span>{p.spec.displayName || name}</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })
+            ) : (
               <SidebarMenuItem>
-                <CollapsibleTrigger asChild>
-                  <SidebarMenuButton tooltip="Projects">
-                    <Folder />
-                    <span>Projects</span>
-                    <ChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
-                  </SidebarMenuButton>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <SidebarMenuSub>
-                    {projects && projects.length > 0 ? (
-                      projects.map((p) => {
-                        const name = p.metadata.name;
-                        const url = `/projects/${encodeURIComponent(name)}/board`;
-                        return (
-                          <SidebarMenuSubItem key={name}>
-                            <SidebarMenuSubButton
-                              asChild
-                              isActive={location.pathname.startsWith(url)}
-                            >
-                              <NavLink to={url}>
-                                <span>{p.spec.displayName || name}</span>
-                              </NavLink>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
-                        );
-                      })
-                    ) : (
-                      <SidebarMenuSubItem>
-                        <SidebarMenuSubButton asChild>
-                          <NavLink to="/projects">
-                            <span className="text-sidebar-foreground/60">No projects yet</span>
-                          </NavLink>
-                        </SidebarMenuSubButton>
-                      </SidebarMenuSubItem>
-                    )}
-                  </SidebarMenuSub>
-                </CollapsibleContent>
+                <SidebarMenuButton
+                  asChild
+                  isActive={false}
+                  tooltip="New project"
+                >
+                  <NavLink to="/projects/new">
+                    <Plus />
+                    <span className="text-sidebar-foreground/60">New project</span>
+                  </NavLink>
+                </SidebarMenuButton>
               </SidebarMenuItem>
-            </Collapsible>
+            )}
+          </SidebarMenu>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarMenu>
             {bottomNavItems.map((item) => (
               <SidebarMenuItem key={item.title}>
                 <SidebarMenuButton

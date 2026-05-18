@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { getRun, fetchSessionMessages, readSessionConfigMap } from "../kube.js";
+import { OPENCODE_RUNNER_DEFAULTS } from "@percussionist/api";
 
 const session = new Hono();
 
@@ -75,7 +76,7 @@ session.get("/:name/session/events", async (c) => {
     return c.json({ error: anyE.body?.message ?? anyE.message ?? String(e) }, status);
   }
 
-  const url = `http://${serviceName}.${ns}.svc.cluster.local:4096/event`;
+  const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/event`;
 
   let upstream: Response;
   try {

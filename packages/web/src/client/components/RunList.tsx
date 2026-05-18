@@ -5,7 +5,7 @@ import { useRunsEvents } from "../hooks/useRunsEvents";
 import StatusBadge from "./StatusBadge";
 import TokenCounter from "./TokenCounter";
 import OpenOpencodeButton from "./OpenOpencodeButton";
-import type { RunPhase, OpenCodeRun } from "../lib/types";
+import type { RunPhase, Run } from "../lib/types";
 import { TERMINAL_PHASES } from "../lib/types";
 const ALL_PHASES: RunPhase[] = [
   "Pending",
@@ -185,7 +185,7 @@ export default function RunList() {
 // ---------------------------------------------------------------------------
 // Sub-components
 
-function RunRow({ run }: { run: OpenCodeRun }) {
+function RunRow({ run }: { run: Run }) {
   const phase = run.status?.phase;
   const isActive = !phase || !TERMINAL_PHASES.has(phase);
   const isFailed = phase === "Failed";

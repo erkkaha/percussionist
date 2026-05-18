@@ -148,7 +148,7 @@ export async function runSshKeyCreate(opts: SshKeyCreateOpts): Promise<void> {
   if (opts.dryRun) {
     console.error("\n--dry-run: no changes made.");
     console.error(
-      "\nWhen applied, reference it in OpenCodeRun specs with:\n" +
+      "\nWhen applied, reference it in Run specs with:\n" +
         "  spec:\n" +
         "    source:\n" +
         "      git:\n" +
@@ -166,7 +166,7 @@ export async function runSshKeyCreate(opts: SshKeyCreateOpts): Promise<void> {
 
   console.error(`\nSecret ${action}.`);
   console.error(
-    "\nReference it in OpenCodeRun specs with:\n" +
+    "\nReference it in Run specs with:\n" +
       "  spec:\n" +
       "    source:\n" +
       "      git:\n" +

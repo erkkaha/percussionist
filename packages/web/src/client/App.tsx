@@ -13,13 +13,15 @@ import BoardView from "./components/BoardView";
 import MetricsView from "./components/MetricsView";
 import AgentChatPanel from "./components/AgentChatPanel";
 import SettingsPage from "./components/SettingsPage";
+import ActivityPage from "./pages/ActivityPage";
 
 export default function App() {
   return (
     <>
       <Routes>
         <Route element={<Layout />}>
-          <Route index element={<RunList />} />
+          <Route index element={<ActivityPage />} />
+          <Route path="/runs" element={<RunList />} />
           <Route path="/runs/new" element={<CreateRunForm />} />
           <Route path="/runs/:name" element={<RunDetail />} />
           <Route path="/stats" element={<StatsView />} />

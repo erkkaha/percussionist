@@ -1,4 +1,4 @@
-// Manager controller entrypoint — watches OpenCodeProject CRs and drives
+// Manager controller entrypoint — watches Project CRs and drives
 // the embedded kanban board for each project.
 
 import { makeInformer } from "@kubernetes/client-node";
@@ -6,7 +6,10 @@ import {
   API_GROUP,
   API_VERSION,
   PLURAL_PROJECT,
-  type OpenCodeProject,
+  PLURAL_TASK,
+  LABELS,
+  type Project,
+  type Task,
 } from "@percussionist/api";
 import {
   enqueue,
@@ -49,9 +52,9 @@ async function main(): Promise<void> {
       namespace: NAMESPACE,
       plural: PLURAL_PROJECT,
     });
-    const items = (res as unknown as { items: OpenCodeProject[] }).items;
+    const items = (res as unknown as { items: Project[] }).items;
     log(`listFn returned ${items.length} project(s)`);
-    return res as unknown as { items: OpenCodeProject[] };
+    return res as unknown as { items: Project[] };
   };
   log("listFn defined, starting bootstrap...");
 
@@ -73,12 +76,12 @@ async function main(): Promise<void> {
   informer.on("add", (obj) => {
     const md = (obj as { metadata?: { namespace?: string; name?: string } }).metadata;
     log(`add event: ${md?.namespace}/${md?.name}`);
-    enqueue(obj as unknown as OpenCodeProject);
+    enqueue(obj as unknown as Project);
   });
   informer.on("update", (obj) => {
     const md = (obj as { metadata?: { namespace?: string; name?: string } }).metadata;
     log(`update event: ${md?.namespace}/${md?.name}`);
-    enqueue(obj as unknown as OpenCodeProject);
+    enqueue(obj as unknown as Project);
   });
   informer.on("delete", (obj) => {
     const md = (obj as { metadata?: { namespace?: string; name?: string } })
@@ -100,6 +103,47 @@ async function main(): Promise<void> {
   log("starting MCP server...");
   startMcpServer().catch((e) =>
     err("MCP server failed to start:", (e as Error).message),
+  );
+
+  // Task informer: enqueue the parent project whenever a task CR changes.
+  const taskPath = `/apis/${API_GROUP}/${API_VERSION}/namespaces/${NAMESPACE}/${PLURAL_TASK}`;
+  const listTasksFn = async () => {
+    const res = await k8s.listNamespacedCustomObject({
+      group: API_GROUP,
+      version: API_VERSION,
+      namespace: NAMESPACE,
+      plural: PLURAL_TASK,
+    });
+    return res as unknown as { items: Task[] };
+  };
+  const taskInformer = makeInformer(kc, taskPath, listTasksFn as never);
+  const enqueueTaskProject = (obj: unknown) => {
+    const task = obj as Task;
+    const projectName = task.metadata?.labels?.[LABELS.projectName];
+    if (!projectName) return;
+    // We don't have the full project object here — reconciler will fetch a fresh
+    // copy anyway. Enqueue a minimal stub; the real data is re-fetched in
+    // runReconcileCycle via getProject().
+    enqueue({
+      metadata: { name: projectName, namespace: NAMESPACE },
+      spec: {} as Project["spec"],
+    } as Project);
+  };
+  taskInformer.on("add", enqueueTaskProject);
+  taskInformer.on("update", enqueueTaskProject);
+  taskInformer.on("delete", enqueueTaskProject);
+  taskInformer.on("error", (e) => {
+    err("task informer error:", (e as Error).message);
+    setTimeout(() => {
+      void taskInformer.start().catch((startErr) =>
+        err("task informer restart failed:", (startErr as Error).message),
+      );
+    }, 2000);
+  });
+  log("starting task informer...");
+  void taskInformer.start().then(
+    () => log("task informer started"),
+    (e) => err("task informer.start() failed:", (e as Error).message),
   );
 
   log("starting informer...");

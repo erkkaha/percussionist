@@ -13,7 +13,8 @@
     "beatctl": "pnpm --filter @percussionist/cli exec tsx src/index.ts",
     "web": "pnpm --filter @percussionist/web dev",
     "web:client": "pnpm --filter @percussionist/web dev:client",
-    "test": "pnpm --filter @percussionist/web test"
+    "test": "pnpm --filter @percussionist/web test",
+    "e2e": "bun test tests/e2e/ --timeout 660000 --concurrency 1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

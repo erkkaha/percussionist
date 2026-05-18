@@ -1,42 +1,42 @@
-// BoardView.tsx — kanban board embedded in an OpenCodeProject.
+// BoardView.tsx — kanban board embedded in an Project.
 //
 // Route: /projects/:name/board
-// Reads board spec + status from GET /api/projects/:name/board
-// and renders a columnar view with worker status.
+// Reads board columns from GET /api/projects/:name/board
+// Returns: { settings, columns: Record<string, Task[]>, approvals, status }
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { FileText, Wrench, Flag, User, ExternalLink, Trash2, Check, X, ChevronDown } from "lucide-react";
-import { fetchBoard, addBoardTask, deleteBoardTask, fetchAgents, patchBoardSpec, retryEscalatedTask, fetchNextTaskId, approveTask, requestChangesTask } from "../lib/api";
-import type { BoardTask, ManagerMetrics, WorkerStatus } from "../lib/types";
+import { fetchBoard, addBoardTask, deleteBoardTask, retryEscalatedTask, approveTask, requestChangesTask } from "../lib/api";
+import type { Task, ManagerMetrics } from "../lib/types";
 import { useBoardNotifications } from "../hooks/useBoardNotifications";
 import { useBoardEvents } from "../hooks/useBoardEvents";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./ui/card";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "./ui/card";
 
 interface TaskCardProps {
-  task: BoardTask;
-  worker: WorkerStatus | undefined;
+  task: Task;
   col: string;
-  data: { approvals?: Record<string, { approved: boolean }> };
-  deleteMutation: { mutate: (id: string) => void; isPending: boolean; variables: string | undefined };
-  retryMutation: { mutate: (id: string) => void; isPending: boolean; variables: string | undefined };
-  approveMutation: { mutate: (taskId: string) => void; isPending: boolean; variables: string | undefined };
+  approvals: Record<string, { approved: boolean; requestChanges: boolean }> | undefined;
+  deleteMutation: { mutate: (name: string) => void; isPending: boolean; variables: string | undefined };
+  retryMutation: { mutate: (name: string) => void; isPending: boolean; variables: string | undefined };
+  approveMutation: { mutate: (taskName: string) => void; isPending: boolean; variables: string | undefined };
   requestChangesMutation: { mutate: ({ taskId, comment }: { taskId: string; comment: string }) => void; isPending: boolean; variables: { taskId: string; comment: string } | undefined };
   projectName: string;
-  taskById: (id: string) => BoardTask | undefined;
   setShowRequestChanges: (v: boolean) => void;
   setRequestChangesTaskId: (id: string) => void;
 }
 
 function TaskCard({
-  task, worker, col, data,
+  task, col, approvals,
   deleteMutation, retryMutation, approveMutation, requestChangesMutation,
-  projectName, taskById, setShowRequestChanges, setRequestChangesTaskId,
+  setShowRequestChanges, setRequestChangesTaskId,
 }: TaskCardProps) {
-  const isBuildTask = task.type === "BUILD";
+  const taskName = task.metadata.name;
+  const worker = task.status?.worker;
+  const isBuildTask = task.spec.type === "BUILD";
   const reviewerDecisionKnown = worker?.reviewApproved !== undefined || !!worker?.reviewFeedback;
-  const approvalState = data.approvals?.[task.id];
+  const approvalState = approvals?.[taskName];
   const alreadyApproved = approvalState?.approved === true;
   const canApproveNow = !alreadyApproved && (!isBuildTask || worker?.reviewApproved === true);
 
@@ -45,51 +45,51 @@ function TaskCard({
       <CardHeader className="space-y-0 p-3 pb-2">
         <div className="flex items-center justify-between gap-1">
           <span className="text-xs font-mono text-text-dim flex items-center gap-1">
-            {task.type === "BUILD" ? (
+            {task.spec.type === "BUILD" ? (
               <Wrench className="h-3 w-3 text-accent" />
             ) : (
               <FileText className="h-3 w-3 text-phase-pending" />
             )}
-            {task.id}
+            {taskName}
           </span>
-          {task.priority && (
+          {task.spec.priority && (
             <span className={`text-[10px] px-1.5 py-0 rounded flex items-center gap-0.5 font-medium ${
-              task.priority === "high" ? "text-phase-failed bg-phase-failed/10" :
-              task.priority === "low" ? "text-text-dim bg-surface-overlay" :
+              task.spec.priority === "high" ? "text-phase-failed bg-phase-failed/10" :
+              task.spec.priority === "low" ? "text-text-dim bg-surface-overlay" :
               "text-phase-running bg-phase-running/10"
             }`}>
               <Flag className="h-2.5 w-2.5" />
-              {task.priority}
+              {task.spec.priority}
             </span>
           )}
         </div>
         <CardTitle className="flex items-start justify-between gap-2 text-sm">
-          <span className="leading-snug flex-1">{task.title}</span>
+          <span className="leading-snug flex-1">{task.spec.title}</span>
           <button
-            onClick={() => deleteMutation.mutate(task.id)}
+            onClick={() => deleteMutation.mutate(taskName)}
             className="opacity-0 group-hover:opacity-100 shrink-0 text-text-dim hover:text-phase-failed transition-all p-0.5"
             title="Remove task"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         </CardTitle>
-        {task.agent && (
+        {task.spec.agent && (
           <CardDescription className="flex items-center gap-1">
             <User className="h-3 w-3" />
-            {task.agent}
+            {task.spec.agent}
           </CardDescription>
         )}
       </CardHeader>
 
       <CardContent className="p-3 pt-0 space-y-2">
         {/* Description with expand affordance */}
-        {task.description && (
+        {task.spec.description && (
           <details className="text-xs text-text-dim group/desc">
             <summary className="cursor-pointer line-clamp-2 list-none hover:text-text transition-colors flex items-center gap-1 [&::-webkit-details-marker]:hidden">
               <ChevronDown className="h-3 w-3 shrink-0 transition-transform duration-200 group-open/desc:rotate-180" />
               <span>Show more</span>
             </summary>
-            <p className="mt-1.5 whitespace-pre-wrap leading-relaxed">{task.description}</p>
+            <p className="mt-1.5 whitespace-pre-wrap leading-relaxed">{task.spec.description}</p>
           </details>
         )}
 
@@ -156,12 +156,12 @@ function TaskCard({
         {/* Retry button */}
         {worker?.status === "Escalated" && (
           <button
-            onClick={() => retryMutation.mutate(task.id)}
+            onClick={() => retryMutation.mutate(taskName)}
             disabled={retryMutation.isPending}
             className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors"
             title="Reset retries and move back to ready"
           >
-            {retryMutation.isPending && retryMutation.variables === task.id ? "Retrying…" : "↺ Retry"}
+            {retryMutation.isPending && retryMutation.variables === taskName ? "Retrying…" : "↺ Retry"}
           </button>
         )}
 
@@ -169,19 +169,19 @@ function TaskCard({
         {col === "review" && (
           <div className="flex gap-2">
             <button
-              onClick={() => approveMutation.mutate(task.id)}
+              onClick={() => approveMutation.mutate(taskName)}
               disabled={approveMutation.isPending || !canApproveNow}
               className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors font-medium flex items-center gap-1"
               title={alreadyApproved ? "Already approved" : (canApproveNow ? "Approve this task" : "Wait for agent review approval first")}
             >
               {alreadyApproved
                 ? <><Check className="h-3 w-3" /> Approved</>
-                : (approveMutation.isPending && approveMutation.variables === task.id ? "Approving…" : <><Check className="h-3 w-3" /> Approve</>)
+                : (approveMutation.isPending && approveMutation.variables === taskName ? "Approving…" : <><Check className="h-3 w-3" /> Approve</>)
               }
             </button>
             <button
               onClick={() => {
-                setRequestChangesTaskId(task.id);
+                setRequestChangesTaskId(taskName);
                 setShowRequestChanges(true);
               }}
               className="text-xs text-text-dim hover:text-phase-failed transition-colors flex items-center gap-1"
@@ -196,7 +196,7 @@ function TaskCard({
   );
 }
 
-const DEFAULT_COLUMNS = ["ready", "in-progress", "review", "rework", "done"];
+const DEFAULT_COLUMNS = ["blocked", "ready", "in-progress", "review", "rework", "done"];
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -250,26 +250,22 @@ export default function BoardView() {
   const { connected: boardSseConnected, eventTick } = useBoardEvents(projectName, true);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["board", projectName, eventTick],
+    queryKey: ["board", projectName],
     queryFn: () => fetchBoard(projectName),
     refetchInterval: boardSseConnected ? false : 10_000,
+    staleTime: 5_000,
   });
 
-  // All ClusterAgents available in the cluster — used for the agent dropdown.
-  const { data: clusterAgents = [] } = useQuery({
-    queryKey: ["agents"],
-    queryFn: fetchAgents,
-  });
+  // Refetch when SSE signals a board change — without changing the query key
+  // (which would drop cached data and cause a loading flicker).
+  useEffect(() => {
+    if (eventTick > 0) {
+      void queryClient.invalidateQueries({ queryKey: ["board", projectName] });
+    }
+  }, [eventTick, projectName, queryClient]);
 
   const [showAddTask, setShowAddTask] = useState(false);
   const [taskType, setTaskType] = useState<"PLAN" | "BUILD">("PLAN");
-
-  // Fetch next task ID based on selected type.
-  const { data: nextId = "" } = useQuery({
-    queryKey: ["nextTaskId", projectName, taskType],
-    queryFn: () => fetchNextTaskId(projectName, taskType),
-    enabled: showAddTask,
-  });
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDesc, setTaskDesc] = useState("");
   const [taskAgent, setTaskAgent] = useState("");
@@ -280,18 +276,14 @@ export default function BoardView() {
   const [requestChangesTaskId, setRequestChangesTaskId] = useState("");
   const [requestChangesComment, setRequestChangesComment] = useState("");
 
+  // All tasks flat — for notifications.
+  const allTasks: Task[] = data ? Object.values(data.columns).flat() : [];
+
   const addMutation = useMutation({
-    mutationFn: async (task: BoardTask) => {
-      // If this agent isn't in the board roster yet, add it first.
-      if (!roster.includes(task.agent)) {
-        const updatedAgents = [...(spec.agents ?? []), { name: task.agent }];
-        await patchBoardSpec(projectName, { agents: updatedAgents });
-      }
-      return addBoardTask(projectName, task);
-    },
+    mutationFn: async (task: { type: string; title: string; description?: string; agent: string; priority?: string }) =>
+      addBoardTask(projectName, task),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["board", projectName] });
-      queryClient.invalidateQueries({ queryKey: ["nextTaskId", projectName] });
       setShowAddTask(false);
       setTaskTitle(""); setTaskDesc(""); setTaskAgent(""); setAddError(null);
     },
@@ -299,18 +291,17 @@ export default function BoardView() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteBoardTask(projectName, id),
+    mutationFn: (taskName: string) => deleteBoardTask(projectName, taskName),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", projectName] }),
   });
 
   const retryMutation = useMutation({
-    mutationFn: (id: string) =>
-      retryEscalatedTask(projectName, id, data?.status.workers ?? [], data?.status.backlog ?? {}),
+    mutationFn: (taskName: string) => retryEscalatedTask(projectName, taskName),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", projectName] }),
   });
 
   const approveMutation = useMutation({
-    mutationFn: (taskId: string) => approveTask(projectName, taskId),
+    mutationFn: (taskName: string) => approveTask(projectName, taskName),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", projectName] }),
   });
 
@@ -325,21 +316,16 @@ export default function BoardView() {
     },
   });
 
-  // Notify on worker status transitions (must be called before early returns per React rules).
-  useBoardNotifications(projectName, data?.status.workers ?? []);
+  // Notify on worker status transitions.
+  useBoardNotifications(projectName, allTasks);
 
-  if (isLoading) return <p className="text-sm text-text-dim">Loading board…</p>;
-  if (error || !data) return <p className="text-sm text-phase-failed">Failed to load board.</p>;
+  if (isLoading && !data) return <p className="text-sm text-text-dim">Loading board…</p>;
+  if (error && !data) return <p className="text-sm text-phase-failed">Failed to load board.</p>;
+  if (!data) return <p className="text-sm text-phase-failed">Failed to load board.</p>;
 
-  const { spec, status } = data;
-  const columns = status.columns ?? DEFAULT_COLUMNS;
-  const backlog = status.backlog ?? {};
-  const workers = status.workers ?? [];
-  const tasks = spec.tasks ?? [];
-  const roster = (spec.agents ?? []).map((a) => a.name);
-
-  function taskById(id: string) { return tasks.find((t) => t.id === id); }
-  function workerByTask(id: string) { return workers.find((w) => w.taskId === id); }
+  const { settings, columns, approvals, status } = data;
+  const columnKeys = DEFAULT_COLUMNS;
+  const roster = (settings.agents ?? []).map((a: { name: string }) => a.name);
 
   return (
     <div className="space-y-6">
@@ -356,9 +342,17 @@ export default function BoardView() {
           </div>
           <h1 className="text-xl font-semibold mt-1">{projectName} — Board</h1>
           <p className="text-sm text-text-dim mt-0.5">
-            Team: {roster.join(", ") || "(no agents configured)"}
-            {" · "}Max parallel: {spec.maxParallel ?? 2}
-            {" · "}Phase: {spec.phase ?? "Active"}
+            Team: {roster.length > 0 ? roster.join(", ") : (
+              <span>
+                (no agents configured —{" "}
+                <Link to={`/projects/${encodeURIComponent(projectName)}/edit`} className="underline hover:text-text transition-colors">
+                  add agents to the project roster
+                </Link>
+                )
+              </span>
+            )}
+            {" · "}Max parallel: {settings.maxParallel ?? 2}
+            {" · "}Phase: {settings.phase ?? "Active"}
           </p>
           <p className="text-xs text-text-dim mt-1">
             Updates: {boardSseConnected ? "live stream" : "polling fallback"}
@@ -401,19 +395,25 @@ export default function BoardView() {
                 <span className="text-sm">BUILD</span>
               </label>
             </div>
-            {nextId && (
-              <p className="text-xs text-text-dim font-mono">Next ID: {nextId}</p>
-            )}
           </div>
           <div className="grid grid-cols-1 gap-3">
-            <select
-              value={taskAgent}
-              onChange={(e) => setTaskAgent(e.target.value)}
-              className="rounded border border-border bg-surface-raised px-2 py-1.5 text-sm"
-            >
-              <option value="">— agent —</option>
-              {clusterAgents.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
-            </select>
+            {roster.length === 0 ? (
+              <p className="text-xs text-phase-failed">
+                No agents in project roster.{" "}
+                <Link to={`/projects/${encodeURIComponent(projectName)}/edit`} className="underline hover:opacity-80">
+                  Add agents to the project first.
+                </Link>
+              </p>
+            ) : (
+              <select
+                value={taskAgent}
+                onChange={(e) => setTaskAgent(e.target.value)}
+                className="rounded border border-border bg-surface-raised px-2 py-1.5 text-sm"
+              >
+                <option value="">— agent —</option>
+                {roster.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            )}
           </div>
           <input
             placeholder="Title"
@@ -445,7 +445,6 @@ export default function BoardView() {
                   return;
                 }
                 addMutation.mutate({
-                  id: nextId,
                   type: taskType,
                   title: taskTitle.trim(),
                   description: taskDesc.trim() || undefined,
@@ -464,39 +463,32 @@ export default function BoardView() {
       )}
 
       {/* Board columns */}
-      <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
-        {columns.map((col) => {
-          const taskIds = backlog[col] ?? [];
+      <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${columnKeys.length}, minmax(0, 1fr))` }}>
+        {columnKeys.map((col) => {
+          const colTasks = columns[col] ?? [];
           return (
             <div key={col} className="space-y-2">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-text-dim">{col}</h3>
-                <span className="text-xs text-text-dim tabular-nums">{taskIds.length}</span>
+                <span className="text-xs text-text-dim tabular-nums">{colTasks.length}</span>
               </div>
               <div className="space-y-2 min-h-[8rem]">
-                {taskIds.map((id) => {
-                  const task = taskById(id);
-                  const worker = workerByTask(id);
-                  if (!task || !worker) return null;
-                  return (
-                    <TaskCard
-                      key={id}
-                      task={task}
-                      worker={worker}
-                      col={col}
-                      data={data}
-                      deleteMutation={deleteMutation}
-                      retryMutation={retryMutation}
-                      approveMutation={approveMutation}
-                      requestChangesMutation={requestChangesMutation}
-                      projectName={projectName}
-                      taskById={taskById}
-                      setShowRequestChanges={setShowRequestChanges}
-                      setRequestChangesTaskId={setRequestChangesTaskId}
-                    />
-                  );
-                })}
-                {taskIds.length === 0 && (
+                {colTasks.map((task) => (
+                  <TaskCard
+                    key={task.metadata.name}
+                    task={task}
+                    col={col}
+                    approvals={approvals}
+                    deleteMutation={deleteMutation}
+                    retryMutation={retryMutation}
+                    approveMutation={approveMutation}
+                    requestChangesMutation={requestChangesMutation}
+                    projectName={projectName}
+                    setShowRequestChanges={setShowRequestChanges}
+                    setRequestChangesTaskId={setRequestChangesTaskId}
+                  />
+                ))}
+                {colTasks.length === 0 && (
                   <p className="text-xs text-text-dim italic">empty</p>
                 )}
               </div>
@@ -531,9 +523,7 @@ export default function BoardView() {
               </button>
               <button
                 onClick={() => {
-                  if (!requestChangesComment.trim()) {
-                    return;
-                  }
+                  if (!requestChangesComment.trim()) return;
                   requestChangesMutation.mutate({
                     taskId: requestChangesTaskId,
                     comment: requestChangesComment.trim(),

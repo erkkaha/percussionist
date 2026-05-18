@@ -111,11 +111,11 @@ confirm() {
   [[ "$ans" =~ ^[Yy]$ ]]
 }
 
-# List OpenCodeRuns whose pods are still running in the cluster. For the
+# List Runs whose pods are still running in the cluster. For the
 # runner/dispatcher images we delete the CR (the operator + k8s GC handle
 # the rest). For the operator image we scale the Deployment.
 list_runs_with_pods() {
-  kubectl get opencoderuns -A -o json 2>/dev/null \
+  kubectl get runs.percussionist.dev -A -o json 2>/dev/null \
     | jq -r '.items[] | select(.status.podName != null) |
              "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null \
     || true
@@ -138,7 +138,7 @@ evict_for() {
       local runs
       runs="$(list_runs_with_pods)"
       if [[ -z "$runs" ]]; then return 0; fi
-      echo ">> --force: these OpenCodeRuns have live pods that may pin the old $name image:"
+      echo ">> --force: these Runs have live pods that may pin the old $name image:"
       echo "$runs" | sed 's/^/     /'
       if ! confirm "   Delete them?"; then
         echo "   aborting" >&2
@@ -147,7 +147,7 @@ evict_for() {
       while IFS= read -r nsname; do
         [[ -z "$nsname" ]] && continue
         local ns="${nsname%/*}" n="${nsname##*/}"
-        kubectl -n "$ns" delete opencoderun "$n" --wait=false
+        kubectl -n "$ns" delete run.percussionist.dev "$n" --wait=false
       done <<<"$runs"
       # Wait for the actual run pods (labelled `percussionist.dev/run=<name>`)
       # to terminate. Listing CRs no longer works here because we just

@@ -11,46 +11,45 @@ import {
   LABELS,
   MANAGED_BY,
   FacilitationSpec,
-  OpenCodeProject,
-  OpenCodeRun,
-  OpenCodeRunStatus,
+  Project,
+  Run,
+  RunStatus,
+  Task,
   resolveRunConfig,
-  type BoardTask,
 } from "@percussionist/api";
 import { fetchSessionMessages, readPodLog, core } from "@percussionist/kube";
 
 const DEFAULT_FACILITATOR_AGENT_NAME = "facilitator";
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
 
-// Build the facilitator OpenCodeRun spec for a FAILED worker run.
+// Build the facilitator Run spec for a FAILED worker run.
 export function buildFacilitationRun(
-  project: OpenCodeProject,
-  task: BoardTask,
+  project: Project,
+  task: Task,
   failedRunName: string,
-  failedRunStatus: OpenCodeRunStatus,
+  failedRunStatus: RunStatus,
   sessionSummary: string,
   runName: string,
   facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
-): OpenCodeRun {
-  const board = project.spec.board ?? { maxParallel: 2, phase: "Active" };
-  const resolved = resolveRunConfig(project.spec, board.overrides);
+): Run {
+  const resolved = resolveRunConfig(project.spec);
 
   const facilitationSpec: FacilitationSpec = {
     targetRunName: failedRunName,
-    targetTaskId: task.id,
+    targetTaskId: task.metadata.name,
     failureReason: failedRunStatus.message ?? "Unknown failure",
     sessionSummary,
     successReview: false,
   };
 
-  const alternativeAgents = (board.agents ?? [])
+  const alternativeAgents = (project.spec.agents ?? [])
     .map((a) => a.name)
     .filter((n) => n !== facilitatorAgentName);
 
   const promptLines = [
     `You are a facilitator agent that analyzes failed worker runs and recommends actions.`,
     "",
-    `TASK: ${task.id} — ${task.title}`,
+    `TASK: ${task.metadata.name} — ${task.spec.title}`,
     `WORKER RUN: ${failedRunName}`,
     `FAILURE: ${facilitationSpec.failureReason}`,
     "",
@@ -86,45 +85,44 @@ export function buildFacilitationRun(
   );
 }
 
-// Build the facilitator OpenCodeRun spec for a SUCCEEDED worker run (success review).
+// Build the facilitator Run spec for a SUCCEEDED worker run (success review).
 export function buildSuccessReviewRun(
-  project: OpenCodeProject,
-  task: BoardTask,
+  project: Project,
+  task: Task,
   succeededRunName: string,
-  succeededRunStatus: OpenCodeRunStatus,
+  succeededRunStatus: RunStatus,
   sessionSummary: string,
   runName: string,
   branchName?: string,
   facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
-): OpenCodeRun {
-  const board = project.spec.board ?? { maxParallel: 2, phase: "Active" };
-  const resolved = resolveRunConfig(project.spec, board.overrides);
+): Run {
+  const resolved = resolveRunConfig(project.spec);
 
   const completionMessage = succeededRunStatus.message ?? "session completed";
 
   const facilitationSpec: FacilitationSpec = {
     targetRunName: succeededRunName,
-    targetTaskId: task.id,
+    targetTaskId: task.metadata.name,
     failureReason: completionMessage, // reusing field for completion message
     sessionSummary,
     successReview: true,
   };
 
-  const alternativeAgents = (board.agents ?? [])
+  const alternativeAgents = (project.spec.agents ?? [])
     .map((a) => a.name)
     .filter((n) => n !== facilitatorAgentName);
 
-  const branch = branchName ?? "feat/${task.id}";
+  const branch = branchName ?? `feat/${task.metadata.name}`;
 
-  const taskTypeLabel = task.type ? `TASK TYPE: ${task.type}` : "";
-  const isBuildTask = task.type === "BUILD";
+  const taskTypeLabel = task.spec.type ? `TASK TYPE: ${task.spec.type}` : "";
+  const isBuildTask = task.spec.type === "BUILD";
 
   const promptLines = [
     `You are a reviewer agent that checks whether a completed worker run actually fulfilled its task.`,
     ...(taskTypeLabel ? [taskTypeLabel] : []),
     "",
-    `TASK: ${task.id} — ${task.title}`,
-    `TASK DESCRIPTION: ${task.description ?? "(none)"}`,
+    `TASK: ${task.metadata.name} — ${task.spec.title}`,
+    `TASK DESCRIPTION: ${task.spec.description ?? "(none)"}`,
     `WORKER RUN: ${succeededRunName}`,
     `BRANCH: ${branch}`,
     `COMPLETION MESSAGE: ${completionMessage}`,
@@ -177,34 +175,33 @@ export function buildSuccessReviewRun(
   );
 }
 
-// Build the facilitator OpenCodeRun spec for generating BUILD tasks from an approved PLAN task.
+// Build the facilitator Run spec for generating BUILD tasks from an approved PLAN task.
 export function buildBuildTaskGeneratorRun(
-  project: OpenCodeProject,
-  planTask: BoardTask,
+  project: Project,
+  planTask: Task,
   succeededRunName: string,
   runName: string,
   facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
-): OpenCodeRun {
-  const board = project.spec.board ?? { maxParallel: 2, phase: "Active" };
-  const resolved = resolveRunConfig(project.spec, board.overrides);
+): Run {
+  const resolved = resolveRunConfig(project.spec);
 
   const facilitationSpec: FacilitationSpec = {
     targetRunName: succeededRunName,
-    targetTaskId: planTask.id,
+    targetTaskId: planTask.metadata.name,
     failureReason: "BUILD task generation from approved PLAN",
     sessionSummary: "", // Facilitator will fetch full session using tools
     successReview: false,
   };
 
-  const availableAgents = (board.agents ?? [])
+  const availableAgents = (project.spec.agents ?? [])
     .map((a) => a.name)
     .filter((n) => n !== facilitatorAgentName);
 
   const promptLines = [
     `You are a facilitator agent that breaks down approved PLAN tasks into concrete BUILD tasks.`,
     "",
-    `PLAN TASK: ${planTask.id} — ${planTask.title}`,
-    `PLAN DESCRIPTION: ${planTask.description ?? "(none)"}`,
+    `PLAN TASK: ${planTask.metadata.name} — ${planTask.spec.title}`,
+    `PLAN DESCRIPTION: ${planTask.spec.description ?? "(none)"}`,
     `PLAN WORKER RUN: ${succeededRunName}`,
     "",
     `The PLAN task has been approved by a human reviewer. Your job is to analyze the complete session`,
@@ -250,17 +247,16 @@ export function buildBuildTaskGeneratorRun(
   );
 }
 
-// Shared helper — constructs the OpenCodeRun for any facilitator invocation.
+// Shared helper — constructs the Run for any facilitator invocation.
 function buildFacilitatorRun(
-  project: OpenCodeProject,
-  task: BoardTask,
+  project: Project,
+  task: Task,
   runName: string,
   facilitationSpec: FacilitationSpec,
   promptLines: string,
   resolved: ReturnType<typeof resolveRunConfig>,
   facilitatorAgentName: string,
-): OpenCodeRun {
-  const board = project.spec.board ?? { maxParallel: 2, phase: "Active" };
+): Run {
   return {
     apiVersion: API_GROUP_VERSION,
     kind: KIND_RUN,
@@ -269,12 +265,12 @@ function buildFacilitatorRun(
       labels: {
         [LABELS.managedBy]: MANAGED_BY,
         [LABELS.projectName]: project.metadata.name,
-        [LABELS.taskId]: task.id,
+        [LABELS.taskId]: task.metadata.name,
       },
       ownerReferences: [
         {
           apiVersion: API_GROUP_VERSION,
-          kind: "OpenCodeProject",
+          kind: "Project",
           name: project.metadata.name,
           uid: project.metadata.uid!,
           controller: true,
@@ -284,11 +280,11 @@ function buildFacilitatorRun(
     },
     spec: {
       project: project.metadata.name,
-      boardTask: task.id,
+      boardTask: task.metadata.name,
       task: promptLines,
       interactive: false,
       agent: facilitatorAgentName,
-      agents: (board.agents ?? []).filter(
+      agents: (project.spec.agents ?? []).filter(
         (a) => a.name !== facilitatorAgentName,
       ),
       model: resolved.model,

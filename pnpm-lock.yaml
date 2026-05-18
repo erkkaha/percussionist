@@ -60,9 +60,6 @@ importers:
       '@kubernetes/client-node':
         specifier: ^1.4.0
         version: 1.4.0
-      '@opencode-ai/sdk':
-        specifier: ^1.14.19
-        version: 1.14.19
       '@percussionist/api':
         specifier: workspace:*
         version: link:../api

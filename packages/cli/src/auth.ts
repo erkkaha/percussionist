@@ -191,7 +191,7 @@ export async function runAuthImport(opts: AuthImportOpts): Promise<void> {
     (e) => fatal("upsert secret", e),
   );
   console.error(`\nSecret ${action}.`);
-  console.error(`\nReference it in OpenCodeRun specs with:`);
+  console.error(`\nReference it in Run specs with:`);
   console.error(`  spec:`);
   console.error(`    secrets:`);
   console.error(`      opencodeAuthSecret:`);

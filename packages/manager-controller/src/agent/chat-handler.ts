@@ -217,18 +217,16 @@ async function handleStream(req: IncomingMessage, res: ServerResponse): Promise<
     Connection: "keep-alive",
   });
 
-  // Send existing history
-  for (const msg of conversationHistory) {
-    res.write(`data: ${JSON.stringify(msg)}\n\n`);
-  }
-
-  // Poll for new messages and stream them
+  // Poll for new messages and stream them (history is loaded separately via GET /chat/history)
   const sessionId = currentSessionId;
   if (!sessionId) {
-    res.write(`data: ${JSON.stringify({ role: "system", text: "No active session. Send a message to start one." })}\n\n`);
+    res.write(`event: ready\ndata: {}\n\n`);
     res.end();
     return;
   }
+
+  // Signal to the client that SSE is live and history has been fetched separately
+  res.write(`event: ready\ndata: {}\n\n`);
 
   const knownMessageCount = new Set<string>();
   const poll = setInterval(async () => {

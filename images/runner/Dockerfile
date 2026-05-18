@@ -5,10 +5,14 @@
 # Build:
 #   docker build -t percussionist/runner:dev images/runner
 #
+# Override the base runner image (e.g. for a custom LLM runtime):
+#   docker build --build-arg RUNNER_BASE=myregistry/my-runner:v1 -t percussionist/runner:dev images/runner
+#
 # For k3s (no registry), import directly:
 #   docker save percussionist/runner:dev | sudo k3s ctr images import -
 
-FROM ghcr.io/anomalyco/opencode:latest
+ARG RUNNER_BASE=ghcr.io/anomalyco/opencode:latest
+FROM ${RUNNER_BASE}
 
 ARG BUN_VERSION=1.3.14
 ARG PNPM_VERSION=11.1.2

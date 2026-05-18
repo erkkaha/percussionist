@@ -1,4 +1,4 @@
-// `beatctl submit` — create a new OpenCodeRun from the command line.
+// `beatctl submit` — create a new Run from the command line.
 //
 // Two input modes:
 //   1. Inline task:    beatctl submit --task "fix the thing" [--name my-run]
@@ -17,10 +17,10 @@ import YAML from "yaml";
 import {
   API_GROUP_VERSION,
   KIND_RUN,
-  OpenCodeRunSchema,
+  RunSchema,
   RunPhase,
   TERMINAL_PHASES,
-  type OpenCodeRun,
+  type Run,
 } from "@percussionist/api";
 import {
   DEFAULT_NAMESPACE,
@@ -66,7 +66,7 @@ function generateName(): string {
   return `run-${Date.now().toString(16)}`;
 }
 
-function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussionist/api").OpenCodeProjectSpec): OpenCodeRun {
+function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussionist/api").ProjectSpec): Run {
   if (!opts.task && !opts.interactive) {
     throw new Error(
       "either --task or --interactive is required when --file is not supplied",
@@ -179,17 +179,17 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
       ...(pd?.initScript ? { initScript: pd.initScript } : {}),
     },
   };
-  return OpenCodeRunSchema.parse(raw);
+  return RunSchema.parse(raw);
 }
 
-function buildRunFromFile(path: string, opts: SubmitOpts): OpenCodeRun {
+function buildRunFromFile(path: string, opts: SubmitOpts): Run {
   const doc = YAML.parse(readFileSync(path, "utf8"));
   // Let a user override the name/namespace at the CLI without editing the file.
   if (opts.name) doc.metadata = { ...(doc.metadata ?? {}), name: opts.name };
   if (opts.namespace) {
     doc.metadata = { ...(doc.metadata ?? {}), namespace: opts.namespace };
   }
-  return OpenCodeRunSchema.parse(doc);
+  return RunSchema.parse(doc);
 }
 
 // Poll the CR status until phase is Running (or terminal, which is fatal for
@@ -199,7 +199,7 @@ async function waitForRunning(
   namespace: string,
   name: string,
   timeoutMs = 120_000,
-): Promise<OpenCodeRun> {
+): Promise<Run> {
   const { custom } = loadKube();
   const deadline = Date.now() + timeoutMs;
   let lastPhase: string | undefined;
@@ -244,7 +244,7 @@ export async function runSubmit(opts: SubmitOpts): Promise<void> {
   // Resolve project defaults before building the run spec. Hard-fail if the
   // project is referenced but cannot be found — a missing project is almost
   // certainly a typo and silently ignoring it would produce a confusing run.
-  let projectDefaults: import("@percussionist/api").OpenCodeProjectSpec | undefined;
+  let projectDefaults: import("@percussionist/api").ProjectSpec | undefined;
   if (opts.project) {
     const { custom } = loadKube();
     try {
@@ -256,7 +256,7 @@ export async function runSubmit(opts: SubmitOpts): Promise<void> {
     }
   }
 
-  let run: OpenCodeRun;
+  let run: Run;
   try {
     run = opts.file
       ? buildRunFromFile(opts.file, opts)

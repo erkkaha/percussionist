@@ -7,7 +7,7 @@
 # Or apply directly:
 #   kubectl apply -f examples/my-project.yaml
 apiVersion: percussionist.dev/v1alpha1
-kind: OpenCodeProject
+kind: Project
 metadata:
   name: my-project
   namespace: percussionist

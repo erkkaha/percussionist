@@ -4,8 +4,9 @@
 // Usage: node codegen/gen-crds.mjs [--out <dir>]
 //
 // Reads the compiled API package (packages/api/dist/index.js) and produces:
-//   k8s/crds/opencoderun.yaml
-//   k8s/crds/opencodeproject.yaml
+//   k8s/crds/run.yaml
+//   k8s/crds/project.yaml
+//   k8s/crds/task.yaml
 //   k8s/crds/clusteragent.yaml
 //
 // Requires the api package to have been built first:
@@ -179,7 +180,7 @@ writeFileSync(path.join(outDir, "clusteragent.yaml"), clusterAgentYAML);
 console.log(`wrote ${path.join(outDir, "clusteragent.yaml")}`);
 
 // ---------------------------------------------------------------------------
-// OpenCodeProject CRD
+// Project CRD
 
 const projectYAML = makeCRD({
   group: api.API_GROUP,
@@ -187,13 +188,13 @@ const projectYAML = makeCRD({
   kind: api.KIND_PROJECT,
   plural: api.PLURAL_PROJECT,
   scope: "Namespaced",
-  specSchema: api.OpenCodeProjectSpecSchema,
-  statusSchema: api.OpenCodeProjectStatusSchema,
+  specSchema: api.ProjectSpecSchema,
+  statusSchema: api.ProjectStatusSchema,
   additionalPrinterColumns: [
     {
       name: "Phase",
       type: "string",
-      jsonPath: ".status.board.phase",
+      jsonPath: ".spec.phase",
     },
     {
       name: "Workers",
@@ -208,11 +209,11 @@ const projectYAML = makeCRD({
   ],
 });
 
-writeFileSync(path.join(outDir, "opencodeproject.yaml"), projectYAML);
-console.log(`wrote ${path.join(outDir, "opencodeproject.yaml")}`);
+writeFileSync(path.join(outDir, "project.yaml"), projectYAML);
+console.log(`wrote ${path.join(outDir, "project.yaml")}`);
 
 // ---------------------------------------------------------------------------
-// OpenCodeRun CRD
+// Run CRD
 
 const runYAML = makeCRD({
   group: api.API_GROUP,
@@ -220,8 +221,8 @@ const runYAML = makeCRD({
   kind: api.KIND_RUN,
   plural: api.PLURAL_RUN,
   scope: "Namespaced",
-  specSchema: api.OpenCodeRunSpecSchema,
-  statusSchema: api.OpenCodeRunStatusSchema,
+  specSchema: api.RunSpecSchema,
+  statusSchema: api.RunStatusSchema,
   additionalPrinterColumns: [
     {
       name: "Phase",
@@ -241,7 +242,50 @@ const runYAML = makeCRD({
   ],
 });
 
-writeFileSync(path.join(outDir, "opencoderun.yaml"), runYAML);
-console.log(`wrote ${path.join(outDir, "opencoderun.yaml")}`);
+writeFileSync(path.join(outDir, "run.yaml"), runYAML);
+console.log(`wrote ${path.join(outDir, "run.yaml")}`);
+
+// ---------------------------------------------------------------------------
+// Task CRD
+
+const taskYAML = makeCRD({
+  group: api.API_GROUP,
+  version: api.API_VERSION,
+  kind: api.KIND_TASK,
+  plural: api.PLURAL_TASK,
+  scope: "Namespaced",
+  specSchema: api.TaskSpecSchema,
+  statusSchema: api.TaskStatusSchema,
+  additionalPrinterColumns: [
+    {
+      name: "Phase",
+      type: "string",
+      jsonPath: ".status.phase",
+    },
+    {
+      name: "Column",
+      type: "string",
+      jsonPath: ".status.column",
+    },
+    {
+      name: "Type",
+      type: "string",
+      jsonPath: ".spec.type",
+    },
+    {
+      name: "Project",
+      type: "string",
+      jsonPath: ".spec.projectRef",
+    },
+    {
+      name: "Age",
+      type: "date",
+      jsonPath: ".metadata.creationTimestamp",
+    },
+  ],
+});
+
+writeFileSync(path.join(outDir, "task.yaml"), taskYAML);
+console.log(`wrote ${path.join(outDir, "task.yaml")}`);
 
 console.log("CRD codegen complete.");

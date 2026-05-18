@@ -1,4 +1,4 @@
-// `beatctl ls` / `beatctl get` — read-only views of OpenCodeRun resources.
+// `beatctl ls` / `beatctl get` — read-only views of Run resources.
 
 import {
   DEFAULT_NAMESPACE,

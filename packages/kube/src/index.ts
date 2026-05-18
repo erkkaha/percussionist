@@ -24,14 +24,20 @@ import {
   API_GROUP_VERSION,
   KIND_RUN,
   KIND_PROJECT,
+  KIND_TASK,
   KIND_CLUSTER_AGENT,
   KIND_CLUSTER_SETTINGS,
   PLURAL_RUN,
   PLURAL_PROJECT,
+  PLURAL_TASK,
   PLURAL_CLUSTER_AGENT,
   PLURAL_CLUSTER_SETTINGS,
-  type OpenCodeRun,
-  type OpenCodeProject,
+  LABELS,
+  OPENCODE_RUNNER_DEFAULTS,
+  type Run,
+  type Project,
+  type Task,
+  type TaskStatus,
   type ClusterAgent,
   type ClusterSettings,
   type BoardStatus,
@@ -94,18 +100,18 @@ export function loadFromKubeconfig(): {
 }
 
 // ---------------------------------------------------------------------------
-// OpenCodeRun helpers
+// Run helpers
 
 export async function listRuns(
   ns: string = NAMESPACE,
   client = custom(),
-): Promise<OpenCodeRun[]> {
+): Promise<Run[]> {
   const res = (await client.listNamespacedCustomObject({
     group: API_GROUP,
     version: API_VERSION,
     namespace: ns,
     plural: PLURAL_RUN,
-  })) as { items: OpenCodeRun[] };
+  })) as { items: Run[] };
   return res.items ?? [];
 }
 
@@ -113,28 +119,28 @@ export async function getRun(
   name: string,
   ns: string = NAMESPACE,
   client = custom(),
-): Promise<OpenCodeRun> {
+): Promise<Run> {
   return (await client.getNamespacedCustomObject({
     group: API_GROUP,
     version: API_VERSION,
     namespace: ns,
     plural: PLURAL_RUN,
     name,
-  })) as OpenCodeRun;
+  })) as Run;
 }
 
 export async function createRun(
-  run: OpenCodeRun,
+  run: Run,
   ns: string = NAMESPACE,
   client = custom(),
-): Promise<OpenCodeRun> {
+): Promise<Run> {
   return (await client.createNamespacedCustomObject({
     group: API_GROUP,
     version: API_VERSION,
     namespace: ns,
     plural: PLURAL_RUN,
     body: run,
-  })) as OpenCodeRun;
+  })) as Run;
 }
 
 export async function deleteRun(
@@ -266,18 +272,18 @@ export async function updateClusterSettings(
 }
 
 // ---------------------------------------------------------------------------
-// OpenCodeProject helpers
+// Project helpers
 
 export async function listProjects(
   ns: string = NAMESPACE,
   client = custom(),
-): Promise<OpenCodeProject[]> {
+): Promise<Project[]> {
   const res = (await client.listNamespacedCustomObject({
     group: API_GROUP,
     version: API_VERSION,
     namespace: ns,
     plural: PLURAL_PROJECT,
-  })) as { items: OpenCodeProject[] };
+  })) as { items: Project[] };
   return res.items ?? [];
 }
 
@@ -285,36 +291,36 @@ export async function getProject(
   name: string,
   ns: string = NAMESPACE,
   client = custom(),
-): Promise<OpenCodeProject> {
+): Promise<Project> {
   return (await client.getNamespacedCustomObject({
     group: API_GROUP,
     version: API_VERSION,
     namespace: ns,
     plural: PLURAL_PROJECT,
     name,
-  })) as OpenCodeProject;
+  })) as Project;
 }
 
 export async function createProject(
-  project: OpenCodeProject,
+  project: Project,
   ns: string = NAMESPACE,
   client = custom(),
-): Promise<OpenCodeProject> {
+): Promise<Project> {
   return (await client.createNamespacedCustomObject({
     group: API_GROUP,
     version: API_VERSION,
     namespace: ns,
     plural: PLURAL_PROJECT,
     body: project,
-  })) as OpenCodeProject;
+  })) as Project;
 }
 
 export async function updateProject(
   name: string,
-  spec: OpenCodeProject["spec"],
+  spec: Project["spec"],
   ns: string = NAMESPACE,
   client = custom(),
-): Promise<OpenCodeProject> {
+): Promise<Project> {
   const existing = await getProject(name, ns, client);
   return (await client.replaceNamespacedCustomObject({
     group: API_GROUP,
@@ -328,15 +334,15 @@ export async function updateProject(
       metadata: { name, resourceVersion: existing.metadata.resourceVersion },
       spec,
     },
-  })) as OpenCodeProject;
+  })) as Project;
 }
 
 export async function patchProjectSpec(
   name: string,
-  specPatch: Partial<OpenCodeProject["spec"]>,
+  specPatch: Partial<Project["spec"]>,
   ns: string = NAMESPACE,
   client = custom(),
-): Promise<OpenCodeProject> {
+): Promise<Project> {
   return (await client.patchNamespacedCustomObject(
     {
       group: API_GROUP,
@@ -347,15 +353,15 @@ export async function patchProjectSpec(
       body: { spec: specPatch },
     },
     setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
-  )) as OpenCodeProject;
+  )) as Project;
 }
 
 export async function patchProject(
   name: string,
-  patch: { metadata?: Partial<OpenCodeProject["metadata"]>; spec?: Partial<OpenCodeProject["spec"]> },
+  patch: { metadata?: Partial<Project["metadata"]>; spec?: Partial<Project["spec"]> },
   ns: string = NAMESPACE,
   client = custom(),
-): Promise<OpenCodeProject> {
+): Promise<Project> {
   return (await client.patchNamespacedCustomObject(
     {
       group: API_GROUP,
@@ -366,7 +372,7 @@ export async function patchProject(
       body: patch,
     },
     setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
-  )) as OpenCodeProject;
+  )) as Project;
 }
 
 export async function patchProjectStatus(
@@ -374,7 +380,7 @@ export async function patchProjectStatus(
   statusPatch: { board?: Partial<BoardStatus> },
   ns: string = NAMESPACE,
   maxRetries = 3,
-): Promise<OpenCodeProject> {
+): Promise<Project> {
   // Use raw fetch with merge-patch content-type — the K8s client sends the
   // wrong content-type for status subresources on some versions.
   //
@@ -406,7 +412,7 @@ export async function patchProjectStatus(
       body: JSON.stringify({ status: statusPatch }),
       signal: AbortSignal.timeout(15_000),
     });
-    if (res.ok) return res.json() as Promise<OpenCodeProject>;
+    if (res.ok) return res.json() as Promise<Project>;
     const body = await res.text();
     if (res.status === 409 && attempt < maxRetries) {
       // Conflict — another writer raced us. Retry with fresh data.
@@ -430,6 +436,145 @@ export async function deleteProject(
     plural: PLURAL_PROJECT,
     name,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Task helpers
+
+export async function listTasks(
+  project: string,
+  ns: string = NAMESPACE,
+  client = custom(),
+): Promise<Task[]> {
+  const res = (await client.listNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: ns,
+    plural: PLURAL_TASK,
+    labelSelector: `${LABELS.projectName}=${project}`,
+  })) as { items: Task[] };
+  return res.items ?? [];
+}
+
+export async function getTask(
+  name: string,
+  ns: string = NAMESPACE,
+  client = custom(),
+): Promise<Task> {
+  return (await client.getNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: ns,
+    plural: PLURAL_TASK,
+    name,
+  })) as Task;
+}
+
+export async function createTask(
+  task: Task,
+  ns: string = NAMESPACE,
+  client = custom(),
+): Promise<Task> {
+  return (await client.createNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: ns,
+    plural: PLURAL_TASK,
+    body: task,
+  })) as Task;
+}
+
+export async function deleteTask(
+  name: string,
+  ns: string = NAMESPACE,
+  client = custom(),
+): Promise<void> {
+  await client.deleteNamespacedCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    namespace: ns,
+    plural: PLURAL_TASK,
+    name,
+  });
+}
+
+export async function patchTaskStatus(
+  name: string,
+  statusPatch: Partial<TaskStatus>,
+  ns: string = NAMESPACE,
+  maxRetries = 3,
+): Promise<Task> {
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error("No service account token available");
+
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_TASK}/${name}/status`;
+
+  let lastErr: Error | undefined;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, 100 * Math.pow(2, attempt - 1)));
+    }
+    const res = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/merge-patch+json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ status: statusPatch }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok) return res.json() as Promise<Task>;
+    const body = await res.text();
+    if (res.status === 409 && attempt < maxRetries) {
+      lastErr = new Error(`Kubernetes API conflict ${res.status}: ${body}`);
+      continue;
+    }
+    throw new Error(`Kubernetes API error ${res.status}: ${body}`);
+  }
+  throw lastErr!;
+}
+
+// Build a new Task object ready for createTask().
+// projectUid is needed for the ownerReference.
+export function buildTask({
+  name,
+  projectName,
+  projectUid,
+  ns,
+  spec,
+}: {
+  name: string;
+  projectName: string;
+  projectUid: string;
+  ns: string;
+  spec: Task["spec"];
+}): Task {
+  return {
+    apiVersion: API_GROUP_VERSION,
+    kind: KIND_TASK,
+    metadata: {
+      name,
+      namespace: ns,
+      labels: {
+        [LABELS.projectName]: projectName,
+        [LABELS.component]: "task",
+      },
+      ownerReferences: [
+        {
+          apiVersion: API_GROUP_VERSION,
+          kind: KIND_PROJECT,
+          name: projectName,
+          uid: projectUid,
+          controller: true,
+          blockOwnerDeletion: true,
+        },
+      ],
+    },
+    spec,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -501,7 +646,7 @@ export async function fetchSessionMessages(
   sessionID: string,
   ns: string = NAMESPACE,
 ): Promise<unknown> {
-  const url = `http://${serviceName}.${ns}.svc.cluster.local:4096/session/${sessionID}/message`;
+  const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session/${sessionID}/message`;
   const res = await fetch(url, {
     headers: { Accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
@@ -518,7 +663,7 @@ export async function postSessionMessage(
   text: string,
   ns: string = NAMESPACE,
 ): Promise<void> {
-  const url = `http://${serviceName}.${ns}.svc.cluster.local:4096/session/${sessionID}/message`;
+  const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session/${sessionID}/message`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -535,7 +680,7 @@ export async function postPermissionReply(
   response: "once" | "always" | "reject",
   ns: string = NAMESPACE,
 ): Promise<void> {
-  const url = `http://${serviceName}.${ns}.svc.cluster.local:4096/session/${sessionID}/permissions/${permissionID}`;
+  const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session/${sessionID}/permissions/${permissionID}`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -16,29 +16,37 @@ metadata:
 rules:
   # Watch and patch OpenCodeProject CRs (the boards the manager orchestrates).
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencodeprojects"]
+    resources: ["projects"]
     verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencodeprojects/status"]
+    resources: ["projects/status"]
     verbs: ["get", "update", "patch"]
   # Create and monitor OpenCodeRun worker pods (child resources).
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencoderuns"]
+    resources: ["runs"]
     verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencoderuns/status"]
+    resources: ["runs/status"]
     verbs: ["get"]
+  # OpenCodeTask — first-class task CRs; manager owns their lifecycle.
+  - apiGroups: ["percussionist.dev"]
+    resources: ["tasks"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+  - apiGroups: ["percussionist.dev"]
+    resources: ["tasks/status"]
+    verbs: ["get", "update", "patch"]
   # ClusterAgent — read-only (for agent definitions).
   - apiGroups: ["percussionist.dev"]
     resources: ["clusteragents"]
     verbs: ["get", "list", "watch"]
-  # ConfigMaps — read session snapshots saved by the dispatcher for facilitation.
+  # ConfigMaps — read session snapshots saved by the dispatcher for facilitation;
+  # also write chat history (manager-chat-history).
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "create", "update", "patch"]
   # Pod logs and events — for the agent's diagnostic MCP tools.
   - apiGroups: [""]
-    resources: ["pods/log"]
+    resources: ["pods", "pods/log"]
     verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["events"]

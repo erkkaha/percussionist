@@ -6,7 +6,7 @@
 #   kubectl -n percussionist create secret generic llm-keys \
 #     --from-literal=ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 apiVersion: percussionist.dev/v1alpha1
-kind: OpenCodeRun
+kind: Run
 metadata:
   name: hello
   namespace: percussionist

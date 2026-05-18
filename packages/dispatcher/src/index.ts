@@ -1,11 +1,11 @@
 // Dispatcher sidecar entrypoint.
 //
-// Runs alongside `opencode serve` inside an OpenCodeRun pod. Responsibilities:
+// Runs alongside `opencode serve` inside an Run pod. Responsibilities:
 //   1. Wait for the server to be reachable on 127.0.0.1:4096.
 //   2. (prompt mode) Create a session, fire the task as a prompt (async).
 //      (interactive mode) Wait for the user to start a session via the web UI
 //      or `beatctl attach`; observe all sessions that appear.
-//   3. Mirror session activity into the OpenCodeRun status subresource.
+//   3. Mirror session activity into the Run status subresource.
 //   4. On completion, snapshot all sessions to a ConfigMap and send analytics.
 //   5. Serve an MCP endpoint on 127.0.0.1:4097 so agents can call fail_run()
 //      or get_status() without cluster API access.
@@ -31,7 +31,7 @@ import {
   API_VERSION,
   PLURAL_RUN,
   RunPhase,
-  type OpenCodeRunStatus,
+  type RunStatus,
 } from "@percussionist/api";
 import { waitForHealthy } from "./session.js";
 import { runInteractive, runPrompt } from "./polling.js";
@@ -87,7 +87,7 @@ kc.loadFromDefault();
 const k8s = kc.makeApiClient(CustomObjectsApi);
 const coreApi = kc.makeApiClient(CoreV1Api);
 
-async function patchStatus(patch: OpenCodeRunStatus): Promise<void> {
+async function patchStatus(patch: RunStatus): Promise<void> {
   const body = { status: { ...patch, lastEventAt: new Date().toISOString() } };
   try {
     await k8s.patchNamespacedCustomObjectStatus(
@@ -114,7 +114,7 @@ let _runStartedAt: string | undefined;
 let _lastStatus: { phase: string; session?: string; tokensIn?: number; tokensOut?: number } | null = null;
 
 function wrapPatchStatus(fn: typeof patchStatus) {
-  return async (patch: OpenCodeRunStatus): Promise<void> => {
+  return async (patch: RunStatus): Promise<void> => {
     await fn(patch);
     _lastStatus = {
       phase: patch.phase ?? _lastStatus?.phase ?? "unknown",

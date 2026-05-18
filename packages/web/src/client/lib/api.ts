@@ -1,16 +1,15 @@
 // Thin fetch wrappers for the /api endpoints.
 
 import type {
-  OpenCodeRun,
+  Run,
   LogsResponse,
   SessionResponse,
   CreateRunRequest,
-  OpenCodeProject,
-  OpenCodeProjectDetail,
+  Project,
+  ProjectDetail,
   CreateProjectRequest,
   CreateAgentRequest,
-  BoardTask,
-  BoardSpec,
+  Task,
   BoardStatus,
 } from "./types";
 import type { ClusterAgent, ClusterSettings } from "@percussionist/api";
@@ -26,13 +25,13 @@ async function fetchJSON<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function fetchRuns(): Promise<OpenCodeRun[]> {
-  const data = await fetchJSON<{ items: OpenCodeRun[] }>("/runs");
+export async function fetchRuns(): Promise<Run[]> {
+  const data = await fetchJSON<{ items: Run[] }>("/runs");
   return data.items;
 }
 
-export async function fetchRun(name: string): Promise<OpenCodeRun> {
-  return fetchJSON<OpenCodeRun>(`/runs/${encodeURIComponent(name)}`);
+export async function fetchRun(name: string): Promise<Run> {
+  return fetchJSON<Run>(`/runs/${encodeURIComponent(name)}`);
 }
 
 export async function fetchLogs(
@@ -48,7 +47,7 @@ export async function fetchSession(name: string): Promise<SessionResponse> {
   return fetchJSON<SessionResponse>(`/runs/${encodeURIComponent(name)}/session`);
 }
 
-export async function submitRun(req: CreateRunRequest): Promise<OpenCodeRun> {
+export async function submitRun(req: CreateRunRequest): Promise<Run> {
   const res = await fetch(`${BASE}/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -58,7 +57,7 @@ export async function submitRun(req: CreateRunRequest): Promise<OpenCodeRun> {
   if (!res.ok) {
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
-  return body as OpenCodeRun;
+  return body as Run;
 }
 
 export async function deleteRun(name: string): Promise<void> {
@@ -74,16 +73,16 @@ export async function deleteRun(name: string): Promise<void> {
 // ---------------------------------------------------------------------------
 // Projects
 
-export async function fetchProjects(): Promise<OpenCodeProject[]> {
-  const data = await fetchJSON<{ items: OpenCodeProject[] }>("/projects");
+export async function fetchProjects(): Promise<Project[]> {
+  const data = await fetchJSON<{ items: Project[] }>("/projects");
   return data.items;
 }
 
-export async function fetchProject(name: string): Promise<OpenCodeProjectDetail> {
-  return fetchJSON<OpenCodeProjectDetail>(`/projects/${encodeURIComponent(name)}`);
+export async function fetchProject(name: string): Promise<ProjectDetail> {
+  return fetchJSON<ProjectDetail>(`/projects/${encodeURIComponent(name)}`);
 }
 
-export async function submitProject(req: CreateProjectRequest): Promise<OpenCodeProject> {
+export async function submitProject(req: CreateProjectRequest): Promise<Project> {
   const res = await fetch(`${BASE}/projects`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -93,7 +92,7 @@ export async function submitProject(req: CreateProjectRequest): Promise<OpenCode
   if (!res.ok) {
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
-  return body as OpenCodeProject;
+  return body as Project;
 }
 
 export async function deleteProject(name: string): Promise<void> {
@@ -114,7 +113,7 @@ export async function fetchDefaultConfig(): Promise<string> {
   return fetchJSON<string>(`/projects/config/default`);
 }
 
-export async function updateProject(name: string, req: CreateProjectRequest): Promise<OpenCodeProject> {
+export async function updateProject(name: string, req: CreateProjectRequest): Promise<Project> {
   const res = await fetch(`${BASE}/projects/${encodeURIComponent(name)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -124,7 +123,7 @@ export async function updateProject(name: string, req: CreateProjectRequest): Pr
   if (!res.ok) {
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
-  return body as OpenCodeProject;
+  return body as Project;
 }
 
 // ---------------------------------------------------------------------------
@@ -176,22 +175,23 @@ export async function deleteAgent(name: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Board (embedded in OpenCodeProject)
+// Board (embedded in Project)
 
 export async function fetchBoard(
   project: string,
 ): Promise<{
-  spec: BoardSpec;
-  status: BoardStatus;
+  settings: { maxParallel: number; agents: Array<{ name: string }>; phase: string };
+  columns: Record<string, Task[]>;
   approvals?: Record<string, { approved: boolean; requestChanges: boolean }>;
+  status: BoardStatus;
 }> {
   return fetchJSON(`/projects/${encodeURIComponent(project)}/board`);
 }
 
 export async function addBoardTask(
   project: string,
-  task: BoardTask,
-): Promise<{ task: BoardTask }> {
+  task: { type: string; title: string; description?: string; agent: string; priority?: string },
+): Promise<{ task: Task }> {
   const res = await fetch(
     `${BASE}/projects/${encodeURIComponent(project)}/board/tasks`,
     {
@@ -204,15 +204,15 @@ export async function addBoardTask(
   if (!res.ok) {
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
-  return body as { task: BoardTask };
+  return body as { task: Task };
 }
 
 export async function deleteBoardTask(
   project: string,
-  taskId: string,
+  taskName: string,
 ): Promise<void> {
   const res = await fetch(
-    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskId)}`,
+    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}`,
     { method: "DELETE" },
   );
   if (!res.ok && res.status !== 204) {
@@ -223,44 +223,31 @@ export async function deleteBoardTask(
 
 export async function patchBoardStatus(
   project: string,
-  patch: Partial<BoardStatus>,
+  _patch: Partial<BoardStatus>,
 ): Promise<BoardStatus> {
+  // Board status is now authoritative in task CRs. This endpoint is legacy.
+  // Return an empty board status shape.
+  void project;
+  return {} as BoardStatus;
+}
+
+export async function retryEscalatedTask(
+  project: string,
+  taskName: string,
+): Promise<void> {
+  // Move the task back to ready via the board task move endpoint.
   const res = await fetch(
-    `${BASE}/projects/${encodeURIComponent(project)}/board/status`,
+    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/move`,
     {
-      method: "PATCH",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
+      body: JSON.stringify({ column: "ready" }),
     },
   );
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
-  return body as BoardStatus;
-}
-
-export async function retryEscalatedTask(
-  project: string,
-  taskId: string,
-  currentWorkers: BoardStatus["workers"],
-  currentBacklog: BoardStatus["backlog"],
-): Promise<BoardStatus> {
-  // Reset the worker entry: clear escalation, reset retryCount to 0, set status Running.
-  const workers = (currentWorkers ?? []).map((w) =>
-    w.taskId === taskId
-      ? { ...w, status: "Running" as const, escalation: undefined, retryCount: 0, runName: undefined }
-      : w,
-  );
-
-  // Move task back to "ready": remove from all columns, prepend to "ready".
-  const backlog = { ...(currentBacklog ?? {}) };
-  for (const col of Object.keys(backlog)) {
-    backlog[col] = (backlog[col] ?? []).filter((id) => id !== taskId);
-  }
-  backlog["ready"] = [taskId, ...(backlog["ready"] ?? [])];
-
-  return patchBoardStatus(project, { workers, backlog });
 }
 
 export async function patchBoardSpec(
@@ -282,12 +269,11 @@ export async function patchBoardSpec(
 }
 
 export async function fetchNextTaskId(
-  project: string,
-  type: "PLAN" | "BUILD",
+  _project: string,
+  _type: "PLAN" | "BUILD",
 ): Promise<string> {
-  const params = new URLSearchParams({ type });
-  const data = await fetchJSON<{ nextId: string }>(`/projects/${encodeURIComponent(project)}/board/next-id?${params}`);
-  return data.nextId;
+  // Task IDs are now auto-generated CR names. Return a placeholder.
+  return "(auto)";
 }
 
 export async function approveTask(

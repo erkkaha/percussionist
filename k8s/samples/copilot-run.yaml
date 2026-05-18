@@ -8,7 +8,7 @@
 #   beatctl logs copilot-demo -f -c dispatcher
 
 apiVersion: percussionist.dev/v1alpha1
-kind: OpenCodeRun
+kind: Run
 metadata:
   name: copilot-demo
   namespace: percussionist

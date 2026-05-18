@@ -1,4 +1,4 @@
-// `beatctl project` — manage reusable OpenCodeProject templates.
+// `beatctl project` — manage reusable Project templates.
 //
 // Projects are lightweight CRs that bundle the "boring" bits of a run spec
 // (git URL/ref, SSH secret, LLM/auth secrets, default model/agent) under a
@@ -10,8 +10,8 @@ import YAML from "yaml";
 import {
   API_GROUP_VERSION,
   KIND_PROJECT,
-  OpenCodeProjectSchema,
-  type OpenCodeProject,
+  ProjectSchema,
+  type Project,
 } from "@percussionist/api";
 import {
   DEFAULT_NAMESPACE,
@@ -44,7 +44,7 @@ export interface ProjectCreateOpts {
   dryRun?: boolean;
 }
 
-function buildProjectFromFlags(opts: ProjectCreateOpts): OpenCodeProject {
+function buildProjectFromFlags(opts: ProjectCreateOpts): Project {
   if (!opts.name) {
     throw new Error("--name is required when --file is not supplied");
   }
@@ -103,23 +103,23 @@ function buildProjectFromFlags(opts: ProjectCreateOpts): OpenCodeProject {
         : {}),
     },
   };
-  return OpenCodeProjectSchema.parse(raw);
+  return ProjectSchema.parse(raw);
 }
 
 function buildProjectFromFile(
   path: string,
   opts: ProjectCreateOpts,
-): OpenCodeProject {
+): Project {
   const doc = YAML.parse(readFileSync(path, "utf8"));
   if (opts.name) doc.metadata = { ...(doc.metadata ?? {}), name: opts.name };
   if (opts.namespace) {
     doc.metadata = { ...(doc.metadata ?? {}), namespace: opts.namespace };
   }
-  return OpenCodeProjectSchema.parse(doc);
+  return ProjectSchema.parse(doc);
 }
 
 export async function runProjectCreate(opts: ProjectCreateOpts): Promise<void> {
-  let project: OpenCodeProject;
+  let project: Project;
   try {
     project = opts.file
       ? buildProjectFromFile(opts.file, opts)
@@ -153,7 +153,7 @@ export interface ProjectListOpts {
 export async function runProjectList(opts: ProjectListOpts): Promise<void> {
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
   const { custom } = loadKube();
-  let items: OpenCodeProject[];
+  let items: Project[];
   try {
     items = await listProjects(custom, ns);
   } catch (e) {
@@ -189,7 +189,7 @@ export async function runProjectGet(
 ): Promise<void> {
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
   const { custom } = loadKube();
-  let project: OpenCodeProject;
+  let project: Project;
   try {
     project = await getProject(custom, ns, name);
   } catch (e) {

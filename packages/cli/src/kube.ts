@@ -10,7 +10,7 @@
 
 import type { CustomObjectsApi } from "@kubernetes/client-node";
 import * as kube from "@percussionist/kube";
-import type { OpenCodeRun, OpenCodeProject } from "@percussionist/api";
+import type { Run, Project } from "@percussionist/api";
 
 // Re-export everything, then override specific functions below.
 export {
@@ -41,22 +41,22 @@ export async function getRun(
   client: CustomObjectsApi,
   namespace: string,
   name: string,
-): Promise<OpenCodeRun> {
+): Promise<Run> {
   return kube.getRun(name, namespace, client);
 }
 
 export async function listRuns(
   client: CustomObjectsApi,
   namespace: string,
-): Promise<OpenCodeRun[]> {
+): Promise<Run[]> {
   return kube.listRuns(namespace, client);
 }
 
 export async function createRun(
   client: CustomObjectsApi,
   namespace: string,
-  body: OpenCodeRun,
-): Promise<OpenCodeRun> {
+  body: Run,
+): Promise<Run> {
   return kube.createRun(body, namespace, client);
 }
 
@@ -72,22 +72,22 @@ export async function getProject(
   client: CustomObjectsApi,
   namespace: string,
   name: string,
-): Promise<OpenCodeProject> {
+): Promise<Project> {
   return kube.getProject(name, namespace, client);
 }
 
 export async function listProjects(
   client: CustomObjectsApi,
   namespace: string,
-): Promise<OpenCodeProject[]> {
+): Promise<Project[]> {
   return kube.listProjects(namespace, client);
 }
 
 export async function createProject(
   client: CustomObjectsApi,
   namespace: string,
-  project: OpenCodeProject,
-): Promise<OpenCodeProject> {
+  project: Project,
+): Promise<Project> {
   return kube.createProject(project, namespace, client);
 }
 
@@ -103,7 +103,7 @@ export async function updateProject(
   client: CustomObjectsApi,
   namespace: string,
   name: string,
-  spec: OpenCodeProject["spec"],
-): Promise<OpenCodeProject> {
+  spec: Project["spec"],
+): Promise<Project> {
   return kube.updateProject(name, spec, namespace, client);
 }

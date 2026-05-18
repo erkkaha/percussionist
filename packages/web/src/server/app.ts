@@ -16,6 +16,7 @@ import boardDb from "./routes/board-db.js";
 import metrics from "./routes/metrics.js";
 import agentChat from "./routes/agent-chat.js";
 import settings from "./routes/settings.js";
+import activity from "./routes/activity.js";
 import { NAMESPACE } from "./kube.js";
 
 export function createApp() {
@@ -34,6 +35,7 @@ export function createApp() {
   app.route("/api/metrics", metrics);
   app.route("/api/agent", agentChat);
   app.route("/api/settings", settings);
+  app.route("/api/activity", activity);
 
   app.get("/api/health", (c) => c.json({ ok: true, namespace: NAMESPACE }));
 

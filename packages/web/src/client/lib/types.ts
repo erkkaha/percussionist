@@ -5,21 +5,22 @@
 
 // Re-export server types so components import from a single place.
 export type {
-  OpenCodeRun,
-  OpenCodeProject,
+  Run,
+  Project,
+  Task,
   ClusterAgent,
-  BoardTask,
-  BoardSpec,
   BoardStatus,
   ManagerMetrics,
   WorkerStatus,
+  TaskColumn,
+  TaskType,
 } from "@percussionist/api";
 export { RunPhase, TERMINAL_PHASES } from "@percussionist/api";
 
-import type { OpenCodeProject as _OpenCodeProject } from "@percussionist/api";
+import type { Project as _Project } from "@percussionist/api";
 
 /** GET /api/projects/:name augments the CR with inject file contents for UI pre-population. */
-export interface OpenCodeProjectDetail extends _OpenCodeProject {
+export interface ProjectDetail extends _Project {
   injectFileContents?: Array<{ filename: string; content: string }>;
 }
 
@@ -91,6 +92,8 @@ export interface CreateProjectRequest {
   injectFiles?: Array<{ filename: string; content: string }>;
   /** Shell script to run after git clone, before opencode starts. */
   initScript?: string;
+  /** Team roster: ClusterAgent names available to this project's tasks. */
+  agents?: Array<{ name: string }>;
 }
 
 export interface CreateAgentRequest {

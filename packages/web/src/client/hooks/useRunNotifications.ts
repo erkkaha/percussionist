@@ -4,11 +4,11 @@
 // Call this hook wherever you have access to the full run list (Layout).
 
 import { useEffect, useRef } from "react";
-import type { OpenCodeRun } from "../lib/types";
+import type { Run } from "../lib/types";
 import { RunPhase } from "../lib/types";
 import { notify, requestNotificationPermission } from "../lib/notifications";
 
-export function useRunNotifications(runs: OpenCodeRun[] | undefined): void {
+export function useRunNotifications(runs: Run[] | undefined): void {
   // Map of runName → last-seen phase.
   const prevPhases = useRef<Map<string, RunPhase>>(new Map());
 

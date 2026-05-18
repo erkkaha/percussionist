@@ -1,6 +1,5 @@
 // polling.ts — prompt-mode and interactive-mode polling loops.
 
-import { createOpencodeClient } from "@opencode-ai/sdk";
 import { RunPhase } from "@percussionist/api";
 import { BASE_URL, listSessions, fetchMessages } from "./session.js";
 import { sendStats } from "./stats-reporter.js";
@@ -257,11 +256,16 @@ export async function runPrompt(
   failureSignal: Promise<string>,
   completionSignal: Promise<string>,
 ): Promise<{ sessionID: string; startedAt: string }> {
-  const client = createOpencodeClient({ baseUrl: BASE_URL });
   const tokens = new TokenAggregator();
 
-  const session = await client.session.create({ body: { title: `run/${runName}` } });
-  const sessionID = (session.data as { id: string }).id;
+  const sessionRes = await fetch(`${BASE_URL}/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: `run/${runName}` }),
+  });
+  if (!sessionRes.ok) throw new Error(`Failed to create session: HTTP ${sessionRes.status}`);
+  const sessionData = (await sessionRes.json()) as { id: string };
+  const sessionID = sessionData.id;
   log(`created session ${sessionID}`);
 
   const runStartedAt = new Date().toISOString();

@@ -18,7 +18,7 @@
 import {
   RunPhase,
   TERMINAL_PHASES,
-  type OpenCodeRun,
+  type Run,
 } from "@percussionist/api";
 import { DEFAULT_NAMESPACE, getRun, loadKube } from "./kube.js";
 
@@ -63,7 +63,7 @@ export async function runWait(name: string, opts: WaitOpts): Promise<void> {
   const { custom } = loadKube();
   const deadline = Date.now() + timeoutSec * 1000;
   let lastPhase: string | undefined;
-  let last: OpenCodeRun | undefined;
+  let last: Run | undefined;
 
   const log = (msg: string) => {
     if (!opts.quiet) process.stderr.write(msg);

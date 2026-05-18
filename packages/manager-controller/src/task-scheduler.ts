@@ -1,142 +1,94 @@
 // task-scheduler.ts — determines which tasks to pull from "ready" and
 // schedules rework when humans move tasks back to the rework column.
+//
+// Now operates on Task CRs instead of embedded board status.
 
-import type { OpenCodeProject, WorkerStatus, BoardStatus } from "@percussionist/api";
+import type { Project, Task, WorkerStatus } from "@percussionist/api";
 
 /**
- * Returns task IDs that should be pulled from "ready" this reconcile cycle.
- * Respects the board's maxParallel WIP limit.
+ * Returns tasks that should be pulled from "ready" this reconcile cycle.
+ * Respects the project's maxParallel WIP limit.
+ * BUILD tasks with a predecessorRef not yet "done" are skipped (blocked).
  */
 export function getTasksToPull(
-  project: OpenCodeProject,
-  boardStatus: BoardStatus,
-): string[] {
-  const maxParallel = project.spec.board?.maxParallel ?? 2;
-  const workers = boardStatus.workers ?? [];
-  const backlog = boardStatus.backlog ?? {};
-  const readyTasks = backlog["ready"] ?? [];
-  const blockingBuildId = getBlockingBuildSequenceTask(project, boardStatus);
+  project: Project,
+  tasks: Task[],
+): Task[] {
+  const maxParallel = project.spec.maxParallel ?? 2;
 
-  const activeCount = workers.filter((w) => w.status === "Running" && !!w.runName).length;
+  const taskByName = new Map(tasks.map((t) => [t.metadata.name, t]));
+  const inProgressTasks = tasks.filter((t) => t.status?.column === "in-progress");
+  const activeCount = inProgressTasks.filter(
+    (t) => t.status?.worker?.status === "Running" && !!t.status.worker.runName,
+  ).length;
   const availableSlots = maxParallel - activeCount;
   if (availableSlots <= 0) return [];
 
-  const result: string[] = [];
-  for (const taskId of readyTasks) {
+  const readyTasks = tasks
+    .filter((t) => t.status?.column === "ready")
+    .sort((a, b) => {
+      // Priority order: high > medium > low
+      const p = { high: 0, medium: 1, low: 2 };
+      const pa = p[a.spec.priority ?? "medium"] ?? 1;
+      const pb = p[b.spec.priority ?? "medium"] ?? 1;
+      return pa - pb;
+    });
+
+  const result: Task[] = [];
+  for (const task of readyTasks) {
     if (result.length >= availableSlots) break;
 
-    // If there is an incomplete BUILD-N chain, only the next required BUILD-N
-    // task is allowed to be pulled. Everything else stays queued.
-    if (blockingBuildId && taskId !== blockingBuildId) {
-      continue;
-    }
-
-    // BUILD-N tasks are sequence-gated: BUILD-(n+1) cannot start until all
-    // existing BUILD-<n tasks are in "done". This prevents overlapping
-    // implementation tasks that should be merged in order.
-    if (isBlockedByBuildSequence(taskId, project, boardStatus)) {
-      continue;
+    // BUILD tasks: check predecessorRef — must be "done" before we can pull.
+    if (task.spec.type === "BUILD" && task.spec.predecessorRef) {
+      const predecessor = taskByName.get(task.spec.predecessorRef);
+      if (!predecessor || predecessor.status?.column !== "done") {
+        // Not ready yet — skip (leave as "ready", will be picked up after predecessor finishes).
+        continue;
+      }
     }
 
     // Skip if already being worked on (not failed/escalated).
-    const existing = workers.find((w) => w.taskId === taskId);
-    const isStaleRunningWithoutRun = existing?.status === "Running" && !existing.runName;
-    if (isStaleRunningWithoutRun) {
-      // Corrupt/stale status entry: task marked Running but no runName exists.
-      // Allow a fresh pull so the board can self-heal.
-      result.push(taskId);
+    const worker = task.status?.worker;
+    const isStaleRunning = worker?.status === "Running" && !worker.runName;
+    if (isStaleRunning) {
+      result.push(task);
       continue;
     }
-    if (existing && existing.status !== "Failed" && existing.status !== "Escalated") {
+    if (worker && worker.status !== "Failed" && worker.status !== "Escalated") {
       continue;
     }
-    result.push(taskId);
+    result.push(task);
   }
   return result;
 }
 
-function getBlockingBuildSequenceTask(
-  project: OpenCodeProject,
-  boardStatus: BoardStatus,
-): string | null {
-  const done = new Set(boardStatus.backlog?.["done"] ?? []);
-  const tasks = project.spec.board?.tasks ?? [];
-  const buildNumbers = tasks
-    .map((t) => {
-      const m = /^BUILD-(\d+)$/.exec(t.id);
-      if (!m) return null;
-      const n = Number.parseInt(m[1] ?? "", 10);
-      return Number.isFinite(n) ? n : null;
-    })
-    .filter((n): n is number => n !== null)
-    .sort((a, b) => a - b);
-
-  for (const n of buildNumbers) {
-    const id = `BUILD-${n}`;
-    if (!done.has(id)) {
-      return id;
-    }
-  }
-  return null;
-}
-
-function isBlockedByBuildSequence(
-  taskId: string,
-  project: OpenCodeProject,
-  boardStatus: BoardStatus,
-): boolean {
-  const m = /^BUILD-(\d+)$/.exec(taskId);
-  if (!m) return false;
-
-  const current = Number.parseInt(m[1] ?? "", 10);
-  if (!Number.isFinite(current) || current <= 1) return false;
-
-  const done = new Set(boardStatus.backlog?.["done"] ?? []);
-  const allTaskIds = new Set((project.spec.board?.tasks ?? []).map((t) => t.id));
-
-  for (let i = 1; i < current; i++) {
-    const prev = `BUILD-${i}`;
-    if (!allTaskIds.has(prev)) continue;
-    if (!done.has(prev)) return true;
-  }
-  return false;
-}
-
 /**
- * Returns task IDs in the "rework" column that should be re-dispatched.
- * A task is eligible if it has no worker, or its worker has finished
- * (Succeeded, Failed, or Escalated) — i.e. it is not currently Running.
- * This covers both the normal review→rework flow (worker Succeeded) and
- * human-initiated rework of failed/escalated tasks.
+ * Returns tasks in the "rework" column that should be re-dispatched.
  */
-export function getTasksToRework(
-  boardStatus: BoardStatus,
-): string[] {
-  const workers = boardStatus.workers ?? [];
-  const reworkColumn = boardStatus.backlog?.["rework"] ?? [];
-
-  return reworkColumn.filter((taskId) => {
-    const worker = workers.find((w) => w.taskId === taskId);
-    // No worker yet, or worker is in a terminal/non-running state.
+export function getTasksToRework(tasks: Task[]): Task[] {
+  return tasks.filter((t) => {
+    if (t.status?.column !== "rework") return false;
+    const worker = t.status?.worker;
     return !worker || worker.status !== "Running";
   });
 }
 
 /**
- * Moves a task from one column to another in the backlog.
+ * Moves a task from one column to another in the backlog (in-memory only).
  * Returns a new backlog object (does not mutate input).
+ * @deprecated Use patchTaskStatus directly for K8s writes. This helper remains
+ * for legacy in-memory bookkeeping during the reconcile cycle before the final
+ * patchTaskStatus calls are made.
  */
 export function moveTask(
-  backlog: BoardStatus["backlog"],
+  backlog: Record<string, string[]>,
   taskId: string,
   toColumn: string,
-): BoardStatus["backlog"] {
+): Record<string, string[]> {
   const updated = { ...backlog };
-  // Remove from all columns.
   for (const col of Object.keys(updated)) {
     updated[col] = (updated[col] ?? []).filter((id) => id !== taskId);
   }
-  // Add to target column.
   if (!updated[toColumn]) updated[toColumn] = [];
   updated[toColumn] = [...updated[toColumn]!, taskId];
   return updated;
@@ -145,24 +97,30 @@ export function moveTask(
 /**
  * Updates a single worker's status in the workers array.
  * Returns a new array (does not mutate input).
+ * @deprecated Use patchTaskStatus directly for K8s writes.
  */
 export function updateWorker(
   workers: WorkerStatus[],
-  taskId: string,
+  taskName: string,
   patch: Partial<WorkerStatus>,
 ): WorkerStatus[] {
   return workers.map((w) =>
-    w.taskId === taskId ? { ...w, ...patch } : w,
+    w.runName === taskName || (w as WorkerStatus & { _taskName?: string })._taskName === taskName
+      ? { ...w, ...patch }
+      : w,
   );
 }
 
 /**
  * Adds a new worker entry or replaces an existing one for a task.
+ * @deprecated Use patchTaskStatus directly for K8s writes.
  */
 export function upsertWorker(
   workers: WorkerStatus[],
   newWorker: WorkerStatus,
 ): WorkerStatus[] {
-  const without = workers.filter((w) => w.taskId !== newWorker.taskId);
+  const without = workers.filter(
+    (w) => (w as WorkerStatus & { _taskName?: string })._taskName !== (newWorker as WorkerStatus & { _taskName?: string })._taskName,
+  );
   return [...without, newWorker];
 }

@@ -23,6 +23,11 @@ const clientDir = path.resolve(__dirname, "../client");
 
 const app = createApp();
 
+// Return 404 for any /api/* path that wasn't matched by the registered routes.
+// Without this, unmatched API paths would fall through to the SPA catch-all and
+// receive index.html with a 200, which is misleading for API consumers.
+app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
+
 // Serve the Vite-built SPA for all non-API routes.
 // Under Bun we use its built-in static file serving; under Node we fall back
 // to @hono/node-server/serve-static.

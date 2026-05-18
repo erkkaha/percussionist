@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { listRuns, getRun, createRun, deleteRun, postSessionMessage } from "../kube.js";
 import { createPollingSseResponse } from "../lib/sse.js";
 import {
-  OpenCodeRunSpecSchema,
+  RunSpecSchema,
   API_GROUP_VERSION,
   KIND_RUN,
 } from "@percussionist/api";
@@ -45,7 +45,7 @@ runs.get("/events", async (c) => {
   });
 });
 
-// GET /api/runs/:name — get a single OpenCodeRun by name.
+// GET /api/runs/:name — get a single Run by name.
 runs.get("/:name", async (c) => {
   const name = c.req.param("name");
   try {
@@ -59,8 +59,8 @@ runs.get("/:name", async (c) => {
   }
 });
 
-// POST /api/runs — create a new OpenCodeRun.
-// Body: OpenCodeRunSpec fields (task, model, agent, interactive, source,
+// POST /api/runs — create a new Run.
+// Body: RunSpec fields (task, model, agent, interactive, source,
 // timeoutSeconds). Name is optional; auto-generated when absent.
 runs.post("/", async (c) => {
   let body: unknown;
@@ -71,7 +71,7 @@ runs.post("/", async (c) => {
   }
 
   // Validate spec fields.
-  const parsed = OpenCodeRunSpecSchema.safeParse(body);
+  const parsed = RunSpecSchema.safeParse(body);
   if (!parsed.success) {
     return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
   }
@@ -118,7 +118,7 @@ runs.delete("/:name", async (c) => {
 runs.post("/:name/reply", async (c) => {
   const runName = c.req.param("name");
 
-  let run: import("@percussionist/api").OpenCodeRun;
+  let run: import("@percussionist/api").Run;
   try { run = await getRun(runName); } catch { return c.json({ error: "Run not found" }, 404); }
 
   const serviceName = (run as any).status?.serviceName;

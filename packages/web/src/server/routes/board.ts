@@ -1,16 +1,31 @@
 // routes/board.ts — board endpoints nested under projects.
 //
+// Tasks are now first-class Task CRs — state lives in K8s, not SQLite.
+//
 // Mounted at /api/projects (so :project param is accessible).
 //
-// GET    /api/projects/:project/board          — get board spec + status
-// PATCH  /api/projects/:project/board/spec     — patch spec.board (add/remove tasks, agents)
-// PATCH  /api/projects/:project/board/status   — patch status.board (backlog, workers)
-// POST   /api/projects/:project/board/tasks    — add a task (validates agent in roster)
-// DELETE /api/projects/:project/board/tasks/:id — remove a task
+// GET    /api/projects/:project/board                         — board settings + task list grouped by column
+// PATCH  /api/projects/:project/board/spec                    — patch project settings (maxParallel, agents, phase)
+// POST   /api/projects/:project/board/tasks                   — create a new Task CR
+// DELETE /api/projects/:project/board/tasks/:taskName         — delete an Task CR
+// POST   /api/projects/:project/board/tasks/:taskName/approve — set approved annotation
+// POST   /api/projects/:project/board/tasks/:taskName/request-changes
 
 import { Hono } from "hono";
-import { getProject, patchProjectSpec, patchProjectStatus, patchProject } from "../kube.js";
-import type { BoardTask, BoardSpec, BoardStatus, TaskType } from "@percussionist/api";
+import { randomBytes } from "node:crypto";
+import {
+  getProject,
+  patchProjectSpec,
+  patchProject,
+  listTasks,
+  deleteTask,
+  createTask,
+  patchTaskStatus,
+  buildTask,
+  NAMESPACE,
+} from "../kube.js";
+import { getDb, taskEvents } from "../db.js";
+import type { TaskSpec } from "@percussionist/api";
 import { createPollingSseResponse } from "../lib/sse.js";
 
 const board = new Hono();
@@ -19,48 +34,84 @@ type KubeError = { statusCode?: number; body?: { message?: string }; message?: s
 function errStatus(e: KubeError) { return e.statusCode === 404 ? 404 : 500; }
 function errMsg(e: KubeError) { return e.body?.message ?? e.message ?? String(e); }
 
+// ---------------------------------------------------------------------------
+// Helpers
+
+function taskCRName(project: string, type: "PLAN" | "BUILD"): string {
+  const suffix = randomBytes(3).toString("hex");
+  return `${project}-${type.toLowerCase()}-${suffix}`;
+}
+
+export async function appendTaskEvent(
+  project: string,
+  taskName: string,
+  taskType: string,
+  eventType: string,
+  payload: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    const db = getDb();
+    db.insert(taskEvents).values({
+      project,
+      taskName,
+      taskType,
+      eventType,
+      payload: JSON.stringify(payload),
+    }).run();
+  } catch {
+    // Event logging is best-effort — never fail the main operation.
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/projects/:project/board
+
 board.get("/:project/board", async (c) => {
   const name = c.req.param("project");
   try {
-    const project = await getProject(name);
-    const spec: BoardSpec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
-    const status: Partial<BoardStatus> = project.status?.board ?? {};
+    const [project, tasks] = await Promise.all([
+      getProject(name),
+      listTasks(name),
+    ]);
+
+    // Group tasks by column.
+    const columns: Record<string, unknown[]> = {};
+    for (const task of tasks) {
+      const col = task.status?.column ?? "ready";
+      if (!columns[col]) columns[col] = [];
+      columns[col]!.push(task);
+    }
+
     const annotations = project.metadata.annotations ?? {};
+    // Collect per-task approval annotations.
     const approvals: Record<string, { approved: boolean; requestChanges: boolean }> = {};
-    for (const task of spec.tasks ?? []) {
-      approvals[task.id] = {
-        approved: annotations[`percussionist.dev/approved-${task.id}`] === "true",
-        requestChanges: annotations[`percussionist.dev/request-changes-${task.id}`] === "true",
+    for (const task of tasks) {
+      const tn = task.metadata.name;
+      approvals[tn] = {
+        approved: annotations[`percussionist.dev/approved-${tn}`] === "true",
+        requestChanges: annotations[`percussionist.dev/request-changes-${tn}`] === "true",
       };
     }
 
-    // Reconcile: any task in spec.tasks that isn't in any backlog column gets
-    // placed into "ready". This repairs boards where the status patch failed
-    // (e.g. due to a previous RBAC gap) without losing task data.
-    const specTaskIds = new Set((spec.tasks ?? []).map((t: BoardTask) => t.id));
-    const backlog: Record<string, string[]> = { ...(status.backlog ?? {}) };
-    const placedIds = new Set(Object.values(backlog).flat());
-    const unplaced = [...specTaskIds].filter((id) => !placedIds.has(id));
-    if (unplaced.length > 0) {
-      backlog["ready"] = [...(backlog["ready"] ?? []), ...unplaced];
-      // Persist the repaired backlog so future reads are consistent.
-      patchProjectStatus(name, { board: { ...status, backlog } }).catch(() => {});
-    }
+    const settings = {
+      maxParallel: project.spec.maxParallel ?? 2,
+      agents: project.spec.agents ?? [],
+      phase: project.spec.phase ?? "Active",
+    };
 
-    return c.json({ spec, status: { ...status, backlog }, approvals });
+    return c.json({ settings, columns, approvals, status: project.status?.board ?? {} });
   } catch (e) {
     const ke = e as KubeError;
     return c.json({ error: errMsg(ke) }, errStatus(ke));
   }
 });
 
-// GET /api/projects/:project/board/events
-// Server-Sent Events stream that emits when board state changes.
+// ---------------------------------------------------------------------------
+// GET /api/projects/:project/board/events — SSE stream for board changes.
+
 board.get("/:project/board/events", async (c) => {
   const name = c.req.param("project");
 
-  // Fail fast if project does not exist.
   try {
     await getProject(name);
   } catch (e) {
@@ -71,9 +122,10 @@ board.get("/:project/board/events", async (c) => {
   return createPollingSseResponse({
     signal: c.req.raw.signal,
     getSignature: async () => {
-      const project = await getProject(name);
-      const spec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
-      const status = project.status?.board ?? {};
+      const [project, tasks] = await Promise.all([
+        getProject(name),
+        listTasks(name),
+      ]);
       const annotations = project.metadata.annotations ?? {};
       const taskApprovalAnnotations = Object.keys(annotations)
         .filter((k) =>
@@ -84,11 +136,14 @@ board.get("/:project/board/events", async (c) => {
         .sort()
         .map((k) => [k, annotations[k]]);
 
+      // Include task resourceVersions so any task status change triggers an event.
+      const taskVersions = tasks.map((t) => `${t.metadata.name}:${t.metadata.resourceVersion}`).join(",");
+
       return JSON.stringify({
         resourceVersion: project.metadata.resourceVersion,
         generation: project.metadata.generation,
-        boardSpec: spec,
-        boardStatus: status,
+        taskVersions,
+        boardStatus: project.status?.board ?? {},
         taskApprovalAnnotations,
       });
     },
@@ -98,147 +153,91 @@ board.get("/:project/board/events", async (c) => {
   });
 });
 
-// PATCH /api/projects/:project/board/spec
-// Body: Partial<OpenCodeProject["spec"]["board"]>
+// ---------------------------------------------------------------------------
+// PATCH /api/projects/:project/board/spec — patch project settings.
+// Body: Partial<{ maxParallel, agents, phase }>
+
 board.patch("/:project/board/spec", async (c) => {
   const name = c.req.param("project");
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
   try {
-    const project = await getProject(name);
-    const board = await patchProjectSpec(name, {
-      board: { ...(project.spec.board ?? { maxParallel: 2, phase: "Active" as const }), ...(body as object) },
+    const updated = await patchProjectSpec(name, body as Parameters<typeof patchProjectSpec>[1]);
+    return c.json({
+      maxParallel: updated.spec.maxParallel,
+      agents: updated.spec.agents,
+      phase: updated.spec.phase,
     });
-    return c.json(board.spec.board ?? {});
   } catch (e) {
     const ke = e as KubeError;
     return c.json({ error: errMsg(ke) }, errStatus(ke));
   }
 });
 
-// PATCH /api/projects/:project/board/status
-// Body: Partial<BoardStatus>
-board.patch("/:project/board/status", async (c) => {
-  const name = c.req.param("project");
-  let body: unknown;
-  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
-  try {
-    const updated = await patchProjectStatus(name, { board: body as never });
-    return c.json(updated.status?.board ?? {});
-  } catch (e) {
-    const ke = e as KubeError;
-    return c.json({ error: errMsg(ke) }, errStatus(ke));
-  }
-});
+// ---------------------------------------------------------------------------
+// POST /api/projects/:project/board/tasks — create a new Task CR.
+// Body: { type, title, agent, description?, priority? }
 
-// GET /api/projects/:project/board/next-id?type=PLAN
-board.get("/:project/board/next-id", async (c) => {
-  const name = c.req.param("project");
-  const type = c.req.query("type") as TaskType | undefined;
-  
-  if (!type || (type !== "PLAN" && type !== "BUILD")) {
-    return c.json({ error: "Invalid type parameter. Must be PLAN or BUILD" }, 400);
-  }
-  
-  try {
-    const project = await getProject(name);
-    const sequences = project.status?.board?.sequences ?? {};
-    const nextNum = (sequences[type] ?? 0) + 1;
-    
-    return c.json({ nextId: `${type}-${nextNum}` });
-  } catch (e) {
-    const ke = e as KubeError;
-    return c.json({ error: errMsg(ke) }, errStatus(ke));
-  }
-});
-
-// POST /api/projects/:project/board/tasks
-// Body: { type, title, agent, description?, priority? } (NO id - auto-generated)
 board.post("/:project/board/tasks", async (c) => {
   const name = c.req.param("project");
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
-  
-  const { type, title, description, agent, priority } = body as Partial<BoardTask>;
-  
+
+  const { type, title, description, agent, priority } = body as Partial<TaskSpec>;
+
   if (!type || !title || !agent) {
     return c.json({ error: "type, title, and agent are required" }, 400);
   }
-  
   if (type !== "PLAN" && type !== "BUILD") {
     return c.json({ error: "Invalid task type. Must be PLAN or BUILD" }, 400);
   }
-  
+
   try {
     const project = await getProject(name);
-    const boardSpec: BoardSpec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
-    const roster = (boardSpec.agents ?? []).map((a) => a.name);
-    
+    const roster = (project.spec.agents ?? []).map((a) => a.name);
     if (!roster.includes(agent)) {
-      return c.json({ error: `agent "${agent}" not in board roster: ${roster.join(", ") || "(empty)"}` }, 400);
+      return c.json({ error: `agent "${agent}" not in project roster: ${roster.join(", ") || "(empty)"}` }, 400);
     }
-    
-    // Get current sequences and generate ID
-    const sequences = project.status?.board?.sequences ?? { PLAN: 0, BUILD: 0 };
-    const nextNum = (sequences[type] ?? 0) + 1;
-    const taskId = `${type}-${nextNum}`;
-    
-    // Create task object
-    const task: BoardTask = {
-      id: taskId,
-      type,
-      title,
-      description: description ?? "",
-      agent,
-      priority: priority ?? "medium"
-    };
-    
-    const tasks = boardSpec.tasks ?? [];
-    tasks.push(task);
-    await patchProjectSpec(name, { board: { ...boardSpec, tasks } });
 
-    // Add to status backlog
-    const boardStatus = project.status?.board ?? { 
-      columns: ["ready", "in-progress", "review", "rework", "done"], 
-      backlog: {}, 
-      workers: [], 
-      activeWorkers: 0 
-    };
-    const backlog = { ...boardStatus.backlog };
-    const col = "ready";
-    if (!backlog[col]) backlog[col] = [];
-    backlog[col]!.push(task.id);
-    
-    // Increment sequence
-    const updatedSequences = { ...sequences, [type]: nextNum };
-    await patchProjectStatus(name, { 
-      board: { ...boardStatus, backlog, sequences: updatedSequences } 
+    const taskName = taskCRName(name, type);
+    const ns = (project.metadata.namespace ?? NAMESPACE);
+
+    const task = buildTask({
+      name: taskName,
+      projectName: name,
+      projectUid: project.metadata.uid ?? "",
+      ns,
+      spec: {
+        projectRef: name,
+        type,
+        title,
+        description,
+        agent,
+        priority: priority ?? "medium",
+      },
     });
 
-    return c.json({ task }, 201);
+    const created = await createTask(task, ns);
+    await patchTaskStatus(taskName, { column: "ready" }, ns);
+    await appendTaskEvent(name, taskName, type, "run.created", { title, agent, priority });
+
+    return c.json({ task: created }, 201);
   } catch (e) {
     const ke = e as KubeError;
     return c.json({ error: errMsg(ke) }, errStatus(ke));
   }
 });
 
-// DELETE /api/projects/:project/board/tasks/:id
-board.delete("/:project/board/tasks/:id", async (c) => {
-  const name = c.req.param("project");
-  const taskId = c.req.param("id");
+// ---------------------------------------------------------------------------
+// DELETE /api/projects/:project/board/tasks/:taskName
+
+board.delete("/:project/board/tasks/:taskName", async (c) => {
+  const projectName = c.req.param("project");
+  const taskName = c.req.param("taskName");
   try {
-    const project = await getProject(name);
-    const boardSpec: BoardSpec = project.spec.board ?? { maxParallel: 2, phase: "Active" };
-    const tasks = (boardSpec.tasks ?? []).filter((t) => t.id !== taskId);
-    await patchProjectSpec(name, { board: { ...boardSpec, tasks } });
-
-    const boardStatus = project.status?.board ?? { columns: [], backlog: {}, workers: [], activeWorkers: 0 };
-    const backlog = { ...boardStatus.backlog };
-    for (const col of Object.keys(backlog)) {
-      backlog[col] = (backlog[col] ?? []).filter((id) => id !== taskId);
-    }
-    await patchProjectStatus(name, { board: { ...boardStatus, backlog } });
-
+    const project = await getProject(projectName);
+    const ns = project.metadata.namespace ?? NAMESPACE;
+    await deleteTask(taskName, ns);
     return c.body(null, 204);
   } catch (e) {
     const ke = e as KubeError;
@@ -246,35 +245,25 @@ board.delete("/:project/board/tasks/:id", async (c) => {
   }
 });
 
-// POST /api/projects/:project/board/tasks/:taskId/approve
-board.post("/:project/board/tasks/:taskId/approve", async (c) => {
+// ---------------------------------------------------------------------------
+// POST /api/projects/:project/board/tasks/:taskName/approve
+
+board.post("/:project/board/tasks/:taskName/approve", async (c) => {
   const name = c.req.param("project");
-  const taskId = c.req.param("taskId");
-  
+  const taskName = c.req.param("taskName");
   try {
     const project = await getProject(name);
-    
-    // Verify task exists
-    const task = project.spec.board?.tasks?.find((t: BoardTask) => t.id === taskId);
-    if (!task) {
-      return c.json({ error: "Task not found" }, 404);
-    }
-    
-    // Add approval annotation
-    const annotationKey = `percussionist.dev/approved-${taskId}`;
-    const requestChangesAnnotationKey = `percussionist.dev/request-changes-${taskId}`;
     const currentAnnotations = project.metadata.annotations ?? {};
-    
     await patchProject(name, {
       metadata: {
         annotations: {
           ...currentAnnotations,
-          [annotationKey]: "true",
-          [requestChangesAnnotationKey]: "false"
-        }
-      }
+          [`percussionist.dev/approved-${taskName}`]: "true",
+          [`percussionist.dev/request-changes-${taskName}`]: "false",
+        },
+      },
     });
-    
+    await appendTaskEvent(name, taskName, "unknown", "approved", {});
     return c.json({ success: true });
   } catch (e) {
     const ke = e as KubeError;
@@ -282,48 +271,58 @@ board.post("/:project/board/tasks/:taskId/approve", async (c) => {
   }
 });
 
-// POST /api/projects/:project/board/tasks/:taskId/request-changes
-board.post("/:project/board/tasks/:taskId/request-changes", async (c) => {
+// ---------------------------------------------------------------------------
+// POST /api/projects/:project/board/tasks/:taskName/request-changes
+
+board.post("/:project/board/tasks/:taskName/request-changes", async (c) => {
   const name = c.req.param("project");
-  const taskId = c.req.param("taskId");
-  
+  const taskName = c.req.param("taskName");
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
-  
   const { feedback } = body as { feedback?: string };
-  if (!feedback || !feedback.trim()) {
+  if (!feedback?.trim()) {
     return c.json({ error: "Feedback is required" }, 400);
   }
-  
   try {
     const project = await getProject(name);
-    
-    // Verify task exists
-    const task = project.spec.board?.tasks?.find((t: BoardTask) => t.id === taskId);
-    if (!task) {
-      return c.json({ error: "Task not found" }, 404);
-    }
-    
-    // Add rework and request-changes annotations
-    const reworkAnnotationKey = `percussionist.dev/rework-${taskId}`;
-    const requestChangesAnnotationKey = `percussionist.dev/request-changes-${taskId}`;
     const currentAnnotations = project.metadata.annotations ?? {};
-    
     await patchProject(name, {
       metadata: {
         annotations: {
           ...currentAnnotations,
-          [reworkAnnotationKey]: feedback.trim(),
-          [requestChangesAnnotationKey]: "true"
-        }
-      }
+          [`percussionist.dev/rework-${taskName}`]: feedback.trim(),
+          [`percussionist.dev/request-changes-${taskName}`]: "true",
+        },
+      },
     });
-    
+    await appendTaskEvent(name, taskName, "unknown", "request-changes", { feedback: feedback.trim() });
     return c.json({ success: true });
   } catch (e) {
     const ke = e as KubeError;
     return c.json({ error: errMsg(ke) }, errStatus(ke));
   }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/projects/:project/board/task-events — internal endpoint for the
+// manager controller to append task lifecycle events.
+// Body: { taskName, taskType, eventType, payload? }
+
+board.post("/:project/board/task-events", async (c) => {
+  const project = c.req.param("project");
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+  const { taskName, taskType, eventType, payload } = body as {
+    taskName?: string;
+    taskType?: string;
+    eventType?: string;
+    payload?: Record<string, unknown>;
+  };
+  if (!taskName || !taskType || !eventType) {
+    return c.json({ error: "taskName, taskType, and eventType are required" }, 400);
+  }
+  await appendTaskEvent(project, taskName, taskType, eventType, payload ?? {});
+  return c.body(null, 204);
 });
 
 export default board;

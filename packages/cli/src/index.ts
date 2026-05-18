@@ -63,7 +63,7 @@ program
 // submit --------------------------------------------------------------------
 program
   .command("submit")
-  .description("create a new OpenCodeRun")
+  .description("create a new Run")
   .option("-t, --task <task>", "inline task prompt")
   .option(
     "-i, --interactive",
@@ -103,7 +103,7 @@ program
   )
   .option(
     "--project <name>",
-    "OpenCodeProject to use as defaults; explicit flags always override project values",
+    "Project to use as defaults; explicit flags always override project values",
   )
   // inline agents
   .option("--agent-file <path>", "path to an agent .md file (repeatable)", (val: string, prev: string[] = []) => [...prev, val])
@@ -122,7 +122,7 @@ program
 // get -----------------------------------------------------------------------
 program
   .command("get <name>")
-  .description("show details for a single OpenCodeRun")
+  .description("show details for a single Run")
   .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
   .option("-o, --output <fmt>", "output format (yaml|json)")
   .action((name: string, opts) => runGet(name, opts));
@@ -271,7 +271,7 @@ auth
 // Subcommand group for managing reusable run templates.
 const project = program
   .command("project")
-  .description("manage OpenCodeProject templates (reusable run defaults)");
+  .description("manage Project templates (reusable run defaults)");
 
 project
   .command("list")
@@ -352,8 +352,8 @@ agent
   .action((name: string) => runAgentDelete(name));
 
 // board --------------------------------------------------------------------
-// Subcommand group for managing the kanban board embedded in an OpenCodeProject.
-const board = program.command("board").description("manage the kanban board embedded in an OpenCodeProject");
+// Subcommand group for managing the kanban board embedded in an Project.
+const board = program.command("board").description("manage the kanban board embedded in an Project");
 
 board
   .command("get <project>")
@@ -369,21 +369,19 @@ boardTask
   .command("add <project>")
   .description("add a task to the board")
   .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
-  .option("--id <id>", "task ID (e.g. F-104)")
   .option("--title <title>", "task title")
   .option("--description <text>", "acceptance criteria and context")
    .option("--type <type>", "task type: PLAN or BUILD", "PLAN")
    .option("--priority <level>", "priority: high, medium, low", "medium")
-   .option("--agent <agent>", "agent name (must be in project board team roster)")
+   .option("--agent <agent>", "agent name (must be in project agents list)")
   .option("--column <name>", "target column (default: ready)", "ready")
   .action((projectName: string, opts) => {
-    if (!opts.id || !opts.title || !opts.agent) {
-      console.error("beatctl: --id, --title, and --agent are required");
+    if (!opts.title || !opts.agent) {
+      console.error("beatctl: --title and --agent are required");
       process.exit(1);
     }
     runBoardTaskAdd(projectName, {
       namespace: opts.namespace,
-      id: opts.id,
       title: opts.title,
       description: opts.description,
       type: opts.type as "PLAN" | "BUILD",
@@ -397,16 +395,16 @@ boardTask
   .command("move <project>")
   .description("move a task between columns")
   .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
-  .option("--task-id <id>", "task ID to move")
+  .option("--task-name <name>", "task CR name to move")
   .option("--to <column>", "target column name (required)")
   .action((projectName: string, opts) => {
-    if (!opts.taskId || !opts.to) {
-      console.error("beatctl: --task-id and --to are required");
+    if (!opts.taskName || !opts.to) {
+      console.error("beatctl: --task-name and --to are required");
       process.exit(1);
     }
     runBoardTaskMove(projectName, {
       namespace: opts.namespace,
-      taskId: opts.taskId,
+      taskName: opts.taskName,
       to: opts.to,
     });
   });
@@ -415,15 +413,15 @@ boardTask
   .command("remove <project>")
   .description("remove a task from the board")
   .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
-  .option("--task-id <id>", "task ID to remove (required)")
+  .option("--task-name <name>", "task CR name to remove (required)")
   .action((projectName: string, opts) => {
-    if (!opts.taskId) {
-      console.error("beatctl: --task-id is required");
+    if (!opts.taskName) {
+      console.error("beatctl: --task-name is required");
       process.exit(1);
     }
     runBoardTaskRemove(projectName, {
       namespace: opts.namespace,
-      taskId: opts.taskId,
+      taskName: opts.taskName,
     });
   });
 

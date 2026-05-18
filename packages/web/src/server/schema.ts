@@ -1,13 +1,11 @@
 // Drizzle schema definitions — no driver imports, safe to import from drizzle-kit.
 //
 // Tables:
-//   runs          — one row per OpenCodeRun session
+//   runs          — one row per Run session
 //   messages      — full message history (user + assistant turns)
 //   tool_calls    — every tool invocation with args, result, duration
 //   file_ops      — files read/written during a session
-//   board_tasks   — authoritative board task state (replaces CR status.board)
-//   board_workers — worker assignment state per task
-//   board_events  — append-only audit log of board state transitions
+//   task_events   — append-only audit log of Task state transitions
 
 import {
   sqliteTable,
@@ -49,8 +47,6 @@ export const messages = sqliteTable(
       .references(() => runs.id, { onDelete: "cascade" }),
     idx: integer("idx").notNull(),
     role: text("role"), // "user" | "assistant"
-    // Full message content — may be large. Stored as JSON string (array of
-    // parts: text, image, tool-use, tool-result, etc.)
     content: text("content"),
     model: text("model"),
     tokensIn: integer("tokens_in"),
@@ -95,70 +91,21 @@ export const fileOps = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// Board tables — authoritative state for OpenCodeProject boards.
-// The manager controller writes here instead of patching CR status.board.
+// Task events — append-only audit log of Task state transitions.
+// CRDs are authoritative for live task state; this table is for history/analytics.
 
-export const boardTasks = sqliteTable(
-  "board_tasks",
-  {
-    project: text("project").notNull(),
-    taskId: text("task_id").notNull(),
-    // Current column: "ready" | "in-progress" | "review" | "rework" | "done"
-    column: text("column").notNull(),
-    // Monotonically increasing sequence number within the project, used for
-    // ordering tasks within a column.
-    seq: integer("seq").notNull().default(0),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`(datetime('now'))`),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`(datetime('now'))`),
-  },
-  (table) => [
-    primaryKey({ columns: [table.project, table.taskId] }),
-    index("idx_board_tasks_project_column").on(table.project, table.column),
-  ],
-);
-
-export const boardWorkers = sqliteTable(
-  "board_workers",
-  {
-    project: text("project").notNull(),
-    taskId: text("task_id").notNull(),
-    runName: text("run_name").notNull(),
-    retryCount: integer("retry_count").notNull().default(0),
-    // Worker status mirrors WorkerStatus.status from the API schema.
-    status: text("status").notNull(),
-    branch: text("branch"),
-    facilitated: integer("facilitated", { mode: "boolean" }).notNull().default(false),
-    reviewRunName: text("review_run_name"),
-    reworkRunName: text("rework_run_name"),
-    facilitationRunName: text("facilitation_run_name"),
-    // JSON blob of remaining WorkerStatus fields not in the main columns
-    // (e.g. reviewApproved, reviewFeedback, reworkAgent, escalation, mergeRunName,
-    // facilitationResult, buildTasksFacilitatorRun, startedAt, completedAt, etc.)
-    extra: text("extra"),
-    assignedAt: text("assigned_at")
-      .notNull()
-      .default(sql`(datetime('now'))`),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`(datetime('now'))`),
-  },
-  (table) => [
-    primaryKey({ columns: [table.project, table.taskId] }),
-    index("idx_board_workers_project").on(table.project),
-  ],
-);
-
-export const boardEvents = sqliteTable(
-  "board_events",
+export const taskEvents = sqliteTable(
+  "task_events",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
+    // Project name (Project metadata.name).
     project: text("project").notNull(),
-    taskId: text("task_id").notNull(),
-    // e.g. "task.moved", "worker.assigned", "worker.completed", "worker.failed"
+    // Task CR name (Task metadata.name).
+    taskName: text("task_name").notNull(),
+    // Task type: "PLAN" | "BUILD".
+    taskType: text("task_type").notNull(),
+    // Event type: "column.changed" | "run.created" | "run.failed" | "merged" |
+    //             "escalated" | "blocked" | "approved" | "request-changes"
     eventType: text("event_type").notNull(),
     // JSON payload with before/after state or relevant context.
     payload: text("payload").notNull().default("{}"),
@@ -167,6 +114,7 @@ export const boardEvents = sqliteTable(
       .default(sql`(datetime('now'))`),
   },
   (table) => [
-    index("idx_board_events_project_task").on(table.project, table.taskId),
+    index("idx_task_events_project_task").on(table.project, table.taskName),
+    index("idx_task_events_project_created").on(table.project, table.createdAt),
   ],
 );

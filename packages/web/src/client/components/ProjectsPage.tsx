@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../hooks/useProjects";
 import { useProjectsEvents } from "../hooks/useProjectsEvents";
 import { deleteProject } from "../lib/api";
-import type { OpenCodeProject } from "../lib/types";
+import type { Project } from "../lib/types";
 
 function age(iso: string | undefined): string {
   if (!iso) return "-";
@@ -18,7 +18,7 @@ function age(iso: string | undefined): string {
   return `${Math.floor(h / 24)}d`;
 }
 
-function ProjectRow({ project }: { project: OpenCodeProject }) {
+function ProjectRow({ project }: { project: Project }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const del = useMutation({

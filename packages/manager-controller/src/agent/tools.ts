@@ -21,19 +21,12 @@ import {
   patchProjectStatus,
   listClusterAgents,
   listPodsByLabels,
+  listTasks,
+  getTask,
+  patchTaskStatus,
 } from "@percussionist/kube";
 import { LABELS } from "@percussionist/api";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
-import { moveTask as moveTaskLocal, upsertWorker as upsertWorkerLocal } from "../task-scheduler.js";
-import {
-  syncBoard,
-  workerStatusToUpsertBody,
-  boardWorkerRowToWorkerStatus,
-  moveTask as boardMoveTask,
-  upsertWorker as boardUpsertWorker,
-  removeWorker as boardRemoveWorker,
-  getBoard,
-} from "../board-client.js";
 import { setPaused, getPauseStatus } from "../reconciler.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
@@ -47,13 +40,13 @@ const TOOLS = [
   {
     name: "inspect_cr",
     description:
-      "Get full details of a Percussionist custom resource. Supports OpenCodeRun, OpenCodeProject, and ClusterAgent kinds.",
+      "Get full details of a Percussionist custom resource. Supports Run, Project, and ClusterAgent kinds.",
     inputSchema: {
       type: "object",
       properties: {
         kind: {
           type: "string",
-          description: "CR kind: OpenCodeRun, OpenCodeProject, or ClusterAgent",
+          description: "CR kind: Run, Project, or ClusterAgent",
         },
         name: { type: "string", description: "Resource name" },
         namespace: {
@@ -67,13 +60,13 @@ const TOOLS = [
   {
     name: "list_crs",
     description:
-      "List Percussionist custom resources of a given kind. Supports OpenCodeRun, OpenCodeProject, and ClusterAgent. Label selector uses comma-separated k=v pairs (e.g. 'percussionist.dev/project=my-project,percussionist.dev/task-id=BUILD-4'). Note: the correct task label key is 'percussionist.dev/task-id' (not 'task').",
+      "List Percussionist custom resources of a given kind. Supports Run, Project, and ClusterAgent. Label selector uses comma-separated k=v pairs (e.g. 'percussionist.dev/project=my-project,percussionist.dev/task-id=BUILD-4'). Note: the correct task label key is 'percussionist.dev/task-id' (not 'task').",
     inputSchema: {
       type: "object",
       properties: {
         kind: {
           type: "string",
-          description: "CR kind: OpenCodeRun, OpenCodeProject, or ClusterAgent",
+          description: "CR kind: Run, Project, or ClusterAgent",
         },
         namespace: {
           type: "string",
@@ -94,7 +87,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        runName: { type: "string", description: "Name of the OpenCodeRun" },
+        runName: { type: "string", description: "Name of the Run" },
         container: {
           type: "string",
           description:
@@ -119,7 +112,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        runName: { type: "string", description: "Name of the OpenCodeRun" },
+        runName: { type: "string", description: "Name of the Run" },
         sessionID: { type: "string", description: "Session ID (optional if only one session)" },
       },
       required: ["runName"],
@@ -145,7 +138,7 @@ const TOOLS = [
   {
     name: "delete_run",
     description:
-      "Delete an OpenCodeRun by name. Useful for cleaning up stale/failed runs before recreating them.",
+      "Delete an Run by name. Useful for cleaning up stale/failed runs before recreating them.",
     inputSchema: {
       type: "object",
       properties: {
@@ -161,7 +154,7 @@ const TOOLS = [
   {
     name: "create_run",
     description:
-      "Create a new OpenCodeRun for a board task. The task must be in the 'ready' column. Moves the task to 'in-progress' and creates the run.",
+      "Create a new Run for a board task. The task must be in the 'ready' column. Moves the task to 'in-progress' and creates the run.",
     inputSchema: {
       type: "object",
       properties: {
@@ -219,7 +212,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        runName: { type: "string", description: "Name of the OpenCodeRun" },
+        runName: { type: "string", description: "Name of the Run" },
         sessionID: {
           type: "string",
           description: "Session ID (auto-discovered from run if not provided)",
@@ -373,11 +366,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const resourceName = String(args.name ?? "");
       const resourceNs = String(args.namespace ?? ns);
       switch (kind) {
-        case "OpenCodeRun": {
+        case "Run": {
           const run = await getRun(resourceName, resourceNs);
           return { kind, name: resourceName, spec: run.spec, status: run.status };
         }
-        case "OpenCodeProject": {
+        case "Project": {
           const proj = await getProject(resourceName, resourceNs);
           return { kind, name: resourceName, spec: proj.spec, status: proj.status };
         }
@@ -397,7 +390,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const labelSelector = String(args.labelSelector ?? "");
 
       switch (kind) {
-        case "OpenCodeRun": {
+        case "Run": {
           const runs = await listRuns(resourceNs);
           let filtered = runs;
           if (labelSelector) {
@@ -424,7 +417,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
             labels: r.metadata.labels,
           }));
         }
-        case "OpenCodeProject": {
+        case "Project": {
           const { listProjects } = await import("@percussionist/kube");
           let projects = await listProjects(resourceNs);
           if (labelSelector) {
@@ -443,8 +436,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
           }
           return projects.map((p) => ({
             name: p.metadata.name,
-            tasks: p.spec.board?.tasks?.length ?? 0,
-            boardPhase: p.spec.board?.phase,
+            phase: p.spec.phase,
+            maxParallel: p.spec.maxParallel,
             labels: p.metadata.labels,
           }));
         }
@@ -459,7 +452,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
           }));
         }
         default:
-          throw new Error(`unknown kind: ${kind}. Supported: OpenCodeRun, OpenCodeProject, ClusterAgent`);
+          throw new Error(`unknown kind: ${kind}. Supported: Run, Project, ClusterAgent`);
       }
     }
 
@@ -512,38 +505,27 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
     case "create_run": {
       const projectName = String(args.project ?? "");
-      const taskId = String(args.task ?? "");
+      const taskName = String(args.task ?? "");
       const agentOverride = args.agent ? String(args.agent) : undefined;
       const modelOverride = args.model ? String(args.model) : undefined;
       const reworkFeedback = args.reworkFeedback ? String(args.reworkFeedback) : undefined;
       const resourceNs = String(args.namespace ?? ns);
 
       const project = await getProject(projectName, resourceNs);
-      const board = project.spec.board;
-      if (!board) throw new Error(`Project ${projectName} has no board configured`);
+      const task = await getTask(taskName, resourceNs);
 
-      const taskDef = (board.tasks ?? []).find((t) => t.id === taskId);
-      if (!taskDef) throw new Error(`Task ${taskId} not found in project ${projectName} board`);
-
-      // Read board state from SQLite.
-      const fullBoard = await getBoard(projectName);
-      const backlog = fullBoard.columns;
-      const readyColumn = (backlog["ready"] ?? []) as string[];
-      if (!readyColumn.includes(taskId)) {
-        const currentCol = Object.entries(backlog).find(([, ids]) =>
-          (ids as string[]).includes(taskId),
-        )?.[0] ?? "unknown";
-        throw new Error(`Task ${taskId} is in column "${currentCol}", not "ready". Use force_retry to clean up first.`);
+      const currentColumn = task.status?.column ?? "ready";
+      if (currentColumn !== "ready") {
+        throw new Error(`Task ${taskName} is in column "${currentColumn}", not "ready". Use force_retry to clean up first.`);
       }
 
-      const existingWorkerRow = fullBoard.workers[taskId] ?? null;
-      const existingWorker = existingWorkerRow ? boardWorkerRowToWorkerStatus(existingWorkerRow) : null;
+      const existingWorker = task.status?.worker ?? null;
       const retryCount = args.retryCount !== undefined
         ? Number(args.retryCount)
         : (existingWorker?.retryCount ?? 0);
 
-      const runName = workerRunName(projectName, taskId, retryCount);
-      const workerRun = buildWorkerRun(project, taskDef, runName, retryCount, reworkFeedback);
+      const runName = workerRunName(projectName, taskName, retryCount);
+      const workerRun = buildWorkerRun(project, task, runName, retryCount, reworkFeedback);
       if (agentOverride) workerRun.spec.agent = agentOverride;
       if (modelOverride) workerRun.spec.model = modelOverride;
 
@@ -565,29 +547,32 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         }
       }
 
-      // Update board state in SQLite atomically.
-      await boardMoveTask(projectName, taskId, "in-progress");
-      await boardUpsertWorker(projectName, taskId, {
-        runName,
-        status: "Running",
-        branch: `feat/${taskId}`,
-        retryCount,
-        facilitated: false,
-      });
+      // Update task status atomically.
+      await patchTaskStatus(taskName, {
+        column: "in-progress",
+        worker: {
+          ...(existingWorker ?? {}),
+          runName,
+          status: "Running",
+          branch: `feat/${taskName}`,
+          retryCount,
+          facilitated: false,
+        },
+      }, resourceNs);
 
-      return { runName, project: projectName, task: taskId, phase: "Created", namespace: resourceNs };
+      return { runName, project: projectName, task: taskName, phase: "Created", namespace: resourceNs };
     }
 
     case "force_retry": {
       const projectName = String(args.project ?? "");
-      const taskId = String(args.task ?? "");
+      const taskName = String(args.task ?? "");
       const shouldCreate = args.createRun !== false;
       const resourceNs = String(args.namespace ?? ns);
 
       const allRuns = await listRuns(resourceNs);
       const taskRuns = allRuns.filter((r) => {
         const labels = r.metadata.labels ?? {};
-        return labels[LABELS.projectName] === projectName && labels[LABELS.taskId] === taskId;
+        return labels[LABELS.projectName] === projectName && labels[LABELS.taskId] === taskName;
       });
 
       const terminalPhases = new Set(["Succeeded", "Failed", "Cancelled"]);
@@ -600,16 +585,12 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       }
 
       const project = await getProject(projectName, resourceNs);
+      const task = await getTask(taskName, resourceNs);
 
       let createdRunName: string | undefined;
       if (shouldCreate) {
-        const board = project.spec.board;
-        if (!board) throw new Error(`Project ${projectName} has no board configured`);
-        const taskDef = (board.tasks ?? []).find((t) => t.id === taskId);
-        if (!taskDef) throw new Error(`Task ${taskId} not found in project ${projectName} board`);
-
-        const runName = workerRunName(projectName, taskId, 0);
-        const workerRun = buildWorkerRun(project, taskDef, runName, 0);
+        const runName = workerRunName(projectName, taskName, 0);
+        const workerRun = buildWorkerRun(project, task, runName, 0);
 
         try {
           await createRun(workerRun, resourceNs);
@@ -629,27 +610,27 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
           }
         }
 
-        // Atomic update: remove old worker, move task to in-progress, create new worker.
-        await boardRemoveWorker(projectName, taskId).catch(() => {});
-        await boardMoveTask(projectName, taskId, "in-progress");
-        await boardUpsertWorker(projectName, taskId, {
-          runName,
-          status: "Running",
-          branch: `feat/${taskId}`,
-          retryCount: 0,
-          facilitated: false,
-        });
+        // Reset task to in-progress with fresh worker.
+        await patchTaskStatus(taskName, {
+          column: "in-progress",
+          worker: {
+            runName,
+            status: "Running",
+            branch: `feat/${taskName}`,
+            retryCount: 0,
+            facilitated: false,
+          },
+        }, resourceNs);
 
         createdRunName = runName;
       } else {
-        // No run creation — just reset to ready.
-        await boardRemoveWorker(projectName, taskId).catch(() => {});
-        await boardMoveTask(projectName, taskId, "ready");
+        // No run creation — reset to ready.
+        await patchTaskStatus(taskName, { column: "ready" }, resourceNs);
       }
 
       return {
         project: projectName,
-        task: taskId,
+        task: taskName,
         deletedRuns: deletedNames,
         createdRun: createdRunName,
         namespace: resourceNs,
@@ -710,25 +691,23 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
     case "set_task_state": {
       const projectName = String(args.project ?? "");
-      const taskId = String(args.task ?? "");
+      const taskName = String(args.task ?? "");
       const targetColumn = String(args.targetColumn ?? "");
       const cancelRunning = args.cancelRunning === true;
       const resourceNs = String(args.namespace ?? ns);
 
-      const validColumns = ["ready", "in-progress", "review", "rework", "done"];
+      const validColumns = ["ready", "in-progress", "review", "rework", "done", "blocked"];
       if (!validColumns.includes(targetColumn)) {
         throw new Error(`Invalid targetColumn: ${targetColumn}. Must be one of: ${validColumns.join(", ")}`);
       }
 
-      const project = await getProject(projectName, resourceNs);
-      const boardTasks = project.spec.board?.tasks ?? [];
-      const taskDef = boardTasks.find((t) => t.id === taskId);
-      if (!taskDef) throw new Error(`Task ${taskId} not found in project ${projectName} board`);
+      const task = await getTask(taskName, resourceNs);
+      void projectName;
 
       const allRuns = await listRuns(resourceNs);
       const taskRuns = allRuns.filter((r) => {
         const labels = r.metadata.labels ?? {};
-        return labels[LABELS.projectName] === projectName && labels[LABELS.taskId] === taskId;
+        return labels[LABELS.taskId] === taskName;
       });
 
       const deletedRuns: string[] = [];
@@ -744,30 +723,29 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         }
       }
 
-      // Update board state in SQLite.
-      await boardMoveTask(projectName, taskId, targetColumn);
-
+      const existingWorker = task.status?.worker;
       let workerCleared = true;
       if (targetColumn === "in-progress") {
-        const fullBoard = await getBoard(projectName);
-        const existingWorkerRow = fullBoard.workers[taskId] ?? null;
-        const retryCount = existingWorkerRow?.retryCount ?? 0;
-        await boardUpsertWorker(projectName, taskId, {
-          runName: "",
-          status: "Running",
-          branch: `feat/${taskId}`,
-          retryCount,
-          facilitated: false,
-        });
+        const retryCount = existingWorker?.retryCount ?? 0;
+        await patchTaskStatus(taskName, {
+          column: "in-progress",
+          worker: {
+            ...(existingWorker ?? {}),
+            runName: undefined,
+            status: "Running",
+            branch: `feat/${taskName}`,
+            retryCount,
+            facilitated: false,
+          },
+        }, resourceNs);
         workerCleared = false;
       } else {
-        // Clear worker for non-in-progress transitions.
-        await boardRemoveWorker(projectName, taskId).catch(() => {});
+        await patchTaskStatus(taskName, { column: targetColumn as "ready" | "review" | "rework" | "done" | "blocked" }, resourceNs);
       }
 
       return {
         project: projectName,
-        task: taskId,
+        task: taskName,
         targetColumn,
         deletedRuns,
         workerCleared,

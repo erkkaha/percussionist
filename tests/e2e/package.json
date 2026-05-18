@@ -1,0 +1,11 @@
+{
+  "name": "e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test --timeout 660000 --concurrency 1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

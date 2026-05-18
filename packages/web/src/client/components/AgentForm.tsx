@@ -36,7 +36,7 @@ export default function AgentForm() {
         await submitAgent({ name: name.trim(), content });
       }
       queryClient.invalidateQueries({ queryKey: ["agents"] });
-      navigate("/agents");
+      navigate("/settings?tab=agents");
     } catch (e) {
       console.error("Failed to save agent:", e);
     } finally {
@@ -50,7 +50,7 @@ export default function AgentForm() {
     <div className="space-y-6">
       {/* Navigation */}
       <Link
-        to="/agents"
+        to="/settings?tab=agents"
         className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text transition-colors"
       >
         &larr; Back to agents
@@ -104,7 +104,7 @@ export default function AgentForm() {
             {submitting ? "Saving\u2026" : isEdit ? "Save Changes" : "Create Agent"}
           </button>
           <Link
-            to="/agents"
+            to="/settings?tab=agents"
             className="text-sm text-text-muted hover:text-text transition-colors"
           >
             Cancel

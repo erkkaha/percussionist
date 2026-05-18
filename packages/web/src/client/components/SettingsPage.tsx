@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchSettings,
@@ -13,12 +14,16 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
+import ProjectsPage from "./ProjectsPage";
+import AgentsPage from "./AgentsPage";
 
-type Tab = "secrets" | "opencode" | "manager" | "runner";
+type Tab = "projects" | "agents" | "secrets" | "opencode" | "manager" | "runner";
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<Tab>("secrets");
+  const [searchParams] = useSearchParams();
+  const initialTab = (searchParams.get("tab") as Tab | null) ?? "projects";
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
   const { data: settings, isLoading: settingsLoading } = useQuery({
@@ -66,6 +71,8 @@ export default function SettingsPage() {
 
   const spec = settings?.spec ?? {};
   const tabs: { id: Tab; label: string }[] = [
+    { id: "projects", label: "Projects" },
+    { id: "agents", label: "Agents" },
     { id: "secrets", label: "Provider Secrets" },
     { id: "opencode", label: "OpenCode Config" },
     { id: "manager", label: "Manager Agent" },
@@ -73,9 +80,9 @@ export default function SettingsPage() {
   ];
 
   return (
-    <div className="flex flex-col gap-4 p-6 max-w-3xl">
+    <div className="flex flex-col gap-4 p-6 max-w-5xl">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Cluster Settings</h1>
+        <h1 className="text-xl font-semibold">Settings</h1>
         {saveMsg && (
           <span className={cn(
             "text-sm",
@@ -103,7 +110,13 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {settingsLoading && <p className="text-text-dim">Loading...</p>}
+      {activeTab === "projects" && <ProjectsPage />}
+
+      {activeTab === "agents" && <AgentsPage />}
+
+      {settingsLoading && activeTab !== "projects" && activeTab !== "agents" && (
+        <p className="text-text-dim">Loading...</p>
+      )}
 
       {!settingsLoading && activeTab === "secrets" && (
         <SecretsPanel

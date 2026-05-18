@@ -19,7 +19,7 @@
 #   beatctl attach git-demo   # or: beatctl logs git-demo -f
 
 apiVersion: percussionist.dev/v1alpha1
-kind: OpenCodeRun
+kind: Run
 metadata:
   name: git-demo
   namespace: percussionist

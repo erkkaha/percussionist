@@ -2,7 +2,7 @@
 //
 // Shells out to `kubectl logs` so we inherit its -f, --since, --tail, etc.
 // semantics for free. Principle: beatctl only implements the things that
-// kubectl does awkwardly (OpenCodeRun-aware name resolution, attach, ...);
+// kubectl does awkwardly (Run-aware name resolution, attach, ...);
 // for the rest we're a polite wrapper.
 
 import { spawn } from "node:child_process";

@@ -232,28 +232,31 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    PCR[OpenCodeProject CR\nwith embedded board]
+    PCR[OpenCodeProject CR\nspec.agents, maxParallel, phase]
+    TASK[OpenCodeTask CR\nstatus.column, status.worker]
 
     PCR -->|watched by| MGR[manager\nDeployment]
+    TASK -->|watched by| MGR
 
     MGR -->|pulls ready tasks\nup to maxParallel|MGR
     MGR -->|creates worker CRs| WRK[OpenCodeRun\nworker CR]
     MGR -->|reads worker status| WRK
-    MGR -->|patches board state| PCR
+    MGR -->|patches task status| TASK
 
     WRK --> POD[Pod\noperator-managed]
 
     COLS["Column flow\nready → in-progress → review → rework → done"]
-    MGR -->|moves task IDs\nacross columns| COLS
+    MGR -->|moves task column| COLS
 
     AGENT[ClusterAgent CR\nclassic role definitions] -->|resolved by operator|MGR
 ```
 
 - **Projects** are the canonical home for environment config (git, secrets, model,
   image, resources). Every run and board worker inherits from its project.
-- The **embedded board** (`spec.board`) defines a task backlog with columns, a team
-  roster of ClusterAgents, a WIP limit (`maxParallel`), and optional overrides for
-  worker run defaults.
+- **Tasks** are first-class `OpenCodeTask` CRs with their own `spec` (title, type,
+  description, agent, priority) and `status` (column, worker state). They are not
+  embedded in the project spec — `spec.agents`, `spec.maxParallel`, and `spec.phase`
+  are top-level project fields.
 - **The manager controller** reconciles projects in a continuous loop: pulls ready tasks
   up to `maxParallel`, monitors active workers (polling OpenCodeRun status), retries
   failed tasks (up to 3 retries), escalates when exhausted, and re-dispatches rework
@@ -268,12 +271,12 @@ flowchart LR
     CA[ClusterAgent CR\ncluster-scoped] -->|content served at reconcile| OP[operator]
     OP -->|mounts as ConfigMap| POD[run pod]
 
-    BOARD[project board.agents] -->|references by name| CA
+    BOARD[project spec.agents] -->|references by name| CA
 ```
 
 `ClusterAgent` is a cluster-scoped resource that defines reusable agent role
 definitions (system prompts + front-matter metadata). Projects reference agents
-by name in their board roster, and runs reference them via `spec.agent` or
+by name in `spec.agents[]`, and runs reference them via `spec.agent` or
 `spec.agents`. The operator resolves names to content at reconcile time and
 mounts them into the pod as a ConfigMap.
 
@@ -738,35 +741,34 @@ sidecars per level (project and run).
 
 ## Project boards
 
-An `OpenCodeProject` can carry an embedded kanban-style board that coordinates
-multi-task agentic development through a five-column flow:
-`ready → in-progress → review → rework → done`.
+An `OpenCodeProject` coordinates multi-task agentic development through a
+five-column flow: `ready → in-progress → review → rework → done`.
+Tasks are standalone `OpenCodeTask` CRs (not embedded in the project spec).
 
-### Board spec fields (on OpenCodeProject)
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `spec.board.maxParallel` | int | 2 | WIP limit: max concurrent worker runs (1–20) |
-| `spec.board.agents[]` | AgentRef[] | — | ClusterAgent names available as task assignees |
-| `spec.board.tasks[]` | BoardTask[] | — | Task backlog (max 100 per board) |
-| `spec.board.overrides.model` | string | project.default | Model override for all worker runs on this board |
-| `spec.board.overrides.timeoutSeconds` | int | project.default | Timeout override for worker runs |
-| `spec.board.phase` | enum | Active | Board lifecycle: Active / Complete / Archived |
-
-### BoardTask fields
+### Project board fields (on OpenCodeProject)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `id` | string (max 32 chars) | — | Unique task ID (e.g. "F-104", "BUG-42"). Immutable once created. |
-| `title` | string (max 256 chars) | — | Short human-readable title shown on the card |
-| `description` | string (max 8192 chars) | optional | Acceptance criteria and context sent to the worker agent |
-| `priority` | enum | medium | Priority for ordering: high / medium / low |
-| `agent` | string (min 1 char) | required | ClusterAgent name from `board.agents[]` that handles this task |
+| `spec.maxParallel` | int | 2 | WIP limit: max concurrent worker runs (1–20) |
+| `spec.agents[]` | AgentRef[] | — | ClusterAgent names available as task assignees |
+| `spec.phase` | enum | Active | Board lifecycle: Active / Complete / Archived |
 
-### Creating a board
+### OpenCodeTask fields
 
-The board is configured as part of project creation. Create a project with an
-embedded board via the CLI or web dashboard:
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `metadata.name` | string | — | Canonical task ID (CR name, e.g. `my-project-build-a3f9c2`). Immutable. |
+| `spec.title` | string (max 256 chars) | — | Short human-readable title shown on the card |
+| `spec.type` | enum | — | `PLAN` or `BUILD` |
+| `spec.description` | string (max 8192 chars) | optional | Acceptance criteria and context sent to the worker agent |
+| `spec.priority` | enum | medium | Priority for ordering: high / medium / low |
+| `spec.agent` | string | required | ClusterAgent name from `spec.agents[]` that handles this task |
+| `spec.projectRef` | string | — | Owning project name |
+| `spec.predecessorRef` | string | optional | Task that must reach "done" before this task becomes "ready" |
+
+### Creating tasks
+
+Create a project then add tasks via the CLI or web dashboard:
 
 ```sh
 beatctl project create --name my-project \
@@ -781,9 +783,9 @@ Then add tasks to the board:
 # Add ClusterAgents (team roster) first — reference cluster-scoped agent definitions.
 beatctl agent create --name code-reviewer -f agents/code-reviewer.yaml
 
-# Add a task to the project's board. It starts in the "ready" column.
+# Add a task. It starts in the "ready" column.
 beatctl board task add my-project \
-  --id F-101 --title "Implement login" \
+  --title "Implement login" \
   --description "Add OAuth login with GitHub provider" \
   --agent code-reviewer
 
@@ -799,7 +801,7 @@ runs, and moves them across columns as they progress.
 The manager escalates a task after 3 retries (4 total attempts). Review the
 escalation text via `beatctl board get <project>` or in the dashboard:
 
-1. **Accept** — move task to "done" via `beatctl board task move my-project --task-id F-101 --to done`.
+1. **Accept** — move task to "done" via `beatctl board task move my-project --task-name <name> --to done`.
 2. **Rework** — move back to "rework"; the manager re-dispatches with feedback
    context embedded in the prompt.
 3. **Skip** — remove the task from the board entirely (`beatctl board task remove`).
@@ -808,14 +810,22 @@ When a worker asks the agent for clarification, the run enters `WaitingForInput`
 phase and a pending question appears on the board status. Reply via the web UI's
 `/runs/:name/reply` endpoint.
 
-### Status fields (project.status.board)
+### Status fields
 
-- `.status.columns` — ordered column names: `["ready", "in-progress", "review", "rework", "done"]`
-- `.status.backlog` — map of column name → task ID array
-- `.status.workers[]` — per-worker run name, status (`Running/Succeeded/Failed/Escalated`), branch, escalation text
-- `.status.activeWorkers` — count of currently running workers
-- `.status.escalations[]` — human-readable escalation texts for tasks that exhausted retries (includes agent decisions when the decision engine acted)
-- `.status.pendingQuestions[]` — worker sessions waiting for human input
+Task state is authoritative in `OpenCodeTask.status`:
+
+- `.status.column` — current column: `ready`, `in-progress`, `review`, `rework`, `done`, `blocked`
+- `.status.worker.runName` — active OpenCodeRun name
+- `.status.worker.status` — `Running / Succeeded / Failed / Escalated`
+- `.status.worker.branch` — git branch used by the worker
+- `.status.worker.escalation` — escalation text when status is `Escalated`
+- `.status.worker.retryCount` — number of attempts so far
+
+Project-level aggregates in `OpenCodeProject.status.board`:
+
+- `.status.board.activeWorkers` — count of currently running workers
+- `.status.board.escalations[]` — escalation texts for tasks needing human attention
+- `.status.board.pendingQuestions[]` — worker sessions waiting for human input
 
 The web dashboard renders board state on project detail pages under the Board tab.
 
@@ -837,7 +847,7 @@ warning once on first visit (or add it to your OS trust store).
 | Page | URL | What it shows |
 |------|-----|---------------|
 | **Runs** | `/` | Live `OpenCodeRun` list — phase badges, token totals, age, attach button. |
-| **Projects** | `/projects` | Project templates with embedded board views (tasks, workers, escalations). |
+| **Projects** | `/projects` | Project templates with board views (OpenCodeTask cards per column, worker status, escalations). |
 | **Agents** | `/agents` | Cluster-wide agent catalog — reusable `.md` definitions. |
 | **Stats** | `/stats` | Historical session analytics from the stats DB. |
 | **Agent chat** | (floating button bottom-right) | Interactive chat with the manager agent — ask about board state, task status, or cluster issues. |
@@ -1100,6 +1110,7 @@ timing. Intended for periodic LLM-assisted pattern analysis.
 | `messages` | full part list (JSON), role, model, per-message token counts, timing |
 | `tool_calls` | tool name, arguments (JSON), success, error, duration |
 | `file_ops` | file path, operation (`read`/`write`/`delete`), message index |
+| `task_events` | append-only audit log of `OpenCodeTask` column transitions (task name, from/to column, timestamp) |
 
 Stats are sent for both succeeded and failed runs. The call is fire-and-forget
 and never delays run completion.

@@ -10,7 +10,6 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.14.19",
     "@kubernetes/client-node": "^1.4.0",
     "@percussionist/api": "workspace:*"
   }

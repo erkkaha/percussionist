@@ -31,6 +31,13 @@ export {
   patchProjectSpec,
   patchProjectStatus,
   deleteProject,
+  // Task helpers
+  listTasks,
+  getTask,
+  createTask,
+  deleteTask,
+  patchTaskStatus,
+  buildTask,
   // Pod helpers
   readPodLog,
   // Session proxy

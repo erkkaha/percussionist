@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { submitProject, updateProject } from "../lib/api";
-import type { CreateProjectRequest, OpenCodeProjectDetail } from "../lib/types";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { submitProject, updateProject, fetchAgents } from "../lib/api";
+import type { CreateProjectRequest, ProjectDetail } from "../lib/types";
 
 type CreateProjectFormProps = {
   mode?: "create" | "edit";
-  initialProject?: OpenCodeProjectDetail;
+  initialProject?: ProjectDetail;
 };
 
 // Sidecar row state — env is edited as a single "KEY=value\nKEY=value" text block.
@@ -31,7 +31,7 @@ interface InjectFileRow {
 let _injectFileIdSeq = 0;
 function nextInjectFileId() { return ++_injectFileIdSeq; }
 
-function initialInjectFileRows(project: OpenCodeProjectDetail | undefined): InjectFileRow[] {
+function initialInjectFileRows(project: ProjectDetail | undefined): InjectFileRow[] {
   const contents = project?.injectFileContents ?? [];
   return contents.map((f) => ({
     id: nextInjectFileId(),
@@ -40,7 +40,7 @@ function initialInjectFileRows(project: OpenCodeProjectDetail | undefined): Inje
   }));
 }
 
-function initialSidecarRows(spec: OpenCodeProjectDetail["spec"] | undefined): SidecarRow[] {
+function initialSidecarRows(spec: ProjectDetail["spec"] | undefined): SidecarRow[] {
   if (!spec?.sidecars?.length) return [];
   return spec.sidecars.map((sc) => ({
     id: nextSidecarId(),
@@ -77,6 +77,16 @@ export default function CreateProjectForm({
   const [opencodeConfig, setOpencodeConfig] = useState("");
   const [sidecars, setSidecars] = useState<SidecarRow[]>(() => initialSidecarRows(initialSpec));
   const [injectFiles, setInjectFiles] = useState<InjectFileRow[]>(() => initialInjectFileRows(initialProject));
+  const [rosterAgents, setRosterAgents] = useState<string[]>(
+    () => (initialSpec?.agents ?? []).map((a: { name: string }) => a.name),
+  );
+  const [rosterPickerValue, setRosterPickerValue] = useState("");
+
+  // All ClusterAgents in cluster — used to populate the roster add dropdown.
+  const { data: clusterAgents = [] } = useQuery({
+    queryKey: ["agents"],
+    queryFn: fetchAgents,
+  });
 
   // Sidecar helpers
   function addSidecar() {
@@ -139,7 +149,7 @@ export default function CreateProjectForm({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
-      navigate("/projects");
+      navigate("/settings?tab=projects");
     },
   });
 
@@ -212,6 +222,8 @@ export default function CreateProjectForm({
     req.injectFiles = injectFiles
       .filter((f) => f.filename.trim())
       .map((f) => ({ filename: f.filename.trim(), content: f.content }));
+    // Always send agents (even empty) so server can clear roster on update.
+    req.agents = rosterAgents.map((name) => ({ name }));
     mutation.mutate(req);
   }
 
@@ -222,7 +234,7 @@ export default function CreateProjectForm({
   return (
     <div className="space-y-6 max-w-2xl">
       <Link
-        to="/projects"
+        to="/settings?tab=projects"
         className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text transition-colors"
       >
         <span>&larr;</span> All projects
@@ -605,6 +617,56 @@ export default function CreateProjectForm({
           />
         </fieldset>
 
+        {/* Agent roster */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Agent roster</legend>
+          <p className="text-xs text-text-dim">
+            ClusterAgents available to tasks in this project. Tasks must reference an agent from this list.
+          </p>
+          {rosterAgents.length > 0 && (
+            <ul className="space-y-1">
+              {rosterAgents.map((agentName) => (
+                <li key={agentName} className="flex items-center justify-between rounded border border-border bg-surface-raised px-3 py-1.5 text-sm">
+                  <span className="font-mono">{agentName}</span>
+                  <button
+                    type="button"
+                    onClick={() => setRosterAgents((prev) => prev.filter((n) => n !== agentName))}
+                    className="text-text-dim hover:text-phase-failed transition-colors text-xs ml-4"
+                  >
+                    remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex items-center gap-2">
+            <select
+              value={rosterPickerValue}
+              onChange={(e) => setRosterPickerValue(e.target.value)}
+              className="flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
+            >
+              <option value="">— add agent —</option>
+              {clusterAgents
+                .filter((a) => !rosterAgents.includes(a.name))
+                .map((a) => <option key={a.name} value={a.name}>{a.name}</option>)
+              }
+            </select>
+            <button
+              type="button"
+              disabled={!rosterPickerValue}
+              onClick={() => {
+                if (rosterPickerValue && !rosterAgents.includes(rosterPickerValue)) {
+                  setRosterAgents((prev) => [...prev, rosterPickerValue]);
+                  setRosterPickerValue("");
+                }
+              }}
+              className="rounded-md border border-border hover:bg-surface-raised disabled:opacity-40 px-3 py-1.5 text-sm transition-colors"
+            >
+              Add
+            </button>
+          </div>
+        </fieldset>
+
         {mutation.error && (
           <div className="rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
             {mutation.error.message}
@@ -619,7 +681,7 @@ export default function CreateProjectForm({
           >
             {mutation.isPending ? (isEdit ? "Saving…" : "Creating…") : (isEdit ? "Save Changes" : "Create Project")}
           </button>
-          <Link to="/projects" className="text-sm text-text-muted hover:text-text transition-colors">
+          <Link to="/settings?tab=projects" className="text-sm text-text-muted hover:text-text transition-colors">
             Cancel
           </Link>
         </div>

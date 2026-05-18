@@ -1,7 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchProject } from "../lib/api";
-import type { OpenCodeProjectDetail } from "../lib/types";
+import type { ProjectDetail } from "../lib/types";
 import CreateProjectForm from "./CreateProjectForm";
 
 export default function EditProjectPage() {
@@ -11,7 +11,7 @@ export default function EditProjectPage() {
     queryKey: ["projects", name],
     queryFn: () => fetchProject(name ?? ""),
     enabled: Boolean(name),
-  }) as { data: OpenCodeProjectDetail | undefined; error: Error | null; isLoading: boolean };
+  }) as { data: ProjectDetail | undefined; error: Error | null; isLoading: boolean };
 
   if (!name) {
     return (
@@ -26,7 +26,7 @@ export default function EditProjectPage() {
     return (
       <div className="space-y-4 max-w-2xl">
         <Link
-          to="/projects"
+          to="/settings?tab=projects"
           className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text transition-colors"
         >
           <span>&larr;</span> All projects

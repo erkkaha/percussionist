@@ -35,14 +35,14 @@ metadata:
   name: percussionist-operator
 rules:
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencoderuns"]
+    resources: ["runs"]
     verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencoderuns/status"]
+    resources: ["runs/status"]
     verbs: ["get", "update", "patch"]
   # Read OpenCodeProject CRs to get project UID for cache PVC owner references.
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencodeprojects"]
+    resources: ["projects"]
     verbs: ["get"]
   # Child resources the operator creates per run.
   - apiGroups: [""]
@@ -60,6 +60,10 @@ rules:
   # ClusterAgent — read-only catalog watched by the operator.
   - apiGroups: ["percussionist.dev"]
     resources: ["clusteragents"]
+    verbs: ["get", "list", "watch"]
+  # ClusterSettings — global defaults read by the operator.
+  - apiGroups: ["percussionist.dev"]
+    resources: ["clustersettings"]
     verbs: ["get", "list", "watch"]
   # ConfigMaps for inline agent injection (per-run).
   - apiGroups: [""]
@@ -91,10 +95,10 @@ metadata:
   namespace: percussionist
 rules:
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencoderuns"]
+    resources: ["runs"]
     verbs: ["get", "list"]
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencoderuns/status"]
+    resources: ["runs/status"]
     verbs: ["get", "update", "patch"]
   # Session snapshot: dispatcher writes a ConfigMap with the full conversation
   # before exiting so the web dashboard can display it after the pod dies.

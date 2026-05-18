@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { submitRun } from "../lib/api";
 import { useProjects } from "../hooks/useProjects";
 import { useRun } from "../hooks/useRun";
-import type { CreateRunRequest, OpenCodeProject, OpenCodeRun, AgentDef } from "../lib/types";
+import type { CreateRunRequest, Project, Run, AgentDef } from "../lib/types";
 
 interface ClusterAgent {
   name: string;
@@ -92,7 +92,7 @@ export default function CreateRunForm() {
     setSeeded(true);
   }, [sourceRun, seeded]);
 
-  function applyRun(run: OpenCodeRun) {
+  function applyRun(run: Run) {
     if (run.spec.task) setTask(run.spec.task);
     if (run.spec.model) setModel(run.spec.model);
     if (run.spec.agent) setAgent(run.spec.agent);
@@ -118,7 +118,7 @@ export default function CreateRunForm() {
       setOpencodeAuthSecretName(run.spec.secrets.opencodeAuthSecret.name);
   }
 
-  function applyProject(proj: OpenCodeProject) {
+  function applyProject(proj: Project) {
     if (proj.spec.model) setModel(proj.spec.model);
     if (proj.spec.agent) setAgent(proj.spec.agent);
     if (proj.spec.source?.git?.url) {
@@ -140,8 +140,18 @@ export default function CreateRunForm() {
       setOpencodeAuthSecretName(proj.spec.secrets.opencodeAuthSecret.name);
   }
 
+  // Cluster agents visible in the dropdown — filtered to project roster when a project is selected.
+  const selectedProjectSpec = projects?.find((p) => p.metadata.name === selectedProject)?.spec;
+  const rosterNames = selectedProjectSpec?.agents?.map((a) => a.name) ?? [];
+  const visibleAgents =
+    rosterNames.length > 0
+      ? clusterAgents.filter((ca) => rosterNames.includes(ca.name))
+      : clusterAgents;
+
   function handleProjectChange(name: string) {
     setSelectedProject(name);
+    setSelectedClusterAgent("");
+    setAgents([]);
     if (!name) return;
     const proj = projects?.find((p) => p.metadata.name === name);
     if (proj) applyProject(proj);
@@ -313,7 +323,7 @@ export default function CreateRunForm() {
             className={inputClass}
           >
             <option value="">— none —</option>
-            {clusterAgents.map((ca) => (
+            {visibleAgents.map((ca) => (
               <option key={ca.name} value={ca.name}>{ca.name}</option>
             ))}
           </select>

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { listProjects, getProject, createProject, updateProject, deleteProject, core, NAMESPACE } from "../kube.js";
 import { createPollingSseResponse } from "../lib/sse.js";
 import {
-  OpenCodeProjectSpecSchema,
+  ProjectSpecSchema,
   API_GROUP_VERSION,
   KIND_PROJECT,
   type InjectFileRef,
@@ -219,7 +219,7 @@ projects.post("/", async (c) => {
   const { opencodeConfig: _oc, injectFiles: _if, name: _n, ...specBody } = body as Record<string, unknown>;
   void _oc; void _if; void _n;
 
-  const parsed = OpenCodeProjectSpecSchema.safeParse(specBody);
+  const parsed = ProjectSpecSchema.safeParse(specBody);
   if (!parsed.success) {
     return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
   }
@@ -284,7 +284,7 @@ projects.put("/:name", async (c) => {
   const { opencodeConfig: _oc2, injectFiles: _if2, name: _n2, ...specBody2 } = body as Record<string, unknown>;
   void _oc2; void _if2; void _n2;
 
-  const parsed = OpenCodeProjectSpecSchema.safeParse(specBody2);
+  const parsed = ProjectSpecSchema.safeParse(specBody2);
   if (!parsed.success) {
     return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
   }
@@ -322,15 +322,6 @@ projects.put("/:name", async (c) => {
   }
 
   try {
-    // Preserve spec.board — the form UI does not manage board config, so a
-    // full spec replace must not wipe out an existing board definition.
-    try {
-      const existing = await getProject(name);
-      if (existing.spec.board && !spec.board) {
-        spec.board = existing.spec.board;
-      }
-    } catch { /* if project not found, proceed without board */ }
-
     const updated = await updateProject(name, spec);
     return c.json(updated);
   } catch (e: unknown) {

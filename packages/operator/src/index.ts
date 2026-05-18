@@ -1,4 +1,4 @@
-// Operator entrypoint — watches OpenCodeRun CRs and ClusterSettings.
+// Operator entrypoint — watches Run CRs and ClusterSettings.
 
 import { makeInformer } from "@kubernetes/client-node";
 import {
@@ -6,7 +6,7 @@ import {
   API_VERSION,
   PLURAL_RUN,
   PLURAL_CLUSTER_SETTINGS,
-  type OpenCodeRun,
+  type Run,
   type ClusterSettings,
 } from "@percussionist/api";
 import {
@@ -34,7 +34,7 @@ async function main(): Promise<void> {
     log("no PERCUSSIONIST_INGRESS_BASE_URL set — per-run ingress disabled");
   }
 
-  // Watch OpenCodeRun CRs.
+  // Watch Run CRs.
   const runPath = `/apis/${API_GROUP}/${API_VERSION}/namespaces/${NAMESPACE}/${PLURAL_RUN}`;
   const listRunsFn = async () => {
     const res = await co.listNamespacedCustomObject({
@@ -43,12 +43,12 @@ async function main(): Promise<void> {
       namespace: NAMESPACE,
       plural: PLURAL_RUN,
     });
-    return res as unknown as { items: OpenCodeRun[] };
+    return res as unknown as { items: Run[] };
   };
 
   const runInformer = makeInformer(kc, runPath, listRunsFn as never);
-  runInformer.on("add", (obj) => enqueue(obj as unknown as OpenCodeRun));
-  runInformer.on("update", (obj) => enqueue(obj as unknown as OpenCodeRun));
+  runInformer.on("add", (obj) => enqueue(obj as unknown as Run));
+  runInformer.on("update", (obj) => enqueue(obj as unknown as Run));
   runInformer.on("delete", (obj) => {
     const md = (obj as { metadata?: { namespace?: string; name?: string } })
       .metadata;

@@ -1,8 +1,8 @@
-import type { OpenCodeRun } from "../lib/types";
+import type { Run } from "../lib/types";
 import { TERMINAL_PHASES } from "../lib/types";
 
 interface OpenOpencodeButtonProps {
-  run: OpenCodeRun;
+  run: Run;
   /** compact = smaller text/padding, used in the list row */
   compact?: boolean;
 }

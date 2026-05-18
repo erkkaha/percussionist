@@ -32,6 +32,7 @@ function messageKey(m: ChatMessage): string {
 export default function AgentChatPanel() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [available, setAvailable] = useState<boolean | null>(null);
@@ -55,7 +56,6 @@ function sanitizeForSpeech(text: string): string {
 
   const speak = useCallback((text: string) => {
     if (!ttsEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(sanitizeForSpeech(text));
     utterance.lang = "en-US";
     utterance.rate = 1.1;
@@ -125,6 +125,7 @@ function sanitizeForSpeech(text: string): string {
   // Load history when panel opens
   useEffect(() => {
     if (!open) return;
+    setHistoryLoaded(false);
     resetSeen();
     fetch("/api/agent/chat/history")
       .then((r) => r.json())
@@ -136,12 +137,13 @@ function sanitizeForSpeech(text: string): string {
           }
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setHistoryLoaded(true));
   }, [open, resetSeen]);
 
-  // SSE stream for real-time updates
+  // SSE stream for real-time updates — only open after history is loaded to avoid race
   useEffect(() => {
-    if (!open) return;
+    if (!open || !historyLoaded) return;
     const es = new EventSource("/api/agent/chat/stream");
     eventSourceRef.current = es;
 
@@ -158,7 +160,7 @@ function sanitizeForSpeech(text: string): string {
       es.close();
       eventSourceRef.current = null;
     };
-  }, [open, addMessageIfNew]);
+  }, [open, historyLoaded, addMessageIfNew]);
 
   // Auto-scroll to bottom
   useEffect(() => {

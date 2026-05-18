@@ -37,23 +37,23 @@ metadata:
 rules:
   # Read + write OpenCodeRun resources (list, detail, create, delete).
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencoderuns"]
+    resources: ["runs"]
     verbs: ["get", "list", "watch", "create", "delete"]
   # Read + write OpenCodeProject resources (list, detail, create, update, delete).
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencodeprojects"]
+    resources: ["projects"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Patch OpenCodeProject status subresource (for board backlog updates from UI).
+  # Patch OpenCodeProject status subresource (for board status updates from UI).
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencodeprojects/status"]
+    resources: ["projects/status"]
     verbs: ["get", "patch"]
-  # Read + write OpenCodeKanban resources (list, detail, create, update, patch, delete).
+  # Read + write OpenCodeTask resources (board task CRs).
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencodekanbans"]
+    resources: ["tasks"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Patch Kanban status subresource (for backlog updates from UI).
+  # Patch OpenCodeTask status subresource.
   - apiGroups: ["percussionist.dev"]
-    resources: ["opencodekanbans/status"]
+    resources: ["tasks/status"]
     verbs: ["get", "patch"]
   # Read pods (needed to resolve podName and read logs).
   - apiGroups: [""]
