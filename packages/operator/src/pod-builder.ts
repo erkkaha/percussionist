@@ -425,12 +425,10 @@ export function renderPod(
       : undefined;
 
   const volumes = [
-    workspaceSubPath
-      ? {
-          name: "workspace",
-          persistentVolumeClaim: { claimName: dataPvcName },
-        }
-      : { name: "workspace", emptyDir: {} },
+    // Workspace volume: only needed as a separate entry when not backed by the data PVC.
+    // When workspaceSubPath is set, /workspace is served via the data volume with subPath
+    // (avoids two volumes pointing at the same PVC which confuses the kubelet attach loop).
+    ...(workspaceSubPath ? [] : [{ name: "workspace", emptyDir: {} }]),
     // Data PVC for caches, git mirrors, worktrees, and local workspace (RWX for parallel workers)
     { name: "data", persistentVolumeClaim: { claimName: dataPvcName } },
     ...(sshSecret
@@ -599,11 +597,11 @@ export function renderPod(
             limits: { cpu: "2", memory: "2Gi" },
           },
           volumeMounts: [
-            {
-              name: "workspace",
-              mountPath: "/workspace",
-              ...(workspaceSubPath ? { subPath: workspaceSubPath } : {}),
-            },
+            // /workspace: use subPath on the data volume when backed by PVC,
+            // otherwise use the dedicated emptyDir workspace volume.
+            workspaceSubPath
+              ? { name: "data", mountPath: "/workspace", subPath: workspaceSubPath }
+              : { name: "workspace", mountPath: "/workspace" },
             // Data volume for package manager caches, git mirrors, worktrees
             { name: "data", mountPath: dataMountPath },
             ...(sshSecret
