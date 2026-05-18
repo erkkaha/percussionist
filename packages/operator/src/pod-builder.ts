@@ -188,8 +188,12 @@ export function renderPod(
   const image = spec.image ?? runner.image ?? RUNNER_IMAGE_DEFAULT;
   const git = spec.source?.git;
   const localGit = spec.source?.local === true;
-  const sshSecret = git?.sshSecret;
-  const githubTokenSecret = git?.githubTokenSecret;
+  const sshSecret = git?.sshSecret
+    ? { ...git.sshSecret, key: git.sshSecret.key ?? "ssh-privatekey" }
+    : undefined;
+  const githubTokenSecret = git?.githubTokenSecret
+    ? { ...git.githubTokenSecret, key: git.githubTokenSecret.key ?? "token" }
+    : undefined;
   const initScript = spec.initScript;
   const hasAgents = resolvedAgents.length > 0;
   const hasSidecars = sidecars.length > 0;
@@ -530,7 +534,7 @@ export function renderPod(
                     valueFrom: {
                       secretKeyRef: {
                         name: spec.secrets.authSecret.name,
-                        key: spec.secrets.authSecret.key,
+                        key: spec.secrets.authSecret.key ?? "auth.json",
                       },
                     },
                   },

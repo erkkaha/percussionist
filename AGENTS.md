@@ -303,6 +303,41 @@ kubectl -n percussionist logs deploy/percussionist-web -c tailscale
 # If auth fails: regenerate the auth key and update the secret, then restart the pod
 ```
 
+## Self-Development Workflow
+
+Percussionist dogfoods itself for development using resources in `k8s/self-dev/`.
+This directory is for maintainers only — external users should skip it.
+
+### Meta-Agents (k8s/self-dev/agents/)
+
+| Agent | Role |
+|-------|------|
+| `meta-reviewer` | Runs typecheck/build/tests and reviews code quality before integration |
+| `meta-smoke-tester` | Builds Docker images via DinD and validates changes in an isolated test namespace |
+| `meta-integrator` | Rebases and merges an approved feature branch into main, pushes to remote |
+| `meta-documenter` | Updates README.md and AGENTS.md to reflect changes that landed on main |
+
+### Project
+
+`percussionist-dev` (in `k8s/self-dev/projects/`) is the self-development Project.
+It uses a remote git mirror/worktree workflow — agents push to `agent/<task-name>`
+branches and the integrator merges to main.
+
+### Task Workflow
+
+```
+PLAN → BUILD → REVIEW → (SMOKE) → INTEGRATE → (DOCUMENT)
+```
+
+1. **PLAN** (`planner`) — Explores codebase, produces implementation plan, creates child BUILD tasks
+2. **BUILD** (`builder`) — Implements changes on `agent/<task-name>` branch
+3. **REVIEW** (`meta-reviewer`) — Typecheck, build, code quality gate
+4. **SMOKE** (`meta-smoke-tester`) — Optional; build images + e2e in isolated namespace
+5. **INTEGRATE** (`meta-integrator`) — Rebase-merge to main, push to remote
+6. **DOCUMENT** (`meta-documenter`) — Optional; update docs post-merge
+
+Setup instructions: `k8s/self-dev/secrets/README.md`
+
 ## Packages (dependency order)
 1. `@percussionist/api` - Zod schemas, constants, type helpers
 2. `@percussionist/kube` - Shared K8s client; depends on `api`
