@@ -967,12 +967,16 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
             }, worker, ns);
           } else {
             const createdRefs: string[] = [];
-            let prevTaskName: string | undefined;
+            // First pass: allocate names so predecessorIndex can be resolved to CR names.
+            const buildTaskNames: string[] = buildTaskDefs.map(() => `${projectName}-build-${randomBytes(3).toString("hex")}`);
             for (let i = 0; i < buildTaskDefs.length; i++) {
               const def = buildTaskDefs[i];
               if (!def) continue;
-              const suffix = randomBytes(3).toString("hex");
-              const buildTaskName = `${projectName}-build-${suffix}`;
+              const buildTaskName = buildTaskNames[i]!;
+              const predecessorRef =
+                typeof def.predecessorIndex === "number" && def.predecessorIndex >= 0 && def.predecessorIndex < i
+                  ? buildTaskNames[def.predecessorIndex]
+                  : undefined;
               createdRefs.push(buildTaskName);
               const newTask = buildTask({
                 name: buildTaskName,
@@ -987,13 +991,12 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
                   agent: def.agent ?? "builder",
                   priority: def.priority ?? "medium",
                   parentTaskRef: taskName,
-                  ...(prevTaskName ? { predecessorRef: prevTaskName } : {}),
+                  ...(predecessorRef ? { predecessorRef } : {}),
                 },
               });
               try {
                 await createTask(newTask, ns);
-                prevTaskName = buildTaskName;
-                log(`created BUILD task CR ${buildTaskName} from PLAN ${taskName}`);
+                log(`created BUILD task CR ${buildTaskName} from PLAN ${taskName}${predecessorRef ? ` (after ${predecessorRef})` : ""}`);
               } catch (e) {
                 err(`failed to create BUILD task ${buildTaskName}:`, (e as Error).message);
               }
@@ -1030,11 +1033,16 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
               });
               if (agentDefs && agentDefs.length > 0) {
                 const createdRefs: string[] = [];
-                let prevTaskName: string | undefined;
-                for (const def of agentDefs) {
+                // First pass: allocate names so predecessorIndex can be resolved.
+                const buildTaskNames: string[] = agentDefs.map(() => `${projectName}-build-${randomBytes(3).toString("hex")}`);
+                for (let i = 0; i < agentDefs.length; i++) {
+                  const def = agentDefs[i];
                   if (!def) continue;
-                  const suffix = randomBytes(3).toString("hex");
-                  const buildTaskName = `${projectName}-build-${suffix}`;
+                  const buildTaskName = buildTaskNames[i]!;
+                  const predecessorRef =
+                    typeof def.predecessorIndex === "number" && def.predecessorIndex >= 0 && def.predecessorIndex < i
+                      ? buildTaskNames[def.predecessorIndex]
+                      : undefined;
                   createdRefs.push(buildTaskName);
                   const newTask = buildTask({
                     name: buildTaskName,
@@ -1049,12 +1057,11 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
                       agent: def.agent ?? "builder",
                       priority: (def.priority === "high" || def.priority === "low" ? def.priority : "medium") as "high" | "medium" | "low",
                       parentTaskRef: taskName,
-                      ...(prevTaskName ? { predecessorRef: prevTaskName } : {}),
+                      ...(predecessorRef ? { predecessorRef } : {}),
                     },
                   });
                   try {
                     await createTask(newTask, ns);
-                    prevTaskName = buildTaskName;
                   } catch (e) {
                     err(`failed to create BUILD task ${buildTaskName}:`, (e as Error).message);
                   }
