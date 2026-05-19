@@ -74,8 +74,8 @@ spec:
     permission:
       edit: deny
       bash: deny
-      read: deny
-      glob: deny
+      read: allow
+      glob: allow
       grep: deny
       list: deny
       webfetch: deny
