@@ -34,7 +34,7 @@ import {
   type RunStatus,
 } from "@percussionist/api";
 import { waitForHealthy } from "./session.js";
-import { runInteractive, runPrompt } from "./polling.js";
+import { runInteractive, runPrompt, snapshotAllSessions } from "./polling.js";
 import { sendStats } from "./stats-reporter.js";
 import { startMcpServer } from "./mcp-server.js";
 
@@ -198,6 +198,10 @@ main().catch(async (e) => {
   }
   err("fatal:", e);
   const completedAt = new Date().toISOString();
+  // Best-effort snapshot so session data survives fatal errors (e.g. waitForHealthy timeout).
+  if (_activeSessionID) {
+    await snapshotAllSessions(coreApi, RUN_NAME, RUN_NAMESPACE, RUN_UID, _activeSessionID).catch(() => { /* best effort */ });
+  }
   if (_activeSessionID) {
     await sendStats(
       _activeSessionID,

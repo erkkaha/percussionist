@@ -329,7 +329,7 @@ export function renderPod(
                                 `    echo "[workspace-init] checked out remote branch ${git.ref}"`,
                                 ...(git.parentRef
                                   ? [
-                                      `  elif git -C "$WORKTREE_DIR" checkout -b "${git.ref}" "${git.parentRef}" 2>/dev/null || git -C "$WORKTREE_DIR" checkout -b "${git.ref}" "origin/${git.parentRef}" 2>/dev/null; then`,
+                                      `  elif git -C "$WORKTREE_DIR" checkout -b "${git.ref}" "${git.parentRef}" 2>/dev/null; then`,
                                       `    echo "[workspace-init] created new branch ${git.ref} from ${git.parentRef}"`,
                                     ]
                                   : []),
@@ -342,24 +342,36 @@ export function renderPod(
                           `  echo "[workspace-init] creating worktree $WORKTREE_DIR"`,
                           ...(git.ref
                             ? [
-                                `  # Try to add worktree with ref; if it doesn't exist, create from parentRef`,
-                                `  if git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
-                                `    echo "[workspace-init] worktree added with branch ${git.ref}"`,
-                                `  elif git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "origin/${git.ref}" 2>/dev/null; then`,
-                                `    echo "[workspace-init] worktree added with remote branch ${git.ref}"`,
-                                ...(git.parentRef
-                                  ? [
-                                      `  else`,
-                                      `    # Create new worktree and branch from parentRef`,
-                                      `    git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "${git.parentRef}" 2>/dev/null || git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "origin/${git.parentRef}"`,
-                                      `    echo "[workspace-init] created new branch ${git.ref} from ${git.parentRef}"`,
-                                    ]
-                                  : [
-                                      `  else`,
-                                      `    echo "[workspace-init] error: failed to add worktree with branch ${git.ref}"`,
-                                      `    exit 1`,
-                                    ]),
-                                `  fi`,
+                                 `  # Prune any stale worktrees that hold the same branch (prevents "already used by worktree" errors)`,
+                                 `  _BRANCH_LINE="branch refs/heads/${git.ref}"`,
+                                 `  _CUR_WT=""`,
+                                 `  while IFS= read -r _LINE; do`,
+                                 `    case "$_LINE" in`,
+                                 `      "worktree "*) _CUR_WT="\${_LINE#worktree }" ;;`,
+                                 `      "$_BRANCH_LINE") if [ "$_CUR_WT" != "$WORKTREE_DIR" ] && [ -n "$_CUR_WT" ]; then`,
+                                 `                        echo "[workspace-init] removing stale worktree $_CUR_WT holding branch ${git.ref}"`,
+                                 `                        git -C "$MIRROR_DIR" worktree remove --force "$_CUR_WT" 2>/dev/null || rm -rf "$_CUR_WT"`,
+                                 `                      fi ;;`,
+                                 `    esac`,
+                                 `  done < <(git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null)`,
+                                 `  git -C "$MIRROR_DIR" worktree prune --expire=now 2>/dev/null || true`,
+                                 `  # Try to add worktree with existing ref; if not found, create new branch from parentRef`,
+                                 `  # Note: bare mirrors store branches as refs/heads/<name> — no origin/ prefix needed`,
+                                 `  if git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
+                                 `    echo "[workspace-init] worktree added with branch ${git.ref}"`,
+                                 ...(git.parentRef
+                                   ? [
+                                       `  else`,
+                                       `    # Create new branch from parentRef (bare mirror: plain ref name, no origin/ prefix)`,
+                                       `    git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "${git.parentRef}"`,
+                                       `    echo "[workspace-init] created new branch ${git.ref} from ${git.parentRef}"`,
+                                     ]
+                                   : [
+                                       `  else`,
+                                       `    echo "[workspace-init] error: failed to add worktree with branch ${git.ref}"`,
+                                       `    exit 1`,
+                                     ]),
+                                 `  fi`,
                               ]
                             : [`  git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR"`]),
                           `fi`,
@@ -371,24 +383,36 @@ export function renderPod(
                           `fi`,
                           ...(git.ref
                             ? [
-                                `# Try to add worktree with ref; if it doesn't exist, create from parentRef`,
-                                `if git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
-                                `  echo "[workspace-init] worktree added with branch ${git.ref}"`,
-                                `elif git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "origin/${git.ref}" 2>/dev/null; then`,
-                                `  echo "[workspace-init] worktree added with remote branch ${git.ref}"`,
-                                ...(git.parentRef
-                                  ? [
-                                      `else`,
-                                      `  # Create new worktree and branch from parentRef`,
-                                      `  git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "${git.parentRef}" 2>/dev/null || git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "origin/${git.parentRef}"`,
-                                      `  echo "[workspace-init] created new branch ${git.ref} from ${git.parentRef}"`,
-                                    ]
-                                  : [
-                                      `else`,
-                                      `  echo "[workspace-init] error: failed to add worktree with branch ${git.ref}"`,
-                                      `  exit 1`,
-                                    ]),
-                                `fi`,
+                                 `# Prune any stale worktrees that hold the same branch (prevents "already used by worktree" errors)`,
+                                 `_BRANCH_LINE="branch refs/heads/${git.ref}"`,
+                                 `_CUR_WT=""`,
+                                 `while IFS= read -r _LINE; do`,
+                                 `  case "$_LINE" in`,
+                                 `    "worktree "*) _CUR_WT="\${_LINE#worktree }" ;;`,
+                                 `    "$_BRANCH_LINE") if [ "$_CUR_WT" != "$WORKTREE_DIR" ] && [ -n "$_CUR_WT" ]; then`,
+                                 `                      echo "[workspace-init] removing stale worktree $_CUR_WT holding branch ${git.ref}"`,
+                                 `                      git -C "$MIRROR_DIR" worktree remove --force "$_CUR_WT" 2>/dev/null || rm -rf "$_CUR_WT"`,
+                                 `                    fi ;;`,
+                                 `  esac`,
+                                 `done < <(git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null)`,
+                                 `git -C "$MIRROR_DIR" worktree prune --expire=now 2>/dev/null || true`,
+                                 `# Try to add worktree with existing ref; if not found, create new branch from parentRef`,
+                                 `# Note: bare mirrors store branches as refs/heads/<name> — no origin/ prefix needed`,
+                                 `if git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
+                                 `  echo "[workspace-init] worktree added with branch ${git.ref}"`,
+                                 ...(git.parentRef
+                                   ? [
+                                       `else`,
+                                       `  # Create new branch from parentRef (bare mirror: plain ref name, no origin/ prefix)`,
+                                       `  git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "${git.parentRef}"`,
+                                       `  echo "[workspace-init] created new branch ${git.ref} from ${git.parentRef}"`,
+                                     ]
+                                   : [
+                                       `else`,
+                                       `  echo "[workspace-init] error: failed to add worktree with branch ${git.ref}"`,
+                                       `  exit 1`,
+                                     ]),
+                                 `fi`,
                               ]
                             : [`git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR"`]),
                         ]),

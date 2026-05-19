@@ -66,11 +66,17 @@ export async function snapshotAllSessions(
   runName: string,
   runNamespace: string,
   runUid: string,
+  knownSessionID?: string,
 ): Promise<void> {
   const { API_GROUP_VERSION, KIND_RUN } = await import("@percussionist/api");
   const { PatchStrategy, setHeaderOptions } = await import("@kubernetes/client-node");
 
-  const sessions = await listSessions();
+  let sessions = await listSessions();
+  if (sessions.length === 0 && knownSessionID) {
+    // opencode may already be shut down; fall back to snapshotting the known session.
+    log(`snapshotAllSessions: listSessions() returned empty, falling back to knownSessionID ${knownSessionID}`);
+    sessions = [{ id: knownSessionID }];
+  }
   if (sessions.length === 0) return;
 
   log(`snapshotAllSessions: snapshotting ${sessions.length} session(s)`);
@@ -374,7 +380,7 @@ export async function runPrompt(
               // Snapshot sessions immediately when entering WaitingForInput so
               // the manager can read the conversation context even if this pod
               // is killed while waiting.
-              snapshotAllSessions(coreApi, runName, runNamespace, runUid).catch((e) =>
+              snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
                 err("WaitingForInput snapshot failed:", (e as Error).message),
               );
             }
@@ -405,7 +411,7 @@ export async function runPrompt(
     while (!terminate) {
       await sleep(60_000);
       if (!terminate) {
-        snapshotAllSessions(coreApi, runName, runNamespace, runUid).catch((e) =>
+        snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
           err("periodic snapshot failed:", (e as Error).message),
         );
       }
@@ -443,7 +449,7 @@ export async function runPrompt(
 
   if (isShuttingDown()) {
     log("shutting down mid-run");
-    await snapshotAllSessions(coreApi, runName, runNamespace, runUid);
+    await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
     await patchStatus({ message: "dispatcher terminated" });
     return { sessionID, startedAt: runStartedAt };
   }
@@ -452,7 +458,7 @@ export async function runPrompt(
   // succeeded or failed.  This ensures the manager always has a ConfigMap
   // to read for facilitation context and SQLite always has a record.
   await tokens.flush(patchStatus, true);
-  await snapshotAllSessions(coreApi, runName, runNamespace, runUid);
+  await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
 
   const completedAt = new Date().toISOString();
   const { tokensIn, tokensOut } = tokens.totals();
