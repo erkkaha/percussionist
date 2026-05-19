@@ -284,7 +284,19 @@ projects.put("/:name", async (c) => {
   const { opencodeConfig: _oc2, injectFiles: _if2, name: _n2, ...specBody2 } = body as Record<string, unknown>;
   void _oc2; void _if2; void _n2;
 
-  const parsed = ProjectSpecSchema.safeParse(specBody2);
+  // Fetch existing project to preserve fields not sent by the UI (like featureBranchingEnabled)
+  let existingSpec: Partial<typeof specBody2> = {};
+  try {
+    const existing = await getProject(name);
+    existingSpec = existing.spec as Partial<typeof specBody2>;
+  } catch {
+    // Project doesn't exist yet, proceed with empty existing spec
+  }
+
+  // Merge existing spec with incoming spec (incoming takes precedence)
+  const mergedSpec = { ...existingSpec, ...specBody2 };
+
+  const parsed = ProjectSpecSchema.safeParse(mergedSpec);
   if (!parsed.success) {
     return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
   }
