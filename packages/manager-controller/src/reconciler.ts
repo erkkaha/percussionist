@@ -1298,47 +1298,59 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
 
   const reconcileDuration = Date.now() - startTime;
 
-  try {
-    await patchProjectStatus(
-      projectName,
-      {
-        board: {
-          activeWorkers,
-          lastEventAt: new Date().toISOString(),
-          pendingQuestions,
-          escalations,
-          managerMetrics: {
-            lastReconcileAt: new Date().toISOString(),
-            lastReconcileDurationMs: reconcileDuration,
-            lastReconcileResult: "success",
-            tasksPulled,
-            workersMonitored,
-            tasksReworked,
-          },
-        },
-      },
-      ns,
-    );
-  } catch (e) {
-    err(`patchProjectStatus failed: ${(e as Error).message}`);
-    await patchProjectStatus(
-      projectName,
-      {
+  // Only patch status if there are meaningful changes (not just metrics updates).
+  // Patching status triggers another reconciliation, so we must avoid infinite loops.
+  const currentBoard = fresh.status?.board;
+  const hasChanges =
+    currentBoard?.activeWorkers !== activeWorkers ||
+    JSON.stringify(currentBoard?.pendingQuestions) !== JSON.stringify(pendingQuestions) ||
+    JSON.stringify(currentBoard?.escalations) !== JSON.stringify(escalations) ||
+    tasksPulled > 0 ||
+    tasksReworked > 0;
+
+  if (hasChanges) {
+    try {
+      await patchProjectStatus(
+        projectName,
+        {
           board: {
             activeWorkers,
+            lastEventAt: new Date().toISOString(),
+            pendingQuestions,
+            escalations,
             managerMetrics: {
               lastReconcileAt: new Date().toISOString(),
               lastReconcileDurationMs: reconcileDuration,
-              lastReconcileResult: "error",
-              lastError: (e as Error).message,
-              tasksPulled: 0,
-              workersMonitored: 0,
-              tasksReworked: 0,
+              lastReconcileResult: "success",
+              tasksPulled,
+              workersMonitored,
+              tasksReworked,
             },
           },
-      },
-      ns,
-    ).catch(() => {});
+        },
+        ns,
+      );
+    } catch (e) {
+      err(`patchProjectStatus failed: ${(e as Error).message}`);
+      await patchProjectStatus(
+        projectName,
+        {
+            board: {
+              activeWorkers,
+              managerMetrics: {
+                lastReconcileAt: new Date().toISOString(),
+                lastReconcileDurationMs: reconcileDuration,
+                lastReconcileResult: "error",
+                lastError: (e as Error).message,
+                tasksPulled: 0,
+                workersMonitored: 0,
+                tasksReworked: 0,
+              },
+            },
+        },
+        ns,
+      ).catch(() => {});
+    }
   }
 }
 

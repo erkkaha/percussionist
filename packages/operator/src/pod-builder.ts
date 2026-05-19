@@ -582,7 +582,7 @@ export function renderPod(
               }),
           ports: [{ name: "http", containerPort }],
           env: [
-            { name: "NODE_OPTIONS", value: "--max-old-space-size=1536" },
+            { name: "NODE_OPTIONS", value: "--max-old-space-size=2560" },
             // Package manager cache configuration
             { name: "PNPM_HOME", value: `${dataMountPath}/cache/pnpm` },
             { name: "npm_config_store_dir", value: `${dataMountPath}/cache/pnpm-store` },
@@ -669,7 +669,7 @@ export function renderPod(
           },
           resources: spec.resources ?? {
             requests: { cpu: "200m", memory: "512Mi" },
-            limits: { cpu: "2", memory: "2Gi" },
+            limits: { cpu: "2", memory: "4Gi" },
           },
           volumeMounts: [
             // /workspace: use subPath on the data volume when backed by PVC,

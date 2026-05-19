@@ -126,9 +126,34 @@ function wrapPatchStatus(fn: typeof patchStatus) {
 }
 
 // ---------------------------------------------------------------------------
+// Memory sampler — logs cgroup memory.current and process RSS every 5 seconds.
+// Helps diagnose OOMKill by showing memory growth trend in dispatcher logs.
+
+function startMemorySampler(intervalMs = 5000): ReturnType<typeof setInterval> {
+  const cgroupPaths = [
+    "/sys/fs/cgroup/memory.current",       // cgroup v2
+    "/sys/fs/cgroup/memory/memory.usage_in_bytes", // cgroup v1
+  ];
+  return setInterval(() => {
+    let cgroupBytes: number | null = null;
+    for (const p of cgroupPaths) {
+      try {
+        const val = parseInt(require("node:fs").readFileSync(p, "utf8").trim(), 10);
+        if (!isNaN(val)) { cgroupBytes = val; break; }
+      } catch { /* not available */ }
+    }
+    const heapMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    const rssMB  = Math.round(process.memoryUsage().rss / 1024 / 1024);
+    const cgroupMB = cgroupBytes !== null ? Math.round(cgroupBytes / 1024 / 1024) : null;
+    log(`[mem] heap=${heapMB}MB rss=${rssMB}MB${cgroupMB !== null ? ` cgroup=${cgroupMB}MB` : ""}`);
+  }, intervalMs).unref();
+}
+
+// ---------------------------------------------------------------------------
 // Main
 
 async function main(): Promise<void> {
+  startMemorySampler();
   // Start the MCP server immediately so fail_run/complete_run/get_status are
   // available as soon as opencode accepts connections.
   let resolveFailure!: (reason: string) => void;
