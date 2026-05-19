@@ -30,6 +30,15 @@ function urlHash(url: string): string {
   return h.toString(16).padStart(8, "0");
 }
 
+function cleanupPodName(prefix: string, name: string): string {
+  const suffix = Date.now().toString(36).slice(-6);
+  return `${prefix}-${name}-${suffix}`.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 63).replace(/-+$/, "");
+}
+
+function shQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 export interface WorktreeCleanupOptions {
   task: Task;
   runName: string;
@@ -81,7 +90,7 @@ export async function spawnWorktreeCleanupPod(
     gitUrl,
   } = opts;
 
-  const podName = `cleanup-${runName}`.slice(0, 63);
+  const podName = cleanupPodName("cleanup", runName);
   const mirrorDir = gitUrl
     ? `${dataMountPath}/git-mirrors/${urlHash(gitUrl)}`
     : undefined;
@@ -90,7 +99,7 @@ export async function spawnWorktreeCleanupPod(
   const script = [
     "set -e",
     `echo "[cleanup] removing worktree ${worktreeDir}"`,
-    `rm -rf "${worktreeDir}"`,
+    `rm -rf ${shQuote(worktreeDir)}`,
     ...(mirrorDir
       ? [
           `echo "[cleanup] pruning git worktree metadata in ${mirrorDir}"`,
@@ -189,23 +198,28 @@ export async function spawnTaskWorktreeCleanupPod(
   } = opts;
 
   const taskName = task.metadata.name;
-  const podName = `cleanup-task-${taskName}`.slice(0, 63).replace(/[^a-z0-9-]/g, "-");
+  const podName = cleanupPodName("cleanup-task", taskName);
   const mirrorDir = gitUrl
     ? `${dataMountPath}/git-mirrors/${urlHash(gitUrl)}`
     : undefined;
   const worktreeDir = `${dataMountPath}/worktrees`;
 
-  // Remove all worktrees for this task (matching pattern: {projectName}-*-{taskId}-*)
+  const sanitizedTaskName = taskName.toLowerCase().replace(/[^a-z0-9]/g, "-");
+  const runPrefix = `${projectName}-${sanitizedTaskName}`;
+
+  // Remove all deterministic worker worktrees for this task.
   const script = [
     "set -e",
     `echo "[cleanup] removing all worktrees for task ${taskName}"`,
-    `cd "${worktreeDir}" || exit 0`, // Exit gracefully if worktree dir doesn't exist
-    `for dir in ${projectName}-*; do`,
-    `  # Check if the directory name contains the task name`,
-    `  if echo "$dir" | grep -q "${taskName}"; then`,
+    `cd ${shQuote(worktreeDir)} || exit 0`, // Exit gracefully if worktree dir doesn't exist
+    `for dir in ${shQuote(runPrefix)}-*; do`,
+    `  [ -e "$dir" ] || continue`,
+    `  case "$dir" in`,
+    `    ${runPrefix}-??????????) ;;`,
+    `    *) continue ;;`,
+    `  esac`,
     `    echo "[cleanup] removing $dir"`,
     `    rm -rf "$dir"`,
-    `  fi`,
     `done`,
     ...(mirrorDir
       ? [

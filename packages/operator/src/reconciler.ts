@@ -502,11 +502,17 @@ function summarizePodFailure(pod?: V1Pod): string {
 
 const queue: string[] = [];
 const pending = new Set<string>();
+const processing = new Set<string>();
+const dirty = new Set<string>();
 const seen = new Map<string, Run>();
 
 export function enqueue(run: Run): void {
   const key = `${run.metadata.namespace}/${run.metadata.name}`;
   seen.set(key, run);
+  if (processing.has(key)) {
+    dirty.add(key);
+    return;
+  }
   if (!pending.has(key)) {
     pending.add(key);
     queue.push(key);
@@ -515,6 +521,9 @@ export function enqueue(run: Run): void {
 
 export function dequeue(key: string): void {
   seen.delete(key);
+  pending.delete(key);
+  processing.delete(key);
+  dirty.delete(key);
 }
 
 export async function runWorker(): Promise<void> {
@@ -527,14 +536,32 @@ export async function runWorker(): Promise<void> {
     pending.delete(key);
     const run = seen.get(key);
     if (!run) continue;
+    processing.add(key);
     try {
-      await reconcile(run);
+      const [namespace, name] = key.split("/");
+      const fresh = namespace && name
+        ? await co.getNamespacedCustomObject({
+            group: API_GROUP,
+            version: API_VERSION,
+            namespace,
+            plural: PLURAL_RUN,
+            name,
+          }) as Run
+        : run;
+      seen.set(key, fresh);
+      await reconcile(fresh);
     } catch (e) {
       err(`reconcile(${key}) failed:`, (e as Error).message);
       setTimeout(() => {
         const current = seen.get(key);
         if (current) enqueue(current);
       }, 5000);
+    } finally {
+      processing.delete(key);
+      if (dirty.delete(key)) {
+        const current = seen.get(key);
+        if (current) enqueue(current);
+      }
     }
   }
 }

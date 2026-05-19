@@ -60,7 +60,7 @@ of TypeScript packages under `packages/*`.
 - Set `gitCache.worktreeReuse: false` to always start from a clean checkout
 - Agent can push to the real remote — `remote set-url` restores the real URL after mirror-based setup
 - Mirror fetches are serialized with `flock` so parallel runs don't corrupt the bare repo
-- Worktree cleanup: when a task moves to `done` the manager spawns a short-lived cleanup pod that removes all worktrees for that task and calls `git worktree prune` on the mirror
+- Worktree cleanup: failed/cancelled run worktrees are pruned before retry; MCP tools that delete stale runs also prune those run worktrees; when a task moves to `done` the manager spawns a short-lived cleanup pod that removes all deterministic worker worktrees for that task and calls `git worktree prune` on the mirror
 
 ### Local git (`source.local: true`)
 - No remote URL required — mutually exclusive with `source.git`
@@ -210,9 +210,9 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `read_session_live` | Incremental session messages with `since`/`nextSince` for polling (tries live API first, falls back to ConfigMap) |
 | `patch_board` | Merge-patch `Project.status.board` (escalations, pendingQuestions, facilitations, managerMetrics) |
 | `delete_run` | Delete an Run by name |
-| `create_run` | Create a new run for a task (task must be in "ready" column); updates `Task.status` atomically |
-| `force_retry` | Clean terminal-phase runs, reset task to ready or in-progress via `Task.status` |
-| `set_task_state` | Atomically move a task to a target column, clean up runs, optionally cancel running runs |
+| `create_run` | Create a new run for a ready task; resolves feature-branch metadata and updates `Task.status` |
+| `force_retry` | Clean stale task runs/worktrees and reset task to ready or in-progress via `Task.status` |
+| `set_task_state` | Move a task to a target column, clean up project-scoped runs, optionally cancel running runs |
 | `read_manager_logs` | Read logs from the manager controller pod |
 | `pause_reconciliation` | Pause the manager reconcile loop for a project (auto-resumes after timeout) |
 | `resume_reconciliation` | Resume a paused reconcile loop |
@@ -222,21 +222,21 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 - Requires: `project`, `task` (Task CR name)
 - Optional: `agent`, `model`, `retryCount`, `reworkFeedback`, `namespace`
 - Errors if the task is not in the "ready" column (use `force_retry` first)
-- Moves task to "in-progress" and patches `Task.status.worker` atomically
+- Moves task to "in-progress" and patches `Task.status.worker` with resolved `gitBranch`, `parentBranch`, and `mergeIntoBranch` when feature branching is enabled
 
 **`force_retry`** — One-shot cleanup and restart for stuck tasks.
 - Requires: `project`, `task` (Task CR name)
-- Optional: `createRun` (default `true`), `namespace`
-- Deletes all terminal-phase runs (Succeeded/Failed/Cancelled) for the task
-- If `createRun: true`: resets task to "in-progress" with fresh worker via `patchTaskStatus`
-- If `createRun: false`: resets task column to "ready" via `patchTaskStatus`
+- Optional: `createRun` (default `true`), `agent`, `model`, `namespace`
+- Deletes all runs for the project/task, including active/stuck runs, and prunes their `/data/worktrees/{run-name}` directories for remote git projects
+- If `createRun: true`: starts the next retry count (`existing retryCount + 1`) and resets task to "in-progress" with feature-branch metadata via `patchTaskStatus`
+- If `createRun: false`: resets task to "ready", clears `runName`, and marks the worker failed so reconciliation can pick it up later
 
 **`set_task_state`** — Atomic task column transition.
 - Requires: `project`, `task` (Task CR name), `targetColumn`
-- Optional: `cancelRunning` (default `false`), `namespace`
+- Optional: `cancelRunning` (default `false`), `preserveRuns` (default `false`), `namespace`
 - Valid columns: `ready`, `in-progress`, `review`, `rework`, `done`, `blocked`
-- Deletes terminal-phase runs; if `cancelRunning: true` also deletes active runs
-- Patches `Task.status.column` (and worker for `in-progress`)
+- Deletes matching runs for the specified project/task and prunes remote-git run worktrees; if `cancelRunning: true` also deletes active runs
+- Patches `Task.status.column`; for `in-progress` it writes feature-branch metadata, for `done` it marks the worker `Succeeded`, and for `ready`/`rework` it clears `runName` and marks existing worker state `Failed`
 
 **`read_session_live`** — Real-time session message streaming.
 - Requires: `runName`

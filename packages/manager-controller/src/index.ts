@@ -6,9 +6,11 @@ import {
   API_GROUP,
   API_VERSION,
   PLURAL_PROJECT,
+  PLURAL_RUN,
   PLURAL_TASK,
   LABELS,
   type Project,
+  type Run,
   type Task,
 } from "@percussionist/api";
 import {
@@ -144,6 +146,46 @@ async function main(): Promise<void> {
   void taskInformer.start().then(
     () => log("task informer started"),
     (e) => err("task informer.start() failed:", (e as Error).message),
+  );
+
+  // Run informer: enqueue the owning project whenever a worker/facilitator run
+  // changes phase. Without this, terminal runs wait for an unrelated task/project
+  // event or a periodic resync before the board advances.
+  const runPath = `/apis/${API_GROUP}/${API_VERSION}/namespaces/${NAMESPACE}/${PLURAL_RUN}`;
+  const listRunsFn = async () => {
+    const res = await k8s.listNamespacedCustomObject({
+      group: API_GROUP,
+      version: API_VERSION,
+      namespace: NAMESPACE,
+      plural: PLURAL_RUN,
+    });
+    return res as unknown as { items: Run[] };
+  };
+  const runInformer = makeInformer(kc, runPath, listRunsFn as never);
+  const enqueueRunProject = (obj: unknown) => {
+    const run = obj as Run;
+    const projectName = run.metadata?.labels?.[LABELS.projectName] ?? run.spec?.project;
+    if (!projectName) return;
+    enqueue({
+      metadata: { name: projectName, namespace: run.metadata?.namespace ?? NAMESPACE },
+      spec: {} as Project["spec"],
+    } as Project);
+  };
+  runInformer.on("add", enqueueRunProject);
+  runInformer.on("update", enqueueRunProject);
+  runInformer.on("delete", enqueueRunProject);
+  runInformer.on("error", (e) => {
+    err("run informer error:", (e as Error).message);
+    setTimeout(() => {
+      void runInformer.start().catch((startErr) =>
+        err("run informer restart failed:", (startErr as Error).message),
+      );
+    }, 2000);
+  });
+  log("starting run informer...");
+  void runInformer.start().then(
+    () => log("run informer started"),
+    (e) => err("runInformer.start() failed:", (e as Error).message),
   );
 
   log("starting informer...");

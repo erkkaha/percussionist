@@ -440,13 +440,19 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
                 const newRunName = workerRunName(projectName, taskName, (worker.retryCount ?? 0) + 1);
                 const reworkRun = buildWorkerRun(fresh, task, newRunName, (worker.retryCount ?? 0) + 1, undefined, freshTasks);
                 reworkRun.spec.agent = result.alternativeAgent;
+                const gitBranch = worker.gitBranch ?? resolveTaskBranch(task, fresh, freshTasks);
+                const parentBranch = worker.parentBranch ?? resolveParentBranch(task, fresh, freshTasks);
+                const mergeIntoBranch = worker.mergeIntoBranch ?? resolveMergeBranch(task, fresh, freshTasks);
                 await patchTaskStatus(taskName, {
-                  column: "ready",
+                  column: "in-progress",
                   worker: {
                     ...worker,
                     runName: newRunName,
                     status: "Running",
-                    branch: `feat/${taskName}`,
+                    branch: gitBranch ?? `feat/${taskName}`,
+                    gitBranch,
+                    parentBranch,
+                    mergeIntoBranch,
                     startedAt: new Date().toISOString(),
                     retryCount: (worker.retryCount ?? 0) + 1,
                     facilitated: true,
@@ -581,6 +587,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
           } catch (e) {
             err(`failed to create facilitator run for ${taskName}:`, (e as Error).message);
             if ((worker.retryCount ?? 0) < MAX_RETRIES) {
+              await cleanupWorktree(task, runName, cleanupProject, ns);
               await patchWorker(taskName, { retryCount: (worker.retryCount ?? 0) + 1, status: "Running" }, worker, ns);
               await moveTaskColumn(taskName, "ready", ns);
               emitEvent(projectName, taskName, task.spec.type, "run.failed", { runName, retryCount: (worker.retryCount ?? 0) + 1, error: (e as Error).message });
@@ -612,6 +619,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
 
           if (result) {
             if (result.recommendedAction === "retry_same") {
+              await cleanupWorktree(task, runName, cleanupProject, ns);
               await patchWorker(taskName, { retryCount: (worker.retryCount ?? 0) + 1, status: "Running", facilitated: true, facilitationResult: result }, worker, ns);
               await moveTaskColumn(taskName, "ready", ns);
               emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "ready", reason: "facilitator-retry-same" });
@@ -621,13 +629,19 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
                 const newRunName = workerRunName(projectName, taskName, (worker.retryCount ?? 0) + 1);
                 const reworkRun = buildWorkerRun(fresh, task, newRunName, (worker.retryCount ?? 0) + 1, undefined, freshTasks);
                 reworkRun.spec.agent = result.alternativeAgent;
+                const gitBranch = worker.gitBranch ?? resolveTaskBranch(task, fresh, freshTasks);
+                const parentBranch = worker.parentBranch ?? resolveParentBranch(task, fresh, freshTasks);
+                const mergeIntoBranch = worker.mergeIntoBranch ?? resolveMergeBranch(task, fresh, freshTasks);
                 await patchTaskStatus(taskName, {
-                  column: "ready",
+                  column: "in-progress",
                   worker: {
                     ...worker,
                     runName: newRunName,
                     status: "Running",
-                    branch: `feat/${taskName}`,
+                    branch: gitBranch ?? `feat/${taskName}`,
+                    gitBranch,
+                    parentBranch,
+                    mergeIntoBranch,
                     startedAt: new Date().toISOString(),
                     retryCount: (worker.retryCount ?? 0) + 1,
                     facilitated: true,
@@ -700,7 +714,8 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
                   continue;
                 }
               }
-              if ((worker.retryCount ?? 0) < MAX_RETRIES) {
+            if ((worker.retryCount ?? 0) < MAX_RETRIES) {
+                await cleanupWorktree(task, runName, cleanupProject, ns);
                 await patchWorker(taskName, { retryCount: (worker.retryCount ?? 0) + 1, status: "Running", facilitated: true }, worker, ns);
                 await moveTaskColumn(taskName, "ready", ns);
                 emitEvent(projectName, taskName, task.spec.type, "run.failed", { runName, retryCount: (worker.retryCount ?? 0) + 1, reason: "facilitator-no-result" });
@@ -716,6 +731,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
             }
           }
         } else if ((worker.retryCount ?? 0) < MAX_RETRIES) {
+          await cleanupWorktree(task, runName, cleanupProject, ns);
           await patchWorker(taskName, { retryCount: (worker.retryCount ?? 0) + 1, status: "Running" }, worker, ns);
           await moveTaskColumn(taskName, "ready", ns);
           log(`task ${taskName} failed — retrying (${(worker.retryCount ?? 0) + 1}/${MAX_RETRIES})`);
@@ -754,6 +770,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
               status: "Running",
               ...(decision.action === "retry_alternative" ? { reworkAgent: decision.agent } : {}),
             }, worker, ns);
+            await cleanupWorktree(task, runName, cleanupProject, ns);
             await moveTaskColumn(taskName, "ready", ns);
             emitEvent(projectName, taskName, task.spec.type, "decision", { action: decision.action, agent: decision.agent, reason: decision.reason });
             } else if (decision.action === "skip") {
@@ -781,6 +798,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
           emitEvent(projectName, taskName, task.spec.type, "escalated", { retryCount: worker.retryCount ?? 0, reason: run.status?.message ?? "retries exhausted" });
         }
       } else if (runPhase === "Cancelled") {
+        await cleanupWorktree(task, runName, cleanupProject, ns);
         await patchWorker(taskName, { status: "Failed", completedAt: new Date().toISOString() }, worker, ns);
         await moveTaskColumn(taskName, "ready", ns);
         emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "ready", reason: "cancelled" });
@@ -803,8 +821,16 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
           status: "Failed",
           completedAt: new Date().toISOString(),
         }, worker, ns);
-        await moveTaskColumn(taskName, "ready", ns);
-        log(`worker run ${runName} not found — ${taskName} returned to ready`);
+        // Only return to ready if task is still in-progress. If it was manually moved to
+        // review/rework/blocked/done, respect that and leave the column alone — otherwise
+        // deleting a run while reviewing causes an infinite recreate loop.
+        const currentColumn = task.status?.column;
+        if (currentColumn === "in-progress") {
+          await moveTaskColumn(taskName, "ready", ns);
+          log(`worker run ${runName} not found — ${taskName} returned to ready`);
+        } else {
+          log(`worker run ${runName} not found — ${taskName} column is '${currentColumn}', leaving in place`);
+        }
         emitEvent(projectName, taskName, task.spec.type, "run.failed", { runName, reason: "run-not-found" });
       } else {
         err(`monitor worker ${runName}:`, msg);
@@ -1197,6 +1223,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
         }
       } else {
         err(`failed to create rework run for ${taskName}:`, msg);
+        await patchWorker(taskName, { status: "Failed", runName: undefined }, existingWorker, ns);
         await moveTaskColumn(taskName, "rework", ns);
       }
     }
@@ -1300,11 +1327,17 @@ export function getPauseStatus(): { paused: boolean; elapsedMs: number; remainin
 
 const queue: string[] = [];
 const pending = new Set<string>();
+const processing = new Set<string>();
+const dirty = new Set<string>();
 const seen = new Map<string, Project>();
 
 export function enqueue(project: Project): void {
   const key = `${project.metadata.namespace}/${project.metadata.name}`;
   seen.set(key, project);
+  if (processing.has(key)) {
+    dirty.add(key);
+    return;
+  }
   if (!pending.has(key)) {
     pending.add(key);
     queue.push(key);
@@ -1313,6 +1346,9 @@ export function enqueue(project: Project): void {
 
 export function dequeue(key: string): void {
   seen.delete(key);
+  pending.delete(key);
+  processing.delete(key);
+  dirty.delete(key);
 }
 
 export async function runWorker(): Promise<void> {
@@ -1327,9 +1363,11 @@ export async function runWorker(): Promise<void> {
       pending.delete(key);
       continue;
     }
+    pending.delete(key);
+    processing.add(key);
     try {
       if (paused) {
-        pending.delete(key);
+        dirty.add(key);
         continue;
       }
       await reconcile(project);
@@ -1340,7 +1378,11 @@ export async function runWorker(): Promise<void> {
         if (current) enqueue(current);
       }, 5000);
     } finally {
-      pending.delete(key);
+      processing.delete(key);
+      if (dirty.delete(key)) {
+        const current = seen.get(key);
+        if (current) enqueue(current);
+      }
     }
   }
 }

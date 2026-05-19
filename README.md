@@ -189,7 +189,7 @@ flowchart TD
     OP -->|creates / owns| POD[Pod]
     OP -->|creates / owns\nif spec.agents set| AGCM[ConfigMap\nagents]
     OP -->|creates / owns\nif INGRESS_BASE_URL set| ING[Ingress\nper-run web URL]
-    OP -->|mirrors pod phase\nevery 10 s| CR
+    OP -->|mirrors pod phase| CR
 
     POD --> INIT[git-clone init container\nif spec.source.git set]
     POD --> OC[opencode container\nopencode web :4096]
@@ -226,7 +226,8 @@ flowchart TD
   cascades from project-level defaults to per-run overrides.
 - **operator** uses a hand-rolled informer (no kubebuilder for TypeScript),
   creates child objects with `ownerReferences` for cascading deletion, and
-  mirrors Pod phase into the CR status every 10 s.
+  mirrors Pod phase into the CR status. It fetches a fresh Run CR before each
+  reconcile and coalesces events that arrive during processing into another pass.
 
 ### Project + Board
 
@@ -237,6 +238,7 @@ flowchart TD
 
     PCR -->|watched by| MGR[manager\nDeployment]
     TASK -->|watched by| MGR
+    WRK -->|watched by| MGR
 
     MGR -->|pulls ready tasks\nup to maxParallel|MGR
     MGR -->|creates worker CRs| WRK[Run\nworker CR]
@@ -257,10 +259,11 @@ flowchart TD
   description, agent, priority) and `status` (column, worker state). They are not
   embedded in the project spec — `spec.agents`, `spec.maxParallel`, and `spec.phase`
   are top-level project fields.
-- **The manager controller** reconciles projects in a continuous loop: pulls ready tasks
-  up to `maxParallel`, monitors active workers (polling Run status), retries
-  failed tasks (up to 3 retries), escalates when exhausted, and re-dispatches rework
-  tasks with feedback context.
+- **The manager controller** reconciles projects from Project, Task, and Run informer
+  events plus periodic resync: pulls ready tasks up to `maxParallel`, monitors active
+  workers from Run status, retries failed tasks (up to 3 retries), escalates when
+  exhausted, and re-dispatches rework tasks with feedback context. Queue events that
+  arrive while a project is already reconciling are coalesced into a follow-up reconcile.
 - **Worker runs** are `Run` CRs created by the manager; they reference their
   parent project via `spec.project` for provenance and config resolution.
 
@@ -351,7 +354,7 @@ flowchart TD
     OP -->|creates / owns| POD[Pod]
     OP -->|creates / owns\nif ClusterAgents or inline agents set| AGCM[ConfigMap\nagents]
     OP -->|creates / owns\nif INGRESS_BASE_URL set| ING[Ingress\nper-run web URL]
-    OP -->|mirrors pod phase\nevery 10 s| CR
+    OP -->|mirrors pod phase| CR
 
     POD --> INIT[git-clone init container\nif spec.source.git set]
     POD --> OC[opencode container\nopencode web :4096]
@@ -390,7 +393,8 @@ flowchart TD
   cascades from project-level defaults to per-run overrides.
 - **operator** uses a hand-rolled informer (no kubebuilder for TypeScript),
   creates child objects with `ownerReferences` for cascading deletion, and
-  mirrors Pod phase into the CR status every 10 s.
+  mirrors Pod phase into the CR status. It fetches a fresh Run CR before each
+  reconcile and coalesces events that arrive during processing into another pass.
 
 ### Run phases
 
@@ -818,6 +822,7 @@ Task state is authoritative in `Task.status`:
 - `.status.worker.runName` — active Run name
 - `.status.worker.status` — `Running / Succeeded / Failed / Escalated`
 - `.status.worker.branch` — git branch used by the worker
+- `.status.worker.gitBranch`, `.status.worker.parentBranch`, `.status.worker.mergeIntoBranch` — feature-branch metadata used when `spec.featureBranchingEnabled` is true
 - `.status.worker.escalation` — escalation text when status is `Escalated`
 - `.status.worker.retryCount` — number of attempts so far
 
@@ -897,6 +902,15 @@ gitGraph
 - **Incremental progress**: Retries continue from previous work
 - **Feature isolation**: All work stays on feature branch until ready
 - **Clean history**: Features merge as cohesive units
+
+### Worktree Cleanup
+
+Remote git worktrees live under `/data/worktrees/{run-name}`. The manager prunes
+obsolete worktrees before retrying failed/cancelled runs and when MCP tools delete
+stale runs. When a task reaches `done`, it spawns a short-lived cleanup pod that
+removes all deterministic worker worktrees for that task and runs `git worktree prune`
+against the bare mirror. Local git workspaces (`source.local: true`) are persistent
+and are not cleaned up by this flow.
 
 ### Enabling
 

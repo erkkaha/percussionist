@@ -907,6 +907,95 @@ export async function listPodMetrics(ns: string = NAMESPACE): Promise<PodMetric[
 }
 
 // ---------------------------------------------------------------------------
+// Workspace exec — spawn a one-off maintenance pod to run a command against
+// the project data PVC, collect its output, then delete the pod.
+
+export interface WorkspaceExecResult {
+  stdout: string;
+  exitCode: number | null;
+  podName: string;
+}
+
+export async function execInWorkspace(
+  projectName: string,
+  command: string,
+  mountPath = "/data",
+  timeoutMs = 120_000,
+  ns: string = NAMESPACE,
+): Promise<WorkspaceExecResult> {
+  const podName = `ws-exec-${projectName}-${Date.now()}`.slice(0, 63).replace(/[^a-z0-9-]/g, "-");
+  const pvcName = `${projectName}-data`;
+
+  const pod: V1Pod = {
+    apiVersion: "v1",
+    kind: "Pod",
+    metadata: {
+      name: podName,
+      namespace: ns,
+      labels: {
+        "app.kubernetes.io/managed-by": "percussionist",
+        "percussionist.dev/component": "ws-exec",
+        "percussionist.dev/project": projectName,
+      },
+    },
+    spec: {
+      restartPolicy: "Never",
+      containers: [
+        {
+          name: "exec",
+          image: "alpine:3.20",
+          command: ["/bin/sh", "-c", command],
+          volumeMounts: [{ name: "data", mountPath }],
+        },
+      ],
+      volumes: [
+        {
+          name: "data",
+          persistentVolumeClaim: { claimName: pvcName },
+        },
+      ],
+    },
+  };
+
+  await core().createNamespacedPod({ namespace: ns, body: pod });
+
+  // Poll until the pod reaches a terminal phase or timeout
+  const deadline = Date.now() + timeoutMs;
+  let exitCode: number | null = null;
+  let finalPhase = "Unknown";
+
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2_000));
+    let podStatus: V1Pod;
+    try {
+      podStatus = await core().readNamespacedPod({ name: podName, namespace: ns });
+    } catch {
+      break;
+    }
+    finalPhase = podStatus.status?.phase ?? "Unknown";
+    if (finalPhase === "Succeeded" || finalPhase === "Failed") {
+      exitCode =
+        podStatus.status?.containerStatuses?.[0]?.state?.terminated?.exitCode ?? null;
+      break;
+    }
+  }
+
+  // Collect logs before deletion (best-effort)
+  let stdout = "";
+  try {
+    const logRes = await core().readNamespacedPodLog({ name: podName, namespace: ns, container: "exec" });
+    stdout = typeof logRes === "string" ? logRes : JSON.stringify(logRes);
+  } catch {
+    stdout = `(logs unavailable — pod phase: ${finalPhase})`;
+  }
+
+  // Delete the pod (best-effort)
+  core().deleteNamespacedPod({ name: podName, namespace: ns }).catch(() => { /* ignore */ });
+
+  return { stdout, exitCode, podName };
+}
+
+// ---------------------------------------------------------------------------
 // Internal token helpers
 
 function readServiceAccountToken(): string | undefined {

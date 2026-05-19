@@ -26,10 +26,12 @@ import {
   listTasks,
   getTask,
   patchTaskStatus,
+  execInWorkspace,
 } from "@percussionist/kube";
-import { LABELS } from "@percussionist/api";
+import { LABELS, type Project, type Task } from "@percussionist/api";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { setPaused, getPauseStatus } from "../reconciler.js";
+import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-manager-agent";
@@ -189,7 +191,7 @@ const TOOLS = [
   {
     name: "force_retry",
     description:
-      "Clean up all terminal-phase runs for a board task, reset the board state, and create a fresh run. Use when a task is stuck after infrastructure issues.",
+      "Clean up all terminal-phase runs for a board task, reset the board state, and create a fresh run. Use when a task is stuck after infrastructure issues. Supports agent/model overrides to retry with a different agent without a multi-step workaround.",
     inputSchema: {
       type: "object",
       properties: {
@@ -198,6 +200,14 @@ const TOOLS = [
         createRun: {
           type: "boolean",
           description: "Create a fresh run immediately (default: true)",
+        },
+        agent: {
+          type: "string",
+          description: "Override the agent for the new run (e.g. 'meta-reviewer')",
+        },
+        model: {
+          type: "string",
+          description: "Override the model for the new run",
         },
         namespace: {
           type: "string",
@@ -234,7 +244,7 @@ const TOOLS = [
   {
     name: "set_task_state",
     description:
-      "Atomically transition a board task to a target state. Cleans up terminal-phase runs, optionally cancels running runs, moves the task in the backlog, and updates the worker entry in a single patch. This avoids race conditions with the manager's reconciliation loop.",
+      "Atomically transition a board task to a target state. Cleans up terminal-phase runs (unless preserveRuns is true), optionally cancels running runs, moves the task in the backlog, and updates the worker entry in a single patch. This avoids race conditions with the manager's reconciliation loop.",
     inputSchema: {
       type: "object",
       properties: {
@@ -248,6 +258,10 @@ const TOOLS = [
         cancelRunning: {
           type: "boolean",
           description: "Delete any active (Running/Pending) runs for this task (default: false)",
+        },
+        preserveRuns: {
+          type: "boolean",
+          description: "Skip run deletion entirely — only update the task column. Useful when you need to preserve completed run data (e.g. session snapshots) for later reading. (default: false)",
         },
         namespace: {
           type: "string",
@@ -320,6 +334,31 @@ const TOOLS = [
       properties: {},
     },
   },
+  {
+    name: "exec_in_workspace",
+    description:
+      "Run a shell command inside a project's data volume by spawning a short-lived maintenance pod. Useful for git mirror cleanup, worktree pruning, disk inspection, or any workspace maintenance. The pod mounts the project's data PVC at the given mountPath (default: /data) and runs the command via /bin/sh -c. Returns stdout and the exit code. The pod is deleted after the command completes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (used to find the data PVC: {project}-data)" },
+        command: { type: "string", description: "Shell command to run, e.g. 'git -C /data/git-mirrors/abc123 worktree prune && rm -rf /data/worktrees/stale-run'" },
+        mountPath: {
+          type: "string",
+          description: "Mount path for the data PVC inside the pod (default: /data)",
+        },
+        timeoutSeconds: {
+          type: "number",
+          description: "Maximum seconds to wait for the pod to complete (default: 120)",
+        },
+        namespace: {
+          type: "string",
+          description: "Namespace (optional, defaults to percussionist)",
+        },
+      },
+      required: ["project", "command"],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -360,6 +399,68 @@ function readBody(req: IncomingMessage): Promise<string> {
 // Tool implementations
 
 const ns = MANAGER_NAMESPACE;
+
+async function listProjectTasks(projectName: string, resourceNs: string): Promise<Task[]> {
+  return listTasks(projectName, resourceNs);
+}
+
+function workerBranchPatch(project: Project, task: Task, allTasks: Task[]) {
+  const gitBranch = resolveTaskBranch(task, project, allTasks);
+  const parentBranch = resolveParentBranch(task, project, allTasks);
+  const mergeIntoBranch = resolveMergeBranch(task, project, allTasks);
+  return {
+    branch: gitBranch ?? `feat/${task.metadata.name}`,
+    gitBranch,
+    parentBranch,
+    mergeIntoBranch,
+  };
+}
+
+async function cleanupRunWorktree(projectName: string, runName: string, resourceNs: string): Promise<void> {
+  const project = await getProject(projectName, resourceNs);
+  const gitUrl = project.spec.source?.git?.url;
+  if (!gitUrl) return;
+  const mountPath = project.spec.data?.mountPath ?? "/data";
+  const hash = (() => {
+    let h = 5381;
+    for (let i = 0; i < gitUrl.length; i++) h = ((h << 5) + h + gitUrl.charCodeAt(i)) >>> 0;
+    return h.toString(16).padStart(8, "0");
+  })();
+  const quotedRun = runName.replace(/'/g, "'\\''");
+  await execInWorkspace(
+    projectName,
+    `rm -rf '${mountPath}/worktrees/${quotedRun}'; if command -v git >/dev/null 2>&1 && [ -d '${mountPath}/git-mirrors/${hash}' ]; then git -C '${mountPath}/git-mirrors/${hash}' worktree prune --expire=now || true; fi`,
+    mountPath,
+    120_000,
+    resourceNs,
+  ).catch(() => { /* best effort */ });
+}
+
+async function deleteRunsForTask(
+  projectName: string,
+  taskName: string,
+  resourceNs: string,
+  opts: { includeActive?: boolean; includeUnknown?: boolean } = {},
+): Promise<string[]> {
+  const allRuns = await listRuns(resourceNs);
+  const taskRuns = allRuns.filter((r) => {
+    const labels = r.metadata.labels ?? {};
+    return labels[LABELS.projectName] === projectName && labels[LABELS.taskId] === taskName;
+  });
+  const deletedNames: string[] = [];
+  for (const run of taskRuns) {
+    const name = run.metadata.name!;
+    const phase = run.status?.phase;
+    const terminal = phase === "Succeeded" || phase === "Failed" || phase === "Cancelled";
+    const active = phase === "Pending" || phase === "Initializing" || phase === "Running" || phase === "WaitingForInput";
+    if (terminal || (opts.includeUnknown && !phase) || (opts.includeActive && active)) {
+      await deleteRun(name, resourceNs);
+      await cleanupRunWorktree(projectName, name, resourceNs);
+      deletedNames.push(name);
+    }
+  }
+  return deletedNames;
+}
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   switch (name) {
@@ -551,6 +652,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
       const project = await getProject(projectName, resourceNs);
       const task = await getTask(taskName, resourceNs);
+      const projectTasks = await listProjectTasks(projectName, resourceNs);
 
       const currentColumn = task.status?.column ?? "ready";
       if (currentColumn !== "ready") {
@@ -563,9 +665,21 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         : (existingWorker?.retryCount ?? 0);
 
       const runName = workerRunName(projectName, taskName, retryCount);
-      const workerRun = buildWorkerRun(project, task, runName, retryCount, reworkFeedback);
+      const workerRun = buildWorkerRun(project, task, runName, retryCount, reworkFeedback, projectTasks);
       if (agentOverride) workerRun.spec.agent = agentOverride;
       if (modelOverride) workerRun.spec.model = modelOverride;
+
+      await patchTaskStatus(taskName, {
+        column: "in-progress",
+        worker: {
+          ...(existingWorker ?? {}),
+          runName,
+          status: "Running",
+          ...workerBranchPatch(project, task, projectTasks),
+          retryCount,
+          facilitated: false,
+        },
+      }, resourceNs);
 
       try {
         await createRun(workerRun, resourceNs);
@@ -576,27 +690,16 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
           const phase = existing.status?.phase;
           if (phase === "Failed" || phase === "Cancelled") {
             await deleteRun(runName, resourceNs);
+            await cleanupRunWorktree(projectName, runName, resourceNs);
             await createRun(workerRun, resourceNs);
           } else {
             throw new Error(`Run ${runName} already exists (phase: ${phase})`);
           }
         } else {
+          await patchTaskStatus(taskName, { column: "ready" }, resourceNs).catch(() => { /* best effort */ });
           throw e;
         }
       }
-
-      // Update task status atomically.
-      await patchTaskStatus(taskName, {
-        column: "in-progress",
-        worker: {
-          ...(existingWorker ?? {}),
-          runName,
-          status: "Running",
-          branch: `feat/${taskName}`,
-          retryCount,
-          facilitated: false,
-        },
-      }, resourceNs);
 
       return { runName, project: projectName, task: taskName, phase: "Created", namespace: resourceNs };
     }
@@ -605,30 +708,34 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const projectName = String(args.project ?? "");
       const taskName = String(args.task ?? "");
       const shouldCreate = args.createRun !== false;
+      const agentOverride = args.agent ? String(args.agent) : undefined;
+      const modelOverride = args.model ? String(args.model) : undefined;
       const resourceNs = String(args.namespace ?? ns);
-
-      const allRuns = await listRuns(resourceNs);
-      const taskRuns = allRuns.filter((r) => {
-        const labels = r.metadata.labels ?? {};
-        return labels[LABELS.projectName] === projectName && labels[LABELS.taskId] === taskName;
-      });
-
-      const terminalPhases = new Set(["Succeeded", "Failed", "Cancelled"]);
-      const terminalRuns = taskRuns.filter((r) => r.status?.phase && terminalPhases.has(r.status.phase));
-      const deletedNames: string[] = [];
-      for (const run of terminalRuns) {
-        const name = run.metadata.name!;
-        await deleteRun(name, resourceNs);
-        deletedNames.push(name);
-      }
 
       const project = await getProject(projectName, resourceNs);
       const task = await getTask(taskName, resourceNs);
+      const projectTasks = await listProjectTasks(projectName, resourceNs);
+      const deletedNames = await deleteRunsForTask(projectName, taskName, resourceNs, { includeActive: true, includeUnknown: true });
 
       let createdRunName: string | undefined;
+      const existingRetryCount = task.status?.worker?.retryCount ?? 0;
+      const retryCount = existingRetryCount + 1;
       if (shouldCreate) {
-        const runName = workerRunName(projectName, taskName, 0);
-        const workerRun = buildWorkerRun(project, task, runName, 0);
+        const runName = workerRunName(projectName, taskName, retryCount);
+        const workerRun = buildWorkerRun(project, task, runName, retryCount, undefined, projectTasks);
+        if (agentOverride) workerRun.spec.agent = agentOverride;
+        if (modelOverride) workerRun.spec.model = modelOverride;
+
+        await patchTaskStatus(taskName, {
+          column: "in-progress",
+          worker: {
+            runName,
+            status: "Running",
+            ...workerBranchPatch(project, task, projectTasks),
+            retryCount,
+            facilitated: false,
+          },
+        }, resourceNs);
 
         try {
           await createRun(workerRun, resourceNs);
@@ -639,31 +746,29 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
             const phase = existing.status?.phase;
             if (phase === "Failed" || phase === "Cancelled") {
               await deleteRun(runName, resourceNs);
+              await cleanupRunWorktree(projectName, runName, resourceNs);
               await createRun(workerRun, resourceNs);
             } else {
               throw new Error(`Run ${runName} already exists (phase: ${phase})`);
             }
           } else {
+            await patchTaskStatus(taskName, { column: "ready" }, resourceNs).catch(() => { /* best effort */ });
             throw e;
           }
         }
 
-        // Reset task to in-progress with fresh worker.
-        await patchTaskStatus(taskName, {
-          column: "in-progress",
-          worker: {
-            runName,
-            status: "Running",
-            branch: `feat/${taskName}`,
-            retryCount: 0,
-            facilitated: false,
-          },
-        }, resourceNs);
-
         createdRunName = runName;
       } else {
         // No run creation — reset to ready.
-        await patchTaskStatus(taskName, { column: "ready" }, resourceNs);
+        await patchTaskStatus(taskName, {
+          column: "ready",
+          worker: {
+            ...(task.status?.worker ?? { status: "Failed", retryCount: 0, facilitated: false }),
+            status: "Failed",
+            runName: undefined,
+            retryCount,
+          },
+        }, resourceNs);
       }
 
       return {
@@ -767,6 +872,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const taskName = String(args.task ?? "");
       const targetColumn = String(args.targetColumn ?? "");
       const cancelRunning = args.cancelRunning === true;
+      const preserveRuns = args.preserveRuns === true;
       const resourceNs = String(args.namespace ?? ns);
 
       const validColumns = ["ready", "in-progress", "review", "rework", "done", "blocked"];
@@ -775,26 +881,12 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       }
 
       const task = await getTask(taskName, resourceNs);
-      void projectName;
+      const project = await getProject(projectName, resourceNs);
+      const projectTasks = await listProjectTasks(projectName, resourceNs);
 
-      const allRuns = await listRuns(resourceNs);
-      const taskRuns = allRuns.filter((r) => {
-        const labels = r.metadata.labels ?? {};
-        return labels[LABELS.taskId] === taskName;
-      });
-
-      const deletedRuns: string[] = [];
-      for (const run of taskRuns) {
-        const name = run.metadata.name!;
-        const phase = run.status?.phase;
-        if (!phase || phase === "Succeeded" || phase === "Failed" || phase === "Cancelled") {
-          await deleteRun(name, resourceNs);
-          deletedRuns.push(name);
-        } else if (cancelRunning && (phase === "Running" || phase === "Pending")) {
-          await deleteRun(name, resourceNs);
-          deletedRuns.push(name);
-        }
-      }
+      const deletedRuns = preserveRuns
+        ? []
+        : await deleteRunsForTask(projectName, taskName, resourceNs, { includeActive: cancelRunning, includeUnknown: true });
 
       const existingWorker = task.status?.worker;
       let workerCleared = true;
@@ -806,12 +898,31 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
             ...(existingWorker ?? {}),
             runName: undefined,
             status: "Running",
-            branch: `feat/${taskName}`,
+            ...workerBranchPatch(project, task, projectTasks),
             retryCount,
             facilitated: false,
           },
         }, resourceNs);
         workerCleared = false;
+      } else if (targetColumn === "done") {
+        await patchTaskStatus(taskName, {
+          column: "done",
+          worker: {
+            ...(existingWorker ?? { retryCount: 0, facilitated: false }),
+            status: "Succeeded",
+            runName: undefined,
+            completedAt: new Date().toISOString(),
+          },
+        }, resourceNs);
+        workerCleared = false;
+      } else if (targetColumn === "ready" || targetColumn === "rework") {
+        await patchTaskStatus(taskName, {
+          column: targetColumn,
+          worker: existingWorker
+            ? { ...existingWorker, status: "Failed", runName: undefined }
+            : undefined,
+        }, resourceNs);
+        workerCleared = !existingWorker;
       } else {
         await patchTaskStatus(taskName, { column: targetColumn as "ready" | "review" | "rework" | "done" | "blocked" }, resourceNs);
       }
@@ -822,6 +933,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         targetColumn,
         deletedRuns,
         workerCleared,
+        preserveRuns,
       };
     }
 
@@ -903,6 +1015,25 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         paused: pauseInfo.paused,
         elapsedMs: pauseInfo.elapsedMs,
         lastReconcile: new Date().toISOString(),
+      };
+    }
+
+    case "exec_in_workspace": {
+      const projectName = String(args.project ?? "");
+      const command = String(args.command ?? "");
+      const mountPath = args.mountPath ? String(args.mountPath) : "/data";
+      const timeoutMs = args.timeoutSeconds ? Number(args.timeoutSeconds) * 1000 : 120_000;
+      const resourceNs = String(args.namespace ?? ns);
+
+      if (!command) throw new Error("command is required");
+
+      const result = await execInWorkspace(projectName, command, mountPath, timeoutMs, resourceNs);
+      return {
+        project: projectName,
+        podName: result.podName,
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        succeeded: result.exitCode === 0,
       };
     }
 
