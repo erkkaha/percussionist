@@ -18,6 +18,7 @@ import {
   resolveRunConfig,
 } from "@percussionist/api";
 import { fetchSessionMessages, readPodLog, core } from "@percussionist/kube";
+import { resolveParentBranch, resolveTaskBranch } from "./branch-resolver.js";
 
 const DEFAULT_FACILITATOR_AGENT_NAME = "facilitator";
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
@@ -31,6 +32,7 @@ export function buildFacilitationRun(
   sessionSummary: string,
   runName: string,
   facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
+  allTasks: Task[] = [],
 ): Run {
   const resolved = resolveRunConfig(project.spec);
 
@@ -82,6 +84,7 @@ export function buildFacilitationRun(
     promptLines,
     resolved,
     facilitatorAgentName,
+    allTasks,
   );
 }
 
@@ -95,6 +98,7 @@ export function buildSuccessReviewRun(
   runName: string,
   branchName?: string,
   facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
+  allTasks: Task[] = [],
 ): Run {
   const resolved = resolveRunConfig(project.spec);
 
@@ -116,6 +120,8 @@ export function buildSuccessReviewRun(
 
   const taskTypeLabel = task.spec.type ? `TASK TYPE: ${task.spec.type}` : "";
   const isBuildTask = task.spec.type === "BUILD";
+  const isPlanTask = task.spec.type === "PLAN";
+  const planPath = `.percussionist/plans/${task.metadata.name}.md`;
 
   const promptLines = [
     `You are a reviewer agent that checks whether a completed worker run actually fulfilled its task.`,
@@ -136,6 +142,15 @@ export function buildSuccessReviewRun(
           `If the completion message is missing or unclear, use request_changes.`,
           "",
         ]
+      : isPlanTask
+        ? [
+            `This is a PLAN task. Do not review code implementation quality.`,
+            `Review the plan artifact at ${planPath}.`,
+            `Approve only if the plan file exists and contains enough context to generate BUILD tasks: scope, assumptions, risks, acceptance criteria, and a concrete implementation breakdown.`,
+            `Use request_changes if the plan artifact is missing, vague, or lacks enough context for builders.`,
+            `Use escalate only for cases that require human judgment beyond improving the plan artifact.`,
+            "",
+          ]
       : [
           `The COMPLETION MESSAGE above summarizes what the worker accomplished.`,
           `Check the completion message and session data to verify the task was completed.`,
@@ -143,6 +158,14 @@ export function buildSuccessReviewRun(
         ]),
     `RECENT SESSION MESSAGES:`,
     sessionSummary || "(none available)",
+    "",
+    ...(isPlanTask
+      ? [
+          `PLAN ARTIFACT PATH: ${planPath}`,
+          `Use workspace file access to inspect this file on branch ${branch}.`,
+          "",
+        ]
+      : []),
     "",
     ...(alternativeAgents.length > 0
       ? [
@@ -172,6 +195,7 @@ export function buildSuccessReviewRun(
     promptLines,
     resolved,
     facilitatorAgentName,
+    allTasks,
   );
 }
 
@@ -182,6 +206,7 @@ export function buildBuildTaskGeneratorRun(
   succeededRunName: string,
   runName: string,
   facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
+  allTasks: Task[] = [],
 ): Run {
   const resolved = resolveRunConfig(project.spec);
 
@@ -203,12 +228,13 @@ export function buildBuildTaskGeneratorRun(
     `PLAN TASK: ${planTask.metadata.name} — ${planTask.spec.title}`,
     `PLAN DESCRIPTION: ${planTask.spec.description ?? "(none)"}`,
     `PLAN WORKER RUN: ${succeededRunName}`,
+    `PLAN ARTIFACT: .percussionist/plans/${planTask.metadata.name}.md`,
     "",
-    `The PLAN task has been approved by a human reviewer. Your job is to analyze the complete session`,
-    `from the PLAN worker run and generate a list of BUILD tasks that implement the plan.`,
+    `The PLAN task has been approved by a human reviewer. Your job is to read the plan artifact`,
+    `and generate a list of BUILD tasks that implement the plan. Use session history only as fallback context.`,
     "",
-    `Use your tools to fetch the full session from run: ${succeededRunName}`,
-    `Review the complete session carefully to understand what was planned.`,
+    `Read .percussionist/plans/${planTask.metadata.name}.md from the workspace first.`,
+    `If the plan artifact is missing or unusable, return an empty array: [] so the PLAN escalates for manual BUILD task creation.`,
     "",
     ...(availableAgents.length > 0
       ? [
@@ -222,7 +248,7 @@ export function buildBuildTaskGeneratorRun(
     JSON.stringify([
       {
         title: "(short title for this BUILD task)",
-        description: "(detailed description with context from PLAN session)",
+        description: "(detailed description including the relevant slice plus full-plan context from .percussionist/plans/<plan-task>.md)",
         agent: "(optional: name from AVAILABLE AGENTS list, defaults to 'builder')",
         priority: "(optional: 'high' | 'medium' | 'low', defaults to 'medium')",
         predecessorIndex: "(optional: 0-based index of the task in this array that must complete first, or omit/null if independent)",
@@ -232,7 +258,12 @@ export function buildBuildTaskGeneratorRun(
     `Requirements:`,
     `- Each BUILD task should be concrete and actionable — one logical concern per task (roughly 1-4 hours of work)`,
     `- Split large PLAN items into multiple smaller BUILD tasks`,
-    `- Include relevant context from the PLAN session in each description`,
+    `- Include relevant local task instructions AND enough full-plan context that the build agent understands the larger feature`,
+    `- Explicitly mention the plan artifact path in each BUILD task description`,
+    `- Do not create standalone audit/research tasks that only document findings unless a later task explicitly consumes a named repo artifact produced by that task`,
+    `- Prefer combining discovery with the implementation task that uses the discoveries`,
+    `- If a discovery task is genuinely necessary, require it to write a specific repo file such as .percussionist/findings/{task-id}.md and require every dependent task to read that exact file`,
+    `- Do not use predecessorIndex merely to sequence vague context handoff; use it only when the predecessor produces code changes or a named artifact that the successor task description explicitly references`,
     `- Tasks that are independent MUST omit predecessorIndex so they run in parallel`,
     `- Only set predecessorIndex when a task genuinely cannot start until another is done (imports code it creates, migrates schema it defines, etc.)`,
     `- predecessorIndex must be a 0-based index strictly less than the task's own index (no forward references, no cycles)`,
@@ -248,6 +279,7 @@ export function buildBuildTaskGeneratorRun(
     promptLines,
     resolved,
     facilitatorAgentName,
+    allTasks,
   );
 }
 
@@ -260,7 +292,27 @@ function buildFacilitatorRun(
   promptLines: string,
   resolved: ReturnType<typeof resolveRunConfig>,
   facilitatorAgentName: string,
+  allTasks: Task[] = [],
 ): Run {
+  const source = resolved.source
+    ? { ...resolved.source, ...(resolved.source.git ? { git: { ...resolved.source.git } } : {}) }
+    : undefined;
+  const data = resolved.data ? { ...resolved.data, mountPath: resolved.data.mountPath ?? "/data" } : undefined;
+  const gitCache = resolved.gitCache ? { worktreeReuse: resolved.gitCache.worktreeReuse ?? true } : undefined;
+  if (source?.git) {
+    let gitBranch: string | undefined;
+    let parentBranch: string | undefined;
+    try {
+      gitBranch = resolveTaskBranch(task, project, allTasks);
+      parentBranch = resolveParentBranch(task, project, allTasks);
+    } catch {
+      gitBranch = task.status?.worker?.gitBranch ?? source.git.ref;
+      parentBranch = task.status?.worker?.parentBranch ?? source.git.parentRef;
+    }
+    if (gitBranch) source.git = { ...source.git, ref: gitBranch };
+    if (parentBranch) source.git = { ...source.git, parentRef: parentBranch };
+  }
+
   return {
     apiVersion: API_GROUP_VERSION,
     kind: KIND_RUN,
@@ -298,6 +350,9 @@ function buildFacilitatorRun(
       facilitation: facilitationSpec,
       ...(resolved.resources ? { resources: resolved.resources } : {}),
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
+      ...(source ? { source } : {}),
+      ...(data ? { data } : {}),
+      ...(gitCache ? { gitCache } : {}),
       ...(resolved.sidecars?.length ? { sidecars: resolved.sidecars } : {}),
       ...(resolved.initScript ? { initScript: resolved.initScript } : {}),
     },

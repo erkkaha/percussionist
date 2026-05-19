@@ -2,7 +2,7 @@
 //
 // When featureBranchingEnabled: true, tasks work on isolated feature branches:
 //   - PLAN tasks: feature/{plan-task-id}
-//   - BUILD tasks (with parent): feature/{plan-task-id}/{build-task-id}
+//   - BUILD tasks (with parent): feature/{plan-task-id}--{build-task-id}
 //   - Standalone BUILD tasks: feature/{build-task-id}
 
 import type { Task, Project } from "@percussionist/api";
@@ -35,7 +35,9 @@ export function resolveTaskBranch(
     return `feature/${taskName}`;
   }
 
-  // BUILD task with parent PLAN: feature/{plan-task-id}/{build-task-id}
+  // BUILD task with parent PLAN. Do not use `${parentBranch}/${taskName}`:
+  // Git refs are path-like, so refs/heads/feature/plan and
+  // refs/heads/feature/plan/build cannot coexist.
   if (task.spec.type === "BUILD" && task.spec.parentTaskRef) {
     const parentPlan = allTasks.find(
       (t) => t.metadata.name === task.spec.parentTaskRef
@@ -51,7 +53,7 @@ export function resolveTaskBranch(
         `Parent PLAN ${task.spec.parentTaskRef} has no branch (feature branching disabled?)`
       );
     }
-    return `${parentBranch}/${taskName}`;
+    return `${parentBranch}--${taskName}`;
   }
 
   // Standalone BUILD task: feature/{build-task-id}

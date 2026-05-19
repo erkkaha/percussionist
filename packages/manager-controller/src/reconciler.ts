@@ -338,6 +338,10 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
     const worker = task.status!.worker!;
     const runName = worker.runName!;
 
+    if (worker.status === "Succeeded" && task.status?.column !== "in-progress") {
+      continue;
+    }
+
     try {
       const run = await getRun(runName, ns, k8s);
       const runPhase = run.status?.phase;
@@ -379,7 +383,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
           const reviewRunName = auxiliaryRunName(projectName, "review", taskName, randomBytes(3).toString("hex"));
           const reviewRun = buildSuccessReviewRun(
             fresh, task, runName, run.status ?? {}, sessionSummary,
-            reviewRunName, worker.branch, REVIEW_FACILITATOR_AGENT,
+            reviewRunName, worker.branch, REVIEW_FACILITATOR_AGENT, freshTasks,
           );
 
           try {
@@ -402,7 +406,25 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
           let reviewRun: Awaited<ReturnType<typeof getRun>> | null = null;
           try {
             reviewRun = await getRun(worker.reviewRunName, ns, k8s);
-          } catch { /* not found yet */ }
+          } catch {
+            if (worker.reviewApproved) {
+              await patchWorker(taskName, { reviewRunName: undefined }, worker, ns);
+              await moveTaskColumn(taskName, "review", ns);
+              await patchProject(projectName, {
+                metadata: {
+                  annotations: {
+                    [`percussionist.dev/approved-${taskName}`]: "false",
+                    [`percussionist.dev/request-changes-${taskName}`]: "false",
+                  },
+                },
+              }, ns, k8s).catch((e) => {
+                err(`failed to clear stale review annotations for ${taskName}:`, (e as Error).message);
+              });
+              log(`review run ${worker.reviewRunName} missing but already approved — ${taskName} moved to review`);
+              emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "review", reason: "missing-review-run-approved" });
+            }
+            continue;
+          }
 
           let result: FacilitationResult | null = null;
           try {
@@ -576,7 +598,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
           const facilitationRunName = auxiliaryRunName(projectName, "facilitator", taskName, randomBytes(3).toString("hex"));
           const facilitationRun = buildFacilitationRun(
             fresh, task, runName, run.status ?? {}, sessionSummary,
-            facilitationRunName, FAILURE_FACILITATOR_AGENT,
+            facilitationRunName, FAILURE_FACILITATOR_AGENT, freshTasks,
           );
 
           try {
@@ -619,10 +641,21 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
 
           if (result) {
             if (result.recommendedAction === "retry_same") {
-              await cleanupWorktree(task, runName, cleanupProject, ns);
-              await patchWorker(taskName, { retryCount: (worker.retryCount ?? 0) + 1, status: "Running", facilitated: true, facilitationResult: result }, worker, ns);
-              await moveTaskColumn(taskName, "ready", ns);
-              emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "ready", reason: "facilitator-retry-same" });
+              if ((worker.retryCount ?? 0) < MAX_RETRIES) {
+                await cleanupWorktree(task, runName, cleanupProject, ns);
+                await patchWorker(taskName, { retryCount: (worker.retryCount ?? 0) + 1, status: "Running", facilitated: true, facilitationResult: result }, worker, ns);
+                await moveTaskColumn(taskName, "ready", ns);
+                emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "ready", reason: "facilitator-retry-same" });
+              } else {
+                await patchWorker(taskName, {
+                  status: "Escalated",
+                  completedAt: new Date().toISOString(),
+                  escalation: `Task: ${taskName}\nWorker: ${runName}\nFacilitator recommended retry_same, but retries are exhausted (${MAX_RETRIES}).\nDiagnosis: ${result.diagnosis}`,
+                  facilitationResult: result,
+                }, worker, ns);
+                await moveTaskColumn(taskName, "review", ns);
+                emitEvent(projectName, taskName, task.spec.type, "escalated", { retryCount: worker.retryCount ?? 0, reason: "facilitator-retry-same-retries-exhausted" });
+              }
             } else if (result.recommendedAction === "retry_alternative" && result.alternativeAgent) {
               const teamNames = (fresh.spec.agents ?? []).map((a) => a.name);
               if (teamNames.includes(result.alternativeAgent)) {
@@ -989,7 +1022,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
       if (!worker?.buildTasksFacilitatorRun) {
         const buildGenRunName = auxiliaryRunName(projectName, "build-gen", taskName, randomBytes(3).toString("hex"));
         const buildGenRun = buildBuildTaskGeneratorRun(
-          fresh, task, worker?.runName ?? "", buildGenRunName, BUILDGEN_FACILITATOR_AGENT,
+          fresh, task, worker?.runName ?? "", buildGenRunName, BUILDGEN_FACILITATOR_AGENT, freshTasks,
         );
         try {
           await createRun(buildGenRun, ns, k8s);
@@ -1035,6 +1068,14 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
               const def = buildTaskDefs[i];
               if (!def) continue;
               const buildTaskName = buildTaskNames[i]!;
+              const planPath = `.percussionist/plans/${taskName}.md`;
+              const buildDescription = [
+                def.description,
+                "",
+                "PLAN CONTEXT:",
+                `Read ${planPath} before implementing. This BUILD task is one slice of that approved plan; preserve the full-plan context, acceptance criteria, risks, and sequencing notes while working.`,
+                "If this task depends on a predecessor, read the predecessor's merged code changes and any named repo artifact explicitly referenced in this description. Do not assume informal handoff outside repo state.",
+              ].filter(Boolean).join("\n");
               const predecessorRef =
                 typeof def.predecessorIndex === "number" && def.predecessorIndex >= 0 && def.predecessorIndex < i
                   ? buildTaskNames[def.predecessorIndex]
@@ -1049,7 +1090,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
                   projectRef: projectName,
                   type: "BUILD",
                   title: def.title,
-                  description: def.description,
+                  description: buildDescription,
                   agent: def.agent ?? "builder",
                   priority: def.priority ?? "medium",
                   parentTaskRef: taskName,
@@ -1058,6 +1099,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
               });
               try {
                 await createTask(newTask, ns);
+                await patchTaskStatus(buildTaskName, { column: "ready", phase: "Pending" }, ns);
                 log(`created BUILD task CR ${buildTaskName} from PLAN ${taskName}${predecessorRef ? ` (after ${predecessorRef})` : ""}`);
               } catch (e) {
                 err(`failed to create BUILD task ${buildTaskName}:`, (e as Error).message);
@@ -1068,7 +1110,6 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
               createdBuildTaskRefs: createdRefs,
             }, worker, ns);
             await moveTaskColumn(taskName, "done", ns);
-            await cleanupTaskWorktrees(task, cleanupProject, ns);
             log(`created ${createdRefs.length} BUILD task CRs from PLAN ${taskName}`);
             emitEvent(projectName, taskName, task.spec.type, "merged", { buildTaskCount: createdRefs.length, buildTasks: createdRefs });
           }
@@ -1101,6 +1142,14 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
                   const def = agentDefs[i];
                   if (!def) continue;
                   const buildTaskName = buildTaskNames[i]!;
+                  const planPath = `.percussionist/plans/${taskName}.md`;
+                  const buildDescription = [
+                    def.description,
+                    "",
+                    "PLAN CONTEXT:",
+                    `Read ${planPath} before implementing. This BUILD task is one slice of that approved plan; preserve the full-plan context, acceptance criteria, risks, and sequencing notes while working.`,
+                    "If this task depends on a predecessor, read the predecessor's merged code changes and any named repo artifact explicitly referenced in this description. Do not assume informal handoff outside repo state.",
+                  ].filter(Boolean).join("\n");
                   const predecessorRef =
                     typeof def.predecessorIndex === "number" && def.predecessorIndex >= 0 && def.predecessorIndex < i
                       ? buildTaskNames[def.predecessorIndex]
@@ -1115,7 +1164,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
                       projectRef: projectName,
                       type: "BUILD",
                       title: def.title,
-                      description: def.description,
+                      description: buildDescription,
                       agent: def.agent ?? "builder",
                       priority: (def.priority === "high" || def.priority === "low" ? def.priority : "medium") as "high" | "medium" | "low",
                       parentTaskRef: taskName,
@@ -1124,13 +1173,13 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
                   });
                   try {
                     await createTask(newTask, ns);
+                    await patchTaskStatus(buildTaskName, { column: "ready", phase: "Pending" }, ns);
                   } catch (e) {
                     err(`failed to create BUILD task ${buildTaskName}:`, (e as Error).message);
                   }
                 }
                 await patchWorker(taskName, { buildTasksCreated: true, createdBuildTaskRefs: createdRefs }, worker, ns);
                 await moveTaskColumn(taskName, "done", ns);
-                await cleanupTaskWorktrees(task, cleanupProject, ns);
                 log(`created ${createdRefs.length} BUILD tasks (via agent) from PLAN ${taskName}`);
                 continue;
               }

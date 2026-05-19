@@ -26,7 +26,7 @@ export function getTasksToPull(
   if (availableSlots <= 0) return [];
 
   const readyTasks = tasks
-    .filter((t) => t.status?.column === "ready")
+    .filter((t) => (t.status?.column ?? "ready") === "ready")
     .sort((a, b) => {
       // Priority order: high > medium > low
       const p = { high: 0, medium: 1, low: 2 };
@@ -43,7 +43,7 @@ export function getTasksToPull(
     // When feature branching is enabled, predecessor must also be merged.
     if (task.spec.type === "BUILD" && task.spec.predecessorRef) {
       const predecessor = taskByName.get(task.spec.predecessorRef);
-      if (!predecessor || predecessor.status?.column !== "done") {
+      if (!predecessor || (predecessor.status?.column ?? "ready") !== "done") {
         // Not ready yet — skip (leave as "ready", will be picked up after predecessor finishes).
         continue;
       }

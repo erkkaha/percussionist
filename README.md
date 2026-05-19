@@ -847,21 +847,21 @@ gitGraph
     checkout feature/plan-abc
     commit id: "plan work"
     
-    branch feature/plan-abc/build-001
-    checkout feature/plan-abc/build-001
+    branch feature/plan-abc--build-001
+    checkout feature/plan-abc--build-001
     commit id: "build-001 work"
     commit id: "build-001 complete"
     
     checkout feature/plan-abc
-    merge feature/plan-abc/build-001 tag: "build-001 merged"
+    merge feature/plan-abc--build-001 tag: "build-001 merged"
     
-    branch feature/plan-abc/build-002
-    checkout feature/plan-abc/build-002
+    branch feature/plan-abc--build-002
+    checkout feature/plan-abc--build-002
     commit id: "build-002 work"
     commit id: "build-002 complete"
     
     checkout feature/plan-abc
-    merge feature/plan-abc/build-002 tag: "build-002 merged"
+    merge feature/plan-abc--build-002 tag: "build-002 merged"
     
     checkout main
     commit id: "other work"
@@ -869,18 +869,21 @@ gitGraph
 
 **Branch naming:**
 - PLAN tasks: `feature/{plan-task-id}`
-- BUILD tasks (with parent PLAN): `feature/{plan-task-id}/{build-task-id}`
+- BUILD tasks (with parent PLAN): `feature/{plan-task-id}--{build-task-id}`
 - Standalone BUILD tasks: `feature/{build-task-id}`
 
 ### Workflow
 
 1. **PLAN task** works on `feature/plan-abc` (created from `main`)
+   - The planner must create `.percussionist/plans/{plan-task-id}.md` on the PLAN branch
+   - PLAN review evaluates that plan artifact, not code implementation output
    - Multiple runs (retries/rework) continue on same branch
    - PLAN branch persists after completion for manual merge later
 
 2. **BUILD tasks** created by approved PLAN
-   - Each BUILD gets nested branch: `feature/plan-abc/build-001`
+   - Each BUILD gets branch: `feature/plan-abc--build-001`
    - BUILD branches created from parent PLAN branch
+   - Each BUILD task description includes the plan artifact path and enough full-plan context for the builder
 
 3. **BUILD approval & merge**
    - On approval, merge run merges BUILD → parent PLAN branch

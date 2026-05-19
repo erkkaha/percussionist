@@ -62,6 +62,28 @@ export function buildWorkerRun(
   }
 
   const projectName = project.metadata.name;
+  const planPath = `.percussionist/plans/${taskName}.md`;
+
+  if (task.spec.type === "PLAN") {
+    promptLines.push(
+      "PLAN ARTIFACT REQUIREMENTS:",
+      `- Create or update ${planPath} in the repository.`,
+      "- The file is the authoritative PLAN output and will be reviewed by facilitator/human reviewers.",
+      "- Include implementation context, scope boundaries, risks, acceptance criteria, and proposed BUILD task breakdown.",
+      "- Commit and push the plan artifact on this task branch before completing the run.",
+      `- Mention ${planPath} in the completion summary.`,
+      "",
+    );
+  } else if (task.spec.type === "BUILD" && task.spec.parentTaskRef) {
+    const planPathForParent = `.percussionist/plans/${task.spec.parentTaskRef}.md`;
+    promptLines.push(
+      "PLAN CONTEXT:",
+      `- Read ${planPathForParent} before implementing.`,
+      "- Treat that PLAN artifact as the full feature context, even if this BUILD task covers only one slice.",
+      "- Keep your changes aligned with the plan's acceptance criteria and sequencing notes.",
+      "",
+    );
+  }
 
   // Feature branching: override git ref with task's branch.
   if (project.spec.featureBranchingEnabled && resolved.source?.git) {

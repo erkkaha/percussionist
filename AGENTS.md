@@ -70,14 +70,14 @@ of TypeScript packages under `packages/*`.
 
 ## Feature Branch Workflow (Optional)
 
-Projects can enable isolated feature branch development by setting `spec.featureBranchingEnabled: true`. This creates a nested branch structure that prevents worktree conflicts and enables incremental feature development.
+Projects can enable isolated feature branch development by setting `spec.featureBranchingEnabled: true`. This creates per-task feature branches that prevent worktree conflicts and enable incremental feature development.
 
 ### Branch Structure
 
 When enabled, tasks work on dedicated feature branches instead of `main`:
 
 - **PLAN tasks** work on: `feature/{plan-task-id}`
-- **BUILD tasks** (with parent PLAN) work on: `feature/{plan-task-id}/{build-task-id}`
+- **BUILD tasks** (with parent PLAN) work on: `feature/{plan-task-id}--{build-task-id}`
 - **Standalone BUILD tasks** work on: `feature/{build-task-id}`
 
 Each run gets its own worktree at `/data/worktrees/{run-name}/` checking out the task's branch.
@@ -87,12 +87,14 @@ Each run gets its own worktree at `/data/worktrees/{run-name}/` checking out the
 1. **PLAN Task Creation**
    - Task assigned branch `feature/plan-abc`
    - First run creates branch from `main`
+   - Planner must create `.percussionist/plans/{plan-task-id}.md`; PLAN review evaluates this artifact, not code implementation output
    - Subsequent runs (retries/rework) continue on same branch
    - PLAN branch persists after completion (for future manual merge to main)
 
 2. **BUILD Task Generation**
    - When PLAN is approved, BUILD tasks are created
-   - Each BUILD branches from parent: `feature/plan-abc/build-123`
+   - Build task generation reads `.percussionist/plans/{plan-task-id}.md` first and includes full-plan context plus the plan path in each BUILD task description
+   - Each BUILD branches from parent: `feature/plan-abc--build-123`
    - BUILD branches are created from the parent PLAN branch
 
 3. **BUILD Review & Merge**
