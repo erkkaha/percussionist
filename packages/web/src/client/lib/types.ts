@@ -94,6 +94,12 @@ export interface CreateProjectRequest {
   initScript?: string;
   /** Team roster: ClusterAgent names available to this project's tasks. */
   agents?: Array<{ name: string }>;
+  /** Maximum number of concurrently running tasks. */
+  maxParallel?: number;
+  /** Run timeout in seconds. */
+  timeoutSeconds?: number;
+  /** Enable per-task feature branches to prevent git mirror conflicts. */
+  featureBranchingEnabled?: boolean;
 }
 
 export interface CreateAgentRequest {

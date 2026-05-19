@@ -293,8 +293,19 @@ projects.put("/:name", async (c) => {
     // Project doesn't exist yet, proceed with empty existing spec
   }
 
-  // Merge existing spec with incoming spec (incoming takes precedence)
+  // Merge existing spec with incoming spec (incoming takes precedence).
+  // For sidecars: deep-merge by name so that fields the UI doesn't know about
+  // (e.g. securityContext.privileged, resources) are preserved from the existing
+  // spec when a matching sidecar name is found.
   const mergedSpec = { ...existingSpec, ...specBody2 };
+  if (Array.isArray((specBody2 as Record<string, unknown>).sidecars) && Array.isArray((existingSpec as Record<string, unknown>).sidecars)) {
+    const existingSidecars = (existingSpec as Record<string, unknown>).sidecars as Array<Record<string, unknown>>;
+    const incomingSidecars = (specBody2 as Record<string, unknown>).sidecars as Array<Record<string, unknown>>;
+    mergedSpec.sidecars = incomingSidecars.map((incoming) => {
+      const existing = existingSidecars.find((e) => e.name === incoming.name);
+      return existing ? { ...existing, ...incoming } : incoming;
+    });
+  }
 
   const parsed = ProjectSpecSchema.safeParse(mergedSpec);
   if (!parsed.success) {

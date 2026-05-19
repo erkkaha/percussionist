@@ -81,6 +81,15 @@ export default function CreateProjectForm({
     () => (initialSpec?.agents ?? []).map((a: { name: string }) => a.name),
   );
   const [rosterPickerValue, setRosterPickerValue] = useState("");
+  const [maxParallel, setMaxParallel] = useState<string>(
+    initialSpec?.maxParallel !== undefined ? String(initialSpec.maxParallel) : "",
+  );
+  const [timeoutSeconds, setTimeoutSeconds] = useState<string>(
+    initialSpec?.timeoutSeconds !== undefined ? String(initialSpec.timeoutSeconds) : "",
+  );
+  const [featureBranchingEnabled, setFeatureBranchingEnabled] = useState<boolean>(
+    initialSpec?.featureBranchingEnabled ?? false,
+  );
 
   // All ClusterAgents in cluster — used to populate the roster add dropdown.
   const { data: clusterAgents = [] } = useQuery({
@@ -224,6 +233,11 @@ export default function CreateProjectForm({
       .map((f) => ({ filename: f.filename.trim(), content: f.content }));
     // Always send agents (even empty) so server can clear roster on update.
     req.agents = rosterAgents.map((name) => ({ name }));
+    const parsedMaxParallel = maxParallel.trim() ? parseInt(maxParallel.trim(), 10) : NaN;
+    if (!isNaN(parsedMaxParallel) && parsedMaxParallel > 0) req.maxParallel = parsedMaxParallel;
+    const parsedTimeout = timeoutSeconds.trim() ? parseInt(timeoutSeconds.trim(), 10) : NaN;
+    if (!isNaN(parsedTimeout) && parsedTimeout > 0) req.timeoutSeconds = parsedTimeout;
+    req.featureBranchingEnabled = featureBranchingEnabled;
     mutation.mutate(req);
   }
 
@@ -410,6 +424,43 @@ export default function CreateProjectForm({
               placeholder="build"
               className={inputClass}
             />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">Max Parallel Tasks</label>
+            <input
+              type="number"
+              min={1}
+              value={maxParallel}
+              onChange={(e) => setMaxParallel(e.target.value)}
+              placeholder="2"
+              className={monoInputClass}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">Timeout (seconds)</label>
+            <input
+              type="number"
+              min={1}
+              value={timeoutSeconds}
+              onChange={(e) => setTimeoutSeconds(e.target.value)}
+              placeholder="3600"
+              className={monoInputClass}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">Feature Branching</label>
+            <label className="flex items-center gap-2 cursor-pointer h-9">
+              <input
+                type="checkbox"
+                checked={featureBranchingEnabled}
+                onChange={(e) => setFeatureBranchingEnabled(e.target.checked)}
+                className="rounded border-border"
+              />
+              <span className="text-sm text-text-muted">Enable per-task branches</span>
+            </label>
           </div>
         </div>
 
