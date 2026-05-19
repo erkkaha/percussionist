@@ -13,6 +13,7 @@ import {
   FacilitationSpec,
   Project,
   Run,
+  RunSpec,
   RunStatus,
   Task,
   resolveRunConfig,
@@ -82,6 +83,7 @@ export function buildFacilitationRun(
     promptLines,
     resolved,
     facilitatorAgentName,
+    undefined, // Failure facilitators don't need workspace access
   );
 }
 
@@ -116,6 +118,7 @@ export function buildSuccessReviewRun(
 
   const taskTypeLabel = task.spec.type ? `TASK TYPE: ${task.spec.type}` : "";
   const isBuildTask = task.spec.type === "BUILD";
+  const isPlanTask = task.spec.type === "PLAN";
 
   const promptLines = [
     `You are a reviewer agent that checks whether a completed worker run actually fulfilled its task.`,
@@ -136,11 +139,21 @@ export function buildSuccessReviewRun(
           `If the completion message is missing or unclear, use request_changes.`,
           "",
         ]
-      : [
-          `The COMPLETION MESSAGE above summarizes what the worker accomplished.`,
-          `Check the completion message and session data to verify the task was completed.`,
-          "",
-        ]),
+      : isPlanTask
+        ? [
+            `This is a PLAN task. The worker should have created a plan artifact and committed it to the repository.`,
+            `The plan artifact should exist at: .percussionist/plans/${task.metadata.name}.md`,
+            `Use workspace file access to inspect this file on branch ${branch}`,
+            `Verify that the plan artifact exists and contains adequate planning content (not just placeholder text).`,
+            `If the plan artifact exists with substantial content, approve the task.`,
+            `If the plan artifact is missing, empty, or inadequate, use request_changes.`,
+            "",
+          ]
+        : [
+            `The COMPLETION MESSAGE above summarizes what the worker accomplished.`,
+            `Check the completion message and session data to verify the task was completed.`,
+            "",
+          ]),
     `RECENT SESSION MESSAGES:`,
     sessionSummary || "(none available)",
     "",
@@ -172,6 +185,7 @@ export function buildSuccessReviewRun(
     promptLines,
     resolved,
     facilitatorAgentName,
+    branch, // Pass the branch so the reviewer can access the workspace on that branch
   );
 }
 
@@ -248,6 +262,7 @@ export function buildBuildTaskGeneratorRun(
     promptLines,
     resolved,
     facilitatorAgentName,
+    undefined, // Build task generators don't need workspace access
   );
 }
 
@@ -260,7 +275,16 @@ function buildFacilitatorRun(
   promptLines: string,
   resolved: ReturnType<typeof resolveRunConfig>,
   facilitatorAgentName: string,
+  gitBranch?: string,
 ): Run {
+  // For success review facilitators, clone the project source so the reviewer
+  // can inspect files (e.g., plan artifacts). Override the git ref to the
+  // worker's branch if provided.
+  const sourceConfig = resolved.source ? { ...resolved.source } : undefined;
+  if (sourceConfig?.git && gitBranch) {
+    sourceConfig.git = { ...sourceConfig.git, ref: gitBranch };
+  }
+
   return {
     apiVersion: API_GROUP_VERSION,
     kind: KIND_RUN,
@@ -298,9 +322,12 @@ function buildFacilitatorRun(
       facilitation: facilitationSpec,
       ...(resolved.resources ? { resources: resolved.resources } : {}),
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
+      ...(sourceConfig ? { source: sourceConfig } : {}),
       ...(resolved.sidecars?.length ? { sidecars: resolved.sidecars } : {}),
       ...(resolved.initScript ? { initScript: resolved.initScript } : {}),
-    },
+      ...(resolved.data ? { data: resolved.data } : {}),
+      ...(resolved.gitCache ? { gitCache: resolved.gitCache } : {}),
+    } as RunSpec,
   };
 }
 
