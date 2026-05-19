@@ -69,3 +69,7 @@ spec:
   # Larger PVC: git mirrors + pnpm store + Docker layer cache.
   data:
     storageClass: standard
+
+  # Feature branching: each task works on its own branch to prevent
+  # git mirror fetch conflicts when multiple tasks run in parallel.
+  featureBranchingEnabled: true
