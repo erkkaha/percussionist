@@ -41,6 +41,7 @@ export default function AgentChatPanel() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const seenKeysRef = useRef<Set<string>>(new Set());
+  const speakEnabledRef = useRef(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
   const sttSupported = !!SpeechRecognitionAPI;
@@ -68,13 +69,14 @@ function sanitizeForSpeech(text: string): string {
     if (seenKeysRef.current.has(key)) return;
     seenKeysRef.current.add(key);
     setMessages((prev) => [...prev, msg]);
-    if (msg.role === "assistant") {
+    if (msg.role === "assistant" && speakEnabledRef.current) {
       setTimeout(() => speak(msg.text), 300);
     }
   }, [speak]);
 
   const resetSeen = useCallback(() => {
     seenKeysRef.current = new Set();
+    speakEnabledRef.current = false;
   }, []);
 
   const startRecording = useCallback(() => {
@@ -138,7 +140,10 @@ function sanitizeForSpeech(text: string): string {
         }
       })
       .catch(() => {})
-      .finally(() => setHistoryLoaded(true));
+      .finally(() => {
+        speakEnabledRef.current = true;
+        setHistoryLoaded(true);
+      });
   }, [open, resetSeen]);
 
   // SSE stream for real-time updates — only open after history is loaded to avoid race
@@ -287,7 +292,14 @@ function sanitizeForSpeech(text: string): string {
               )}
               <button
                 type="button"
-                onClick={() => setTtsEnabled((v) => !v)}
+                onClick={() => {
+                  setTtsEnabled((v) => {
+                    if (v && typeof window !== "undefined" && "speechSynthesis" in window) {
+                      window.speechSynthesis.cancel();
+                    }
+                    return !v;
+                  });
+                }}
                 className={`p-2 rounded-md transition-colors hover:bg-surface-raised ${
                   ttsEnabled ? "text-accent" : "text-text-dim"
                 }`}
