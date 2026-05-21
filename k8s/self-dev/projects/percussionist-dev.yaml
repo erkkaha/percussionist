@@ -16,7 +16,7 @@ metadata:
   labels:
     percussionist.dev/project-type: self-development
 spec:
-  displayName: "Percussionist Self-Development"
+  displayName: "Percussionist"
 
   source:
     git:
@@ -42,7 +42,7 @@ spec:
   # Single worker — increase when RWX storage is available.
   maxParallel: 1
 
-  model: github-copilot/claude-sonnet-4.5
+  model: lmstudio/qwen3.6-35b-a3b@q4_k_s
 
   secrets:
     authSecret:

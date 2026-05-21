@@ -845,6 +845,11 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
         );
         const updatedQs = [...existingQs, { workerId: taskName, sessionID, messageText }];
         await patchProjectStatus(projectName, { board: { pendingQuestions: updatedQs } }, ns);
+      } else if (runPhase === "Running") {
+        const runMessage = run.status?.message ?? "";
+        log(`run ${runName} is Running (${runMessage}) for task ${taskName} — monitoring`);
+      } else if (runPhase === "Initializing" || runPhase === "Pending") {
+        log(`run ${runName} is ${runPhase} for task ${taskName} — waiting`);
       }
     } catch (e) {
       const msg = (e as Error).message;

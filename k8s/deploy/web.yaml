@@ -90,14 +90,14 @@ roleRef:
   kind: Role
   name: percussionist-web
 ---
-# ClusterRole for cluster-scoped resources (ClusterAgents).
+# ClusterRole for cluster-scoped resources (ClusterAgents, ClusterSettings).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: percussionist-web-clusteragents
 rules:
   - apiGroups: ["percussionist.dev"]
-    resources: ["clusteragents"]
+    resources: ["clusteragents", "clustersettings"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
 ---
 # ClusterRole for node metrics (observability view).

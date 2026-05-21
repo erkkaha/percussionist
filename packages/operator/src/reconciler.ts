@@ -203,26 +203,49 @@ Do not use icons, emoji, or unnecessary special characters
 (asterisks, backticks, arrows, etc.) in your responses — they
 will be read aloud by text-to-speech and sound garbled.`;
 
-    // Build opencode.json for the manager sidecar. It always needs the MCP
-    // manager-agent entry; the rest (providers, skills) come from the config.
-    let runnerConfigJson = `{\n  "$schema": "https://opencode.ai/config.json",\n  "mcp": {\n    "manager-agent": {\n      "type": "remote",\n      "url": "http://127.0.0.1:4097/mcp",\n      "enabled": true\n    }\n  }`;
+    // Build opencode.json for the manager sidecar. It always needs the model
+    // (when set in ClusterSettings) and the MCP manager-agent entry; the rest
+    // (provider, skills) come from spec.runnerConfig.config or fall back to
+    // the existing opencode-config ConfigMap.
+    const runnerConfig: Record<string, unknown> = {
+      "$schema": "https://opencode.ai/config.json",
+      mcp: {
+        "manager-agent": {
+          type: "remote",
+          url: "http://127.0.0.1:4097/mcp",
+          enabled: true,
+        },
+      },
+    };
+    if (spec.manager.model) {
+      runnerConfig.model = spec.manager.model;
+    }
     if (spec.runnerConfig?.config) {
       try {
-        const parsed = JSON.parse(spec.runnerConfig?.config) as {
-          providers?: unknown;
-          skills?: unknown;
-        };
-        if (parsed.providers) {
-          runnerConfigJson += `,\n  "providers": ${JSON.stringify(parsed.providers)}`;
-        }
-        if (parsed.skills) {
-          runnerConfigJson += `,\n  "skills": ${JSON.stringify(parsed.skills)}`;
-        }
+        const parsed = JSON.parse(spec.runnerConfig.config) as Record<string, unknown>;
+        if (parsed.provider) runnerConfig.provider = parsed.provider;
+        if (parsed.skills) runnerConfig.skills = parsed.skills;
       } catch {
         // ignore parse errors — just use the minimal config
       }
+    } else {
+      // Fall back to reading provider/skills from the existing opencode-config CM.
+      try {
+        const cm = await core.readNamespacedConfigMap({
+          name: "opencode-config",
+          namespace: SELF_NAMESPACE,
+        });
+        const raw = cm.data?.["opencode.json"];
+        if (raw) {
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          if (parsed.provider) runnerConfig.provider = parsed.provider;
+          if (parsed.skills) runnerConfig.skills = parsed.skills;
+        }
+      } catch {
+        // CM doesn't exist — skip, leave runnerConfig as-is
+      }
     }
-    runnerConfigJson += `\n}`;
+    const runnerConfigJson = JSON.stringify(runnerConfig, null, 2);
 
     await upsertConfigMap(SELF_NAMESPACE, "agent-config", {
       "opencode.json": runnerConfigJson,
@@ -251,7 +274,16 @@ async function upsertConfigMap(
     });
   } catch (e) {
     if (/already exists/i.test((e as Error).message)) {
-      await core.replaceNamespacedConfigMap({ name, namespace: ns, body: { data } });
+      await core.replaceNamespacedConfigMap({
+        name,
+        namespace: ns,
+        body: {
+          apiVersion: "v1",
+          kind: "ConfigMap",
+          metadata: { name, namespace: ns },
+          data,
+        },
+      });
     } else {
       err(`upsertConfigMap(${ns}/${name}):`, (e as Error).message);
     }
