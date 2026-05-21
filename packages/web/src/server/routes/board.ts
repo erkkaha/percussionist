@@ -218,7 +218,7 @@ board.post("/:project/board/tasks", async (c) => {
     });
 
     const created = await createTask(task, ns);
-    await patchTaskStatus(taskName, { column: "ready" }, ns);
+    await patchTaskStatus(taskName, { column: "backlog" }, ns);
     await appendTaskEvent(name, taskName, type, "run.created", { title, agent, priority });
 
     return c.json({ task: created }, 201);

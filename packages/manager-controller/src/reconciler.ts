@@ -95,7 +95,7 @@ async function moveTaskColumn(
   ns: string,
 ): Promise<void> {
   try {
-    await patchTaskStatus(taskName, { column: column as "ready" | "in-progress" | "review" | "rework" | "done" | "blocked" }, ns);
+    await patchTaskStatus(taskName, { column: column as "backlog" | "ready" | "in-progress" | "review" | "rework" | "done" | "blocked" }, ns);
   } catch (e) {
     err(`moveTaskColumn(${taskName} → ${column}) failed:`, (e as Error).message);
   }
@@ -1025,9 +1025,23 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
       }
 
       if (!worker?.buildTasksFacilitatorRun) {
+        // Fetch session data from the PLAN worker run to include as context.
+        let planSessionSummary = "";
+        try {
+          const planRun = await getRun(worker?.runName ?? "", ns, k8s);
+          if (planRun?.status?.sessionID && planRun?.status?.serviceName) {
+            const sessionData = await fetchSessionMessages(planRun.status.serviceName, planRun.status.sessionID, ns);
+            if (sessionData && typeof sessionData === "object" && "messages" in sessionData) {
+              const msgs = (sessionData.messages as Array<{ content?: string }>)
+                .slice(-30).map((m) => m.content).filter(Boolean).join("\n");
+              planSessionSummary = msgs.slice(0, 10000);
+            }
+          }
+        } catch { /* best effort */ }
+
         const buildGenRunName = auxiliaryRunName(projectName, "build-gen", taskName, randomBytes(3).toString("hex"));
         const buildGenRun = buildBuildTaskGeneratorRun(
-          fresh, task, worker?.runName ?? "", buildGenRunName, BUILDGEN_FACILITATOR_AGENT, freshTasks,
+          fresh, task, worker?.runName ?? "", buildGenRunName, planSessionSummary, BUILDGEN_FACILITATOR_AGENT, freshTasks,
         );
         try {
           await createRun(buildGenRun, ns, k8s);

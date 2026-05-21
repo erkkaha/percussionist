@@ -196,7 +196,7 @@ function TaskCard({
   );
 }
 
-const DEFAULT_COLUMNS = ["blocked", "ready", "in-progress", "review", "rework", "done"];
+const DEFAULT_COLUMNS = ["backlog", "blocked", "ready", "in-progress", "review", "rework", "done"];
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;

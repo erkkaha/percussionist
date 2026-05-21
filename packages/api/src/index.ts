@@ -615,6 +615,7 @@ export type TaskType = (typeof TaskType)[keyof typeof TaskType];
 
 // Task column enum
 export const TaskColumn = {
+  Backlog: "backlog",
   Ready: "ready",
   InProgress: "in-progress",
   Review: "review",
@@ -858,8 +859,8 @@ export type TaskSpec = z.infer<typeof TaskSpecSchema>;
 export const TaskStatusSchema = z.object({
   // Kanban column.
   column: z
-    .enum(["ready", "in-progress", "review", "rework", "done", "blocked"])
-    .default("ready"),
+    .enum(["backlog", "ready", "in-progress", "review", "rework", "done", "blocked"])
+    .default("backlog"),
 
   // High-level phase for kubectl visibility.
   phase: z

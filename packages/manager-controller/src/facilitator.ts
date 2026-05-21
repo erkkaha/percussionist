@@ -205,6 +205,7 @@ export function buildBuildTaskGeneratorRun(
   planTask: Task,
   succeededRunName: string,
   runName: string,
+  sessionSummary: string,
   facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
   allTasks: Task[] = [],
 ): Run {
@@ -214,7 +215,7 @@ export function buildBuildTaskGeneratorRun(
     targetRunName: succeededRunName,
     targetTaskId: planTask.metadata.name,
     failureReason: "BUILD task generation from approved PLAN",
-    sessionSummary: "", // Facilitator will fetch full session using tools
+    sessionSummary: "", 
     successReview: false,
   };
 
@@ -224,17 +225,24 @@ export function buildBuildTaskGeneratorRun(
 
   const promptLines = [
     `You are a facilitator agent that breaks down approved PLAN tasks into concrete BUILD tasks.`,
+    `You do NOT implement code. You do NOT write, edit, or modify any files. You do NOT run git commands. You do NOT create pull requests. You do NOT explore the codebase. Your ONLY output is a JSON array of BUILD task definitions.`,
     "",
     `PLAN TASK: ${planTask.metadata.name} — ${planTask.spec.title}`,
     `PLAN DESCRIPTION: ${planTask.spec.description ?? "(none)"}`,
     `PLAN WORKER RUN: ${succeededRunName}`,
-    `PLAN ARTIFACT: .percussionist/plans/${planTask.metadata.name}.md`,
     "",
-    `The PLAN task has been approved by a human reviewer. Your job is to read the plan artifact`,
-    `and generate a list of BUILD tasks that implement the plan. Use session history only as fallback context.`,
+    `PLAN SESSION CONTEXT:`,
+    sessionSummary || "(none available — use the task description above)",
     "",
-    `Read .percussionist/plans/${planTask.metadata.name}.md from the workspace first.`,
-    `If the plan artifact is missing or unusable, return an empty array: [] so the PLAN escalates for manual BUILD task creation.`,
+    `PLAN ARTIFACT PATH: .percussionist/plans/${planTask.metadata.name}.md`,
+    "",
+    `The PLAN task has been approved by a human reviewer. Your job is to generate a list`,
+    `of BUILD tasks that implement the plan. Work ONLY from the task description and plan`,
+    `session context provided above. Do NOT read any workspace files. Do NOT explore the codebase.`,
+    `Do NOT run shell commands. Do NOT write or edit any files.`,
+    "",
+    `If the context above is insufficient to derive concrete BUILD tasks, return an empty array: []`,
+    `so the PLAN escalates for manual BUILD task creation.`,
     "",
     ...(availableAgents.length > 0
       ? [
@@ -248,7 +256,7 @@ export function buildBuildTaskGeneratorRun(
     JSON.stringify([
       {
         title: "(short title for this BUILD task)",
-        description: "(detailed description including the relevant slice plus full-plan context from .percussionist/plans/<plan-task>.md)",
+        description: "(detailed description including the relevant slice plus full-plan context)",
         agent: "(optional: name from AVAILABLE AGENTS list, defaults to 'builder')",
         priority: "(optional: 'high' | 'medium' | 'low', defaults to 'medium')",
         predecessorIndex: "(optional: 0-based index of the task in this array that must complete first, or omit/null if independent)",
@@ -259,7 +267,6 @@ export function buildBuildTaskGeneratorRun(
     `- Each BUILD task should be concrete and actionable — one logical concern per task (roughly 1-4 hours of work)`,
     `- Split large PLAN items into multiple smaller BUILD tasks`,
     `- Include relevant local task instructions AND enough full-plan context that the build agent understands the larger feature`,
-    `- Explicitly mention the plan artifact path in each BUILD task description`,
     `- Do not create standalone audit/research tasks that only document findings unless a later task explicitly consumes a named repo artifact produced by that task`,
     `- Prefer combining discovery with the implementation task that uses the discoveries`,
     `- If a discovery task is genuinely necessary, require it to write a specific repo file such as .percussionist/findings/{task-id}.md and require every dependent task to read that exact file`,
@@ -269,6 +276,16 @@ export function buildBuildTaskGeneratorRun(
     `- predecessorIndex must be a 0-based index strictly less than the task's own index (no forward references, no cycles)`,
     `- If the PLAN requires no BUILD tasks (was purely research/planning), return empty array: []`,
     `- Return valid JSON array ONLY - no markdown fences, no explanation`,
+    "",
+    `CRITICAL — DO NOT:`,
+    `- Do NOT write or edit any files. You have NO file write access.`,
+    `- Do NOT run any shell commands. You have NO shell access.`,
+    `- Do NOT read any workspace files. You have NO file read access.`,
+    `- Do NOT run git commands, commit, push, or create pull requests.`,
+    `- Do NOT explore the codebase. Do NOT browse directories.`,
+    `- Do NOT use any tool other than percussionist_dispatcher_complete_run.`,
+    `- Do NOT output anything other than the JSON array via the summary field.`,
+    `- If you are unsure, still output ONLY the JSON array — never output prose or attempts.`,
   ].join("\n");
 
   return buildFacilitatorRun(
@@ -554,6 +571,16 @@ export async function parseBuildTaskDefinitions(
   return null;
 }
 
+// Patterns that indicate the agent went off-script and self-reports having implemented code.
+// These must NOT match BUILD task descriptions which naturally describe future work.
+const OFF_SCRIPT_PATTERNS = [
+  /\bI\s+(?:will\s+)?(?:have\s+)?(?:just\s+)?(?:added|created|implemented|written|built|modified|changed|pushed|committed)\b/i,
+  /\bI(?:'ve|'d)\s+(?:already\s+|just\s+|now\s+)?(?:added|created|implemented|written|built|modified|changed|pushed|committed)\b/i,
+  /\blet me\s+(implement|write|create|add|build|modify|change|commit|push)\b/i,
+  /(?:git\s+)?(?:committed|pushed)\s+(?:the\s+)?(?:changes|code)\s+(?:to|on|in)/i,
+  /\b(?:creating|opening?|submitting?)\s+(?:a\s+)?pull\s*[_-]?\s*request\b/i,
+];
+
 // Extract a JSON array of BUILD task definitions from text.
 function extractBuildTasksJson(text: string): Array<{
   title: string;
@@ -602,6 +629,16 @@ function extractBuildTasksJson(text: string): Array<{
     }
     return null;
   };
+
+  // Reject responses that look like the agent went off-script (implemented code instead of outputting JSON).
+  if (OFF_SCRIPT_PATTERNS.some((p) => p.test(text))) {
+    return null;
+  }
+
+  // Reject responses that are too long (agent went off-script with prose/implementation).
+  if (text.length > 15000) {
+    return null;
+  }
 
   // Most common case: response is pure JSON array.
   const trimmed = text.trim();

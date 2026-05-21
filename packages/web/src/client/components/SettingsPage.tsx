@@ -170,9 +170,8 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
   const [llmKeysSecret, setLlmKeysSecret] = useState(
     (spec.secrets as Record<string, unknown> | undefined)?.llmKeysSecret as string ?? "llm-keys"
   );
-  const [authSecretName, setAuthSecretName] = useState(
-    (spec.secrets as Record<string, unknown> | undefined)?.authSecret as string ?? ""
-  );
+  const authSecretObj = (spec.secrets as Record<string, unknown> | undefined)?.authSecret as { name?: string } | undefined;
+  const [authSecretName, setAuthSecretName] = useState(authSecretObj?.name ?? "");
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   // Pre-populate from cluster config

@@ -66,7 +66,7 @@ export async function runBoardGet(
   console.log(`Team: ${(project.spec.agents ?? []).map((a) => a.name).join(", ") || "(none)"}`);
   console.log();
 
-  const columns = ["ready", "in-progress", "review", "rework", "done", "blocked"];
+  const columns = ["backlog", "ready", "in-progress", "review", "rework", "done", "blocked"];
   const colRows: string[][] = [["COLUMN", "TASKS"]];
   for (const col of columns) {
     const colTasks = tasks.filter((t) => (t.status?.column ?? "ready") === col);

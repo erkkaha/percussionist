@@ -120,20 +120,46 @@ export function extractAssistantTextWithTimeout(
 }
 
 // ---------------------------------------------------------------------------
-// Wait for an assistant message to complete, with timeout.
+// Sleep that short-circuits when the signal is aborted.
+
+async function interruptibleSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return;
+  return new Promise((resolve) => {
+    if (signal) {
+      const onAbort = () => { clearTimeout(timer); resolve(); };
+      signal.addEventListener("abort", onAbort, { once: true });
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+    } else {
+      setTimeout(resolve, ms);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Wait for an assistant message to complete.
+//
 // Returns the full text of the last completed assistant message, or null.
+//
+// When `signal` is provided the loop stops as soon as the signal fires —
+// no hard timeout. The `timeoutMs` parameter is kept for backward-compatible
+// callers (decision-engine). Pass `0` or `undefined` to disable the hard
+// deadline.
 
 export async function waitForCompletion(
   sessionId: string,
   timeoutMs: number = AGENT_TIMEOUT_MS,
   firstResponseTimeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<string | null> {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : 0;
   const startedAt = Date.now();
   let sawFirstResponse = false;
-  const firstResponseTimeout = firstResponseTimeoutMs ?? Math.min(timeoutMs, 60000);
+  const firstResponseTimeout = firstResponseTimeoutMs ?? (timeoutMs > 0 ? Math.min(timeoutMs, 60000) : 60000);
 
-  while (Date.now() < deadline) {
+  while (!signal?.aborted && (deadline === 0 || Date.now() < deadline)) {
     const messages = await getMessages(sessionId);
     const lastAssistant = extractLastAssistantText(messages);
 
@@ -160,10 +186,14 @@ export async function waitForCompletion(
       return null;
     }
 
-    await new Promise((r) => setTimeout(r, 2000));
+    await interruptibleSleep(2000, signal);
   }
 
-  log(`agent did not complete within ${timeoutMs}ms`);
+  if (signal?.aborted) {
+    log(`waitForCompletion cancelled via signal`);
+  } else {
+    log(`agent did not complete within ${timeoutMs}ms`);
+  }
   return null;
 }
 

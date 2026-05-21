@@ -85,6 +85,7 @@ spec:
                 column:
                   type: string
                   enum:
+                    - backlog
                     - ready
                     - in-progress
                     - review

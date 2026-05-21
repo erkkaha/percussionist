@@ -756,7 +756,7 @@ export async function readSessionConfigMap(
       truncated: cm.data?.[`truncated-${sessionID}`] === "true",
     };
   } catch (e: unknown) {
-    if ((e as { statusCode?: number }).statusCode === 404) return null;
+    if (((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) === 404) return null;
     throw e;
   }
 }
@@ -790,7 +790,7 @@ export async function readAllSessionsFromConfigMap(
 
     return { sessions, allMessages };
   } catch (e: unknown) {
-    if ((e as { statusCode?: number }).statusCode === 404) return null;
+    if (((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) === 404) return null;
     throw e;
   }
 }

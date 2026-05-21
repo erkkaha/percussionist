@@ -51,7 +51,7 @@ async function loadHistoryFromConfigMap(): Promise<void> {
     }
   } catch (e: unknown) {
     // 404 = ConfigMap doesn't exist yet (first run). Other errors are logged.
-    if ((e as { statusCode?: number }).statusCode !== 404) {
+    if (((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) !== 404) {
       log(`failed to load chat history from ConfigMap: ${(e as Error).message}`);
     }
   }
@@ -72,7 +72,7 @@ async function saveHistoryToConfigMap(): Promise<void> {
       setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
     );
   } catch (e: unknown) {
-    const status = (e as { statusCode?: number }).statusCode;
+    const status = (e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code;
     if (status === 404) {
       // ConfigMap doesn't exist — create it
       try {
@@ -196,16 +196,23 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
   conversationHistory.push({ role: "user", text: message });
   debouncedSave();
 
+  const abortController = new AbortController();
+  const onClose = () => { abortController.abort(); };
+  req.on("close", onClose);
+  req.on("error", onClose);
+
   try {
     const sessionId = await ensureSession();
     await sendMessage(sessionId, message, DECISION_AGENT_NAME);
 
     const frto = FIRST_RESPONSE_TIMEOUT_MS > 0 ? FIRST_RESPONSE_TIMEOUT_MS : undefined;
-    const response = await waitForCompletion(sessionId, 120_000, frto);
+    const response = await waitForCompletion(sessionId, 0, frto, abortController.signal);
     if (response) {
       conversationHistory.push({ role: "assistant", text: response });
       debouncedSave();
       sendJson(res, 200, { response, sessionId });
+    } else if (abortController.signal.aborted) {
+      sendJson(res, 200, { cancelled: true, sessionId });
     } else {
       sendJson(res, 200, { response: "Agent did not respond in time. Please try again.", sessionId });
     }

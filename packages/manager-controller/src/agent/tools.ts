@@ -252,7 +252,7 @@ const TOOLS = [
         task: { type: "string", description: "Board task ID (e.g. 'BUILD-4')" },
         targetColumn: {
           type: "string",
-          enum: ["ready", "in-progress", "review", "rework", "done"],
+          enum: ["backlog", "ready", "in-progress", "review", "rework", "done"],
           description: "Target backlog column for the task",
         },
         cancelRunning: {
@@ -875,7 +875,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const preserveRuns = args.preserveRuns === true;
       const resourceNs = String(args.namespace ?? ns);
 
-      const validColumns = ["ready", "in-progress", "review", "rework", "done", "blocked"];
+      const validColumns = ["backlog", "ready", "in-progress", "review", "rework", "done", "blocked"];
       if (!validColumns.includes(targetColumn)) {
         throw new Error(`Invalid targetColumn: ${targetColumn}. Must be one of: ${validColumns.join(", ")}`);
       }

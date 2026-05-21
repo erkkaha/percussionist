@@ -156,7 +156,6 @@ export async function runChat(opts: ChatOpts): Promise<void> {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: trimmed }),
-        signal: AbortSignal.timeout(130_000),
       });
       const data = await res.json();
       if (data.response) {

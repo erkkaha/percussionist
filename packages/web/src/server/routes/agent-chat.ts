@@ -17,24 +17,23 @@ const CHAT_URL = `${MANAGER_SERVICE}:4098`;
 
 // POST /api/agent/chat — send a message to the manager agent, get response.
 router.post("/chat", async (c) => {
+  const abortController = new AbortController();
+  c.req.raw.signal.addEventListener("abort", () => abortController.abort());
+
   try {
     const body = await c.req.json();
     const res = await fetch(`${CHAT_URL}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(130_000),
+      signal: abortController.signal,
     });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      return c.json({ error: `manager agent error (${res.status}): ${text}` }, res.status as 400 | 409 | 500 | 502 | 503 | 504);
-    }
     const data = await res.json();
-    return c.json(data);
+    return c.json(data, res.status as Parameters<typeof c.json>[1]);
   } catch (e) {
     const msg = (e as Error).message;
-    if (msg.includes("aborted") || msg.includes("timeout")) {
-      return c.json({ error: "agent did not respond in time" }, 504);
+    if (msg.includes("aborted")) {
+      return c.json({ cancelled: true }, 502);
     }
     return c.json({ error: msg }, 502);
   }

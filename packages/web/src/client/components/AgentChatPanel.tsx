@@ -42,6 +42,7 @@ export default function AgentChatPanel() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const seenKeysRef = useRef<Set<string>>(new Set());
   const speakEnabledRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
   const sttSupported = !!SpeechRecognitionAPI;
@@ -182,6 +183,12 @@ function sanitizeForSpeech(text: string): string {
     };
   }, []);
 
+  function handleCancel() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setSending(false);
+  }
+
   async function handleSend() {
     const text = input.trim();
     if (!text || sending) return;
@@ -189,21 +196,33 @@ function sanitizeForSpeech(text: string): string {
     setSending(true);
     addMessageIfNew({ role: "user", text });
 
+    const ac = new AbortController();
+    abortRef.current = ac;
+
     try {
       const res = await fetch("/api/agent/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text }),
+        signal: ac.signal,
       });
       const data = await res.json();
-      if (data.response) {
+      if (data.cancelled) {
+        addMessageIfNew({ role: "system", text: "Request cancelled." });
+      } else if (data.response) {
         addMessageIfNew({ role: "assistant", text: data.response });
       } else if (data.error) {
         addMessageIfNew({ role: "system", text: `Error: ${data.error}` });
       }
     } catch (e) {
-      addMessageIfNew({ role: "system", text: `Error: ${(e as Error).message}` });
+      const err = e as Error;
+      if (err.name === "AbortError") {
+        addMessageIfNew({ role: "system", text: "Request cancelled." });
+      } else {
+        addMessageIfNew({ role: "system", text: `Error: ${err.message}` });
+      }
     } finally {
+      if (abortRef.current === ac) abortRef.current = null;
       setSending(false);
     }
   }
@@ -307,13 +326,23 @@ function sanitizeForSpeech(text: string): string {
               >
                 {ttsEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
               </button>
-              <button
-                type="submit"
-                disabled={sending || !input.trim()}
-                className="rounded-md bg-[#fbbf24] text-[#451a03] px-3 py-2 text-sm font-medium hover:bg-[#f59e0b] disabled:cursor-not-allowed transition-colors"
-              >
-                {sending ? <DrumLogo playing size={16} /> : <Send className="w-4 h-4" />}
-              </button>
+              {sending ? (
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="rounded-md bg-phase-failed/20 text-phase-failed px-3 py-2 text-sm font-medium hover:bg-phase-failed/30 transition-colors"
+                >
+                  Cancel
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  className="rounded-md bg-[#fbbf24] text-[#451a03] px-3 py-2 text-sm font-medium hover:bg-[#f59e0b] disabled:cursor-not-allowed transition-colors"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              )}
             </form>
           </div>
         </div>
