@@ -126,11 +126,12 @@ export function extractAssistantTextWithTimeout(
 export async function waitForCompletion(
   sessionId: string,
   timeoutMs: number = AGENT_TIMEOUT_MS,
+  firstResponseTimeoutMs?: number,
 ): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
   const startedAt = Date.now();
   let sawFirstResponse = false;
-  const firstResponseTimeout = Math.min(timeoutMs, 60000);
+  const firstResponseTimeout = firstResponseTimeoutMs ?? Math.min(timeoutMs, 60000);
 
   while (Date.now() < deadline) {
     const messages = await getMessages(sessionId);

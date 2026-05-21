@@ -333,7 +333,12 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
   const [agentName, setAgentName] = useState((manager.agentName as string) ?? "manager-agent");
   const [decisionAgentName, setDecisionAgentName] = useState((manager.decisionAgentName as string) ?? "manager-decision");
   const [model, setModel] = useState((manager.model as string) ?? "");
-  const [timeoutMs, setTimeoutMs] = useState(String((manager.timeoutMs as number) ?? 30000));
+  const [timeoutSec, setTimeoutSec] = useState(String(Math.round(((manager.timeoutMs as number) ?? 30000) / 1000)));
+  const [firstResponseTimeoutSec, setFirstResponseTimeoutSec] = useState(
+    (manager.firstResponseTimeoutMs as number | undefined) != null
+      ? String(Math.round((manager.firstResponseTimeoutMs as number) / 1000))
+      : ""
+  );
   const [decisionAgentContent, setDecisionAgentContent] = useState(
     (manager.decisionAgentContent as string) ?? ""
   );
@@ -368,14 +373,24 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
             />
           </div>
           <div>
-            <label className="text-sm font-medium block mb-1">Timeout (ms)</label>
+            <label className="text-sm font-medium block mb-1">Timeout (seconds)</label>
             <Input
               type="number"
-              value={timeoutMs}
-              onChange={(e) => setTimeoutMs(e.target.value)}
-              min={1000}
+              value={timeoutSec}
+              onChange={(e) => setTimeoutSec(e.target.value)}
+              min={1}
             />
           </div>
+        </div>
+        <div>
+          <label className="text-sm font-medium block mb-1">First Response Timeout (seconds) <span className="text-text-dim font-normal">— empty = default (min of overall timeout, 60s)</span></label>
+          <Input
+            type="number"
+            value={firstResponseTimeoutSec}
+            onChange={(e) => setFirstResponseTimeoutSec(e.target.value)}
+            min={1}
+            placeholder="default"
+          />
         </div>
         <div>
           <label className="text-sm font-medium block mb-1">Decision Agent Content (.md)</label>
@@ -390,18 +405,23 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
       </CardContent>
       <CardFooter>
         <Button
-          onClick={() =>
+          onClick={() => {
+            const timeoutMsVal = parseInt(timeoutSec, 10) * 1000;
+            const frtVal = firstResponseTimeoutSec.trim()
+              ? parseInt(firstResponseTimeoutSec, 10) * 1000
+              : undefined;
             onSave({
               ...spec,
               manager: {
                 agentName: agentName.trim() || undefined,
                 decisionAgentName: decisionAgentName.trim() || undefined,
                 model: model.trim() || undefined,
-                timeoutMs: parseInt(timeoutMs, 10) || undefined,
+                timeoutMs: timeoutMsVal || undefined,
+                firstResponseTimeoutMs: frtVal || undefined,
                 decisionAgentContent: decisionAgentContent.trim() || undefined,
               },
             })
-          }
+          }}
           disabled={saving}
         >
           Save Manager Settings

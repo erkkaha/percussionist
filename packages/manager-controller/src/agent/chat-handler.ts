@@ -9,7 +9,7 @@
 // degrades gracefully (in-memory only).
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { CHAT_PORT, MANAGER_NAMESPACE as NAMESPACE } from "./config.js";
+import { CHAT_PORT, FIRST_RESPONSE_TIMEOUT_MS, MANAGER_NAMESPACE as NAMESPACE } from "./config.js";
 import {
   createSession,
   sendMessage,
@@ -200,7 +200,8 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
     const sessionId = await ensureSession();
     await sendMessage(sessionId, message, DECISION_AGENT_NAME);
 
-    const response = await waitForCompletion(sessionId, 120_000);
+    const frto = FIRST_RESPONSE_TIMEOUT_MS > 0 ? FIRST_RESPONSE_TIMEOUT_MS : undefined;
+    const response = await waitForCompletion(sessionId, 120_000, frto);
     if (response) {
       conversationHistory.push({ role: "assistant", text: response });
       debouncedSave();

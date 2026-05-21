@@ -94,6 +94,11 @@ spec:
                       exclusiveMinimum: true
                       minimum: 1
                       default: 30000
+                    firstResponseTimeoutMs:
+                      type: integer
+                      exclusiveMinimum: true
+                      minimum: 1
+                      description: Max ms to wait for the first assistant message before timing out. Defaults to min(timeoutMs, 60000) when unset.
                   description: Manager agent configuration.
                 runner:
                   type: object

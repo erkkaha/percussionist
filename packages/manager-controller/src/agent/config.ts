@@ -4,6 +4,7 @@ export const OPENCODE_URL = process.env.AGENT_OPENCODE_URL ?? "http://127.0.0.1:
 export const MCP_PORT = parseInt(process.env.AGENT_MCP_PORT ?? "4097", 10);
 export const CHAT_PORT = parseInt(process.env.AGENT_CHAT_PORT ?? "4098", 10);
 export const AGENT_TIMEOUT_MS = parseInt(process.env.AGENT_TIMEOUT_MS ?? "30000", 10);
+export const FIRST_RESPONSE_TIMEOUT_MS = parseInt(process.env.FIRST_RESPONSE_TIMEOUT_MS ?? "0", 10);
 export const AGENT_NAME = process.env.AGENT_NAME ?? "manager-agent";
 export const MANAGER_NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
 

@@ -6,7 +6,9 @@
 // waits for a structured response, and returns the decision.
 
 import { createSession, sendPrompt, waitForCompletion } from "./session.js";
-import { AGENT_TIMEOUT_MS, DECISION_AGENT_NAME, type AgentDecision } from "./config.js";
+import { AGENT_TIMEOUT_MS, FIRST_RESPONSE_TIMEOUT_MS, DECISION_AGENT_NAME, type AgentDecision } from "./config.js";
+
+const FRTO = FIRST_RESPONSE_TIMEOUT_MS > 0 ? FIRST_RESPONSE_TIMEOUT_MS : undefined;
 
 const log = (...args: unknown[]) =>
   console.log(`[agent-decision ${new Date().toISOString()}]`, ...args);
@@ -28,7 +30,7 @@ export async function analyzeFailure(
     const sessionId = await createSession(`failure-${context.taskId}`);
     await sendPrompt(sessionId, prompt, DECISION_AGENT_NAME);
 
-    const response = await waitForCompletion(sessionId, AGENT_TIMEOUT_MS);
+    const response = await waitForCompletion(sessionId, AGENT_TIMEOUT_MS, FRTO);
     if (!response) {
       log(`agent timed out for failure analysis of ${context.taskId} — defaulting to escalate`);
       return { action: "escalate", reason: "agent did not respond in time" };
@@ -63,7 +65,7 @@ export async function parseRawFacilitation(
     const sessionId = await createSession(`parse-facilitation-${context.taskId}`);
     await sendPrompt(sessionId, prompt, DECISION_AGENT_NAME);
 
-    const response = await waitForCompletion(sessionId, AGENT_TIMEOUT_MS);
+    const response = await waitForCompletion(sessionId, AGENT_TIMEOUT_MS, FRTO);
     if (!response) return null;
 
     return parseFacilitationJson(response);
@@ -197,7 +199,7 @@ export async function parseRawReview(
     const sessionId = await createSession(`parse-review-${context.taskId}`);
     await sendPrompt(sessionId, prompt, DECISION_AGENT_NAME);
 
-    const response = await waitForCompletion(sessionId, AGENT_TIMEOUT_MS);
+    const response = await waitForCompletion(sessionId, AGENT_TIMEOUT_MS, FRTO);
     if (!response) return null;
 
     return parseFacilitationJson(response);
@@ -250,7 +252,7 @@ export async function parseRawBuildTaskGen(
     const sessionId = await createSession(`parse-build-gen-${context.taskId}`);
     await sendPrompt(sessionId, prompt, DECISION_AGENT_NAME);
 
-    const response = await waitForCompletion(sessionId, AGENT_TIMEOUT_MS);
+    const response = await waitForCompletion(sessionId, AGENT_TIMEOUT_MS, FRTO);
     if (!response) return null;
 
     return parseBuildTaskGenArray(response);
