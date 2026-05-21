@@ -27,6 +27,7 @@ import {
   getTask,
   patchTaskStatus,
   execInWorkspace,
+  core,
 } from "@percussionist/kube";
 import { LABELS, type Project, type Task } from "@percussionist/api";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
@@ -332,6 +333,22 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {},
+    },
+  },
+  {
+    name: "read_plan",
+    description:
+      "Read the plan artifact (.percussionist/plans/{planTaskId}.md) from a completed run's ConfigMap snapshot or workspace. First tries to read the plan file from the run's session ConfigMap (same mechanism as read_session), then falls back to reading from the workspace PVC via execInWorkspace. Resolves the correct plan file name by following parentTaskRef for BUILD tasks. Returns the raw markdown content or a clear error if no plan exists.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runName: { type: "string", description: "Name of the Run" },
+        namespace: {
+          type: "string",
+          description: "Namespace (optional, defaults to percussionist)",
+        },
+      },
+      required: ["runName"],
     },
   },
   {
@@ -1015,6 +1032,108 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         paused: pauseInfo.paused,
         elapsedMs: pauseInfo.elapsedMs,
         lastReconcile: new Date().toISOString(),
+      };
+    }
+
+    case "read_plan": {
+      const runName = String(args.runName ?? "");
+      const resourceNs = String(args.namespace ?? ns);
+
+      if (!runName) throw new Error("runName is required");
+
+      const run = await getRun(runName, resourceNs);
+      const projectName = run.spec.project;
+      const taskName = run.spec.boardTask;
+
+      if (!projectName) throw new Error(`Run ${runName} has no project reference`);
+      if (!taskName) throw new Error(`Run ${runName} has no boardTask reference — it was not created from a board task`);
+
+      // Resolve the correct plan file name:
+      // - PLAN tasks: the plan file is named after the task itself
+      // - BUILD tasks: the plan file is named after the parent PLAN task (parentTaskRef)
+      let planTaskId: string;
+      try {
+        const task = await getTask(taskName, resourceNs);
+        planTaskId = task.spec.type === "BUILD" && task.spec.parentTaskRef
+          ? task.spec.parentTaskRef
+          : task.metadata.name;
+      } catch {
+        // If task lookup fails (e.g. task was deleted), fall back to boardTask
+        planTaskId = taskName;
+      }
+      const planRelPath = `.percussionist/plans/${planTaskId}.md`;
+
+      // Try 1: Read from the run's ConfigMap snapshot (same mechanism as read_session).
+      // The plan file may be stored as a ConfigMap data key (using dot-separated paths
+      // since ConfigMap keys cannot contain slashes).
+      try {
+        const cmResult = await core().readNamespacedConfigMap({
+          name: `${runName}-session`,
+          namespace: resourceNs,
+        });
+        const cmData = cmResult.data ?? {};
+        // Try various key formats: dot-separated path, leading-dot path, and raw path
+        const planKey = `percussionist.plans.${planTaskId}.md`;
+        const altPlanKey = `.percussionist.plans.${planTaskId}.md`;
+        const planContent = cmData[planKey] ?? cmData[altPlanKey] ?? cmData[planRelPath];
+        if (planContent) {
+          return {
+            runName,
+            project: projectName,
+            task: taskName,
+            planTaskId,
+            planPath: planRelPath,
+            content: planContent,
+            source: "configmap",
+          };
+        }
+      } catch {
+        // ConfigMap doesn't exist or plan not stored there — fall through to PVC
+      }
+
+      // Try 2: Read from workspace PVC via execInWorkspace
+      const project = await getProject(projectName, resourceNs);
+      const mountPath = project.spec.data?.mountPath ?? "/data";
+      const isLocal = project.spec.source?.local === true;
+      const gitUrl = project.spec.source?.git?.url;
+
+      // Determine the git workspace root where .percussionist/ lives
+      const workspaceRoot = isLocal
+        ? `${mountPath}/workspace`
+        : gitUrl
+          ? `${mountPath}/worktrees/${runName}`
+          : `${mountPath}/workspace`;
+
+      const absPlanPath = `${workspaceRoot}/${planRelPath}`;
+
+      const result = await execInWorkspace(
+        projectName,
+        `cat '${absPlanPath}'`,
+        mountPath,
+        30_000,
+        resourceNs,
+      );
+
+      if (result.exitCode !== 0) {
+        return {
+          runName,
+          project: projectName,
+          task: taskName,
+          planTaskId,
+          planPath: planRelPath,
+          content: null,
+          note: `No plan file found at ${absPlanPath}. The task (${taskName}) may not have created a plan artifact, or the workspace may not be ready yet.`,
+        };
+      }
+
+      return {
+        runName,
+        project: projectName,
+        task: taskName,
+        planTaskId,
+        planPath: planRelPath,
+        content: result.stdout || "",
+        source: "workspace",
       };
     }
 
