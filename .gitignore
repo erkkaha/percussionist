@@ -31,3 +31,4 @@ kubeconfig
 packages/web/data/
 
 prds/
+*.bak

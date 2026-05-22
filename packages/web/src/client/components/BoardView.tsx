@@ -30,11 +30,13 @@ interface TaskCardProps {
 function TaskCard({
   task, col, approvals,
   deleteMutation, retryMutation, approveMutation, requestChangesMutation,
+  projectName,
   setShowRequestChanges, setRequestChangesTaskId,
 }: TaskCardProps) {
   const taskName = task.metadata.name;
   const worker = task.status?.worker;
   const isBuildTask = task.spec.type === "BUILD";
+  const isPlanTask = task.spec.type === "PLAN";
   const reviewerDecisionKnown = worker?.reviewApproved !== undefined || !!worker?.reviewFeedback;
   const approvalState = approvals?.[taskName];
   const alreadyApproved = approvalState?.approved === true;
@@ -121,6 +123,18 @@ function TaskCard({
           >
             <ExternalLink className="h-3 w-3 shrink-0" />
             merge: {worker.mergeRunName}
+          </Link>
+        )}
+
+        {/* Plan view link — shown for PLAN tasks that have completed at least once */}
+        {isPlanTask && worker?.runName && (
+          <Link
+            to={`/projects/${encodeURIComponent(projectName)}/plans/${encodeURIComponent(taskName)}`}
+            className="text-xs text-accent hover:text-accent/80 transition-colors underline flex items-center gap-1 block"
+            title="View plan artifact"
+          >
+            <FileText className="h-3 w-3 shrink-0" />
+            View Plan
           </Link>
         )}
 

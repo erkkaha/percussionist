@@ -4,6 +4,7 @@ import type {
   Run,
   LogsResponse,
   SessionResponse,
+  PlanResponse,
   CreateRunRequest,
   Project,
   ProjectDetail,
@@ -45,6 +46,12 @@ export async function fetchLogs(
 
 export async function fetchSession(name: string): Promise<SessionResponse> {
   return fetchJSON<SessionResponse>(`/runs/${encodeURIComponent(name)}/session`);
+}
+
+export async function fetchPlan(project: string, taskId: string): Promise<PlanResponse> {
+  return fetchJSON<PlanResponse>(
+    `/projects/${encodeURIComponent(project)}/plans/${encodeURIComponent(taskId)}`
+  );
 }
 
 export async function submitRun(req: CreateRunRequest): Promise<Run> {

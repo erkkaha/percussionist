@@ -219,3 +219,12 @@ export interface SessionResponse {
   source?: "live" | "snapshot";
   truncated?: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Plan response (from GET /api/projects/:project/plans/:taskId)
+
+export interface PlanResponse {
+  content: string;
+  taskId: string;
+  project: string;
+}

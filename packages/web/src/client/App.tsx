@@ -13,6 +13,7 @@ import BoardView from "./components/BoardView";
 import MetricsView from "./components/MetricsView";
 import AgentChatPanel from "./components/AgentChatPanel";
 import SettingsPage from "./components/SettingsPage";
+import PlanView from "./components/PlanView";
 import ActivityPage from "./pages/ActivityPage";
 
 export default function App() {
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/projects/new" element={<CreateProjectForm />} />
           <Route path="/projects/:name/edit" element={<EditProjectPage />} />
           <Route path="/projects/:name/board" element={<BoardView />} />
+          <Route path="/projects/:name/plans/:taskId" element={<PlanView />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/agents/new" element={<AgentForm />} />
           <Route path="/agents/:name/edit" element={<AgentForm />} />
