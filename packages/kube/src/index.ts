@@ -867,6 +867,106 @@ export async function readAllSessionsFromConfigMap(
 }
 
 // ---------------------------------------------------------------------------
+// Plan ConfigMap helpers — store/retrieve plan artifacts per project.
+// ConfigMap name: {project}-plans, data key: {task}.md
+
+const CONFIGMAP_SIZE_WARN = 900 * 1024; // 900 KB soft limit warning
+
+export async function getPlansConfigMap(
+  projectName: string,
+  ns: string = NAMESPACE,
+): Promise<{ apiVersion: string; kind: string; metadata: Record<string, unknown>; data?: Record<string, string> } | null> {
+  try {
+    const cm = await core().readNamespacedConfigMap({
+      name: `${projectName}-plans`,
+      namespace: ns,
+    });
+    return {
+      apiVersion: cm.apiVersion ?? "v1",
+      kind: cm.kind ?? "ConfigMap",
+      metadata: cm.metadata as unknown as Record<string, unknown>,
+      data: cm.data,
+    };
+  } catch (e: unknown) {
+    if (((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) === 404) return null;
+    throw e;
+  }
+}
+
+export async function writePlanToConfigMap(
+  projectName: string,
+  taskName: string,
+  content: string,
+  ns: string = NAMESPACE,
+): Promise<{ written: boolean; sizeBytes: number; warning?: string }> {
+  const key = `${taskName}.md`;
+  const cmName = `${projectName}-plans`;
+  let existing = await getPlansConfigMap(projectName, ns);
+
+  if (!existing) {
+    existing = {
+      apiVersion: "v1",
+      kind: "ConfigMap",
+      metadata: {
+        name: cmName,
+        namespace: ns,
+        labels: {
+          [LABELS.projectName]: projectName,
+          "percussionist.dev/component": "plans",
+        },
+      },
+      data: {},
+    };
+  }
+
+  const newData = { ...existing.data, [key]: content };
+  const totalSize = Object.values(newData).reduce((sum, v) => sum + Buffer.byteLength(v, "utf8"), 0);
+  let warning: string | undefined;
+  if (totalSize > CONFIGMAP_SIZE_WARN) {
+    warning = `ConfigMap data size (${Math.round(totalSize / 1024)}KB) approaching 1MB limit. Consider removing old plans.`;
+  }
+
+  if (!existing.metadata.resourceVersion) {
+    // Create new ConfigMap
+    await core().createNamespacedConfigMap({
+      namespace: ns,
+      body: {
+        apiVersion: "v1",
+        kind: "ConfigMap",
+        metadata: existing.metadata as any,
+        data: newData,
+      },
+    });
+  } else {
+    // Update existing ConfigMap
+    await core().replaceNamespacedConfigMap({
+      name: cmName,
+      namespace: ns,
+      body: {
+        apiVersion: "v1",
+        kind: "ConfigMap",
+        metadata: {
+          ...existing.metadata,
+        } as any,
+        data: newData,
+      },
+    });
+  }
+
+  return { written: true, sizeBytes: Buffer.byteLength(content, "utf8"), warning };
+}
+
+export async function readPlanFromConfigMap(
+  projectName: string,
+  taskName: string,
+  ns: string = NAMESPACE,
+): Promise<string | null> {
+  const cm = await getPlansConfigMap(projectName, ns);
+  if (!cm || !cm.data) return null;
+  return cm.data[`${taskName}.md`] ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Render utilities
 
 export function padCols(rows: string[][]): string {

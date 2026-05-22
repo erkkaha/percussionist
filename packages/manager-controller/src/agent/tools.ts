@@ -27,6 +27,8 @@ import {
   getTask,
   patchTaskStatus,
   execInWorkspace,
+  writePlanToConfigMap,
+  readPlanFromConfigMap,
 } from "@percussionist/kube";
 import { LABELS, type Project, type Task } from "@percussionist/api";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
@@ -362,22 +364,36 @@ const TOOLS = [
   {
     name: "read_plan",
     description:
-      "Read a plan artifact from a project's data volume. Plans are created by planner agents at .percussionist/plans/{task}.md and referenced by BUILD tasks during implementation. Use this to review plan content before implementing or reviewing BUILD tasks to understand the full plan context, acceptance criteria, and sequencing.",
+      "Read a plan artifact from the project's plans ConfigMap. Plans are persisted by planner agents via write_plan and referenced by BUILD tasks during implementation. Use this to review plan content before implementing or reviewing BUILD tasks.",
     inputSchema: {
       type: "object",
       properties: {
-        project: { type: "string", description: "Project name (used to locate the data PVC: {project}-data)" },
-        task: { type: "string", description: "Plan task ID (e.g. 'PLAN-1') — reads .percussionist/plans/{task}.md from the project's data volume" },
-        mountPath: {
-          type: "string",
-          description: "Mount path for the data PVC inside the pod (default: /data)",
-        },
+        project: { type: "string", description: "Project name" },
+        task: { type: "string", description: "Plan task ID (e.g. 'PLAN-1')" },
         namespace: {
           type: "string",
           description: "Namespace (optional, defaults to percussionist)",
         },
       },
       required: ["project", "task"],
+    },
+  },
+  {
+    name: "write_plan",
+    description:
+      "Persist a plan artifact to the project's plans ConfigMap. Planner agents MUST call this after creating their plan markdown file, so the plan is queryable via read_plan even after worktrees are cleaned up.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name" },
+        task: { type: "string", description: "Plan task ID (e.g. 'PLAN-1')" },
+        content: { type: "string", description: "Full markdown content of the plan" },
+        namespace: {
+          type: "string",
+          description: "Namespace (optional, defaults to percussionist)",
+        },
+      },
+      required: ["project", "task", "content"],
     },
   },
 ];
@@ -675,9 +691,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const task = await getTask(taskName, resourceNs);
       const projectTasks = await listProjectTasks(projectName, resourceNs);
 
-      const currentColumn = task.status?.column ?? "ready";
-      if (currentColumn !== "ready") {
-        throw new Error(`Task ${taskName} is in column "${currentColumn}", not "ready". Use force_retry to clean up first.`);
+      const currentPhase = task.status?.phase ?? "pending";
+      if (currentPhase !== "pending") {
+        throw new Error(`Task ${taskName} has phase "${currentPhase}", not "pending". Use force_retry to clean up first.`);
       }
 
       const existingWorker = task.status?.worker ?? null;
@@ -691,7 +707,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       if (modelOverride) workerRun.spec.model = modelOverride;
 
       await patchTaskStatus(taskName, {
-        column: "in-progress",
+        phase: "running",
         worker: {
           ...(existingWorker ?? {}),
           runName,
@@ -717,7 +733,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
             throw new Error(`Run ${runName} already exists (phase: ${phase})`);
           }
         } else {
-          await patchTaskStatus(taskName, { column: "ready" }, resourceNs).catch(() => { /* best effort */ });
+          await patchTaskStatus(taskName, { phase: "pending" }, resourceNs).catch(() => { /* best effort */ });
           throw e;
         }
       }
@@ -748,7 +764,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         if (modelOverride) workerRun.spec.model = modelOverride;
 
         await patchTaskStatus(taskName, {
-          column: "in-progress",
+          phase: "running",
           worker: {
             runName,
             status: "Running",
@@ -773,16 +789,16 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
               throw new Error(`Run ${runName} already exists (phase: ${phase})`);
             }
           } else {
-            await patchTaskStatus(taskName, { column: "ready" }, resourceNs).catch(() => { /* best effort */ });
+            await patchTaskStatus(taskName, { phase: "pending" }, resourceNs).catch(() => { /* best effort */ });
             throw e;
           }
         }
 
         createdRunName = runName;
       } else {
-        // No run creation — reset to ready.
+        // No run creation — reset to pending.
         await patchTaskStatus(taskName, {
-          column: "ready",
+          phase: "pending",
           worker: {
             ...(task.status?.worker ?? { status: "Failed" as const, retryCount: 0, aiReworkCount: 0 }),
             status: "Failed",
@@ -1078,8 +1094,71 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       if (!projectName) throw new Error("project is required");
       if (!taskName) throw new Error("task is required");
 
+      // Get project to determine if it's local or remote git
+      const project = await getProject(projectName, resourceNs);
+      const isLocal = project.spec.source?.local === true;
+      const gitUrl = project.spec.source?.git?.url;
+
       const planPath = `.percussionist/plans/${taskName}.md`;
       const escaped = planPath.replace(/'/g, "'\\''");
+
+      // For remote git projects, read from the git mirror using git show
+      if (!isLocal && gitUrl) {
+        // Get the task to find its feature branch
+        const task = await getTask(taskName, resourceNs);
+        const gitBranch = task.status?.worker?.gitBranch || `feature/${taskName}`;
+        
+        // Calculate URL hash using djb2 (same as operator)
+        let h = 5381;
+        for (let i = 0; i < gitUrl.length; i++) {
+          h = ((h << 5) + h + gitUrl.charCodeAt(i)) >>> 0;
+        }
+        const urlHash = h.toString(16).padStart(8, "0");
+        
+        const mirrorPath = `${mountPath}/git-mirrors/${urlHash}`;
+        
+        // Install git and try to read from the feature branch
+        // Alpine's apk is quiet by default and git install is fast (~2-3s)
+        const gitShowCmd = `apk add --no-cache git > /dev/null 2>&1 && cd '${mirrorPath}' && git show '${gitBranch}:${planPath}' 2>/dev/null`;
+        const result = await execInWorkspace(projectName, gitShowCmd, mountPath, 30_000, resourceNs);
+
+        if (result.exitCode === 0 && result.stdout) {
+          return {
+            project: projectName,
+            task: taskName,
+            planPath,
+            exists: true,
+            content: result.stdout,
+            branch: gitBranch,
+          };
+        }
+
+        // Fallback: try main branch
+        const mainBranchCmd = `apk add --no-cache git > /dev/null 2>&1 && cd '${mirrorPath}' && git show 'main:${planPath}' 2>/dev/null`;
+        const mainResult = await execInWorkspace(projectName, mainBranchCmd, mountPath, 30_000, resourceNs);
+        
+        if (mainResult.exitCode === 0 && mainResult.stdout) {
+          return {
+            project: projectName,
+            task: taskName,
+            planPath,
+            exists: true,
+            content: mainResult.stdout,
+            branch: "main",
+          };
+        }
+
+        return {
+          project: projectName,
+          task: taskName,
+          planPath,
+          exists: false,
+          content: null,
+          note: `Plan artifact not found at ${planPath} in branch ${gitBranch} or main. The plan may not have been committed yet.`,
+        };
+      }
+
+      // For local git projects, read from workspace directory
       const result = await execInWorkspace(projectName, `cat '${escaped}'`, mountPath, 30_000, resourceNs);
 
       if (result.exitCode !== 0) {

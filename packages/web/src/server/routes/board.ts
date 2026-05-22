@@ -13,6 +13,7 @@
 
 import { Hono } from "hono";
 import { randomBytes } from "node:crypto";
+import { computeBoardColumn } from "@percussionist/api";
 import {
   getProject,
   patchProjectSpec,
@@ -76,10 +77,11 @@ board.get("/:project/board", async (c) => {
       listTasks(name),
     ]);
 
-    // Group tasks by column.
+    // Group tasks by board column derived from phase (authoritative).
     const columns: Record<string, unknown[]> = {};
     for (const task of tasks) {
-      const col = task.status?.column ?? "ready";
+      const phase = task.status?.phase ?? "pending";
+      const col = task.status?.blocked ? "blocked" : computeBoardColumn(phase);
       if (!columns[col]) columns[col] = [];
       columns[col]!.push(task);
     }
@@ -220,7 +222,6 @@ board.post("/:project/board/tasks", async (c) => {
     });
 
     const created = await createTask(task, ns);
-    await patchTaskStatus(taskName, { column: "backlog" }, ns);
     await appendTaskEvent(name, taskName, type, "run.created", { title, agent, priority });
 
     return c.json({ task: created }, 201);
@@ -241,6 +242,40 @@ board.delete("/:project/board/tasks/:taskName", async (c) => {
     const ns = project.metadata.namespace ?? NAMESPACE;
     await deleteTask(taskName, ns);
     return c.body(null, 204);
+  } catch (e) {
+    const ke = e as KubeError;
+    return c.json({ error: errMsg(ke) }, errStatus(ke));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/projects/:project/board/tasks/:taskName/move
+//
+// Body: { column: string }
+// Resets a failed/escalated task back to "pending" phase so the reconciler
+// picks it up again. "column" in the body is accepted for API compatibility
+// but only "ready"/"pending" makes sense here — anything else is rejected.
+
+board.post("/:project/board/tasks/:taskName/move", async (c) => {
+  const projectName = c.req.param("project");
+  const taskName = c.req.param("taskName");
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+  const { column } = body as { column?: string };
+  if (!column?.trim()) return c.json({ error: "column is required" }, 400);
+
+  // Only resetting to "ready"/"pending" (backlog) is supported via this endpoint.
+  if (column !== "ready" && column !== "pending" && column !== "backlog") {
+    return c.json({ error: `Unsupported target column: ${column}. Only "ready" is supported.` }, 400);
+  }
+
+  try {
+    const project = await getProject(projectName);
+    const ns = project.metadata.namespace ?? NAMESPACE;
+    // Phase "pending" = task is well-defined and waiting to be scheduled.
+    await patchTaskStatus(taskName, { phase: "pending", blocked: false }, ns);
+    await appendTaskEvent(projectName, taskName, "unknown", "moved", { column });
+    return c.json({ success: true });
   } catch (e) {
     const ke = e as KubeError;
     return c.json({ error: errMsg(ke) }, errStatus(ke));

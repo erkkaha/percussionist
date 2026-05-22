@@ -1,0 +1,246 @@
+// TaskListPanel.tsx — scrollable grouped task list with filter bar.
+
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { ChevronDown } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { Task } from "../../lib/types";
+import { FilterBar } from "./FilterBar";
+import type { FilterState } from "./FilterBar";
+import { TaskRow } from "./TaskRow";
+import { addBoardTask } from "../../lib/api";
+
+const DEFAULT_COLUMNS = ["ideas", "backlog", "blocked", "in-progress", "review", "done"] as const;
+
+interface AddTaskFormProps {
+  projectName: string;
+  roster: string[];
+  onClose: () => void;
+}
+
+function AddTaskForm({ projectName, roster, onClose }: AddTaskFormProps) {
+  const queryClient = useQueryClient();
+  const [taskType, setTaskType] = useState<"PLAN" | "BUILD">("PLAN");
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskDesc, setTaskDesc] = useState("");
+  const [taskAgent, setTaskAgent] = useState("");
+  const [taskPriority, setTaskPriority] = useState<"high" | "medium" | "low">("medium");
+  const [error, setError] = useState<string | null>(null);
+
+  const addMutation = useMutation({
+    mutationFn: async (task: { type: string; title: string; description?: string; agent: string; priority?: string }) =>
+      addBoardTask(projectName, task),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["board", projectName] });
+      onClose();
+    },
+    onError: (e) => setError((e as Error).message),
+  });
+
+  return (
+    <div className="rounded-md border border-border bg-surface p-4 space-y-3 mx-2">
+      <h2 className="text-sm font-semibold">Add Task</h2>
+
+      {/* Type */}
+      <div className="flex gap-4">
+        {(["PLAN", "BUILD"] as const).map((t) => (
+          <label key={t} className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              value={t}
+              checked={taskType === t}
+              onChange={() => setTaskType(t)}
+              className="cursor-pointer"
+            />
+            <span className="text-sm">{t}</span>
+          </label>
+        ))}
+      </div>
+
+      {/* Agent */}
+      {roster.length === 0 ? (
+        <p className="text-xs text-phase-failed">
+          No agents in roster.{" "}
+          <Link to={`/projects/${encodeURIComponent(projectName)}/edit`} className="underline hover:opacity-80">
+            Add agents first.
+          </Link>
+        </p>
+      ) : (
+        <select
+          value={taskAgent}
+          onChange={(e) => setTaskAgent(e.target.value)}
+          className="w-full rounded border border-border bg-surface-raised px-2 py-1.5 text-sm"
+        >
+          <option value="">— agent —</option>
+          {roster.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select>
+      )}
+
+      <input
+        placeholder="Title"
+        value={taskTitle}
+        onChange={(e) => setTaskTitle(e.target.value)}
+        className="w-full rounded border border-border bg-surface-raised px-2 py-1.5 text-sm"
+      />
+
+      <textarea
+        placeholder="Description (optional)"
+        value={taskDesc}
+        onChange={(e) => setTaskDesc(e.target.value)}
+        rows={3}
+        className="w-full rounded border border-border bg-surface-raised px-2 py-1.5 text-sm resize-y"
+      />
+
+      <div className="flex items-center gap-3">
+        <select
+          value={taskPriority}
+          onChange={(e) => setTaskPriority(e.target.value as "high" | "medium" | "low")}
+          className="rounded border border-border bg-surface-raised px-2 py-1.5 text-sm"
+        >
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <button
+          onClick={() => {
+            if (!taskTitle.trim() || !taskAgent) { setError("Title and agent required"); return; }
+            addMutation.mutate({ type: taskType, title: taskTitle.trim(), description: taskDesc.trim() || undefined, agent: taskAgent, priority: taskPriority });
+          }}
+          disabled={addMutation.isPending}
+          className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] disabled:opacity-40 px-3 py-1.5 text-sm font-medium text-text transition-colors"
+        >
+          {addMutation.isPending ? "Adding…" : "Add"}
+        </button>
+        <button onClick={onClose} className="text-sm text-text-dim hover:text-text transition-colors">Cancel</button>
+      </div>
+      {error && <p className="text-xs text-phase-failed">{error}</p>}
+    </div>
+  );
+}
+
+interface TaskListPanelProps {
+  projectName: string;
+  columns: Record<string, Task[]>;
+  roster: string[];
+  selectedTaskName: string | null;
+  onSelectTask: (name: string) => void;
+  showAddTask: boolean;
+  onCloseAddTask: () => void;
+}
+
+export function TaskListPanel({
+  projectName,
+  columns,
+  roster,
+  selectedTaskName,
+  onSelectTask,
+  showAddTask,
+  onCloseAddTask,
+}: TaskListPanelProps) {
+  const [filters, setFilters] = useState<FilterState>({
+    column: "all",
+    search: "",
+    type: "all",
+    priority: "all",
+  });
+
+  // Collapsed state per column
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({
+    ideas: true,
+    done: true,
+  });
+
+  const toggleCollapsed = (col: string) => setCollapsed((p) => ({ ...p, [col]: !p[col] }));
+
+  // Column counts for filter bar
+  const columnCounts = Object.fromEntries(
+    DEFAULT_COLUMNS.map((col) => [col, (columns[col] ?? []).length])
+  );
+
+  // Filter tasks
+  const searchLower = filters.search.toLowerCase();
+  function matchesFilters(task: Task, col: string): boolean {
+    if (filters.column !== "all" && col !== filters.column) return false;
+    if (filters.type !== "all" && task.spec.type !== filters.type) return false;
+    if (filters.priority !== "all" && task.spec.priority !== filters.priority) return false;
+    if (filters.search) {
+      const haystack = `${task.spec.title} ${task.metadata.name} ${task.spec.description ?? ""} ${task.spec.agent ?? ""}`.toLowerCase();
+      if (!haystack.includes(searchLower)) return false;
+    }
+    return true;
+  }
+
+  const isFiltering = filters.column !== "all" || filters.search || filters.type !== "all" || filters.priority !== "all";
+
+  // Build filtered column map
+  const filteredColumns = DEFAULT_COLUMNS.map((col) => ({
+    col,
+    tasks: (columns[col] ?? []).filter((t) => matchesFilters(t, col)),
+  })).filter(({ tasks, col }) => {
+    if (isFiltering && tasks.length === 0) return false;
+    if (!isFiltering && tasks.length === 0 && collapsed[col] !== false) return false;
+    return true;
+  });
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="px-2 pt-2 pb-2 space-y-2 shrink-0">
+        <FilterBar filters={filters} onChange={setFilters} columnCounts={columnCounts} />
+      </div>
+
+      {showAddTask && (
+        <div className="pb-2 shrink-0">
+          <AddTaskForm projectName={projectName} roster={roster} onClose={onCloseAddTask} />
+        </div>
+      )}
+
+      {/* Scrollable task list */}
+      <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-3">
+        {filteredColumns.length === 0 && (
+          <p className="text-xs text-text-dim px-1 py-4 text-center italic">No tasks match filters.</p>
+        )}
+        {filteredColumns.map(({ col, tasks }) => {
+          const isCollapsed = collapsed[col] ?? false;
+          const allColTasks = columns[col] ?? [];
+          return (
+            <div key={col}>
+              {/* Column header */}
+              <button
+                onClick={() => toggleCollapsed(col)}
+                className="w-full flex items-center justify-between px-1 py-1 group"
+              >
+                <span className="text-xs font-semibold uppercase tracking-wider text-text-dim group-hover:text-text transition-colors">
+                  {col}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-text-dim tabular-nums">{allColTasks.length}</span>
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 text-text-dim transition-transform duration-200 ${isCollapsed ? "-rotate-90" : ""}`}
+                  />
+                </div>
+              </button>
+
+              {!isCollapsed && (
+                <div className="space-y-0.5">
+                  {tasks.length === 0 && !isFiltering ? (
+                    <p className="text-xs text-text-dim italic px-1 py-1">empty</p>
+                  ) : (
+                    tasks.map((task) => (
+                      <TaskRow
+                        key={task.metadata.name}
+                        task={task}
+                        col={col}
+                        isSelected={selectedTaskName === task.metadata.name}
+                        onClick={() => onSelectTask(task.metadata.name)}
+                      />
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

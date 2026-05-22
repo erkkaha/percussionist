@@ -161,8 +161,8 @@ export function buildSuccessReviewRun(
     "",
     ...(isPlanTask
       ? [
-          `PLAN ARTIFACT PATH: ${planPath}`,
-          `Use workspace file access to inspect this file on branch ${branch}.`,
+           `PLAN ARTIFACT PATH: ${planPath}`,
+           `Call the read_plan MCP tool (read_plan(project="<project>", task="<task-id>")) to retrieve plan content.`,
           "",
         ]
       : []),

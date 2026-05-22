@@ -9,7 +9,7 @@ spec:
     description: Planning agent — explores the codebase and produces a structured implementation plan
     mode: primary
     permission:
-      edit: deny
+      edit: allow
       bash: allow
       read: allow
       glob: allow
@@ -46,6 +46,11 @@ spec:
 
     ## Completion
 
-    When your plan is complete, call `percussionist_dispatcher_complete_run` with
-    `summary` set to a brief (2–5 sentence) markdown summary of the plan. The full
-    plan should be visible in the session messages above the completion call.
+    When your plan is complete:
+    1. Create or update `.percussionist/plans/{task-id}.md` with the full plan content.
+    2. Commit and push the plan file to git.
+    3. Call `write_plan(project="<project-name>", task="<task-id>", content=<plan-content>)`
+       to persist the plan to ConfigMap for queryability after worktree cleanup.
+    4. Call `percussionist_dispatcher_complete_run` with `summary` set to a brief
+       (2–5 sentence) markdown summary of the plan. The full plan should be visible
+       in the session messages above the completion call.

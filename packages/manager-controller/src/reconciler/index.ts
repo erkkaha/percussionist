@@ -1,38 +1,12 @@
 // Manager reconciler — phase-driven architecture.
 
-import type { Project, Task, Run, TaskPhase } from "@percussionist/api";
+import type { Project, Task, Run } from "@percussionist/api";
 import { listTasks, getRun, patchTaskStatus } from "@percussionist/kube";
 import type { PhaseContext } from "./types.js";
 import { resolveConfig } from "./config-resolver.js";
 import { byPriority } from "./scheduler.js";
 import { handlers } from "./handlers/index.js";
 import { applyTransition } from "./transitions.js";
-
-// Backfill old tasks with phase from legacy column field.
-function backfillPhase(task: Task): TaskPhase {
-  const column = task.status?.column;
-  const worker = task.status?.worker;
-
-  switch (column) {
-    case "backlog":
-    case "ready":
-      return "pending";
-    case "in-progress":
-      if (!worker?.runName) return "scheduled";
-      return "running";
-    case "review":
-      if (worker?.status === "Failed") return "failed";
-      return "awaiting-human";
-    case "rework":
-      return "rework-requested";
-    case "done":
-      return "done";
-    case "blocked":
-      return "pending"; // + blocked flag set separately
-    default:
-      return "pending";
-  }
-}
 
 // Reconcile a single project's tasks.
 export async function reconcileProject(
@@ -44,24 +18,6 @@ export async function reconcileProject(
 
   // Fetch all tasks for this project.
   const tasks = await listTasks(projectName, namespace);
-
-  // Backfill phase for tasks that don't have one yet.
-  for (const task of tasks) {
-    if (!task.status?.phase) {
-      const phase = backfillPhase(task);
-      await patchTaskStatus(task.metadata.name, { phase }, namespace);
-      task.status = task.status ?? {};
-      task.status.phase = phase;
-      console.log(`[reconcile] ${task.metadata.name} backfilled phase: ${phase}`);
-    }
-
-    // Backfill blocked flag from legacy column.
-    if (task.status?.column === "blocked" && !task.status?.blocked) {
-      await patchTaskStatus(task.metadata.name, { blocked: true }, namespace);
-      task.status.blocked = true;
-      console.log(`[reconcile] ${task.metadata.name} backfilled blocked: true`);
-    }
-  }
 
   // Filter to active tasks (not idea or done).
   const activeTasks = tasks.filter((t) => {

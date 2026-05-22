@@ -71,6 +71,7 @@ export function buildWorkerRun(
       "- The file is the authoritative PLAN output and will be reviewed by facilitator/human reviewers.",
       "- Include implementation context, scope boundaries, risks, acceptance criteria, and proposed BUILD task breakdown.",
       "- Commit and push the plan artifact on this task branch before completing the run.",
+      "- After committing, call write_plan(project=\"<project>\", task=\"<task-id>\", content=<plan-content>) to persist it to ConfigMap.",
       `- Mention ${planPath} in the completion summary.`,
       "",
     );
