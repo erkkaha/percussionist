@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Task } from "../../lib/types";
 import { FilterBar } from "./FilterBar";
@@ -15,10 +15,11 @@ const DEFAULT_COLUMNS = ["ideas", "backlog", "blocked", "in-progress", "review",
 interface AddTaskFormProps {
   projectName: string;
   roster: string[];
+  defaultColumn?: string;
   onClose: () => void;
 }
 
-function AddTaskForm({ projectName, roster, onClose }: AddTaskFormProps) {
+function AddTaskForm({ projectName, roster, defaultColumn = "backlog", onClose }: AddTaskFormProps) {
   const queryClient = useQueryClient();
   const [taskType, setTaskType] = useState<"PLAN" | "BUILD">("PLAN");
   const [taskTitle, setTaskTitle] = useState("");
@@ -29,7 +30,7 @@ function AddTaskForm({ projectName, roster, onClose }: AddTaskFormProps) {
 
   const addMutation = useMutation({
     mutationFn: async (task: { type: string; title: string; description?: string; agent: string; priority?: string }) =>
-      addBoardTask(projectName, task),
+      addBoardTask(projectName, { ...task, column: defaultColumn }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["board", projectName] });
       onClose();
@@ -39,7 +40,7 @@ function AddTaskForm({ projectName, roster, onClose }: AddTaskFormProps) {
 
   return (
     <div className="rounded-md border border-border bg-surface p-4 space-y-3 mx-2">
-      <h2 className="text-sm font-semibold">Add Task</h2>
+      <h2 className="text-sm font-semibold">Add Task {defaultColumn === "ideas" ? "to Ideas" : "to Backlog"}</h2>
 
       {/* Type */}
       <div className="flex gap-4">
@@ -150,6 +151,9 @@ export function TaskListPanel({
     done: true,
   });
 
+  // Inline add-to-ideas form state
+  const [showAddIdea, setShowAddIdea] = useState(false);
+
   const toggleCollapsed = (col: string) => setCollapsed((p) => ({ ...p, [col]: !p[col] }));
 
   // Column counts for filter bar
@@ -205,20 +209,42 @@ export function TaskListPanel({
           return (
             <div key={col}>
               {/* Column header */}
-              <button
-                onClick={() => toggleCollapsed(col)}
-                className="w-full flex items-center justify-between px-1 py-1 group"
-              >
-                <span className="text-xs font-semibold uppercase tracking-wider text-text-dim group-hover:text-text transition-colors">
-                  {col}
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-text-dim tabular-nums">{allColTasks.length}</span>
-                  <ChevronDown
-                    className={`h-3.5 w-3.5 text-text-dim transition-transform duration-200 ${isCollapsed ? "-rotate-90" : ""}`}
+              <div className="w-full flex items-center justify-between px-1 py-1 group">
+                <button
+                  onClick={() => toggleCollapsed(col)}
+                  className="flex-1 flex items-center justify-between"
+                >
+                  <span className="text-xs font-semibold uppercase tracking-wider text-text-dim group-hover:text-text transition-colors">
+                    {col}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-text-dim tabular-nums">{allColTasks.length}</span>
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 text-text-dim transition-transform duration-200 ${isCollapsed ? "-rotate-90" : ""}`}
+                    />
+                  </div>
+                </button>
+                {col === "ideas" && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowAddIdea((v) => !v); if (isCollapsed) toggleCollapsed(col); }}
+                    className="ml-2 p-0.5 rounded text-text-dim hover:text-text transition-colors"
+                    title="Add idea"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {col === "ideas" && showAddIdea && !isCollapsed && (
+                <div className="pb-2">
+                  <AddTaskForm
+                    projectName={projectName}
+                    roster={roster}
+                    defaultColumn="ideas"
+                    onClose={() => setShowAddIdea(false)}
                   />
                 </div>
-              </button>
+              )}
 
               {!isCollapsed && (
                 <div className="space-y-0.5">

@@ -1088,99 +1088,88 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     case "read_plan": {
       const projectName = String(args.project ?? "");
       const taskName = String(args.task ?? "");
-      const mountPath = args.mountPath ? String(args.mountPath) : "/data";
       const resourceNs = String(args.namespace ?? ns);
 
       if (!projectName) throw new Error("project is required");
       if (!taskName) throw new Error("task is required");
 
-      // Get project to determine if it's local or remote git
+      // Try ConfigMap first (fast, no pod spawning)
+      const planContent = await readPlanFromConfigMap(projectName, taskName, resourceNs);
+      if (planContent !== null) {
+        return {
+          project: projectName,
+          task: taskName,
+          exists: true,
+          content: planContent,
+          source: "configmap",
+        };
+      }
+
+      // Fallback: read from workspace via execInWorkspace (backward compat for existing plans)
+      const mountPath = "/data";
       const project = await getProject(projectName, resourceNs);
       const isLocal = project.spec.source?.local === true;
       const gitUrl = project.spec.source?.git?.url;
-
       const planPath = `.percussionist/plans/${taskName}.md`;
       const escaped = planPath.replace(/'/g, "'\\''");
 
-      // For remote git projects, read from the git mirror using git show
       if (!isLocal && gitUrl) {
-        // Get the task to find its feature branch
         const task = await getTask(taskName, resourceNs);
         const gitBranch = task.status?.worker?.gitBranch || `feature/${taskName}`;
-        
-        // Calculate URL hash using djb2 (same as operator)
         let h = 5381;
         for (let i = 0; i < gitUrl.length; i++) {
           h = ((h << 5) + h + gitUrl.charCodeAt(i)) >>> 0;
         }
         const urlHash = h.toString(16).padStart(8, "0");
-        
         const mirrorPath = `${mountPath}/git-mirrors/${urlHash}`;
-        
-        // Install git and try to read from the feature branch
-        // Alpine's apk is quiet by default and git install is fast (~2-3s)
+
         const gitShowCmd = `apk add --no-cache git > /dev/null 2>&1 && cd '${mirrorPath}' && git show '${gitBranch}:${planPath}' 2>/dev/null`;
         const result = await execInWorkspace(projectName, gitShowCmd, mountPath, 30_000, resourceNs);
 
         if (result.exitCode === 0 && result.stdout) {
-          return {
-            project: projectName,
-            task: taskName,
-            planPath,
-            exists: true,
-            content: result.stdout,
-            branch: gitBranch,
-          };
+          return { project: projectName, task: taskName, exists: true, content: result.stdout, source: "git", branch: gitBranch };
         }
 
-        // Fallback: try main branch
         const mainBranchCmd = `apk add --no-cache git > /dev/null 2>&1 && cd '${mirrorPath}' && git show 'main:${planPath}' 2>/dev/null`;
         const mainResult = await execInWorkspace(projectName, mainBranchCmd, mountPath, 30_000, resourceNs);
-        
+
         if (mainResult.exitCode === 0 && mainResult.stdout) {
-          return {
-            project: projectName,
-            task: taskName,
-            planPath,
-            exists: true,
-            content: mainResult.stdout,
-            branch: "main",
-          };
+          return { project: projectName, task: taskName, exists: true, content: mainResult.stdout, source: "git", branch: "main" };
         }
-
-        return {
-          project: projectName,
-          task: taskName,
-          planPath,
-          exists: false,
-          content: null,
-          note: `Plan artifact not found at ${planPath} in branch ${gitBranch} or main. The plan may not have been committed yet.`,
-        };
-      }
-
-      // For local git projects, read from workspace directory
-      const result = await execInWorkspace(projectName, `cat '${escaped}'`, mountPath, 30_000, resourceNs);
-
-      if (result.exitCode !== 0) {
-        const stderr = result.stdout?.trim() || "";
-        return {
-          project: projectName,
-          task: taskName,
-          planPath,
-          exists: false,
-          content: null,
-          note: stderr
-            ? `Plan artifact not found at ${planPath}: ${stderr}`
-            : `Plan artifact not found at ${planPath}. The plan may not have been created yet.`,
-        };
+      } else {
+        const result = await execInWorkspace(projectName, `cat '${escaped}'`, mountPath, 30_000, resourceNs);
+        if (result.exitCode === 0 && result.stdout) {
+          return { project: projectName, task: taskName, exists: true, content: result.stdout, source: "workspace" };
+        }
       }
 
       return {
         project: projectName,
         task: taskName,
         planPath,
-        exists: true,
-        content: result.stdout,
+        exists: false,
+        content: null,
+        note: `Plan not found for ${taskName}. The planner may not have called write_plan yet.`,
+      };
+    }
+
+    case "write_plan": {
+      const projectName = String(args.project ?? "");
+      const taskName = String(args.task ?? "");
+      const content = args.content ? String(args.content) : "";
+      const resourceNs = String(args.namespace ?? ns);
+
+      if (!projectName) throw new Error("project is required");
+      if (!taskName) throw new Error("task is required");
+      if (!content) throw new Error("content is required");
+
+      const result = await writePlanToConfigMap(projectName, taskName, content, resourceNs);
+      return {
+        project: projectName,
+        task: taskName,
+        written: true,
+        sizeBytes: result.sizeBytes,
+        warning: result.warning,
       };
     }
 

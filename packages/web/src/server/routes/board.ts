@@ -28,7 +28,7 @@ import {
   NAMESPACE,
 } from "../kube.js";
 import { getDb, taskEvents } from "../db.js";
-import type { TaskSpec } from "@percussionist/api";
+import type { TaskSpec, TaskPhase } from "@percussionist/api";
 import { createPollingSseResponse } from "../lib/sse.js";
 
 const board = new Hono();
@@ -187,7 +187,8 @@ board.post("/:project/board/tasks", async (c) => {
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
 
-  const { type, title, description, agent, priority } = body as Partial<TaskSpec>;
+  const { type, title, description, agent, priority } = body as Partial<TaskSpec> & { column?: string };
+  const { column: targetColumn } = body as { column?: string };
 
   if (!type || !title || !agent) {
     return c.json({ error: "type, title, and agent are required" }, 400);
@@ -222,6 +223,12 @@ board.post("/:project/board/tasks", async (c) => {
     });
 
     const created = await createTask(task, ns);
+
+    // If the caller specified ideas column, patch status to phase=idea immediately.
+    if (targetColumn === "ideas") {
+      await patchTaskStatus(taskName, { phase: "idea" }, ns);
+    }
+
     await appendTaskEvent(name, taskName, type, "run.created", { title, agent, priority });
 
     return c.json({ task: created }, 201);
@@ -264,16 +271,22 @@ board.post("/:project/board/tasks/:taskName/move", async (c) => {
   const { column } = body as { column?: string };
   if (!column?.trim()) return c.json({ error: "column is required" }, 400);
 
-  // Only resetting to "ready"/"pending" (backlog) is supported via this endpoint.
-  if (column !== "ready" && column !== "pending" && column !== "backlog") {
-    return c.json({ error: `Unsupported target column: ${column}. Only "ready" is supported.` }, 400);
+  // Supported target columns and the phase they map to.
+  const columnPhaseMap: Record<string, TaskPhase> = {
+    ready: "pending",
+    pending: "pending",
+    backlog: "pending",
+    ideas: "idea",
+  };
+  if (!(column in columnPhaseMap)) {
+    return c.json({ error: `Unsupported target column: ${column}. Supported: ready, backlog, ideas.` }, 400);
   }
 
   try {
     const project = await getProject(projectName);
     const ns = project.metadata.namespace ?? NAMESPACE;
-    // Phase "pending" = task is well-defined and waiting to be scheduled.
-    await patchTaskStatus(taskName, { phase: "pending", blocked: false }, ns);
+    const targetPhase = columnPhaseMap[column]!;
+    await patchTaskStatus(taskName, { phase: targetPhase, blocked: false }, ns);
     await appendTaskEvent(projectName, taskName, "unknown", "moved", { column });
     return c.json({ success: true });
   } catch (e) {

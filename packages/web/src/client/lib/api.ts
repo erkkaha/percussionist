@@ -197,7 +197,7 @@ export async function fetchBoard(
 
 export async function addBoardTask(
   project: string,
-  task: { type: string; title: string; description?: string; agent: string; priority?: string },
+  task: { type: string; title: string; description?: string; agent: string; priority?: string; column?: string },
 ): Promise<{ task: Task }> {
   const res = await fetch(
     `${BASE}/projects/${encodeURIComponent(project)}/board/tasks`,
@@ -249,6 +249,25 @@ export async function retryEscalatedTask(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ column: "ready" }),
+    },
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function moveTask(
+  project: string,
+  taskName: string,
+  column: string,
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/move`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ column }),
     },
   );
   const body = await res.json().catch(() => ({}));

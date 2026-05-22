@@ -7,11 +7,11 @@ import { Link } from "react-router-dom";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   ExternalLink, Check, X, Trash2, Flag, User,
-  Wrench, FileText, RefreshCw, MousePointerClick,
+  Wrench, FileText, RefreshCw, MousePointerClick, ArrowRight,
 } from "lucide-react";
 import { useRun } from "../../hooks/useRun";
 import { useRunEvents } from "../../hooks/useRunEvents";
-import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan } from "../../lib/api";
+import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan, moveTask } from "../../lib/api";
 import { TERMINAL_PHASES } from "../../lib/types";
 import type { Task } from "../../lib/types";
 import SessionView from "../SessionView";
@@ -210,6 +210,11 @@ export function TaskDetailPanel({
     onSuccess: invalidateBoard,
   });
 
+  const promoteIdeaMutation = useMutation({
+    mutationFn: () => moveTask(projectName, taskName, "backlog"),
+    onSuccess: invalidateBoard,
+  });
+
   const deleteMutation = useMutation({
     mutationFn: () => deleteBoardTask(projectName, taskName),
     onSuccess: () => { invalidateBoard(); onDeleted(); },
@@ -265,6 +270,17 @@ export function TaskDetailPanel({
 
         {/* Action buttons */}
         <div className="flex items-center gap-2 flex-wrap">
+          {col === "ideas" && (
+            <button
+              onClick={() => promoteIdeaMutation.mutate()}
+              disabled={promoteIdeaMutation.isPending}
+              className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text transition-colors disabled:opacity-40"
+            >
+              <ArrowRight className="h-3.5 w-3.5" />
+              {promoteIdeaMutation.isPending ? "Promoting…" : "Promote to Backlog"}
+            </button>
+          )}
+
           {col === "review" && (
             <>
               <button
