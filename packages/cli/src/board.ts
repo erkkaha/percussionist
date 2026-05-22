@@ -13,6 +13,8 @@ import YAML from "yaml";
 import {
   type Project,
   type TaskColumn,
+  type TaskPhase,
+  computeBoardColumn,
 } from "@percussionist/api";
 import {
   NAMESPACE,
@@ -102,7 +104,8 @@ export async function runBoardGet(
     console.log(`Escalations (${escalated.length}):`);
     for (const t of escalated) {
       console.log(`--- ${t.metadata.name} ---`);
-      console.log(t.status?.worker?.escalation ?? "(no details)");
+      // Note: escalation field removed in new schema
+      console.log("(escalation details no longer stored in worker status)");
       console.log();
     }
   }
@@ -162,19 +165,17 @@ export async function runBoardTaskAdd(
     },
   });
 
-  // Set initial column in status if specified.
-  const initialColumn = (opts.column ?? "ready") as TaskColumn;
-  if (initialColumn !== "ready") {
-    task.status = { column: initialColumn, phase: "Pending" };
-  }
+  // Set initial phase in status (defaults to pending).
+  const initialPhase: TaskPhase = "pending";
+  
+  task.status = { phase: initialPhase };
 
   try {
     const created = await createTask(task, ns, custom);
-    console.log(`task ${created.metadata.name} created in "${initialColumn}" on project ${projectName}`);
-    if (initialColumn !== "ready") {
-      // Patch status subresource to set initial column.
-      await patchTaskStatus(created.metadata.name, { column: initialColumn }, ns);
-    }
+    const column = computeBoardColumn(initialPhase);
+    console.log(`task ${created.metadata.name} created in "${column}" (phase: ${initialPhase}) on project ${projectName}`);
+    // Patch status subresource to set initial phase.
+    await patchTaskStatus(created.metadata.name, { phase: initialPhase }, ns);
   } catch (e) {
     fatal("create task failed", e);
   }

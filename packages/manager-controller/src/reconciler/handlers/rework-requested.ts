@@ -1,0 +1,17 @@
+// Phase handler: rework-requested → scheduled
+
+import type { PhaseHandler, Transition } from "../types.js";
+import { canSchedule } from "../scheduler.js";
+
+export const handleReworkRequested: PhaseHandler = async (ctx) => {
+  // Check if a scheduling slot is available.
+  if (!canSchedule(ctx.task, ctx.project, ctx.allTasks)) {
+    return null; // Wait for slot.
+  }
+
+  // Reschedule the task.
+  return {
+    targetPhase: "scheduled",
+    sideEffects: [],
+  };
+};

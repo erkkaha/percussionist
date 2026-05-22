@@ -18,8 +18,10 @@ import {
   patchProjectSpec,
   patchProject,
   listTasks,
+  getTask,
   deleteTask,
   createTask,
+  patchTask,
   patchTaskStatus,
   buildTask,
   NAMESPACE,
@@ -296,6 +298,64 @@ board.post("/:project/board/tasks/:taskName/request-changes", async (c) => {
       },
     });
     await appendTaskEvent(name, taskName, "unknown", "request-changes", { feedback: feedback.trim() });
+    return c.json({ success: true });
+  } catch (e) {
+    const ke = e as KubeError;
+    return c.json({ error: errMsg(ke) }, errStatus(ke));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/projects/:project/board/tasks/:taskName/abandon
+
+board.post("/:project/board/tasks/:taskName/abandon", async (c) => {
+  const name = c.req.param("project");
+  const taskName = c.req.param("taskName");
+  try {
+    const project = await getProject(name);
+    const currentAnnotations = project.metadata.annotations ?? {};
+    await patchProject(name, {
+      metadata: {
+        annotations: {
+          ...currentAnnotations,
+          [`percussionist.dev/abandon-${taskName}`]: "true",
+        },
+      },
+    });
+    await appendTaskEvent(name, taskName, "unknown", "abandoned", {});
+    return c.json({ success: true });
+  } catch (e) {
+    const ke = e as KubeError;
+    return c.json({ error: errMsg(ke) }, errStatus(ke));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/projects/:project/board/tasks/:taskName/answer
+
+board.post("/:project/board/tasks/:taskName/answer", async (c) => {
+  const name = c.req.param("project");
+  const taskName = c.req.param("taskName");
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+  const { answer } = body as { answer?: string };
+  if (!answer?.trim()) {
+    return c.json({ error: "Answer is required" }, 400);
+  }
+  try {
+    // Answer is written as a Task annotation (not Project).
+    const task = await getTask(taskName);
+    const currentAnnotations = task.metadata.annotations ?? {};
+    await patchTask(taskName, {
+      metadata: {
+        ...task.metadata,
+        annotations: {
+          ...currentAnnotations,
+          [`percussionist.dev/answer-${taskName}`]: answer.trim(),
+        },
+      },
+    });
+    await appendTaskEvent(name, taskName, "PLAN", "answered", { answer: answer.trim() });
     return c.json({ success: true });
   } catch (e) {
     const ke = e as KubeError;

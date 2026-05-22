@@ -577,6 +577,37 @@ export async function patchTaskStatus(
   throw lastErr!;
 }
 
+// Patch a Task (metadata + spec, not status).
+export async function patchTask(
+  name: string,
+  patch: Partial<Pick<Task, "metadata" | "spec">>,
+  ns: string = NAMESPACE,
+  client = custom(),
+): Promise<Task> {
+  // Use fetch directly for merge-patch since the client doesn't support custom headers well.
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error("No service account token available");
+
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_TASK}/${name}`;
+
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/merge-patch+json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(patch),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (res.ok) return res.json() as Promise<Task>;
+  const body = await res.text();
+  throw new Error(`Kubernetes API error ${res.status}: ${body}`);
+}
+
 // Build a new Task object ready for createTask().
 // projectUid is needed for the ownerReference.
 export function buildTask({

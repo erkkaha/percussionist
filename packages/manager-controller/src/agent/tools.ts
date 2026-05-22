@@ -30,7 +30,7 @@ import {
 } from "@percussionist/kube";
 import { LABELS, type Project, type Task } from "@percussionist/api";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
-import { setPaused, getPauseStatus } from "../reconciler.js";
+import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
 import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
@@ -244,16 +244,16 @@ const TOOLS = [
   {
     name: "set_task_state",
     description:
-      "Atomically transition a board task to a target state. Cleans up terminal-phase runs (unless preserveRuns is true), optionally cancels running runs, moves the task in the backlog, and updates the worker entry in a single patch. This avoids race conditions with the manager's reconciliation loop.",
+      "Atomically transition a task to a target phase. Cleans up terminal-phase runs (unless preserveRuns is true), optionally cancels running runs, and updates task status in a single operation. This avoids race conditions with the manager's reconciliation loop.",
     inputSchema: {
       type: "object",
       properties: {
         project: { type: "string", description: "Project name" },
-        task: { type: "string", description: "Board task ID (e.g. 'BUILD-4')" },
-        targetColumn: {
+        task: { type: "string", description: "Task CR name" },
+        targetPhase: {
           type: "string",
-          enum: ["backlog", "ready", "in-progress", "review", "rework", "done"],
-          description: "Target backlog column for the task",
+          enum: ["idea", "pending", "scheduled", "running", "failed", "awaiting-human", "rework-requested", "done"],
+          description: "Target phase for the task. Most common: pending (reset to backlog), awaiting-human (needs review), rework-requested (AI/human requested changes), done (complete).",
         },
         cancelRunning: {
           type: "boolean",
@@ -261,14 +261,14 @@ const TOOLS = [
         },
         preserveRuns: {
           type: "boolean",
-          description: "Skip run deletion entirely — only update the task column. Useful when you need to preserve completed run data (e.g. session snapshots) for later reading. (default: false)",
+          description: "Skip run deletion entirely — only update the task phase. Useful when you need to preserve completed run data (default: false)",
         },
         namespace: {
           type: "string",
           description: "Namespace (optional, defaults to percussionist)",
         },
       },
-      required: ["project", "task", "targetColumn"],
+      required: ["project", "task", "targetPhase"],
     },
   },
   {
@@ -698,7 +698,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
           status: "Running",
           ...workerBranchPatch(project, task, projectTasks),
           retryCount,
-          facilitated: false,
+          aiReworkCount: existingWorker?.aiReworkCount ?? 0,
         },
       }, resourceNs);
 
@@ -754,7 +754,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
             status: "Running",
             ...workerBranchPatch(project, task, projectTasks),
             retryCount,
-            facilitated: false,
+            aiReworkCount: 0,
           },
         }, resourceNs);
 
@@ -784,7 +784,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         await patchTaskStatus(taskName, {
           column: "ready",
           worker: {
-            ...(task.status?.worker ?? { status: "Failed", retryCount: 0, facilitated: false }),
+            ...(task.status?.worker ?? { status: "Failed" as const, retryCount: 0, aiReworkCount: 0 }),
             status: "Failed",
             runName: undefined,
             retryCount,
@@ -891,14 +891,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     case "set_task_state": {
       const projectName = String(args.project ?? "");
       const taskName = String(args.task ?? "");
-      const targetColumn = String(args.targetColumn ?? "");
+      const targetPhase = String(args.targetPhase ?? "");
       const cancelRunning = args.cancelRunning === true;
       const preserveRuns = args.preserveRuns === true;
       const resourceNs = String(args.namespace ?? ns);
 
-      const validColumns = ["backlog", "ready", "in-progress", "review", "rework", "done", "blocked"];
-      if (!validColumns.includes(targetColumn)) {
-        throw new Error(`Invalid targetColumn: ${targetColumn}. Must be one of: ${validColumns.join(", ")}`);
+      const validPhases = ["idea", "pending", "scheduled", "running", "failed", "awaiting-human", "rework-requested", "done"];
+      if (!validPhases.includes(targetPhase)) {
+        throw new Error(`Invalid targetPhase: ${targetPhase}. Must be one of: ${validPhases.join(", ")}`);
       }
 
       const task = await getTask(taskName, resourceNs);
@@ -911,47 +911,58 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
       const existingWorker = task.status?.worker;
       let workerCleared = true;
-      if (targetColumn === "in-progress") {
+      
+      // Phase-specific worker state updates
+      if (targetPhase === "scheduled" || targetPhase === "running") {
         const retryCount = existingWorker?.retryCount ?? 0;
         await patchTaskStatus(taskName, {
-          column: "in-progress",
+          phase: targetPhase as "scheduled" | "running",
           worker: {
             ...(existingWorker ?? {}),
             runName: undefined,
             status: "Running",
             ...workerBranchPatch(project, task, projectTasks),
             retryCount,
-            facilitated: false,
+            aiReworkCount: existingWorker?.aiReworkCount ?? 0,
           },
         }, resourceNs);
         workerCleared = false;
-      } else if (targetColumn === "done") {
+      } else if (targetPhase === "done") {
         await patchTaskStatus(taskName, {
-          column: "done",
+          phase: "done",
           worker: {
-            ...(existingWorker ?? { retryCount: 0, facilitated: false }),
+            ...(existingWorker ?? { retryCount: 0, aiReworkCount: 0, status: "Succeeded" as const }),
             status: "Succeeded",
             runName: undefined,
             completedAt: new Date().toISOString(),
           },
         }, resourceNs);
         workerCleared = false;
-      } else if (targetColumn === "ready" || targetColumn === "rework") {
+      } else if (targetPhase === "pending" || targetPhase === "rework-requested") {
         await patchTaskStatus(taskName, {
-          column: targetColumn,
+          phase: targetPhase as "pending" | "rework-requested",
           worker: existingWorker
             ? { ...existingWorker, status: "Failed", runName: undefined }
             : undefined,
         }, resourceNs);
         workerCleared = !existingWorker;
+      } else if (targetPhase === "failed") {
+        await patchTaskStatus(taskName, {
+          phase: "failed",
+          worker: existingWorker
+            ? { ...existingWorker, status: "Failed", runName: undefined }
+            : { status: "Failed" as const, retryCount: 0, aiReworkCount: 0 },
+        }, resourceNs);
+        workerCleared = false;
       } else {
-        await patchTaskStatus(taskName, { column: targetColumn as "ready" | "review" | "rework" | "done" | "blocked" }, resourceNs);
+        // Other phases (idea, awaiting-human) - just update phase
+        await patchTaskStatus(taskName, { phase: targetPhase as never }, resourceNs);
       }
 
       return {
         project: projectName,
         task: taskName,
-        targetColumn,
+        targetPhase,
         deletedRuns,
         workerCleared,
         preserveRuns,

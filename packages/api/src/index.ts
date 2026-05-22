@@ -613,7 +613,45 @@ export const TaskType = {
 } as const;
 export type TaskType = (typeof TaskType)[keyof typeof TaskType];
 
-// Task column enum
+// New task phase enum — authoritative internal state
+export const TaskPhase = z.enum([
+  // Pre-work
+  "idea",              // Parking lot, not actionable
+  "pending",           // Well-defined, waiting for scheduling
+  // Active work
+  "scheduled",         // Scheduler picked it, run being created
+  "initializing",      // Pod starting, git checkout in progress
+  "running",           // Agent actively working
+  "waiting-for-input", // PLAN-only: agent asked a question
+  // Post-work
+  "succeeded",         // Run completed successfully
+  "reviewing",         // AI reviewer evaluating (optional)
+  "awaiting-human",    // Needs human decision (approve/reject/answer question)
+  "awaiting-merge",    // Merge run in progress
+  "rework-requested",  // Human gave feedback, waiting for scheduling slot
+  "generating-builds", // PLAN-only: buildgen facilitator splitting into tasks
+  // Terminal
+  "done",              // Complete
+  // Failure
+  "failed",            // Run failed, needs human decision
+]);
+export type TaskPhase = z.infer<typeof TaskPhase>;
+
+// Board column enum — computed client-side from phase, never stored
+export const BoardColumn = z.enum(["ideas", "backlog", "in-progress", "review", "done"]);
+export type BoardColumn = z.infer<typeof BoardColumn>;
+
+// Compute board column from task phase
+export function computeBoardColumn(phase: TaskPhase): BoardColumn {
+  if (phase === "idea") return "ideas";
+  if (phase === "pending") return "backlog";
+  if (phase === "done") return "done";
+  if (["waiting-for-input", "succeeded", "reviewing", "awaiting-human", "failed"].includes(phase))
+    return "review";
+  return "in-progress";
+}
+
+// Legacy task column enum — kept for backwards compatibility during migration
 export const TaskColumn = {
   Backlog: "backlog",
   Ready: "ready",
@@ -624,15 +662,6 @@ export const TaskColumn = {
   Blocked: "blocked",
 } as const;
 export type TaskColumn = (typeof TaskColumn)[keyof typeof TaskColumn];
-
-// Task phase enum (for kubectl visibility)
-export const TaskPhase = {
-  Pending: "Pending",
-  Active: "Active",
-  Done: "Done",
-  Escalated: "Escalated",
-} as const;
-export type TaskPhase = (typeof TaskPhase)[keyof typeof TaskPhase];
 
 // Per-worker execution tracking — now lives in Task.status.worker.
 export const WorkerStatusSchema = z.object({
@@ -646,13 +675,11 @@ export const WorkerStatusSchema = z.object({
   prNumber: z.number().int().min(1).optional(),
   startedAt: z.string().optional(),
   completedAt: z.string().optional(),
-  escalation: z.string().max(4096).optional(),
   retryCount: z.number().int().min(0).default(0),
-  facilitated: z.boolean().default(false),
-  facilitationRunName: z.string().optional(),
+  // AI reviewer rework count — incremented on AI request_changes, reset on human action.
+  aiReworkCount: z.number().int().min(0).default(0),
   // Name of the success-review facilitator run (set after worker Succeeded).
   reviewRunName: z.string().optional(),
-  facilitationResult: FacilitationResultSchema.optional(),
   // BUILD task generation tracking (for PLAN tasks).
   buildTasksFacilitatorRun: z.string().optional(),
   buildTasksCreated: z.boolean().optional(),
@@ -660,7 +687,6 @@ export const WorkerStatusSchema = z.object({
   createdBuildTaskRefs: z.array(z.string()).optional(),
   reviewApproved: z.boolean().optional(),
   reviewFeedback: z.string().max(4096).optional(),
-  reworkAgent: z.string().max(63).optional(),
   mergeRunName: z.string().optional(),
   mergedAt: z.string().optional(),
   mergeError: z.string().max(4096).optional(),
@@ -781,6 +807,23 @@ export const ProjectSpecSchema = z.object({
   // PLAN tasks use feature/{plan-id}, BUILD tasks use feature/{plan-id}/{build-id}.
   // Default: false (all tasks work on main branch).
   featureBranchingEnabled: z.boolean().default(false),
+  
+  // Retry policy — auto-retry behavior on task failure.
+  retryPolicy: z.object({
+    enabled: z.boolean().default(false),
+    maxAttempts: z.number().int().min(1).max(10).default(3),
+    backoffSeconds: z.number().int().min(5).max(600).default(30),
+    backoffMultiplier: z.number().min(1).max(5).default(2),
+    maxBackoffSeconds: z.number().int().min(5).max(3600).default(300),
+    poisonPillThresholdSeconds: z.number().int().min(5).max(300).default(30),
+  }).optional(),
+  
+  // Review policy — AI reviewer opt-in and rework ceiling.
+  reviewPolicy: z.object({
+    aiReviewerEnabled: z.boolean().default(false),
+    aiReviewerAgent: z.string().max(63).default("reviewer"),
+    maxAutoReworks: z.number().int().min(1).max(10).default(2),
+  }).optional(),
 });
 
 export type ProjectSpec = z.infer<typeof ProjectSpecSchema>;
@@ -852,24 +895,38 @@ export const TaskSpecSchema = z.object({
 
   // BUILD only: CR name of the following BUILD task in the serial chain.
   successorRef: z.string().optional(),
+  
+  // Task-level retry policy override (merges with project-level policy).
+  retryPolicy: z.object({
+    enabled: z.boolean().optional(),
+    maxAttempts: z.number().int().min(1).max(10).optional(),
+    backoffSeconds: z.number().int().min(5).max(600).optional(),
+  }).optional(),
 });
 
 export type TaskSpec = z.infer<typeof TaskSpecSchema>;
 
 export const TaskStatusSchema = z.object({
-  // Kanban column.
+  // Internal phase — authoritative state for reconciler logic.
+  phase: TaskPhase.default("pending"),
+  
+  // Blocked flag — when true, task is excluded from scheduling regardless of phase.
+  blocked: z.boolean().default(false),
+  blockedReason: z.string().max(1024).optional(),
+  
+  // Retry backoff — when set, scheduler skips this task until retryAfter time passes.
+  retryAfter: z.string().optional(),
+  lastFailureReason: z.string().max(4096).optional(),
+  lastFailureDuration: z.number().optional(),
+  
+  // Legacy column field — kept for backwards compatibility, never written by new code.
   column: z
     .enum(["backlog", "ready", "in-progress", "review", "rework", "done", "blocked"])
-    .default("backlog"),
+    .optional(),
 
-  // High-level phase for kubectl visibility.
-  phase: z
-    .enum(["Pending", "Active", "Done", "Escalated"])
-    .default("Pending"),
-
-  // Worker execution state — set when column is in-progress or beyond.
+  // Worker execution state — set when phase is scheduled or beyond.
   worker: WorkerStatusSchema.optional(),
-});
+}).partial();
 
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 

@@ -21,7 +21,7 @@ import {
   kc,
   k8s,
   NAMESPACE,
-} from "./reconciler.js";
+} from "./reconciler-bridge.js";
 import { startAgent } from "./agent/index.js";
 import { startMcpServer } from "./agent/tools.js";
 

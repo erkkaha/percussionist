@@ -36,6 +36,7 @@ export {
   getTask,
   createTask,
   deleteTask,
+  patchTask,
   patchTaskStatus,
   buildTask,
   // Pod helpers

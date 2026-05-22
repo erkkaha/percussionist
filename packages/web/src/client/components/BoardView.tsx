@@ -145,11 +145,8 @@ function TaskCard({
           <details className="text-xs text-phase-failed">
             <summary className="cursor-pointer list-none hover:opacity-80 transition-opacity [&::-webkit-details-marker]:hidden flex items-center gap-1.5">
               <span>Escalated</span>
-              {worker.escalation && <span className="text-text-dim">(show reason)</span>}
             </summary>
-            {worker.escalation && (
-              <p className="mt-1 whitespace-pre-wrap text-text-dim">{worker.escalation}</p>
-            )}
+            <p className="mt-1 whitespace-pre-wrap text-text-dim">(escalation details no longer stored in worker status)</p>
           </details>
         )}
 
