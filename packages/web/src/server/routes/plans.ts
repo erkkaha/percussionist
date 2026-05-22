@@ -24,28 +24,10 @@ router.get("/:project/plans/:taskId", async (c) => {
     return c.json({ error: "Missing required parameters: project, taskId" }, 400);
   }
 
-  // First, we need to find a run for this task to pass to read_plan.
-  // The read_plan tool requires a runName, so we need to look up the task
-  // and get its worker.runName.
+  // Call the manager's MCP tool read_plan.
+  // The tool requires project and task parameters, and it will automatically
+  // resolve the plan task ID (for BUILD tasks, it reads the parent PLAN).
   try {
-    // Import kube helpers
-    const { getTask } = await import("../kube.js");
-    
-    const task = await getTask(taskId);
-    const runName = task.status?.worker?.runName;
-
-    if (!runName) {
-      return c.json(
-        {
-          error: `Task ${taskId} has no completed run. Plan artifacts are only available after the task has run at least once.`,
-          taskId,
-          project,
-        },
-        404,
-      );
-    }
-
-    // Call the manager's MCP tool read_plan
     const mcpRequest = {
       jsonrpc: "2.0",
       id: 1,
@@ -53,7 +35,8 @@ router.get("/:project/plans/:taskId", async (c) => {
       params: {
         name: "read_plan",
         arguments: {
-          runName,
+          project,
+          task: taskId,
           namespace: NAMESPACE,
         },
       },

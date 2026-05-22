@@ -45,9 +45,10 @@ rules:
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "patch"]
   # Pod logs and events — for the agent's diagnostic MCP tools.
+  # Pod creation — for execInWorkspace (used by read_plan and other maintenance tools).
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "create", "delete"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list"]
@@ -70,6 +71,10 @@ spec:
     - name: chat
       port: 4098
       targetPort: 4098
+      protocol: TCP
+    - name: mcp
+      port: 4097
+      targetPort: 4097
       protocol: TCP
 ---
 apiVersion: rbac.authorization.k8s.io/v1

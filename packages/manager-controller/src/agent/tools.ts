@@ -1201,8 +1201,8 @@ export function startMcpServer(): Promise<McpServer> {
     });
 
     server.on("error", reject);
-    server.listen(MCP_PORT, "127.0.0.1", () => {
-      console.log(`[agent] MCP server listening on 127.0.0.1:${MCP_PORT}`);
+    server.listen(MCP_PORT, "0.0.0.0", () => {
+      console.log(`[agent] MCP server listening on 0.0.0.0:${MCP_PORT}`);
       resolve({
         close() {
           server.close();
