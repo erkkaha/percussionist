@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Web dashboard for percussionist",
   "scripts": {
-    "dev": "tsx watch src/server/index.ts",
+    "dev": "bun --watch src/server/index.ts",
     "dev:client": "vite",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
