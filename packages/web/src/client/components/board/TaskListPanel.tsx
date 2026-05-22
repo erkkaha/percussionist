@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Task } from "../../lib/types";
 import { FilterBar } from "./FilterBar";
@@ -189,7 +189,10 @@ export function TaskListPanel({
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="px-2 pt-2 pb-2 space-y-2 shrink-0">
-        <FilterBar filters={filters} onChange={setFilters} columnCounts={columnCounts} />
+        <FilterBar filters={filters} onChange={setFilters} columnCounts={columnCounts} onAddIdea={() => {
+          setShowAddIdea((v) => !v);
+          setCollapsed((p) => ({ ...p, ideas: false }));
+        }} />
       </div>
 
       {showAddTask && (
@@ -209,31 +212,20 @@ export function TaskListPanel({
           return (
             <div key={col}>
               {/* Column header */}
-              <div className="w-full flex items-center justify-between px-1 py-1 group">
-                <button
-                  onClick={() => toggleCollapsed(col)}
-                  className="flex-1 flex items-center justify-between"
-                >
-                  <span className="text-xs font-semibold uppercase tracking-wider text-text-dim group-hover:text-text transition-colors">
-                    {col}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-text-dim tabular-nums">{allColTasks.length}</span>
-                    <ChevronDown
-                      className={`h-3.5 w-3.5 text-text-dim transition-transform duration-200 ${isCollapsed ? "-rotate-90" : ""}`}
-                    />
-                  </div>
-                </button>
-                {col === "ideas" && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setShowAddIdea((v) => !v); if (isCollapsed) toggleCollapsed(col); }}
-                    className="ml-2 p-0.5 rounded text-text-dim hover:text-text transition-colors"
-                    title="Add idea"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
+              <button
+                onClick={() => toggleCollapsed(col)}
+                className="w-full flex items-center justify-between px-1 py-1 group"
+              >
+                <span className="text-xs font-semibold uppercase tracking-wider text-text-dim group-hover:text-text transition-colors">
+                  {col}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-text-dim tabular-nums">{allColTasks.length}</span>
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 text-text-dim transition-transform duration-200 ${isCollapsed ? "-rotate-90" : ""}`}
+                  />
+                </div>
+              </button>
 
               {col === "ideas" && showAddIdea && !isCollapsed && (
                 <div className="pb-2">
