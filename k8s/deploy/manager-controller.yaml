@@ -27,7 +27,7 @@ rules:
     verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: ["percussionist.dev"]
     resources: ["runs/status"]
-    verbs: ["get"]
+    verbs: ["get", "update", "patch"]
   # Task — first-class task CRs; manager owns their lifecycle.
   - apiGroups: ["percussionist.dev"]
     resources: ["tasks"]
@@ -121,6 +121,8 @@ spec:
               value: http://percussionist-web.percussionist.svc.cluster.local:8080
             - name: RUNNER_IMAGE_DEFAULT
               value: percussionist/runner:dev
+            - name: MERGING_AGENT
+              value: meta-integrator
             - name: NODE_EXTRA_CA_CERTS
               value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
           resources:

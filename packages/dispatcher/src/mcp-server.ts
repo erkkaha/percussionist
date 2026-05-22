@@ -122,7 +122,13 @@ function readBody(req: IncomingMessage): Promise<string> {
  */
 async function validateGitWorkflow(sessionID: string): Promise<string[]> {
   const errors: string[] = [];
-  
+
+  // Skip validation for merge-only tasks that prohibit code changes.
+  const taskDesc = process.env.RUN_TASK ?? "";
+  if (/do not perform any code changes/i.test(taskDesc)) {
+    return errors;
+  }
+
   try {
     const messages: RawMessage[] = await fetchMessages(sessionID);
     

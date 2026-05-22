@@ -9,9 +9,14 @@ import {
   CustomObjectsApi,
 } from "@kubernetes/client-node";
 import {
+  API_GROUP,
+  API_VERSION,
   API_GROUP_VERSION,
+  PLURAL_RUN,
   PLURAL_TASK,
+  RunPhase,
   type Project,
+  type Run,
   type Task,
   type WorkerStatus,
   type BoardStatus,
@@ -25,6 +30,7 @@ import {
   getProject,
   patchProject,
   patchProjectStatus,
+  patchRunStatus,
   listTasks,
   createTask,
   deleteTask,
@@ -74,31 +80,29 @@ export { kc };
 // ---------------------------------------------------------------------------
 // Helpers
 
-/** Patch just the worker field on a task status. Best-effort — logs errors. */
+/** Patch just the worker field on a task status. Throws on failure.
+ *  Fields set to `undefined` in the patch are serialized as `null` to ensure
+ *  JSON merge patch actually clears them (JSON.stringify drops undefined keys). */
 async function patchWorker(
   taskName: string,
   patch: Partial<WorkerStatus>,
   existingWorker: WorkerStatus | undefined,
   ns: string,
 ): Promise<void> {
-  try {
-    await patchTaskStatus(taskName, { worker: { ...(existingWorker ?? { status: "Running", retryCount: 0, facilitated: false }), ...patch } }, ns);
-  } catch (e) {
-    err(`patchWorker(${taskName}) failed:`, (e as Error).message);
+  const base: Record<string, unknown> = { ...(existingWorker ?? { status: "Running", retryCount: 0, facilitated: false }) };
+  for (const [key, value] of Object.entries(patch)) {
+    base[key] = value === undefined ? null : value;
   }
+  await patchTaskStatus(taskName, { worker: base as WorkerStatus }, ns);
 }
 
-/** Move a task to a new column. */
+/** Move a task to a new column. Throws on failure. */
 async function moveTaskColumn(
   taskName: string,
   column: string,
   ns: string,
 ): Promise<void> {
-  try {
-    await patchTaskStatus(taskName, { column: column as "backlog" | "ready" | "in-progress" | "review" | "rework" | "done" | "blocked" }, ns);
-  } catch (e) {
-    err(`moveTaskColumn(${taskName} → ${column}) failed:`, (e as Error).message);
-  }
+  await patchTaskStatus(taskName, { column: column as "backlog" | "ready" | "in-progress" | "review" | "rework" | "done" | "blocked" }, ns);
 }
 
 /**
@@ -338,7 +342,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
     const worker = task.status!.worker!;
     const runName = worker.runName!;
 
-    if (worker.status === "Succeeded" && task.status?.column !== "in-progress") {
+    if (task.status?.column !== "in-progress") {
       continue;
     }
 
@@ -364,6 +368,12 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
 
         // Success-review gate.
         if (reviewFacilitatorEnabled && !worker.reviewRunName) {
+          if (worker.reviewApproved) {
+            await moveTaskColumn(taskName, "review", ns);
+            log(`worker ${runName} succeeded, already approved → task ${taskName} in review`);
+            emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "review", reason: "succeeded" });
+            continue;
+          }
           let sessionSummary = "";
           if (run.status?.sessionID && run.status?.serviceName) {
             try {
@@ -408,7 +418,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
             reviewRun = await getRun(worker.reviewRunName, ns, k8s);
           } catch {
             if (worker.reviewApproved) {
-              await patchWorker(taskName, { reviewRunName: undefined }, worker, ns);
+              await patchWorker(taskName, { status: "Succeeded", reviewRunName: undefined }, worker, ns);
               await moveTaskColumn(taskName, "review", ns);
               await patchProject(projectName, {
                 metadata: {
@@ -438,7 +448,7 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
 
           if (result) {
             if (result.recommendedAction === "approve") {
-              await patchWorker(taskName, { facilitationResult: result, reviewApproved: true, reviewFeedback: undefined, reworkAgent: undefined }, worker, ns);
+              await patchWorker(taskName, { status: "Succeeded", facilitationResult: result, reviewApproved: true, reviewFeedback: undefined, reworkAgent: undefined }, worker, ns);
               await moveTaskColumn(taskName, "review", ns);
               log(`reviewer approved task ${taskName} → review`);
               emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "review", reason: "reviewer-approved" });
@@ -570,6 +580,9 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
             await moveTaskColumn(taskName, "review", ns);
             log(`worker ${runName} succeeded → ${taskName} in review (no reviewer, auto-approved)`);
             emitEvent(projectName, taskName, task.spec.type, "column.changed", { from: "in-progress", to: "review", reason: "succeeded-auto-approved" });
+          } else {
+            await moveTaskColumn(taskName, "review", ns);
+            log(`worker ${runName} succeeded, already approved → ${taskName} in review`);
           }
         }
       } else if (runPhase === "Failed") {
@@ -847,6 +860,32 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
         await patchProjectStatus(projectName, { board: { pendingQuestions: updatedQs } }, ns);
       } else if (runPhase === "Running") {
         const runMessage = run.status?.message ?? "";
+        // Staleness detection: if the dispatcher hasn't updated lastEventAt
+        // for 5+ minutes on a non-interactive run, the session is likely dead
+        // (opencode crashed, dispatcher hung). Patch the run to Failed so the
+        // existing failure handling (retry/escalate) kicks in.
+        if (!run.spec.interactive) {
+          const lastEventAt = run.status?.lastEventAt;
+          if (lastEventAt) {
+            const elapsed = Date.now() - new Date(lastEventAt).getTime();
+            const staleThresholdMs = 5 * 60 * 1000;
+            if (elapsed > staleThresholdMs) {
+              log(`run ${runName} is stale — lastEventAt ${lastEventAt} was ${Math.floor(elapsed / 1000)}s ago (>5m) — marking as failed`);
+              try {
+                await patchRunStatus(runName, {
+                  phase: RunPhase.Failed,
+                  message: `session lost: no status update in ${Math.floor(elapsed / 1000)}s`,
+                  completedAt: new Date().toISOString(),
+                }, ns);
+              } catch (e) {
+                err(`failed to patch stale run ${runName} to Failed:`, (e as Error).message);
+              }
+              // Continue to the next iteration — next reconcile will pick up
+              // the Failed phase from the re-read run and handle retry/escalation.
+              continue;
+            }
+          }
+        }
         log(`run ${runName} is Running (${runMessage}) for task ${taskName} — monitoring`);
       } else if (runPhase === "Initializing" || runPhase === "Pending") {
         log(`run ${runName} is ${runPhase} for task ${taskName} — waiting`);
@@ -981,6 +1020,16 @@ async function runReconcileCycle(project: Project, startTime: number): Promise<v
           }, worker, ns);
           await moveTaskColumn(taskName, "review", ns);
           emitEvent(projectName, taskName, task.spec.type, "escalated", { reason: `Merge ${mergePhase}: ${mergeMessage}` });
+          continue;
+        }
+        // Merge run not found (TTL'd, deleted) — clear the reference so the
+        // human-approval path can re-attempt.
+        if (!mergeRun) {
+          log(`merge run ${worker.mergeRunName} not found for ${taskName} — clearing mergeRunName`);
+          await patchWorker(taskName, {
+            mergeRunName: undefined,
+            mergeError: undefined,
+          }, worker, ns);
           continue;
         }
         // Merge still pending/running.

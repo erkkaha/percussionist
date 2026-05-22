@@ -144,6 +144,19 @@ export async function getPermissions(sessionID: string): Promise<unknown[]> {
   }
 }
 
+export async function checkHealth(): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE_URL}/global/health`);
+    if (res.ok) {
+      const body = (await res.json()) as { healthy?: boolean; version?: string };
+      return !!body.healthy;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export async function waitForHealthy(
   timeoutMs = 120_000,
   shuttingDown: () => boolean,

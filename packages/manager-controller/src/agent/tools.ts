@@ -359,6 +359,27 @@ const TOOLS = [
       required: ["project", "command"],
     },
   },
+  {
+    name: "read_plan",
+    description:
+      "Read a plan artifact from a project's data volume. Plans are created by planner agents at .percussionist/plans/{task}.md and referenced by BUILD tasks during implementation. Use this to review plan content before implementing or reviewing BUILD tasks to understand the full plan context, acceptance criteria, and sequencing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (used to locate the data PVC: {project}-data)" },
+        task: { type: "string", description: "Plan task ID (e.g. 'PLAN-1') — reads .percussionist/plans/{task}.md from the project's data volume" },
+        mountPath: {
+          type: "string",
+          description: "Mount path for the data PVC inside the pod (default: /data)",
+        },
+        namespace: {
+          type: "string",
+          description: "Namespace (optional, defaults to percussionist)",
+        },
+      },
+      required: ["project", "task"],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1034,6 +1055,42 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         exitCode: result.exitCode,
         stdout: result.stdout,
         succeeded: result.exitCode === 0,
+      };
+    }
+
+    case "read_plan": {
+      const projectName = String(args.project ?? "");
+      const taskName = String(args.task ?? "");
+      const mountPath = args.mountPath ? String(args.mountPath) : "/data";
+      const resourceNs = String(args.namespace ?? ns);
+
+      if (!projectName) throw new Error("project is required");
+      if (!taskName) throw new Error("task is required");
+
+      const planPath = `.percussionist/plans/${taskName}.md`;
+      const escaped = planPath.replace(/'/g, "'\\''");
+      const result = await execInWorkspace(projectName, `cat '${escaped}'`, mountPath, 30_000, resourceNs);
+
+      if (result.exitCode !== 0) {
+        const stderr = result.stdout?.trim() || "";
+        return {
+          project: projectName,
+          task: taskName,
+          planPath,
+          exists: false,
+          content: null,
+          note: stderr
+            ? `Plan artifact not found at ${planPath}: ${stderr}`
+            : `Plan artifact not found at ${planPath}. The plan may not have been created yet.`,
+        };
+      }
+
+      return {
+        project: projectName,
+        task: taskName,
+        planPath,
+        exists: true,
+        content: result.stdout,
       };
     }
 

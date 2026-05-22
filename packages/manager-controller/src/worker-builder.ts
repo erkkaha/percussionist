@@ -171,23 +171,29 @@ export function buildMergeRun(
     targetBranch = "main";
   }
 
+  // Use a dedicated merge agent if configured, otherwise fall back to the task's agent.
+  const MERGING_AGENT = process.env.MERGING_AGENT;
+  const mergeAgent =
+    MERGING_AGENT && (project.spec.agents ?? []).some((a) => a.name === MERGING_AGENT)
+      ? MERGING_AGENT
+      : task.spec.agent;
+
   const promptLines = [
-    `TASK: Merge approved PR for ${taskName}`,
+    `TASK: Merge approved changes for ${taskName}`,
     "",
     `Task title: ${task.spec.title}`,
     `Source branch: ${sourceBranch}`,
     `Target branch: ${targetBranch}`,
     "",
     "Requirements:",
-    "- Use GitHub CLI and repository context in this workspace.",
-    "- Find the open PR for the source branch.",
-    "- Merge it with SQUASH strategy into the target branch.",
+    "- Merge the source branch into the target branch.",
     "- Do not perform any code changes.",
-    "- If no matching open PR exists, fail with a clear reason.",
+    "- If the branches are already merged, report success — do not re-create runs or PRs.",
+    "- Push the merged result to the remote repository.",
     "",
-    "Suggested commands:",
-    `- gh pr list --head \"${sourceBranch}\" --state open --json number,title,headRefName,baseRefName,url`,
-    "- gh pr merge <number> --squash --delete-branch",
+    "## Completion",
+    "",
+    'When done, call `percussionist_dispatcher_complete_run` with a summary.',
   ];
 
   return {
@@ -216,8 +222,8 @@ export function buildMergeRun(
       boardTask: taskName,
       task: promptLines.join("\n"),
       interactive: false,
-      agent: task.spec.agent,
-      agents: (project.spec.agents ?? []).filter((a) => a.name !== task.spec.agent),
+      agent: mergeAgent,
+      agents: (project.spec.agents ?? []).filter((a) => a.name !== mergeAgent),
       model: resolved.model,
       image: resolved.image,
       timeoutSeconds: resolved.timeoutSeconds,

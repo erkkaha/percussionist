@@ -1,7 +1,7 @@
 // polling.ts — prompt-mode and interactive-mode polling loops.
 
 import { RunPhase } from "@percussionist/api";
-import { BASE_URL, listSessions, fetchMessages } from "./session.js";
+import { BASE_URL, listSessions, fetchMessages, checkHealth } from "./session.js";
 import { sendStats } from "./stats-reporter.js";
 import type { RawMessage } from "./session.js";
 
@@ -190,10 +190,12 @@ export async function runInteractive(
   };
 
   const streamEvents = async (): Promise<void> => {
+    let streamErrors = 0;
     while (!terminate) {
       try {
         const evtRes = await fetch(`${BASE_URL}/event`, { headers: { Accept: "text/event-stream" } });
         if (!evtRes.ok || !evtRes.body) { await sleep(5000); continue; }
+        streamErrors = 0;
         const reader = evtRes.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -230,7 +232,11 @@ export async function runInteractive(
         try { await reader.cancel(); } catch { /* ignore */ }
       } catch (e) {
         if (terminate) return;
-        err("SSE stream error:", (e as Error).message, "— retrying in 5s");
+        streamErrors++;
+        err("SSE stream error:", (e as Error).message, `(${streamErrors}/5)`);
+        if (streamErrors >= 5) {
+          throw new Error("opencode server unreachable: stream disconnected");
+        }
         await sleep(5000);
       }
     }
@@ -307,11 +313,26 @@ export async function runPrompt(
     const startedAt = Date.now();
     await sleep(1000);
     let iter = 0;
+    let unhealthyCount = 0;
     while (!terminate && !isShuttingDown()) {
       iter++;
       try {
         const msgs = await fetchMessages(sessionID);
         const last = msgs.length > 0 ? msgs[msgs.length - 1] : undefined;
+
+        // Periodic health check every 10s (5 iterations). If opencode is
+        // OOM-killed this detects it faster than waiting for stream failure.
+        if (iter % 5 === 0) {
+          const healthy = await checkHealth();
+          if (!healthy) {
+            unhealthyCount++;
+            if (unhealthyCount >= 3) {
+              throw new Error("opencode server unreachable: health check failed");
+            }
+          } else {
+            unhealthyCount = 0;
+          }
+        }
 
         const elapsedSinceStart = Date.now() - startedAt;
         if (!sawBusy && elapsedSinceStart > FIRST_RESPONSE_TIMEOUT_MS) {
@@ -356,10 +377,12 @@ export async function runPrompt(
   };
 
   const streamEvents = async (): Promise<void> => {
+    let streamErrors = 0;
     while (!terminate) {
       try {
         const evtRes = await fetch(`${BASE_URL}/event`, { headers: { Accept: "text/event-stream" } });
         if (!evtRes.ok || !evtRes.body) { await sleep(5000); continue; }
+        streamErrors = 0;
         const reader = evtRes.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -397,6 +420,11 @@ export async function runPrompt(
         try { await reader.cancel(); } catch { /* ignore */ }
       } catch (e) {
         if (terminate) return;
+        streamErrors++;
+        err("SSE stream error:", (e as Error).message, `(${streamErrors}/5)`);
+        if (streamErrors >= 5) {
+          throw new Error("opencode server unreachable: stream disconnected");
+        }
         await sleep(5000);
       }
     }

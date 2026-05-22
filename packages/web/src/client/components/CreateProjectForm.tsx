@@ -206,27 +206,27 @@ export default function CreateProjectForm({
     if (initScript.trim()) {
       req.initScript = initScript.trim();
     }
-    if (sidecars.length > 0) {
-      req.sidecars = sidecars.map((sc) => {
-        const ports = sc.ports.trim()
-          ? sc.ports.split(",").map((p) => parseInt(p.trim(), 10)).filter(Boolean)
-          : undefined;
-        const env = sc.env.trim()
-          ? sc.env.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
-              const eq = line.indexOf("=");
-              return eq >= 1
-                ? { name: line.slice(0, eq), value: line.slice(eq + 1) }
-                : { name: line, value: "" };
-            })
-          : undefined;
-        return {
-          name: sc.name.trim(),
-          image: sc.image.trim(),
-          ...(ports?.length ? { ports } : {}),
-          ...(env?.length ? { env } : {}),
-        };
-      });
-    }
+    req.sidecars = sidecars.length > 0
+      ? sidecars.map((sc) => {
+          const ports = sc.ports.trim()
+            ? sc.ports.split(",").map((p) => parseInt(p.trim(), 10)).filter(Boolean)
+            : undefined;
+          const env = sc.env.trim()
+            ? sc.env.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+                const eq = line.indexOf("=");
+                return eq >= 1
+                  ? { name: line.slice(0, eq), value: line.slice(eq + 1) }
+                  : { name: line, value: "" };
+              })
+            : undefined;
+          return {
+            name: sc.name.trim(),
+            image: sc.image.trim(),
+            ...(ports?.length ? { ports } : {}),
+            ...(env?.length ? { env } : {}),
+          };
+        })
+      : [];
     // Always send injectFiles (even empty array) so server can delete orphans on update.
     req.injectFiles = injectFiles
       .filter((f) => f.filename.trim())

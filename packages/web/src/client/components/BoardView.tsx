@@ -38,7 +38,7 @@ function TaskCard({
   const reviewerDecisionKnown = worker?.reviewApproved !== undefined || !!worker?.reviewFeedback;
   const approvalState = approvals?.[taskName];
   const alreadyApproved = approvalState?.approved === true;
-  const canApproveNow = !alreadyApproved && (!isBuildTask || worker?.reviewApproved === true);
+  const canApproveNow = !alreadyApproved;
 
   return (
     <Card className="group relative">
@@ -170,7 +170,7 @@ function TaskCard({
           <div className="flex gap-2">
             <button
               onClick={() => approveMutation.mutate(taskName)}
-              disabled={approveMutation.isPending || !canApproveNow}
+              disabled={(approveMutation.isPending || approveMutation.variables === taskName) || !canApproveNow}
               className="text-xs text-text-dim hover:text-text disabled:opacity-40 transition-colors font-medium flex items-center gap-1"
               title={alreadyApproved ? "Already approved" : (canApproveNow ? "Approve this task" : "Wait for agent review approval first")}
             >
@@ -452,7 +452,7 @@ export default function BoardView() {
                   priority: taskPriority,
                 });
               }}
-              disabled={addMutation.isPending}
+              disabled={addMutation.isPending && addMutation.variables !== undefined}
               className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] disabled:opacity-40 px-3 py-1.5 text-sm font-medium text-text transition-colors"
             >
               {addMutation.isPending ? "Adding…" : "Add"}
@@ -529,7 +529,7 @@ export default function BoardView() {
                     comment: requestChangesComment.trim(),
                   });
                 }}
-                disabled={requestChangesMutation.isPending || !requestChangesComment.trim()}
+                disabled={(requestChangesMutation.isPending || requestChangesMutation.variables?.taskId === requestChangesTaskId) || !requestChangesComment.trim()}
                 className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] disabled:opacity-40 px-3 py-1.5 text-sm font-medium text-text transition-colors"
               >
                 {requestChangesMutation.isPending ? "Submitting…" : "Submit"}
