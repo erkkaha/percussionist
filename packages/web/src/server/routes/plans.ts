@@ -72,8 +72,21 @@ router.get("/:project/plans/:taskId", async (c) => {
       );
     }
 
-    // Extract the plan content from the MCP response
-    const content = mcpResponse.result?.content?.[0]?.text;
+    // Extract the plan content from the MCP response.
+    // The MCP server wraps all tool results as JSON.stringify(result), so
+    // content[0].text is a JSON string like {"content":"## Plan...","exists":true,...}.
+    // Parse it and extract the inner .content field.
+    const rawText = mcpResponse.result?.content?.[0]?.text;
+    let content: string | null = null;
+    if (rawText) {
+      try {
+        const parsed = JSON.parse(rawText) as Record<string, unknown>;
+        content = typeof parsed.content === "string" ? parsed.content : null;
+      } catch {
+        // Not JSON — treat as raw markdown (fallback)
+        content = rawText;
+      }
+    }
     if (!content) {
       return c.json(
         {
