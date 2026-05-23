@@ -351,6 +351,9 @@ export const ClusterSettingsSpecSchema = z.object({
     })
     .optional(),
 
+  // How many days to keep completed Run CRs before automatic cleanup.
+  runTTLDays: z.number().int().positive().default(7),
+
   // Optional override for the runner container image / runtime spec.
   // When absent, the opencode defaults (OPENCODE_RUNNER_DEFAULTS) are used.
   runnerAdapter: z
@@ -479,7 +482,7 @@ export const RunSpecSchema = z
   initScript: z.string().optional(),
 
     timeoutSeconds: z.number().int().positive().default(3600),
-    ttlSecondsAfterFinished: z.number().int().nonnegative().default(3600),
+    ttlSecondsAfterFinished: z.number().int().nonnegative().default(7 * 86400),
     expose: ExposeSchema.optional(),
 
     // Data PVC configuration — backs package manager caches, git mirrors,

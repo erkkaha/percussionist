@@ -120,6 +120,12 @@ spec:
                         limits:
                           type: object
                           x-kubernetes-preserve-unknown-fields: true
-                  description: Default runner pod settings for all projects and runs.
-          required:
+                   description: Default runner pod settings for all projects and runs.
+                 runTTLDays:
+                   type: integer
+                   exclusiveMinimum: true
+                   minimum: 1
+                   default: 7
+                   description: How many days to keep completed Run CRs before automatic cleanup.
+           required:
             - spec

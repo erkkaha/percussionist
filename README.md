@@ -908,9 +908,11 @@ gitGraph
 
 ### Worktree Cleanup
 
-Remote git worktrees live under `/data/worktrees/{run-name}`. The manager prunes
-obsolete worktrees before retrying failed/cancelled runs and when MCP tools delete
-stale runs. When a task reaches `done`, it spawns a short-lived cleanup pod that
+Remote git worktrees live under `/data/worktrees/{run-name}`. Worktree cleanup is
+handled by the pod init container at startup (`git worktree prune`). MCP tools no
+longer delete runs eagerly — runs are preserved as historical records and cleaned
+up by the TTL controller after `runTTLDays` days (configured via ClusterSettings,
+default 7). When a task reaches `done`, it spawns a short-lived cleanup pod that
 removes all deterministic worker worktrees for that task and runs `git worktree prune`
 against the bare mirror. Local git workspaces (`source.local: true`) are persistent
 and are not cleaned up by this flow.

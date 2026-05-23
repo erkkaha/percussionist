@@ -497,12 +497,49 @@ export async function reconcile(run: Run): Promise<void> {
       completedAt: new Date().toISOString(),
       message: "pod succeeded",
     });
+    await cleanupChildResources(run, ns);
   } else if (podPhase === "Failed" && currentPhase !== RunPhase.Failed) {
     await patchStatus(run, {
       phase: RunPhase.Failed,
       completedAt: new Date().toISOString(),
       message: summarizePodFailure(pod),
     });
+    await cleanupChildResources(run, ns);
+  }
+}
+
+function isNotFound(e: unknown): boolean {
+  return ((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) === 404;
+}
+
+async function cleanupChildResources(run: Run, ns: string): Promise<void> {
+  const name = run.metadata.name;
+  // Delete Pod (best-effort).
+  try {
+    await core.deleteNamespacedPod({ name, namespace: ns });
+    log(`deleted pod ${ns}/${name}`);
+  } catch (e: unknown) {
+    if (!isNotFound(e)) {
+      err(`delete pod ${ns}/${name}:`, (e as Error).message);
+    }
+  }
+  // Delete Service (best-effort).
+  try {
+    await core.deleteNamespacedService({ name, namespace: ns });
+    log(`deleted service ${ns}/${name}`);
+  } catch (e: unknown) {
+    if (!isNotFound(e)) {
+      err(`delete service ${ns}/${name}:`, (e as Error).message);
+    }
+  }
+  // Delete Ingress (best-effort).
+  try {
+    await networking.deleteNamespacedIngress({ name, namespace: ns });
+    log(`deleted ingress ${ns}/${name}`);
+  } catch (e: unknown) {
+    if (!isNotFound(e)) {
+      err(`delete ingress ${ns}/${name}:`, (e as Error).message);
+    }
   }
 }
 

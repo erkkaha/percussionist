@@ -363,7 +363,7 @@ function buildFacilitatorRun(
       model: resolved.model,
       image: resolved.image,
       timeoutSeconds: FACILITATION_TIMEOUT_SECONDS,
-      ttlSecondsAfterFinished: 3600,
+      ttlSecondsAfterFinished: 7 * 86400,
       facilitation: facilitationSpec,
       ...(resolved.resources ? { resources: resolved.resources } : {}),
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),

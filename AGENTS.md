@@ -60,7 +60,7 @@ of TypeScript packages under `packages/*`.
 - Set `gitCache.worktreeReuse: false` to always start from a clean checkout
 - Agent can push to the real remote — `remote set-url` restores the real URL after mirror-based setup
 - Mirror fetches are serialized with `flock` so parallel runs don't corrupt the bare repo
-- Worktree cleanup: failed/cancelled run worktrees are pruned before retry; MCP tools that delete stale runs also prune those run worktrees; when a task moves to `done` the manager spawns a short-lived cleanup pod that removes all deterministic worker worktrees for that task and calls `git worktree prune` on the mirror
+- Worktree cleanup: the pod init container prunes stale worktrees on startup via `git worktree prune`; MCP tools (force_retry, set_task_state) no longer delete runs eagerly — the TTL controller handles cleanup after `runTTLDays` days; a cleanup pod spawns when a task reaches `done` to remove all deterministic worker worktrees for that task
 
 ### Local git (`source.local: true`)
 - No remote URL required — mutually exclusive with `source.git`
@@ -213,8 +213,8 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `patch_board` | Merge-patch `Project.status.board` (escalations, pendingQuestions, facilitations, managerMetrics) |
 | `delete_run` | Delete an Run by name |
 | `create_run` | Create a new run for a ready task; resolves feature-branch metadata and updates `Task.status` |
-| `force_retry` | Clean stale task runs/worktrees and reset task to ready or in-progress via `Task.status` |
-| `set_task_state` | Move a task to a target column, clean up project-scoped runs, optionally cancel running runs |
+| `force_retry` | Restart a stuck task at an incremented retry count via `Task.status` (does not delete old runs) |
+| `set_task_state` | Move a task to a target column, optionally cancel running runs (runs preserved by default) |
 | `read_manager_logs` | Read logs from the manager controller pod |
 | `pause_reconciliation` | Pause the manager reconcile loop for a project (auto-resumes after timeout) |
 | `resume_reconciliation` | Resume a paused reconcile loop |
@@ -229,13 +229,13 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 **`force_retry`** — One-shot cleanup and restart for stuck tasks.
 - Requires: `project`, `task` (Task CR name)
 - Optional: `createRun` (default `true`), `agent`, `model`, `namespace`
-- Deletes all runs for the project/task, including active/stuck runs, and prunes their `/data/worktrees/{run-name}` directories for remote git projects
+- Does NOT delete old runs — they are preserved as historical records until the TTL controller cleans them up after `runTTLDays` days
 - If `createRun: true`: starts the next retry count (`existing retryCount + 1`) and resets task to "in-progress" with feature-branch metadata via `patchTaskStatus`
 - If `createRun: false`: resets task to "ready", clears `runName`, and marks the worker failed so reconciliation can pick it up later
 
 **`set_task_state`** — Atomic task column transition.
 - Requires: `project`, `task` (Task CR name), `targetColumn`
-- Optional: `cancelRunning` (default `false`), `preserveRuns` (default `false`), `namespace`
+- Optional: `cancelRunning` (default `false`), `preserveRuns` (default `true`), `namespace`
 - Valid columns: `ready`, `in-progress`, `review`, `rework`, `done`, `blocked`
 - Deletes matching runs for the specified project/task and prunes remote-git run worktrees; if `cancelRunning: true` also deletes active runs
 - Patches `Task.status.column`; for `in-progress` it writes feature-branch metadata, for `done` it marks the worker `Succeeded`, and for `ready`/`rework` it clears `runName` and marks existing worker state `Failed`

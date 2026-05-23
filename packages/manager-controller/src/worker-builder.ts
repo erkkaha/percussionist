@@ -145,7 +145,7 @@ export function buildWorkerRun(
       model: resolved.model,
       image: resolved.image,
       timeoutSeconds: resolved.timeoutSeconds,
-      ttlSecondsAfterFinished: 3600,
+      ttlSecondsAfterFinished: 7 * 86400,
       ...(resolved.resources ? { resources: resolved.resources } : {}),
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
       ...(resolved.source ? { source: resolved.source } : {}),
@@ -156,6 +156,8 @@ export function buildWorkerRun(
     } as RunSpec,
   };
 }
+
+const TTL_SECONDS = 7 * 86400;
 
 export function buildMergeRun(
   project: Project,
@@ -243,7 +245,7 @@ export function buildMergeRun(
       model: resolved.model,
       image: resolved.image,
       timeoutSeconds: resolved.timeoutSeconds,
-      ttlSecondsAfterFinished: 3600,
+      ttlSecondsAfterFinished: TTL_SECONDS,
       ...(resolved.resources ? { resources: resolved.resources } : {}),
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
       ...(resolved.source ? { source: resolved.source } : {}),

@@ -783,7 +783,6 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const project = await getProject(projectName, resourceNs);
       const task = await getTask(taskName, resourceNs);
       const projectTasks = await listProjectTasks(projectName, resourceNs);
-      const deletedNames = await deleteRunsForTask(projectName, taskName, resourceNs, { includeActive: true, includeUnknown: true });
 
       let createdRunName: string | undefined;
       const existingRetryCount = task.status?.worker?.retryCount ?? 0;
@@ -814,7 +813,6 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
             const phase = existing.status?.phase;
             if (phase === "Failed" || phase === "Cancelled") {
               await deleteRun(runName, resourceNs);
-              await cleanupRunWorktree(projectName, runName, resourceNs);
               await createRun(workerRun, resourceNs);
             } else {
               throw new Error(`Run ${runName} already exists (phase: ${phase})`);
@@ -842,7 +840,6 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       return {
         project: projectName,
         task: taskName,
-        deletedRuns: deletedNames,
         createdRun: createdRunName,
         namespace: resourceNs,
       };
@@ -940,7 +937,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const taskName = String(args.task ?? "");
       const targetPhase = String(args.targetPhase ?? "");
       const cancelRunning = args.cancelRunning === true;
-      const preserveRuns = args.preserveRuns === true;
+      const preserveRuns = args.preserveRuns !== false;
       const resourceNs = String(args.namespace ?? ns);
 
       const validPhases = ["idea", "pending", "scheduled", "running", "failed", "awaiting-human", "rework-requested", "done"];

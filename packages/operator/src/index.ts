@@ -20,6 +20,7 @@ import {
   reconcileClusterSettings,
 } from "./reconciler.js";
 import { INGRESS_BASE_URL, INGRESS_CLASS } from "./config.js";
+import { startTTLCleanup } from "./ttl.js";
 
 const log = (...args: unknown[]) =>
   console.log(`[operator ${new Date().toISOString()}]`, ...args);
@@ -85,6 +86,7 @@ async function main(): Promise<void> {
   await csInformer.start();
 
   startPeriodicResync();
+  startTTLCleanup();
   await runWorker();
 }
 
