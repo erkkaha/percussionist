@@ -143,7 +143,7 @@ export default function AgentsPage() {
           to define reusable agent prompts available across all runs.
         </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-hidden">
+        <div className="rounded-lg border border-border overflow-hidden settings-table-scroll">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
