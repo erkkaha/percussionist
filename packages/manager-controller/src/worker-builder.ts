@@ -65,13 +65,28 @@ export function buildWorkerRun(
   const planPath = `.percussionist/plans/${taskName}.md`;
 
   if (task.spec.type === "PLAN") {
+    // If this is a retry/rework, the agent should redo the plan. Otherwise,
+    // instruct it to check for an existing plan first and short-circuit if found.
+    const isRework = reworkFeedback != null || retryCount > 0;
+    if (!isRework) {
+      promptLines.push(
+        "IDEMPOTENCY CHECK (do this first, before any exploration):",
+        `- Run: \`cat ${planPath}\``,
+        "- If the file exists and is non-empty:",
+        `  1. Call write_plan(project="${projectName}", task="${taskName}", content=<file-content>) to ensure it is persisted.`,
+        "  2. Call percussionist_dispatcher_complete_run with a brief summary of the existing plan.",
+        "  3. Do NOT re-explore or re-plan — the work is already done.",
+        "- Only proceed with planning if the file does not exist or is empty.",
+        "",
+      );
+    }
     promptLines.push(
       "PLAN ARTIFACT REQUIREMENTS:",
       `- Create or update ${planPath} in the repository.`,
       "- The file is the authoritative PLAN output and will be reviewed by facilitator/human reviewers.",
       "- Include implementation context, scope boundaries, risks, acceptance criteria, and proposed BUILD task breakdown.",
       "- Commit and push the plan artifact on this task branch before completing the run.",
-      "- After committing, call write_plan(project=\"<project>\", task=\"<task-id>\", content=<plan-content>) to persist it to ConfigMap.",
+      `- After committing, call write_plan(project="${projectName}", task="${taskName}", content=<plan-content>) to persist it to ConfigMap.`,
       `- Mention ${planPath} in the completion summary.`,
       "",
     );
