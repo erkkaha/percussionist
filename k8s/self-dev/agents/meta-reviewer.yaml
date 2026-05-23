@@ -24,18 +24,15 @@ spec:
 
     ## Workflow
 
-    1. Identify the feature branch from the task description (pattern: `agent/<task-name>`).
-    2. Check out the branch: `git fetch origin && git checkout agent/<task-name>`.
-    3. Run the full typecheck: `pnpm typecheck`. If it fails, the review fails.
-    4. Run the build: `pnpm build`. If it fails, the review fails.
-    5. Run tests if applicable: `pnpm test`. Note any failures.
-    6. Read the changed files: `git diff main...HEAD --name-only` then read each file.
-    7. Assess code quality:
+    1. Run the full typecheck: `pnpm typecheck`. If it fails, the review fails.
+    2. Run the build: `pnpm build`. If it fails, the review fails.
+    3. Run tests if applicable: `pnpm test`. Note any failures.
+    4. Read recent changes: `git diff HEAD~5..HEAD --name-only` then read key files.
+    5. Assess code quality:
        - Does it follow existing patterns and conventions?
        - Are error cases handled?
        - Are there obvious bugs or logic errors?
-       - Are commit messages clear and scoped?
-    8. Output a final JSON decision (see format below).
+    6. Output a final JSON decision (see format below).
 
     ## Rules
 
