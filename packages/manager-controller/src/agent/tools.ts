@@ -46,13 +46,13 @@ const TOOLS = [
   {
     name: "inspect_cr",
     description:
-      "Get full details of a Percussionist custom resource. Supports Run, Project, and ClusterAgent kinds.",
+      "Get full details of a Percussionist custom resource. Supports Run, Project, Task, and ClusterAgent kinds.",
     inputSchema: {
       type: "object",
       properties: {
         kind: {
           type: "string",
-          description: "CR kind: Run, Project, or ClusterAgent",
+          description: "CR kind: Run, Project, Task, or ClusterAgent",
         },
         name: { type: "string", description: "Resource name" },
         namespace: {
@@ -66,13 +66,13 @@ const TOOLS = [
   {
     name: "list_crs",
     description:
-      "List Percussionist custom resources of a given kind. Supports Run, Project, and ClusterAgent. Label selector uses comma-separated k=v pairs (e.g. 'percussionist.dev/project=my-project,percussionist.dev/task-id=BUILD-4'). Note: the correct task label key is 'percussionist.dev/task-id' (not 'task').",
+      "List Percussionist custom resources of a given kind. Supports Run, Project, Task, and ClusterAgent. Label selector uses comma-separated k=v pairs (e.g. 'percussionist.dev/project=my-project,percussionist.dev/task-id=BUILD-4'). Note: the correct task label key is 'percussionist.dev/task-id' (not 'task').",
     inputSchema: {
       type: "object",
       properties: {
         kind: {
           type: "string",
-          description: "CR kind: Run, Project, or ClusterAgent",
+          description: "CR kind: Run, Project, Task, or ClusterAgent",
         },
         namespace: {
           type: "string",
@@ -127,7 +127,7 @@ const TOOLS = [
   {
     name: "patch_board",
     description:
-      "Modify board state for a project. Uses Kubernetes merge-patch on the status.board subresource. At the top level of 'board', omitted keys are preserved, but nested objects (e.g. backlog columns) are fully replaced. Best practice: always include backlog, workers, activeWorkers, and lastEventAt in every patch to avoid losing state. For atomic task state changes, prefer set_task_state instead.",
+      "Modify project board metadata. Uses Kubernetes merge-patch on the status.board subresource. Supports updating activeWorkers, escalations, pendingQuestions, managerMetrics, and lastEventAt. At the top level of 'board', omitted keys are preserved, but nested objects are fully replaced. For atomic task state changes, prefer set_task_state instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -135,7 +135,7 @@ const TOOLS = [
         patch: {
           type: "object",
           description:
-            "Status board patch. E.g. { backlog: { ready: [...], 'in-progress': [...] }, workers: [...] }. Omitted top-level board keys are preserved; nested objects are replaced.",
+            "Status board patch. E.g. { activeWorkers: 2, escalations: [...], pendingQuestions: [...] }. Omitted top-level board keys are preserved; nested objects are replaced.",
         },
       },
       required: ["project", "patch"],
@@ -160,12 +160,12 @@ const TOOLS = [
   {
     name: "create_run",
     description:
-      "Create a new Run for a board task. The task must be in the 'ready' column. Moves the task to 'in-progress' and creates the run.",
+      "Create a new Run for a task. The task must be in the 'pending' phase. Moves the task to 'running' and creates the run.",
     inputSchema: {
       type: "object",
       properties: {
         project: { type: "string", description: "Project name" },
-        task: { type: "string", description: "Board task ID (e.g. 'BUILD-4')" },
+        task: { type: "string", description: "Task CR name (e.g. 'BUILD-4')" },
         agent: {
           type: "string",
           description: "Override the task's default agent",
@@ -193,12 +193,12 @@ const TOOLS = [
   {
     name: "force_retry",
     description:
-      "Clean up all terminal-phase runs for a board task, reset the board state, and create a fresh run. Use when a task is stuck after infrastructure issues. Supports agent/model overrides to retry with a different agent without a multi-step workaround.",
+      "Clean up all terminal-phase runs for a task CR, reset the task state, and create a fresh run. Use when a task is stuck after infrastructure issues. Supports agent/model overrides to retry with a different agent without a multi-step workaround.",
     inputSchema: {
       type: "object",
       properties: {
         project: { type: "string", description: "Project name" },
-        task: { type: "string", description: "Board task ID (e.g. 'BUILD-4')" },
+        task: { type: "string", description: "Task CR name (e.g. 'BUILD-4')" },
         createRun: {
           type: "boolean",
           description: "Create a fresh run immediately (default: true)",
@@ -519,6 +519,10 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
           const agent = await getClusterAgent(resourceName);
           return { kind, name: resourceName, spec: agent.spec };
         }
+        case "Task": {
+          const task = await getTask(resourceName, resourceNs);
+          return { kind, name: resourceName, spec: task.spec, status: task.status };
+        }
         default:
           throw new Error(`unknown kind: ${kind}`);
       }
@@ -591,8 +595,35 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
             labels: a.metadata.labels,
           }));
         }
+        case "Task": {
+          const projectFilter = args.project ? String(args.project) : undefined;
+          let tasks = await listTasks(projectFilter, resourceNs);
+          if (labelSelector) {
+            tasks = tasks.filter((t) => {
+              const labels = t.metadata.labels ?? {};
+              for (const part of labelSelector.split(",")) {
+                const trimmed = part.trim();
+                const eqIdx = trimmed.indexOf("=");
+                if (eqIdx < 0) continue;
+                const k = trimmed.slice(0, eqIdx).trim();
+                const v = trimmed.slice(eqIdx + 1).trim();
+                if (k && labels[k] !== v) return false;
+              }
+              return true;
+            });
+          }
+          return tasks.map((t) => ({
+            name: t.metadata.name,
+            projectRef: t.spec.projectRef,
+            type: t.spec.type,
+            title: t.spec.title,
+            phase: t.status?.phase,
+            column: t.status?.column,
+            labels: t.metadata.labels,
+          }));
+        }
         default:
-          throw new Error(`unknown kind: ${kind}. Supported: Run, Project, ClusterAgent`);
+          throw new Error(`unknown kind: ${kind}. Supported: Run, Project, ClusterAgent, Task`);
       }
     }
 
