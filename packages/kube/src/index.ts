@@ -482,7 +482,7 @@ export async function deleteProject(
 // Task helpers
 
 export async function listTasks(
-  project: string,
+  project?: string,
   ns: string = NAMESPACE,
   client = custom(),
 ): Promise<Task[]> {
@@ -491,7 +491,7 @@ export async function listTasks(
     version: API_VERSION,
     namespace: ns,
     plural: PLURAL_TASK,
-    labelSelector: `${LABELS.projectName}=${project}`,
+    ...(project ? { labelSelector: `${LABELS.projectName}=${project}` } : {}),
   })) as { items: Task[] };
   return res.items ?? [];
 }
