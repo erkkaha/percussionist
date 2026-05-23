@@ -3,7 +3,7 @@
 import type { PhaseHandler, Transition } from "../types.js";
 import { buildSuccessReviewRun } from "../../facilitator.js";
 import { auxiliaryRunName } from "../../worker-builder.js";
-import { readSessionConfigMap } from "@percussionist/kube";
+import { readAllSessionsFromConfigMap } from "@percussionist/kube";
 
 export const handleSucceeded: PhaseHandler = async (ctx) => {
   // Check if AI reviewer is enabled and agent exists.
@@ -50,12 +50,12 @@ export const handleSucceeded: PhaseHandler = async (ctx) => {
 
   try {
     // Fetch session summary from worker run.
-    const sessionData = await readSessionConfigMap(workerRunName, ctx.namespace);
-    if (!sessionData || !sessionData.messages) {
+    const sessionData = await readAllSessionsFromConfigMap(workerRunName, ctx.namespace);
+    if (!sessionData || !sessionData.allMessages || sessionData.allMessages.length === 0) {
       throw new Error("No session data available");
     }
     
-    const messages = sessionData.messages;
+    const messages = sessionData.allMessages;
     const lastN = messages.slice(-10); // Last 10 messages for context.
     const sessionSummary = lastN
       .map((m: unknown) => {

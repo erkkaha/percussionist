@@ -2,7 +2,7 @@
 
 import type { PhaseHandler, Transition } from "../types.js";
 import { getRun } from "@percussionist/kube";
-import { readSessionConfigMap } from "@percussionist/kube";
+import { readAllSessionsFromConfigMap } from "@percussionist/kube";
 
 const REVIEW_STALENESS_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -60,12 +60,12 @@ export const handleReviewing: PhaseHandler = async (ctx) => {
 
   // Parse review result from session ConfigMap.
   try {
-    const sessionData = await readSessionConfigMap(reviewRunName, ctx.namespace);
-    if (!sessionData || !sessionData.messages) {
+    const sessionData = await readAllSessionsFromConfigMap(reviewRunName, ctx.namespace);
+    if (!sessionData || !sessionData.allMessages || sessionData.allMessages.length === 0) {
       throw new Error("No session data available");
     }
     
-    const lastMessage = sessionData.messages[sessionData.messages.length - 1];
+    const lastMessage = sessionData.allMessages[sessionData.allMessages.length - 1];
     const reviewText = (lastMessage as { textContent?: string })?.textContent ?? "";
     
     // Simple JSON extraction (look for {diagnosis, recommendedAction} pattern).

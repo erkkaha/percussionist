@@ -1,7 +1,7 @@
 // Phase handler: generating-builds → done
 
 import type { PhaseHandler, Transition } from "../types.js";
-import { getRun, readSessionConfigMap } from "@percussionist/kube";
+import { getRun, readAllSessionsFromConfigMap, readPlanFromConfigMap } from "@percussionist/kube";
 import { buildBuildTaskGeneratorRun, parseBuildTaskDefinitions } from "../../facilitator.js";
 import { auxiliaryRunName } from "../../worker-builder.js";
 import { buildTask } from "@percussionist/kube";
@@ -41,19 +41,33 @@ export const handleGeneratingBuilds: PhaseHandler = async (ctx) => {
     }
 
     try {
-      const sessionData = await readSessionConfigMap(planRunName, ctx.namespace);
-      if (!sessionData || !sessionData.messages) {
-        throw new Error("No session data available");
+      // Try session snapshot ConfigMap first (correct signature: runName, namespace).
+      let planSession = "";
+      const sessionData = await readAllSessionsFromConfigMap(planRunName, ctx.namespace);
+      if (sessionData && sessionData.allMessages.length > 0) {
+        const lastN = sessionData.allMessages.slice(-10);
+        planSession = lastN
+          .map((m: unknown) => {
+            const msg = m as { role?: string; textContent?: string };
+            return `[${msg.role}] ${msg.textContent}`;
+          })
+          .join("\n\n");
+      } else {
+        // Session snapshot missing (pod/ConfigMap deleted) — fall back to plan artifact.
+        console.log(
+          `[generating-builds] ${ctx.task.metadata.name} session ConfigMap missing, falling back to plan artifact`,
+        );
+        const planContent = await readPlanFromConfigMap(
+          ctx.project.metadata.name,
+          ctx.task.metadata.name,
+          ctx.namespace,
+        );
+        if (planContent) {
+          planSession = `[Plan artifact]\n${planContent}`;
+        }
+        // If plan content is also absent, proceed with empty string — the
+        // buildgen prompt has a "(none available)" fallback for that case.
       }
-
-      const messages = sessionData.messages;
-      const lastN = messages.slice(-10);
-      const planSession = lastN
-        .map((m: unknown) => {
-          const msg = m as { role?: string; textContent?: string };
-          return `[${msg.role}] ${msg.textContent}`;
-        })
-        .join("\n\n");
 
       const buildgenRun = buildBuildTaskGeneratorRun(
         ctx.project,
