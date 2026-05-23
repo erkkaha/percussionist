@@ -56,7 +56,7 @@ spec:
                       required:
                         - name
                   description: Cluster-wide secret references. Inherited by all projects and runs unless overridden.
-                opencode:
+                runnerConfig:
                   type: object
                   properties:
                     config:

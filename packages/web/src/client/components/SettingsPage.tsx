@@ -131,7 +131,13 @@ export default function SettingsPage() {
       {!settingsLoading && activeTab === "opencode" && (
         <OpencodePanel
           config={(opencodeConfig as string) ?? ""}
-          onSave={(config) => saveMutation.mutate({ ...spec, runnerConfig: { config } })}
+          onSave={(config) => saveMutation.mutate({ 
+            ...spec, 
+            runnerConfig: { 
+              ...(spec.runnerConfig as Record<string, unknown> | undefined), 
+              config 
+            } 
+          })}
           saving={saveMutation.isPending}
         />
       )}
