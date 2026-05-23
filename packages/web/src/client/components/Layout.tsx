@@ -17,10 +17,15 @@ export default function Layout() {
 
   const [managerAvailable, setManagerAvailable] = useState<boolean | null>(null);
   useEffect(() => {
-    fetch("/api/agent/status")
-      .then((r) => r.json())
-      .then((d) => setManagerAvailable(d.available === true))
-      .catch(() => setManagerAvailable(false));
+    function check() {
+      fetch("/api/agent/status")
+        .then((r) => r.json())
+        .then((d) => setManagerAvailable(d.available === true))
+        .catch(() => setManagerAvailable(false));
+    }
+    check();
+    const id = setInterval(check, 10_000);
+    return () => clearInterval(id);
   }, []);
 
   return (

@@ -117,12 +117,17 @@ function sanitizeForSpeech(text: string): string {
     recognitionRef.current = null;
   }, []);
 
-  // Check agent availability on mount
+  // Check agent availability on mount with polling
   useEffect(() => {
-    fetch("/api/agent/status")
-      .then((r) => r.json())
-      .then((d) => setAvailable(d.available === true))
-      .catch(() => setAvailable(false));
+    function check() {
+      fetch("/api/agent/status")
+        .then((r) => r.json())
+        .then((d) => setAvailable(d.available === true))
+        .catch(() => setAvailable(false));
+    }
+    check();
+    const id = setInterval(check, 10_000);
+    return () => clearInterval(id);
   }, []);
 
   // Load history when panel opens
@@ -278,6 +283,21 @@ function sanitizeForSpeech(text: string): string {
                 </div>
               </div>
             ))}
+            {sending && (
+              <div className="flex justify-start">
+                <div className="flex items-center gap-2 rounded-lg px-3 py-2 bg-surface-raised border border-border-muted text-sm text-text-dim">
+                  <span>Thinking…</span>
+                  <span className="text-border-muted">·</span>
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    className="text-xs text-phase-failed/70 hover:text-phase-failed transition-colors"
+                  >
+                    cancel
+                  </button>
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
 
@@ -327,13 +347,9 @@ function sanitizeForSpeech(text: string): string {
                 {ttsEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
               </button>
               {sending ? (
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  className="rounded-md bg-phase-failed/20 text-phase-failed px-3 py-2 text-sm font-medium hover:bg-phase-failed/30 transition-colors"
-                >
-                  Cancel
-                </button>
+                <div className="flex items-center justify-center w-[2.375rem] h-[2.375rem]">
+                  <DrumLogo playing={true} size={32} />
+                </div>
               ) : (
                 <button
                   type="submit"
