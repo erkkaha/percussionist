@@ -2,6 +2,7 @@
 
 import { RunPhase } from "@percussionist/api";
 import { BASE_URL, listSessions, fetchMessages, checkHealth } from "./session.js";
+import http from "node:http";
 import { sendStats } from "./stats-reporter.js";
 import type { RawMessage } from "./session.js";
 
@@ -14,11 +15,12 @@ const RUN_NAME = process.env.RUN_NAME ?? "";
 const MODEL = process.env.RUN_MODEL ?? "";
 const AGENT = process.env.RUN_AGENT ?? "";
 const TASK = process.env.RUN_TASK ?? "";
-// Derive the first-response deadline from the run's configured timeout. If the
-// run has a long timeout (e.g. large repo clone), give the model up to half
-// that time to produce its first assistant response; minimum 90 s, maximum 600 s.
-const RUN_TIMEOUT_S = parseInt(process.env.RUN_TIMEOUT_SECONDS ?? "3600", 10);
-const FIRST_RESPONSE_TIMEOUT_MS = Math.min(600_000, Math.max(90_000, Math.floor(RUN_TIMEOUT_S / 2) * 1000));
+// Allow up to 1 hour for the model to produce its first assistant response.
+// POST /session/{id}/message may remain open while opencode processes the
+// model request, so the dispatcher starts it asynchronously and relies on the
+// poll loop to enforce this first-response deadline.
+const FIRST_RESPONSE_TIMEOUT_MS = 3_600_000;
+const HARD_TIMEOUT_MS = FIRST_RESPONSE_TIMEOUT_MS + 300_000;
 
 // ---------------------------------------------------------------------------
 // Token aggregator
@@ -255,6 +257,56 @@ export async function runInteractive(
 }
 
 // ---------------------------------------------------------------------------
+// HTTP helper with custom socket timeout (bypasses undici's default 300s
+// headersTimeout that can't be configured from user code).
+
+async function httpJsonPost(
+  url: string,
+  body: unknown,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; status: number; json(): Promise<unknown>; text(): Promise<string> }> {
+  const u = new URL(url);
+  const payload = JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: u.hostname,
+        port: u.port === "" ? undefined : Number(u.port),
+        path: u.pathname + u.search,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+        },
+        timeout: timeoutMs,
+        signal,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf-8");
+          const status = res.statusCode ?? 0;
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            json: () => Promise.resolve(JSON.parse(text)),
+            text: () => Promise.resolve(text),
+          });
+        });
+      },
+    );
+    req.on("timeout", () => {
+      req.destroy(new Error(`Request timeout after ${timeoutMs}ms`));
+    });
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Prompt-driven mode
 
 export async function runPrompt(
@@ -294,27 +346,64 @@ export async function runPrompt(
     }
   }
 
-  const syncRes = await fetch(`${BASE_URL}/session/${sessionID}/message`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(promptBody),
-    signal: AbortSignal.timeout(FIRST_RESPONSE_TIMEOUT_MS),
-  });
-  if (!syncRes.ok) {
-    throw new Error(`prompt failed: HTTP ${syncRes.status} ${await syncRes.text()}`);
-  }
-  const syncData = (await syncRes.json()) as { info?: Record<string, unknown>; parts?: unknown[] };
-  const syncTokensIn = (syncData.info?.tokens as { input?: number })?.input ?? 0;
-  const syncTokensOut = (syncData.info?.tokens as { output?: number })?.output ?? 0;
-  if (syncTokensIn > 0 || syncTokensOut > 0) {
-    tokens.update(sessionID, syncTokensIn, syncTokensOut);
-    await tokens.flush(patchStatus);
-  }
-  log("prompt completed (sync)", JSON.stringify(syncData.info));
-
-  let sawBusy = true; // sync /message already returned, so first response is confirmed
-  let waitingForInput = syncTokensIn === 0 && syncTokensOut === 0;
+  let sawBusy = false; // set true only when poll loop sees first assistant message
+  let waitingForInput = false;
   let terminate = false;
+
+  // Transient error codes that warrant a retry of the prompt POST.
+  const RETRYABLE_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "EPIPE", "ETIMEDOUT"]);
+  const MAX_PROMPT_RETRIES = 3;
+
+  const promptPostController = new AbortController();
+
+  // Retry wrapper around httpJsonPost: on transient network errors, wait for
+  // opencode to become healthy, check whether the session already has messages
+  // (prompt was received before the disconnect), and re-POST only if not.
+  const promptPost = (async () => {
+    let attempt = 0;
+    while (true) {
+      try {
+        const syncRes = await httpJsonPost(
+          `${BASE_URL}/session/${sessionID}/message`,
+          promptBody,
+          FIRST_RESPONSE_TIMEOUT_MS,
+          promptPostController.signal,
+        );
+        if (!syncRes.ok) {
+          throw new Error(`prompt failed: HTTP ${syncRes.status} ${await syncRes.text()}`);
+        }
+        const syncData = (await syncRes.json()) as { info?: Record<string, unknown>; parts?: unknown[] };
+        const syncTokensIn = (syncData.info?.tokens as { input?: number })?.input ?? 0;
+        const syncTokensOut = (syncData.info?.tokens as { output?: number })?.output ?? 0;
+        if (syncTokensIn > 0 || syncTokensOut > 0) {
+          tokens.update(sessionID, syncTokensIn, syncTokensOut);
+          await tokens.flush(patchStatus);
+        }
+        log("prompt completed (sync)", JSON.stringify(syncData.info));
+        return;
+      } catch (e) {
+        if (terminate || promptPostController.signal.aborted) return;
+        const code = (e as NodeJS.ErrnoException).code ?? "";
+        const isRetryable = RETRYABLE_CODES.has(code) || (e as Error).message?.includes("socket hang up");
+        if (!isRetryable || attempt >= MAX_PROMPT_RETRIES) throw e;
+        attempt++;
+        err(`prompt POST failed (${(e as Error).message}), retrying (${attempt}/${MAX_PROMPT_RETRIES})…`);
+        // Wait for opencode to be healthy before re-checking / re-posting.
+        await sleep(5000);
+        // Check whether the prompt was already received (session has messages).
+        // If so there's nothing to re-POST — the poll loop will handle completion.
+        try {
+          const existingMsgs = await fetchMessages(sessionID);
+          if (existingMsgs.length > 0) {
+            log(`prompt POST failed but session already has ${existingMsgs.length} message(s) — skipping re-POST`);
+            return;
+          }
+        } catch { /* ignore — we'll retry the POST regardless */ }
+        log(`re-posting prompt (attempt ${attempt}/${MAX_PROMPT_RETRIES})`);
+      }
+    }
+  })();
+  const promptPostFailure = promptPost.then(() => new Promise<void>(() => {}));
 
   const pollStatus = async (): Promise<void> => {
     const POLL_MS = 2000;
@@ -438,7 +527,7 @@ export async function runPrompt(
     }
   };
 
-  const hardTimeout = setTimeout(() => { err("dispatcher timeout guard"); process.exit(3); }, 3_600_000);
+  const hardTimeout = setTimeout(() => { err("dispatcher timeout guard"); process.exit(3); }, HARD_TIMEOUT_MS);
   hardTimeout.unref();
   void streamEvents().catch((e) => { if (!terminate) err("streamEvents fatal:", (e as Error).message); });
 
@@ -476,11 +565,12 @@ export async function runPrompt(
   // still snapshot + persist stats before re-throwing.
   let raceError: Error | undefined;
   try {
-    await Promise.race([pollStatus(), failureRaced, completionRaced]);
+    await Promise.race([pollStatus(), promptPostFailure, failureRaced, completionRaced]);
   } catch (e) {
-    raceError = e as Error;
+    if ((e as Error).name !== "AbortError") raceError = e as Error;
   }
   terminate = true;
+  promptPostController.abort();
   clearTimeout(hardTimeout);
 
   if (isShuttingDown()) {
