@@ -294,18 +294,26 @@ export async function runPrompt(
     }
   }
 
-  const asyncRes = await fetch(`${BASE_URL}/session/${sessionID}/prompt_async`, {
+  const syncRes = await fetch(`${BASE_URL}/session/${sessionID}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(promptBody),
+    signal: AbortSignal.timeout(FIRST_RESPONSE_TIMEOUT_MS),
   });
-  if (!asyncRes.ok && asyncRes.status !== 204) {
-    throw new Error(`prompt_async failed: HTTP ${asyncRes.status} ${await asyncRes.text()}`);
+  if (!syncRes.ok) {
+    throw new Error(`prompt failed: HTTP ${syncRes.status} ${await syncRes.text()}`);
   }
-  log("prompt dispatched (async)");
+  const syncData = (await syncRes.json()) as { info?: Record<string, unknown>; parts?: unknown[] };
+  const syncTokensIn = (syncData.info?.tokens as { input?: number })?.input ?? 0;
+  const syncTokensOut = (syncData.info?.tokens as { output?: number })?.output ?? 0;
+  if (syncTokensIn > 0 || syncTokensOut > 0) {
+    tokens.update(sessionID, syncTokensIn, syncTokensOut);
+    await tokens.flush(patchStatus);
+  }
+  log("prompt completed (sync)", JSON.stringify(syncData.info));
 
-  let sawBusy = false;
-  let waitingForInput = false;
+  let sawBusy = true; // sync /message already returned, so first response is confirmed
+  let waitingForInput = syncTokensIn === 0 && syncTokensOut === 0;
   let terminate = false;
 
   const pollStatus = async (): Promise<void> => {

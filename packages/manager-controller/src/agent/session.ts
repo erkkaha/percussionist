@@ -53,12 +53,13 @@ export async function sendPrompt(
   const agent = agentName ?? DECISION_AGENT_NAME;
   body.agent = agent;
 
-  const res = await fetch(`${OPENCODE_URL}/session/${sessionId}/prompt_async`, {
+  const res = await fetch(`${OPENCODE_URL}/session/${sessionId}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(300_000),
   });
-  if (!res.ok && res.status !== 204) {
+  if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`sendPrompt failed (${res.status}): ${text}`);
   }

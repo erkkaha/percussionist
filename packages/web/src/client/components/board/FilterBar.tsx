@@ -1,6 +1,6 @@
 // FilterBar.tsx — column filter tabs, search, type/priority filter chips.
 
-import { Search, X, Plus } from "lucide-react";
+import { Search, X } from "lucide-react";
 
 const ALL_COLUMNS = ["ideas", "backlog", "blocked", "in-progress", "review", "done"] as const;
 export type ColumnKey = (typeof ALL_COLUMNS)[number];
@@ -16,10 +16,9 @@ interface FilterBarProps {
   filters: FilterState;
   onChange: (f: FilterState) => void;
   columnCounts: Record<string, number>;
-  onAddIdea?: () => void;
 }
 
-export function FilterBar({ filters, onChange, columnCounts, onAddIdea }: FilterBarProps) {
+export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
   return (
     <div className="space-y-2 shrink-0">
       {/* Column tabs — scrollable row */}
@@ -39,30 +38,20 @@ export function FilterBar({ filters, onChange, columnCounts, onAddIdea }: Filter
           </span>
         </button>
         {ALL_COLUMNS.map((col) => (
-          <div key={col} className="flex items-center">
-            <button
-              onClick={() => onChange({ ...filters, column: col })}
-              className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-                filters.column === col
-                  ? "bg-[#5c4a3a] text-text"
-                  : "text-text-dim hover:text-text hover:bg-surface-overlay"
-              }`}
-            >
-              {col}
-              {columnCounts[col] != null && columnCounts[col]! > 0 && (
-                <span className="ml-1 tabular-nums opacity-60">{columnCounts[col]}</span>
-              )}
-            </button>
-            {col === "ideas" && onAddIdea && (
-              <button
-                onClick={onAddIdea}
-                className="ml-0.5 p-1 rounded text-text-dim hover:text-text hover:bg-surface-overlay transition-colors"
-                title="Add idea"
-              >
-                <Plus className="h-3 w-3" />
-              </button>
+          <button
+            key={col}
+            onClick={() => onChange({ ...filters, column: col })}
+            className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+              filters.column === col
+                ? "bg-[#5c4a3a] text-text"
+                : "text-text-dim hover:text-text hover:bg-surface-overlay"
+            }`}
+          >
+            {col}
+            {columnCounts[col] != null && columnCounts[col]! > 0 && (
+              <span className="ml-1 tabular-nums opacity-60">{columnCounts[col]}</span>
             )}
-          </div>
+          </button>
         ))}
       </div>
 
