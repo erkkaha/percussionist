@@ -203,10 +203,17 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
 
   try {
     const sessionId = await ensureSession();
-    await sendMessage(sessionId, message, DECISION_AGENT_NAME);
+    const sendController = new AbortController();
+    abortController.signal.addEventListener("abort", () => sendController.abort(), { once: true });
+    const sendPromise = sendMessage(sessionId, message, DECISION_AGENT_NAME, sendController.signal);
+    const sendFailure = sendPromise.then(() => new Promise<void>(() => {}));
 
     const frto = FIRST_RESPONSE_TIMEOUT_MS > 0 ? FIRST_RESPONSE_TIMEOUT_MS : undefined;
-    const response = await waitForCompletion(sessionId, 0, frto, abortController.signal);
+    const response = await Promise.race([
+      waitForCompletion(sessionId, 0, frto, abortController.signal),
+      sendFailure,
+    ]);
+    sendController.abort();
     if (response) {
       conversationHistory.push({ role: "assistant", text: response });
       debouncedSave();

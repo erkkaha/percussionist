@@ -4,6 +4,7 @@
 // calls internally. This avoids adding a runtime dependency to the manager.
 
 import { OPENCODE_URL, AGENT_TIMEOUT_MS, DECISION_AGENT_NAME } from "./config.js";
+import http from "node:http";
 
 const log = (...args: unknown[]) =>
   console.log(`[agent ${new Date().toISOString()}]`, ...args);
@@ -20,6 +21,56 @@ interface SessionMessage {
     error?: unknown;
   };
   parts?: Array<{ type: string; text?: string }>;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP helper with custom socket timeout (bypasses undici's default 300s
+// headersTimeout that can't be configured from user code).
+
+async function httpJsonPost(
+  url: string,
+  body: unknown,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; status: number; json(): Promise<unknown>; text(): Promise<string> }> {
+  const u = new URL(url);
+  const payload = JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: u.hostname,
+        port: u.port === "" ? undefined : Number(u.port),
+        path: u.pathname + u.search,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+        },
+        timeout: timeoutMs,
+        signal,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf-8");
+          const status = res.statusCode ?? 0;
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            json: () => Promise.resolve(JSON.parse(text)),
+            text: () => Promise.resolve(text),
+          });
+        });
+      },
+    );
+    req.on("timeout", () => {
+      req.destroy(new Error(`Request timeout after ${timeoutMs}ms`));
+    });
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -46,6 +97,7 @@ export async function sendPrompt(
   sessionId: string,
   prompt: string,
   agentName?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const body: Record<string, unknown> = {
     parts: [{ type: "text", text: prompt }],
@@ -53,12 +105,12 @@ export async function sendPrompt(
   const agent = agentName ?? DECISION_AGENT_NAME;
   body.agent = agent;
 
-  const res = await fetch(`${OPENCODE_URL}/session/${sessionId}/message`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(300_000),
-  });
+  const res = await httpJsonPost(
+    `${OPENCODE_URL}/session/${sessionId}/message`,
+    body,
+    300_000,
+    signal,
+  );
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`sendPrompt failed (${res.status}): ${text}`);
@@ -74,18 +126,33 @@ export async function getMessages(sessionId: string): Promise<SessionMessage[]> 
   return Array.isArray(data) ? data : (data.items ?? []);
 }
 
-export async function sendMessage(sessionId: string, text: string, agentName?: string): Promise<void> {
+export async function sendMessage(sessionId: string, text: string, agentName?: string, signal?: AbortSignal): Promise<void> {
   const body: Record<string, unknown> = { parts: [{ type: "text", text }] };
   if (agentName) body.agent = agentName;
-  const res = await fetch(`${OPENCODE_URL}/session/${sessionId}/message`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const res = await httpJsonPost(
+    `${OPENCODE_URL}/session/${sessionId}/message`,
+    body,
+    300_000,
+    signal,
+  );
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`sendMessage failed (${res.status}): ${body}`);
+    const text = await res.text().catch(() => "");
+    throw new Error(`sendMessage failed (${res.status}): ${text}`);
   }
+}
+
+function sawAgentActivity(messages: SessionMessage[]): boolean {
+  return messages.some((msg) => {
+    if (msg.info?.role !== "assistant") return false;
+    const tokens = msg.info.tokens;
+    return Boolean(
+      msg.info.time?.created ||
+      msg.info.time?.completed ||
+      msg.info.error ||
+      (tokens && ((tokens.input ?? 0) > 0 || (tokens.output ?? 0) > 0)) ||
+      (msg.parts?.length ?? 0) > 0
+    );
+  });
 }
 
 export function extractLastAssistantText(messages: SessionMessage[]): string {
@@ -157,16 +224,12 @@ export async function waitForCompletion(
 ): Promise<string | null> {
   const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : 0;
   const startedAt = Date.now();
-  let sawFirstResponse = false;
-  const firstResponseTimeout = firstResponseTimeoutMs ?? (timeoutMs > 0 ? Math.min(timeoutMs, 60000) : 60000);
+  let sawActivity = false;
+  const activityTimeout = firstResponseTimeoutMs ?? (timeoutMs > 0 ? Math.min(timeoutMs, 60000) : 0);
 
   while (!signal?.aborted && (deadline === 0 || Date.now() < deadline)) {
     const messages = await getMessages(sessionId);
-    const lastAssistant = extractLastAssistantText(messages);
-
-    if (lastAssistant !== "(no assistant message)") {
-      sawFirstResponse = true;
-    }
+    if (sawAgentActivity(messages)) sawActivity = true;
 
     // Check if the last assistant message has completed
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -181,9 +244,11 @@ export async function waitForCompletion(
       }
     }
 
-    // First response timeout
-    if (!sawFirstResponse && Date.now() - startedAt > firstResponseTimeout) {
-      log(`agent did not produce first response within ${firstResponseTimeout}ms`);
+    // Activity timeout. We care that the agent started working, not that it
+    // produced visible assistant text; tool calls and empty assistant messages
+    // count as activity. A value of 0 disables this guard.
+    if (!sawActivity && activityTimeout > 0 && Date.now() - startedAt > activityTimeout) {
+      log(`agent did not start work within ${activityTimeout}ms`);
       return null;
     }
 
