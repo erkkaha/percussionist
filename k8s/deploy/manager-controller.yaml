@@ -116,8 +116,8 @@ spec:
       serviceAccountName: percussionist-manager
       containers:
         - name: manager
-          image: percussionist/manager:dev
-          imagePullPolicy: Never
+          image: ghcr.io/erkkaha/percussionist/manager:latest
+          imagePullPolicy: IfNotPresent
           env:
             - name: WATCH_NAMESPACE
               value: percussionist
@@ -126,7 +126,7 @@ spec:
             - name: WEB_SERVICE_URL
               value: http://percussionist-web.percussionist.svc.cluster.local:8080
             - name: RUNNER_IMAGE_DEFAULT
-              value: percussionist/runner:dev
+              value: ghcr.io/erkkaha/percussionist/runner:latest
             - name: MERGING_AGENT
               value: meta-integrator
             - name: NODE_EXTRA_CA_CERTS

@@ -146,15 +146,15 @@ spec:
       serviceAccountName: percussionist-operator
       containers:
         - name: operator
-          image: percussionist/operator:dev
-          imagePullPolicy: Never
+          image: ghcr.io/erkkaha/percussionist/operator:latest
+          imagePullPolicy: IfNotPresent
           env:
             - name: WATCH_NAMESPACE
               value: percussionist
             - name: RUNNER_IMAGE_DEFAULT
-              value: percussionist/runner:dev
+              value: ghcr.io/erkkaha/percussionist/runner:latest
             - name: DISPATCHER_IMAGE
-              value: percussionist/dispatcher:dev
+              value: ghcr.io/erkkaha/percussionist/dispatcher:latest
             - name: DISPATCHER_SERVICE_ACCOUNT
               value: percussionist-dispatcher
             # Enable per-run Ingresses that expose the opencode web UI at

@@ -178,8 +178,8 @@ spec:
       serviceAccountName: percussionist-web
       containers:
         - name: web
-          image: percussionist/web:dev
-          imagePullPolicy: Never
+          image: ghcr.io/erkkaha/percussionist/web:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8080
