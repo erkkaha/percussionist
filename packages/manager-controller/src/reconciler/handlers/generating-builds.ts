@@ -48,8 +48,13 @@ export const handleGeneratingBuilds: PhaseHandler = async (ctx) => {
         const lastN = sessionData.allMessages.slice(-10);
         planSession = lastN
           .map((m: unknown) => {
-            const msg = m as { role?: string; textContent?: string };
-            return `[${msg.role}] ${msg.textContent}`;
+            const msg = m as { info?: { role?: string }; parts?: Array<{ type: string; text?: string }> };
+            const role = msg.info?.role ?? "unknown";
+            const text = (msg.parts ?? [])
+              .filter((p) => p.type === "text")
+              .map((p) => p.text ?? "")
+              .join(" ");
+            return `[${role}] ${text || "(no text)"}`;
           })
           .join("\n\n");
       } else {

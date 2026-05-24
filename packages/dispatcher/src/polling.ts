@@ -1,7 +1,7 @@
 // polling.ts — prompt-mode and interactive-mode polling loops.
 
 import { RunPhase } from "@percussionist/api";
-import { BASE_URL, listSessions, fetchMessages, checkHealth } from "./session.js";
+import { BASE_URL, listSessions, fetchMessages, checkHealth, compactMessagesForSnapshot } from "./session.js";
 import http from "node:http";
 import { sendStats } from "./stats-reporter.js";
 import type { RawMessage } from "./session.js";
@@ -10,6 +10,25 @@ const log = (...args: unknown[]) =>
   console.log(`[dispatcher ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
   console.error(`[dispatcher ${new Date().toISOString()}]`, ...args);
+
+function logEvent(evt: { type?: string; properties?: Record<string, unknown> }): void {
+  if (!evt.type || evt.type === "server.connected") return;
+  const p = evt.properties ?? {};
+  const info = p.info as { sessionID?: string; id?: string; role?: string; tokens?: { input?: number; output?: number } } | undefined;
+  const pieces = [
+    info?.sessionID ? `session=${info.sessionID}` : undefined,
+    info?.id ? `message=${info.id}` : undefined,
+    info?.role ? `role=${info.role}` : undefined,
+    typeof info?.tokens?.input === "number" ? `tokens=${info.tokens.input}/${info.tokens.output ?? 0}` : undefined,
+  ].filter(Boolean);
+  log(`[event] ${evt.type}${pieces.length ? ` ${pieces.join(" ")}` : ""}`);
+}
+
+function maybeLogStreamReconnect(mode: "interactive" | "prompt", reconnects: number): void {
+  if (reconnects === 1 || reconnects % 60 === 0) {
+    log(`[event] ${mode} SSE stream reconnected ${reconnects} time(s); OpenCode may be closing /event after server.connected`);
+  }
+}
 
 const RUN_NAME = process.env.RUN_NAME ?? "";
 const MODEL = process.env.RUN_MODEL ?? "";
@@ -88,7 +107,7 @@ export async function snapshotAllSessions(
   };
 
   for (const session of sessions) {
-    let messages = await fetchMessages(session.id);
+    let messages = compactMessagesForSnapshot(await fetchMessages(session.id));
     let json = JSON.stringify(messages);
     let truncated = false;
     while (Buffer.byteLength(json, "utf8") > perSessionBudget && messages.length > 1) {
@@ -193,9 +212,12 @@ export async function runInteractive(
 
   const streamEvents = async (): Promise<void> => {
     let streamErrors = 0;
+    let reconnects = 0;
     while (!terminate) {
       try {
+        if (reconnects > 0) maybeLogStreamReconnect("interactive", reconnects);
         const evtRes = await fetch(`${BASE_URL}/event`, { headers: { Accept: "text/event-stream" } });
+        reconnects++;
         if (!evtRes.ok || !evtRes.body) { await sleep(5000); continue; }
         streamErrors = 0;
         const reader = evtRes.body.getReader();
@@ -213,6 +235,7 @@ export async function runInteractive(
             if (dataLines.length === 0) continue;
             let evt: { type?: string; properties?: Record<string, unknown> };
             try { evt = JSON.parse(dataLines.join("\n")); } catch { continue; }
+            logEvent(evt);
             if (evt.type === "message.updated") {
               const p = (evt.properties ?? {}) as { info?: { sessionID?: string; tokens?: { input?: number; output?: number } } };
               const sid = p.info?.sessionID;
@@ -241,6 +264,8 @@ export async function runInteractive(
         }
         await sleep(5000);
       }
+      // Add delay between all reconnection attempts (success or error) to prevent runaway loops
+      if (!terminate) await sleep(1000);
     }
   };
 
@@ -475,9 +500,12 @@ export async function runPrompt(
 
   const streamEvents = async (): Promise<void> => {
     let streamErrors = 0;
+    let reconnects = 0;
     while (!terminate) {
       try {
+        if (reconnects > 0) maybeLogStreamReconnect("prompt", reconnects);
         const evtRes = await fetch(`${BASE_URL}/event`, { headers: { Accept: "text/event-stream" } });
+        reconnects++;
         if (!evtRes.ok || !evtRes.body) { await sleep(5000); continue; }
         streamErrors = 0;
         const reader = evtRes.body.getReader();
@@ -495,6 +523,7 @@ export async function runPrompt(
             if (dataLines.length === 0) continue;
             let evt: { type?: string; properties?: Record<string, unknown> };
             try { evt = JSON.parse(dataLines.join("\n")); } catch { continue; }
+            logEvent(evt);
             if ((evt.type === "permission.updated" || evt.type === "session.idle") && !waitingForInput) {
               waitingForInput = true;
               // Snapshot sessions immediately when entering WaitingForInput so
@@ -524,6 +553,8 @@ export async function runPrompt(
         }
         await sleep(5000);
       }
+      // Add delay between all reconnection attempts (success or error) to prevent runaway loops
+      if (!terminate) await sleep(1000);
     }
   };
 

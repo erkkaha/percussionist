@@ -65,8 +65,12 @@ export const handleReviewing: PhaseHandler = async (ctx) => {
       throw new Error("No session data available");
     }
     
-    const lastMessage = sessionData.allMessages[sessionData.allMessages.length - 1];
-    const reviewText = (lastMessage as { textContent?: string })?.textContent ?? "";
+    const lastMessage = sessionData.allMessages[sessionData.allMessages.length - 1] as
+      { parts?: Array<{ type: string; text?: string }> } | undefined;
+    const reviewText = (lastMessage?.parts ?? [])
+      .filter((p) => p.type === "text")
+      .map((p) => p.text ?? "")
+      .join(" ");
     
     // Simple JSON extraction (look for {diagnosis, recommendedAction} pattern).
     const jsonMatch = reviewText.match(/\{[\s\S]*?"recommendedAction"[\s\S]*?\}/);

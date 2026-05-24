@@ -252,6 +252,37 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 - Optional: `durationSeconds` (default: 300), `namespace`
 - Auto-resumes after the specified duration
 
+## Dispatcher MCP Tools
+
+The dispatcher sidecar runs an in-process MCP server on port 4097 (same port as manager,
+but served within each run pod). These tools are available to agents during run execution:
+
+| Tool | Purpose |
+|------|---------|
+| `complete_run` | Signal successful BUILD task completion (validates git commit+push+PR) |
+| `complete_plan` | Signal successful PLAN task completion (validates git commit+push only, no PR required) |
+| `fail_run` | Signal task failure with reason, triggering facilitator analysis |
+| `get_status` | Return current run state (phase, session ID, token usage) |
+
+**`complete_plan`** vs **`complete_run`**:
+- PLAN agents should call `complete_plan` after committing their plan document to `.percussionist/plans/{task-id}.md`
+- BUILD agents should call `complete_run` after implementation is complete and PR is created
+- `complete_plan` only validates that changes are committed and pushed (no PR requirement)
+- `complete_run` validates commit+push+PR creation for full code review workflow
+
+## Dispatcher SSE Event Streaming
+
+The dispatcher connects to OpenCode's `/event` SSE endpoint for real-time token updates
+and session state changes. Implementation notes:
+
+- **Reconnection backoff**: 1-second delay between reconnection attempts (both success
+  and error paths) to prevent runaway reconnection loops
+- **Event logging**: All SSE events are logged as `[event] <type> <properties>` for
+  debugging (properties truncated to 200 chars)
+- **Known issue**: OpenCode's SSE stream may close immediately after `server.connected`,
+  causing rapid reconnections. The 1-second backoff prevents resource exhaustion.
+- See `packages/dispatcher/src/polling.ts` lines 194-252 (interactive) and 481-540 (prompt)
+
 ## Image Build & Load Pitfalls
 
 ### 1. New source files may be silently excluded from Docker images
@@ -361,6 +392,44 @@ kubectl -n percussionist logs deploy/percussionist-web -c tailscale
 # If HTTPS serve fails: ensure HTTPS is enabled in Admin Console → DNS
 # If auth fails: regenerate the auth key and update the secret, then restart the pod
 ```
+
+### Common Issues & Fixes
+
+#### Session Message Format
+When processing OpenCode session messages, always use the correct nested structure:
+- `msg.info.role` (not `msg.role`)
+- `msg.parts[0].text` (not `msg.textContent`)
+
+Incorrect access returns `undefined` and breaks message extraction in reconciler handlers.
+
+#### SSE Reconnection Storms
+If you see thousands of `[event] server.connected` logs in the dispatcher, the SSE
+stream is closing immediately and reconnecting in a tight loop. This was fixed by
+adding a 1-second backoff between all reconnection attempts (both success and error
+paths) in `packages/dispatcher/src/polling.ts` lines 250 and 540.
+
+**Symptoms:**
+- Dispatcher logs flooded with `[event] server.connected` (35K+ events per run)
+- High CPU/memory usage in run pods
+- Pods being killed with exit 137 (SIGKILL) due to resource exhaustion
+
+**Fix applied:** Added `if (!terminate) await sleep(1000);` after the SSE reader loop
+completes to prevent runaway reconnections when OpenCode's `/event` endpoint closes
+the stream prematurely.
+
+#### Web Pod OOM When Viewing Large Sessions
+The web server's `/api/runs/:name/session` endpoint loads all session messages into
+memory at once via `fetchSessionMessages()` from the OpenCode API. For runs with large
+session histories (thousands of messages), this can exceed the memory limit.
+
+**Fix applied:** `fetchSessionMessages()` now reads the OpenCode response with a hard
+20 MB cap before JSON parsing. If the live session is too large, the route falls back
+to the dispatcher's ConfigMap snapshot, which is already truncated to fit the
+ConfigMap budget. Do not raise the web pod memory limit to mask this issue.
+
+**Longer-term improvement:** Implement pagination or streaming for session message
+retrieval so large live sessions can be viewed incrementally instead of falling back
+to a truncated snapshot.
 
 ## Self-Development Workflow
 

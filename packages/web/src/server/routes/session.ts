@@ -31,15 +31,9 @@ session.get("/:name/session", async (c) => {
     return c.json({ error: anyE.body?.message ?? anyE.message ?? String(e) }, status);
   }
 
-  // 2. Try live proxy first.
-  try {
-    const messages = await fetchSessionMessages(serviceName, sessionID);
-    return c.json({ sessionID, messages, source: "live" });
-  } catch {
-    // Live proxy failed — fall through to ConfigMap snapshot.
-  }
-
-  // 3. ConfigMap fallback.
+  // Prefer the dispatcher's compact snapshot when it exists. Live OpenCode
+  // sessions can include very large tool outputs; pulling them repeatedly while
+  // viewing a run can OOM the web pod even if the route later falls back.
   try {
     const snapshot = await readSessionConfigMap(name, sessionID);
     if (snapshot) {
@@ -51,7 +45,16 @@ session.get("/:name/session", async (c) => {
       });
     }
   } catch {
-    // ConfigMap read also failed — fall through to error.
+    // Snapshot read failed — fall through to live proxy.
+  }
+
+  // No snapshot yet: try the bounded live proxy.
+  try {
+    const messages = await fetchSessionMessages(serviceName, sessionID);
+    return c.json({ sessionID, messages, source: "live" });
+  } catch (e) {
+    console.warn(`[session] live fetch failed for ${name}:`, (e as Error).message);
+    // Live proxy failed and no snapshot exists — fall through to error.
   }
 
   return c.json(

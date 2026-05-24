@@ -78,7 +78,7 @@ export async function buildWorkerRun(
         `- Run: \`cat ${planPath}\``,
         "- If the file exists and is non-empty:",
         `  1. Call write_plan(project="${projectName}", task="${taskName}", content=<file-content>) to ensure it is persisted.`,
-        "  2. Call percussionist_dispatcher_complete_run with a brief summary of the existing plan.",
+        "  2. Call percussionist_dispatcher_complete_plan with a brief summary of the existing plan.",
         "  3. Do NOT re-explore or re-plan — the work is already done.",
         "- Only proceed with planning if the file does not exist or is empty.",
         "",
@@ -92,6 +92,7 @@ export async function buildWorkerRun(
       "- Commit and push the plan artifact on this task branch before completing the run.",
       `- After committing, call write_plan(project="${projectName}", task="${taskName}", content=<plan-content>) to persist it to ConfigMap.`,
       `- Mention ${planPath} in the completion summary.`,
+      `- When done, call percussionist_dispatcher_complete_plan instead of complete_run.`,
       "",
     );
   } else if (task.spec.type === "BUILD" && task.spec.parentTaskRef) {

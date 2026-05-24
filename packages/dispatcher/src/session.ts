@@ -48,6 +48,60 @@ export type Part =
   | { type: string };
 export type RawMessage = MessagesEntry;
 
+export const SESSION_RESPONSE_MAX_BYTES = 20_000_000;
+
+async function readJsonWithLimit(res: Response, maxBytes: number): Promise<unknown> {
+  if (!res.body) return null;
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      try { await reader.cancel(); } catch { /* ignore */ }
+      throw new Error(`OpenCode session response too large (${total} bytes)`);
+    }
+    chunks.push(value);
+  }
+
+  return JSON.parse(Buffer.concat(chunks, total).toString("utf8")) as unknown;
+}
+
+export function compactMessagesForSnapshot(messages: RawMessage[]): RawMessage[] {
+  return messages.map((msg) => ({
+    info: msg.info,
+    parts: (msg.parts ?? []).map((part) => {
+      if (part.type === "tool") {
+        const p = part as ToolPart;
+        return {
+          ...p,
+          state: p.state
+            ? {
+                ...p.state,
+                output: typeof p.state.output === "string" && p.state.output.length > 4000
+                  ? `${p.state.output.slice(0, 4000)}\n... (truncated for snapshot)`
+                  : p.state.output,
+                metadata: { ...p.state.metadata, truncated: true },
+              }
+            : p.state,
+        };
+      }
+      if (part.type === "text") {
+        const p = part as TextPart;
+        return p.text.length > 20_000
+          ? { ...p, text: `${p.text.slice(0, 20_000)}\n... (truncated for snapshot)` }
+          : p;
+      }
+      return part;
+    }),
+  }));
+}
+
 export async function listSessions(): Promise<SessionEntry[]> {
   try {
     const res = await fetch(`${BASE_URL}/session`);
@@ -65,7 +119,7 @@ export async function fetchMessages(sessionID: string): Promise<RawMessage[]> {
   try {
     const res = await fetch(`${BASE_URL}/session/${sessionID}/message`);
     if (!res.ok) return [];
-    const data = (await res.json()) as RawMessage[] | { items?: RawMessage[] };
+    const data = (await readJsonWithLimit(res, SESSION_RESPONSE_MAX_BYTES)) as RawMessage[] | { items?: RawMessage[] };
     return Array.isArray(data) ? data : (data.items ?? []);
   } catch {
     return [];

@@ -724,20 +724,56 @@ export async function listPodEvents(
 // ---------------------------------------------------------------------------
 // OpenCode API proxy helpers (talk to opencode server inside run pods)
 
+async function readJsonWithLimit(res: Response, maxBytes: number): Promise<unknown> {
+  if (!res.body) return null;
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      try { await reader.cancel(); } catch { /* ignore */ }
+      throw new Error(`OpenCode session response too large (${total} bytes)`);
+    }
+    chunks.push(value);
+  }
+
+  const body = Buffer.concat(chunks, total).toString("utf8");
+  return JSON.parse(body) as unknown;
+}
+
 export async function fetchSessionMessages(
   serviceName: string,
   sessionID: string,
   ns: string = NAMESPACE,
 ): Promise<unknown> {
   const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session/${sessionID}/message`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
   const res = await fetch(url, {
     headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(10_000),
+    signal: controller.signal,
   });
-  if (!res.ok) {
-    throw new Error(`OpenCode API ${res.status}: ${await res.text().catch(() => "")}`);
+
+  try {
+    if (!res.ok) {
+      throw new Error(`OpenCode API ${res.status}: ${await res.text().catch(() => "")}`);
+    }
+
+    const contentLength = Number(res.headers.get("content-length") ?? "0");
+    if (contentLength > 20_000_000) {
+      throw new Error(`OpenCode session response too large (${contentLength} bytes)`);
+    }
+
+    return readJsonWithLimit(res, 20_000_000);
+  } finally {
+    clearTimeout(timeout);
   }
-  return res.json();
 }
 
 export async function postSessionMessage(

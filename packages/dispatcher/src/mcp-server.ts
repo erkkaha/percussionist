@@ -66,6 +66,25 @@ const TOOL_COMPLETE_RUN = {
   },
 };
 
+const TOOL_COMPLETE_PLAN = {
+  name: "complete_plan",
+  description:
+    "Signal that this PLAN agent run has completed successfully. " +
+    "Unlike complete_run, this does not require a pull request. " +
+    "The orchestrator will evaluate the plan artifact and generate BUILD tasks. " +
+    "Call this after committing and pushing the plan artifact.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      summary: {
+        type: "string",
+        description: "Human-readable summary of what the plan covers.",
+      },
+    },
+    required: ["summary"],
+  },
+};
+
 const TOOL_GET_STATUS = {
   name: "get_status",
   description:
@@ -188,6 +207,58 @@ async function validateGitWorkflow(sessionID: string): Promise<string[]> {
   return errors;
 }
 
+/**
+ * Lightweight git workflow validation for PLAN tasks.
+ * Only checks commit + push (no PR required).
+ */
+async function validateGitWorkflowPlan(sessionID: string): Promise<string[]> {
+  const errors: string[] = [];
+
+  const taskDesc = process.env.RUN_TASK ?? "";
+  if (/do not perform any code changes/i.test(taskDesc)) {
+    return errors;
+  }
+
+  try {
+    const messages: RawMessage[] = await fetchMessages(sessionID);
+
+    const bashCommands: string[] = [];
+    for (const msg of messages) {
+      if (msg.info?.role === "assistant" && msg.parts) {
+        for (const part of msg.parts) {
+          const toolPart = part as ToolPart;
+          if (toolPart.type === "tool" && toolPart.tool === "bash") {
+            const cmd = toolPart.state?.input as { command?: string } | undefined;
+            if (cmd?.command) {
+              bashCommands.push(cmd.command);
+            }
+          }
+        }
+      }
+    }
+
+    const hasGitCommit = bashCommands.some(cmd =>
+      cmd.includes("git commit") && !cmd.includes("git commit --amend")
+    );
+    const hasGitPush = bashCommands.some(cmd =>
+      cmd.includes("git push")
+    );
+
+    if (!hasGitCommit) {
+      errors.push("❌ No git commit detected (missing 'git commit')");
+    }
+
+    if (!hasGitPush) {
+      errors.push("❌ Changes not pushed to remote (missing 'git push')");
+    }
+
+  } catch (e) {
+    console.error(`[mcp-server] git workflow validation error:`, (e as Error).message);
+  }
+
+  return errors;
+}
+
 // ---------------------------------------------------------------------------
 // MCP handler
 
@@ -218,7 +289,7 @@ function handleMcp(
       return ok(req.id, {});
 
     case "tools/list":
-      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_GET_STATUS] });
+      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_COMPLETE_PLAN, TOOL_GET_STATUS] });
 
     case "tools/call": {
       const toolName = (req.params?.name as string | undefined) ?? "";
@@ -281,6 +352,51 @@ function handleMcp(
         onCompleteRun(summary);
         return ok(req.id, {
           content: [{ type: "text", text: "Run marked as complete. The orchestrator will review the result." }],
+        });
+      }
+
+      if (toolName === "complete_plan") {
+        const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
+        const summary = typeof args["summary"] === "string"
+          ? args["summary"]
+          : "agent called complete_plan without a summary";
+
+        const status = getStatus();
+        const sessionID = status?.session;
+
+        if (sessionID) {
+          return (async () => {
+            const validationErrors = await validateGitWorkflowPlan(sessionID);
+
+            if (validationErrors.length > 0) {
+              const errorMsg = [
+                "⚠️  Cannot complete plan - required git workflow steps are missing:",
+                "",
+                ...validationErrors,
+                "",
+                "Required workflow for PLAN tasks:",
+                "1. Commit changes: git add -A && git commit -m \"...\"",
+                "2. Push to remote: git push -u origin <branch-name>",
+                "",
+                "Please complete these steps, then call complete_plan again.",
+              ].join("\n");
+
+              return ok(req.id, {
+                content: [{ type: "text", text: errorMsg }],
+                isError: true,
+              });
+            }
+
+            onCompleteRun(summary);
+            return ok(req.id, {
+              content: [{ type: "text", text: "Plan marked as complete. The orchestrator will review the plan artifact." }],
+            });
+          })();
+        }
+
+        onCompleteRun(summary);
+        return ok(req.id, {
+          content: [{ type: "text", text: "Plan marked as complete. The orchestrator will review the plan artifact." }],
         });
       }
 

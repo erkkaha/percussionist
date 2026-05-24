@@ -18,6 +18,9 @@ import ProjectsPage from "./ProjectsPage";
 import AgentsPage from "./AgentsPage";
 
 type Tab = "projects" | "agents" | "secrets" | "opencode" | "manager" | "runner";
+type SettingsSpec = Record<string, unknown> & {
+  runnerConfig?: Record<string, unknown>;
+};
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
@@ -69,7 +72,7 @@ export default function SettingsPage() {
     },
   });
 
-  const spec = settings?.spec ?? {};
+  const spec = (settings?.spec ?? {}) as SettingsSpec;
   const tabs: { id: Tab; label: string }[] = [
     { id: "projects", label: "Projects" },
     { id: "agents", label: "Agents" },
