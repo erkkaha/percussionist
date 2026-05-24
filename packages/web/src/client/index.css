@@ -80,4 +80,54 @@
   background: var(--color-text-dim);
 }
 
+/* ---------------------------------------------------------------------------
+   Mobile responsive overrides for settings pages (320px–768px)
+   Desktop layout is unchanged — only narrow-viewport overrides below.
+   --------------------------------------------------------------------------- */
+
+@media (max-width: 480px) {
+  /* Ensure all inputs and form controls are full width on very small screens */
+  .settings-mobile-full-width input,
+  .settings-mobile-full-width textarea {
+    width: 100% !important;
+  }
+
+  /* Stack tab labels vertically or allow wrapping */
+  .settings-tabs-wrap {
+    flex-wrap: wrap;
+  }
+
+  .settings-tabs-wrap button {
+    flex: 1 1 auto;
+    min-width: 80px;
+    text-align: center;
+    font-size: 0.75rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  /* Reduce header spacing — stack title and save message vertically */
+  .settings-header-mobile {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 0.5rem;
+  }
+
+  .settings-header-mobile h1 {
+    font-size: 1.25rem !important;
+  }
+}
+
+@media (max-width: 768px) {
+  /* Make tables horizontally scrollable */
+  .settings-table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+  }
+
+  .settings-table-scroll table {
+    min-width: 600px;
+  }
+}
+
 
