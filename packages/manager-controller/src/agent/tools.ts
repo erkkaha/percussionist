@@ -733,7 +733,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         : (existingWorker?.retryCount ?? 0);
 
       const runName = workerRunName(projectName, taskName, retryCount);
-      const workerRun = buildWorkerRun(project, task, runName, retryCount, reworkFeedback, projectTasks);
+      const workerRun = await buildWorkerRun(project, task, runName, retryCount, reworkFeedback, projectTasks);
       if (agentOverride) workerRun.spec.agent = agentOverride;
       if (modelOverride) workerRun.spec.model = modelOverride;
 
@@ -789,7 +789,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const retryCount = existingRetryCount + 1;
       if (shouldCreate) {
         const runName = workerRunName(projectName, taskName, retryCount);
-        const workerRun = buildWorkerRun(project, task, runName, retryCount, undefined, projectTasks);
+        const workerRun = await buildWorkerRun(project, task, runName, retryCount, undefined, projectTasks);
         if (agentOverride) workerRun.spec.agent = agentOverride;
         if (modelOverride) workerRun.spec.model = modelOverride;
 

@@ -286,7 +286,19 @@ board.post("/:project/board/tasks/:taskName/move", async (c) => {
     const project = await getProject(projectName);
     const ns = project.metadata.namespace ?? NAMESPACE;
     const targetPhase = columnPhaseMap[column]!;
-    await patchTaskStatus(taskName, { phase: targetPhase, blocked: false }, ns);
+    const patch: Record<string, unknown> = { phase: targetPhase, blocked: false };
+
+    // When resetting to backlog/pending, increment retryCount so the
+    // reconciler generates a new unique run name (workerRunName hashes
+    // retryCount into the name), preserving the old failed Run and its history.
+    const resetTargets = ["ready", "pending", "backlog"];
+    if (resetTargets.includes(column)) {
+      const task = await getTask(taskName, ns);
+      const currentRetryCount = task.status?.worker?.retryCount ?? 0;
+      patch.worker = { retryCount: currentRetryCount + 1 };
+    }
+
+    await patchTaskStatus(taskName, patch as never, ns);
     await appendTaskEvent(projectName, taskName, "unknown", "moved", { column });
     return c.json({ success: true });
   } catch (e) {

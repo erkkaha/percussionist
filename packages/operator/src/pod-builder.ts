@@ -218,12 +218,14 @@ export function renderPod(
           .join(" && ") + " && "
       : "";
 
-  const gitAuthorEnv = git?.author
+  const defaultAuthor = { name: "Percussionist Agent", email: "agent@percussionist.dev" };
+  const author = git?.author ?? (localGit ? defaultAuthor : undefined);
+  const gitAuthorEnv = author
     ? [
-        { name: "GIT_AUTHOR_NAME", value: git.author.name },
-        { name: "GIT_AUTHOR_EMAIL", value: git.author.email },
-        { name: "GIT_COMMITTER_NAME", value: git.author.name },
-        { name: "GIT_COMMITTER_EMAIL", value: git.author.email },
+        { name: "GIT_AUTHOR_NAME", value: author.name },
+        { name: "GIT_AUTHOR_EMAIL", value: author.email },
+        { name: "GIT_COMMITTER_NAME", value: author.name },
+        { name: "GIT_COMMITTER_EMAIL", value: author.email },
       ]
     : [];
 

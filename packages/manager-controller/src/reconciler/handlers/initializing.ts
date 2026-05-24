@@ -42,6 +42,19 @@ export const handleInitializing: PhaseHandler = async (ctx) => {
     };
   }
 
+  // Run completed before we transitioned to running — skip straight to succeeded.
+  if (ctx.run.status?.phase === "Succeeded") {
+    return {
+      targetPhase: "succeeded",
+      sideEffects: [
+        {
+          type: "patchWorker",
+          patch: { status: "Succeeded", completedAt: new Date().toISOString() },
+        },
+      ],
+    };
+  }
+
   // Still initializing.
   return null;
 };

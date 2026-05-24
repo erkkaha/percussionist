@@ -13,7 +13,7 @@ export const handleScheduled: PhaseHandler = async (ctx) => {
   const reworkFeedback = ctx.project.metadata.annotations?.[feedbackKey];
 
   // Build the worker run spec.
-  const run = buildWorkerRun(
+  const run = await buildWorkerRun(
     ctx.project,
     ctx.task,
     runName,

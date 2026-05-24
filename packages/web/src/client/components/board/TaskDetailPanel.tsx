@@ -304,7 +304,7 @@ export function TaskDetailPanel({
             </>
           )}
 
-          {worker?.status === "Escalated" && (
+          {(worker?.status === "Failed" || worker?.status === "Escalated") && (
             <button
               onClick={() => retryMutation.mutate()}
               disabled={retryMutation.isPending}

@@ -19,7 +19,7 @@ export const handleAwaitingMerge: PhaseHandler = async (ctx) => {
       "0",
     );
 
-    const mergeRun = buildMergeRun(
+    const mergeRun = await buildMergeRun(
       ctx.project,
       ctx.task,
       newMergeRunName,

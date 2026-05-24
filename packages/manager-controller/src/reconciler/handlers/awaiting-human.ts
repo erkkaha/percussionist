@@ -26,7 +26,7 @@ export const handleAwaitingHuman: PhaseHandler = async (ctx) => {
         mergeSeq,
       );
 
-      const mergeRun = buildMergeRun(
+      const mergeRun = await buildMergeRun(
         ctx.project,
         ctx.task,
         mergeRunName,

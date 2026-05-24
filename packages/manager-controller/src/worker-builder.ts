@@ -17,6 +17,7 @@ import {
   resolveParentBranch,
   resolveMergeBranch,
 } from "./branch-resolver.js";
+import { getClusterSettings } from "@percussionist/kube";
 
 const MAX_RETRIES = 3;
 
@@ -28,15 +29,18 @@ export { MAX_RETRIES };
  * Config resolution order: project defaults → task-specific overrides.
  * When featureBranchingEnabled: true, overrides git ref with task's feature branch.
  */
-export function buildWorkerRun(
+export async function buildWorkerRun(
   project: Project,
   task: Task,
   runName: string,
   retryCount: number,
   reworkFeedback?: string,
   allTasks?: Task[]
-): Run {
-  const resolved = resolveRunConfig(project.spec);
+): Promise<Run> {
+  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const resolved = resolveRunConfig(project.spec, undefined, undefined, {
+    runner: { resources: clusterSettings?.spec?.runner?.resources },
+  });
 
   const taskName = task.metadata.name;
   const promptLines = [
@@ -159,13 +163,16 @@ export function buildWorkerRun(
 
 const TTL_SECONDS = 7 * 86400;
 
-export function buildMergeRun(
+export async function buildMergeRun(
   project: Project,
   task: Task,
   runName: string,
   allTasks?: Task[]
-): Run {
-  const resolved = resolveRunConfig(project.spec);
+): Promise<Run> {
+  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const resolved = resolveRunConfig(project.spec, undefined, undefined, {
+    runner: { resources: clusterSettings?.spec?.runner?.resources },
+  });
   const projectName = project.metadata.name;
   const taskName = task.metadata.name;
   

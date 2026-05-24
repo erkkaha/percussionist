@@ -381,38 +381,50 @@ export async function patchProjectSpec(
   name: string,
   specPatch: Partial<Project["spec"]>,
   ns: string = NAMESPACE,
-  client = custom(),
 ): Promise<Project> {
-  return (await client.patchNamespacedCustomObject(
-    {
-      group: API_GROUP,
-      version: API_VERSION,
-      namespace: ns,
-      plural: PLURAL_PROJECT,
-      name,
-      body: { spec: specPatch },
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error("No service account token available");
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_PROJECT}/${name}`;
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/merge-patch+json",
+      Accept: "application/json",
     },
-    setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
-  )) as Project;
+    body: JSON.stringify({ spec: specPatch }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (res.ok) return res.json() as Promise<Project>;
+  const body = await res.text();
+  throw new Error(`Kubernetes API error ${res.status}: ${body}`);
 }
 
 export async function patchProject(
   name: string,
   patch: { metadata?: Partial<Project["metadata"]>; spec?: Partial<Project["spec"]> },
   ns: string = NAMESPACE,
-  client = custom(),
 ): Promise<Project> {
-  return (await client.patchNamespacedCustomObject(
-    {
-      group: API_GROUP,
-      version: API_VERSION,
-      namespace: ns,
-      plural: PLURAL_PROJECT,
-      name,
-      body: patch,
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error("No service account token available");
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_PROJECT}/${name}`;
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/merge-patch+json",
+      Accept: "application/json",
     },
-    setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
-  )) as Project;
+    body: JSON.stringify(patch),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (res.ok) return res.json() as Promise<Project>;
+  const body = await res.text();
+  throw new Error(`Kubernetes API error ${res.status}: ${body}`);
 }
 
 export async function patchProjectStatus(

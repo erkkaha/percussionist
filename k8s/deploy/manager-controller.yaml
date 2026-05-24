@@ -36,8 +36,9 @@ rules:
     resources: ["tasks/status"]
     verbs: ["get", "update", "patch"]
   # ClusterAgent — read-only (for agent definitions).
+  # ClusterSettings — read-only (for resolving runner resource defaults).
   - apiGroups: ["percussionist.dev"]
-    resources: ["clusteragents"]
+    resources: ["clusteragents", "clustersettings"]
     verbs: ["get", "list", "watch"]
   # ConfigMaps — read session snapshots saved by the dispatcher for facilitation;
   # also write chat history (manager-chat-history).

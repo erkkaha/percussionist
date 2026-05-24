@@ -23,8 +23,9 @@ export async function applyTransition(
           try {
             await createRun(effect.run, namespace);
           } catch (e: unknown) {
-            if (!isAlreadyExists(e)) throw e;
-            // Already exists — idempotent.
+            const msg = (e as Error).message;
+            if (!/already exists/i.test(msg)) throw e;
+            // Already exists — idempotent (or replace if terminal).
           }
           break;
         }
