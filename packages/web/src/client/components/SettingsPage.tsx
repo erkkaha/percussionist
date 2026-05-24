@@ -80,9 +80,9 @@ export default function SettingsPage() {
   ];
 
   return (
-    <div className="flex flex-col gap-4 p-6 max-w-5xl">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Settings</h1>
+    <div className="flex flex-col gap-4 p-4 sm:p-6 max-w-5xl mx-auto w-full">
+      <div className="flex items-center justify-between settings-header-mobile">
+        <h1 className="text-xl font-semibold text-lg sm:text-xl">Settings</h1>
         {saveMsg && (
           <span className={cn(
             "text-sm",
@@ -92,7 +92,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b border-border">
+      <div className="flex gap-1 border-b border-border settings-tabs-wrap overflow-x-auto sm:overflow-visible">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -193,12 +193,12 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
       <CardContent className="flex flex-col gap-4">
         <div>
           <label className="text-sm font-medium block mb-1">LLM Keys Secret Name</label>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Input
               value={llmKeysSecret}
               onChange={(e) => setLlmKeysSecret(e.target.value)}
               placeholder="llm-keys"
-              className="w-64"
+              className="flex-1 min-w-0 sm:w-64"
             />
             <Button
               variant="outline"
@@ -219,12 +219,12 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
 
         <div className="border-t border-border pt-4">
           <label className="text-sm font-medium block mb-1">OpenCode Auth Secret Name</label>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Input
               value={authSecretName}
               onChange={(e) => setAuthSecretName(e.target.value)}
               placeholder="percussionist-auth"
-              className="w-64"
+              className="flex-1 min-w-0 sm:w-64"
             />
             <Button
               variant="outline"
@@ -243,12 +243,13 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
           )}
         </div>
       </CardContent>
-      <CardFooter>
+      <CardFooter className="sm:flex-row flex-col gap-2">
         <Button
           onClick={() =>
             onSave({ ...spec, secrets: { llmKeysSecret: llmKeysSecret.trim() || undefined, authSecret: authSecretName.trim() ? { name: authSecretName.trim(), key: "auth.json" } : undefined } })
           }
           disabled={saving}
+          className="w-full sm:w-auto"
         >
           Save Secrets Reference
         </Button>
@@ -298,7 +299,7 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
       </CardHeader>
       <CardContent>
         <textarea
-          className="w-full h-80 font-mono text-sm border border-input bg-background rounded-md p-3 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
+          className="w-full h-64 sm:h-80 font-mono text-sm border border-input bg-background rounded-md p-3 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
           value={value}
           onChange={(e) => handleChange(e.target.value)}
           spellCheck={false}
@@ -309,8 +310,8 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
           <p className="text-xs text-green-500 mt-1">Valid JSON</p>
         )}
       </CardContent>
-      <CardFooter>
-        <Button onClick={() => onSave(value)} disabled={saving || !!jsonError}>
+      <CardFooter className="sm:flex-row flex-col gap-2">
+        <Button onClick={() => onSave(value)} disabled={saving || !!jsonError} className="w-full sm:w-auto">
           Save OpenCode Config
         </Button>
       </CardFooter>
@@ -352,7 +353,7 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-medium block mb-1">Agent Name</label>
             <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} />
@@ -362,7 +363,7 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
             <Input value={decisionAgentName} onChange={(e) => setDecisionAgentName(e.target.value)} />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-medium block mb-1">Model</label>
             <Input
@@ -402,7 +403,7 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
           />
         </div>
       </CardContent>
-      <CardFooter>
+      <CardFooter className="sm:flex-row flex-col gap-2">
         <Button
           onClick={() => {
             const timeoutMsVal = parseInt(timeoutSec, 10) * 1000;
@@ -422,6 +423,7 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
             })
           }}
           disabled={saving}
+          className="w-full sm:w-auto"
         >
           Save Manager Settings
         </Button>
@@ -467,7 +469,7 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-medium block mb-1">Runner Image</label>
             <Input value={image} onChange={(e) => setImage(e.target.value)} />
@@ -484,7 +486,7 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
         </div>
         <div className="border-t border-border pt-4">
           <p className="text-sm font-medium mb-2">Resource Requests</p>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-xs text-text-dim block mb-1">CPU request (e.g. 100m, 1)</label>
               <Input value={cpuRequest} onChange={(e) => setCpuRequest(e.target.value)} placeholder="100m" />
@@ -497,7 +499,7 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
         </div>
         <div>
           <p className="text-sm font-medium mb-2">Resource Limits</p>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-xs text-text-dim block mb-1">CPU limit (e.g. 500m, 1)</label>
               <Input value={cpuLimit} onChange={(e) => setCpuLimit(e.target.value)} placeholder="500m" />
@@ -509,7 +511,7 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
           </div>
         </div>
       </CardContent>
-      <CardFooter>
+      <CardFooter className="sm:flex-row flex-col gap-2">
         <Button
           onClick={() => {
             const resources: Record<string, { cpu?: string; memory?: string }> = {};
@@ -533,6 +535,7 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
             });
           }}
           disabled={saving}
+          className="w-full sm:w-auto"
         >
           Save Runner Defaults
         </Button>
