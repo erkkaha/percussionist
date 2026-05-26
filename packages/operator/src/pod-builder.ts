@@ -207,6 +207,18 @@ export function renderPod(
     limits: { cpu: "2", memory: "4Gi" },
   };
 
+  // Derive Node.js heap size from the container memory limit (75% of limit).
+  // Supports Mi and Gi suffixes; falls back to 2560 MB if unparseable.
+  function heapMbFromLimit(limit: string | undefined): number {
+    if (!limit) return 2560;
+    const giMatch = limit.match(/^(\d+(?:\.\d+)?)Gi$/);
+    if (giMatch) return Math.floor(parseFloat(giMatch[1]!) * 1024 * 0.75);
+    const miMatch = limit.match(/^(\d+(?:\.\d+)?)Mi$/);
+    if (miMatch) return Math.floor(parseFloat(miMatch[1]!) * 0.75);
+    return 2560;
+  }
+  const nodeHeapMb = heapMbFromLimit(initContainerResources.limits?.memory);
+
   // Build the wait-for-sidecars prefix: for each sidecar port, loop until nc
   // succeeds. This runs inside the opencode container so all pods share the
   // same network namespace and localhost is available.
@@ -586,7 +598,7 @@ export function renderPod(
               }),
           ports: [{ name: "http", containerPort }],
           env: [
-            { name: "NODE_OPTIONS", value: "--max-old-space-size=2560" },
+            { name: "NODE_OPTIONS", value: `--max-old-space-size=${nodeHeapMb}` },
             // Package manager cache configuration
             { name: "PNPM_HOME", value: `${dataMountPath}/cache/pnpm` },
             { name: "npm_config_store_dir", value: `${dataMountPath}/cache/pnpm-store` },
