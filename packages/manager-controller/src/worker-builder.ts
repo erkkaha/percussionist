@@ -39,7 +39,10 @@ export async function buildWorkerRun(
 ): Promise<Run> {
   const clusterSettings = await getClusterSettings().catch(() => undefined);
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
-    runner: { resources: clusterSettings?.spec?.runner?.resources },
+    runner: {
+      image: clusterSettings?.spec?.runner?.image,
+      resources: clusterSettings?.spec?.runner?.resources,
+    },
   });
 
   const taskName = task.metadata.name;
@@ -172,7 +175,10 @@ export async function buildMergeRun(
 ): Promise<Run> {
   const clusterSettings = await getClusterSettings().catch(() => undefined);
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
-    runner: { resources: clusterSettings?.spec?.runner?.resources },
+    runner: {
+      image: clusterSettings?.spec?.runner?.image,
+      resources: clusterSettings?.spec?.runner?.resources,
+    },
   });
   const projectName = project.metadata.name;
   const taskName = task.metadata.name;

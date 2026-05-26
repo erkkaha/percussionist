@@ -68,7 +68,7 @@ spec:
 
   # Larger PVC: git mirrors + pnpm store + Docker layer cache.
   data:
-    storageClass: standard
+    storageClass: longhorn-rwx
 
   # Feature branching: each task works on its own branch to prevent
   # git mirror fetch conflicts when multiple tasks run in parallel.
