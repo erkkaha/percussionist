@@ -29,6 +29,7 @@ import {
   execInWorkspace,
   writePlanToConfigMap,
   readPlanFromConfigMap,
+  getDeploymentImages,
 } from "@percussionist/kube";
 import { LABELS, type Project, type Task } from "@percussionist/api";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
@@ -394,6 +395,18 @@ const TOOLS = [
         },
       },
       required: ["project", "task", "content"],
+    },
+  },
+  {
+    name: "check_for_updates",
+    description:
+      "Check the currently running Percussionist component versions against the latest available release on GHCR. " +
+      "Reads image tags from the live deployments (operator, manager, web) and queries the container registry " +
+      "to find the newest semver tag. Returns current versions, the latest available tag, and whether an update is available.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
     },
   },
 ];
@@ -1198,6 +1211,90 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         written: true,
         sizeBytes: result.sizeBytes,
         warning: result.warning,
+      };
+    }
+
+    case "check_for_updates": {
+      const DEPLOYMENT_NAMES = [
+        "percussionist-operator",
+        "percussionist-manager",
+        "percussionist-web",
+      ];
+
+      // 1. Read current image tags from live deployments
+      const images = await getDeploymentImages(ns, DEPLOYMENT_NAMES);
+
+      // 2. Derive registry prefix and repo path from the operator image (or whichever is found first)
+      const foundImage = Object.values(images)[0];
+      if (!foundImage) {
+        return {
+          current: {},
+          latest: null,
+          updateAvailable: false,
+          error: "Could not read deployment images — are the deployments running?",
+        };
+      }
+
+      // e.g. "ghcr.io/erkkaha/percussionist/operator:v0.1.4"
+      // imageWithoutTag = "ghcr.io/erkkaha/percussionist/operator"
+      // repo = "erkkaha/percussionist/operator"
+      const imageWithoutTag = foundImage.image.includes(":")
+        ? foundImage.image.slice(0, foundImage.image.lastIndexOf(":"))
+        : foundImage.image;
+      const repo = imageWithoutTag.replace(/^[^/]+\//, ""); // strip registry host
+
+      // 3. Get GHCR anonymous bearer token for this repo
+      let latestTag: string | null = null;
+      let registryError: string | undefined;
+      try {
+        const tokenRes = await fetch(
+          `https://ghcr.io/token?scope=repository:${repo}:pull`,
+          { signal: AbortSignal.timeout(10_000) },
+        );
+        if (!tokenRes.ok) throw new Error(`GHCR token endpoint returned ${tokenRes.status}`);
+        const { token } = (await tokenRes.json()) as { token: string };
+
+        // 4. Fetch tag list
+        const tagsRes = await fetch(
+          `https://ghcr.io/v2/${repo}/tags/list`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(10_000),
+          },
+        );
+        if (!tagsRes.ok) throw new Error(`GHCR tags endpoint returned ${tagsRes.status}`);
+        const { tags } = (await tagsRes.json()) as { tags: string[] };
+
+        // 5. Find latest semver tag (vMAJOR.MINOR.PATCH) via inline sort
+        const semverTags = (tags ?? [])
+          .filter((t) => /^v\d+\.\d+\.\d+$/.test(t))
+          .sort((a, b) => {
+            const parse = (s: string) => s.slice(1).split(".").map(Number) as [number, number, number];
+            const [aMaj, aMin, aPatch] = parse(a);
+            const [bMaj, bMin, bPatch] = parse(b);
+            return (bMaj - aMaj) || (bMin - aMin) || (bPatch - aPatch);
+          });
+        latestTag = semverTags[0] ?? null;
+      } catch (e) {
+        registryError = (e as Error).message;
+      }
+
+      const currentTag = foundImage.tag;
+      const updateAvailable =
+        latestTag !== null &&
+        latestTag !== currentTag &&
+        !registryError;
+
+      return {
+        current: {
+          operator: images["percussionist-operator"]?.tag ?? null,
+          manager: images["percussionist-manager"]?.tag ?? null,
+          web: images["percussionist-web"]?.tag ?? null,
+        },
+        latest: latestTag,
+        updateAvailable,
+        registryPrefix: foundImage.registryPrefix,
+        ...(registryError ? { error: registryError } : {}),
       };
     }
 

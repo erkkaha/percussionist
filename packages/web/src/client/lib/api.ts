@@ -396,3 +396,19 @@ export async function deleteSecret(name: string): Promise<void> {
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
 }
+
+export interface UpdateStatus {
+  current: {
+    operator: string | null;
+    manager: string | null;
+    web: string | null;
+  };
+  latest: string | null;
+  updateAvailable: boolean;
+  registryPrefix?: string;
+  error?: string;
+}
+
+export async function fetchUpdateStatus(): Promise<UpdateStatus> {
+  return fetchJSON<UpdateStatus>("/upgrade/status");
+}

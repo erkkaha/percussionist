@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { useProjects } from "../hooks/useProjects";
 import { useProjectsEvents } from "../hooks/useProjectsEvents";
+import { useQuery } from "@tanstack/react-query";
+import { fetchUpdateStatus } from "../lib/api";
 import {
   Sidebar,
   SidebarContent,
@@ -76,6 +78,13 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
   const { data: projects } = useProjects(
     projectsSseConnected ? false : 10_000,
   );
+  const { data: updateStatus } = useQuery({
+    queryKey: ["update-status"],
+    queryFn: fetchUpdateStatus,
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+    retry: 1,
+  });
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -165,7 +174,12 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                   tooltip={item.title}
                 >
                   <NavLink to={item.url} end>
-                    <item.icon />
+                    <span className="relative inline-flex shrink-0">
+                      <item.icon />
+                      {item.title === "Settings" && updateStatus?.updateAvailable && (
+                        <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400" />
+                      )}
+                    </span>
                     <span>{item.title}</span>
                   </NavLink>
                 </SidebarMenuButton>
