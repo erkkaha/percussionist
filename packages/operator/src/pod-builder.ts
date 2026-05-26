@@ -421,6 +421,8 @@ export function renderPod(
                     "",
                     "# Ensure remote URL points to real remote (not file://) so agent can push",
                     `git -C "$WORKTREE_DIR" remote set-url origin "${git.url}" 2>/dev/null || true`,
+                    "# Unset mirror=true inherited from bare mirror so agent can push individual branches",
+                    `git -C "$WORKTREE_DIR" config --local remote.origin.mirror false 2>/dev/null || true`,
                     `echo "[workspace-init] HEAD=$(git -C "$WORKTREE_DIR" rev-parse HEAD)"`,
                     "",
                     ...(initScript
