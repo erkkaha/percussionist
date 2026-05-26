@@ -10,7 +10,9 @@ import {
   updateSecret,
   deleteSecret,
   fetchUpdateStatus,
+  postUpgradeApply,
   type UpdateStatus,
+  type UpgradeResult,
 } from "../lib/api";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./ui/card";
 import { Input } from "./ui/input";
@@ -570,6 +572,14 @@ function UpdatesPanel() {
     retry: 1,
   });
 
+  const upgradeMutation = useMutation<UpgradeResult, Error, string>({
+    mutationFn: postUpgradeApply,
+    onSuccess: () => {
+      // Refetch status after upgrade is triggered
+      setTimeout(() => void refetch(), 5_000);
+    },
+  });
+
   const currentTag =
     data?.current?.operator ??
     data?.current?.manager ??
@@ -610,6 +620,23 @@ function UpdatesPanel() {
           </p>
         )}
 
+        {upgradeMutation.isError && (
+          <p className="text-red-500 text-sm">
+            Upgrade failed: {upgradeMutation.error.message}
+          </p>
+        )}
+
+        {upgradeMutation.isSuccess && (
+          <p className="text-green-500 text-sm">
+            Upgrade to {upgradeMutation.data.targetTag} triggered — deployments are rolling out.
+            {upgradeMutation.data.errors.length > 0 && (
+              <span className="text-amber-500">
+                {" "}Errors: {upgradeMutation.data.errors.join("; ")}
+              </span>
+            )}
+          </p>
+        )}
+
         {data && (
           <>
             <div className="flex flex-col gap-1">
@@ -642,16 +669,26 @@ function UpdatesPanel() {
                       )}
                     </p>
                   </div>
-                  {releaseUrl && (
-                    <a
-                      href={releaseUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-accent underline underline-offset-2 ml-4"
+                  <div className="flex items-center gap-2 ml-4 mt-1">
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => upgradeMutation.mutate(data.latest!)}
+                      disabled={upgradeMutation.isPending}
                     >
-                      View release notes
-                    </a>
-                  )}
+                      {upgradeMutation.isPending ? "Upgrading..." : "Upgrade"}
+                    </Button>
+                    {releaseUrl && (
+                      <a
+                        href={releaseUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-accent underline underline-offset-2"
+                      >
+                        View release notes
+                      </a>
+                    )}
+                  </div>
                 </div>
               ) : data.latest && !data.error ? (
                 <div className="flex items-center gap-2">
@@ -675,7 +712,7 @@ function UpdatesPanel() {
           variant="outline"
           size="sm"
           onClick={() => void refetch()}
-          disabled={isFetching}
+          disabled={isFetching || upgradeMutation.isPending}
           className="w-full sm:w-auto"
         >
           {isFetching ? "Checking..." : "Check again"}

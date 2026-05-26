@@ -9,6 +9,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { MCP_PORT, MANAGER_NAMESPACE } from "./config.js";
+import { setHeaderOptions } from "@kubernetes/client-node";
 import {
   getRun,
   getProject,
@@ -30,6 +31,7 @@ import {
   writePlanToConfigMap,
   readPlanFromConfigMap,
   getDeploymentImages,
+  apps,
 } from "@percussionist/kube";
 import { LABELS, type Project, type Task } from "@percussionist/api";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
@@ -407,6 +409,23 @@ const TOOLS = [
       type: "object",
       properties: {},
       required: [],
+    },
+  },
+  {
+    name: "apply_upgrade",
+    description:
+      "Upgrade Percussionist deployments (operator, manager, web) to a specified target image tag. " +
+      "Uses the currently running image registry prefix to construct the new image references and patches " +
+      "each deployment in-place (rolling update). Requires 'patch' permission on deployments.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        targetTag: {
+          type: "string",
+          description: "Target image tag to upgrade to (e.g. v0.1.9)",
+        },
+      },
+      required: ["targetTag"],
     },
   },
 ];
@@ -1296,6 +1315,79 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         registryPrefix: foundImage.registryPrefix,
         ...(registryError ? { error: registryError } : {}),
       };
+    }
+
+    case "apply_upgrade": {
+      const targetTag = String(args.targetTag ?? "");
+      if (!targetTag) throw new Error("targetTag is required");
+
+      const DEPLOYMENT_NAMES = [
+        "percussionist-operator",
+        "percussionist-manager",
+        "percussionist-web",
+      ];
+
+      // Container names within each deployment (must match k8s/deploy/*.yaml)
+      const CONTAINER_NAMES: Record<string, string> = {
+        "percussionist-operator": "operator",
+        "percussionist-manager": "manager",
+        "percussionist-web": "web",
+      };
+
+      // Read current images to derive registry prefix and component names
+      const images = await getDeploymentImages(ns, DEPLOYMENT_NAMES);
+      const foundImage = Object.values(images)[0];
+      if (!foundImage) {
+        return {
+          patched: [],
+          errors: ["Could not read deployment images — are the deployments running?"],
+        };
+      }
+
+      const registryPrefix = foundImage.registryPrefix;
+      const patched: string[] = [];
+      const errors: string[] = [];
+
+      for (const depName of DEPLOYMENT_NAMES) {
+        const info = images[depName];
+        if (!info) {
+          errors.push(`${depName}: deployment not found`);
+          continue;
+        }
+
+        // Derive component name from the full image path
+        // e.g. "ghcr.io/erkkaha/percussionist/operator:v0.1.5" → "operator"
+        const imageWithoutTag = info.image.includes(":")
+          ? info.image.slice(0, info.image.lastIndexOf(":"))
+          : info.image;
+        const component = imageWithoutTag.split("/").pop() ?? depName;
+        const newImage = `${registryPrefix}/${component}:${targetTag}`;
+        const containerName = CONTAINER_NAMES[depName] ?? component;
+
+        try {
+          await apps().patchNamespacedDeployment(
+            {
+              name: depName,
+              namespace: ns,
+              body: {
+                spec: {
+                  template: {
+                    spec: {
+                      containers: [{ name: containerName, image: newImage }],
+                    },
+                  },
+                },
+              },
+            },
+            setHeaderOptions("Content-Type", "application/strategic-merge-patch+json"),
+          );
+          patched.push(depName);
+        } catch (e) {
+          errors.push(`${depName}: ${(e as Error).message}`);
+        }
+      }
+
+      return { patched, errors, targetTag };
     }
 
     default:
