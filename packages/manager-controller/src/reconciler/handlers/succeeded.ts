@@ -81,7 +81,7 @@ export const handleSucceeded: PhaseHandler = async (ctx) => {
       reviewSeq,
     );
 
-    const reviewRun = buildSuccessReviewRun(
+    const reviewRun = await buildSuccessReviewRun(
       ctx.project,
       ctx.task,
       workerRunName,

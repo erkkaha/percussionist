@@ -11,15 +11,15 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: percussionist-web-db-v2
+  name: percussionist-web-db-v3
   namespace: percussionist
   labels:
     app.kubernetes.io/name: percussionist
     app.kubernetes.io/component: web
 spec:
   accessModes:
-    - ReadWriteOnce
-  storageClassName: longhorn-wffc
+    - ReadWriteMany
+  storageClassName: longhorn-rwx
   resources:
     requests:
       storage: 1Gi
@@ -257,7 +257,7 @@ spec:
       volumes:
         - name: percussionist-db
           persistentVolumeClaim:
-            claimName: percussionist-web-db-v2
+            claimName: percussionist-web-db-v3
 ---
 # Dashboard Ingress — exposes the Percussionist web UI at a stable URL without
 # kubectl port-forward. Relies on the ingress-nginx addon (or any nginx-class
