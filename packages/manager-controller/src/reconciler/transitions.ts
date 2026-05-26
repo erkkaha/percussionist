@@ -40,12 +40,13 @@ export async function applyTransition(
         }
         case "patchWorker": {
           // Merge patch with existing worker state to avoid destroying fields.
-          // Keys explicitly set to undefined in the patch are deleted (cleared).
+          // Keys explicitly set to undefined in the patch are set to null in the
+          // JSON body so the merge patch removes them from the stored object.
           const currentWorker = task.status?.worker ?? {};
           const mergedWorker = { ...currentWorker, ...effect.patch } as Record<string, unknown>;
           for (const key of Object.keys(effect.patch as Record<string, unknown>)) {
             if ((effect.patch as Record<string, unknown>)[key] === undefined) {
-              delete mergedWorker[key];
+              mergedWorker[key] = null; // null in merge-patch removes the field
             }
           }
           await patchTaskStatus(taskName, { worker: mergedWorker as never }, namespace);
