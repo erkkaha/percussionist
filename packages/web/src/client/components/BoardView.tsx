@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchBoard, deleteBoardTask, retryEscalatedTask, approveTask, requestChangesTask } from "../lib/api";
@@ -83,8 +83,12 @@ export default function BoardView() {
   if (error && !data) return <p className="text-sm text-phase-failed p-4">Failed to load board.</p>;
   if (!data) return <p className="text-sm text-phase-failed p-4">Failed to load board.</p>;
 
-  const { settings, columns, approvals, status } = data;
+  const { settings, columns, approvals: rawApprovals, status } = data;
   const roster = (settings.agents ?? []).map((a: { name: string }) => a.name);
+
+  // Stabilise approvals reference so TaskDetailPanel's memo comparator isn't
+  // invalidated on every board refetch when approvals haven't actually changed.
+  const approvals = useMemo(() => rawApprovals, [JSON.stringify(rawApprovals)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedTask: Task | undefined = selectedTaskName
     ? allTasks.find((t) => t.metadata.name === selectedTaskName)

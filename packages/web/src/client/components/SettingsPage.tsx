@@ -18,6 +18,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
+import { RefreshCw, Loader2 } from "lucide-react";
 import ProjectsPage from "./ProjectsPage";
 import AgentsPage from "./AgentsPage";
 
@@ -77,6 +78,12 @@ export default function SettingsPage() {
   });
 
   const spec = (settings?.spec ?? {}) as SettingsSpec;
+  const { data: updateStatus } = useQuery<UpdateStatus>({
+    queryKey: ["update-status"],
+    queryFn: fetchUpdateStatus,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
   const tabs: { id: Tab; label: string }[] = [
     { id: "projects", label: "Projects" },
     { id: "agents", label: "Agents" },
@@ -113,7 +120,12 @@ export default function SettingsPage() {
                 : "border-transparent text-text-dim hover:text-text"
             )}
           >
-            {t.label}
+            <span className="relative">
+              {t.label}
+              {t.id === "updates" && updateStatus?.updateAvailable && (
+                <span className="absolute -top-0.5 -right-2.5 w-2 h-2 rounded-full bg-amber-400" />
+              )}
+            </span>
           </button>
         ))}
       </div>
@@ -564,21 +576,31 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
 // Updates panel
 
 function UpdatesPanel() {
+  const upgradeMutation = useMutation<UpgradeResult, Error, string>({
+    mutationFn: postUpgradeApply,
+  });
+
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<UpdateStatus>({
     queryKey: ["update-status"],
     queryFn: fetchUpdateStatus,
-    // Check once on mount; user can manually refresh.
     staleTime: 5 * 60 * 1000,
     retry: 1,
-  });
-
-  const upgradeMutation = useMutation<UpgradeResult, Error, string>({
-    mutationFn: postUpgradeApply,
-    onSuccess: () => {
-      // Refetch status after upgrade is triggered
-      setTimeout(() => void refetch(), 5_000);
+    // Poll every 5s while an upgrade is in flight so the banner clears automatically.
+    refetchInterval: (query) => {
+      if (!upgradeMutation.isSuccess) return false;
+      const target = upgradeMutation.data.targetTag;
+      const cur = query.state.data?.current;
+      const done = [cur?.operator, cur?.manager, cur?.web].filter(Boolean).every((v) => v === target);
+      return done ? false : 5_000;
     },
   });
+
+  // Hide the success banner once the running versions have caught up to the target tag.
+  const upgradeComplete = upgradeMutation.isSuccess && (() => {
+    const target = upgradeMutation.data.targetTag;
+    const { operator, manager, web } = data?.current ?? {};
+    return [operator, manager, web].filter(Boolean).every((v) => v === target);
+  })();
 
   const currentTag =
     data?.current?.operator ??
@@ -598,23 +620,37 @@ function UpdatesPanel() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Updates</CardTitle>
-        <CardDescription>
-          Current running versions and latest available release from the container registry.
-        </CardDescription>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <CardTitle>Updates</CardTitle>
+            <CardDescription>
+              Current running versions and latest available release from the container registry.
+            </CardDescription>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => void refetch()}
+            disabled={isFetching || upgradeMutation.isPending}
+            className="shrink-0 mt-0.5"
+            title="Check for updates"
+          >
+            <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {isLoading && (
           <p className="text-text-dim text-sm">Checking for updates...</p>
         )}
 
-        {isError && (
+        {isError && !upgradeMutation.isPending && !upgradeMutation.isSuccess && (
           <p className="text-red-500 text-sm">
             Could not check for updates: {(error as Error).message}
           </p>
         )}
 
-        {data?.error && (
+        {data?.error && !upgradeMutation.isPending && (
           <p className="text-amber-500 text-sm">
             Registry check failed: {data.error}
           </p>
@@ -626,7 +662,19 @@ function UpdatesPanel() {
           </p>
         )}
 
-        {upgradeMutation.isSuccess && (
+        {upgradeMutation.isPending && (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2 text-sm text-text-dim">
+              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+              <span>Installing update — deployments are rolling out…</span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-surface-raised overflow-hidden">
+              <div className="h-full bg-accent rounded-full animate-[progress-indeterminate_1.5s_ease-in-out_infinite]" style={{ width: "40%" }} />
+            </div>
+          </div>
+        )}
+
+        {upgradeMutation.isSuccess && !upgradeComplete && (
           <p className="text-green-500 text-sm">
             Upgrade to {upgradeMutation.data.targetTag} triggered — deployments are rolling out.
             {upgradeMutation.data.errors.length > 0 && (
@@ -707,17 +755,6 @@ function UpdatesPanel() {
           </>
         )}
       </CardContent>
-      <CardFooter>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void refetch()}
-          disabled={isFetching || upgradeMutation.isPending}
-          className="w-full sm:w-auto"
-        >
-          {isFetching ? "Checking..." : "Check again"}
-        </Button>
-      </CardFooter>
     </Card>
   );
 }
