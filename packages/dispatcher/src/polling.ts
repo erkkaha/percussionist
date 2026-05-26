@@ -469,7 +469,15 @@ export async function runPrompt(
           if (last.info.time?.completed) {
             // Check for errors first, before any other logic
             if (last.info.error) {
-              throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
+              // A MessageAbortedError means the user manually aborted the message.
+              // Treat it as "waiting for input" so the run can continue rather
+              // than failing — the next prompt dispatch will resume the session.
+              if ((last.info.error as { name?: string }).name === "MessageAbortedError") {
+                log("assistant message aborted by user — treating as waiting for input");
+                waitingForInput = true;
+              } else {
+                throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
+              }
             }
 
             const totalTokens = tokens.totals();
