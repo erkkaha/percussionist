@@ -148,8 +148,8 @@ export default function RunList() {
             : `No runs matching phase "${phaseFilter}".`}
         </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="rounded-lg border border-border overflow-hidden overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
                 <Th onClick={() => handleSort("name")}>
@@ -287,7 +287,7 @@ function FilterButton({
 
 function TableSkeleton() {
   return (
-    <div className="rounded-lg border border-border overflow-hidden">
+    <div className="rounded-lg border border-border overflow-x-auto">
       <div className="divide-y divide-border-muted">
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="px-4 py-4 flex gap-6">

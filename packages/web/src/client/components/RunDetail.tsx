@@ -102,7 +102,7 @@ export default function RunDetail() {
     mutationFn: () => deleteRun(name!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runs"] });
-      navigate("/");
+      navigate("/runs");
     },
   });
 
@@ -375,7 +375,7 @@ export default function RunDetail() {
 function BackLink() {
   return (
     <Link
-      to="/"
+      to="/runs"
       className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text transition-colors"
     >
       <span>&larr;</span> All runs

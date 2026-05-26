@@ -144,7 +144,7 @@ function EventRow({ event }: { event: TaskEvent }) {
   const boardUrl = `/projects/${encodeURIComponent(event.project)}/board`;
 
   return (
-    <div className="flex items-start gap-3 py-2.5 border-b border-border/50 last:border-0 hover:bg-surface-raised/40 px-4 transition-colors">
+    <div className="flex items-start gap-3 py-2.5 border-b border-border/50 last:border-0 hover:bg-surface-raised/40 px-6 transition-colors">
       {/* Time */}
       <span className="font-mono text-[11px] text-text-muted w-[72px] shrink-0 pt-0.5">
         {fmtTime(event.createdAt)}
@@ -246,7 +246,8 @@ export default function ActivityPage() {
   const grouped = groupByDate(events);
 
   return (
-    <div className="flex flex-col h-full">
+    // Pull out of the parent p-6 padding so the activity feed fills the viewport height correctly.
+    <div className="-m-6 flex flex-col" style={{ height: "calc(100svh - 3.5rem)" }}>
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
         <div className="flex items-center gap-2.5">
@@ -292,7 +293,7 @@ export default function ActivityPage() {
         {grouped.map(({ label, events: grpEvents }) => (
           <div key={label}>
             {/* Date separator */}
-            <div className="sticky top-0 z-10 px-4 py-1.5 bg-surface border-b border-border/50 flex items-center gap-2">
+            <div className="sticky top-0 z-10 px-6 py-1.5 bg-surface border-b border-border/50 flex items-center gap-2">
               <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">{label}</span>
             </div>
             {grpEvents.map((e) => (
