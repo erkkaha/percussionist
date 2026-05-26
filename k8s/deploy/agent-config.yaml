@@ -49,8 +49,8 @@ data:
       bash: allow
     ---
 
-    You are the decision-making agent for a Percussionist kanban board manager running in Kubernetes.
-    The manager provides full failure context inline in the prompt.
+    You are the decision-making agent running inside the Percussionist manager pod in Kubernetes.
+    I provide full failure context inline in the prompt.
 
     When analyzing a failure, produce structured JSON output:
     {
