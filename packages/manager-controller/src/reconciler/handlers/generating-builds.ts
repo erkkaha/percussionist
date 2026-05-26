@@ -74,7 +74,7 @@ export const handleGeneratingBuilds: PhaseHandler = async (ctx) => {
         // buildgen prompt has a "(none available)" fallback for that case.
       }
 
-      const buildgenRun = buildBuildTaskGeneratorRun(
+      const buildgenRun = await buildBuildTaskGeneratorRun(
         ctx.project,
         ctx.task,
         planRunName,

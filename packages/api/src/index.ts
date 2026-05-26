@@ -345,7 +345,7 @@ export const ClusterSettingsSpecSchema = z.object({
 
   runner: z
     .object({
-      image: z.string().default("percussionist/runner:dev"),
+      image: z.string().default("ghcr.io/erkkaha/percussionist/runner:latest"),
       timeoutSeconds: z.number().int().positive().default(3600),
       resources: ResourceRequirementsSchema.optional(),
     })
@@ -464,7 +464,7 @@ export const RunSpecSchema = z
     inlineAgents: AgentDefSchema.array().max(5).optional(),
 
     model: z.string().optional(),
-    image: z.string().default("percussionist/runner:dev"),
+    image: z.string().default("ghcr.io/erkkaha/percussionist/runner:latest"),
     resources: ResourceRequirementsSchema.optional(),
     secrets: SecretsRefSchema.optional(),
     source: SourceSchema.optional(),
@@ -1031,7 +1031,7 @@ export function resolveRunConfig(
       boardOverrides?.image ??
       project.image ??
       clusterBase?.runner?.image ??
-      "percussionist/runner:dev",
+      "ghcr.io/erkkaha/percussionist/runner:latest",
     timeoutSeconds:
       runOverrides?.timeoutSeconds ??
       boardOverrides?.timeoutSeconds ??

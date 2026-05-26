@@ -17,14 +17,14 @@ import {
   Task,
   resolveRunConfig,
 } from "@percussionist/api";
-import { fetchSessionMessages, readPodLog, core } from "@percussionist/kube";
+import { fetchSessionMessages, readPodLog, core, getClusterSettings } from "@percussionist/kube";
 import { resolveParentBranch, resolveTaskBranch } from "./branch-resolver.js";
 
 const DEFAULT_FACILITATOR_AGENT_NAME = "facilitator";
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
 
 // Build the facilitator Run spec for a FAILED worker run.
-export function buildFacilitationRun(
+export async function buildFacilitationRun(
   project: Project,
   task: Task,
   failedRunName: string,
@@ -33,8 +33,14 @@ export function buildFacilitationRun(
   runName: string,
   facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
   allTasks: Task[] = [],
-): Run {
-  const resolved = resolveRunConfig(project.spec);
+): Promise<Run> {
+  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const resolved = resolveRunConfig(project.spec, undefined, undefined, {
+    runner: {
+      image: clusterSettings?.spec?.runner?.image,
+      resources: clusterSettings?.spec?.runner?.resources,
+    },
+  });
 
   const facilitationSpec: FacilitationSpec = {
     targetRunName: failedRunName,
@@ -89,7 +95,7 @@ export function buildFacilitationRun(
 }
 
 // Build the facilitator Run spec for a SUCCEEDED worker run (success review).
-export function buildSuccessReviewRun(
+export async function buildSuccessReviewRun(
   project: Project,
   task: Task,
   succeededRunName: string,
@@ -99,8 +105,14 @@ export function buildSuccessReviewRun(
   branchName?: string,
   facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
   allTasks: Task[] = [],
-): Run {
-  const resolved = resolveRunConfig(project.spec);
+): Promise<Run> {
+  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const resolved = resolveRunConfig(project.spec, undefined, undefined, {
+    runner: {
+      image: clusterSettings?.spec?.runner?.image,
+      resources: clusterSettings?.spec?.runner?.resources,
+    },
+  });
 
   const completionMessage = succeededRunStatus.message ?? "session completed";
 
@@ -200,7 +212,7 @@ export function buildSuccessReviewRun(
 }
 
 // Build the facilitator Run spec for generating BUILD tasks from an approved PLAN task.
-export function buildBuildTaskGeneratorRun(
+export async function buildBuildTaskGeneratorRun(
   project: Project,
   planTask: Task,
   succeededRunName: string,
@@ -208,8 +220,14 @@ export function buildBuildTaskGeneratorRun(
   sessionSummary: string,
   facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
   allTasks: Task[] = [],
-): Run {
-  const resolved = resolveRunConfig(project.spec);
+): Promise<Run> {
+  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const resolved = resolveRunConfig(project.spec, undefined, undefined, {
+    runner: {
+      image: clusterSettings?.spec?.runner?.image,
+      resources: clusterSettings?.spec?.runner?.resources,
+    },
+  });
 
   const facilitationSpec: FacilitationSpec = {
     targetRunName: succeededRunName,
