@@ -1228,7 +1228,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const foundImage = Object.values(images)[0];
       if (!foundImage) {
         return {
-          current: {},
+          current: { operator: null, manager: null, web: null },
           latest: null,
           updateAvailable: false,
           error: "Could not read deployment images — are the deployments running?",
