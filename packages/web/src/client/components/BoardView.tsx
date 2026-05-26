@@ -79,16 +79,18 @@ export default function BoardView() {
     if (!open) setSelectedTaskName(null);
   };
 
+  // Stabilise approvals reference so TaskDetailPanel's memo comparator isn't
+  // invalidated on every board refetch when approvals haven't actually changed.
+  // Must be before early returns to satisfy Rules of Hooks.
+  const rawApprovals = data?.approvals;
+  const approvals = useMemo(() => rawApprovals, [JSON.stringify(rawApprovals)]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (isLoading && !data) return <p className="text-sm text-text-dim p-4">Loading board…</p>;
   if (error && !data) return <p className="text-sm text-phase-failed p-4">Failed to load board.</p>;
   if (!data) return <p className="text-sm text-phase-failed p-4">Failed to load board.</p>;
 
-  const { settings, columns, approvals: rawApprovals, status } = data;
+  const { settings, columns, status } = data;
   const roster = (settings.agents ?? []).map((a: { name: string }) => a.name);
-
-  // Stabilise approvals reference so TaskDetailPanel's memo comparator isn't
-  // invalidated on every board refetch when approvals haven't actually changed.
-  const approvals = useMemo(() => rawApprovals, [JSON.stringify(rawApprovals)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedTask: Task | undefined = selectedTaskName
     ? allTasks.find((t) => t.metadata.name === selectedTaskName)
