@@ -80,7 +80,7 @@ export const handleGeneratingBuilds: PhaseHandler = async (ctx) => {
         planRunName,
         newBuildgenRunName,
         planSession,
-        undefined, // Use default facilitator agent
+        "facilitator-buildgen",
         ctx.allTasks,
       );
 
