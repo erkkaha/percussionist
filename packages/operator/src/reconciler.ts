@@ -121,12 +121,15 @@ async function ensureOpencodeConfig(ns: string): Promise<void> {
 //   1. opencode-config  — copied to every namespace that has a run
 //   2. agent-config     — used by the manager's opencode-web sidecar
 //
-// If ClusterSettings is absent (never created), existing ConfigMaps are left
-// alone so manually-managed configurations continue to work.
+// Both ConfigMaps are written using server-side apply (SSA) with
+// fieldManager="percussionist-operator" and force=true. This means the
+// operator is the authoritative owner of these ConfigMap data keys regardless
+// of what other tools (kubectl, tofu, node-fetch) may have written previously.
+// Tofu excludes agent-config from its for_each to avoid conflicts.
 //
 // ConfigMap sources of truth (in priority order):
 //   opencode.config  >  opencode.configMapRef  >  existing opencode-config CM
-//   manager.*        >  existing agent-config CM
+//   manager.*        >  static defaults
 export async function reconcileClusterSettings(
   cs: ClusterSettings,
 ): Promise<void> {
@@ -137,21 +140,21 @@ export async function reconcileClusterSettings(
   // If spec.runnerConfig?.config is set, it becomes the data source.
   // Otherwise use configMapRef if set. If neither, leave existing CM alone.
   if (spec.runnerConfig?.config) {
-    await upsertConfigMap(SELF_NAMESPACE, "opencode-config", {
-      "opencode.json": spec.runnerConfig?.config,
+    await ssaConfigMap(SELF_NAMESPACE, "opencode-config", {
+      "opencode.json": spec.runnerConfig.config,
     });
     log(`reconciled opencode-config from ClusterSettings (config string)`);
   } else if (spec.runnerConfig?.configMapRef) {
     // Mirror the referenced ConfigMap into our namespace as opencode-config.
     try {
-      const ref = spec.runnerConfig?.configMapRef;
+      const ref = spec.runnerConfig.configMapRef;
       const source = await core.readNamespacedConfigMap({
         name: ref.name,
         namespace: SELF_NAMESPACE,
       });
       const data = source.data ?? {};
       if (data["opencode.json"]) {
-        await upsertConfigMap(SELF_NAMESPACE, "opencode-config", {
+        await ssaConfigMap(SELF_NAMESPACE, "opencode-config", {
           "opencode.json": data["opencode.json"],
         });
         log(`reconciled opencode-config from ref ${ref.name}/${ref.key}`);
@@ -163,14 +166,14 @@ export async function reconcileClusterSettings(
   // If neither config nor configMapRef is set, do nothing — existing CM kept as-is.
 
   // --- agent-config ---
-  // Reconstruct agent-config from spec.manager fields + a default opencode.json
-  // that keeps the MCP/manager-agent stanza working.
-  if (spec.manager) {
-    const agentName = spec.manager.agentName ?? "manager-agent";
-    const decisionAgentName = spec.manager.decisionAgentName ?? "manager-decision";
-    const decisionContent =
-      spec.manager.decisionAgentContent ??
-      `---
+  // Always write agent-config so the operator owns it via SSA, even when
+  // spec.manager is not set (use static defaults). This prevents field-manager
+  // conflicts when other tools (kubectl, tofu) bootstrapped the ConfigMap.
+  const agentName = spec.manager?.agentName ?? "manager-agent";
+  const decisionAgentName = spec.manager?.decisionAgentName ?? "manager-decision";
+  const decisionContent =
+    spec.manager?.decisionAgentContent ??
+    `---
 description: Manager decision agent — analyzes failures, parses facilitation output, and assists operators.
 mode: subagent
 permission:
@@ -203,78 +206,75 @@ Do not use icons, emoji, or unnecessary special characters
 (asterisks, backticks, arrows, etc.) in your responses — they
 will be read aloud by text-to-speech and sound garbled.`;
 
-    // Build opencode.json for the manager sidecar. It always needs the model
-    // (when set in ClusterSettings) and the MCP manager-agent entry; the rest
-    // (provider, skills) come from spec.runnerConfig.config or fall back to
-    // the existing opencode-config ConfigMap.
-    const runnerConfig: Record<string, unknown> = {
-      "$schema": "https://opencode.ai/config.json",
-      mcp: {
-        "manager-agent": {
-          type: "remote",
-          url: "http://127.0.0.1:4097/mcp",
-          enabled: true,
-        },
+  // Build opencode.json for the manager sidecar. It always needs the MCP
+  // manager-agent entry; model/provider/skills are layered on top when set.
+  const runnerConfig: Record<string, unknown> = {
+    "$schema": "https://opencode.ai/config.json",
+    mcp: {
+      "manager-agent": {
+        type: "remote",
+        url: "http://127.0.0.1:4097/mcp",
+        enabled: true,
       },
-    };
-    if (spec.manager.model) {
-      runnerConfig.model = spec.manager.model;
+    },
+    skills: {
+      directories: ["/root/.config/opencode/agents/"],
+    },
+  };
+  if (spec.manager?.model) {
+    runnerConfig.model = spec.manager.model;
+  }
+  if (spec.runnerConfig?.config) {
+    try {
+      const parsed = JSON.parse(spec.runnerConfig.config) as Record<string, unknown>;
+      if (parsed.provider) runnerConfig.provider = parsed.provider;
+      if (parsed.skills) runnerConfig.skills = parsed.skills;
+    } catch {
+      // ignore parse errors — just use the minimal config
     }
-    if (spec.runnerConfig?.config) {
-      try {
-        const parsed = JSON.parse(spec.runnerConfig.config) as Record<string, unknown>;
+  } else {
+    // Fall back to reading provider/skills from the existing opencode-config CM.
+    try {
+      const cm = await core.readNamespacedConfigMap({
+        name: "opencode-config",
+        namespace: SELF_NAMESPACE,
+      });
+      const raw = cm.data?.["opencode.json"];
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
         if (parsed.provider) runnerConfig.provider = parsed.provider;
         if (parsed.skills) runnerConfig.skills = parsed.skills;
-      } catch {
-        // ignore parse errors — just use the minimal config
       }
-    } else {
-      // Fall back to reading provider/skills from the existing opencode-config CM.
-      try {
-        const cm = await core.readNamespacedConfigMap({
-          name: "opencode-config",
-          namespace: SELF_NAMESPACE,
-        });
-        const raw = cm.data?.["opencode.json"];
-        if (raw) {
-          const parsed = JSON.parse(raw) as Record<string, unknown>;
-          if (parsed.provider) runnerConfig.provider = parsed.provider;
-          if (parsed.skills) runnerConfig.skills = parsed.skills;
-        }
-      } catch {
-        // CM doesn't exist — skip, leave runnerConfig as-is
-      }
+    } catch {
+      // CM doesn't exist — skip, leave runnerConfig as-is
     }
-    const runnerConfigJson = JSON.stringify(runnerConfig, null, 2);
-
-    await upsertConfigMap(SELF_NAMESPACE, "agent-config", {
-      "opencode.json": runnerConfigJson,
-      [`${decisionAgentName}.md`]: decisionContent,
-    });
-    log(
-      `reconciled agent-config from ClusterSettings (agentName=${agentName}, decisionAgentName=${decisionAgentName})`,
-    );
   }
+  const runnerConfigJson = JSON.stringify(runnerConfig, null, 2);
+
+  await ssaConfigMap(SELF_NAMESPACE, "agent-config", {
+    "opencode.json": runnerConfigJson,
+    [`${decisionAgentName}.md`]: decisionContent,
+  });
+  log(
+    `reconciled agent-config via SSA (agentName=${agentName}, decisionAgentName=${decisionAgentName})`,
+  );
 }
 
-async function upsertConfigMap(
+// ssaConfigMap writes a ConfigMap using server-side apply with
+// fieldManager="percussionist-operator" and force=true.
+//
+// force=true means the operator unconditionally takes ownership of these keys
+// from any prior field manager (kubectl, tofu, node-fetch, etc.). This is safe
+// because the operator is the authoritative source of truth for these ConfigMaps
+// and rebuilds them from ClusterSettings on every reconcile cycle.
+async function ssaConfigMap(
   ns: string,
   name: string,
   data: Record<string, string>,
 ): Promise<void> {
   try {
-    await core.createNamespacedConfigMap({
-      namespace: ns,
-      body: {
-        apiVersion: "v1",
-        kind: "ConfigMap",
-        metadata: { name, namespace: ns },
-        data,
-      },
-    });
-  } catch (e) {
-    if (/already exists/i.test((e as Error).message)) {
-      await core.replaceNamespacedConfigMap({
+    await core.patchNamespacedConfigMap(
+      {
         name,
         namespace: ns,
         body: {
@@ -283,10 +283,13 @@ async function upsertConfigMap(
           metadata: { name, namespace: ns },
           data,
         },
-      });
-    } else {
-      err(`upsertConfigMap(${ns}/${name}):`, (e as Error).message);
-    }
+        fieldManager: "percussionist-operator",
+        force: true,
+      },
+      setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply),
+    );
+  } catch (e) {
+    err(`ssaConfigMap(${ns}/${name}):`, (e as Error).message);
   }
 }
 
