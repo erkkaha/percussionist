@@ -13,6 +13,7 @@ import {
   KubeConfig,
   CoreV1Api,
   CustomObjectsApi,
+  AppsV1Api,
   PatchStrategy,
   setHeaderOptions,
   V1Pod,
@@ -57,6 +58,7 @@ export const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
 let _kc: KubeConfig | undefined;
 let _core: CoreV1Api | undefined;
 let _custom: CustomObjectsApi | undefined;
+let _apps: AppsV1Api | undefined;
 
 function init() {
   if (_kc) return;
@@ -68,6 +70,7 @@ function init() {
   }
   _core = _kc.makeApiClient(CoreV1Api);
   _custom = _kc.makeApiClient(CustomObjectsApi);
+  _apps = _kc.makeApiClient(AppsV1Api);
 }
 
 export function kubeConfig(): KubeConfig {
@@ -83,6 +86,11 @@ export function core(): CoreV1Api {
 export function custom(): CustomObjectsApi {
   init();
   return _custom!;
+}
+
+export function apps(): AppsV1Api {
+  init();
+  return _apps!;
 }
 
 // For CLI use — loads from kubeconfig only (no in-cluster fallback).
@@ -1212,6 +1220,50 @@ export async function execInWorkspace(
   core().deleteNamespacedPod({ name: podName, namespace: ns }).catch(() => { /* ignore */ });
 
   return { stdout, exitCode, podName };
+}
+
+// ---------------------------------------------------------------------------
+// Deployment image inspection
+
+export interface DeploymentImageInfo {
+  /** Full image string, e.g. ghcr.io/erkkaha/percussionist/operator:v0.1.4 */
+  image: string;
+  /** Tag portion only, e.g. v0.1.4 */
+  tag: string;
+  /** Registry + org prefix without the component name, e.g. ghcr.io/erkkaha/percussionist */
+  registryPrefix: string;
+}
+
+/**
+ * Read the first container image for each named deployment.
+ * Returns a map of deploymentName → DeploymentImageInfo.
+ * Missing or errored deployments are omitted from the result.
+ */
+export async function getDeploymentImages(
+  namespace: string,
+  deploymentNames: string[],
+): Promise<Record<string, DeploymentImageInfo>> {
+  const results: Record<string, DeploymentImageInfo> = {};
+  await Promise.all(
+    deploymentNames.map(async (name) => {
+      try {
+        const res = await apps().readNamespacedDeployment({ name, namespace });
+        const image = res.spec?.template?.spec?.containers?.[0]?.image ?? "";
+        if (!image) return;
+        const colonIdx = image.lastIndexOf(":");
+        const tag = colonIdx >= 0 ? image.slice(colonIdx + 1) : "latest";
+        // Strip the last path segment (component name) to get the registry prefix
+        // e.g. "ghcr.io/erkkaha/percussionist/operator" → "ghcr.io/erkkaha/percussionist"
+        const imageWithoutTag = colonIdx >= 0 ? image.slice(0, colonIdx) : image;
+        const slashIdx = imageWithoutTag.lastIndexOf("/");
+        const registryPrefix = slashIdx >= 0 ? imageWithoutTag.slice(0, slashIdx) : imageWithoutTag;
+        results[name] = { image, tag, registryPrefix };
+      } catch {
+        // Deployment not found or inaccessible — skip
+      }
+    }),
+  );
+  return results;
 }
 
 // ---------------------------------------------------------------------------

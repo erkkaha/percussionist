@@ -9,6 +9,8 @@ import {
   createSecret,
   updateSecret,
   deleteSecret,
+  fetchUpdateStatus,
+  type UpdateStatus,
 } from "../lib/api";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./ui/card";
 import { Input } from "./ui/input";
@@ -17,7 +19,7 @@ import { cn } from "../lib/utils";
 import ProjectsPage from "./ProjectsPage";
 import AgentsPage from "./AgentsPage";
 
-type Tab = "projects" | "agents" | "secrets" | "opencode" | "manager" | "runner";
+type Tab = "projects" | "agents" | "secrets" | "opencode" | "manager" | "runner" | "updates";
 type SettingsSpec = Record<string, unknown> & {
   runnerConfig?: Record<string, unknown>;
 };
@@ -80,6 +82,7 @@ export default function SettingsPage() {
     { id: "opencode", label: "OpenCode Config" },
     { id: "manager", label: "Manager Agent" },
     { id: "runner", label: "Runner Defaults" },
+    { id: "updates", label: "Updates" },
   ];
 
   return (
@@ -160,6 +163,8 @@ export default function SettingsPage() {
           saving={saveMutation.isPending}
         />
       )}
+
+      {activeTab === "updates" && <UpdatesPanel />}
     </div>
   );
 }
@@ -547,6 +552,133 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
           className="w-full sm:w-auto"
         >
           Save Runner Defaults
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Updates panel
+
+function UpdatesPanel() {
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<UpdateStatus>({
+    queryKey: ["update-status"],
+    queryFn: fetchUpdateStatus,
+    // Check once on mount; user can manually refresh.
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+
+  const currentTag =
+    data?.current?.operator ??
+    data?.current?.manager ??
+    data?.current?.web ??
+    null;
+
+  // Derive GitHub release URL from registryPrefix if available
+  // e.g. "ghcr.io/erkkaha/percussionist" → "https://github.com/erkkaha/percussionist"
+  const releaseUrl = (() => {
+    const prefix = data?.registryPrefix ?? "";
+    const parts = prefix.replace(/^[^/]+\//, ""); // strip registry host
+    if (!parts || !data?.latest) return null;
+    return `https://github.com/${parts}/releases/tag/${data.latest}`;
+  })();
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Updates</CardTitle>
+        <CardDescription>
+          Current running versions and latest available release from the container registry.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {isLoading && (
+          <p className="text-text-dim text-sm">Checking for updates...</p>
+        )}
+
+        {isError && (
+          <p className="text-red-500 text-sm">
+            Could not check for updates: {(error as Error).message}
+          </p>
+        )}
+
+        {data?.error && (
+          <p className="text-amber-500 text-sm">
+            Registry check failed: {data.error}
+          </p>
+        )}
+
+        {data && (
+          <>
+            <div className="flex flex-col gap-1">
+              <p className="text-sm font-medium mb-1">Running versions</p>
+              {(
+                [
+                  ["operator", data.current.operator],
+                  ["manager", data.current.manager],
+                  ["web", data.current.web],
+                ] as [string, string | null][]
+              ).map(([name, tag]) => (
+                <div key={name} className="flex items-center gap-2 text-sm">
+                  <span className="text-text-dim w-20">{name}</span>
+                  <span className="font-mono">{tag ?? <span className="text-text-dim italic">unknown</span>}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-t border-border pt-4">
+              {data.updateAvailable && data.latest ? (
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                    <p className="text-sm font-medium">
+                      Version <span className="font-mono">{data.latest}</span> is available
+                      {currentTag && (
+                        <span className="text-text-dim font-normal">
+                          {" "}(running <span className="font-mono">{currentTag}</span>)
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  {releaseUrl && (
+                    <a
+                      href={releaseUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-accent underline underline-offset-2 ml-4"
+                    >
+                      View release notes
+                    </a>
+                  )}
+                </div>
+              ) : data.latest && !data.error ? (
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full bg-phase-succeeded shrink-0" />
+                  <p className="text-sm">
+                    Up to date{" "}
+                    <span className="text-text-dim font-normal">
+                      (<span className="font-mono">{data.latest}</span>)
+                    </span>
+                  </p>
+                </div>
+              ) : !data.error ? (
+                <p className="text-text-dim text-sm">Latest version unavailable</p>
+              ) : null}
+            </div>
+          </>
+        )}
+      </CardContent>
+      <CardFooter>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void refetch()}
+          disabled={isFetching}
+          className="w-full sm:w-auto"
+        >
+          {isFetching ? "Checking..." : "Check again"}
         </Button>
       </CardFooter>
     </Card>
