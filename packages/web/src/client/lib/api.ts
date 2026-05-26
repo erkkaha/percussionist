@@ -412,3 +412,22 @@ export interface UpdateStatus {
 export async function fetchUpdateStatus(): Promise<UpdateStatus> {
   return fetchJSON<UpdateStatus>("/upgrade/status");
 }
+
+export interface UpgradeResult {
+  patched: string[];
+  errors: string[];
+  targetTag: string;
+}
+
+export async function postUpgradeApply(targetTag: string): Promise<UpgradeResult> {
+  const res = await fetch(`${BASE}/upgrade/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ targetTag }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<UpgradeResult>;
+}

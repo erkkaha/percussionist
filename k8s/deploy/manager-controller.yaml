@@ -53,10 +53,10 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list"]
-  # Deployments — read image tags for the update check (check_for_updates MCP tool).
+  # Deployments — read image tags and patch for upgrades.
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "patch"]
 ---
 # ClusterIP Service exposing the manager's chat handler (port 4098)
 # so the web dashboard can proxy interactive conversations.
