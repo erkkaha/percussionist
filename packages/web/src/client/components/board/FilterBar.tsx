@@ -18,22 +18,21 @@ interface FilterBarProps {
   columnCounts: Record<string, number>;
 }
 
+const pillBase = "shrink-0 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors capitalize";
+const pillActive = "border-accent/60 bg-surface-overlay text-text";
+const pillInactive = "border-border-muted text-text-dim hover:border-border hover:text-text-muted";
+
 export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
   return (
     <div className="space-y-2 shrink-0">
       {/* Column tabs — scrollable row */}
-      <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none">
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none flex-wrap">
         <button
           onClick={() => onChange({ ...filters, column: "all" })}
-          className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-            filters.column === "all"
-              ? "bg-[#5c4a3a] text-text"
-              : "text-text-dim hover:text-text hover:bg-surface-overlay"
-          }`}
+          className={`${pillBase} ${filters.column === "all" ? pillActive : pillInactive}`}
         >
-          All
-          {" "}
-          <span className="tabular-nums opacity-60">
+          All{" "}
+          <span className="ml-1 text-text-dim">
             {Object.values(columnCounts).reduce((a, b) => a + b, 0)}
           </span>
         </button>
@@ -41,15 +40,11 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
           <button
             key={col}
             onClick={() => onChange({ ...filters, column: col })}
-            className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-              filters.column === col
-                ? "bg-[#5c4a3a] text-text"
-                : "text-text-dim hover:text-text hover:bg-surface-overlay"
-            }`}
+            className={`${pillBase} ${filters.column === col ? pillActive : pillInactive}`}
           >
             {col}
             {columnCounts[col] != null && columnCounts[col]! > 0 && (
-              <span className="ml-1 tabular-nums opacity-60">{columnCounts[col]}</span>
+              <span className="ml-1 text-text-dim">{columnCounts[col]}</span>
             )}
           </button>
         ))}
@@ -64,7 +59,7 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
             placeholder="Search tasks…"
             value={filters.search}
             onChange={(e) => onChange({ ...filters, search: e.target.value })}
-            className="w-full rounded border border-border bg-surface-raised pl-7 pr-7 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-border"
+            className="w-full rounded-md border border-border bg-surface-raised pl-7 pr-7 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-border"
           />
           {filters.search && (
             <button
@@ -77,16 +72,12 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
         </div>
 
         {/* Type filter */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           {(["all", "PLAN", "BUILD"] as const).map((t) => (
             <button
               key={t}
               onClick={() => onChange({ ...filters, type: t })}
-              className={`rounded px-2 py-1 text-xs transition-colors ${
-                filters.type === t
-                  ? "bg-surface-overlay text-text"
-                  : "text-text-dim hover:text-text"
-              }`}
+              className={`${pillBase} ${filters.type === t ? pillActive : pillInactive}`}
             >
               {t === "all" ? "Any type" : t}
             </button>
@@ -94,16 +85,12 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
         </div>
 
         {/* Priority filter */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           {(["all", "high", "medium", "low"] as const).map((p) => (
             <button
               key={p}
               onClick={() => onChange({ ...filters, priority: p })}
-              className={`rounded px-2 py-1 text-xs transition-colors ${
-                filters.priority === p
-                  ? "bg-surface-overlay text-text"
-                  : "text-text-dim hover:text-text"
-              }`}
+              className={`${pillBase} ${filters.priority === p ? pillActive : pillInactive}`}
             >
               {p === "all" ? "Any priority" : p}
             </button>

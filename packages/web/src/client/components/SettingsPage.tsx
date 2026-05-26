@@ -88,7 +88,7 @@ export default function SettingsPage() {
   ];
 
   return (
-    <div className="flex flex-col gap-4 p-4 sm:p-6 max-w-5xl mx-auto w-full">
+    <div className="flex flex-col gap-4 max-w-5xl mx-auto w-full">
       <div className="flex items-center justify-between settings-header-mobile">
         <h1 className="text-xl font-semibold text-lg sm:text-xl">Settings</h1>
         {saveMsg && (

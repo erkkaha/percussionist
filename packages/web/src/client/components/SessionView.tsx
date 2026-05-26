@@ -75,7 +75,7 @@ export default function SessionView({ name, hasSession, active, sseConnected, ev
   }
 
   return (
-    <div className="p-4 space-y-3">
+    <div className="space-y-3">
       {isFetching && (
         <span className="text-xs text-text-dim animate-pulse">refreshing...</span>
       )}
@@ -151,7 +151,7 @@ function MessageBubble({
       }`}
     >
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border-muted">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border-muted flex-wrap">
         <span
           className={`text-xs font-semibold uppercase tracking-wider ${
             isUser ? "text-phase-pending" : "text-phase-running"
@@ -163,17 +163,17 @@ function MessageBubble({
           <span className="text-xs text-text-dim">({info.agent})</span>
         )}
         {!isUser && info.modelID && (
-          <span className="text-xs text-text-dim font-mono">
+          <span className="text-xs text-text-dim font-mono truncate max-w-[180px] sm:max-w-none">
             {info.providerID ? `${info.providerID}/` : ""}{info.modelID}
           </span>
         )}
         {info.time.created && (
-          <span className="text-xs text-text-dim ml-auto">
+          <span className="text-xs text-text-dim ml-auto shrink-0">
             {new Date(info.time.created).toLocaleTimeString()}
           </span>
         )}
         {info.error && (
-          <span className="text-xs text-phase-failed ml-2">
+          <span className="text-xs text-phase-failed w-full">
             error: {info.error.message}
           </span>
         )}

@@ -42,23 +42,27 @@ function RunPanel({ runName, tab }: { runName: string; tab: "session" | "logs" }
 
   if (tab === "session") {
     return (
-      <SessionView
-        name={runName}
-        hasSession={!!run.status?.sessionID}
-        active={isActive}
-        sseConnected={sseConnected}
-        eventTick={eventTick}
-      />
+      <div className="px-4 py-3">
+        <SessionView
+          name={runName}
+          hasSession={!!run.status?.sessionID}
+          active={isActive}
+          sseConnected={sseConnected}
+          eventTick={eventTick}
+        />
+      </div>
     );
   }
 
   return (
-    <LogViewer
-      name={runName}
-      active={isActive}
-      sseConnected={sseConnected}
-      eventTick={eventTick}
-    />
+    <div className="px-4 py-3">
+      <LogViewer
+        name={runName}
+        active={isActive}
+        sseConnected={sseConnected}
+        eventTick={eventTick}
+      />
+    </div>
   );
 }
 
