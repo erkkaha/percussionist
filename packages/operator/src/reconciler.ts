@@ -137,11 +137,32 @@ export async function reconcileClusterSettings(
   if (!spec) return;
 
   // --- opencode-config ---
+  // Always inject the dispatcher MCP stanza so every run pod can call
+  // complete_run / complete_plan / fail_run / get_status regardless of what
+  // the user provides in ClusterSettings. The stanza is merged last so it
+  // cannot be accidentally overridden by user-supplied config.
+  function injectDispatcherMcp(raw: string): string {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      parsed = {};
+    }
+    const mcp = (parsed.mcp ?? {}) as Record<string, unknown>;
+    mcp["percussionist-dispatcher"] = {
+      type: "remote",
+      url: "http://127.0.0.1:4097/mcp",
+      enabled: true,
+    };
+    parsed.mcp = mcp;
+    return JSON.stringify(parsed);
+  }
+
   // If spec.runnerConfig?.config is set, it becomes the data source.
   // Otherwise use configMapRef if set. If neither, leave existing CM alone.
   if (spec.runnerConfig?.config) {
     await ssaConfigMap(SELF_NAMESPACE, "opencode-config", {
-      "opencode.json": spec.runnerConfig.config,
+      "opencode.json": injectDispatcherMcp(spec.runnerConfig.config),
     });
     log(`reconciled opencode-config from ClusterSettings (config string)`);
   } else if (spec.runnerConfig?.configMapRef) {
@@ -155,7 +176,7 @@ export async function reconcileClusterSettings(
       const data = source.data ?? {};
       if (data["opencode.json"]) {
         await ssaConfigMap(SELF_NAMESPACE, "opencode-config", {
-          "opencode.json": data["opencode.json"],
+          "opencode.json": injectDispatcherMcp(data["opencode.json"]),
         });
         log(`reconciled opencode-config from ref ${ref.name}/${ref.key}`);
       }
