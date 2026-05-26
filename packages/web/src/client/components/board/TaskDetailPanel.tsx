@@ -2,7 +2,7 @@
 // Shows: Overview, Session (live), Logs, Plan (PLAN tasks only).
 // Actions: Approve, Request Changes, Retry, Delete.
 
-import { useState } from "react";
+import { useState, memo } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import {
@@ -18,6 +18,10 @@ import SessionView from "../SessionView";
 import LogViewer from "../LogViewer";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { CodeBlock } from "../CodeBlock";
+import type React from "react";
+
+const remarkPlugins = [remarkGfm];
 
 type Tab = "overview" | "session" | "logs" | "plan";
 
@@ -69,20 +73,59 @@ function RunPanel({ runName, tab }: { runName: string; tab: "session" | "logs" }
 // ---------------------------------------------------------------------------
 // Plan content — renders markdown plan artifact
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Stable markdown component overrides — defined outside render to avoid
+// new object references causing ReactMarkdown to re-render the entire tree.
+// ---------------------------------------------------------------------------
+const planMarkdownComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
+  p: ({ children }) => <p className="my-0">{children}</p>,
+  pre: ({ children }) => <div className="mb-2">{children}</div>,
+  code: ({ children, className }) => {
+    const lang = className?.replace("language-", "") ?? "";
+    const code = String(children).replace(/\n$/, "");
+    if (lang || code.includes("\n")) {
+      return <CodeBlock code={code} language={lang} />;
+    }
+    return <span className="bg-surface-sunken rounded px-1 py-0.5 text-xs font-mono">{children}</span>;
+  },
+  h1: ({ children }) => <h1 className="text-2xl font-bold mt-4 mb-1">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-xl font-semibold mt-3 mb-1">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-lg font-semibold mt-2 mb-1">{children}</h3>,
+  h4: ({ children }) => <h4 className="text-base font-semibold mt-2 mb-0.5">{children}</h4>,
+  table: ({ children }) => (
+    <div className="overflow-x-auto mb-2">
+      <table className="border-collapse text-xs w-full">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="bg-surface-raised">{children}</thead>,
+  tbody: ({ children }) => <tbody className="divide-y divide-border-muted">{children}</tbody>,
+  tr: ({ children }) => <tr className="hover:bg-surface-overlay/30 transition-colors">{children}</tr>,
+  th: ({ children }) => <th className="border border-border px-2 py-1.5 font-semibold text-left">{children}</th>,
+  td: ({ children }) => <td className="border border-border px-2 py-1">{children}</td>,
+};
+
 function PlanContent({ projectName, taskName }: { projectName: string; taskName: string }) {
-  const { data, isLoading, error } = useQuery({
+  const { data, status, fetchStatus, error } = useQuery({
     queryKey: ["plan", projectName, taskName],
     queryFn: () => fetchPlan(projectName, taskName),
-    staleTime: 30_000,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   });
 
-  if (isLoading) return <p className="text-xs text-text-dim p-4">Loading plan…</p>;
+  const isFirstLoad = status === "pending" && fetchStatus === "fetching";
+
+  if (isFirstLoad) return <p className="text-xs text-text-dim p-4">Loading plan…</p>;
   if (error) return <p className="text-xs text-phase-failed p-4">Failed to load plan: {(error as Error).message}</p>;
   if (!data?.content) return <p className="text-xs text-text-dim p-4">No plan artifact found.</p>;
 
   return (
     <div className="prose prose-sm prose-invert max-w-none px-4 py-3">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.content}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        components={planMarkdownComponents}
+      >
+        {data.content}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -176,7 +219,7 @@ function MetaRow({ label, value, mono }: { label: string; value: string; mono?: 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-export function TaskDetailPanel({
+function TaskDetailPanelInner({
   task,
   col,
   projectName,
@@ -411,13 +454,25 @@ export function TaskDetailPanel({
         {activeTab === "logs" && primaryRunName && (
           <RunPanel runName={primaryRunName} tab="logs" />
         )}
-        {activeTab === "plan" && isPlan && (
-          <PlanContent projectName={projectName} taskName={taskName} />
+        {isPlan && (
+          <div className={activeTab === "plan" ? "" : "hidden"}>
+            <PlanContent projectName={projectName} taskName={taskName} />
+          </div>
         )}
       </div>
     </div>
   );
 }
+
+export const TaskDetailPanel = memo(TaskDetailPanelInner, (prev, next) => {
+  return (
+    prev.task.metadata.resourceVersion === next.task.metadata.resourceVersion &&
+    prev.col === next.col &&
+    prev.projectName === next.projectName &&
+    prev.approvals === next.approvals &&
+    prev.onDeleted === next.onDeleted
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Empty state — shown when no task is selected
