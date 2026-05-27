@@ -451,9 +451,6 @@ export function renderPod(
                     `git -C "$WORKTREE_DIR" config --local remote.origin.mirror false 2>/dev/null || true`,
                     `echo "[workspace-init] HEAD=$(git -C "$WORKTREE_DIR" rev-parse HEAD)"`,
                     "",
-                    "# Pre-warm pnpm store so the agent's pnpm commands finish within 120s",
-                    `cd "$WORKTREE_DIR" && pnpm install --frozen-lockfile --config.strict-dep-builds=false 2>&1 || echo "[workspace-init] pnpm install skipped (non-zero exit)"`,
-                    "",
                     ...(initScript
                       ? [
                           "# Run init script",
@@ -478,9 +475,6 @@ export function renderPod(
                     `else`,
                     `  echo "[workspace-init] resuming existing local workspace at $WORKSPACE_DIR"`,
                     `fi`,
-                    "",
-                    "# Pre-warm pnpm store so the agent's pnpm commands finish within 120s",
-                    `cd "$WORKSPACE_DIR" && pnpm install --frozen-lockfile --config.strict-dep-builds=false 2>&1 || echo "[workspace-init] pnpm install skipped (non-zero exit)"`,
                     "",
                     ...(initScript
                       ? [
