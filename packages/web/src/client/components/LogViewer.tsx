@@ -1,4 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
 import { useLogs } from "../hooks/useLogs";
 
 interface LogViewerProps {
@@ -16,6 +19,11 @@ interface LogViewerProps {
 const BASE_CONTAINERS = ["bootstrap", "opencode", "dispatcher"] as const;
 const TAIL_OPTIONS = [100, 500, 1000] as const;
 
+/** Convert a plain-text log string to xterm-safe output (CRLF line endings). */
+function toTerminalLines(text: string): string {
+  return text.replace(/\r?\n/g, "\r\n");
+}
+
 export default function LogViewer({
   name,
   active,
@@ -27,11 +35,109 @@ export default function LogViewer({
   const [container, setContainer] = useState<string>(defaultContainer);
   const [tailLines, setTailLines] = useState<number>(500);
   const [autoScroll, setAutoScroll] = useState(true);
-  const scrollRef = useRef<HTMLPreElement>(null);
 
-  // When defaultContainer changes (e.g. run loads and we know it failed on
-  // workspace-init), switch to it — but only if the user hasn't manually picked
-  // a different container yet.
+  const termDivRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  /** Tracks how many characters of `data.lines` have already been written. */
+  const writtenLenRef = useRef(0);
+  /** Tracks which container+tail combo was last written (to detect resets). */
+  const lastKeyRef = useRef("");
+  /** Mirror of latest data.lines for use inside the mount effect. */
+  const dataRef = useRef<string>("");
+  /** Mirror of current container:tailLines key. */
+  const keyRef = useRef(`${defaultContainer}:500`);
+  /** Mirror of autoScroll state for use inside the mount effect. */
+  const autoScrollRef = useRef(true);
+  /** Cleanup fn stored so the callback ref can tear down on unmount. */
+  const termCleanupRef = useRef<(() => void) | null>(null);
+
+  // Callback ref: fires when the inner div enters/leaves the DOM.
+  // This works correctly even when the div is conditionally rendered
+  // (a plain useEffect([]) runs before the loading state resolves).
+  const termCallbackRef = useCallback((node: HTMLDivElement | null) => {
+    // Teardown previous instance if any.
+    if (termCleanupRef.current) {
+      termCleanupRef.current();
+      termCleanupRef.current = null;
+    }
+    if (!node) return;
+
+    // Keep termDivRef in sync for ResizeObserver.
+    (termDivRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+
+    const term = new Terminal({
+      convertEol: false,
+      scrollback: 10_000,
+      fontSize: 12,
+      fontFamily: '"JetBrains Mono", "Fira Mono", "Cascadia Code", monospace',
+      theme: {
+        background: "#0c0906",
+        foreground: "#faf5f0",
+        cursor: "#d97706",
+        cursorAccent: "#0c0906",
+        selectionBackground: "#5c4a3a",
+        black: "#0c0906",
+        brightBlack: "#7a6a5a",
+        red: "#fca5a5",
+        brightRed: "#fca5a5",
+        green: "#86efac",
+        brightGreen: "#86efac",
+        yellow: "#fbbf24",
+        brightYellow: "#fbbf24",
+        blue: "#93c5fd",
+        brightBlue: "#93c5fd",
+        magenta: "#e879f9",
+        brightMagenta: "#e879f9",
+        cyan: "#67e8f9",
+        brightCyan: "#67e8f9",
+        white: "#faf5f0",
+        brightWhite: "#ffffff",
+      },
+      disableStdin: true,
+      cursorBlink: false,
+      allowTransparency: false,
+    });
+
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(node);
+
+    termRef.current = term;
+    fitAddonRef.current = fitAddon;
+
+    // Resize observer — debounced via rAF.
+    let rafId = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => fitAddon.fit());
+    });
+    observer.observe(node);
+
+    // Fit at final size, then write any already-loaded data.
+    rafId = requestAnimationFrame(() => {
+      fitAddon.fit();
+      const existingLines = dataRef.current;
+      if (existingLines) {
+        term.write(toTerminalLines(existingLines));
+        writtenLenRef.current = existingLines.length;
+        lastKeyRef.current = keyRef.current;
+        if (autoScrollRef.current) term.scrollToBottom();
+      }
+    });
+
+    termCleanupRef.current = () => {
+      cancelAnimationFrame(rafId);
+      observer.disconnect();
+      term.dispose();
+      termRef.current = null;
+      fitAddonRef.current = null;
+      writtenLenRef.current = 0;
+      lastKeyRef.current = "";
+    };
+  }, []);
+
+  // When defaultContainer changes, switch to it.
   useEffect(() => {
     setContainer(defaultContainer);
   }, [defaultContainer]);
@@ -44,14 +150,55 @@ export default function LogViewer({
     active && !sseConnected ? 5_000 : false,
   );
 
-  const containers = [...BASE_CONTAINERS];
+  // Write new log content whenever data/error/loading changes.
+  const writeData = useCallback(() => {
+    const term = termRef.current;
 
-  // Auto-scroll to bottom when new content arrives.
-  useEffect(() => {
-    if (autoScroll && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const currentKey = `${container}:${tailLines}`;
+    const newLines = data?.lines ?? "";
+
+    // Always keep mirrors current so the mount effect can use them.
+    dataRef.current = newLines;
+    keyRef.current = currentKey;
+    autoScrollRef.current = autoScroll;
+
+    if (!term) return;
+
+    if (lastKeyRef.current !== currentKey) {
+      // Container or tail changed — full reset.
+      term.reset();
+      writtenLenRef.current = 0;
+      lastKeyRef.current = currentKey;
     }
-  }, [data?.lines, autoScroll]);
+
+    if (error) {
+      if (writtenLenRef.current === 0) {
+        term.write(`\x1b[33m${error.message}\x1b[0m`);
+        writtenLenRef.current = 1; // sentinel so we don't repeat
+      }
+      return;
+    }
+
+    if (isLoading && writtenLenRef.current === 0) {
+      term.write("\x1b[2mLoading logs...\x1b[0m");
+      return;
+    }
+
+    // Clear "Loading logs..." once data arrives.
+    if (newLines.length > writtenLenRef.current) {
+      const delta = newLines.slice(writtenLenRef.current);
+      term.write(toTerminalLines(delta));
+      writtenLenRef.current = newLines.length;
+    }
+
+    if (autoScroll) {
+      term.scrollToBottom();
+    }
+  }, [data?.lines, error, isLoading, container, tailLines, autoScroll]);
+
+  useEffect(() => {
+    writeData();
+  }, [writeData]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -59,7 +206,7 @@ export default function LogViewer({
       <div className="flex items-center gap-3 flex-wrap">
         {/* Container tabs */}
         <div className="flex rounded-md border border-border overflow-hidden">
-          {containers.map((c) => (
+          {[...BASE_CONTAINERS].map((c) => (
             <button
               key={c}
               onClick={() => setContainer(c)}
@@ -111,23 +258,13 @@ export default function LogViewer({
         )}
       </div>
 
-      {/* Log output */}
-      {error ? (
-        <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-4 text-sm text-phase-failed">
-          {error.message}
-        </div>
-      ) : isLoading ? (
-        <div className="rounded-lg border border-border bg-surface p-4 text-sm text-text-dim animate-pulse">
-          Loading logs...
-        </div>
-      ) : (
-        <pre
-          ref={scrollRef}
-          className="log-viewer rounded-lg border border-border bg-surface p-4 text-xs font-mono leading-none overflow-auto max-h-[600px] whitespace-pre-wrap break-all"
-        >
-          {data?.lines || "No log output yet."}
-        </pre>
-      )}
+      {/* Log output — always render the terminal; error/loading written into it */}
+      <div
+        className="rounded-lg border border-border overflow-hidden"
+        style={{ height: "600px", background: "#0c0906", padding: "12px", minWidth: 0 }}
+      >
+        <div ref={termCallbackRef} style={{ height: "100%", overflow: "hidden" }} />
+      </div>
     </div>
   );
 }
