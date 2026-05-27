@@ -204,7 +204,7 @@ export function renderPod(
 
   const initContainerResources = spec.resources ?? {
     requests: { cpu: "200m", memory: "512Mi" },
-    limits: { cpu: "2", memory: "4Gi" },
+    limits: { cpu: "2", memory: "8Gi" },
   };
 
   // Derive Node.js heap size from the container memory limit (75% of limit).
@@ -350,8 +350,22 @@ export function renderPod(
                                 `  else`,
                                 `    echo "[workspace-init] warning: could not checkout or create branch ${git.ref}"`,
                                 `  fi`,
+                                `  # Reset to remote tip so the worktree always starts with the latest committed code.`,
+                                `  # Uses origin/<ref> if available (worktree fetch sets up remote tracking),`,
+                                `  # otherwise falls back to the mirror's ref directly.`,
+                                `  if git -C "$WORKTREE_DIR" rev-parse "origin/${git.ref}" >/dev/null 2>&1; then`,
+                                `    git -C "$WORKTREE_DIR" reset --hard "origin/${git.ref}" && echo "[workspace-init] reset to origin/${git.ref}"`,
+                                `  else`,
+                                `    echo "[workspace-init] no remote tracking branch for ${git.ref}, skipping reset"`,
+                                `  fi`,
                               ]
-                            : []),
+                            : [
+                                `  # No specific ref — reset to origin/HEAD to pick up latest remote commits.`,
+                                `  _DEFAULT_BRANCH=$(git -C "$WORKTREE_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)`,
+                                `  if [ -n "$_DEFAULT_BRANCH" ] && git -C "$WORKTREE_DIR" rev-parse "origin/$_DEFAULT_BRANCH" >/dev/null 2>&1; then`,
+                                `    git -C "$WORKTREE_DIR" reset --hard "origin/$_DEFAULT_BRANCH" && echo "[workspace-init] reset to origin/$_DEFAULT_BRANCH"`,
+                                `  fi`,
+                              ]),
                           `else`,
                           `  echo "[workspace-init] creating worktree $WORKTREE_DIR"`,
                           ...(git.ref
@@ -685,7 +699,7 @@ export function renderPod(
           },
           resources: spec.resources ?? {
             requests: { cpu: "200m", memory: "512Mi" },
-            limits: { cpu: "2", memory: "4Gi" },
+            limits: { cpu: "2", memory: "8Gi" },
           },
           volumeMounts: [
             // /workspace: use subPath on the data volume when backed by PVC,
