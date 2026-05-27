@@ -19,6 +19,7 @@ import settings from "./routes/settings.js";
 import activity from "./routes/activity.js";
 import plans from "./routes/plans.js";
 import upgrade from "./routes/upgrade.js";
+import providers from "./routes/providers.js";
 import { NAMESPACE } from "./kube.js";
 
 export function createApp() {
@@ -40,6 +41,7 @@ export function createApp() {
   app.route("/api/activity", activity);
   app.route("/api/projects", plans);
   app.route("/api/upgrade", upgrade);
+  app.route("/api/providers", providers);
 
   app.get("/api/health", (c) => c.json({ ok: true, namespace: NAMESPACE }));
 

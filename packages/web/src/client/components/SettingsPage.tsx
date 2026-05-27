@@ -19,6 +19,7 @@ import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { RefreshCw, Loader2 } from "lucide-react";
+import ModelSelector from "./ModelSelector";
 import ProjectsPage from "./ProjectsPage";
 import AgentsPage from "./AgentsPage";
 
@@ -394,9 +395,9 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-medium block mb-1">Model</label>
-            <Input
+            <ModelSelector
               value={model}
-              onChange={(e) => setModel(e.target.value)}
+              onChange={setModel}
               placeholder="e.g. anthropic/claude-sonnet-4-20250514"
             />
           </div>
