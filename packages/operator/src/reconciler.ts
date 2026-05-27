@@ -149,6 +149,15 @@ export async function reconcileClusterSettings(
       parsed = {};
     }
     const mcp = (parsed.mcp ?? {}) as Record<string, unknown>;
+    // Strip local MCP servers — they spawn child processes inside run pods,
+    // consuming memory and potentially failing (npx not available, etc.).
+    // Only remote MCP entries are safe in headless agent containers.
+    for (const [key, entry] of Object.entries(mcp)) {
+      const e = entry as Record<string, unknown>;
+      if (e.type === "local" || e.type === "stdio") {
+        delete mcp[key];
+      }
+    }
     mcp["percussionist-dispatcher"] = {
       type: "remote",
       url: "http://127.0.0.1:4097/mcp",
