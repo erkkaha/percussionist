@@ -662,7 +662,7 @@ function UpdatesPanel() {
           </p>
         )}
 
-        {upgradeMutation.isPending && (
+        {(upgradeMutation.isPending || (upgradeMutation.isSuccess && !upgradeComplete)) && (
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2 text-sm text-text-dim">
               <Loader2 className="h-4 w-4 animate-spin shrink-0" />
@@ -672,17 +672,6 @@ function UpdatesPanel() {
               <div className="h-full bg-accent rounded-full animate-[progress-indeterminate_1.5s_ease-in-out_infinite]" style={{ width: "40%" }} />
             </div>
           </div>
-        )}
-
-        {upgradeMutation.isSuccess && !upgradeComplete && (
-          <p className="text-green-500 text-sm">
-            Upgrade to {upgradeMutation.data.targetTag} triggered — deployments are rolling out.
-            {upgradeMutation.data.errors.length > 0 && (
-              <span className="text-amber-500">
-                {" "}Errors: {upgradeMutation.data.errors.join("; ")}
-              </span>
-            )}
-          </p>
         )}
 
         {data && (
