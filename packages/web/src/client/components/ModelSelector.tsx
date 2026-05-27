@@ -80,7 +80,10 @@ export default function ModelSelector({
   const filtered = allProviders
     .map((p) => {
       const q = filter.toLowerCase();
-      const models = p.models.filter(
+      const modelList = Array.isArray(p.models)
+        ? p.models
+        : Object.values((p.models ?? {}) as Record<string, { id: string; name?: string }>);
+      const models = modelList.filter(
         (m) =>
           !q ||
           m.id.toLowerCase().includes(q) ||
