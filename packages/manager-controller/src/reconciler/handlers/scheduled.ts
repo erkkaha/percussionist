@@ -8,9 +8,8 @@ export const handleScheduled: PhaseHandler = async (ctx) => {
   const retryCount = ctx.task.status?.worker?.retryCount ?? 0;
   const runName = workerRunName(ctx.project.metadata.name, ctx.task.metadata.name, retryCount);
   
-  // Check for rework feedback annotation on Project (written by web API).
-  const feedbackKey = `percussionist.dev/rework-${ctx.task.metadata.name}`;
-  const reworkFeedback = ctx.project.metadata.annotations?.[feedbackKey];
+  // Rework feedback is stored in worker status by handleAwaitingHuman.
+  const reworkFeedback = ctx.task.status?.worker?.reviewFeedback;
 
   // Build the worker run spec.
   const run = await buildWorkerRun(
