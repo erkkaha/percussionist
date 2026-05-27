@@ -141,12 +141,17 @@ export default function CreateRunForm() {
   }
 
   // Cluster agents visible in the dropdown — filtered to project roster when a project is selected.
-  const selectedProjectSpec = projects?.find((p) => p.metadata.name === selectedProject)?.spec;
+  const selectedProjectObj = projects?.find((p) => p.metadata.name === selectedProject);
+  const selectedProjectSpec = selectedProjectObj?.spec;
   const rosterNames = selectedProjectSpec?.agents?.map((a) => a.name) ?? [];
   const visibleAgents =
     rosterNames.length > 0
       ? clusterAgents.filter((ca) => rosterNames.includes(ca.name))
       : clusterAgents;
+
+  // When a project is selected, git and secrets are inherited from it — hide those fields.
+  const projectHasGit = !!selectedProjectSpec?.source?.git?.url;
+  const projectHasSecrets = !!(selectedProjectSpec?.secrets?.llmKeysSecret || selectedProjectSpec?.secrets?.authSecret?.name);
 
   function handleProjectChange(name: string) {
     setSelectedProject(name);
@@ -379,7 +384,8 @@ export default function CreateRunForm() {
           ))}
         </div>
 
-        {/* Secrets row */}
+        {/* Secrets row — hidden when project is selected (inherited from project) */}
+        {!projectHasSecrets && (
         <div className="space-y-3">
           <p className="text-sm font-medium text-text-muted">
             Kubernetes Secret references
@@ -418,6 +424,7 @@ export default function CreateRunForm() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Timeout */}
         <div className="space-y-1.5">
@@ -433,7 +440,19 @@ export default function CreateRunForm() {
           />
         </div>
 
-        {/* Git source */}
+        {/* Git source — hidden when project provides it (inherited automatically) */}
+        {projectHasGit ? (
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium text-text-muted">Git source</p>
+            <p className="text-sm text-text-dim">
+              Inherited from project:{" "}
+              <span className="font-mono text-text">{selectedProjectSpec?.source?.git?.url}</span>
+              {selectedProjectSpec?.source?.git?.ref && (
+                <span className="text-text-dim"> @ <span className="font-mono text-text">{selectedProjectSpec.source.git.ref}</span></span>
+              )}
+            </p>
+          </div>
+        ) : (
         <div className="space-y-3">
           <button
             type="button"
@@ -524,6 +543,7 @@ export default function CreateRunForm() {
             </div>
           )}
         </div>
+        )}
 
         {/* Error */}
         {mutation.error && (
