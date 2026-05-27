@@ -73,9 +73,9 @@ export default function ModelSelector({
     });
   }, []);
 
-  // Build filtered list: connected providers first, then others.
+  // Build filtered list: only connected providers.
   const connected = new Set(providers?.connected ?? []);
-  const allProviders = providers?.all ?? [];
+  const allProviders = (providers?.all ?? []).filter((p) => connected.has(p.id));
 
   const filtered = allProviders
     .map((p) => {
