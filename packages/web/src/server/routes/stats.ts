@@ -5,6 +5,12 @@
 //   full session — run metadata, every message (with full content), tool
 //   invocations, and file accesses — to percussionist.db.
 //
+// PATCH /api/stats/session
+//   Called by the dispatcher incrementally after each assistant turn completes.
+//   Upserts the run row and inserts new messages/toolCalls/fileOps using
+//   insert-or-ignore so partial writes never overwrite a later full flush.
+//   The run row is created early so in-progress sessions appear in the UI.
+//
 // GET /api/stats/export
 //   Returns all sessions (within a configurable look-back window) as a single
 //   JSON document suitable for piping into an LLM for pattern analysis.
@@ -179,6 +185,120 @@ stats.post("/session", async (c) => {
   } catch (e) {
     console.error("[stats] failed to persist session:", (e as Error).message);
     return c.json({ error: "failed to persist session" }, 500);
+  }
+
+  return c.json({ ok: true });
+});
+
+// PATCH /api/stats/session — incremental flush after each assistant turn.
+// Uses insert-or-ignore so concurrent/repeated calls are idempotent and never
+// overwrite a later full POST flush. The run row is created on first call so
+// in-progress sessions show up in the UI immediately.
+stats.patch("/session", async (c) => {
+  let body: SessionPayload;
+  try {
+    body = (await c.req.json()) as SessionPayload;
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+
+  const { sessionID, run: runPayload } = body;
+  if (!sessionID || !runPayload?.name) {
+    return c.json({ error: "sessionID and run.name are required" }, 400);
+  }
+
+  const db = getDb();
+
+  try {
+    db.transaction((tx) => {
+      // Upsert run row — create if not exists, update token counts and phase if set.
+      tx.insert(runs)
+        .values({
+          id: sessionID,
+          name: runPayload.name,
+          namespace: runPayload.namespace,
+          task: runPayload.task,
+          model: runPayload.model,
+          agent: runPayload.agent,
+          phase: runPayload.phase ?? "Running",
+          startedAt: runPayload.startedAt,
+          completedAt: runPayload.completedAt,
+          tokensIn: runPayload.tokensIn ?? 0,
+          tokensOut: runPayload.tokensOut ?? 0,
+          error: runPayload.error,
+        })
+        .onConflictDoUpdate({
+          target: runs.id,
+          set: {
+            // Only update token counts and phase — never overwrite name/task/model.
+            tokensIn: runPayload.tokensIn ?? 0,
+            tokensOut: runPayload.tokensOut ?? 0,
+            ...(runPayload.phase ? { phase: runPayload.phase } : {}),
+            ...(runPayload.completedAt ? { completedAt: runPayload.completedAt } : {}),
+            ...(runPayload.error ? { error: runPayload.error } : {}),
+          },
+        })
+        .run();
+
+      // Messages — insert-or-ignore: never overwrite rows that may have richer
+      // data from a later full POST flush.
+      if (body.messages?.length) {
+        for (const m of body.messages) {
+          tx.insert(messages)
+            .values({
+              id: m.id ?? randomUUID(),
+              sessionId: sessionID,
+              idx: m.idx,
+              role: m.role,
+              content: m.content,
+              model: m.model,
+              tokensIn: m.tokensIn,
+              tokensOut: m.tokensOut,
+              createdAt: m.createdAt,
+              completedAt: m.completedAt,
+            })
+            .onConflictDoNothing()
+            .run();
+        }
+      }
+
+      // Tool calls — insert-or-ignore.
+      if (body.toolCalls?.length) {
+        for (const t of body.toolCalls) {
+          tx.insert(toolCalls)
+            .values({
+              id: t.id ?? randomUUID(),
+              sessionId: sessionID,
+              messageIdx: t.messageIdx,
+              tool: t.tool,
+              args: t.args,
+              success: t.success,
+              error: t.error,
+              durationMs: t.durationMs,
+            })
+            .onConflictDoNothing()
+            .run();
+        }
+      }
+
+      // File ops — insert-or-ignore (composite PK).
+      if (body.fileOps?.length) {
+        for (const f of body.fileOps) {
+          tx.insert(fileOps)
+            .values({
+              sessionId: sessionID,
+              messageIdx: f.messageIdx,
+              filePath: f.filePath,
+              operation: f.operation,
+            })
+            .onConflictDoNothing()
+            .run();
+        }
+      }
+    });
+  } catch (e) {
+    console.error("[stats] incremental flush failed:", (e as Error).message);
+    return c.json({ error: "failed to persist incremental flush" }, 500);
   }
 
   return c.json({ ok: true });

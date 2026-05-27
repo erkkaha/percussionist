@@ -3,7 +3,7 @@
 import { RunPhase } from "@percussionist/api";
 import { BASE_URL, listSessions, fetchMessages, checkHealth, compactMessagesForSnapshot } from "./session.js";
 import http from "node:http";
-import { sendStats } from "./stats-reporter.js";
+import { sendStats, incrementalFlush } from "./stats-reporter.js";
 import type { RawMessage } from "./session.js";
 
 const log = (...args: unknown[]) =>
@@ -186,6 +186,8 @@ export async function runInteractive(
   let terminate = false;
   let snapshotPending = false;
   let hasSnapshotted = false;
+  let interactiveFlushCursor = 0;
+  const interactiveStartedAt = new Date().toISOString();
 
   // Fire a single best-effort snapshot (deduped with a flag to avoid overlap).
   const maybeSnapshot = (reason: string): void => {
@@ -254,6 +256,14 @@ export async function runInteractive(
               // Snapshot after the first assistant turn completes.
               const p = evt.properties as { busy?: boolean } | undefined;
               if (p?.busy === false && !hasSnapshotted) maybeSnapshot("first idle");
+              // Incremental DB flush on each completed turn.
+              if (p?.busy === false && firstSessionID) {
+                const sid = firstSessionID;
+                const { tokensIn, tokensOut } = tokens.totals();
+                incrementalFlush(sid, interactiveStartedAt, tokensIn, tokensOut, interactiveFlushCursor)
+                  .then((newCursor) => { interactiveFlushCursor = newCursor; })
+                  .catch((e) => err("interactive incrementalFlush failed (non-fatal):", (e as Error).message));
+              }
             }
             if (evt.type === "message.updated") {
               const p = (evt.properties ?? {}) as { info?: { sessionID?: string; tokens?: { input?: number; output?: number } } };
@@ -402,6 +412,7 @@ export async function runPrompt(
   let sawBusy = false; // set true only when poll loop sees first assistant message
   let waitingForInput = false;
   let terminate = false;
+  let promptFlushCursor = 0;
 
   // Transient error codes that warrant a retry of the prompt POST.
   const RETRYABLE_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "EPIPE", "ETIMEDOUT"]);
@@ -568,6 +579,16 @@ export async function runPrompt(
               snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
                 err("WaitingForInput snapshot failed:", (e as Error).message),
               );
+            }
+            if (evt.type === "session.status") {
+              // Incremental DB flush after each completed assistant turn.
+              const p = evt.properties as { busy?: boolean } | undefined;
+              if (p?.busy === false) {
+                const { tokensIn, tokensOut } = tokens.totals();
+                incrementalFlush(sessionID, runStartedAt, tokensIn, tokensOut, promptFlushCursor)
+                  .then((newCursor) => { promptFlushCursor = newCursor; })
+                  .catch((e) => err("prompt incrementalFlush failed (non-fatal):", (e as Error).message));
+              }
             }
             if (evt.type === "message.updated") {
               const p = (evt.properties ?? {}) as { info?: { sessionID?: string; tokens?: { input?: number; output?: number } } };
