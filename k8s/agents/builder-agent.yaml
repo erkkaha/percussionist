@@ -32,6 +32,12 @@ spec:
        errors, make sure existing behaviour is not broken.
     5. Commit the changes with a clear, concise commit message.
 
+    ## Tool timeout
+
+    The `bash` tool has a default 120-second timeout. Commands like `pnpm install`
+    that download packages can exceed this on a cold cache. If a command is killed
+    with SIGTERM, retry with an explicit `timeout` parameter (e.g. 600000 for 10 min).
+
     ## Rules
 
     - Follow the existing code style exactly — no reformatting unrelated code.
