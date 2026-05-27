@@ -1,4 +1,7 @@
 // stats-reporter.ts — sends full session analytics to the web pod.
+//
+// sendStats()         — full flush on run completion (POST /api/stats/session)
+// incrementalFlush()  — delta flush after each assistant turn (PATCH /api/stats/session)
 
 import { BASE_URL } from "./session.js";
 import type { RawMessage, TextPart, ToolUsePart, ToolResultPart, FilePart, ToolPart } from "./session.js";
@@ -14,6 +17,72 @@ const RUN_NAMESPACE = process.env.RUN_NAMESPACE ?? "";
 const TASK = process.env.RUN_TASK ?? "";
 const MODEL = process.env.RUN_MODEL ?? "";
 const AGENT = process.env.RUN_AGENT ?? "";
+
+// ---------------------------------------------------------------------------
+// Incremental flush — called after each assistant turn completes.
+// Fetches only messages from `fromIdx` onward, assembles the delta payload,
+// and PATCHes the web server. Non-fatal on any error.
+
+export async function incrementalFlush(
+  sessionID: string,
+  startedAt: string,
+  tokensIn: number,
+  tokensOut: number,
+  fromIdx: number,
+): Promise<number> {
+  // Returns the new cursor (total messages seen) so the caller can advance it.
+  if (!WEB_STATS_URL) return fromIdx;
+
+  let rawMessages: RawMessage[] = [];
+  try {
+    const res = await fetch(`${BASE_URL}/session/${sessionID}/message`);
+    if (!res.ok) return fromIdx;
+    const data = (await res.json()) as RawMessage[] | { items?: RawMessage[] };
+    rawMessages = Array.isArray(data) ? data : (data.items ?? []);
+  } catch {
+    return fromIdx; // OpenCode may be busy — skip silently
+  }
+
+  if (rawMessages.length <= fromIdx) return fromIdx; // nothing new
+
+  const newMessages = rawMessages.slice(fromIdx);
+  const { messagesPayload, toolCallsPayload, fileOpsPayload } = buildPayloads(newMessages, sessionID, fromIdx);
+
+  const payload = {
+    sessionID,
+    run: {
+      name: RUN_NAME, namespace: RUN_NAMESPACE,
+      task: TASK || undefined, model: MODEL || undefined, agent: AGENT || undefined,
+      phase: "Running",
+      startedAt,
+      tokensIn, tokensOut,
+    },
+    messages: messagesPayload,
+    toolCalls: toolCallsPayload,
+    fileOps: fileOpsPayload,
+  };
+
+  try {
+    const res = await fetch(`${WEB_STATS_URL}/api/stats/session`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok) {
+      log(`incrementalFlush: flushed ${newMessages.length} message(s) from idx ${fromIdx} (session ${sessionID})`);
+    } else {
+      err(`incrementalFlush: web pod HTTP ${res.status}`);
+    }
+  } catch (e) {
+    err("incrementalFlush: POST failed (non-fatal):", (e as Error).message);
+  }
+
+  return rawMessages.length; // advance cursor to total seen
+}
+
+// ---------------------------------------------------------------------------
+// Full flush — called on run completion.
 
 export async function sendStats(
   sessionID: string,
@@ -37,13 +106,72 @@ export async function sendStats(
     err("sendStats: failed to fetch messages:", (e as Error).message);
   }
 
+  const { messagesPayload, toolCallsPayload, fileOpsPayload } = buildPayloads(rawMessages, sessionID, 0);
+
+  const payload = {
+    sessionID,
+    run: {
+      name: RUN_NAME, namespace: RUN_NAMESPACE,
+      task: TASK || undefined, model: MODEL || undefined, agent: AGENT || undefined,
+      phase, startedAt, completedAt, tokensIn, tokensOut, error: sessionError,
+    },
+    messages: messagesPayload,
+    toolCalls: toolCallsPayload,
+    fileOps: fileOpsPayload,
+  };
+
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(`${WEB_STATS_URL}/api/stats/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        if (attempt < MAX_ATTEMPTS) {
+          err(`sendStats: web pod HTTP ${res.status} (attempt ${attempt}/${MAX_ATTEMPTS}), retrying: ${body}`);
+          await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
+          continue;
+        }
+        err(`sendStats: web pod HTTP ${res.status} (all ${MAX_ATTEMPTS} attempts failed): ${body}`);
+      } else {
+        log(`sendStats: persisted ${sessionID} — ${messagesPayload.length} messages, ${toolCallsPayload.length} tool calls`);
+      }
+      return;
+    } catch (e) {
+      if (attempt < MAX_ATTEMPTS) {
+        err(`sendStats: POST failed (attempt ${attempt}/${MAX_ATTEMPTS}), retrying:`, (e as Error).message);
+        await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
+        continue;
+      }
+      err("sendStats: POST failed (all attempts exhausted, non-fatal):", (e as Error).message);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared payload builder — used by both full and incremental flush.
+
+function buildPayloads(
+  rawMessages: RawMessage[],
+  sessionID: string,
+  baseIdx: number,
+): {
+  messagesPayload: unknown[];
+  toolCallsPayload: unknown[];
+  fileOpsPayload: unknown[];
+} {
   const messagesPayload: unknown[] = [];
   const toolCallsPayload: unknown[] = [];
   const fileOpsPayload: unknown[] = [];
   const toolUseTimestamps = new Map<string, number>();
 
-  for (let idx = 0; idx < rawMessages.length; idx++) {
-    const msg = rawMessages[idx]!;
+  for (let i = 0; i < rawMessages.length; i++) {
+    const idx = baseIdx + i;
+    const msg = rawMessages[i]!;
     const info = msg.info ?? {};
     const parts = msg.parts ?? [];
     const content = JSON.stringify(parts);
@@ -126,48 +254,7 @@ export async function sendStats(
     }
   }
 
-  const payload = {
-    sessionID,
-    run: {
-      name: RUN_NAME, namespace: RUN_NAMESPACE,
-      task: TASK || undefined, model: MODEL || undefined, agent: AGENT || undefined,
-      phase, startedAt, completedAt, tokensIn, tokensOut, error: sessionError,
-    },
-    messages: messagesPayload,
-    toolCalls: toolCallsPayload,
-    fileOps: fileOpsPayload,
-  };
-
-  const MAX_ATTEMPTS = 3;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      const res = await fetch(`${WEB_STATS_URL}/api/stats/session`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        if (attempt < MAX_ATTEMPTS) {
-          err(`sendStats: web pod HTTP ${res.status} (attempt ${attempt}/${MAX_ATTEMPTS}), retrying: ${body}`);
-          await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
-          continue;
-        }
-        err(`sendStats: web pod HTTP ${res.status} (all ${MAX_ATTEMPTS} attempts failed): ${body}`);
-      } else {
-        log(`sendStats: persisted ${sessionID} — ${messagesPayload.length} messages, ${toolCallsPayload.length} tool calls`);
-      }
-      return;
-    } catch (e) {
-      if (attempt < MAX_ATTEMPTS) {
-        err(`sendStats: POST failed (attempt ${attempt}/${MAX_ATTEMPTS}), retrying:`, (e as Error).message);
-        await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
-        continue;
-      }
-      err("sendStats: POST failed (all attempts exhausted, non-fatal):", (e as Error).message);
-    }
-  }
+  return { messagesPayload, toolCallsPayload, fileOpsPayload };
 }
 
 function detectFileOp(toolName: string): string {
@@ -177,3 +264,4 @@ function detectFileOp(toolName: string): string {
   if (t === "delete" || t === "delete_file") return "delete";
   return "access";
 }
+
