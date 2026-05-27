@@ -38,7 +38,7 @@ export default function Layout() {
           </div>
           <NotificationBell />
         </header>
-        <main className="flex-1 p-6">
+        <main className="flex-1 min-w-0 overflow-x-hidden p-6">
           <Outlet />
         </main>
       </SidebarInset>
