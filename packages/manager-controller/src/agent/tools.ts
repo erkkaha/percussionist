@@ -1412,17 +1412,37 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       });
       if (!res.ok) throw new Error(`opencode /provider returned ${res.status}`);
       const data = (await res.json()) as {
-        all: Array<{ id: string }>;
+        all: Array<{ id: string; name?: string; models?: unknown }>;
         default: Record<string, string>;
         connected: string[];
       };
+      // Normalize each provider's models to an array (opencode may return a
+      // record/object keyed by model ID rather than an array).
+      const normalizeModels = (raw: unknown): Array<{ id: string; name?: string }> => {
+        if (Array.isArray(raw)) return raw as Array<{ id: string; name?: string }>;
+        if (raw && typeof raw === "object") {
+          return Object.values(raw as Record<string, { id: string; name?: string }>);
+        }
+        return [];
+      };
+      const normalized = {
+        ...data,
+        all: (data.all ?? []).map((p) => ({
+          id: p.id,
+          name: p.name ?? p.id,
+          models: normalizeModels(p.models).map((m) => ({
+            id: m.id,
+            name: (m as { name?: string }).name ?? m.id,
+          })),
+        })),
+      };
       const providerID = args.providerID as string | undefined;
       if (providerID) {
-        const match = data.all.find((p) => p.id === providerID);
+        const match = normalized.all.find((p) => p.id === providerID);
         if (!match) return { error: `Provider '${providerID}' not found` };
         return match;
       }
-      return data;
+      return normalized;
     }
 
     default:
