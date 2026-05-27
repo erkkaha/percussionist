@@ -184,19 +184,33 @@ export async function runInteractive(
   let firstSessionID: string | undefined;
   const knownSessions = new Set<string>();
   let terminate = false;
+  let snapshotPending = false;
+  let hasSnapshotted = false;
+
+  // Fire a single best-effort snapshot (deduped with a flag to avoid overlap).
+  const maybeSnapshot = (reason: string): void => {
+    if (snapshotPending) return;
+    snapshotPending = true;
+    snapshotAllSessions(coreApi, runName, runNamespace, runUid, firstSessionID)
+      .then(() => { hasSnapshotted = true; })
+      .catch((e) => err(`snapshot (${reason}) failed:`, (e as Error).message))
+      .finally(() => { snapshotPending = false; });
+  };
 
   const discoverSessions = async (): Promise<void> => {
     while (!terminate) {
       const sessions = await listSessions();
       for (const s of sessions) {
-        if (!knownSessions.has(s.id)) {
-          knownSessions.add(s.id);
-          log(`discovered session ${s.id}`);
-          if (!firstSessionID) {
-            firstSessionID = s.id;
-            await patchStatus({ sessionID: firstSessionID, message: "session active" });
+          if (!knownSessions.has(s.id)) {
+            knownSessions.add(s.id);
+            log(`discovered session ${s.id}`);
+            if (!firstSessionID) {
+              firstSessionID = s.id;
+              await patchStatus({ sessionID: firstSessionID, message: "session active" });
+              // Snapshot immediately on first session discovery.
+              maybeSnapshot("session discovered");
+            }
           }
-        }
       }
       for (const sessionID of knownSessions) {
         const msgs = await fetchMessages(sessionID);
@@ -236,6 +250,11 @@ export async function runInteractive(
             let evt: { type?: string; properties?: Record<string, unknown> };
             try { evt = JSON.parse(dataLines.join("\n")); } catch { continue; }
             logEvent(evt);
+            if (evt.type === "session.status") {
+              // Snapshot after the first assistant turn completes.
+              const p = evt.properties as { busy?: boolean } | undefined;
+              if (p?.busy === false && !hasSnapshotted) maybeSnapshot("first idle");
+            }
             if (evt.type === "message.updated") {
               const p = (evt.properties ?? {}) as { info?: { sessionID?: string; tokens?: { input?: number; output?: number } } };
               const sid = p.info?.sessionID;
@@ -272,7 +291,16 @@ export async function runInteractive(
   const shutdown = new Promise<void>((resolve) => {
     const check = setInterval(() => { if (isShuttingDown()) { terminate = true; clearInterval(check); resolve(); } }, 500);
   });
-  await Promise.race([Promise.all([discoverSessions(), streamEvents()]), shutdown]);
+
+  // Periodic snapshot every 2 minutes as a safety net for long interactive sessions.
+  const periodicInteractiveSnapshot = async (): Promise<void> => {
+    while (!terminate) {
+      await sleep(120_000);
+      if (!terminate && firstSessionID) maybeSnapshot("periodic");
+    }
+  };
+
+  await Promise.race([Promise.all([discoverSessions(), streamEvents(), periodicInteractiveSnapshot()]), shutdown]);
   terminate = true;
 
   await tokens.flush(patchStatus, true);
@@ -570,10 +598,13 @@ export async function runPrompt(
   hardTimeout.unref();
   void streamEvents().catch((e) => { if (!terminate) err("streamEvents fatal:", (e as Error).message); });
 
-  // Periodic snapshot every 60s for visibility during long-running tasks
+  // Periodic snapshot every 30s for visibility during long-running tasks.
+  // First iteration fires immediately (no initial delay) to capture early state.
   const periodicSnapshot = async (): Promise<void> => {
+    let first = true;
     while (!terminate) {
-      await sleep(60_000);
+      if (!first) await sleep(30_000);
+      first = false;
       if (!terminate) {
         snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
           err("periodic snapshot failed:", (e as Error).message),
