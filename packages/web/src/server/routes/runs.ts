@@ -85,7 +85,10 @@ runs.post("/", async (c) => {
   const run = {
     apiVersion: API_GROUP_VERSION,
     kind: KIND_RUN,
-    metadata: { name },
+    metadata: {
+      name,
+      labels: { "percussionist.dev/project": spec.project },
+    },
     spec,
   };
 
