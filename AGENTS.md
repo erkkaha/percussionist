@@ -215,6 +215,7 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `create_run` | Create a new run for a ready task; resolves feature-branch metadata and updates `Task.status` |
 | `force_retry` | Restart a stuck task at an incremented retry count via `Task.status` (does not delete old runs) |
 | `set_task_state` | Move a task to a target column, optionally cancel running runs (runs preserved by default) |
+| `list_models` | List available LLM providers and models from the opencode sidecar |
 | `read_manager_logs` | Read logs from the manager controller pod |
 | `pause_reconciliation` | Pause the manager reconcile loop for a project (auto-resumes after timeout) |
 | `resume_reconciliation` | Resume a paused reconcile loop |

@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { submitRun } from "../lib/api";
 import { useProjects } from "../hooks/useProjects";
 import { useRun } from "../hooks/useRun";
+import ModelSelector from "./ModelSelector";
 import type { CreateRunRequest, Project, Run, AgentDef } from "../lib/types";
 
 interface ClusterAgent {
@@ -299,12 +300,10 @@ export default function CreateRunForm() {
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Model</label>
-            <input
-              type="text"
+            <ModelSelector
               value={model}
-              onChange={(e) => setModel(e.target.value)}
+              onChange={setModel}
               placeholder="e.g. anthropic/claude-sonnet-4-20250514"
-              className={inputClass + " font-mono"}
             />
           </div>
           <div className="space-y-1.5">

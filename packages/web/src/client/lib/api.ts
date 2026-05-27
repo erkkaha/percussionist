@@ -431,3 +431,31 @@ export async function postUpgradeApply(targetTag: string): Promise<UpgradeResult
   }
   return res.json() as Promise<UpgradeResult>;
 }
+
+// ---------------------------------------------------------------------------
+// Providers / models
+
+export interface ProviderModel {
+  id: string;
+  name: string;
+  /** Context window size in tokens, if available */
+  limit?: { context?: number; output?: number };
+  [key: string]: unknown;
+}
+
+export interface Provider {
+  id: string;
+  name: string;
+  models: ProviderModel[];
+  [key: string]: unknown;
+}
+
+export interface ProvidersResponse {
+  all: Provider[];
+  default: Record<string, string>;
+  connected: string[];
+}
+
+export async function fetchProviders(): Promise<ProvidersResponse> {
+  return fetchJSON<ProvidersResponse>("/providers");
+}

@@ -8,7 +8,7 @@
 // Note: uses `mcp` key (not `mcpServers` — that was a legacy format).
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { MCP_PORT, MANAGER_NAMESPACE } from "./config.js";
+import { MCP_PORT, MANAGER_NAMESPACE, OPENCODE_URL } from "./config.js";
 import { setHeaderOptions } from "@kubernetes/client-node";
 import {
   getRun,
@@ -426,6 +426,22 @@ const TOOLS = [
         },
       },
       required: ["targetTag"],
+    },
+  },
+  {
+    name: "list_models",
+    description:
+      "List available LLM providers and their models from the opencode sidecar. " +
+      "Returns all providers, which ones are connected, and current defaults. " +
+      "Optionally filter to a single provider by ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        providerID: {
+          type: "string",
+          description: "Optional provider ID to filter results (e.g. 'anthropic', 'openai')",
+        },
+      },
     },
   },
 ];
@@ -1388,6 +1404,25 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       }
 
       return { patched, errors, targetTag };
+    }
+
+    case "list_models": {
+      const res = await fetch(`${OPENCODE_URL}/provider`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) throw new Error(`opencode /provider returned ${res.status}`);
+      const data = (await res.json()) as {
+        all: Array<{ id: string }>;
+        default: Record<string, string>;
+        connected: string[];
+      };
+      const providerID = args.providerID as string | undefined;
+      if (providerID) {
+        const match = data.all.find((p) => p.id === providerID);
+        if (!match) return { error: `Provider '${providerID}' not found` };
+        return match;
+      }
+      return data;
     }
 
     default:
