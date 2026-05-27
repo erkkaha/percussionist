@@ -654,10 +654,15 @@ export async function runWorker(): Promise<void> {
       await reconcile(fresh);
     } catch (e) {
       err(`reconcile(${key}) failed:`, (e as Error).message);
-      setTimeout(() => {
-        const current = seen.get(key);
-        if (current) enqueue(current);
-      }, 5000);
+      if (isNotFound(e)) {
+        // Run CR was deleted — remove from state to prevent indefinite re-enqueue.
+        dequeue(key);
+      } else {
+        setTimeout(() => {
+          const current = seen.get(key);
+          if (current) enqueue(current);
+        }, 5000);
+      }
     } finally {
       processing.delete(key);
       if (dirty.delete(key)) {

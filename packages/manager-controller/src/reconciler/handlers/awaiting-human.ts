@@ -77,6 +77,7 @@ export const handleAwaitingHuman: PhaseHandler = async (ctx) => {
           type: "patchWorker",
           patch: {
             reviewFeedback: feedback,
+            retryCount: (ctx.task.status?.worker?.retryCount ?? 0) + 1,
             aiReworkCount: 0, // Reset AI rework count on human action.
           },
         },
