@@ -1425,16 +1425,19 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         }
         return [];
       };
+      const connectedSet = new Set(data.connected ?? []);
       const normalized = {
         ...data,
-        all: (data.all ?? []).map((p) => ({
-          id: p.id,
-          name: p.name ?? p.id,
-          models: normalizeModels(p.models).map((m) => ({
-            id: m.id,
-            name: (m as { name?: string }).name ?? m.id,
+        all: (data.all ?? [])
+          .filter((p) => connectedSet.has(p.id))
+          .map((p) => ({
+            id: p.id,
+            name: p.name ?? p.id,
+            models: normalizeModels(p.models).map((m) => ({
+              id: m.id,
+              name: (m as { name?: string }).name ?? m.id,
+            })),
           })),
-        })),
       };
       const providerID = args.providerID as string | undefined;
       if (providerID) {
