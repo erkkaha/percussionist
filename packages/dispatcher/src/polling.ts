@@ -11,6 +11,21 @@ const log = (...args: unknown[]) =>
 const err = (...args: unknown[]) =>
   console.error(`[dispatcher ${new Date().toISOString()}]`, ...args);
 
+function isMessageAbortedError(error: unknown): boolean {
+  if (typeof error === "string") return error.includes("Abort") || error === "MessageAbortedError";
+  if (error && typeof error === "object") {
+    const e = error as Record<string, unknown>;
+    if (e.name === "MessageAbortedError" || e.type === "MessageAbortedError" || e.code === "MessageAbortedError") return true;
+    if (e.name === "AbortError" || e.type === "AbortError") return true;
+    if (e.name === "Aborted") return true;
+  }
+  return false;
+}
+
+function isAbortedMessageInError(e: Error): boolean {
+  return isMessageAbortedError(e) || e.message?.includes("MessageAbortedError") || e.message?.includes("AbortError");
+}
+
 function logEvent(evt: { type?: string; properties?: Record<string, unknown> }): void {
   if (!evt.type || evt.type === "server.connected") return;
   const p = evt.properties ?? {};
@@ -511,7 +526,7 @@ export async function runPrompt(
               // A MessageAbortedError means the user manually aborted the message.
               // Treat it as "waiting for input" so the run can continue rather
               // than failing — the next prompt dispatch will resume the session.
-              if ((last.info.error as { name?: string }).name === "MessageAbortedError") {
+              if (isMessageAbortedError(last.info.error)) {
                 log("assistant message aborted by user — treating as waiting for input");
                 waitingForInput = true;
               } else {
@@ -655,10 +670,18 @@ export async function runPrompt(
   // Capture any failure thrown by pollStatus() or failureRaced so we can
   // still snapshot + persist stats before re-throwing.
   let raceError: Error | undefined;
+  let aborting = false;
   try {
     await Promise.race([pollStatus(), promptPostFailure, failureRaced, completionRaced]);
   } catch (e) {
-    if ((e as Error).name !== "AbortError") raceError = e as Error;
+    if ((e as Error).name === "AbortError") {
+      // not ours
+    } else if (isAbortedMessageInError(e as Error)) {
+      log("message aborted (caught in race) — treating as waiting for input");
+      aborting = true;
+    } else {
+      raceError = e as Error;
+    }
   }
   terminate = true;
   promptPostController.abort();
@@ -668,6 +691,18 @@ export async function runPrompt(
     log("shutting down mid-run");
     await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
     await patchStatus({ message: "dispatcher terminated" });
+    return { sessionID, startedAt: runStartedAt };
+  }
+
+  // If the race was won by an aborted message, keep the run in Running
+  // phase and exit cleanly instead of crashing with Failed status.
+  if (aborting) {
+    await tokens.flush(patchStatus, true);
+    await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
+    const { tokensIn, tokensOut } = tokens.totals();
+    await sendStats(sessionID, RunPhase.Running, runStartedAt, new Date().toISOString(), tokensIn, tokensOut);
+    await patchStatus({ phase: RunPhase.Running, message: "waiting for input (message aborted)" });
+    log("done (waiting for input after abort)");
     return { sessionID, startedAt: runStartedAt };
   }
 

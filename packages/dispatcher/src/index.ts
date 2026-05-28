@@ -196,6 +196,28 @@ main().catch(async (e) => {
     log("shutdown in progress; suppressing fatal:", (e as Error).message ?? e);
     process.exit(0);
   }
+  const msg = String((e as Error).message ?? e);
+  // Last-resort safety net: if an aborted-message error reaches here, keep
+  // the run in Running phase instead of failing it — the abort was not a
+  // run failure, just the user pressing "cancel".
+  if (msg.includes("MessageAbortedError") || msg.includes("AbortError") || msg.includes("Aborted")) {
+    log("message aborted (caught in main().catch) — exiting cleanly");
+    const completedAt = new Date().toISOString();
+    if (_activeSessionID) {
+      await snapshotAllSessions(coreApi, RUN_NAME, RUN_NAMESPACE, RUN_UID, _activeSessionID).catch(() => {});
+      await sendStats(
+        _activeSessionID,
+        RunPhase.Running,
+        _runStartedAt ?? completedAt,
+        completedAt,
+        0,
+        0,
+        "message aborted",
+      ).catch(() => {});
+    }
+    await patchStatus({ phase: RunPhase.Running, message: "waiting for input (message aborted)", completedAt }).catch(() => {});
+    process.exit(0);
+  }
   err("fatal:", e);
   const completedAt = new Date().toISOString();
   // Best-effort snapshot so session data survives fatal errors (e.g. waitForHealthy timeout).
@@ -210,13 +232,13 @@ main().catch(async (e) => {
       completedAt,
       0,
       0,
-      String((e as Error).message ?? e),
+      msg,
     ).catch(() => { /* best effort */ });
   }
   try {
     await patchStatus({
       phase: RunPhase.Failed,
-      message: String((e as Error).message ?? e),
+      message: msg,
       completedAt,
     });
   } catch { /* best effort */ }
