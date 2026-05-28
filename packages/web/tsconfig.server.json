@@ -4,9 +4,5 @@
     "outDir": "./dist/server",
     "rootDir": "./src/server"
   },
-  "include": ["src/server/**/*"],
-  "references": [
-    { "path": "../api" },
-    { "path": "../kube" }
-  ]
+  "include": ["src/server/**/*"]
 }
