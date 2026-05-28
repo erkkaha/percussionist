@@ -390,6 +390,7 @@ function buildFacilitatorRun(
       ...(gitCache ? { gitCache } : {}),
       ...(resolved.sidecars?.length ? { sidecars: resolved.sidecars } : {}),
       ...(resolved.initScript ? { initScript: resolved.initScript } : {}),
+      ...(resolved.injectFiles?.length ? { injectFiles: resolved.injectFiles } : {}),
     },
   };
 }
