@@ -6,7 +6,7 @@ of TypeScript packages under `packages/*`.
 
 ## Key Commands
 - `pnpm build` - Build all packages
-- `pnpm typecheck` - Type-check all packages (run before committing)
+- `pnpm typecheck` - Type-check all packages via `tsc -b` (run before committing; respects project references, runs in topological order)
 - `pnpm bundle` - Bundle CLI into standalone binary (`beatctl`)
 - `pnpm codegen` - Generate CRD YAML from Zod schemas
 - `pnpm beatctl` - Run CLI from source
