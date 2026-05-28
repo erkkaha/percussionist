@@ -753,6 +753,7 @@ export function renderPod(
               : []),
             ...(spec.model ? [{ name: "RUN_MODEL", value: spec.model }] : []),
             ...(spec.agent ? [{ name: "RUN_AGENT", value: spec.agent }] : []),
+            ...(spec.facilitation ? [{ name: "RUN_IS_FACILITATION", value: "1" }] : []),
             { name: "RUN_TIMEOUT_SECONDS", value: String(spec.timeoutSeconds ?? 3600) },
           ],
           resources: {
