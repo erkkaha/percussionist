@@ -11,7 +11,7 @@
     "build:server": "tsc -p tsconfig.server.json",
     "build": "pnpm build:client && pnpm build:server",
     "start": "node dist/server/index.js",
-    "typecheck": "tsc -b tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "typecheck": "tsc -b tsconfig.server.json && tsc -p tsconfig.client.json --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun src/server/migrate.ts",
     "test": "bun test tests/"

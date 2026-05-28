@@ -63,6 +63,7 @@ export async function reconcileProject(
       }
     } catch (e) {
       console.error(`[reconcile] ${task.metadata.name} handler error:`, e);
+      throw e;
     }
   }
 

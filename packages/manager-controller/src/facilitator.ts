@@ -19,6 +19,7 @@ import {
 } from "@percussionist/api";
 import { fetchSessionMessages, readPodLog, core, getClusterSettings } from "@percussionist/kube";
 import { resolveParentBranch, resolveTaskBranch } from "./branch-resolver.js";
+import { truncateK8sName } from "./worker-builder.js";
 
 const DEFAULT_FACILITATOR_AGENT_NAME = "facilitator";
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
@@ -356,7 +357,7 @@ function buildFacilitatorRun(
       labels: {
         [LABELS.managedBy]: MANAGED_BY,
         [LABELS.projectName]: project.metadata.name,
-        [LABELS.taskId]: task.metadata.name,
+        [LABELS.taskId]: truncateK8sName(task.metadata.name, 63),
       },
       ownerReferences: [
         {

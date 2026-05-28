@@ -1,7 +1,7 @@
 // Reconciler bridge — maintains old API for index.ts while using new phase-driven reconciler.
 
 import { KubeConfig, CustomObjectsApi } from "@kubernetes/client-node";
-import type { Project } from "@percussionist/api";
+import { API_GROUP, API_VERSION, PLURAL_PROJECT, type Project } from "@percussionist/api";
 import { NAMESPACE, getProject } from "@percussionist/kube";
 import { reconcileProject } from "./reconciler/index.js";
 
@@ -100,8 +100,22 @@ export async function runWorker(): Promise<void> {
 
 // Periodic resync: re-enqueue all projects every 60 seconds.
 export function startPeriodicResync(): void {
-  setInterval(() => {
+  setInterval(async () => {
     console.log("[periodicResync] triggering resync");
-    // Trigger via informer add events naturally handled by index.ts.
+    try {
+      const res = await k8s.listNamespacedCustomObject({
+        group: API_GROUP,
+        version: API_VERSION,
+        namespace: NAMESPACE,
+        plural: PLURAL_PROJECT,
+      });
+      const items = (res as { items: Project[] }).items ?? [];
+      for (const project of items) {
+        enqueue(project);
+      }
+      console.log(`[periodicResync] re-enqueued ${items.length} project(s)`);
+    } catch (e) {
+      console.error("[periodicResync] failed to list projects:", e);
+    }
   }, 60000);
 }

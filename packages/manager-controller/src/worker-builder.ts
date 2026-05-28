@@ -130,7 +130,7 @@ export async function buildWorkerRun(
       labels: {
         [LABELS.managedBy]: MANAGED_BY,
         [LABELS.projectName]: projectName,
-        [LABELS.taskId]: taskName,
+        [LABELS.taskId]: truncateK8sName(taskName, 63),
       },
       ownerReferences: [
         {
@@ -237,7 +237,7 @@ export async function buildMergeRun(
       labels: {
         [LABELS.managedBy]: MANAGED_BY,
         [LABELS.projectName]: projectName,
-        [LABELS.taskId]: taskName,
+        [LABELS.taskId]: truncateK8sName(taskName, 63),
       },
       ownerReferences: [
         {
