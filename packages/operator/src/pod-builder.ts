@@ -498,7 +498,7 @@ export function renderPod(
               ...(initScript ? [{ name: "INIT_SCRIPT", value: initScript }] : []),
               // Cache env vars so init scripts (e.g. pnpm install) use the data PVC
               { name: "PNPM_HOME", value: `${dataMountPath}/cache/pnpm` },
-              { name: "PNPM_STORE_DIR", value: `${dataMountPath}/cache/pnpm-store` },
+              { name: "pnpm_config_store_dir", value: `${dataMountPath}/cache/pnpm-store` },
               { name: "NPM_CONFIG_CACHE", value: `${dataMountPath}/cache/npm` },
               { name: "BUN_INSTALL_CACHE_DIR", value: `${dataMountPath}/cache/bun` },
               { name: "TURBO_CACHE_DIR", value: `${dataMountPath}/cache/turbo` },
@@ -615,7 +615,7 @@ export function renderPod(
             { name: "NODE_OPTIONS", value: `--max-old-space-size=${nodeHeapMb}` },
             // Package manager cache configuration
             { name: "PNPM_HOME", value: `${dataMountPath}/cache/pnpm` },
-            { name: "PNPM_STORE_DIR", value: `${dataMountPath}/cache/pnpm-store` },
+            { name: "pnpm_config_store_dir", value: `${dataMountPath}/cache/pnpm-store` },
             { name: "NPM_CONFIG_CACHE", value: `${dataMountPath}/cache/npm` },
             { name: "BUN_INSTALL_CACHE_DIR", value: `${dataMountPath}/cache/bun` },
             { name: "TURBO_CACHE_DIR", value: `${dataMountPath}/cache/turbo` },
