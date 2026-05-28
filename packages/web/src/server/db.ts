@@ -25,6 +25,7 @@ export * from "./schema.js";
 // Client singleton
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _sqlite: Database | null = null;
 
 export function getDb(): ReturnType<typeof drizzle> {
   if (_db) return _db;
@@ -48,9 +49,21 @@ export function getDb(): ReturnType<typeof drizzle> {
 
   // Only assign the singleton after migrations succeed — prevents a failed
   // migration from leaving _db set to an unmigrated database handle.
+  _sqlite = sqlite;
   _db = db;
 
   console.log(`[db] percussionist.db opened at ${dbPath}`);
+
+  // Graceful shutdown: close the raw SQLite handle on SIGTERM to prevent WAL
+  // corruption during pod termination.
+  process.on("SIGTERM", () => {
+    try {
+      _sqlite?.close();
+    } finally {
+      process.exit(0);
+    }
+  });
+
   return _db;
 }
 
