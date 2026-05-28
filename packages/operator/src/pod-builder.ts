@@ -585,6 +585,14 @@ export function renderPod(
     spec: {
       restartPolicy: "Never",
       serviceAccountName: DISPATCHER_SERVICE_ACCOUNT,
+      tolerations: [
+        {
+          key: "percussionist.dev/workload",
+          operator: "Equal",
+          value: "transient",
+          effect: "NoExecute",
+        },
+      ],
       activeDeadlineSeconds: spec.timeoutSeconds,
       ...(initContainers ? { initContainers } : {}),
       containers: [
