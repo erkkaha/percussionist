@@ -3,6 +3,7 @@
 import type { PhaseHandler, Transition } from "../types.js";
 import { getProject } from "@percussionist/kube";
 import { buildMergeRun, auxiliaryRunName } from "../../worker-builder.js";
+import { annotationKey } from "@percussionist/api";
 
 export const handleAwaitingHuman: PhaseHandler = async (ctx) => {
   // Human actions are stored as annotations on the Project CR.
@@ -11,7 +12,7 @@ export const handleAwaitingHuman: PhaseHandler = async (ctx) => {
   const taskName = ctx.task.metadata.name;
 
   // Check for approval annotation.
-  const approvalKey = `percussionist.dev/approved-${taskName}`;
+  const approvalKey = `percussionist.dev/${annotationKey("approved", taskName)}`;
   if (annotations[approvalKey]) {
     if (ctx.task.spec.type === "BUILD") {
       // BUILD task approved → create merge run and transition to awaiting-merge.
@@ -65,8 +66,8 @@ export const handleAwaitingHuman: PhaseHandler = async (ctx) => {
   }
 
   // Check for request-changes annotation.
-  const reworkKey = `percussionist.dev/request-changes-${taskName}`;
-  const feedbackKey = `percussionist.dev/rework-${taskName}`;
+  const reworkKey = `percussionist.dev/${annotationKey("request-changes", taskName)}`;
+  const feedbackKey = `percussionist.dev/${annotationKey("rework", taskName)}`;
   if (annotations[reworkKey]) {
     const feedback = annotations[feedbackKey] ?? "No feedback provided";
     // Store feedback in worker for consumption on next run.
@@ -90,7 +91,7 @@ export const handleAwaitingHuman: PhaseHandler = async (ctx) => {
   }
 
   // Check for abandon annotation.
-  const abandonKey = `percussionist.dev/abandon-${taskName}`;
+  const abandonKey = `percussionist.dev/${annotationKey("abandon", taskName)}`;
   if (annotations[abandonKey]) {
     // Mark as done (abandoned).
     return {

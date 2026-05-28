@@ -13,7 +13,7 @@
 
 import { Hono } from "hono";
 import { randomBytes } from "node:crypto";
-import { computeBoardColumn } from "@percussionist/api";
+import { computeBoardColumn, annotationKey, ANNOTATION_PREFIXES } from "@percussionist/api";
 import {
   getProject,
   patchProjectSpec,
@@ -92,8 +92,8 @@ board.get("/:project/board", async (c) => {
     for (const task of tasks) {
       const tn = task.metadata.name;
       approvals[tn] = {
-        approved: annotations[`percussionist.dev/approved-${tn}`] === "true",
-        requestChanges: annotations[`percussionist.dev/request-changes-${tn}`] === "true",
+        approved: annotations[`percussionist.dev/${annotationKey("approved", tn)}`] === "true",
+        requestChanges: annotations[`percussionist.dev/${annotationKey("request-changes", tn)}`] === "true",
       };
     }
 
@@ -133,9 +133,7 @@ board.get("/:project/board/events", async (c) => {
       const annotations = project.metadata.annotations ?? {};
       const taskApprovalAnnotations = Object.keys(annotations)
         .filter((k) =>
-          k.startsWith("percussionist.dev/approved-") ||
-          k.startsWith("percussionist.dev/request-changes-") ||
-          k.startsWith("percussionist.dev/rework-"),
+          ANNOTATION_PREFIXES.some((p) => k.startsWith(`percussionist.dev/${p}-`)),
         )
         .sort()
         .map((k) => [k, annotations[k]]);
@@ -320,8 +318,8 @@ board.post("/:project/board/tasks/:taskName/approve", async (c) => {
       metadata: {
         annotations: {
           ...currentAnnotations,
-          [`percussionist.dev/approved-${taskName}`]: "true",
-          [`percussionist.dev/request-changes-${taskName}`]: "false",
+          [`percussionist.dev/${annotationKey("approved", taskName)}`]: "true",
+          [`percussionist.dev/${annotationKey("request-changes", taskName)}`]: "false",
         },
       },
     });
@@ -352,8 +350,8 @@ board.post("/:project/board/tasks/:taskName/request-changes", async (c) => {
       metadata: {
         annotations: {
           ...currentAnnotations,
-          [`percussionist.dev/rework-${taskName}`]: feedback.trim(),
-          [`percussionist.dev/request-changes-${taskName}`]: "true",
+          [`percussionist.dev/${annotationKey("rework", taskName)}`]: feedback.trim(),
+          [`percussionist.dev/${annotationKey("request-changes", taskName)}`]: "true",
         },
       },
     });
@@ -378,7 +376,7 @@ board.post("/:project/board/tasks/:taskName/abandon", async (c) => {
       metadata: {
         annotations: {
           ...currentAnnotations,
-          [`percussionist.dev/abandon-${taskName}`]: "true",
+          [`percussionist.dev/${annotationKey("abandon", taskName)}`]: "true",
         },
       },
     });
@@ -411,7 +409,7 @@ board.post("/:project/board/tasks/:taskName/answer", async (c) => {
         ...task.metadata,
         annotations: {
           ...currentAnnotations,
-          [`percussionist.dev/answer-${taskName}`]: answer.trim(),
+          [`percussionist.dev/${annotationKey("answer", taskName)}`]: answer.trim(),
         },
       },
     });

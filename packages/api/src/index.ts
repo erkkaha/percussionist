@@ -994,6 +994,33 @@ export const LABELS = {
   taskId: "percussionist.dev/task-id",
 } as const;
 
+/** Annotation key prefixes used for board actions. */
+export const ANNOTATION_PREFIXES = [
+  "approved",
+  "request-changes",
+  "rework",
+  "abandon",
+  "answer",
+] as const;
+
+/**
+ * Build a K8s-safe annotation name part (after the `/`) that is ≤63 bytes.
+ * Uses a short hash suffix to guarantee uniqueness when the prefix+taskName
+ * exceeds the 63-byte limit.
+ */
+export function annotationKey(prefix: string, taskName: string): string {
+  const key = `${prefix}-${taskName}`;
+  if (key.length <= 63) return key;
+  let hash = 0;
+  for (let i = 0; i < taskName.length; i++) {
+    hash = ((hash << 5) - hash) + taskName.charCodeAt(i);
+    hash |= 0;
+  }
+  const hashStr = Math.abs(hash).toString(36).slice(0, 6);
+  const maxPrefix = 63 - hashStr.length - 1;
+  return `${key.slice(0, maxPrefix).replace(/-+$/, "")}-${hashStr}`;
+}
+
 export const MANAGED_BY = "percussionist";
 
 export const CONTAINER_PORT = 4096;
