@@ -23,7 +23,7 @@ function isMessageAbortedError(error: unknown): boolean {
 }
 
 function isAbortedMessageInError(e: Error): boolean {
-  return isMessageAbortedError(e) || e.message?.includes("MessageAbortedError") || e.message?.includes("AbortError");
+  return isMessageAbortedError(e) || e.message?.includes("MessageAbortedError") || e.message?.includes("AbortError") || e.message?.includes("Aborted");
 }
 
 function logEvent(evt: { type?: string; properties?: Record<string, unknown> }): void {
@@ -520,25 +520,31 @@ export async function runPrompt(
           const t = last.info.tokens;
           if (t?.input || t?.output) tokens.update(sessionID, t.input ?? 0, t.output ?? 0);
           await tokens.flush(patchStatus);
-          if (last.info.time?.completed) {
-            // Check for errors first, before any other logic
-            if (last.info.error) {
-              // A MessageAbortedError means the user manually aborted the message.
-              // Treat it as "waiting for input" so the run can continue rather
-              // than failing — the next prompt dispatch will resume the session.
-              if (isMessageAbortedError(last.info.error)) {
-                log("assistant message aborted by user — treating as waiting for input");
-                waitingForInput = true;
-              } else {
-                throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
-              }
-            }
 
+          // Check for errors regardless of time.completed — OpenCode may set
+          // a MessageAbortedError on the message without setting the completed
+          // timestamp (aborted messages are never fully "completed").
+          if (last.info.error) {
+            if (isMessageAbortedError(last.info.error)) {
+              if (!waitingForInput) {
+                log("assistant message aborted by user — waiting for input");
+                waitingForInput = true;
+              }
+            } else {
+              throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
+            }
+          }
+
+          if (last.info.time?.completed) {
             const totalTokens = tokens.totals();
             if (waitingForInput) {
-              if (totalTokens.tokensIn > 0 || totalTokens.tokensOut > 0) {
+              // Don't reset waitingForInput for abort errors on the current
+              // message.  Only reset when a new non-aborted message arrives.
+              if (!last.info.error && (totalTokens.tokensIn > 0 || totalTokens.tokensOut > 0)) {
                 waitingForInput = false;
               }
+              // If still waiting (aborted or idle), fall through without
+              // terminating — the poll loop keeps running.
             } else if (totalTokens.tokensIn === 0 && totalTokens.tokensOut === 0) {
               if (!sawBusy) {
                 throw new Error("opencode produced an assistant response with zero token usage before any work was done");
@@ -630,7 +636,15 @@ export async function runPrompt(
     }
   };
 
-  const hardTimeout = setTimeout(() => { err("dispatcher timeout guard"); process.exit(3); }, HARD_TIMEOUT_MS);
+  const hardTimeout = setTimeout(() => {
+    if (waitingForInput) {
+      err("dispatcher timeout guard — waiting for input, exiting cleanly");
+      process.exit(0);
+    } else {
+      err("dispatcher timeout guard");
+      process.exit(3);
+    }
+  }, HARD_TIMEOUT_MS);
   hardTimeout.unref();
   void streamEvents().catch((e) => { if (!terminate) err("streamEvents fatal:", (e as Error).message); });
 
