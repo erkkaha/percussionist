@@ -138,6 +138,17 @@ export const ResourceRequirementsSchema = z
 
 export type ResourceRequirements = z.infer<typeof ResourceRequirementsSchema>;
 
+// Code-server configuration for interactive workspace access.
+export const CodeServerSpecSchema = z.object({
+  /** Enable per-project code-server for interactive workspace access. */
+  enabled: z.boolean().default(false),
+  /** code-server container image. */
+  image: z.string().default("codercom/code-server:4.96.4"),
+  /** Pod resource requirements for code-server container. */
+  resources: ResourceRequirementsSchema.optional(),
+});
+export type CodeServerSpec = z.infer<typeof CodeServerSpecSchema>;
+
 // DEPRECATED — cluster-level secrets are managed via ClusterSettings.
 // This schema is kept for backwards compatibility only.
 export const SecretsRefSchema = z
@@ -827,6 +838,11 @@ export const ProjectSpecSchema = z.object({
     aiReviewerAgent: z.string().max(63).default("reviewer"),
     maxAutoReworks: z.number().int().min(1).max(10).default(2),
   }).optional(),
+
+  // Per-project code-server for interactive workspace access.
+  // Requires source.git or source.local (needs a data PVC to mount).
+  // Access via kubectl port-forward, or configure ingress in infrastructure.
+  codeServer: CodeServerSpecSchema.optional(),
 });
 
 export type ProjectSpec = z.infer<typeof ProjectSpecSchema>;
@@ -987,6 +1003,9 @@ export const DISPATCHER_MCP_PORT = 4097;
 export const RUNNER_CONTAINER = "opencode";
 export const DISPATCHER_CONTAINER = "dispatcher";
 export const GIT_CLONE_CONTAINER = "workspace-init";
+export const CODE_SERVER_CONTAINER = "code-server";
+export const CODE_SERVER_PORT = 8080;
+export const CODE_SERVER_DEFAULT_IMAGE = "codercom/code-server:4.96.4";
 
 // ---------------------------------------------------------------------------
 // Config resolution helpers.

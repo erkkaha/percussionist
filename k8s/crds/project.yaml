@@ -281,6 +281,22 @@ spec:
                       type: integer
                       minimum: 1
                       maximum: 10
+                codeServer:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                    image:
+                      type: string
+                    resources:
+                      type: object
+                      properties:
+                        requests:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        limits:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
             status:
               type: object
               properties:

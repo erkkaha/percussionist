@@ -3,6 +3,7 @@
 import {
   KubeConfig,
   CoreV1Api,
+  AppsV1Api,
   CustomObjectsApi,
   NetworkingV1Api,
   PatchStrategy,
@@ -37,6 +38,13 @@ import {
 import { NAMESPACE, SELF_NAMESPACE } from "./config.js";
 import { ensureDataPVC, isPVCBound } from "./pvc-helper.js";
 import { resolveRunnerSpec } from "./adapters/opencode-config.js";
+import {
+  shouldReconcileCodeServer,
+  renderCodeServerDeployment,
+  renderCodeServerService,
+  codeServerDeploymentName,
+  codeServerServiceName,
+} from "./code-server.js";
 
 const log = (...args: unknown[]) =>
   console.log(`[operator ${new Date().toISOString()}]`, ...args);
@@ -49,6 +57,7 @@ const err = (...args: unknown[]) =>
 const kc = new KubeConfig();
 kc.loadFromDefault();
 const core = kc.makeApiClient(CoreV1Api);
+const apps = kc.makeApiClient(AppsV1Api);
 const co = kc.makeApiClient(CustomObjectsApi);
 const networking = kc.makeApiClient(NetworkingV1Api);
 
@@ -677,6 +686,132 @@ export function startPeriodicResync(): void {
   setInterval(() => {
     for (const run of seen.values()) enqueue(run);
   }, 10_000).unref();
+}
+
+// ---------------------------------------------------------------------------
+// Project reconciliation — code-server Deployment and Service
+//
+// Called by the project informer on add/update. Creates or updates code-server
+// resources when spec.codeServer.enabled is true and a source is configured.
+
+export async function reconcileProject(project: Project): Promise<void> {
+  const name = project.metadata.name!;
+  const ns = project.metadata.namespace!;
+  const logPrefix = `[project/${ns}/${name}]`;
+
+  if (shouldReconcileCodeServer(project)) {
+    log(`${logPrefix} reconciling code-server resources`);
+
+    // Ensure data PVC exists first (code-server needs it).
+    const projectUid = project.metadata.uid!;
+    const pvcName = project.spec.data?.pvcName ?? `${name}-data`;
+    try {
+      await ensureDataPVC({
+        projectName: name,
+        namespace: ns,
+        projectUid,
+        storageClass: project.spec.data?.storageClass,
+        pvcName,
+      });
+    } catch (e) {
+      err(`${logPrefix} failed to ensure data PVC:`, (e as Error).message);
+      return; // Cannot proceed without PVC
+    }
+
+    // Upsert Deployment
+    const deployName = codeServerDeploymentName(project);
+    try {
+      await apps.readNamespacedDeployment({ name: deployName, namespace: ns });
+      // Exists — patch it via SSA
+      await apps.patchNamespacedDeployment(
+        {
+          name: deployName,
+          namespace: ns,
+          body: renderCodeServerDeployment(project),
+          fieldManager: "percussionist-operator",
+          force: true,
+        },
+        setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply),
+      );
+      log(`${logPrefix} patched deployment ${deployName}`);
+    } catch (e) {
+      if ((e as { statusCode?: number }).statusCode === 404) {
+        await apps.createNamespacedDeployment({
+          namespace: ns,
+          body: renderCodeServerDeployment(project),
+        });
+        log(`${logPrefix} created deployment ${deployName}`);
+      } else {
+        err(`${logPrefix} deployment error:`, (e as Error).message);
+        throw e;
+      }
+    }
+
+    // Upsert Service
+    const svcName = codeServerServiceName(project);
+    try {
+      await core.readNamespacedService({ name: svcName, namespace: ns });
+      // Exists — patch it via SSA
+      await core.patchNamespacedService(
+        {
+          name: svcName,
+          namespace: ns,
+          body: renderCodeServerService(project),
+          fieldManager: "percussionist-operator",
+          force: true,
+        },
+        setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply),
+      );
+      log(`${logPrefix} patched service ${svcName}`);
+    } catch (e) {
+      if ((e as { statusCode?: number }).statusCode === 404) {
+        await core.createNamespacedService({
+          namespace: ns,
+          body: renderCodeServerService(project),
+        });
+        log(`${logPrefix} created service ${svcName}`);
+      } else {
+        err(`${logPrefix} service error:`, (e as Error).message);
+        throw e;
+      }
+    }
+
+    log(`${logPrefix} code-server resources reconciled`);
+  } else {
+    // codeServer disabled or no source — clean up if exists
+    await cleanupCodeServer(project);
+  }
+}
+
+/**
+ * Cleans up code-server resources when codeServer is disabled or project is deleted.
+ */
+export async function cleanupCodeServer(project: Project): Promise<void> {
+  const name = project.metadata.name!;
+  const ns = project.metadata.namespace!;
+  const logPrefix = `[project/${ns}/${name}]`;
+
+  // Delete Service (ignore 404)
+  const svcName = codeServerServiceName(project);
+  try {
+    await core.deleteNamespacedService({ name: svcName, namespace: ns });
+    log(`${logPrefix} deleted code-server service ${svcName}`);
+  } catch (e) {
+    if ((e as { statusCode?: number }).statusCode !== 404) {
+      err(`${logPrefix} failed to delete service:`, (e as Error).message);
+    }
+  }
+
+  // Delete Deployment (ignore 404)
+  const deployName = codeServerDeploymentName(project);
+  try {
+    await apps.deleteNamespacedDeployment({ name: deployName, namespace: ns });
+    log(`${logPrefix} deleted code-server deployment ${deployName}`);
+  } catch (e) {
+    if ((e as { statusCode?: number }).statusCode !== 404) {
+      err(`${logPrefix} failed to delete deployment:`, (e as Error).message);
+    }
+  }
 }
 
 // Export kc for informer setup in index.ts

@@ -1,12 +1,14 @@
-// Operator entrypoint — watches Run CRs and ClusterSettings.
+// Operator entrypoint — watches Run CRs, Project CRs, and ClusterSettings.
 
 import { makeInformer } from "@kubernetes/client-node";
 import {
   API_GROUP,
   API_VERSION,
   PLURAL_RUN,
+  PLURAL_PROJECT,
   PLURAL_CLUSTER_SETTINGS,
   type Run,
+  type Project,
   type ClusterSettings,
 } from "@percussionist/api";
 import {
@@ -18,6 +20,8 @@ import {
   co,
   NAMESPACE,
   reconcileClusterSettings,
+  reconcileProject,
+  cleanupCodeServer,
 } from "./reconciler.js";
 import { INGRESS_BASE_URL, INGRESS_CLASS } from "./config.js";
 import { startTTLCleanup } from "./ttl.js";
@@ -84,6 +88,35 @@ async function main(): Promise<void> {
     setTimeout(() => csInformer.start().catch(console.error), 2000);
   });
   await csInformer.start();
+
+  // Watch Project CRs for code-server reconciliation.
+  const projectPath = `/apis/${API_GROUP}/${API_VERSION}/namespaces/${NAMESPACE}/projects`;
+  const listProjectsFn = async () => {
+    const res = await co.listNamespacedCustomObject({
+      group: API_GROUP,
+      version: API_VERSION,
+      namespace: NAMESPACE,
+      plural: PLURAL_PROJECT,
+    });
+    return res as unknown as { items: Project[] };
+  };
+
+  const projectInformer = makeInformer(kc, projectPath, listProjectsFn as never);
+  projectInformer.on("add", (obj) => {
+    void reconcileProject(obj as unknown as Project);
+  });
+  projectInformer.on("update", (obj) => {
+    void reconcileProject(obj as unknown as Project);
+  });
+  projectInformer.on("delete", (obj) => {
+    void cleanupCodeServer(obj as unknown as Project);
+  });
+  projectInformer.on("error", (e) => {
+    err("project informer error:", (e as Error).message);
+    setTimeout(() => projectInformer.start().catch(console.error), 2000);
+  });
+  await projectInformer.start();
+  log("project informer started");
 
   startPeriodicResync();
   startTTLCleanup();

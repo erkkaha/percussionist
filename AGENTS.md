@@ -52,6 +52,55 @@ of TypeScript packages under `packages/*`.
 - Override storage class via `spec.data.storageClass` (optional)
 - Override mount path via `spec.data.mountPath` (defaults to `/data`)
 
+## Code-Server (Interactive Workspace Access)
+
+Projects can enable an opt-in code-server instance for interactive VS Code access
+to the workspace.
+
+### Enable
+
+```yaml
+apiVersion: percussionist.dev/v1alpha1
+kind: Project
+metadata:
+  name: my-project
+spec:
+  source:
+    local: true  # or source.git
+  codeServer:
+    enabled: true
+    # Optional overrides:
+    # image: codercom/code-server:4.96.4
+    # resources:
+    #   requests: { cpu: "100m", memory: "256Mi" }
+    #   limits: { memory: "512Mi" }
+```
+
+### Access (Minikube / Vanilla K8s)
+
+```bash
+kubectl -n percussionist port-forward svc/code-server-my-project 8080:8080
+# Open http://localhost:8080
+```
+
+### Workspace Layout
+
+The code-server mounts the project's data PVC at `/data`, giving access to:
+- `/data/worktrees/{run-name}/` — per-run git worktrees (remote git)
+- `/data/workspace/` — persistent workspace (local git)
+- `/data/git-mirrors/` — bare git mirrors
+- `/data/cache/` — package manager caches
+
+### Requirements
+
+- `source.git` or `source.local` must be set (needs a data PVC)
+
+### Resources
+
+| Component | CPU Request | Memory Request | Memory Limit |
+|-----------|-------------|----------------|--------------|
+| code-server | 100m | 256Mi | 512Mi |
+
 ## Git Workspace Modes
 
 ### Remote git (`source.git`)
