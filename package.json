@@ -7,7 +7,7 @@
   "scripts": {
     "build": "pnpm -r run build",
     "bundle": "pnpm --filter @percussionist/cli bundle",
-    "typecheck": "pnpm --filter @percussionist/api typecheck && pnpm --filter @percussionist/kube typecheck && pnpm --filter @percussionist/operator typecheck && pnpm --filter @percussionist/dispatcher typecheck && pnpm --filter @percussionist/manager-controller typecheck && pnpm --filter @percussionist/web typecheck && pnpm --filter @percussionist/cli typecheck",
+    "typecheck": "pnpm -r run typecheck",
     "lint": "pnpm -r run lint",
     "codegen": "pnpm --filter @percussionist/api codegen",
     "beatctl": "pnpm --filter @percussionist/cli exec tsx src/index.ts",
