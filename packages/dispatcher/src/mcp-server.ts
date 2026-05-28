@@ -148,6 +148,11 @@ async function validateGitWorkflow(sessionID: string): Promise<string[]> {
     return errors;
   }
 
+  // Skip validation for facilitator runs (review, analysis, task generation).
+  if (process.env.RUN_IS_FACILITATION === "1") {
+    return errors;
+  }
+
   try {
     const messages: RawMessage[] = await fetchMessages(sessionID);
     
@@ -214,6 +219,12 @@ async function validateGitWorkflow(sessionID: string): Promise<string[]> {
 async function validateGitWorkflowPlan(sessionID: string): Promise<string[]> {
   const errors: string[] = [];
 
+  // Skip validation for facilitator runs (review, analysis, task generation).
+  if (process.env.RUN_IS_FACILITATION === "1") {
+    return errors;
+  }
+
+  // Skip validation for merge-only tasks that prohibit code changes.
   const taskDesc = process.env.RUN_TASK ?? "";
   if (/do not perform any code changes/i.test(taskDesc)) {
     return errors;
