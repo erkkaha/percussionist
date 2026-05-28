@@ -41,9 +41,10 @@ rules:
     resources: ["runs/status"]
     verbs: ["get", "update", "patch"]
   # Read Project CRs to get project UID for cache PVC owner references.
+  # list+watch required for the project informer (code-server reconciliation).
   - apiGroups: ["percussionist.dev"]
     resources: ["projects"]
-    verbs: ["get"]
+    verbs: ["get", "list", "watch"]
   # Child resources the operator creates per run.
   - apiGroups: [""]
     resources: ["pods", "services", "persistentvolumeclaims"]
@@ -56,6 +57,10 @@ rules:
     verbs: ["create", "patch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Deployments for per-project code-server.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # ClusterAgent — read-only catalog watched by the operator.
   - apiGroups: ["percussionist.dev"]
