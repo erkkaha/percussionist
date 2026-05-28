@@ -1,6 +1,5 @@
 {
   "compilerOptions": {
-    "composite": true,
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
@@ -12,7 +11,7 @@
     "declaration": true,
     "sourceMap": true,
     "resolveJsonModule": true,
-    "isolatedModules": true,
+    "isolatedModules": false,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true
   }
