@@ -588,7 +588,7 @@ monorepos and repeated builds.
   to share the cache simultaneously.
 - Package managers are automatically configured via environment variables to use
   the cache:
-  - **pnpm**: `PNPM_HOME=/cache/pnpm`, `npm_config_store_dir=/cache/pnpm-store`
+  - **pnpm**: `PNPM_HOME=/cache/pnpm`, `PNPM_STORE_DIR=/cache/pnpm-store`
   - **npm**: `NPM_CONFIG_CACHE=/cache/npm`
   - **bun**: `BUN_INSTALL_CACHE_DIR=/cache/bun`
   - **Turbo**: `TURBO_CACHE_DIR=/cache/turbo`
