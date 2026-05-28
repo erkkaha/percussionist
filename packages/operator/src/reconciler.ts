@@ -735,7 +735,7 @@ export async function reconcileProject(project: Project): Promise<void> {
       );
       log(`${logPrefix} patched deployment ${deployName}`);
     } catch (e) {
-      if ((e as { statusCode?: number }).statusCode === 404) {
+      if (isNotFound(e)) {
         await apps.createNamespacedDeployment({
           namespace: ns,
           body: renderCodeServerDeployment(project),
@@ -764,7 +764,7 @@ export async function reconcileProject(project: Project): Promise<void> {
       );
       log(`${logPrefix} patched service ${svcName}`);
     } catch (e) {
-      if ((e as { statusCode?: number }).statusCode === 404) {
+      if (isNotFound(e)) {
         await core.createNamespacedService({
           namespace: ns,
           body: renderCodeServerService(project),
@@ -797,7 +797,7 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
     await core.deleteNamespacedService({ name: svcName, namespace: ns });
     log(`${logPrefix} deleted code-server service ${svcName}`);
   } catch (e) {
-    if ((e as { statusCode?: number }).statusCode !== 404) {
+    if (!isNotFound(e)) {
       err(`${logPrefix} failed to delete service:`, (e as Error).message);
     }
   }
@@ -808,7 +808,7 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
     await apps.deleteNamespacedDeployment({ name: deployName, namespace: ns });
     log(`${logPrefix} deleted code-server deployment ${deployName}`);
   } catch (e) {
-    if ((e as { statusCode?: number }).statusCode !== 404) {
+    if (!isNotFound(e)) {
       err(`${logPrefix} failed to delete deployment:`, (e as Error).message);
     }
   }
