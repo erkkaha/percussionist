@@ -91,6 +91,35 @@ export default function CreateProjectForm({
     initialSpec?.featureBranchingEnabled ?? false,
   );
 
+  const [retryPolicyEnabled, setRetryPolicyEnabled] = useState<boolean>(
+    initialSpec?.retryPolicy?.enabled ?? false,
+  );
+  const [retryPolicyMaxAttempts, setRetryPolicyMaxAttempts] = useState<string>(
+    String(initialSpec?.retryPolicy?.maxAttempts ?? 3),
+  );
+  const [retryPolicyBackoffSeconds, setRetryPolicyBackoffSeconds] = useState<string>(
+    String(initialSpec?.retryPolicy?.backoffSeconds ?? 30),
+  );
+  const [retryPolicyBackoffMultiplier, setRetryPolicyBackoffMultiplier] = useState<string>(
+    String(initialSpec?.retryPolicy?.backoffMultiplier ?? 2),
+  );
+  const [retryPolicyMaxBackoffSeconds, setRetryPolicyMaxBackoffSeconds] = useState<string>(
+    String(initialSpec?.retryPolicy?.maxBackoffSeconds ?? 300),
+  );
+  const [retryPolicyPoisonPillThreshold, setRetryPolicyPoisonPillThreshold] = useState<string>(
+    String(initialSpec?.retryPolicy?.poisonPillThresholdSeconds ?? 30),
+  );
+
+  const [reviewPolicyAiReviewerEnabled, setReviewPolicyAiReviewerEnabled] = useState<boolean>(
+    initialSpec?.reviewPolicy?.aiReviewerEnabled ?? false,
+  );
+  const [reviewPolicyAiReviewerAgent, setReviewPolicyAiReviewerAgent] = useState<string>(
+    initialSpec?.reviewPolicy?.aiReviewerAgent ?? "reviewer",
+  );
+  const [reviewPolicyMaxAutoReworks, setReviewPolicyMaxAutoReworks] = useState<string>(
+    String(initialSpec?.reviewPolicy?.maxAutoReworks ?? 2),
+  );
+
   // All ClusterAgents in cluster — used to populate the roster add dropdown.
   const { data: clusterAgents = [] } = useQuery({
     queryKey: ["agents"],
@@ -238,6 +267,23 @@ export default function CreateProjectForm({
     const parsedTimeout = timeoutSeconds.trim() ? parseInt(timeoutSeconds.trim(), 10) : NaN;
     if (!isNaN(parsedTimeout) && parsedTimeout > 0) req.timeoutSeconds = parsedTimeout;
     req.featureBranchingEnabled = featureBranchingEnabled;
+    if (retryPolicyEnabled) {
+      req.retryPolicy = {
+        enabled: true,
+        maxAttempts: parseInt(retryPolicyMaxAttempts, 10) || 3,
+        backoffSeconds: parseInt(retryPolicyBackoffSeconds, 10) || 30,
+        backoffMultiplier: parseFloat(retryPolicyBackoffMultiplier) || 2,
+        maxBackoffSeconds: parseInt(retryPolicyMaxBackoffSeconds, 10) || 300,
+        poisonPillThresholdSeconds: parseInt(retryPolicyPoisonPillThreshold, 10) || 30,
+      };
+    }
+    if (reviewPolicyAiReviewerEnabled) {
+      req.reviewPolicy = {
+        aiReviewerEnabled: true,
+        aiReviewerAgent: reviewPolicyAiReviewerAgent.trim() || "reviewer",
+        maxAutoReworks: parseInt(reviewPolicyMaxAutoReworks, 10) || 2,
+      };
+    }
     mutation.mutate(req);
   }
 
@@ -463,6 +509,131 @@ export default function CreateProjectForm({
             </label>
           </div>
         </div>
+
+        {/* Retry Policy */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Retry Policy</legend>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={retryPolicyEnabled}
+              onChange={(e) => setRetryPolicyEnabled(e.target.checked)}
+              className="rounded border-border"
+            />
+            <span className="text-sm text-text-muted">Auto-retry failed tasks with exponential backoff</span>
+          </label>
+          {retryPolicyEnabled && (
+            <>
+              <p className="text-xs text-text-dim">
+                Retries use exponential backoff — each attempt waits longer than the last.
+                If a retry finishes faster than the poison pill threshold, the task is considered stuck and retries stop.
+              </p>
+              <div className="grid grid-cols-3 gap-4 pt-2">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-muted">Max attempts</label>
+                  <input
+                    type="number"
+                    min={1} max={10}
+                    value={retryPolicyMaxAttempts}
+                    onChange={(e) => setRetryPolicyMaxAttempts(e.target.value)}
+                    className={monoInputClass}
+                  />
+                  <p className="text-xs text-text-dim">Total retries before giving up.</p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-muted">Initial backoff (s)</label>
+                  <input
+                    type="number"
+                    min={5} max={600}
+                    value={retryPolicyBackoffSeconds}
+                    onChange={(e) => setRetryPolicyBackoffSeconds(e.target.value)}
+                    className={monoInputClass}
+                  />
+                  <p className="text-xs text-text-dim">Delay before first retry.</p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-muted">Backoff multiplier</label>
+                  <input
+                    type="number"
+                    min={1} max={5} step={0.1}
+                    value={retryPolicyBackoffMultiplier}
+                    onChange={(e) => setRetryPolicyBackoffMultiplier(e.target.value)}
+                    className={monoInputClass}
+                  />
+                  <p className="text-xs text-text-dim">Factor applied each retry (e.g. 2 → 30s, 60s, 120s).</p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-muted">Max backoff (s)</label>
+                  <input
+                    type="number"
+                    min={5} max={3600}
+                    value={retryPolicyMaxBackoffSeconds}
+                    onChange={(e) => setRetryPolicyMaxBackoffSeconds(e.target.value)}
+                    className={monoInputClass}
+                  />
+                  <p className="text-xs text-text-dim">Ceiling for backoff growth.</p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-muted">Poison pill threshold (s)</label>
+                  <input
+                    type="number"
+                    min={5} max={300}
+                    value={retryPolicyPoisonPillThreshold}
+                    onChange={(e) => setRetryPolicyPoisonPillThreshold(e.target.value)}
+                    className={monoInputClass}
+                  />
+                  <p className="text-xs text-text-dim">Retries completing faster than this are treated as stuck.</p>
+                </div>
+              </div>
+            </>
+          )}
+        </fieldset>
+
+        {/* Review Policy */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Review Policy</legend>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={reviewPolicyAiReviewerEnabled}
+              onChange={(e) => setReviewPolicyAiReviewerEnabled(e.target.checked)}
+              className="rounded border-border"
+            />
+            <span className="text-sm text-text-muted">Enable automated AI review of completed tasks</span>
+          </label>
+          {reviewPolicyAiReviewerEnabled && (
+            <>
+              <p className="text-xs text-text-dim">
+                When the reviewer rejects a task, it is sent back for rework automatically.
+                After the max rework count is exceeded, it requires manual review.
+              </p>
+              <div className="grid grid-cols-2 gap-4 pt-2">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-muted">Reviewer agent</label>
+                  <input
+                    type="text"
+                    value={reviewPolicyAiReviewerAgent}
+                    onChange={(e) => setReviewPolicyAiReviewerAgent(e.target.value)}
+                    placeholder="reviewer"
+                    className={monoInputClass}
+                  />
+                  <p className="text-xs text-text-dim">ClusterAgent assigned to review completed tasks.</p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-muted">Max auto-reworks</label>
+                  <input
+                    type="number"
+                    min={1} max={10}
+                    value={reviewPolicyMaxAutoReworks}
+                    onChange={(e) => setReviewPolicyMaxAutoReworks(e.target.value)}
+                    className={monoInputClass}
+                  />
+                  <p className="text-xs text-text-dim">Reworks exhausted → manual review required.</p>
+                </div>
+              </div>
+            </>
+          )}
+        </fieldset>
 
         {/* OpenCode Config */}
         <fieldset className="rounded-md border border-border p-4">

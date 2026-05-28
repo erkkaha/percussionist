@@ -100,6 +100,23 @@ export interface CreateProjectRequest {
   timeoutSeconds?: number;
   /** Enable per-task feature branches to prevent git mirror conflicts. */
   featureBranchingEnabled?: boolean;
+
+  /** Auto-retry policy for failed tasks. */
+  retryPolicy?: {
+    enabled?: boolean;
+    maxAttempts?: number;
+    backoffSeconds?: number;
+    backoffMultiplier?: number;
+    maxBackoffSeconds?: number;
+    poisonPillThresholdSeconds?: number;
+  };
+
+  /** Automated review policy for completed tasks. */
+  reviewPolicy?: {
+    aiReviewerEnabled?: boolean;
+    aiReviewerAgent?: string;
+    maxAutoReworks?: number;
+  };
 }
 
 export interface CreateAgentRequest {

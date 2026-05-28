@@ -25,6 +25,7 @@ import { DEFAULT_NAMESPACE, fatal, getRun, loadKube } from "./kube.js";
 export interface AttachOpts {
   namespace?: string;
   localPort?: string;
+  continue?: boolean;
 }
 
 async function pickFreePort(): Promise<number> {
@@ -153,14 +154,12 @@ export async function runAttach(name: string, opts: AttachOpts): Promise<void> {
   });
 
   console.log(`beatctl: launching opencode attach...`);
-  const attach = spawn(
-    "opencode",
-    ["attach", `http://localhost:${localPort}`],
-    {
-      stdio: "inherit",
-      env: { ...process.env },
-    },
-  );
+  const opencodeArgs = ["attach", `http://localhost:${localPort}`];
+  if (opts.continue) opencodeArgs.push("--continue");
+  const attach = spawn("opencode", opencodeArgs, {
+    stdio: "inherit",
+    env: { ...process.env },
+  });
   attach.on("exit", (code) => {
     kill();
     process.exit(code ?? 0);

@@ -488,6 +488,9 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
   const [memLimit, setMemLimit] = useState(
     ((runner.resources as Record<string, Record<string, string>> | undefined)?.limits?.memory) ?? ""
   );
+  const [runTTLDays, setRunTTLDays] = useState(
+    String((spec.runTTLDays as number) ?? 7)
+  );
 
   return (
     <Card>
@@ -539,6 +542,21 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
             </div>
           </div>
         </div>
+        <div className="border-t border-border pt-4">
+          <p className="text-sm font-medium mb-2">Cleanup</p>
+          <div>
+            <label className="text-xs text-text-dim block mb-1">Run TTL (days)</label>
+            <Input
+              type="number"
+              min={1}
+              value={runTTLDays}
+              onChange={(e) => setRunTTLDays(e.target.value)}
+            />
+            <p className="text-xs text-text-dim mt-1">
+              Completed Run CRs are automatically cleaned up after this many days.
+            </p>
+          </div>
+        </div>
       </CardContent>
       <CardFooter className="sm:flex-row flex-col gap-2">
         <Button
@@ -556,6 +574,7 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
             }
             onSave({
               ...spec,
+              runTTLDays: parseInt(runTTLDays, 10) || 7,
               runner: {
                 image: image.trim() || undefined,
                 timeoutSeconds: parseInt(timeoutSeconds, 10) || undefined,
