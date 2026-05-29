@@ -839,6 +839,51 @@ export const ProjectSpecSchema = z.object({
     maxAutoReworks: z.number().int().min(1).max(10).default(2),
   }).optional(),
 
+  // Flow configuration — user-configurable task lifecycle.
+  // Presets provide sensible defaults; individual fields override preset behavior.
+  flow: z.object({
+    preset: z.enum([
+      "simple",
+      "review",
+      "plan-build",
+      "plan-build-review-merge",
+    ]).default("plan-build-review-merge"),
+    humanApproval: z.object({
+      plan: z.enum(["required", "disabled"]).default("required").optional(),
+      build: z.enum(["required", "disabled"]).default("required").optional(),
+    }).optional(),
+    plan: z.object({
+      onApprove: z.enum(["generate-builds", "done"]).default("generate-builds").optional(),
+      buildGeneration: z.enum(["ai", "manual", "disabled"]).default("ai").optional(),
+    }).optional(),
+    build: z.object({
+      onSuccess: z.enum(["human-review", "ai-review", "done"]).default("human-review").optional(),
+      onApprove: z.enum(["merge", "done"]).default("merge").optional(),
+    }).optional(),
+    merge: z.object({
+      mode: z.enum(["auto", "manual", "disabled"]).default("auto").optional(),
+    }).optional(),
+    review: z.object({
+      aiReviewerEnabled: z.boolean().default(false).optional(),
+      aiReviewerAgent: z.string().max(63).default("reviewer").optional(),
+      maxAutoReworks: z.number().int().min(1).max(10).default(2).optional(),
+    }).optional(),
+    retry: z.object({
+      enabled: z.boolean().default(false).optional(),
+      maxAttempts: z.number().int().min(1).max(10).default(3).optional(),
+      backoffSeconds: z.number().int().min(5).max(600).default(30).optional(),
+      backoffMultiplier: z.number().min(1).max(5).default(2).optional(),
+      maxBackoffSeconds: z.number().int().min(5).max(3600).default(300).optional(),
+      poisonPillThresholdSeconds: z.number().int().min(5).max(300).default(30).optional(),
+    }).optional(),
+    timeouts: z.object({
+      runningStaleSeconds: z.number().int().min(30).max(86400).default(1800).optional(),
+      reviewStaleSeconds: z.number().int().min(30).max(86400).default(600).optional(),
+      mergeStaleSeconds: z.number().int().min(30).max(86400).default(600).optional(),
+      buildgenStaleSeconds: z.number().int().min(30).max(86400).default(600).optional(),
+    }).optional(),
+  }).optional(),
+
   // Per-project code-server for interactive workspace access.
   // Requires source.git or source.local (needs a data PVC to mount).
   // Access via kubectl port-forward, or configure ingress in infrastructure.

@@ -33,10 +33,11 @@ import {
   getDeploymentImages,
   apps,
 } from "@percussionist/kube";
-import { LABELS, type Project, type Task } from "@percussionist/api";
+import { LABELS, type Project, type Task, type TaskPhase } from "@percussionist/api";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
 import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
+import { isValidTransition, TRANSITION_TABLE } from "../reconciler/transitions.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-manager-agent";
@@ -770,9 +771,13 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const task = await getTask(taskName, resourceNs);
       const projectTasks = await listProjectTasks(projectName, resourceNs);
 
-      const currentPhase = task.status?.phase ?? "pending";
-      if (currentPhase !== "pending") {
-        throw new Error(`Task ${taskName} has phase "${currentPhase}", not "pending". Use force_retry to clean up first.`);
+      const currentPhase = (task.status?.phase ?? "pending") as TaskPhase;
+      // Validate pending → running transition (create_run is an admin shortcut).
+      if (!isValidTransition(currentPhase, "running")) {
+        const allowed = TRANSITION_TABLE[currentPhase] ?? [];
+        throw new Error(
+          `Task ${taskName} has phase "${currentPhase}", cannot create run. Allowed transitions: ${allowed.join(", ") || "(none, terminal)"}. Use force_retry to clean up first.`,
+        );
       }
 
       const existingWorker = task.status?.worker ?? null;
@@ -831,6 +836,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const project = await getProject(projectName, resourceNs);
       const task = await getTask(taskName, resourceNs);
       const projectTasks = await listProjectTasks(projectName, resourceNs);
+
+      const currentPhase = (task.status?.phase ?? "pending") as TaskPhase;
+      // force_retry is an admin tool — validates but allows any phase → running.
+      if (!isValidTransition(currentPhase, "running")) {
+        console.log(
+          `[force_retry] ${taskName} admin override: ${currentPhase} → running (not a standard transition)`,
+        );
+      }
 
       let createdRunName: string | undefined;
       const existingRetryCount = task.status?.worker?.retryCount ?? 0;
@@ -986,16 +999,28 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const targetPhase = String(args.targetPhase ?? "");
       const cancelRunning = args.cancelRunning === true;
       const preserveRuns = args.preserveRuns !== false;
+      const adminOverride = args.admin === true;
       const resourceNs = String(args.namespace ?? ns);
 
-      const validPhases = ["idea", "pending", "scheduled", "running", "failed", "awaiting-human", "rework-requested", "done"];
-      if (!validPhases.includes(targetPhase)) {
-        throw new Error(`Invalid targetPhase: ${targetPhase}. Must be one of: ${validPhases.join(", ")}`);
+      // Validate target phase is a known TaskPhase.
+      const allPhases = Object.keys(TRANSITION_TABLE) as TaskPhase[];
+      if (!allPhases.includes(targetPhase as TaskPhase)) {
+        throw new Error(`Invalid targetPhase: ${targetPhase}. Must be one of: ${allPhases.join(", ")}`);
       }
 
       const task = await getTask(taskName, resourceNs);
       const project = await getProject(projectName, resourceNs);
       const projectTasks = await listProjectTasks(projectName, resourceNs);
+
+      const currentPhase = (task.status?.phase ?? "pending") as TaskPhase;
+
+      // Validate transition unless admin override is set.
+      if (!adminOverride && !isValidTransition(currentPhase, targetPhase as TaskPhase)) {
+        const allowed = TRANSITION_TABLE[currentPhase] ?? [];
+        throw new Error(
+          `Invalid transition: ${currentPhase} → ${targetPhase}. Allowed: ${allowed.join(", ") || "(none, terminal)"}. Use admin: true to override.`,
+        );
+      }
 
       const deletedRuns = preserveRuns
         ? []

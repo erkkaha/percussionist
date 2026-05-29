@@ -281,6 +281,122 @@ spec:
                       type: integer
                       minimum: 1
                       maximum: 10
+                flow:
+                  type: object
+                  properties:
+                    preset:
+                      type: string
+                      enum:
+                        - simple
+                        - review
+                        - plan-build
+                        - plan-build-review-merge
+                    humanApproval:
+                      type: object
+                      properties:
+                        plan:
+                          type: string
+                          enum:
+                            - required
+                            - disabled
+                        build:
+                          type: string
+                          enum:
+                            - required
+                            - disabled
+                    plan:
+                      type: object
+                      properties:
+                        onApprove:
+                          type: string
+                          enum:
+                            - generate-builds
+                            - done
+                        buildGeneration:
+                          type: string
+                          enum:
+                            - ai
+                            - manual
+                            - disabled
+                    build:
+                      type: object
+                      properties:
+                        onSuccess:
+                          type: string
+                          enum:
+                            - human-review
+                            - ai-review
+                            - done
+                        onApprove:
+                          type: string
+                          enum:
+                            - merge
+                            - done
+                    merge:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum:
+                            - auto
+                            - manual
+                            - disabled
+                    review:
+                      type: object
+                      properties:
+                        aiReviewerEnabled:
+                          type: boolean
+                        aiReviewerAgent:
+                          type: string
+                          maxLength: 63
+                        maxAutoReworks:
+                          type: integer
+                          minimum: 1
+                          maximum: 10
+                    retry:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                        maxAttempts:
+                          type: integer
+                          minimum: 1
+                          maximum: 10
+                        backoffSeconds:
+                          type: integer
+                          minimum: 5
+                          maximum: 600
+                        backoffMultiplier:
+                          type: number
+                          minimum: 1
+                          maximum: 5
+                        maxBackoffSeconds:
+                          type: integer
+                          minimum: 5
+                          maximum: 3600
+                        poisonPillThresholdSeconds:
+                          type: integer
+                          minimum: 5
+                          maximum: 300
+                    timeouts:
+                      type: object
+                      properties:
+                        runningStaleSeconds:
+                          type: integer
+                          minimum: 30
+                          maximum: 86400
+                        reviewStaleSeconds:
+                          type: integer
+                          minimum: 30
+                          maximum: 86400
+                        mergeStaleSeconds:
+                          type: integer
+                          minimum: 30
+                          maximum: 86400
+                        buildgenStaleSeconds:
+                          type: integer
+                          minimum: 30
+                          maximum: 86400
                 codeServer:
                   type: object
                   properties:

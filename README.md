@@ -42,9 +42,11 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 .
 ├── k8s/                # All Kubernetes manifests
 │   ├── crds/           # CustomResourceDefinitions (v1alpha1)
-│   │   ├── opencoderun.yaml
-│   │   ├── opencodeproject.yaml
-│   │   └── clusteragent.yaml
+│   │   ├── run.yaml
+│   │   ├── project.yaml
+│   │   ├── task.yaml
+│   │   ├── clusteragent.yaml
+│   │   └── clustersettings.yaml
 │   ├── deploy/         # Kubernetes Deployment + RBAC manifests
 │   │   ├── operator.yaml
 │   │   ├── manager-controller.yaml
@@ -53,13 +55,19 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 │   ├── agents/         # Production ClusterAgent definitions
 │   ├── samples/        # Example manifests and smoke test
 │   └── tests/          # E2E test manifests
-├── images/
-│   ├── api/            # Shared Zod schemas, constants, type helpers
-│   ├── operator/       # CRD reconciler (informer + reconciler loop)
-│   ├── dispatcher/     # Sidecar: session driver + MCP server (fail_run, get_status)
-│   ├── cli/            # beatctl — user-facing CLI (includes `chat` command)
-│   ├── web/            # Dashboard SPA + Hono server + bun:sqlite stats DB (includes agent-chat proxy)
-│   └── manager-controller/  # Board controller + embedded agent module (decision engine, MCP tools, chat handler)
+├── images/            # Docker image definitions
+│   ├── runner/          # opencode + git + ssh + node (Alpine-based)
+│   ├── node/            # Shared Node 24 base
+│   ├── web/             # Bun runtime
+│   └── manager/         # Node 24 base
+├── packages/          # TypeScript packages (pnpm workspace)
+│   ├── api/             # Zod schemas, constants, type helpers
+│   ├── kube/            # Shared K8s client helpers
+│   ├── operator/        # CRD reconciler (informer + reconciler loop)
+│   ├── dispatcher/      # Sidecar: session driver + MCP server (fail_run, get_status)
+│   ├── manager-controller/  # Board controller + decision engine + MCP tools
+│   ├── web/             # Dashboard SPA + Hono server + bun:sqlite stats DB
+│   └── cli/             # beatctl — user-facing CLI
 └── scripts/            # Cluster image loader + smoke test helpers
 ```
 
@@ -112,9 +120,11 @@ Installs all three CRDs, the operator, manager controller, and web dashboard,
 then waits for rollouts to complete. Equivalent manual flow:
 
 ```sh
-kubectl apply -f k8s/crds/opencoderun.yaml
-kubectl apply -f k8s/crds/opencodeproject.yaml
+kubectl apply -f k8s/crds/run.yaml
+kubectl apply -f k8s/crds/project.yaml
+kubectl apply -f k8s/crds/task.yaml
 kubectl apply -f k8s/crds/clusteragent.yaml
+kubectl apply -f k8s/crds/clustersettings.yaml
 kubectl apply -f k8s/deploy/operator.yaml
 kubectl apply -f k8s/deploy/manager-controller.yaml
 kubectl apply -f k8s/deploy/web.yaml
@@ -750,7 +760,9 @@ sidecars per level (project and run).
 ## Project boards
 
 An `Project` coordinates multi-task agentic development through a
-five-column flow: `ready → in-progress → review → rework → done`.
+14-phase state machine stored in `Task.status.phase`. The web dashboard
+renders a simplified board view mapping phases to columns
+(`ideas`, `backlog`, `in-progress`, `review`, `done`).
 Tasks are standalone `Task` CRs (not embedded in the project spec).
 
 ### Project board fields (on Project)
@@ -806,26 +818,35 @@ runs, and moves them across columns as they progress.
 
 ### Human-in-the-loop
 
-The manager escalates a task after 3 retries (4 total attempts). Review the
-escalation text via `beatctl board get <project>` or in the dashboard:
+The manager escalates tasks that reach `failed` phase. Retry behavior is
+flow-configurable: when `flow.retry.enabled` is set, the manager applies
+exponential backoff up to `maxAttempts`, with a `poisonPillThresholdSeconds`
+guard against rapid repeated failures. When retry is disabled or exhausted,
+the task stays in `awaiting-human` phase for human decision. Review task state
+via `beatctl board get <project>` or in the dashboard:
 
-1. **Accept** — move task to "done" via `beatctl board task move my-project --task-name <name> --to done`.
-2. **Rework** — move back to "rework"; the manager re-dispatches with feedback
-   context embedded in the prompt.
-3. **Skip** — remove the task from the board entirely (`beatctl board task remove`).
+1. **Approve** — marks the task annotation `percussionist.dev/action-approved`;
+   the reconciler transitions to `generating-builds` (PLAN) or `awaiting-merge`
+   (BUILD).
+2. **Request changes** — sets `percussionist.dev/action-request-changes` with
+   feedback text; transitions to `rework-requested`, the manager re-dispatches
+   with feedback context embedded in the prompt.
+3. **Abandon** — sets `percussionist.dev/action-abandon`; transitions to `done`.
 
 When a worker asks the agent for clarification, the run enters `WaitingForInput`
-phase and a pending question appears on the board status. Reply via the web UI's
-`/runs/:name/reply` endpoint.
+phase and the task transitions to `waiting-for-input`. Reply via the web UI's
+`/runs/:name/reply` endpoint, which writes the answer to a Task annotation
+(`percussionist.dev/action-answer`). The reconciler picks it up and transitions
+back to `running`.
 
 ### Status fields
 
 Task state is authoritative in `Task.status`:
 
-- `.status.column` — current column: `ready`, `in-progress`, `review`, `rework`, `done`, `blocked`
+- `.status.phase` — current lifecycle phase (14 phases, see `docs/task-lifetime.md`)
 - `.status.worker.runName` — active Run name
 - `.status.worker.status` — `Running / Succeeded / Failed / Escalated`
-- `.status.worker.branch` — git branch used by the worker
+- `.status.worker.gitBranch` — git branch used by the worker
 - `.status.worker.gitBranch`, `.status.worker.parentBranch`, `.status.worker.mergeIntoBranch` — feature-branch metadata used when `spec.featureBranchingEnabled` is true
 - `.status.worker.escalation` — escalation text when status is `Escalated`
 - `.status.worker.retryCount` — number of attempts so far

@@ -319,6 +319,120 @@ export async function buildBuildTaskGeneratorRun(
   );
 }
 
+// Build a review Run spec without session summary.
+// The reviewer agent uses MCP tools (read_session_live) to fetch session data itself.
+export function buildReviewRun(
+  project: Project,
+  task: Task,
+  succeededRunName: string,
+  succeededRunStatus: RunStatus,
+  runName: string,
+  branchName: string | undefined,
+  facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
+  allTasks: Task[] = [],
+): Run {
+  const resolved = resolveRunConfig(project.spec, undefined, undefined, {
+    runner: {
+      image: undefined,
+      resources: undefined,
+    },
+  });
+
+  const completionMessage = succeededRunStatus.message ?? "session completed";
+  const branch = branchName ?? `feat/${task.metadata.name}`;
+  const taskTypeLabel = task.spec.type ? `TASK TYPE: ${task.spec.type}` : "";
+  const isBuildTask = task.spec.type === "BUILD";
+  const isPlanTask = task.spec.type === "PLAN";
+  const planPath = `.percussionist/plans/${task.metadata.name}.md`;
+
+  const alternativeAgents = (project.spec.agents ?? [])
+    .map((a) => a.name)
+    .filter((n) => n !== facilitatorAgentName);
+
+  const promptLines = [
+    `You are a reviewer agent that checks whether a completed worker run actually fulfilled its task.`,
+    ...(taskTypeLabel ? [taskTypeLabel] : []),
+    "",
+    `TASK: ${task.metadata.name} — ${task.spec.title}`,
+    `TASK DESCRIPTION: ${task.spec.description ?? "(none)"}`,
+    `WORKER RUN: ${succeededRunName}`,
+    `BRANCH: ${branch}`,
+    `COMPLETION MESSAGE: ${completionMessage}`,
+    "",
+    `SESSION DATA: Use the read_session_live MCP tool (runName="${succeededRunName}") to read the full session.`,
+    `Start with since=0 and paginate using nextSince until you have all messages.`,
+    "",
+    ...(isBuildTask
+      ? [
+          `This is a BUILD task. The worker was validated by the dispatcher to have committed, pushed, and created a PR before calling complete_run.`,
+          `The COMPLETION MESSAGE above contains the worker's summary and should reference the PR that was created.`,
+          `Check the completion message for evidence of PR creation (URL, number, or explicit confirmation).`,
+          `If the completion message clearly indicates a PR was created, approve the task.`,
+          `If the completion message is missing or unclear, use request_changes.`,
+          "",
+        ]
+      : isPlanTask
+        ? [
+            `This is a PLAN task. Do not review code implementation quality.`,
+            `Review the plan artifact at ${planPath}.`,
+            `Approve only if the plan file exists and contains enough context to generate BUILD tasks: scope, assumptions, risks, acceptance criteria, and a concrete implementation breakdown.`,
+            `Use request_changes if the plan artifact is missing, vague, or lacks enough context for builders.`,
+            `Use escalate only for cases that require human judgment beyond improving the plan artifact.`,
+            "",
+          ]
+      : [
+          `The COMPLETION MESSAGE above summarizes what the worker accomplished.`,
+          `Check the completion message and session data to verify the task was completed.`,
+          "",
+        ]),
+    ...(isPlanTask
+      ? [
+           `PLAN ARTIFACT PATH: ${planPath}`,
+           `Call the read_plan MCP tool (read_plan(project="<project>", task="<task-id>")) to retrieve plan content.`,
+          "",
+        ]
+      : []),
+    "",
+    ...(alternativeAgents.length > 0
+      ? [
+          `AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(", ")}`,
+          "",
+        ]
+      : []),
+    `Review the above and output ONLY valid JSON (no markdown, no explanation):`,
+    JSON.stringify({
+      diagnosis: "(1-2 sentences: did the worker actually complete the task?)",
+      recommendedAction: "(approve | request_changes | retry_alternative | escalate)",
+      alternativeAgent: "(required if recommendedAction is retry_alternative — must be one of the AVAILABLE ALTERNATIVE AGENTS listed above)",
+      suggestion: "(optional — what to improve or why escalating)",
+    }),
+    "",
+    `Use "approve" if the task was completed satisfactorily.`,
+    `Use "request_changes" if implementation changes are needed before human approval.`,
+    `Use "retry_alternative" only if a different agent should redo the task.`,
+    `Use "escalate" if human review is needed.`,
+  ].join("\n");
+
+  const facilitationSpec: FacilitationSpec = {
+    targetRunName: succeededRunName,
+    targetTaskId: task.metadata.name,
+    failureReason: completionMessage,
+    sessionSummary: "",
+    successReview: true,
+  };
+
+  return buildFacilitatorRun(
+    project,
+    task,
+    runName,
+    facilitationSpec,
+    promptLines,
+    resolved,
+    facilitatorAgentName,
+    allTasks,
+  );
+}
+
 // Shared helper — constructs the Run for any facilitator invocation.
 function buildFacilitatorRun(
   project: Project,

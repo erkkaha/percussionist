@@ -2,33 +2,16 @@
 
 import type { Project, Task } from "@percussionist/api";
 import type { ResolvedConfig } from "./types.js";
+import { resolveFlow } from "./flow.js";
 
 export function resolveConfig(project: Project, task: Task): ResolvedConfig {
-  // Retry policy: task overrides project defaults.
-  const projectRetry = project.spec.retryPolicy ?? {
-    enabled: false,
-    maxAttempts: 3,
-    backoffSeconds: 30,
-    backoffMultiplier: 2,
-    maxBackoffSeconds: 300,
-    poisonPillThresholdSeconds: 30,
-  };
-  const taskRetry = task.spec.retryPolicy ?? {};
-  const retryPolicy = {
-    enabled: taskRetry.enabled ?? projectRetry.enabled,
-    maxAttempts: taskRetry.maxAttempts ?? projectRetry.maxAttempts,
-    backoffSeconds: taskRetry.backoffSeconds ?? projectRetry.backoffSeconds,
-    backoffMultiplier: projectRetry.backoffMultiplier,
-    maxBackoffSeconds: projectRetry.maxBackoffSeconds,
-    poisonPillThresholdSeconds: projectRetry.poisonPillThresholdSeconds,
-  };
+  const flow = resolveFlow(project);
 
-  // Review policy: project-level only.
-  const reviewPolicy = project.spec.reviewPolicy ?? {
-    aiReviewerEnabled: false,
-    aiReviewerAgent: "reviewer",
-    maxAutoReworks: 2,
-  };
+  // Retry policy: flow resolver already merged task overrides and legacy policies.
+  const retryPolicy = flow.retry;
+
+  // Review policy: flow resolver already merged legacy reviewPolicy.
+  const reviewPolicy = flow.review;
 
   return {
     retryPolicy,
@@ -36,5 +19,6 @@ export function resolveConfig(project: Project, task: Task): ResolvedConfig {
     model: project.spec.model,
     image: project.spec.image ?? "percussionist/runner:dev",
     timeoutSeconds: project.spec.timeoutSeconds ?? 3600,
+    flow,
   };
 }

@@ -5,7 +5,7 @@
 | Actor | Role |
 |---|---|
 | **Human** | Creates PLAN tasks; approves, requests changes, or abandons in review |
-| **Manager** | Single-threaded reconcile loop; the only thing that drives phase transitions |
+| **Manager** | Single-threaded reconcile loop; the primary driver of phase transitions. MCP tools (`set_task_state`, `force_retry`, `create_run`) can also transition tasks as administrative actions, with validity checks against the transition table. |
 | **Operator** | Watches Run CRs; provisions Pod + Service + PVC + ConfigMap; mirrors pod phase into Run status |
 | **Dispatcher** | Sidecar inside every run pod; starts the agent session, exposes MCP tools to the agent, signals success/failure via exit code |
 | **Agent (opencode)** | The LLM worker; calls `complete_run`/`complete_plan`/`fail_run` on the dispatcher |
@@ -44,7 +44,12 @@ The manager checks three gates on every reconcile cycle:
 All three pass → `scheduled`.
 
 ### `scheduled`
-Manager creates the worker Run CR. The run name is a deterministic SHA-256 hash of `project:task:retryCount` — same inputs always produce the same name, so a double-reconcile never creates a duplicate. If feature branching is on, the run's `source.git.ref` is overridden with the task's feature branch. Patches `worker.runName`, `worker.status = "Running"`, `worker.startedAt`. Transitions to `initializing`.
+Manager's pure decision engine emits a `ScheduleRun` effect. The effect executor
+resolves it by building a Run CR via `buildWorkerRun()` with a deterministic
+run name (via `workerRunName(project, task, retryCount)`) and creating it in
+Kubernetes. If feature branching is on, the run's `source.git.ref` is overridden
+with the task's feature branch. Patches `worker.runName`, `worker.status = "Running"`,
+`worker.startedAt`. Transitions to `initializing`.
 
 ### `initializing`
 Manager waits for the operator. In parallel the operator:
@@ -60,40 +65,54 @@ Manager polls `Run.status.phase`:
 - `Succeeded` → `succeeded`
 - `Failed` → `failed`
 - `WaitingForInput` → `waiting-for-input` (PLAN only; BUILD tasks go straight to `failed`)
-- Running but no events for 5+ minutes → `failed` (staleness guard)
+- Running but no events beyond `flow.timeouts.runningStaleSeconds` (default 1800s/30min) → `failed` (staleness guard)
 
 The agent is working during this phase. It calls `complete_run` or `complete_plan` on the dispatcher when done. The dispatcher validates the git workflow (for BUILD: checks that a commit, push, and `gh pr create` happened; for PLAN: just commit + push), then exits 0. The pod reaches Succeeded, the operator mirrors it, and the manager picks it up on the next reconcile.
 
 ### `waiting-for-input` *(PLAN only)*
-Manager polls for an answer annotation (`percussionist.dev/answer-{taskName}`) on the Project CR. When a human posts an answer via the web UI, the dispatcher injects it into the live session. Once the run resumes to `Running` the task goes back to `running`. The annotation is cleared.
+Manager polls for an answer annotation (`percussionist.dev/action-answer`) on the Task CR (with legacy fallback to Project CR annotations). When a human posts an answer via the web UI, the dispatcher injects it into the live session. Once the run resumes to `Running` the task goes back to `running`. The annotation is cleared.
 
 ### `succeeded`
-Manager decides whether to run AI review:
-- AI review disabled (default) → straight to `awaiting-human`
-- AI review enabled → creates a success-review facilitator Run → `reviewing`
+Manager's decision engine checks flow configuration:
+- `flow.build.onSuccess === "done"` (simple preset) → straight to `done`
+- AI review disabled (`flow.review.aiReviewerEnabled === false` default) → `awaiting-human`
+- AI review enabled → emits `ScheduleReviewRun` effect; executor builds the review Run
+  via `buildReviewRun()` (no session data — the review agent reads context itself via
+  MCP `read_session_live`). Transitions to `reviewing`.
 
 ### `reviewing`
-Manager waits for the reviewer run. The reviewer agent reads the session snapshot and outputs JSON with a `recommendedAction`:
-- `approve` → `awaiting-human` (with `worker.reviewApproved = true`)
-- `request_changes` and under `maxAutoReworks` ceiling → auto-rework to `rework-requested` (fully automated loop)
-- `request_changes` at ceiling, or any other action → `awaiting-human`
-
-If the review run fails or goes stale (5 min no events) → `awaiting-human` as fallback.
+Manager waits for the reviewer run. The reviewer agent reads the preceding worker
+session via MCP `read_session_live` and writes a structured verdict annotation
+(`percussionist.dev/review-verdict`) on the review Run CR before exiting.
+The decision engine reads the annotation:
+- `{"action":"approve"}` → `awaiting-human` (with `worker.reviewApproved = true`)
+- `{"action":"request_changes","feedback":"..."}` and under `flow.review.maxAutoReworks`
+  ceiling → auto-rework to `rework-requested`
+- `request_changes` at ceiling → `awaiting-human`
+- No verdict annotation → `awaiting-human` (fallback)
+- Stale beyond `flow.timeouts.reviewStaleSeconds` (default 600s/10min) → `awaiting-human`
 
 ### `awaiting-human`
-The task sits in the Review column waiting for a human annotation on the Project CR, set by the web UI:
+The task waits for a human action written as Task annotations by the web UI.
+The decision engine reads Task annotations first, falling back to legacy
+Project annotations for migration compatibility:
 
-| Annotation | BUILD path | PLAN path |
-|---|---|---|
-| `approved-{taskName}` | → `awaiting-merge` (creates merge run) | → `generating-builds` |
-| `request-changes-{taskName}` | → `rework-requested` (stores feedback) | same |
-| `abandon-{taskName}` | → `done` | same |
+| Action | Task annotation | BUILD path | PLAN path |
+|---|---|---|---|
+| **Approve** | `percussionist.dev/action-approved` | → `awaiting-merge` (creates merge run) | → `generating-builds` |
+| **Request changes** | `percussionist.dev/action-request-changes` + `percussionist.dev/action-rework-feedback` | → `rework-requested` (stores feedback) | same |
+| **Abandon** | `percussionist.dev/action-abandon` | → `done` | same |
 
 ### `awaiting-merge` *(BUILD only)*
 Manager creates a merge facilitator Run whose agent merges the BUILD's feature branch (`feature/{plan}--{build}`) into the parent PLAN branch (`feature/{plan}`). When the merge run succeeds → `done` and `worker.mergedAt` is recorded. This timestamp is what unlocks successor BUILD tasks in `canSchedule`. If the merge run fails or goes stale → `failed`.
 
 ### `generating-builds` *(PLAN only)*
-Manager spawns a buildgen facilitator Run. The buildgen agent reads the plan session context and outputs a JSON array of `{title, description, agent, priority, predecessorIndex}` objects — nothing else, no code, no file writes. The manager parses this, validates it, and creates the BUILD Task CRs (each with `spec.parentTaskRef` + `spec.predecessorRef` for serial chaining). PLAN task transitions to `done`.
+Manager spawns a buildgen facilitator Run. The buildgen agent reads
+`.percussionist/plans/{plan-task-id}.md` from the git worktree and creates BUILD
+Task CRs directly via MCP tools (each with `spec.parentTaskRef` +
+`spec.predecessorRef` for serial chaining). The manager's decision engine watches
+for child Tasks with `parentTaskRef === taskName` to appear. When all child Tasks
+exist → PLAN task transitions to `done`.
 
 ### `rework-requested`
 Waits for a scheduling slot (same `canSchedule` check as `pending`). When available → `scheduled`. The next run gets the stored `worker.reviewFeedback` injected into its prompt as rework context.
@@ -132,9 +151,9 @@ A task has up to three live Runs at once:
 
 | Run type | Created in phase | Name scheme |
 |---|---|---|
-| Worker | `scheduled` | SHA-256 of `project:task:retryCount` |
-| Review | `succeeded` | `{project}-review-{task}-{retryCount+aiReworkCount}` |
-| Merge | `awaiting-human` (BUILD approval) | `{project}-merge-{task}-{retryCount}` |
-| Buildgen | `generating-builds` | `{project}-buildgen-{task}-0` |
+| Worker | `scheduled` | `workerRunName(project, task, retryCount)` — deterministic SHA-256 hash |
+| Review | `succeeded` | `{project}-review-{task}-{retryCount+aiReworkCount}` (`auxiliaryRunName`) |
+| Merge | `awaiting-human` (BUILD approval) | `{project}-merge-{task}-{retryCount}` (`auxiliaryRunName`) |
+| Buildgen | `generating-builds` | `{project}-buildgen-{task}-0` (`auxiliaryRunName`) |
 
 Old Runs are never deleted by state transitions — they persist as history until the TTL controller removes them after `runTTLDays` days (default 7).

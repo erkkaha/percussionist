@@ -213,7 +213,7 @@ Do not add `ALTER TABLE` try/catch blocks to `db.ts`. Do not duplicate DDL as ra
 
 ## Conventions
 - No linter/formatting tool configured -- do not add one without asking
-- No test framework -- do not add tests without asking
+- Testing: Vitest in `packages/manager-controller`; run `pnpm test` locally
 - K8s client: `@kubernetes/client-node` (lazy singleton, typed CRUD helpers)
 - Console-based logging with timestamps (no structured logger)
 - CamelCase for TS, kebab-case for YAML
@@ -273,22 +273,32 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 **`create_run`** — Direct run creation without waiting for reconcile cycle.
 - Requires: `project`, `task` (Task CR name)
 - Optional: `agent`, `model`, `retryCount`, `reworkFeedback`, `namespace`
-- Errors if the task is not in the "ready" column (use `force_retry` first)
-- Moves task to "in-progress" and patches `Task.status.worker` with resolved `gitBranch`, `parentBranch`, and `mergeIntoBranch` when feature branching is enabled
+- Validates the transition via `isValidTransition(currentPhase, "running")` — errors
+  if the current phase does not allow moving to `running` (use `force_retry` first)
+- Moves task to `running` and patches `Task.status.worker` with resolved `gitBranch`,
+  `parentBranch`, and `mergeIntoBranch` when feature branching is enabled
 
 **`force_retry`** — One-shot cleanup and restart for stuck tasks.
 - Requires: `project`, `task` (Task CR name)
 - Optional: `createRun` (default `true`), `agent`, `model`, `namespace`
 - Does NOT delete old runs — they are preserved as historical records until the TTL controller cleans them up after `runTTLDays` days
-- If `createRun: true`: starts the next retry count (`existing retryCount + 1`) and resets task to "in-progress" with feature-branch metadata via `patchTaskStatus`
-- If `createRun: false`: resets task to "ready", clears `runName`, and marks the worker failed so reconciliation can pick it up later
+- Validates via `isValidTransition(currentPhase, "running")`; if the transition is
+  non-standard (e.g. `failed` → `running`), it logs an admin override warning but
+  proceeds (this is an administrative tool)
+- If `createRun: true`: starts the next retry count (`existing retryCount + 1`) and
+  resets task to `running` with feature-branch metadata via `patchTaskStatus`
+- If `createRun: false`: resets task to `pending`, clears `runName`, and marks the
+  worker failed so reconciliation can pick it up later
 
-**`set_task_state`** — Atomic task column transition.
-- Requires: `project`, `task` (Task CR name), `targetColumn`
-- Optional: `cancelRunning` (default `false`), `preserveRuns` (default `true`), `namespace`
-- Valid columns: `ready`, `in-progress`, `review`, `rework`, `done`, `blocked`
+**`set_task_state`** — Atomic task phase transition.
+- Requires: `project`, `task` (Task CR name), `targetPhase`
+- Optional: `cancelRunning` (default `false`), `preserveRuns` (default `true`), `admin` (default `false`), `namespace`
+- Valid phases: any value in the transition table (use `admin: true` to bypass validation)
+- By default, validates via `isValidTransition(currentPhase, targetPhase)` and rejects
+  illegal transitions. Set `admin: true` to override.
 - Deletes matching runs for the specified project/task and prunes remote-git run worktrees; if `cancelRunning: true` also deletes active runs
-- Patches `Task.status.column`; for `in-progress` it writes feature-branch metadata, for `done` it marks the worker `Succeeded`, and for `ready`/`rework` it clears `runName` and marks existing worker state `Failed`
+- Patches `Task.status.phase`; phase-specific worker updates handle `running`, `done`,
+  `pending`, `rework-requested`, and `failed` transitions
 
 **`read_session_live`** — Real-time session message streaming.
 - Requires: `runName`
@@ -450,7 +460,9 @@ When processing OpenCode session messages, always use the correct nested structu
 - `msg.info.role` (not `msg.role`)
 - `msg.parts[0].text` (not `msg.textContent`)
 
-Incorrect access returns `undefined` and breaks message extraction in reconciler handlers.
+Incorrect access returns `undefined` and breaks message extraction. The dispatcher
+and session-read MCP tools handle this correctly; agents calling `read_session_live`
+receive properly structured messages regardless of the format.
 
 #### SSE Reconnection Storms
 If you see thousands of `[event] server.connected` logs in the dispatcher, the SSE
