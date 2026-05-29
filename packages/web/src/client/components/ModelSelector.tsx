@@ -150,7 +150,7 @@ export default function ModelSelector({
       {open && hasProviders && (
         <div
           role="listbox"
-          className="absolute z-50 mt-1 w-full min-w-[280px] rounded-md border border-border bg-[#110e0b] shadow-xl overflow-hidden"
+          className="absolute z-50 mt-1 w-full min-w-[280px] rounded-md border border-border bg-surface-container-low shadow-xl overflow-hidden"
         >
           {/* Search filter */}
           <div className="p-2 border-b border-border">
@@ -174,7 +174,7 @@ export default function ModelSelector({
                 return (
                   <div key={provider.id}>
                     {/* Provider header */}
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-[#0c0906] sticky top-0">
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-dim sticky top-0">
                       <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">
                         {provider.name ?? provider.id}
                       </span>
@@ -196,7 +196,7 @@ export default function ModelSelector({
                           aria-selected={isSelected}
                           onClick={() => handleSelect(modelId)}
                           className={cn(
-                            "w-full text-left px-3 py-2 flex items-center justify-between gap-3 hover:bg-[#1a1410] transition-colors",
+                            "w-full text-left px-3 py-2 flex items-center justify-between gap-3 hover:bg-surface-container-low transition-colors",
                             isSelected && "bg-accent/10 text-accent",
                             !isConnected && "opacity-50",
                           )}

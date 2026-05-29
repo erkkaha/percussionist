@@ -265,9 +265,9 @@ function ToolUsage({ toolCounts }: { toolCounts: Analytics["toolCounts"] }) {
                 <td className="px-4 py-2.5 tabular-nums text-text-muted">{count}</td>
                 <td className="px-4 py-2.5">
                   <div className="flex items-center gap-2">
-                    <div className="flex-1 bg-surface-overlay rounded-full h-1.5 overflow-hidden">
+                    <div className="flex-1 bg-surface-overlay h-1.5 overflow-hidden">
                       <div
-                        className="h-full bg-[#d97706] rounded-full"
+                        className="h-full bg-primary-container"
                         style={{ width: `${(count / max) * 100}%` }}
                       />
                     </div>
@@ -322,12 +322,12 @@ function ModelBreakdown({ modelRows }: { modelRows: Analytics["modelRows"] }) {
                   </td>
                   <td className="px-4 py-2.5">
                     <div
-                      className="flex h-2 rounded-full overflow-hidden bg-surface-overlay"
+                      className="flex h-2 overflow-hidden bg-surface-overlay"
                       style={{ width: `${barWidth}%`, minWidth: "20px" }}
                       title={`In: ${fmtTokens(tokensIn)} (${inPct.toFixed(0)}%) / Out: ${fmtTokens(tokensOut)} (${outPct.toFixed(0)}%)`}
                     >
-                      <div className="bg-[#d97706]" style={{ width: `${inPct}%` }} />
-                      <div className="bg-[#5c4a3a]" style={{ width: `${outPct}%` }} />
+                      <div className="bg-primary-container" style={{ width: `${inPct}%` }} />
+                      <div className="bg-surface-container-high" style={{ width: `${outPct}%` }} />
                     </div>
                   </td>
                 </tr>
@@ -336,8 +336,8 @@ function ModelBreakdown({ modelRows }: { modelRows: Analytics["modelRows"] }) {
           </tbody>
         </table>
         <p className="px-4 py-2 text-xs text-text-dim border-t border-border-muted">
-          Bar: <span className="text-text-dim">■</span> tokens in &nbsp;
-          <span className="text-text-muted">■</span> tokens out
+          Bar: <span className="text-primary-container">■</span> tokens in &nbsp;
+          <span className="text-surface-container-high">■</span> tokens out
         </p>
       </div>
     </section>
@@ -373,14 +373,14 @@ function TokensChart({ sessions }: { sessions: StatSession[] }) {
               <div className="w-32 shrink-0 truncate text-text-muted font-mono" title={s.name}>
                 {s.name}
               </div>
-              <div className="flex-1 flex h-3 rounded-sm overflow-hidden bg-surface-overlay gap-px">
+              <div className="flex-1 flex h-3 overflow-hidden bg-surface-overlay gap-px">
                 <div
-                  className="bg-[#d97706] rounded-l-sm"
+                  className="bg-primary-container"
                   style={{ width: `${inPct}%` }}
                   title={`In: ${fmtTokens(s.tokensIn)}`}
                 />
                 <div
-                  className="bg-[#5c4a3a] rounded-r-sm"
+                  className="bg-surface-container-high"
                   style={{ width: `${outPct}%` }}
                   title={`Out: ${fmtTokens(s.tokensOut)}`}
                 />

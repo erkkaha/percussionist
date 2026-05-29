@@ -108,7 +108,7 @@ export default function RunList() {
         </div>
         <Link
           to="/runs/new"
-          className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] px-3 py-1.5 text-sm font-medium text-text transition-colors"
+          className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
         >
           + New Run
         </Link>

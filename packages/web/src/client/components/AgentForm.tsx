@@ -99,7 +99,7 @@ export default function AgentForm() {
           <button
             onClick={handleSave}
             disabled={!name.trim() || submitting}
-            className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] px-4 py-1.5 text-sm font-medium text-text transition-colors disabled:opacity-40"
+            className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-4 py-1.5 text-sm font-medium text-text transition-colors disabled:opacity-40"
           >
             {submitting ? "Saving\u2026" : isEdit ? "Save Changes" : "Create Agent"}
           </button>

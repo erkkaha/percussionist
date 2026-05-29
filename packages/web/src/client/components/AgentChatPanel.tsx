@@ -354,7 +354,7 @@ function sanitizeForSpeech(text: string): string {
                 <button
                   type="submit"
                   disabled={!input.trim()}
-                  className="rounded-md bg-[#fbbf24] text-[#451a03] px-3 py-2 text-sm font-medium hover:bg-[#f59e0b] disabled:cursor-not-allowed transition-colors"
+                  className="rounded-md bg-phase-pending text-on-primary px-3 py-2 text-sm font-medium hover:bg-phase-pending/80 disabled:cursor-not-allowed transition-colors"
                 >
                   <Send className="w-4 h-4" />
                 </button>

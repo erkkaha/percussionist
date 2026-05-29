@@ -899,7 +899,7 @@ export default function CreateProjectForm({
           <button
             type="submit"
             disabled={(!isEdit && !name.trim()) || mutation.isPending || gitAuthorIncomplete || !!configJsonError || hasSidecarErrors || hasInjectFileErrors}
-            className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
+            className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
           >
             {mutation.isPending ? (isEdit ? "Saving…" : "Creating…") : (isEdit ? "Save Changes" : "Create Project")}
           </button>

@@ -48,13 +48,13 @@ export function TaskRow({ task, col, isSelected, onClick }: TaskRowProps) {
           <p className="text-sm font-medium leading-snug truncate pr-1">{task.spec.title}</p>
           <div className="flex items-center gap-2 flex-wrap">
             {/* Column badge */}
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-sm font-medium ${colColor}`}>
+            <span className={`text-label-md font-mono uppercase px-1.5 py-0.5 rounded-sm ${colColor}`}>
               {col}
             </span>
 
             {/* Priority */}
             {task.spec.priority && task.spec.priority !== "medium" && (
-              <span className={`text-[10px] flex items-center gap-0.5 font-medium ${
+              <span className={`text-label-md font-mono uppercase flex items-center gap-0.5 ${
                 task.spec.priority === "high" ? "text-phase-failed" : "text-text-dim"
               }`}>
                 <Flag className="h-2.5 w-2.5" />
@@ -64,7 +64,7 @@ export function TaskRow({ task, col, isSelected, onClick }: TaskRowProps) {
 
             {/* Agent */}
             {task.spec.agent && (
-              <span className="text-[10px] text-text-dim flex items-center gap-0.5">
+              <span className="text-label-md font-mono uppercase text-text-dim flex items-center gap-0.5">
                 <User className="h-2.5 w-2.5" />
                 {task.spec.agent}
               </span>
@@ -72,7 +72,7 @@ export function TaskRow({ task, col, isSelected, onClick }: TaskRowProps) {
 
             {/* Active run indicator */}
             {worker?.runName && col === "in-progress" && (
-              <span className="text-[10px] text-phase-running flex items-center gap-0.5">
+              <span className="text-label-md font-mono uppercase text-phase-running flex items-center gap-0.5">
                 <ExternalLink className="h-2.5 w-2.5" />
                 running
               </span>
@@ -80,7 +80,7 @@ export function TaskRow({ task, col, isSelected, onClick }: TaskRowProps) {
 
             {/* Escalated */}
             {worker?.status === "Escalated" && (
-              <span className="text-[10px] text-phase-failed">escalated</span>
+              <span className="text-label-md font-mono uppercase text-phase-failed">escalated</span>
             )}
           </div>
         </div>

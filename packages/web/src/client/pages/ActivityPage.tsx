@@ -146,14 +146,14 @@ function EventRow({ event }: { event: TaskEvent }) {
   return (
     <div className="flex items-start gap-3 py-2.5 border-b border-border/50 last:border-0 hover:bg-surface-raised/40 px-6 transition-colors">
       {/* Time */}
-      <span className="font-mono text-[11px] text-text-muted w-[72px] shrink-0 pt-0.5">
+      <span className="font-mono text-xs text-text-muted w-[72px] shrink-0 pt-0.5">
         {fmtTime(event.createdAt)}
       </span>
 
       {/* Project badge */}
       <Link
         to={boardUrl}
-        className="text-[11px] font-medium px-1.5 py-0.5 rounded border bg-surface-raised border-border text-text-muted hover:text-text shrink-0 truncate max-w-[100px]"
+        className="text-label-md font-mono uppercase px-1.5 py-0.5 rounded border bg-surface-raised border-border text-text-muted hover:text-text shrink-0 truncate max-w-[100px]"
         title={event.project}
       >
         {event.project}
@@ -162,20 +162,20 @@ function EventRow({ event }: { event: TaskEvent }) {
       {/* Task name */}
       <Link
         to={boardUrl}
-        className="font-mono text-[11px] text-text-muted hover:text-text shrink-0 truncate max-w-[140px]"
+        className="font-mono text-xs text-text-muted hover:text-text shrink-0 truncate max-w-[140px]"
         title={event.taskName}
       >
         {event.taskName.split("-").slice(-3).join("-")}
       </Link>
 
       {/* Event badge */}
-      <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border shrink-0 ${cfg.color}`}>
+      <span className={`text-label-md font-mono uppercase px-1.5 py-0.5 rounded border shrink-0 ${cfg.color}`}>
         {cfg.label}
       </span>
 
       {/* Description */}
       {description && (
-        <span className="text-[11px] text-text-muted truncate flex-1" title={description}>
+        <span className="text-xs text-text-muted truncate flex-1" title={description}>
           {description}
         </span>
       )}
@@ -253,15 +253,15 @@ export default function ActivityPage() {
         <div className="flex items-center gap-2.5">
           <Activity className="w-4 h-4 text-text-muted" />
           <h1 className="text-sm font-semibold text-text">Activity</h1>
-          {events.length > 0 && (
-            <span className="text-[11px] text-text-muted">
+            {events.length > 0 && (
+            <span className="text-label-md font-mono uppercase text-text-muted">
               {events.length} event{events.length !== 1 ? "s" : ""}
             </span>
           )}
         </div>
         <button
           onClick={() => { setLoading(true); void fetchActivity(true); }}
-          className="flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text transition-colors"
+          className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors"
         >
           <RefreshCw className="w-3 h-3" />
           Refresh
@@ -286,7 +286,7 @@ export default function ActivityPage() {
           <div className="flex flex-col items-center justify-center h-48 gap-2 text-text-muted">
             <Activity className="w-8 h-8 opacity-30" />
             <p className="text-sm">No activity yet</p>
-            <p className="text-[11px]">Events appear here as the manager orchestrates tasks.</p>
+            <p className="text-xs text-text-dim">Events appear here as the manager orchestrates tasks.</p>
           </div>
         )}
 
@@ -294,7 +294,7 @@ export default function ActivityPage() {
           <div key={label}>
             {/* Date separator */}
             <div className="sticky top-0 z-10 px-6 py-1.5 bg-surface border-b border-border/50 flex items-center gap-2">
-              <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">{label}</span>
+              <span className="text-label-md font-mono uppercase text-text-muted">{label}</span>
             </div>
             {grpEvents.map((e) => (
               <EventRow key={e.id} event={e} />
@@ -306,7 +306,7 @@ export default function ActivityPage() {
           <div className="flex justify-center py-4">
             <button
               onClick={loadMore}
-              className="text-[11px] text-text-muted hover:text-text border border-border rounded px-3 py-1.5 transition-colors"
+              className="text-xs text-text-muted hover:text-text border border-border rounded px-3 py-1.5 transition-colors"
             >
               Load more
             </button>

@@ -1,4 +1,4 @@
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import {
   BarChart3,
   Terminal,
@@ -17,13 +17,9 @@ import {
   SidebarContent,
   SidebarHeader,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupAction,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarRail,
 } from "./ui/sidebar";
 
 const topNavItems = [
@@ -52,7 +48,7 @@ export function DrumLogo({ playing, size = 24 }: { playing: boolean; size?: numb
         <rect width="64" height="64" rx="12" fill="#fbbf24"/>
         <ellipse cx="32" cy="38" rx="20" ry="14" fill="#92400e" stroke="#78350f" strokeWidth="2"/>
         <ellipse cx="32" cy="38" rx="16" ry="10" fill="#b45309"/>
-        <ellipse cx="32" cy="28" rx="20" ry="8" fill="#d97706" stroke="#b45309" strokeWidth="1.5"/>
+        <ellipse cx="32" cy="28" rx="20" ry="8" fill="#e8a852" stroke="#b45309" strokeWidth="1.5"/>
         <ellipse cx="32" cy="28" rx="16" ry="5" fill="#fbbf24"/>
         <g className="drum-left">
           <line x1="14" y1="48" x2="28" y2="20" stroke="#451a03" strokeWidth="3" strokeLinecap="round"/>
@@ -72,7 +68,6 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
 
 export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarProps) {
   const location = useLocation();
-  const navigate = useNavigate();
   const { connected: projectsSseConnected, eventTick } = useProjectsEvents();
   void eventTick;
   const { data: projects } = useProjects(
@@ -88,7 +83,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
 
   return (
     <Sidebar collapsible="icon" {...props}>
-      <SidebarHeader className="border-b border-sidebar-border p-0">
+      <SidebarHeader className="p-0">
         <div className="flex h-14 items-center gap-2.5 px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
           <DrumLogo playing={!!playing} />
           <div className="group-data-[collapsible=icon]:hidden">
@@ -98,38 +93,23 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
         </div>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
-          <SidebarMenu>
-            {topNavItems.map((item) => (
-              <SidebarMenuItem key={item.title}>
-                <SidebarMenuButton
-                  asChild
-                  isActive={location.pathname === item.url}
-                  tooltip={item.title}
-                >
-                  <NavLink to={item.url} end>
-                    <item.icon />
-                    <span>{item.title}</span>
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Projects</SidebarGroupLabel>
-          <SidebarGroupAction
-            title="New project"
-            onClick={() => navigate("/projects/new")}
-          >
-            <Plus />
-            <span className="sr-only">New project</span>
-          </SidebarGroupAction>
-          <SidebarMenu>
-            {projects && projects.length > 0 ? (
-              projects.map((p) => {
+        <SidebarMenu className="[[data-collapsible=icon]_&]:items-center">
+          {topNavItems.map((item) => (
+            <SidebarMenuItem key={item.title}>
+              <SidebarMenuButton
+                asChild
+                isActive={location.pathname === item.url}
+                tooltip={item.title}
+              >
+                <NavLink to={item.url} end>
+                  <item.icon />
+                  <span>{item.title}</span>
+                </NavLink>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+          {projects && projects.length > 0
+            ? projects.map((p) => {
                 const name = p.metadata.name;
                 const url = `/projects/${encodeURIComponent(name)}/board`;
                 return (
@@ -147,7 +127,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                   </SidebarMenuItem>
                 );
               })
-            ) : (
+            : (
               <SidebarMenuItem>
                 <SidebarMenuButton
                   asChild
@@ -156,39 +136,31 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                 >
                   <NavLink to="/projects/new">
                     <Plus />
-                    <span className="text-sidebar-foreground/60">New project</span>
+                    <span>New project</span>
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )}
-          </SidebarMenu>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarMenu>
-            {bottomNavItems.map((item) => (
-              <SidebarMenuItem key={item.title}>
-                <SidebarMenuButton
-                  asChild
-                  isActive={location.pathname === item.url}
-                  tooltip={item.title}
-                >
+          {bottomNavItems.map((item) => (
+            <SidebarMenuItem key={item.title}>
+              <SidebarMenuButton
+                asChild
+                isActive={location.pathname === item.url}
+                tooltip={item.title}
+              >
                   <NavLink to={item.url} end>
-                    <span className="relative inline-flex shrink-0">
-                      <item.icon />
-                      {item.title === "Settings" && updateStatus?.updateAvailable && (
-                        <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400" />
-                      )}
-                    </span>
+                    <item.icon />
+                    {item.title === "Settings" && updateStatus?.updateAvailable && (
+                      <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-400" />
+                    )}
                     <span>{item.title}</span>
                   </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-        </SidebarGroup>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
       </SidebarContent>
-      <SidebarFooter className="border-t border-sidebar-border">
+      <SidebarFooter>
         <div className="flex items-center gap-1.5 px-1 py-1 group-data-[collapsible=icon]:justify-center">
           <span
             className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
@@ -204,7 +176,6 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
           </span>
         </div>
       </SidebarFooter>
-      <SidebarRail />
     </Sidebar>
   );
 }

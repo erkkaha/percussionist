@@ -72,17 +72,17 @@ export default function LogViewer({
       fontSize: 12,
       fontFamily: '"JetBrains Mono", "Fira Mono", "Cascadia Code", monospace',
       theme: {
-        background: "#0c0906",
-        foreground: "#faf5f0",
-        cursor: "#d97706",
-        cursorAccent: "#0c0906",
-        selectionBackground: "#5c4a3a",
-        black: "#0c0906",
-        brightBlack: "#7a6a5a",
-        red: "#fca5a5",
-        brightRed: "#fca5a5",
-        green: "#86efac",
-        brightGreen: "#86efac",
+        background: "#111317",
+        foreground: "#e2e2e8",
+        cursor: "#e8a852",
+        cursorAccent: "#111317",
+        selectionBackground: "#514537",
+        black: "#111317",
+        brightBlack: "#9e8e7e",
+        red: "#ffb4ab",
+        brightRed: "#ffb4ab",
+        green: "#58ea8a",
+        brightGreen: "#58ea8a",
         yellow: "#fbbf24",
         brightYellow: "#fbbf24",
         blue: "#93c5fd",
@@ -91,7 +91,7 @@ export default function LogViewer({
         brightMagenta: "#e879f9",
         cyan: "#67e8f9",
         brightCyan: "#67e8f9",
-        white: "#faf5f0",
+        white: "#e2e2e8",
         brightWhite: "#ffffff",
       },
       disableStdin: true,
@@ -261,7 +261,7 @@ export default function LogViewer({
       {/* Log output — always render the terminal; error/loading written into it */}
       <div
         className="rounded-lg border border-border overflow-hidden"
-        style={{ height: "600px", background: "#0c0906", padding: "12px", minWidth: 0 }}
+        style={{ height: "600px", background: "#111317", padding: "12px", minWidth: 0 }}
       >
         <div ref={termCallbackRef} style={{ height: "100%", overflow: "hidden" }} />
       </div>

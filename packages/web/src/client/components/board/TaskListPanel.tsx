@@ -108,7 +108,7 @@ function AddTaskForm({ projectName, roster, defaultColumn = "backlog", onClose }
             addMutation.mutate({ type: taskType, title: taskTitle.trim(), description: taskDesc.trim() || undefined, agent: taskAgent, priority: taskPriority });
           }}
           disabled={addMutation.isPending}
-          className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] disabled:opacity-40 px-3 py-1.5 text-sm font-medium text-text transition-colors"
+          className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 px-3 py-1.5 text-sm font-medium text-text transition-colors"
         >
           {addMutation.isPending ? "Adding…" : "Add"}
         </button>
@@ -216,7 +216,7 @@ export function TaskListPanel({
                   onClick={() => toggleCollapsed(col)}
                   className="flex-1 flex items-center justify-between"
                 >
-                  <span className="text-xs font-semibold uppercase tracking-wider text-text-dim group-hover:text-text transition-colors">
+                  <span className="text-label-md font-mono uppercase text-text-dim group-hover:text-text transition-colors">
                     {col}
                   </span>
                   <div className="flex items-center gap-2">

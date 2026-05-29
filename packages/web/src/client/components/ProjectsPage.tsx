@@ -116,7 +116,7 @@ export default function ProjectsPage() {
         </div>
         <Link
           to="/projects/new"
-          className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] px-3 py-1.5 text-sm font-medium text-text transition-colors"
+          className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
         >
           + New Project
         </Link>
@@ -144,8 +144,8 @@ export default function ProjectsPage() {
           to save git URLs, secrets, and model defaults for reuse.
         </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-hidden settings-table-scroll">
-          <table className="w-full text-sm">
+        <div className="rounded-lg border border-border overflow-x-auto">
+          <table className="min-w-[720px] text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
                 <th className="px-4 py-2.5 font-medium">Name</th>

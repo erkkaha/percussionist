@@ -146,7 +146,7 @@ function OverviewContent({ task, col, projectName }: { task: Task; col: string; 
       {/* Description */}
       {task.spec.description && (
         <div>
-          <p className="text-xs font-semibold text-text-dim uppercase tracking-wider mb-1.5">Description</p>
+          <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">Description</p>
           <p className="text-sm whitespace-pre-wrap leading-relaxed text-text">{task.spec.description}</p>
         </div>
       )}
@@ -168,7 +168,7 @@ function OverviewContent({ task, col, projectName }: { task: Task; col: string; 
       {/* Agent review feedback */}
       {worker?.reviewFeedback && (
         <div>
-          <p className="text-xs font-semibold text-text-dim uppercase tracking-wider mb-1.5">Agent Review Feedback</p>
+          <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">Agent Review Feedback</p>
           <p className="text-sm whitespace-pre-wrap text-phase-failed/80 leading-relaxed">{worker.reviewFeedback}</p>
         </div>
       )}
@@ -176,7 +176,7 @@ function OverviewContent({ task, col, projectName }: { task: Task; col: string; 
       {/* Run links */}
       {runs.length > 0 && (
         <div>
-          <p className="text-xs font-semibold text-text-dim uppercase tracking-wider mb-1.5">Runs</p>
+          <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">Runs</p>
           <div className="space-y-1">
             {runs.map(({ label, name }) => (
               <Link
@@ -210,8 +210,8 @@ function OverviewContent({ task, col, projectName }: { task: Task; col: string; 
 function MetaRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <p className="text-[10px] text-text-dim uppercase tracking-wider">{label}</p>
-      <p className={`text-sm ${mono ? "font-mono text-xs" : ""} truncate`}>{value}</p>
+      <p className="text-label-md font-mono uppercase text-text-dim">{label}</p>
+      <p className={`text-sm ${mono ? "font-mono text-xs" : ""} truncate text-text`}>{value}</p>
     </div>
   );
 }
@@ -297,12 +297,12 @@ function TaskDetailPanelInner({
         {/* Meta badges */}
         <div className="flex items-center gap-2 flex-wrap">
           {worker?.status && (
-            <span className="text-xs text-text-dim bg-surface-overlay px-2 py-0.5 rounded font-mono">
+            <span className="text-label-md font-mono uppercase text-text-dim bg-surface-overlay px-2 py-0.5 rounded">
               {worker.status}
             </span>
           )}
           {task.spec.priority && task.spec.priority !== "medium" && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5 font-medium ${
+            <span className={`text-label-md font-mono uppercase px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
               task.spec.priority === "high" ? "text-phase-failed bg-phase-failed/10" : "text-text-dim bg-surface-overlay"
             }`}>
               <Flag className="h-2.5 w-2.5" />{task.spec.priority}
@@ -336,7 +336,7 @@ function TaskDetailPanelInner({
                 className={`flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                   alreadyApproved
                     ? "bg-phase-succeeded/20 text-phase-succeeded border border-phase-succeeded/30 cursor-default"
-                    : "bg-[#5c4a3a] hover:bg-[#6b5948] text-text disabled:opacity-40"
+                    : "bg-surface-container-high hover:bg-surface-container-highest text-text disabled:opacity-40"
                 }`}
               >
                 <Check className="h-3.5 w-3.5" />
@@ -415,7 +415,7 @@ function TaskDetailPanelInner({
                   }
                 }}
                 disabled={requestChangesMutation.isPending || !requestChangesComment.trim()}
-                className="rounded-md bg-[#5c4a3a] hover:bg-[#6b5948] disabled:opacity-40 px-3 py-1.5 text-xs font-medium text-text transition-colors"
+                className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 px-3 py-1.5 text-xs font-medium text-text transition-colors"
               >
                 {requestChangesMutation.isPending ? "Submitting…" : "Submit"}
               </button>

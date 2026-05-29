@@ -4,21 +4,85 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
+  /* ── Surfaces ── */
   --color-surface: var(--surface);
+  --color-surface-dim: var(--surface-dim);
+  --color-surface-bright: var(--surface-bright);
+  --color-surface-container-lowest: var(--surface-container-lowest);
+  --color-surface-container-low: var(--surface-container-low);
+  --color-surface-container: var(--surface-container);
+  --color-surface-container-high: var(--surface-container-high);
+  --color-surface-container-highest: var(--surface-container-highest);
+  --color-surface-variant: var(--surface-variant);
+  --color-on-surface: var(--on-surface);
+  --color-on-surface-variant: var(--on-surface-variant);
+  --color-background: var(--background);
+  --color-on-background: var(--on-background);
+
+  /* ── Old surface names (backward compat) ── */
   --color-surface-raised: var(--surface-raised);
   --color-surface-overlay: var(--surface-overlay);
+
+  /* ── Primary (Amber/Gold) ── */
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --color-primary-container: var(--primary-container);
+  --color-on-primary-container: var(--on-primary-container);
+  --color-inverse-primary: var(--inverse-primary);
+
+  /* ── Secondary (Slate/Zinc) ── */
+  --color-secondary: var(--secondary);
+  --color-on-secondary: var(--on-secondary);
+  --color-secondary-container: var(--secondary-container);
+  --color-on-secondary-container: var(--on-secondary-container);
+
+  /* ── Tertiary (Green) ── */
+  --color-tertiary: var(--tertiary);
+  --color-on-tertiary: var(--on-tertiary);
+  --color-tertiary-container: var(--tertiary-container);
+  --color-on-tertiary-container: var(--on-tertiary-container);
+
+  /* ── Error ── */
+  --color-error: var(--error);
+  --color-on-error: var(--on-error);
+  --color-error-container: var(--error-container);
+  --color-on-error-container: var(--on-error-container);
+
+  /* ── Fixed variants ── */
+  --color-primary-fixed: var(--primary-fixed);
+  --color-primary-fixed-dim: var(--primary-fixed-dim);
+  --color-on-primary-fixed: var(--on-primary-fixed);
+  --color-on-primary-fixed-variant: var(--on-primary-fixed-variant);
+  --color-secondary-fixed: var(--secondary-fixed);
+  --color-secondary-fixed-dim: var(--secondary-fixed-dim);
+  --color-on-secondary-fixed: var(--on-secondary-fixed);
+  --color-on-secondary-fixed-variant: var(--on-secondary-fixed-variant);
+  --color-tertiary-fixed: var(--tertiary-fixed);
+  --color-tertiary-fixed-dim: var(--tertiary-fixed-dim);
+  --color-on-tertiary-fixed: var(--on-tertiary-fixed);
+  --color-on-tertiary-fixed-variant: var(--on-tertiary-fixed-variant);
+
+  /* ── Outline / Border ── */
+  --color-outline: var(--outline);
+  --color-outline-variant: var(--outline-variant);
+
+  /* ── Old border/text names (backward compat) ── */
   --color-border: var(--border);
   --color-border-muted: var(--border-muted);
   --color-text: var(--text);
   --color-text-muted: var(--text-muted);
   --color-text-dim: var(--text-dim);
   --color-accent: var(--accent);
+
+  /* ── Phase status colors ── */
   --color-phase-pending: var(--phase-pending);
   --color-phase-initializing: var(--phase-initializing);
   --color-phase-running: var(--phase-running);
   --color-phase-succeeded: var(--phase-succeeded);
   --color-phase-failed: var(--phase-failed);
   --color-phase-cancelled: var(--phase-cancelled);
+
+  /* ── Sidebar ── */
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -27,38 +91,151 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  /* ── Typography ── */
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --text-headline-lg:
+    24px;
+  --text-headline-lg--line-height: 32px;
+  --text-headline-lg--letter-spacing: -0.02em;
+
+  --text-headline-md:
+    20px;
+  --text-headline-md--line-height: 28px;
+
+  --text-body-lg:
+    16px;
+  --text-body-lg--line-height: 24px;
+
+  --text-body-sm:
+    14px;
+  --text-body-sm--line-height: 20px;
+
+  --text-label-md:
+    12px;
+  --text-label-md--line-height: 16px;
+  --text-label-md--letter-spacing: 0.05em;
+
+  --text-code-block:
+    13px;
+  --text-code-block--line-height: 20px;
+
+  /* ── Rounded ── */
+  --radius-sm: 0.125rem;
+  --radius: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+
+  /* ── Spacing tokens (reference values, use Tailwind spacing directly) ── */
+  --spacing-margin-page: 24px;
+  --spacing-gutter-grid: 16px;
+  --spacing-padding-card: 16px;
+  --spacing-gap-sidebar: 12px;
+  --spacing-stack-sm: 8px;
+  --spacing-stack-md: 16px;
+  --spacing-stack-lg: 32px;
 }
 
 :root {
-  --surface: #0c0906;
-  --surface-raised: #1a1410;
-  --surface-overlay: #2a2018;
-  --border: #5c4a3a;
-  --border-muted: #2a2018;
-  --text: #faf5f0;
-  --text-muted: #b8a898;
-  --text-dim: #7a6a5a;
-  --accent: #d97706;
+  /* ── Surface palette ── */
+  --surface: #111317;
+  --surface-dim: #111317;
+  --surface-bright: #37393e;
+  --surface-container-lowest: #0c0e12;
+  --surface-container-low: #1a1c20;
+  --surface-container: #1e2024;
+  --surface-container-high: #282a2e;
+  --surface-container-highest: #333539;
+  --surface-variant: #333539;
+  --on-surface: #e2e2e8;
+  --on-surface-variant: #d5c4b2;
+  --inverse-surface: #e2e2e8;
+  --inverse-on-surface: #2f3035;
+  --background: #111317;
+  --on-background: #e2e2e8;
+
+  /* ── Old names (backward compat) ── */
+  --surface-raised: #1e2024;
+  --surface-overlay: #282a2e;
+
+  /* ── Primary (Amber/Gold) ── */
+  --primary: #ffc67d;
+  --on-primary: #462a00;
+  --primary-container: #e8a852;
+  --on-primary-container: #633e00;
+  --inverse-primary: #845400;
+  --surface-tint: #fcba62;
+
+  /* ── Secondary (Slate/Zinc) ── */
+  --secondary: #c8c5cb;
+  --on-secondary: #303034;
+  --secondary-container: #47464b;
+  --on-secondary-container: #b6b4b9;
+
+  /* ── Tertiary (Green) ── */
+  --tertiary: #58ea8a;
+  --on-tertiary: #003919;
+  --tertiary-container: #34cd71;
+  --on-tertiary-container: #005126;
+
+  /* ── Error ── */
+  --error: #ffb4ab;
+  --on-error: #690005;
+  --error-container: #93000a;
+  --on-error-container: #ffdad6;
+
+  /* ── Fixed variants ── */
+  --primary-fixed: #ffddb6;
+  --primary-fixed-dim: #fcba62;
+  --on-primary-fixed: #2a1800;
+  --on-primary-fixed-variant: #643f00;
+  --secondary-fixed: #e4e1e7;
+  --secondary-fixed-dim: #c8c5cb;
+  --on-secondary-fixed: #1b1b1f;
+  --on-secondary-fixed-variant: #47464b;
+  --tertiary-fixed: #6dfe9c;
+  --tertiary-fixed-dim: #4de082;
+  --on-tertiary-fixed: #00210c;
+  --on-tertiary-fixed-variant: #005227;
+
+  /* ── Outline / Border ── */
+  --outline: #9e8e7e;
+  --outline-variant: #514537;
+
+  /* ── Old border/text names (backward compat) ── */
+  --border: #514537;
+  --border-muted: #333539;
+  --text: #e2e2e8;
+  --text-muted: #d5c4b2;
+  --text-dim: #9e8e7e;
+  --accent: #e8a852;
+
+  /* ── Phase status colors ── */
   --phase-pending: #fbbf24;
   --phase-initializing: #fb923c;
-  --phase-running: #d97706;
-  --phase-succeeded: #86efac;
-  --phase-failed: #fca5a5;
-  --phase-cancelled: #7a6a5a;
-  --sidebar: #1a1410;
-  --sidebar-foreground: #faf5f0;
-  --sidebar-primary: #d97706;
-  --sidebar-primary-foreground: #fff;
-  --sidebar-accent: #2a2018;
-  --sidebar-accent-foreground: #faf5f0;
-  --sidebar-border: #5c4a3a;
-  --sidebar-ring: #d97706;
+  --phase-running: #e8a852;
+  --phase-succeeded: #58ea8a;
+  --phase-failed: #ffb4ab;
+  --phase-cancelled: #514537;
+
+  /* ── Sidebar ── */
+  --sidebar: #1a1c20;
+  --sidebar-foreground: #e2e2e8;
+  --sidebar-primary: #e8a852;
+  --sidebar-primary-foreground: #462a00;
+  --sidebar-accent: #282a2e;
+  --sidebar-accent-foreground: #e2e2e8;
+  --sidebar-border: #514537;
+  --sidebar-ring: #e8a852;
 }
 
 /* Global themed thin scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-border) var(--color-surface);
+  scrollbar-color: var(--outline-variant) var(--surface);
 }
 
 *::-webkit-scrollbar {
@@ -67,17 +244,17 @@
 }
 
 *::-webkit-scrollbar-track {
-  background: var(--color-surface);
+  background: var(--surface);
 }
 
 *::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: var(--outline-variant);
   border-radius: 9999px;
-  border: 2px solid var(--color-surface);
+  border: 2px solid var(--surface);
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-dim);
+  background: var(--outline);
 }
 
 /* ---------------------------------------------------------------------------
@@ -86,13 +263,11 @@
    --------------------------------------------------------------------------- */
 
 @media (max-width: 480px) {
-  /* Ensure all inputs and form controls are full width on very small screens */
   .settings-mobile-full-width input,
   .settings-mobile-full-width textarea {
     width: 100% !important;
   }
 
-  /* Stack tab labels vertically or allow wrapping */
   .settings-tabs-wrap {
     flex-wrap: wrap;
   }
@@ -105,7 +280,6 @@
     padding: 0.5rem 0.75rem;
   }
 
-  /* Reduce header spacing — stack title and save message vertically */
   .settings-header-mobile {
     flex-direction: column !important;
     align-items: flex-start !important;
@@ -118,7 +292,6 @@
 }
 
 @media (max-width: 768px) {
-  /* Make tables horizontally scrollable */
   .settings-table-scroll {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
@@ -135,4 +308,3 @@
   50% { transform: translateX(150%); }
   100% { transform: translateX(400%); }
 }
-

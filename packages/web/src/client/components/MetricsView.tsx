@@ -47,15 +47,15 @@ function NodeCard({ node }: { node: NodeMetricRow }) {
 }
 
 function MetricBar({ label, value, pct }: { label: string; value: string; pct: number }) {
-  const color = pct > 80 ? "bg-red-500" : pct > 50 ? "bg-amber-500" : "bg-[#d97706]";
+  const color = pct > 80 ? "bg-red-500" : pct > 50 ? "bg-amber-500" : "bg-primary-container";
   return (
     <div>
       <div className="flex items-center justify-between text-xs mb-1">
         <span className="text-text-muted">{label}</span>
         <span className="font-mono text-text">{value}</span>
       </div>
-      <div className="h-1.5 bg-surface-overlay rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+      <div className="h-1.5 bg-surface-overlay overflow-hidden">
+        <div className={`h-full transition-all ${color}`} style={{ width: `${pct}%` }} />
       </div>
     </div>
   );
