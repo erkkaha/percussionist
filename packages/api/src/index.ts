@@ -274,8 +274,10 @@ export const SidecarSpecSchema = z.object({
 export type SidecarSpec = z.infer<typeof SidecarSpecSchema>;
 
 // A reference to a ClusterAgent by name.
+// Optional `model` overrides the project-level default for this agent specifically.
 export const AgentRefSchema = z.object({
   name: z.string().min(1).max(63),
+  model: z.string().optional(),
 });
 
 export type AgentRef = z.infer<typeof AgentRefSchema>;

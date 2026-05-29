@@ -45,6 +45,17 @@ export async function buildWorkerRun(
     },
   });
 
+  // Per-agent model override: if the task's agent has a `model` field set in
+  // the project roster, use it instead of the project-level default.
+  // Resolution order (highest → lowest):
+  //   explicit run override (MCP tool) → per-agent model → project.spec.model
+  const agentOverride = (project.spec.agents ?? []).find(
+    (a) => a.name === task.spec.agent,
+  );
+  if (agentOverride?.model) {
+    resolved.model = agentOverride.model;
+  }
+
   const taskName = task.metadata.name;
   const promptLines = [
     `TASK: ${taskName} — ${task.spec.title}`,
@@ -181,6 +192,22 @@ export async function buildMergeRun(
       resources: clusterSettings?.spec?.runner?.resources,
     },
   });
+
+  // Per-agent model override for the merge agent.
+  const MERGING_AGENT = process.env.MERGING_AGENT;
+  const mergeAgent =
+    MERGING_AGENT && (project.spec.agents ?? []).some((a) => a.name === MERGING_AGENT)
+      ? MERGING_AGENT
+      : task.spec.agent;
+
+  // Resolve per-agent model for the effective merge agent.
+  const mergeAgentOverride = (project.spec.agents ?? []).find(
+    (a) => a.name === mergeAgent,
+  );
+  if (mergeAgentOverride?.model) {
+    resolved.model = mergeAgentOverride.model;
+  }
+
   const projectName = project.metadata.name;
   const taskName = task.metadata.name;
   
@@ -203,13 +230,6 @@ export async function buildMergeRun(
     sourceBranch = `feat/${taskName}`;
     targetBranch = "main";
   }
-
-  // Use a dedicated merge agent if configured, otherwise fall back to the task's agent.
-  const MERGING_AGENT = process.env.MERGING_AGENT;
-  const mergeAgent =
-    MERGING_AGENT && (project.spec.agents ?? []).some((a) => a.name === MERGING_AGENT)
-      ? MERGING_AGENT
-      : task.spec.agent;
 
   const promptLines = [
     `TASK: Merge approved changes for ${taskName}`,
