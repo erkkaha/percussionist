@@ -153,6 +153,7 @@ async function validateGitWorkflow(sessionID: string): Promise<string[]> {
     return errors;
   }
 
+  // Verify the session is accessible before proceeding with validation.
   try {
     const messages: RawMessage[] = await fetchMessages(sessionID);
 
