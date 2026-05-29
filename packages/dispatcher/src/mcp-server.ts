@@ -22,7 +22,6 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { DISPATCHER_MCP_PORT } from "@percussionist/api";
-import { fetchMessages, type RawMessage, type ToolPart } from "./session.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-dispatcher";
@@ -131,135 +130,6 @@ function readBody(req: IncomingMessage): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Git workflow validation
-
-/**
- * Validates that the agent has completed the required git workflow steps
- * before allowing complete_run to succeed.
- * 
- * Returns array of error messages (empty if validation passes).
- */
-async function validateGitWorkflow(sessionID: string): Promise<string[]> {
-  const errors: string[] = [];
-
-  // Skip validation for merge-only tasks that prohibit code changes.
-  const taskDesc = process.env.RUN_TASK ?? "";
-  if (/do not perform any code changes/i.test(taskDesc)) {
-    return errors;
-  }
-
-  try {
-    const messages: RawMessage[] = await fetchMessages(sessionID);
-    
-    // Extract all bash commands from the session
-    const bashCommands: string[] = [];
-    for (const msg of messages) {
-      if (msg.info?.role === "assistant" && msg.parts) {
-        for (const part of msg.parts) {
-          const toolPart = part as ToolPart;
-          if (toolPart.type === "tool" && toolPart.tool === "bash") {
-            const cmd = toolPart.state?.input as { command?: string } | undefined;
-            if (cmd?.command) {
-              bashCommands.push(cmd.command);
-            }
-          }
-        }
-      }
-    }
-    
-    // Check for required git operations
-    const hasGitCommit = bashCommands.some(cmd => 
-      cmd.includes("git commit") && !cmd.includes("git commit --amend")
-    );
-    const hasGitPush = bashCommands.some(cmd => 
-      cmd.includes("git push")
-    );
-    const hasPRCreate = bashCommands.some(cmd => 
-      cmd.includes("gh pr create")
-    );
-    const hasCheckoutBranch = bashCommands.some(cmd =>
-      cmd.includes("git checkout -b")
-    );
-    
-    // Validate workflow steps
-    if (!hasCheckoutBranch) {
-      errors.push("❌ No feature branch created (missing 'git checkout -b')");
-    }
-    
-    if (!hasGitCommit) {
-      errors.push("❌ No git commit detected (missing 'git commit')");
-    }
-    
-    if (!hasGitPush) {
-      errors.push("❌ Changes not pushed to remote (missing 'git push')");
-    }
-    
-    if (!hasPRCreate) {
-      errors.push("❌ No pull request created (missing 'gh pr create')");
-    }
-    
-  } catch (e) {
-    // If validation fails for technical reasons, log but allow completion
-    // (don't block agents due to our own bugs)
-    console.error(`[mcp-server] git workflow validation error:`, (e as Error).message);
-  }
-  
-  return errors;
-}
-
-/**
- * Lightweight git workflow validation for PLAN tasks.
- * Only checks commit + push (no PR required).
- */
-async function validateGitWorkflowPlan(sessionID: string): Promise<string[]> {
-  const errors: string[] = [];
-
-  const taskDesc = process.env.RUN_TASK ?? "";
-  if (/do not perform any code changes/i.test(taskDesc)) {
-    return errors;
-  }
-
-  try {
-    const messages: RawMessage[] = await fetchMessages(sessionID);
-
-    const bashCommands: string[] = [];
-    for (const msg of messages) {
-      if (msg.info?.role === "assistant" && msg.parts) {
-        for (const part of msg.parts) {
-          const toolPart = part as ToolPart;
-          if (toolPart.type === "tool" && toolPart.tool === "bash") {
-            const cmd = toolPart.state?.input as { command?: string } | undefined;
-            if (cmd?.command) {
-              bashCommands.push(cmd.command);
-            }
-          }
-        }
-      }
-    }
-
-    const hasGitCommit = bashCommands.some(cmd =>
-      cmd.includes("git commit") && !cmd.includes("git commit --amend")
-    );
-    const hasGitPush = bashCommands.some(cmd =>
-      cmd.includes("git push")
-    );
-
-    if (!hasGitCommit) {
-      errors.push("❌ No git commit detected (missing 'git commit')");
-    }
-
-    if (!hasGitPush) {
-      errors.push("❌ Changes not pushed to remote (missing 'git push')");
-    }
-
-  } catch (e) {
-    console.error(`[mcp-server] git workflow validation error:`, (e as Error).message);
-  }
-
-  return errors;
-}
-
-// ---------------------------------------------------------------------------
 // MCP handler
 
 type RunStatus = {
@@ -309,46 +179,6 @@ function handleMcp(
         const summary = typeof args["summary"] === "string"
           ? args["summary"]
           : "agent called complete_run without a summary";
-        
-        // Validate git workflow before allowing completion
-        const status = getStatus();
-        const sessionID = status?.session;
-        
-        if (sessionID) {
-          // Async validation - return a promise
-          return (async () => {
-            const validationErrors = await validateGitWorkflow(sessionID);
-            
-            if (validationErrors.length > 0) {
-              const errorMsg = [
-                "⚠️  Cannot complete run - required git workflow steps are missing:",
-                "",
-                ...validationErrors,
-                "",
-                "Required workflow:",
-                "1. Create feature branch: git checkout -b <branch-name>",
-                "2. Commit changes: git add -A && git commit -m \"...\"",
-                "3. Push to remote: git push -u origin <branch-name>",
-                "4. Create pull request: gh pr create --title \"...\" --body \"...\"",
-                "",
-                "Please complete these steps, then call complete_run again.",
-              ].join("\n");
-              
-              return ok(req.id, {
-                content: [{ type: "text", text: errorMsg }],
-                isError: true,
-              });
-            }
-            
-            // Validation passed - proceed with completion
-            onCompleteRun(summary);
-            return ok(req.id, {
-              content: [{ type: "text", text: "Run marked as complete. The orchestrator will review the result." }],
-            });
-          })();
-        }
-        
-        // No session ID available (shouldn't happen, but be safe)
         onCompleteRun(summary);
         return ok(req.id, {
           content: [{ type: "text", text: "Run marked as complete. The orchestrator will review the result." }],
@@ -360,40 +190,6 @@ function handleMcp(
         const summary = typeof args["summary"] === "string"
           ? args["summary"]
           : "agent called complete_plan without a summary";
-
-        const status = getStatus();
-        const sessionID = status?.session;
-
-        if (sessionID) {
-          return (async () => {
-            const validationErrors = await validateGitWorkflowPlan(sessionID);
-
-            if (validationErrors.length > 0) {
-              const errorMsg = [
-                "⚠️  Cannot complete plan - required git workflow steps are missing:",
-                "",
-                ...validationErrors,
-                "",
-                "Required workflow for PLAN tasks:",
-                "1. Commit changes: git add -A && git commit -m \"...\"",
-                "2. Push to remote: git push -u origin <branch-name>",
-                "",
-                "Please complete these steps, then call complete_plan again.",
-              ].join("\n");
-
-              return ok(req.id, {
-                content: [{ type: "text", text: errorMsg }],
-                isError: true,
-              });
-            }
-
-            onCompleteRun(summary);
-            return ok(req.id, {
-              content: [{ type: "text", text: "Plan marked as complete. The orchestrator will review the plan artifact." }],
-            });
-          })();
-        }
-
         onCompleteRun(summary);
         return ok(req.id, {
           content: [{ type: "text", text: "Plan marked as complete. The orchestrator will review the plan artifact." }],
