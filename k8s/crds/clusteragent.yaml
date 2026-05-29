@@ -33,6 +33,8 @@ spec:
                 content:
                   type: string
                   maxLength: 102400
+                model:
+                  type: string
               required:
                 - content
           required:
