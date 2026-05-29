@@ -31,6 +31,38 @@ export async function fetchRuns(): Promise<Run[]> {
   return data.items;
 }
 
+export async function fetchTaskRuns(taskName: string): Promise<Run[]> {
+  const data = await fetchJSON<{ items: Run[] }>(`/runs?task=${encodeURIComponent(taskName)}`);
+  return data.items;
+}
+
+export async function fetchTaskEvents(
+  project: string,
+  taskName: string,
+  limit = 50,
+): Promise<Array<{
+  id: number;
+  project: string;
+  taskName: string;
+  taskType: string;
+  eventType: string;
+  payload: string;
+  createdAt: string;
+}>> {
+  const data = await fetchJSON<{
+    events: Array<{
+      id: number;
+      project: string;
+      taskName: string;
+      taskType: string;
+      eventType: string;
+      payload: string;
+      createdAt: string;
+    }>;
+  }>(`/board/${encodeURIComponent(project)}/tasks/${encodeURIComponent(taskName)}/events?limit=${limit}`);
+  return data.events;
+}
+
 export async function fetchRun(name: string): Promise<Run> {
   return fetchJSON<Run>(`/runs/${encodeURIComponent(name)}`);
 }

@@ -1,5 +1,5 @@
 // TaskDetailPanel.tsx — tabbed detail view for a selected task.
-// Shows: Overview, Session (live), Logs, Plan (PLAN tasks only).
+// Shows: Overview, Runs (with per-run Session/Logs), Events, Plan (PLAN tasks only).
 // Actions: Approve, Request Changes, Retry, Delete.
 
 import { useState, memo } from "react";
@@ -9,21 +9,18 @@ import {
   ExternalLink, Check, X, Trash2, Flag, User,
   Wrench, FileText, RefreshCw, MousePointerClick, ArrowRight,
 } from "lucide-react";
-import { useRun } from "../../hooks/useRun";
-import { useRunEvents } from "../../hooks/useRunEvents";
 import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan, moveTask } from "../../lib/api";
-import { TERMINAL_PHASES } from "../../lib/types";
 import type { Task } from "../../lib/types";
-import SessionView from "../SessionView";
-import LogViewer from "../LogViewer";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "../CodeBlock";
+import TaskRunsPanel from "./TaskRunsPanel";
+import TaskEventsPanel from "./TaskEventsPanel";
 import type React from "react";
 
 const remarkPlugins = [remarkGfm];
 
-type Tab = "overview" | "session" | "logs" | "plan";
+type Tab = "overview" | "runs" | "events" | "plan";
 
 interface TaskDetailPanelProps {
   task: Task;
@@ -31,43 +28,6 @@ interface TaskDetailPanelProps {
   projectName: string;
   approvals: Record<string, { approved: boolean; requestChanges: boolean }> | undefined;
   onDeleted: () => void;
-}
-
-// ---------------------------------------------------------------------------
-// Run sub-panel — fetches and displays run info with session/logs
-// ---------------------------------------------------------------------------
-function RunPanel({ runName, tab }: { runName: string; tab: "session" | "logs" }) {
-  const { data: run } = useRun(runName, 5_000);
-  const runPhase = run?.status?.phase;
-  const isActive = !!run && (!runPhase || !TERMINAL_PHASES.has(runPhase));
-  const { connected: sseConnected, eventTick } = useRunEvents(runName, isActive);
-
-  if (!run) return <p className="text-xs text-text-dim p-4">Loading run…</p>;
-
-  if (tab === "session") {
-    return (
-      <div className="px-4 py-3">
-        <SessionView
-          name={runName}
-          hasSession={!!run.status?.sessionID}
-          active={isActive}
-          sseConnected={sseConnected}
-          eventTick={eventTick}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div className="px-4 py-3">
-      <LogViewer
-        name={runName}
-        active={isActive}
-        sseConnected={sseConnected}
-        eventTick={eventTick}
-      />
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +198,6 @@ function TaskDetailPanelInner({
   const isPlan = task.spec.type === "PLAN";
   const approvalState = approvals?.[taskName];
   const alreadyApproved = approvalState?.approved === true;
-  const primaryRunName = worker?.runName;
 
   const invalidateBoard = () => queryClient.invalidateQueries({ queryKey: ["board", projectName] });
 
@@ -269,9 +228,9 @@ function TaskDetailPanelInner({
 
   const availableTabs: Array<{ id: Tab; label: string }> = [
     { id: "overview", label: "Overview" },
-    ...(primaryRunName ? [{ id: "session" as Tab, label: "Session" }] : []),
-    ...(primaryRunName ? [{ id: "logs" as Tab, label: "Logs" }] : []),
-    ...(isPlan && primaryRunName ? [{ id: "plan" as Tab, label: "Plan" }] : []),
+    { id: "runs", label: "Runs" },
+    { id: "events", label: "Events" },
+    ...(isPlan ? [{ id: "plan" as Tab, label: "Plan" }] : []),
   ];
 
   // If current tab is not available (e.g. run just removed), reset
@@ -448,11 +407,11 @@ function TaskDetailPanelInner({
         {activeTab === "overview" && (
           <OverviewContent task={task} col={col} projectName={projectName} />
         )}
-        {activeTab === "session" && primaryRunName && (
-          <RunPanel runName={primaryRunName} tab="session" />
+        {activeTab === "runs" && (
+          <TaskRunsPanel projectName={projectName} taskName={taskName} />
         )}
-        {activeTab === "logs" && primaryRunName && (
-          <RunPanel runName={primaryRunName} tab="logs" />
+        {activeTab === "events" && (
+          <TaskEventsPanel projectName={projectName} taskName={taskName} />
         )}
         {isPlan && (
           <div className={activeTab === "plan" ? "" : "hidden"}>
