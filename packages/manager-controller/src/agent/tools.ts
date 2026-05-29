@@ -8,6 +8,7 @@
 // Note: uses `mcp` key (not `mcpServers` — that was a legacy format).
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomBytes } from "node:crypto";
 import { MCP_PORT, MANAGER_NAMESPACE, OPENCODE_URL } from "./config.js";
 import { setHeaderOptions } from "@kubernetes/client-node";
 import {
@@ -31,9 +32,11 @@ import {
   writePlanToConfigMap,
   readPlanFromConfigMap,
   getDeploymentImages,
+  buildTask,
+  createTask,
   apps,
 } from "@percussionist/kube";
-import { LABELS, type Project, type Task, type TaskPhase } from "@percussionist/api";
+import { LABELS, type Project, type Task, type TaskPhase, type TaskSpec } from "@percussionist/api";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
 import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
@@ -192,6 +195,27 @@ const TOOLS = [
         },
       },
       required: ["project", "task"],
+    },
+  },
+  {
+    name: "create_task",
+    description:
+      "Create a new Task CR and add it to a project's board. The task starts in 'pending' phase (backlog column). Validates that the agent is in the project's agent roster.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name" },
+        type: { type: "string", enum: ["PLAN", "BUILD"], description: "Task type" },
+        title: { type: "string", description: "Short human-readable title" },
+        agent: { type: "string", description: "Agent name (must be in project's agent roster)" },
+        description: { type: "string", description: "Detailed context and acceptance criteria (optional)" },
+        priority: { type: "string", enum: ["high", "medium", "low"], description: "Priority (default: medium)" },
+        parentTaskRef: { type: "string", description: "BUILD only: CR name of the parent PLAN task" },
+        predecessorRef: { type: "string", description: "BUILD only: CR name of preceding BUILD task" },
+        successorRef: { type: "string", description: "BUILD only: CR name of following BUILD task" },
+        namespace: { type: "string", description: "Namespace (optional, defaults to percussionist)" },
+      },
+      required: ["project", "type", "title", "agent"],
     },
   },
   {
@@ -834,6 +858,61 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       }
 
       return { runName, project: projectName, task: taskName, phase: "Created", namespace: resourceNs };
+    }
+
+    case "create_task": {
+      const projectName = String(args.project ?? "");
+      const taskType = String(args.type ?? "");
+      const title = String(args.title ?? "");
+      const agent = String(args.agent ?? "");
+      const description = args.description ? String(args.description) : undefined;
+      const priority = String(args.priority ?? "medium");
+      const parentTaskRef = args.parentTaskRef ? String(args.parentTaskRef) : undefined;
+      const predecessorRef = args.predecessorRef ? String(args.predecessorRef) : undefined;
+      const successorRef = args.successorRef ? String(args.successorRef) : undefined;
+      const resourceNs = String(args.namespace ?? ns);
+
+      if (taskType !== "PLAN" && taskType !== "BUILD") {
+        throw new Error("type must be PLAN or BUILD");
+      }
+
+      const project = await getProject(projectName, resourceNs);
+      const roster = (project.spec.agents ?? []).map((a: { name: string }) => a.name);
+      if (!roster.includes(agent)) {
+        throw new Error(`agent "${agent}" not in project roster: ${roster.join(", ") || "(empty)"}`);
+      }
+
+      const suffix = randomBytes(3).toString("hex");
+      const taskName = `${projectName}-${taskType.toLowerCase()}-${suffix}`;
+
+      const task = buildTask({
+        name: taskName,
+        projectName,
+        projectUid: project.metadata.uid ?? "",
+        ns: resourceNs,
+        spec: {
+          projectRef: projectName,
+          type: taskType as "PLAN" | "BUILD",
+          title,
+          description,
+          agent,
+          priority: priority as "high" | "medium" | "low",
+          parentTaskRef,
+          predecessorRef,
+          successorRef,
+        },
+      });
+
+      const created = await createTask(task, resourceNs);
+      await patchTaskStatus(taskName, { phase: "pending" }, resourceNs);
+
+      return {
+        taskName: created.metadata.name,
+        project: projectName,
+        type: taskType,
+        phase: "pending",
+        namespace: resourceNs,
+      };
     }
 
     case "force_retry": {
