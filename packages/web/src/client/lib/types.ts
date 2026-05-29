@@ -122,6 +122,7 @@ export interface CreateProjectRequest {
 export interface CreateAgentRequest {
   name?: string;
   content: string;
+  model?: string;
 }
 
 // ---------------------------------------------------------------------------

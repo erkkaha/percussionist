@@ -19,7 +19,7 @@ const agents = new Hono();
 agents.get("/", async (c) => {
   try {
     const items = await listClusterAgents();
-    return c.json({ agents: items.map((a) => ({ name: a.metadata.name!, content: a.spec.content })) });
+    return c.json({ agents: items.map((a) => ({ name: a.metadata.name!, content: a.spec.content, model: a.spec.model })) });
   } catch (e: unknown) {
     const msg = (e as { body?: { message?: string } })?.body?.message ?? String(e);
     return c.json({ error: msg }, 500);
@@ -37,6 +37,7 @@ agents.get("/events", async (c) => {
         generation: a.metadata.generation,
         name: a.metadata.name,
         content: a.spec.content,
+        model: a.spec.model,
       })));
     },
     updatedEvent: "agents.updated",

@@ -295,6 +295,8 @@ export type AgentDef = z.infer<typeof AgentDefSchema>;
 export const ClusterAgentSpecSchema = z.object({
   // Full .md file contents (YAML front-matter + system prompt). Max 100KB.
   content: z.string().max(102400),
+  // Optional model override for runs using this agent. Resolved between board and project level.
+  model: z.string().optional(),
 });
 
 export type ClusterAgentSpec = z.infer<typeof ClusterAgentSpecSchema>;

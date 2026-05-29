@@ -17,7 +17,7 @@ import {
   resolveParentBranch,
   resolveMergeBranch,
 } from "./branch-resolver.js";
-import { getClusterSettings } from "@percussionist/kube";
+import { getClusterAgent, getClusterSettings } from "@percussionist/kube";
 
 const MAX_RETRIES = 3;
 
@@ -44,6 +44,16 @@ export async function buildWorkerRun(
       resources: clusterSettings?.spec?.runner?.resources,
     },
   });
+
+  // Agent-level model override (between board and project in resolution hierarchy).
+  try {
+    const agent = await getClusterAgent(task.spec.agent);
+    if (agent.spec.model) {
+      resolved.model = agent.spec.model;
+    }
+  } catch {
+    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
+  }
 
   const taskName = task.metadata.name;
   const promptLines = [
@@ -181,6 +191,7 @@ export async function buildMergeRun(
       resources: clusterSettings?.spec?.runner?.resources,
     },
   });
+
   const projectName = project.metadata.name;
   const taskName = task.metadata.name;
   
@@ -210,6 +221,16 @@ export async function buildMergeRun(
     MERGING_AGENT && (project.spec.agents ?? []).some((a) => a.name === MERGING_AGENT)
       ? MERGING_AGENT
       : task.spec.agent;
+
+  // Agent-level model override (between board and project in resolution hierarchy).
+  try {
+    const agent = await getClusterAgent(mergeAgent);
+    if (agent.spec.model) {
+      resolved.model = agent.spec.model;
+    }
+  } catch {
+    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
+  }
 
   const promptLines = [
     `TASK: Merge approved changes for ${taskName}`,
