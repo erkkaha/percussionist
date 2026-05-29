@@ -423,10 +423,21 @@ function rpcError(id: JsonRpcRequest["id"], code: number, message: string): Json
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
+const MAX_BODY_SIZE = 1_048_576; // 1 MB — covers S13 + S19
+
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => chunks.push(c));
+    let totalSize = 0;
+    req.on("data", (c: Buffer) => {
+      totalSize += c.length;
+      if (totalSize > MAX_BODY_SIZE) {
+        reject(new Error(`Request body exceeds ${MAX_BODY_SIZE} byte limit`));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
