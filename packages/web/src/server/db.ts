@@ -55,7 +55,8 @@ export function getDb(): ReturnType<typeof drizzle> {
   console.log(`[db] percussionist.db opened at ${dbPath}`);
 
   // Graceful shutdown: close the raw SQLite handle on SIGTERM to prevent WAL
-  // corruption during pod termination.
+  // corruption during pod termination. Must be registered after singleton
+  // assignment so _sqlite is always defined when the handler fires.
   process.on("SIGTERM", () => {
     try {
       _sqlite?.close();
@@ -65,6 +66,15 @@ export function getDb(): ReturnType<typeof drizzle> {
   });
 
   return _db;
+}
+
+// ---------------------------------------------------------------------------
+// Exported for testing / manual shutdown
+
+export function closeDb(): void {
+  _sqlite?.close();
+  _db = null;
+  _sqlite = null;
 }
 
 export type Db = ReturnType<typeof getDb>;
