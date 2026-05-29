@@ -748,11 +748,23 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
   const buildgenRunName = task.status?.worker?.buildTasksFacilitatorRun;
 
   if (!buildgenRunName) {
+    const succeededRunName = task.status?.worker?.runName;
+    if (!succeededRunName) {
+      return {
+        taskName,
+        fromPhase,
+        toPhase: "awaiting-human",
+        effects: [],
+        events: [makeEvent(input, fromPhase, "awaiting-human", "NoWorkerRunForBuildGen")],
+      };
+    }
+    const name = auxiliaryRunName(input.project.metadata.name, "buildgen", taskName, "0");
     return {
       taskName,
       fromPhase,
-      toPhase: "generating-builds",
-      effects: [],
+      toPhase: undefined,
+      statusPatch: { worker: { buildTasksFacilitatorRun: name } },
+      effects: [{ type: "ScheduleBuildGenRun", buildgenRunName: name, succeededRunName }],
       events: [makeEvent(input, fromPhase, "generating-builds", "BuildGenRunCreating")],
     };
   }

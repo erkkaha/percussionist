@@ -143,6 +143,7 @@ function handleMcp(
   req: JsonRpcRequest,
   onFailRun: (reason: string) => void,
   onCompleteRun: (summary: string) => void,
+  onCompletePlan: (summary: string) => void,
   getStatus: () => RunStatus | null,
 ): JsonRpcResponse | Promise<JsonRpcResponse> {
   switch (req.method) {
@@ -190,7 +191,7 @@ function handleMcp(
         const summary = typeof args["summary"] === "string"
           ? args["summary"]
           : "agent called complete_plan without a summary";
-        onCompleteRun(summary);
+        onCompletePlan(summary);
         return ok(req.id, {
           content: [{ type: "text", text: "Plan marked as complete. The orchestrator will review the plan artifact." }],
         });
@@ -226,6 +227,7 @@ export interface McpServer {
 export function startMcpServer(
   onFailRun: (reason: string) => void,
   onCompleteRun: (summary: string) => void,
+  onCompletePlan: (summary: string) => void,
   getStatus: () => RunStatus | null,
 ): Promise<McpServer> {
   return new Promise((resolve, reject) => {
@@ -250,13 +252,13 @@ export function startMcpServer(
 
           // Notifications have no id — return 202 with empty body.
           if (rpc.id === undefined || rpc.id === null) {
-            handleMcp(rpc, onFailRun, onCompleteRun, getStatus); // side-effects only (e.g. notifications/initialized)
+            handleMcp(rpc, onFailRun, onCompleteRun, onCompletePlan, getStatus); // side-effects only (e.g. notifications/initialized)
             res.writeHead(202);
             res.end();
             return;
           }
 
-          const response = await Promise.resolve(handleMcp(rpc, onFailRun, onCompleteRun, getStatus));
+          const response = await Promise.resolve(handleMcp(rpc, onFailRun, onCompleteRun, onCompletePlan, getStatus));
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(response));
         })

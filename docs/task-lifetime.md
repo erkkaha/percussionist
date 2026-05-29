@@ -67,7 +67,7 @@ Manager polls `Run.status.phase`:
 - `WaitingForInput` → `waiting-for-input` (PLAN only; BUILD tasks go straight to `failed`)
 - Running but no events beyond `flow.timeouts.runningStaleSeconds` (default 1800s/30min) → `failed` (staleness guard)
 
-The agent is working during this phase. It calls `complete_run` or `complete_plan` on the dispatcher when done. The dispatcher validates the git workflow (for BUILD: checks that a commit, push, and `gh pr create` happened; for PLAN: just commit + push), then exits 0. The pod reaches Succeeded, the operator mirrors it, and the manager picks it up on the next reconcile.
+The agent is working during this phase. It calls `complete_run` or `complete_plan` on the dispatcher when done. The dispatcher records the signal and exits 0. The pod reaches Succeeded, the operator mirrors it, and the manager picks it up on the next reconcile.
 
 ### `waiting-for-input` *(PLAN only)*
 Manager polls for an answer annotation (`percussionist.dev/action-answer`) on the Task CR (with legacy fallback to Project CR annotations). When a human posts an answer via the web UI, the dispatcher injects it into the live session. Once the run resumes to `Running` the task goes back to `running`. The annotation is cleared.
@@ -131,7 +131,7 @@ Terminal. Manager never touches it again. Task CR persists until the parent Proj
 |---|---|---|
 | Created by | Human | Manager (buildgen) or human |
 | Can enter `waiting-for-input` | Yes | No — goes to `failed` |
-| Completion signal | `complete_plan` (commit + push, no PR needed) | `complete_run` (commit + push + `gh pr create`) |
+| Completion signal | `complete_plan` (plan artifact committed) | `complete_run` (work committed) |
 | On human approval | → `generating-builds` | → `awaiting-merge` |
 | Feature branch | `feature/{plan-id}` (from main) | `feature/{plan-id}--{build-id}` (from PLAN branch) |
 | Merge target | None (manual to main) | Parent PLAN branch |

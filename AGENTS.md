@@ -319,16 +319,16 @@ but served within each run pod). These tools are available to agents during run 
 
 | Tool | Purpose |
 |------|---------|
-| `complete_run` | Signal successful BUILD task completion (validates git commit+push+PR) |
-| `complete_plan` | Signal successful PLAN task completion (validates git commit+push only, no PR required) |
+| `complete_run` | Signal successful BUILD task completion |
+| `complete_plan` | Signal successful PLAN task completion |
 | `fail_run` | Signal task failure with reason, triggering facilitator analysis |
 | `get_status` | Return current run state (phase, session ID, token usage) |
 
 **`complete_plan`** vs **`complete_run`**:
 - PLAN agents should call `complete_plan` after committing their plan document to `.percussionist/plans/{task-id}.md`
-- BUILD agents should call `complete_run` after implementation is complete and PR is created
-- `complete_plan` only validates that changes are committed and pushed (no PR requirement)
-- `complete_run` validates commit+push+PR creation for full code review workflow
+- BUILD agents should call `complete_run` after implementation is committed
+- `complete_plan` signals plan artifact completion (no code work expected)
+- `complete_run` signals implementation work is done
 
 ## Dispatcher SSE Event Streaming
 

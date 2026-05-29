@@ -228,8 +228,8 @@ flowchart TD
   patches the CR to `Succeeded` (or `Failed` on error) and exits. A 1-hour
   hard timeout guard exits with code 3 if the run stalls indefinitely. The
   dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
-  - `complete_run(...)` — signal BUILD task completion (validates commit+push+PR)
-  - `complete_plan(...)` — signal PLAN task completion (validates commit+push only)
+  - `complete_run(...)` — signal BUILD task completion
+  - `complete_plan(...)` — signal PLAN task completion
   - `fail_run(reason)` — signal task failure, triggering facilitator analysis
   - `get_status()` — return current run state (phase, session ID, tokens)
 - **sidecar containers** (`spec.sidecars[]`) are user-defined pods that start
@@ -397,8 +397,8 @@ flowchart TD
   patches the CR to `Succeeded` (or `Failed` on error) and exits. A 1-hour
   hard timeout guard exits with code 3 if the run stalls indefinitely. The
   dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
-  - `complete_run(...)` — signal BUILD task completion (validates commit+push+PR)
-  - `complete_plan(...)` — signal PLAN task completion (validates commit+push only)
+  - `complete_run(...)` — signal BUILD task completion
+  - `complete_plan(...)` — signal PLAN task completion
   - `fail_run(reason)` — signal task failure, triggering facilitator analysis
   - `get_status()` — return current run state (phase, session ID, tokens)
 - **sidecar containers** (`spec.sidecars[]`) are user-defined pods that start
@@ -664,7 +664,7 @@ Typical improvements for a monorepo with ~100 packages:
 
 ### GitHub token (`gh` CLI authentication)
 
-To allow the agent to use `gh` CLI (create PRs, comment on issues, etc.),
+To allow the agent to use `gh` CLI (push, create PRs, comment on issues, etc.),
 provide a GitHub personal access token stored in a Kubernetes Secret:
 
 ```bash

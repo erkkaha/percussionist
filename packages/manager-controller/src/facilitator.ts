@@ -148,11 +148,11 @@ export async function buildSuccessReviewRun(
     "",
     ...(isBuildTask
       ? [
-          `This is a BUILD task. The worker was validated by the dispatcher to have committed, pushed, and created a PR before calling complete_run.`,
-          `The COMPLETION MESSAGE above contains the worker's summary and should reference the PR that was created.`,
-          `Check the completion message for evidence of PR creation (URL, number, or explicit confirmation).`,
-          `If the completion message clearly indicates a PR was created, approve the task.`,
-          `If the completion message is missing or unclear, use request_changes.`,
+          `This is a BUILD task. The worker should have committed the completed work before calling complete_run.`,
+          `The COMPLETION MESSAGE above contains the worker's summary of what was accomplished.`,
+          `Review the session data to verify the task was completed satisfactorily.`,
+          `If the completion message and session data indicate the task was completed, approve it.`,
+          `If the work is incomplete or incorrect, use request_changes.`,
           "",
         ]
       : isPlanTask
@@ -364,11 +364,11 @@ export function buildReviewRun(
     "",
     ...(isBuildTask
       ? [
-          `This is a BUILD task. The worker was validated by the dispatcher to have committed, pushed, and created a PR before calling complete_run.`,
-          `The COMPLETION MESSAGE above contains the worker's summary and should reference the PR that was created.`,
-          `Check the completion message for evidence of PR creation (URL, number, or explicit confirmation).`,
-          `If the completion message clearly indicates a PR was created, approve the task.`,
-          `If the completion message is missing or unclear, use request_changes.`,
+          `This is a BUILD task. The worker should have committed the completed work before calling complete_run.`,
+          `The COMPLETION MESSAGE above contains the worker's summary of what was accomplished.`,
+          `Review the session data to verify the task was completed satisfactorily.`,
+          `If the completion message and session data indicate the task was completed, approve it.`,
+          `If the work is incomplete or incorrect, use request_changes.`,
           "",
         ]
       : isPlanTask

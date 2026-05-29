@@ -92,7 +92,7 @@ export async function buildWorkerRun(
       `- Create or update ${planPath} in the repository.`,
       "- The file is the authoritative PLAN output and will be reviewed by facilitator/human reviewers.",
       "- Include implementation context, scope boundaries, risks, acceptance criteria, and proposed BUILD task breakdown.",
-      "- Commit and push the plan artifact on this task branch before completing the run.",
+      "- Commit the plan artifact on this task branch before completing the run.",
       `- After committing, call write_plan(project="${projectName}", task="${taskName}", content=<plan-content>) to persist it to ConfigMap.`,
       `- Mention ${planPath} in the completion summary.`,
       `- When done, call percussionist_dispatcher_complete_plan instead of complete_run.`,

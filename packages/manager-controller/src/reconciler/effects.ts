@@ -11,6 +11,7 @@ import { persistEvent } from "./audit.js";
 export type ReconcileEffect =
   | { type: "ScheduleRun"; runName: string; retryCount: number; reworkFeedback?: string }
   | { type: "ScheduleReviewRun"; reviewRunName: string; succeededRunName: string; reviewAgent: string }
+  | { type: "ScheduleBuildGenRun"; buildgenRunName: string; succeededRunName: string }
   | { type: "CreateRun"; run: Run }
   | { type: "DeleteRun"; name: string; reason: string }
   | { type: "PatchTaskStatus"; patch: Record<string, unknown> }
@@ -131,6 +132,32 @@ export async function executeEffects(
           );
           try {
             await createRun(reviewRun, namespace);
+          } catch (e: unknown) {
+            const msg = (e as Error).message;
+            if (!/already exists/i.test(msg)) throw e;
+          }
+          break;
+        }
+        case "ScheduleBuildGenRun": {
+          if (!project) {
+            throw new Error("Project metadata required for ScheduleBuildGenRun effect");
+          }
+          const fullProject = project as unknown as import("@percussionist/api").Project;
+          const succeededRun = await getRun(effect.succeededRunName, namespace).catch(() => undefined);
+          const succeededStatus = succeededRun?.status ?? {};
+
+          const { buildBuildTaskGeneratorRun } = await import("../facilitator.js");
+          const buildgenRun = await buildBuildTaskGeneratorRun(
+            fullProject,
+            task,
+            effect.succeededRunName,
+            effect.buildgenRunName,
+            succeededStatus.message ?? "",
+            undefined,
+            allTasks,
+          );
+          try {
+            await createRun(buildgenRun, namespace);
           } catch (e: unknown) {
             const msg = (e as Error).message;
             if (!/already exists/i.test(msg)) throw e;

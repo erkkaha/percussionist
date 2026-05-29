@@ -489,6 +489,21 @@ describe("decide — generating-builds", () => {
     }));
     expect(result.toPhase).toBeUndefined();
   });
+
+  it("generating-builds + no buildgenRunName + worker run exists → ScheduleBuildGenRun effect", () => {
+    const planTask = makeTask("plan-1", "test-project", { phase: "generating-builds", type: "PLAN", runName: "plan-worker-1" });
+    const result = decide(makeInput(planTask));
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects.some((e) => e.type === "ScheduleBuildGenRun")).toBe(true);
+    expect((result.statusPatch?.worker as any).buildTasksFacilitatorRun).toBeDefined();
+  });
+
+  it("generating-builds + no buildgenRunName + no worker run → awaiting-human", () => {
+    const planTask = makeTask("plan-1", "test-project", { phase: "generating-builds", type: "PLAN" });
+    const result = decide(makeInput(planTask));
+    expect(result.toPhase).toBe("awaiting-human");
+    expect(result.events[0]?.reason).toBe("NoWorkerRunForBuildGen");
+  });
 });
 
 describe("decide — succeeded with AI review", () => {

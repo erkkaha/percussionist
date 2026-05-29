@@ -397,6 +397,7 @@ export async function runPrompt(
   runUid: string,
   failureSignal: Promise<string>,
   completionSignal: Promise<string>,
+  planSignal?: Promise<string>,
 ): Promise<{ sessionID: string; startedAt: string }> {
   const tokens = new TokenAggregator();
 
@@ -666,11 +667,12 @@ export async function runPrompt(
 
   // Race the normal poll loop against:
   // - fail_run: agent signals failure → throw "session error:" → Failed
-  // - complete_run: agent signals explicit success → succeed immediately
+  // - complete_run: agent signals explicit build success → succeed
+  // - complete_plan: agent signals explicit plan success → succeed
   // If fail_run wins, throw a "session error:" so the standard failure
   // path in main().catch patches status to Failed.
-  // If complete_run wins, resolve normally — the caller patches Succeeded
-  // with the agent's summary as the completion message.
+  // If complete_run/complete_plan wins, resolve normally — the caller
+  // patches Succeeded with the agent's summary as the completion message.
   let agentCompletionSummary: string | undefined;
   const failureRaced = failureSignal.then((reason) => {
     terminate = true;
@@ -681,12 +683,17 @@ export async function runPrompt(
     agentCompletionSummary = summary;
     log(`complete_run called by agent: ${summary}`);
   });
+  const planRaced = planSignal?.then((summary) => {
+    terminate = true;
+    agentCompletionSummary = summary;
+    log(`complete_plan called by agent: ${summary}`);
+  });
   // Capture any failure thrown by pollStatus() or failureRaced so we can
   // still snapshot + persist stats before re-throwing.
   let raceError: Error | undefined;
   let aborting = false;
   try {
-    await Promise.race([pollStatus(), promptPostFailure, failureRaced, completionRaced]);
+    await Promise.race([pollStatus(), promptPostFailure, failureRaced, completionRaced, planRaced].filter(Boolean));
   } catch (e) {
     if ((e as Error).name === "AbortError") {
       // not ours
