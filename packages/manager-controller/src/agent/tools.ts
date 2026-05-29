@@ -469,6 +469,22 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "list_task_events",
+    description:
+      "List task lifecycle events from the audit log. Events include phase transitions, " +
+      "review verdicts, failures, and manual actions. Events are recorded by the reconciler " +
+      "and persisted to the web server's SQLite database.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (required)" },
+        task: { type: "string", description: "Optional task CR name to filter events (e.g. 'BUILD-4')" },
+        limit: { type: "number", description: "Max events to return (default: 50, max: 500)" },
+      },
+      required: ["project"],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1561,6 +1577,25 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         return match;
       }
       return normalized;
+    }
+
+    case "list_task_events": {
+      const project = String(args.project ?? "");
+      const taskFilter = args.task ? String(args.task) : undefined;
+      const limit = Math.min(parseInt(String(args.limit ?? "50"), 10), 500);
+      const webUrl =
+        process.env.WEB_SERVICE_URL ??
+        `http://percussionist-web.${MANAGER_NAMESPACE}.svc.cluster.local:8080`;
+      let path = `/api/board/${encodeURIComponent(project)}/events?limit=${limit}`;
+      if (taskFilter) {
+        path = `/api/board/${encodeURIComponent(project)}/tasks/${encodeURIComponent(taskFilter)}/events?limit=${limit}`;
+      }
+      const res = await fetch(`${webUrl}${path}`);
+      if (!res.ok) {
+        throw new Error(`web server returned ${res.status}: ${res.statusText}`);
+      }
+      const body = (await res.json()) as { events: unknown };
+      return body.events ?? [];
     }
 
     default:
