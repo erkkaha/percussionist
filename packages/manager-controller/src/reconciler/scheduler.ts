@@ -17,9 +17,8 @@ export function isActivePhase(phase: TaskPhase): boolean {
 }
 
 // Check if a task can be scheduled (transitioned from pending → scheduled).
-export function canSchedule(task: Task, project: Project, allTasks: Task[]): boolean {
+export function canSchedule(task: Task, project: Project, allTasks: Task[], activeCount: number): boolean {
   // WIP limit check.
-  const activeCount = allTasks.filter((t) => isActivePhase(t.status?.phase ?? "pending")).length;
   const maxParallel = project.spec.maxParallel ?? 2;
   if (activeCount >= maxParallel) {
     return false;

@@ -4,7 +4,7 @@ import type { Project, Task, Run } from "@percussionist/api";
 import { listTasks, getRun, patchTaskStatus } from "@percussionist/kube";
 import type { PhaseContext } from "./types.js";
 import { resolveConfig } from "./config-resolver.js";
-import { byPriority } from "./scheduler.js";
+import { byPriority, isActivePhase } from "./scheduler.js";
 import { handlers } from "./handlers/index.js";
 import { applyTransition } from "./transitions.js";
 
@@ -28,6 +28,9 @@ export async function reconcileProject(
   // Sort by priority for fairness.
   activeTasks.sort(byPriority);
 
+  // Track active count across transitions in this cycle to respect maxParallel.
+  let activeCount = tasks.filter((t) => isActivePhase(t.status?.phase ?? "pending")).length;
+
   // Reconcile each active task.
   for (const task of activeTasks) {
     if (task.status?.blocked) {
@@ -46,6 +49,7 @@ export async function reconcileProject(
         task,
         project,
         allTasks: tasks,
+        activeCount,
         run: task.status?.worker?.runName
           ? await getRun(task.status.worker.runName, namespace).catch(() => undefined)
           : undefined,
@@ -60,6 +64,10 @@ export async function reconcileProject(
           `[reconcile] ${task.metadata.name} transitioning: ${phase} → ${transition.targetPhase}`,
         );
         await applyTransition(task, transition, namespace, projectName);
+        // Bump active count if we just transitioned to an active phase.
+        if (isActivePhase(transition.targetPhase)) {
+          activeCount++;
+        }
       }
     } catch (e) {
       console.error(`[reconcile] ${task.metadata.name} handler error:`, e);

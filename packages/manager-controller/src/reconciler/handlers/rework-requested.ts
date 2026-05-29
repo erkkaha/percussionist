@@ -12,7 +12,7 @@ export const handleReworkRequested: PhaseHandler = async (ctx) => {
   }
 
   // Check if a scheduling slot is available.
-  if (!canSchedule(ctx.task, ctx.project, ctx.allTasks)) {
+  if (!canSchedule(ctx.task, ctx.project, ctx.allTasks, ctx.activeCount)) {
     return null; // Wait for slot.
   }
 

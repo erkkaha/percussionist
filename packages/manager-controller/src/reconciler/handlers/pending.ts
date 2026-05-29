@@ -5,7 +5,7 @@ import { canSchedule } from "../scheduler.js";
 
 export const handlePending: PhaseHandler = async (ctx) => {
   // Check if task can be scheduled (WIP limit, predecessors, backoff).
-  if (!canSchedule(ctx.task, ctx.project, ctx.allTasks)) {
+  if (!canSchedule(ctx.task, ctx.project, ctx.allTasks, ctx.activeCount)) {
     return null; // Not ready yet.
   }
 

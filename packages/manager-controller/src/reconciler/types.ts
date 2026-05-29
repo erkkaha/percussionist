@@ -31,6 +31,8 @@ export interface PhaseContext {
   run?: Run;
   config: ResolvedConfig;
   namespace: string;
+  /** Running count of active tasks (updated after each transition in this reconcile cycle). */
+  activeCount: number;
 }
 
 // Side effects emitted by phase handlers.
