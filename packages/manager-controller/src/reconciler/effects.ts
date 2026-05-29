@@ -183,22 +183,21 @@ export async function executeEffects(
         }
         case "ClearTaskAnnotations": {
           try {
-            const fresh = await getTask(taskName, namespace);
-            const annotations = { ...(fresh.metadata.annotations ?? {}) };
+            const taskPatch: Record<string, string | null> = {};
             const projectKeys: string[] = [];
             for (const key of effect.keys) {
               if (key.startsWith("percussionist.dev/action-")) {
-                delete annotations[key];
+                taskPatch[key] = null;
               } else {
                 projectKeys.push(key);
               }
             }
-            await patchTask(taskName, {
-              metadata: {
-                ...fresh.metadata,
-                annotations,
-              },
-            }, namespace);
+            const taskKeys = Object.keys(taskPatch);
+            if (taskKeys.length > 0) {
+              await patchTask(taskName, {
+                metadata: { name: taskName, annotations: taskPatch as Record<string, string> },
+              }, namespace);
+            }
             if (projectKeys.length > 0) {
               await clearProjectAnnotations(projectKeys, project, namespace, taskName);
             }
@@ -284,13 +283,12 @@ async function clearProjectAnnotations(
       console.warn(`[effects] ClearProjectAnnotations: no project name for ${taskName}`);
       return;
     }
-    const fresh = await getProject(projectName, namespace);
-    const annotations = { ...(fresh.metadata.annotations ?? {}) };
+    const patch: Record<string, string | null> = {};
     for (const key of keys) {
-      delete annotations[key];
+      patch[key] = null;
     }
     await patchProject(projectName, {
-      metadata: { ...fresh.metadata, annotations },
+      metadata: { name: projectName, annotations: patch as Record<string, string> },
     }, namespace);
   } catch (e) {
     console.warn(`[effects] ClearProjectAnnotations failed for ${taskName}:`, (e as Error).message);
