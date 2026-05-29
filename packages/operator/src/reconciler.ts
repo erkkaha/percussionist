@@ -593,6 +593,8 @@ export function dequeue(key: string): void {
   pending.delete(key);
   processing.delete(key);
   dirty.delete(key);
+  const idx = queue.indexOf(key);
+  if (idx !== -1) queue.splice(idx, 1);
 }
 
 export async function runWorker(): Promise<void> {
@@ -620,11 +622,16 @@ export async function runWorker(): Promise<void> {
       seen.set(key, fresh);
       await reconcile(fresh);
     } catch (e) {
-      err(`reconcile(${key}) failed:`, (e as Error).message);
-      setTimeout(() => {
-        const current = seen.get(key);
-        if (current) enqueue(current);
-      }, 5000);
+      if (isNotFound(e)) {
+        log(`run ${key} not found, removing from queue`);
+        dequeue(key);
+      } else {
+        err(`reconcile(${key}) failed:`, (e as Error).message);
+        setTimeout(() => {
+          const current = seen.get(key);
+          if (current) enqueue(current);
+        }, 5000);
+      }
     } finally {
       processing.delete(key);
       if (dirty.delete(key)) {
