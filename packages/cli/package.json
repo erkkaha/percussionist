@@ -11,7 +11,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "bundle": "node scripts/bundle.mjs",
-    "typecheck": "tsc -b tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json",
     "start": "bun src/index.ts",
     "beatctl": "bun src/index.ts"
   },
