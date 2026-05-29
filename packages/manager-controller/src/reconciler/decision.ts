@@ -583,7 +583,7 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
   const fromPhase = "awaiting-human" as TaskPhase;
 
   if (manualActions.abandon) {
-    const consumedKeys = getConsumedAnnotationKeys(taskName, manualActions);
+    const consumedKeys = getConsumedAnnotationKeys(manualActions);
     return {
       taskName,
       fromPhase,
@@ -595,7 +595,7 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
   }
 
   if (manualActions.requestChanges) {
-    const consumedKeys = getConsumedAnnotationKeys(taskName, manualActions);
+    const consumedKeys = getConsumedAnnotationKeys(manualActions);
     return {
       taskName,
       fromPhase,
@@ -613,7 +613,7 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
   }
 
   if (manualActions.approved) {
-    const consumedKeys = getConsumedAnnotationKeys(taskName, manualActions);
+    const consumedKeys = getConsumedAnnotationKeys(manualActions);
     if (task.spec.type === "PLAN") {
       if (flow.plan.onApprove === "done") {
         return {

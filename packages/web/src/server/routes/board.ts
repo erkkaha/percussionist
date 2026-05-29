@@ -17,7 +17,6 @@ import { computeBoardColumn, annotationKey, ANNOTATION_PREFIXES } from "@percuss
 import {
   getProject,
   patchProjectSpec,
-  patchProject,
   listTasks,
   getTask,
   deleteTask,
@@ -325,22 +324,6 @@ board.post("/:project/board/tasks/:taskName/approve", async (c) => {
         },
       },
     });
-    // Also write legacy Project annotation for backward compatibility during migration.
-    try {
-      const project = await getProject(name);
-      const projAnnotations = project.metadata.annotations ?? {};
-      await patchProject(name, {
-        metadata: {
-          annotations: {
-            ...projAnnotations,
-            [`percussionist.dev/${annotationKey("approved", taskName)}`]: "true",
-            [`percussionist.dev/${annotationKey("request-changes", taskName)}`]: "false",
-          },
-        },
-      });
-    } catch {
-      // Legacy annotation write is best-effort during migration.
-    }
     await appendTaskEvent(name, taskName, "unknown", "approved", {});
     return c.json({ success: true });
   } catch (e) {
@@ -375,22 +358,6 @@ board.post("/:project/board/tasks/:taskName/request-changes", async (c) => {
         },
       },
     });
-    // Also write legacy Project annotation for backward compatibility during migration.
-    try {
-      const project = await getProject(name);
-      const projAnnotations = project.metadata.annotations ?? {};
-      await patchProject(name, {
-        metadata: {
-          annotations: {
-            ...projAnnotations,
-            [`percussionist.dev/${annotationKey("rework", taskName)}`]: feedback.trim(),
-            [`percussionist.dev/${annotationKey("request-changes", taskName)}`]: "true",
-          },
-        },
-      });
-    } catch {
-      // Legacy annotation write is best-effort during migration.
-    }
     await appendTaskEvent(name, taskName, "unknown", "request-changes", { feedback: feedback.trim() });
     return c.json({ success: true });
   } catch (e) {
@@ -418,21 +385,6 @@ board.post("/:project/board/tasks/:taskName/abandon", async (c) => {
         },
       },
     });
-    // Also write legacy Project annotation for backward compatibility during migration.
-    try {
-      const project = await getProject(name);
-      const projAnnotations = project.metadata.annotations ?? {};
-      await patchProject(name, {
-        metadata: {
-          annotations: {
-            ...projAnnotations,
-            [`percussionist.dev/${annotationKey("abandon", taskName)}`]: "true",
-          },
-        },
-      });
-    } catch {
-      // Legacy annotation write is best-effort during migration.
-    }
     await appendTaskEvent(name, taskName, "unknown", "abandoned", {});
     return c.json({ success: true });
   } catch (e) {

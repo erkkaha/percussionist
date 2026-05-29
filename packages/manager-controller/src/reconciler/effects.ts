@@ -4,7 +4,7 @@ import type { Task, TaskPhase, Run } from "@percussionist/api";
 import type { AuditEvent } from "./decision.js";
 import type { ResolvedFlow } from "./flow.js";
 import { validateTransition } from "./transitions.js";
-import { createRun, deleteRun, patchTaskStatus, getTask, patchTask, createTask, getRun } from "@percussionist/kube";
+import { createRun, deleteRun, patchTaskStatus, getTask, patchTask, createTask, getRun, getProject, patchProject } from "@percussionist/kube";
 import { buildWorkerRun, buildMergeRun, auxiliaryRunName } from "../worker-builder.js";
 import { persistEvent } from "./audit.js";
 
@@ -17,7 +17,7 @@ export type ReconcileEffect =
   | { type: "PatchTaskStatus"; patch: Record<string, unknown> }
   | { type: "CreateTask"; task: Task }
   | { type: "ClearTaskAnnotations"; keys: string[] }
-  | { type: "ClearProjectAnnotations"; keys: string[]; legacyOnly?: boolean }
+  | { type: "ClearProjectAnnotations"; keys: string[] }
   | { type: "CleanupWorktree"; runName: string };
 
 export interface ExecutionResult {
@@ -185,8 +185,13 @@ export async function executeEffects(
           try {
             const fresh = await getTask(taskName, namespace);
             const annotations = { ...(fresh.metadata.annotations ?? {}) };
+            const projectKeys: string[] = [];
             for (const key of effect.keys) {
-              delete annotations[key];
+              if (key.startsWith("percussionist.dev/action-")) {
+                delete annotations[key];
+              } else {
+                projectKeys.push(key);
+              }
             }
             await patchTask(taskName, {
               metadata: {
@@ -194,13 +199,16 @@ export async function executeEffects(
                 annotations,
               },
             }, namespace);
+            if (projectKeys.length > 0) {
+              await clearProjectAnnotations(projectKeys, project, namespace, taskName);
+            }
           } catch (e) {
             console.warn(`[effects] ClearTaskAnnotations failed for ${taskName}:`, (e as Error).message);
           }
           break;
         }
         case "ClearProjectAnnotations": {
-          // Best-effort — handled by existing logic.
+          await clearProjectAnnotations(effect.keys, project, namespace, taskName);
           break;
         }
         case "CleanupWorktree": {
@@ -262,4 +270,29 @@ function isNotFound(e: unknown): boolean {
     "statusCode" in e &&
     (e as { statusCode?: number }).statusCode === 404
   );
+}
+
+async function clearProjectAnnotations(
+  keys: string[],
+  projectObj: Task["metadata"] & { spec: Record<string, unknown> } | null,
+  namespace: string,
+  taskName: string,
+): Promise<void> {
+  try {
+    const projectName = (projectObj as { metadata?: { name?: string } } | null)?.metadata?.name;
+    if (!projectName) {
+      console.warn(`[effects] ClearProjectAnnotations: no project name for ${taskName}`);
+      return;
+    }
+    const fresh = await getProject(projectName, namespace);
+    const annotations = { ...(fresh.metadata.annotations ?? {}) };
+    for (const key of keys) {
+      delete annotations[key];
+    }
+    await patchProject(projectName, {
+      metadata: { ...fresh.metadata, annotations },
+    }, namespace);
+  } catch (e) {
+    console.warn(`[effects] ClearProjectAnnotations failed for ${taskName}:`, (e as Error).message);
+  }
 }
