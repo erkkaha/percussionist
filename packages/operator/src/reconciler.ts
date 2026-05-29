@@ -635,6 +635,8 @@ export function dequeue(key: string): void {
   pending.delete(key);
   processing.delete(key);
   dirty.delete(key);
+  const idx = queue.indexOf(key);
+  if (idx !== -1) queue.splice(idx, 1);
 }
 
 export async function runWorker(): Promise<void> {
