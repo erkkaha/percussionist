@@ -211,7 +211,7 @@ function MetaRow({ label, value, mono }: { label: string; value: string; mono?: 
   return (
     <div>
       <p className="text-label-md font-mono uppercase text-text-dim">{label}</p>
-      <p className={`text-sm ${mono ? "font-mono text-xs" : ""} truncate text-text`}>{value}</p>
+      <p className={`text-xs ${mono ? "font-mono" : ""} truncate text-text`}>{value}</p>
     </div>
   );
 }
