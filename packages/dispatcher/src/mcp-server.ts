@@ -21,7 +21,9 @@
 // operator into the runner container's environment.
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomBytes } from "node:crypto";
 import { DISPATCHER_MCP_PORT } from "@percussionist/api";
+import { getProject, buildTask, createTask } from "@percussionist/kube";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-dispatcher";
@@ -92,6 +94,26 @@ const TOOL_GET_STATUS = {
   inputSchema: { type: "object", properties: {} },
 };
 
+const TOOL_CREATE_TASK = {
+  name: "create_task",
+  description:
+    "Create a new BUILD Task CR for the current project. " +
+    "Starts in 'pending' phase (backlog column). " +
+    "The agent name must be in the project's agent roster. " +
+    "Returns the created task name via a 'taskName' field for use with predecessorRef.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      title: { type: "string", description: "Short human-readable title for the BUILD task" },
+      description: { type: "string", description: "Detailed implementation context and acceptance criteria (optional)" },
+      agent: { type: "string", description: "Agent name (must be in project's agent roster)" },
+      priority: { type: "string", enum: ["high", "medium", "low"], description: "Priority (default: medium)" },
+      predecessorRef: { type: "string", description: "Name of the preceding BUILD task this task depends on (optional)" },
+    },
+    required: ["title", "agent"],
+  },
+};
+
 // ---------------------------------------------------------------------------
 // JSON-RPC helpers
 
@@ -139,6 +161,64 @@ type RunStatus = {
   tokensOut?: number;
 };
 
+async function handleCreateTask(
+  id: JsonRpcRequest["id"],
+  args: Record<string, unknown>,
+): Promise<JsonRpcResponse> {
+  const projectName = process.env.RUN_PROJECT ?? "";
+  const boardTask = process.env.RUN_BOARD_TASK ?? "";
+  const ns = process.env.RUN_NAMESPACE ?? "percussionist";
+
+  if (!projectName) {
+    return rpcError(id, -32602, "RUN_PROJECT not set");
+  }
+
+  const title = String(args.title ?? "");
+  const agent = String(args.agent ?? "");
+  if (!title || !agent) {
+    return rpcError(id, -32602, "title and agent are required");
+  }
+  const description = args.description ? String(args.description) : undefined;
+  const priority = String(args.priority ?? "medium");
+  const predecessorRef = args.predecessorRef ? String(args.predecessorRef) : undefined;
+
+  try {
+    const project = await getProject(projectName, ns);
+    const roster = (project.spec.agents ?? []).map((a: { name: string }) => a.name);
+    if (!roster.includes(agent)) {
+      return rpcError(id, -32602, `agent "${agent}" not in project roster: ${roster.join(", ") || "(empty)"}`);
+    }
+
+    const suffix = randomBytes(3).toString("hex");
+    const taskName = `${projectName}-build-${suffix}`;
+
+    const task = buildTask({
+      name: taskName,
+      projectName,
+      projectUid: project.metadata.uid ?? "",
+      ns,
+      spec: {
+        projectRef: projectName,
+        type: "BUILD",
+        title,
+        description,
+        agent,
+        priority: priority as "high" | "medium" | "low",
+        parentTaskRef: boardTask || undefined,
+        predecessorRef,
+      },
+    });
+
+    await createTask(task, ns);
+
+    return ok(id, {
+      content: [{ type: "text", text: JSON.stringify({ taskName, project: projectName, type: "BUILD", phase: "pending" }) }],
+    });
+  } catch (e) {
+    return rpcError(id, -32603, `failed to create task: ${(e as Error).message}`);
+  }
+}
+
 function handleMcp(
   req: JsonRpcRequest,
   onFailRun: (reason: string) => void,
@@ -160,7 +240,7 @@ function handleMcp(
       return ok(req.id, {});
 
     case "tools/list":
-      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_COMPLETE_PLAN, TOOL_GET_STATUS] });
+      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_COMPLETE_PLAN, TOOL_GET_STATUS, TOOL_CREATE_TASK] });
 
     case "tools/call": {
       const toolName = (req.params?.name as string | undefined) ?? "";
@@ -207,6 +287,10 @@ function handleMcp(
         return ok(req.id, {
           content: [{ type: "text", text: JSON.stringify(status) }],
         });
+      }
+
+      if (toolName === "create_task") {
+        return handleCreateTask(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>);
       }
 
       return rpcError(req.id, -32602, `unknown tool: ${toolName}`);
