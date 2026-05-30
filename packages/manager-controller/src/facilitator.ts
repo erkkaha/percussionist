@@ -283,8 +283,13 @@ export async function buildBuildTaskGeneratorRun(
     ]),
     "",
     `Requirements:`,
-    `- Each BUILD task should be concrete and actionable — one logical concern per task (roughly 1-4 hours of work)`,
-    `- Split large PLAN items into multiple smaller BUILD tasks`,
+    `- Each BUILD task should represent one logical change that justifies its own commit and review cycle.`,
+    `- Bundle tightly-coupled changes into a single BUILD task: schema + Zod types + CRD regeneration (pnpm codegen) is ONE task; API change + operator consumers is ONE task.`,
+    `- Build verification (pnpm build, pnpm typecheck) is the builder's responsibility — never create a standalone BUILD task for it.`,
+    `- CRD regeneration triggered by a schema change belongs in the same BUILD task as the schema update.`,
+    `- Split only when changes are truly independent: disjoint packages, no shared types, can merge in any order.`,
+    `- A task should represent roughly 1-4 hours of focused implementation work.`,
+    `- If a PLAN item is large but tightly coupled (e.g., refactoring one module), keep it as one BUILD task rather than splitting by file or function.`,
     `- Include relevant local task instructions AND enough full-plan context that the build agent understands the larger feature`,
     `- Do not create standalone audit/research tasks that only document findings unless a later task explicitly consumes a named repo artifact produced by that task`,
     `- Prefer combining discovery with the implementation task that uses the discoveries`,
@@ -305,6 +310,8 @@ export async function buildBuildTaskGeneratorRun(
     `- Do NOT use any tool other than percussionist_dispatcher_complete_run.`,
     `- Do NOT output anything other than the JSON array via the summary field.`,
     `- If you are unsure, still output ONLY the JSON array — never output prose or attempts.`,
+    `- Do NOT create standalone BUILD tasks for build verification, type-checking, or CRD regeneration. These are part of every builder's verification step.`,
+    `- Do NOT split tightly-coupled changes (schema + codegen, API + consumers) into separate BUILD tasks. Bundle them as one logical change.`,
   ].join("\n");
 
   return buildFacilitatorRun(

@@ -151,9 +151,13 @@ spec:
     8) Do NOT use any tool other than percussionist_dispatcher_complete_run.
 
     TASK DECOMPOSITION RULES:
-    - Prefer small, focused tasks: one logical concern per task (a single feature, a single module, a single migration).
+    - Each BUILD task should represent one logical change that justifies its own commit and review cycle.
+    - Bundle tightly-coupled changes into a single BUILD task: schema + Zod types + CRD regeneration (pnpm codegen) is ONE task; API change + operator consumers is ONE task.
+    - Build verification (pnpm build, pnpm typecheck) is the builder's responsibility — never create a standalone BUILD task for it.
+    - CRD regeneration triggered by a schema change belongs in the same BUILD task as the schema update.
+    - Split only when changes are truly independent: disjoint packages, no shared types, can merge in any order.
     - A task should represent roughly 1–4 hours of focused implementation work.
-    - If a PLAN item is large, split it into multiple BUILD tasks.
+    - If a PLAN item is large but tightly coupled (e.g., refactoring one module), keep it as one BUILD task rather than splitting by file or function.
     - Tasks that are independent of each other MUST omit `predecessorIndex` so they can run in parallel.
     - Only set `predecessorIndex` when one task genuinely cannot start until another is complete (e.g. it imports code the predecessor creates, or it migrates a schema the predecessor defines).
     - Do not force serial ordering just for safety — prefer parallelism.
@@ -222,15 +226,14 @@ spec:
     4. Write a structured markdown plan covering:
        - **Context** — a brief summary of the relevant existing code
        - **Approach** — the strategy and key decisions
-       - **Tasks** — a numbered list of concrete implementation steps, each small enough
-         to be done independently where possible
+        - **Task Breakdown** — proposed BUILD tasks at feature-level granularity; bundle tightly-coupled changes (schema + codegen, API + consumers) into single tasks. Each task should represent one logical change that justifies its own commit and review cycle.
        - **Risks / open questions** — anything uncertain or worth calling out
 
     ## Rules
 
     - Do NOT edit files or write code.
     - Do NOT commit or run git commands.
-    - Prefer many small steps over a few large ones in the Tasks section.
+    - Structure BUILD task breakdown at feature-level granularity — not step-level. Each BUILD task should represent one logical change that justifies its own commit and review cycle. Bundle tightly-coupled changes (schema + codegen, API + consumers) into a single BUILD task. Do NOT create standalone tasks for build verification or CRD regeneration — these are part of every BUILD's verification step.
     - Be concrete: reference actual file paths, function names, and type names.
     - If the request is ambiguous, state your assumptions explicitly.
 
@@ -282,6 +285,7 @@ spec:
     - Do not add tests or documentation unless the task explicitly asks for them.
     - If the task description is ambiguous, make a reasonable assumption and note it
       in the commit message or summary.
+    - Build verification is part of your responsibility: run pnpm build and pnpm typecheck before committing. Do not expect a separate task for this.
     - If you hit a blocker you cannot resolve (missing context, broken environment,
       unclear requirements), stop and describe the problem clearly in your summary.
 
