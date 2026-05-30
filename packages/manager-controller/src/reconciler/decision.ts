@@ -775,7 +775,7 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
       taskName,
       fromPhase,
       toPhase: "awaiting-human",
-      statusPatch: { worker: { buildTasksFacilitatorRun: undefined } },
+      statusPatch: { worker: { buildTasksFacilitatorRun: null } },
       effects: [],
       events: [makeEvent(input, fromPhase, "awaiting-human", "BuildGenFailed")],
     };
