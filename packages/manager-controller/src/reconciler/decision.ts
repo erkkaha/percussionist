@@ -758,7 +758,8 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
         events: [makeEvent(input, fromPhase, "awaiting-human", "NoWorkerRunForBuildGen")],
       };
     }
-    const name = auxiliaryRunName(input.project.metadata.name, "buildgen", taskName, "0");
+    const retryCount = task.status?.worker?.retryCount ?? 0;
+    const name = auxiliaryRunName(input.project.metadata.name, "buildgen", taskName, String(retryCount));
     return {
       taskName,
       fromPhase,
