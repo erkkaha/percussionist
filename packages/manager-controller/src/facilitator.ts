@@ -21,7 +21,7 @@ import { fetchSessionMessages, readPodLog, core, getClusterSettings } from "@per
 import { resolveParentBranch, resolveTaskBranch } from "./branch-resolver.js";
 import { truncateK8sName } from "./worker-builder.js";
 
-const DEFAULT_FACILITATOR_AGENT_NAME = "facilitator";
+const DEFAULT_FACILITATOR_AGENT_NAME = "facilitator-buildgen";
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
 
 // Build the facilitator Run spec for a FAILED worker run.
