@@ -291,6 +291,7 @@ spec:
       in the commit message or summary.
     - If you hit a blocker you cannot resolve (missing context, broken environment,
       unclear requirements), stop and describe the problem clearly in your summary.
+    - Build verification is part of your responsibility: run pnpm build and pnpm typecheck before committing. Do not expect a separate task for this.
 
     ## Completion
 
