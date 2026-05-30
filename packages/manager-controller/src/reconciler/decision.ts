@@ -436,7 +436,7 @@ function decideSucceeded(input: ReconcileInput): ReconcileDecision {
           },
         },
         effects: [
-          { type: "ScheduleReviewRun", reviewRunName, succeededRunName: workerRunName, reviewAgent: flow.review.aiReviewerAgent },
+          { type: "ScheduleReviewRun", reviewRunName, succeededRunName: workerRunName, reviewAgent: flow.review.agent },
         ],
         events: [makeEvent(input, fromPhase, "reviewing", "ReviewRunCreating")],
       };

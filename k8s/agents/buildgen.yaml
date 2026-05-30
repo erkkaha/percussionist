@@ -1,11 +1,11 @@
 apiVersion: percussionist.dev/v1alpha1
 kind: ClusterAgent
 metadata:
-  name: facilitator-buildgen
+  name: buildgen
 spec:
   content: |
     ---
-    name: facilitator-buildgen
+    name: buildgen
     description: Build-task generator for approved PLAN runs
     mode: primary
     temperature: 0

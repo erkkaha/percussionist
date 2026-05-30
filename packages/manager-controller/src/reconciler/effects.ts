@@ -153,8 +153,9 @@ export async function executeEffects(
             effect.succeededRunName,
             effect.buildgenRunName,
             succeededStatus.message ?? "",
-            undefined,
+            flow.plan.buildGenerationAgent,
             allTasks,
+            flow.build.defaultAgent,
           );
           try {
             await createRun(buildgenRun, namespace);

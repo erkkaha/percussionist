@@ -88,7 +88,7 @@ describe("resolveFlow", () => {
     });
     const flow = resolveFlow(project);
     expect(flow.review.aiReviewerEnabled).toBe(true);
-    expect(flow.review.aiReviewerAgent).toBe("custom-reviewer");
+    expect(flow.review.agent).toBe("custom-reviewer");
     expect(flow.review.maxAutoReworks).toBe(5);
   });
 
@@ -104,13 +104,13 @@ describe("resolveFlow", () => {
       preset: "plan-build-review-merge",
       review: {
         aiReviewerEnabled: false,
-        aiReviewerAgent: "new-reviewer",
+        agent: "new-reviewer",
         maxAutoReworks: 1,
       },
     };
     const flow = resolveFlow(project);
     expect(flow.review.aiReviewerEnabled).toBe(false);
-    expect(flow.review.aiReviewerAgent).toBe("new-reviewer");
+    expect(flow.review.agent).toBe("new-reviewer");
     expect(flow.review.maxAutoReworks).toBe(1);
   });
 
@@ -164,5 +164,67 @@ describe("resolveFlow", () => {
     expect(flow.timeouts.reviewStaleSeconds).toBe(1200);
     expect(flow.timeouts.mergeStaleSeconds).toBe(900);
     expect(flow.timeouts.buildgenStaleSeconds).toBe(1800);
+  });
+
+  it("uses preset defaults for buildGenerationAgent and defaultAgent", () => {
+    const project = makeProject("test-project");
+    project.spec.flow = { preset: "simple" };
+    const flow = resolveFlow(project);
+    expect(flow.plan.buildGenerationAgent).toBe("buildgen");
+    expect(flow.build.defaultAgent).toBe("builder");
+  });
+
+  it("overrides buildGenerationAgent from flow config", () => {
+    const project = makeProject("test-project");
+    project.spec.flow = {
+      preset: "plan-build-review-merge",
+      plan: { buildGenerationAgent: "custom-buildgen" },
+    };
+    const flow = resolveFlow(project);
+    expect(flow.plan.buildGenerationAgent).toBe("custom-buildgen");
+  });
+
+  it("overrides defaultAgent from flow config", () => {
+    const project = makeProject("test-project");
+    project.spec.flow = {
+      preset: "plan-build-review-merge",
+      build: { defaultAgent: "custom-builder" },
+    };
+    const flow = resolveFlow(project);
+    expect(flow.build.defaultAgent).toBe("custom-builder");
+  });
+
+  it("uses merge.agent when configured", () => {
+    const project = makeProject("test-project");
+    project.spec.flow = {
+      preset: "plan-build-review-merge",
+      merge: { agent: "integrator" },
+    };
+    const flow = resolveFlow(project);
+    expect(flow.merge.agent).toBe("integrator");
+  });
+
+  it("leaves merge.agent undefined when not configured", () => {
+    const project = makeProject("test-project");
+    project.spec.flow = { preset: "plan-build-review-merge" };
+    const flow = resolveFlow(project);
+    expect(flow.merge.agent).toBeUndefined();
+  });
+
+  it("uses preset default for plan.defaultAgent", () => {
+    const project = makeProject("test-project");
+    project.spec.flow = { preset: "simple" };
+    const flow = resolveFlow(project);
+    expect(flow.plan.defaultAgent).toBe("planner");
+  });
+
+  it("overrides plan.defaultAgent from flow config", () => {
+    const project = makeProject("test-project");
+    project.spec.flow = {
+      preset: "plan-build-review-merge",
+      plan: { defaultAgent: "custom-planner" },
+    };
+    const flow = resolveFlow(project);
+    expect(flow.plan.defaultAgent).toBe("custom-planner");
   });
 });

@@ -1,11 +1,11 @@
 apiVersion: percussionist.dev/v1alpha1
 kind: ClusterAgent
 metadata:
-  name: facilitator-failure
+  name: failure-analyst
 spec:
   content: |
     ---
-    name: facilitator-failure
+    name: failure-analyst
     description: Failure-analysis facilitator for failed worker runs
     mode: primary
     temperature: 0

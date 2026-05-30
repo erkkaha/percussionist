@@ -857,17 +857,21 @@ export const ProjectSpecSchema = z.object({
     plan: z.object({
       onApprove: z.enum(["generate-builds", "done"]).default("generate-builds").optional(),
       buildGeneration: z.enum(["ai", "manual", "disabled"]).default("ai").optional(),
+      buildGenerationAgent: z.string().max(63).default("buildgen").optional(),
+      defaultAgent: z.string().max(63).default("planner").optional(),
     }).optional(),
     build: z.object({
       onSuccess: z.enum(["human-review", "ai-review", "done"]).default("human-review").optional(),
       onApprove: z.enum(["merge", "done"]).default("merge").optional(),
+      defaultAgent: z.string().max(63).default("builder").optional(),
     }).optional(),
     merge: z.object({
       mode: z.enum(["auto", "manual", "disabled"]).default("auto").optional(),
+      agent: z.string().max(63).optional(),
     }).optional(),
     review: z.object({
       aiReviewerEnabled: z.boolean().default(false).optional(),
-      aiReviewerAgent: z.string().max(63).default("reviewer").optional(),
+      agent: z.string().max(63).default("reviewer").optional(),
       maxAutoReworks: z.number().int().min(1).max(10).default(2).optional(),
     }).optional(),
     retry: z.object({

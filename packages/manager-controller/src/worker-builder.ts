@@ -182,7 +182,8 @@ export async function buildMergeRun(
   project: Project,
   task: Task,
   runName: string,
-  allTasks?: Task[]
+  allTasks?: Task[],
+  mergeAgentName?: string,
 ): Promise<Run> {
   const clusterSettings = await getClusterSettings().catch(() => undefined);
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
@@ -216,10 +217,9 @@ export async function buildMergeRun(
   }
 
   // Use a dedicated merge agent if configured, otherwise fall back to the task's agent.
-  const MERGING_AGENT = process.env.MERGING_AGENT;
   const mergeAgent =
-    MERGING_AGENT && (project.spec.agents ?? []).some((a) => a.name === MERGING_AGENT)
-      ? MERGING_AGENT
+    mergeAgentName && (project.spec.agents ?? []).some((a) => a.name === mergeAgentName)
+      ? mergeAgentName
       : task.spec.agent;
 
   // Agent-level model override (between board and project in resolution hierarchy).

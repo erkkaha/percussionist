@@ -21,7 +21,6 @@ import { fetchSessionMessages, readPodLog, core, getClusterSettings } from "@per
 import { resolveParentBranch, resolveTaskBranch } from "./branch-resolver.js";
 import { truncateK8sName } from "./worker-builder.js";
 
-const DEFAULT_FACILITATOR_AGENT_NAME = "facilitator-buildgen";
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
 
 // Build the facilitator Run spec for a FAILED worker run.
@@ -32,7 +31,7 @@ export async function buildFacilitationRun(
   failedRunStatus: RunStatus,
   sessionSummary: string,
   runName: string,
-  facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
+  facilitatorAgentName: string,
   allTasks: Task[] = [],
 ): Promise<Run> {
   const clusterSettings = await getClusterSettings().catch(() => undefined);
@@ -103,8 +102,8 @@ export async function buildSuccessReviewRun(
   succeededRunStatus: RunStatus,
   sessionSummary: string,
   runName: string,
+  facilitatorAgentName: string,
   branchName?: string,
-  facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
   allTasks: Task[] = [],
 ): Promise<Run> {
   const clusterSettings = await getClusterSettings().catch(() => undefined);
@@ -219,8 +218,9 @@ export async function buildBuildTaskGeneratorRun(
   succeededRunName: string,
   runName: string,
   sessionSummary: string,
-  facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
+  facilitatorAgentName: string,
   allTasks: Task[] = [],
+  defaultBuildAgent: string = "builder",
 ): Promise<Run> {
   const clusterSettings = await getClusterSettings().catch(() => undefined);
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
@@ -267,7 +267,7 @@ export async function buildBuildTaskGeneratorRun(
       ? [
           `AVAILABLE AGENTS: ${availableAgents.join(", ")}`,
           `For each BUILD task, you may optionally specify which agent should handle it.`,
-          `If not specified, the default "builder" agent will be used.`,
+          `If not specified, the "${defaultBuildAgent}" agent will be used.`,
           "",
         ]
       : []),
@@ -276,7 +276,7 @@ export async function buildBuildTaskGeneratorRun(
       {
         title: "(short title for this BUILD task)",
         description: "(detailed description including the relevant slice plus full-plan context)",
-        agent: "(optional: name from AVAILABLE AGENTS list, defaults to 'builder')",
+        agent: `(optional: name from AVAILABLE AGENTS list, defaults to '${defaultBuildAgent}')`,
         priority: "(optional: 'high' | 'medium' | 'low', defaults to 'medium')",
         predecessorIndex: "(optional: 0-based index of the task in this array that must complete first, or omit/null if independent)",
       },
@@ -328,7 +328,7 @@ export function buildReviewRun(
   succeededRunStatus: RunStatus,
   runName: string,
   branchName: string | undefined,
-  facilitatorAgentName = DEFAULT_FACILITATOR_AGENT_NAME,
+  facilitatorAgentName: string,
   allTasks: Task[] = [],
 ): Run {
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
