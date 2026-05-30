@@ -749,6 +749,7 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
 
   if (!buildgenRunName) {
     const succeededRunName = task.status?.worker?.runName;
+    console.log("[decideGeneratingBuilds]", taskName, "buildgenRunName=", buildgenRunName, "succeededRunName=", succeededRunName);
     if (!succeededRunName) {
       return {
         taskName,
