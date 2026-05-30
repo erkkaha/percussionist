@@ -13,7 +13,7 @@
 
 import { Hono } from "hono";
 import { randomBytes } from "node:crypto";
-import { computeBoardColumn, annotationKey, ANNOTATION_PREFIXES } from "@percussionist/api";
+import { computeBoardColumn } from "@percussionist/api";
 import {
   getProject,
   patchProjectSpec,
@@ -85,14 +85,13 @@ board.get("/:project/board", async (c) => {
       columns[col]!.push(task);
     }
 
-    const annotations = project.metadata.annotations ?? {};
-    // Collect per-task approval annotations.
+    // Collect per-task approval annotations from task metadata.
     const approvals: Record<string, { approved: boolean; requestChanges: boolean }> = {};
     for (const task of tasks) {
-      const tn = task.metadata.name;
-      approvals[tn] = {
-        approved: annotations[`percussionist.dev/${annotationKey("approved", tn)}`] === "true",
-        requestChanges: annotations[`percussionist.dev/${annotationKey("request-changes", tn)}`] === "true",
+      const taskAnnotations = task.metadata.annotations ?? {};
+      approvals[task.metadata.name] = {
+        approved: taskAnnotations["percussionist.dev/action-approved"] === "true",
+        requestChanges: taskAnnotations["percussionist.dev/action-request-changes"] === "true",
       };
     }
 
@@ -129,13 +128,17 @@ board.get("/:project/board/events", async (c) => {
         getProject(name),
         listTasks(name),
       ]);
-      const annotations = project.metadata.annotations ?? {};
-      const taskApprovalAnnotations = Object.keys(annotations)
-        .filter((k) =>
-          ANNOTATION_PREFIXES.some((p) => k.startsWith(`percussionist.dev/${p}-`)),
-        )
-        .sort()
-        .map((k) => [k, annotations[k]]);
+      // Collect task annotations for change detection.
+      const taskApprovalAnnotations: [string, string][] = [];
+      for (const task of tasks) {
+        const taskAnnotations = task.metadata.annotations ?? {};
+        for (const key of Object.keys(taskAnnotations)) {
+          if (key.startsWith("percussionist.dev/action-")) {
+            taskApprovalAnnotations.push([key, taskAnnotations[key] ?? ""]);
+          }
+        }
+      }
+      taskApprovalAnnotations.sort((a, b) => a[0].localeCompare(b[0]));
 
       // Include task resourceVersions so any task status change triggers an event.
       const taskVersions = tasks.map((t) => `${t.metadata.name}:${t.metadata.resourceVersion}`).join(",");
@@ -414,7 +417,7 @@ board.post("/:project/board/tasks/:taskName/answer", async (c) => {
         ...task.metadata,
         annotations: {
           ...currentAnnotations,
-          [`percussionist.dev/${annotationKey("answer", taskName)}`]: answer.trim(),
+          [`percussionist.dev/action-answer-${taskName}`]: answer.trim(),
         },
       },
     });

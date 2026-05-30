@@ -381,7 +381,7 @@ function decideWaitingForInput(input: ReconcileInput): ReconcileDecision {
       taskName,
       fromPhase,
       toPhase: "running",
-      effects: [{ type: "ClearTaskAnnotations", keys: [`percussionist.dev/answer-${taskName}`] }],
+      effects: [{ type: "ClearTaskAnnotations", keys: [`percussionist.dev/action-answer-${taskName}`] }],
       events: [makeEvent(input, fromPhase, "running", "InputAnswered")],
     };
   }
