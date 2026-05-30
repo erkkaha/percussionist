@@ -244,7 +244,7 @@ export async function buildBuildTaskGeneratorRun(
 
   const promptLines = [
     `You are a facilitator agent that breaks down approved PLAN tasks into concrete BUILD tasks.`,
-    `You do NOT implement code. You do NOT write, edit, or modify any files. You do NOT run git commands. You do NOT create pull requests. You do NOT explore the codebase. Your ONLY output is a JSON array of BUILD task definitions.`,
+    `You do NOT implement code. You do NOT write, edit, or modify any files. You do NOT run git commands. You do NOT create pull requests. You do NOT explore the codebase.`,
     "",
     `PLAN TASK: ${planTask.metadata.name} — ${planTask.spec.title}`,
     `PLAN DESCRIPTION: ${planTask.spec.description ?? "(none)"}`,
@@ -255,46 +255,48 @@ export async function buildBuildTaskGeneratorRun(
     "",
     `PLAN ARTIFACT PATH: .percussionist/plans/${planTask.metadata.name}.md`,
     "",
-    `The PLAN task has been approved by a human reviewer. Your job is to generate a list`,
-    `of BUILD tasks that implement the plan. Work ONLY from the task description and plan`,
-    `session context provided above. Do NOT read any workspace files. Do NOT explore the codebase.`,
-    `Do NOT run shell commands. Do NOT write or edit any files.`,
-    "",
-    `If the context above is insufficient to derive concrete BUILD tasks, return an empty array: []`,
-    `so the PLAN escalates for manual BUILD task creation.`,
+    `The PLAN task has been approved by a human reviewer. Your job is to call the`,
+    `create_task tool for each BUILD task that implements the plan. Work ONLY from`,
+    `the task description and plan session context provided above. Do NOT read any`,
+    `workspace files. Do NOT explore the codebase. Do NOT run shell commands.`,
+    `Do NOT write or edit any files.`,
     "",
     ...(availableAgents.length > 0
       ? [
           `AVAILABLE AGENTS: ${availableAgents.join(", ")}`,
-          `For each BUILD task, you may optionally specify which agent should handle it.`,
+          `For each BUILD task, specify the agent via the create_task "agent" parameter.`,
           `If not specified, the "${defaultBuildAgent}" agent will be used.`,
           "",
         ]
       : []),
-    `Output ONLY valid JSON array (no markdown, no explanation, no extra text):`,
-    JSON.stringify([
-      {
-        title: "(short title for this BUILD task)",
-        description: "(detailed description including the relevant slice plus full-plan context)",
-        agent: `(optional: name from AVAILABLE AGENTS list, defaults to '${defaultBuildAgent}')`,
-        priority: "(optional: 'high' | 'medium' | 'low', defaults to 'medium')",
-        predecessorIndex: "(optional: 0-based index of the task in this array that must complete first, or omit/null if independent)",
-      },
-    ]),
+    `AVAILABLE TOOLS:`,
+    `- create_task(title, description?, agent, priority?, predecessorRef?) — creates a BUILD Task CR and returns { taskName, project, type, phase }`,
+    `- percussionist_dispatcher_complete_run — call after all BUILD tasks are created to signal completion`,
     "",
-    `Requirements:`,
+    `If the context above is insufficient to derive concrete BUILD tasks, call complete_run`,
+    `with summary "no build tasks required" so the PLAN escalates for manual BUILD task creation.`,
+    "",
+    `WORKFLOW:`,
+    `1. Decide your BUILD tasks and their order.`,
+    `2. Call create_task for each task IN ORDER:`,
+    `   - title (required): short actionable title`,
+    `   - description: detailed implementation context including the relevant PLAN slice`,
+    `   - agent (required): agent name from AVAILABLE AGENTS list`,
+    `   - priority: "high", "medium", or "low" (default: "medium")`,
+    `   - predecessorRef: the taskName returned by a previous create_task call if this task depends on it`,
+    `3. Each create_task returns { taskName, ... }. Use the returned taskName as predecessorRef for dependent tasks.`,
+    `4. After ALL tasks are created, call percussionist_dispatcher_complete_run with a summary of what was created.`,
+    "",
+    `REQUIREMENTS:`,
     `- Each BUILD task should be concrete and actionable — one logical concern per task (roughly 1-4 hours of work)`,
     `- Split large PLAN items into multiple smaller BUILD tasks`,
-    `- Include relevant local task instructions AND enough full-plan context that the build agent understands the larger feature`,
+    `- Include enough full-plan context in each task description that the build agent understands the larger feature`,
     `- Do not create standalone audit/research tasks that only document findings unless a later task explicitly consumes a named repo artifact produced by that task`,
     `- Prefer combining discovery with the implementation task that uses the discoveries`,
     `- If a discovery task is genuinely necessary, require it to write a specific repo file such as .percussionist/findings/{task-id}.md and require every dependent task to read that exact file`,
-    `- Do not use predecessorIndex merely to sequence vague context handoff; use it only when the predecessor produces code changes or a named artifact that the successor task description explicitly references`,
-    `- Tasks that are independent MUST omit predecessorIndex so they run in parallel`,
-    `- Only set predecessorIndex when a task genuinely cannot start until another is done (imports code it creates, migrates schema it defines, etc.)`,
-    `- predecessorIndex must be a 0-based index strictly less than the task's own index (no forward references, no cycles)`,
-    `- If the PLAN requires no BUILD tasks (was purely research/planning), return empty array: []`,
-    `- Return valid JSON array ONLY - no markdown fences, no explanation`,
+    `- Tasks that are independent MUST NOT be chained via predecessorRef — they run in parallel`,
+    `- Only set predecessorRef when one task genuinely cannot start until another is done (imports code it creates, migrates schema it defines, etc.)`,
+    `- If the PLAN requires no BUILD tasks (was purely research/planning), call complete_run with summary "no build tasks required"`,
     "",
     `CRITICAL — DO NOT:`,
     `- Do NOT write or edit any files. You have NO file write access.`,
@@ -302,9 +304,7 @@ export async function buildBuildTaskGeneratorRun(
     `- Do NOT read any workspace files. You have NO file read access.`,
     `- Do NOT run git commands, commit, push, or create pull requests.`,
     `- Do NOT explore the codebase. Do NOT browse directories.`,
-    `- Do NOT use any tool other than percussionist_dispatcher_complete_run.`,
-    `- Do NOT output anything other than the JSON array via the summary field.`,
-    `- If you are unsure, still output ONLY the JSON array — never output prose or attempts.`,
+    `- Do NOT output JSON or prose — just call the tools.`,
   ].join("\n");
 
   return buildFacilitatorRun(
@@ -616,187 +616,3 @@ function extractFacilitationJson(text: string) {
   return null;
 }
 
-// Parse BUILD task definitions from a BUILD task generator facilitator run.
-export async function parseBuildTaskDefinitions(
-  runName: string,
-  ns: string,
-  serviceName?: string,
-  sessionID?: string,
-): Promise<Array<{
-  title: string;
-  description?: string;
-  agent?: string;
-  priority?: "high" | "medium" | "low";
-  predecessorIndex?: number | null;
-}> | null> {
-  // Primary: try the session ConfigMap snapshot saved by the dispatcher.
-  try {
-    const cm = await core().readNamespacedConfigMap({
-      name: `${runName}-session`,
-      namespace: ns,
-    });
-    const data = cm.data ?? {};
-    for (const [key, value] of Object.entries(data)) {
-      if (!key.startsWith("messages-")) continue;
-      const messages: Array<{
-        info: { role: string };
-        parts: Array<{
-          type: string;
-          text?: string;
-          tool?: string;
-          state?: { input?: { summary?: string } };
-        }>;
-      }> = JSON.parse(value);
-      // Walk messages in reverse to find the last assistant text.
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i];
-        if (!msg || msg.info.role !== "assistant") continue;
-        for (const part of msg.parts) {
-          if (part.type === "text" && part.text) {
-            const result = extractBuildTasksJson(part.text);
-            if (result) return result;
-          }
-          if (
-            part.type === "tool" &&
-            part.tool === "percussionist-dispatcher_complete_run" &&
-            part.state?.input?.summary
-          ) {
-            const result = extractBuildTasksJson(part.state.input.summary);
-            if (result) return result;
-          }
-        }
-      }
-    }
-  } catch {
-    // ConfigMap not yet available — fall through to live API.
-  }
-
-  // Fallback: live OpenCode API (works while pod is still running).
-  let runStatus: unknown = null;
-  if (serviceName && sessionID) {
-    try {
-      runStatus = await fetchSessionMessages(serviceName, sessionID, ns);
-    } catch {
-      runStatus = null;
-    }
-  }
-  if (runStatus && typeof runStatus === "object" && "messages" in runStatus) {
-    const messages = (runStatus.messages as Array<{
-      role: string;
-      content: string;
-    }>).filter((m) => m.role === "assistant");
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
-      if (!message) continue;
-      const result = extractBuildTasksJson(message.content);
-      if (result) return result;
-    }
-  }
-
-  // Last resort: pod log.
-  try {
-    const logs = await readPodLog(runName, "opencode", undefined, ns);
-    const result = extractBuildTasksJson(logs);
-    if (result) return result;
-  } catch {
-    // Ignore
-  }
-
-  return null;
-}
-
-// Patterns that indicate the agent went off-script and self-reports having implemented code.
-// These must NOT match BUILD task descriptions which naturally describe future work.
-const OFF_SCRIPT_PATTERNS = [
-  /\bI\s+(?:will\s+)?(?:have\s+)?(?:just\s+)?(?:added|created|implemented|written|built|modified|changed|pushed|committed)\b/i,
-  /\bI(?:'ve|'d)\s+(?:already\s+|just\s+|now\s+)?(?:added|created|implemented|written|built|modified|changed|pushed|committed)\b/i,
-  /\blet me\s+(implement|write|create|add|build|modify|change|commit|push)\b/i,
-  /(?:git\s+)?(?:committed|pushed)\s+(?:the\s+)?(?:changes|code)\s+(?:to|on|in)/i,
-  /\b(?:creating|opening?|submitting?)\s+(?:a\s+)?pull\s*[_-]?\s*request\b/i,
-];
-
-// Extract a JSON array of BUILD task definitions from text.
-function extractBuildTasksJson(text: string): Array<{
-  title: string;
-  description?: string;
-  agent?: string;
-  priority?: "high" | "medium" | "low";
-  predecessorIndex?: number | null;
-}> | null {
-  const validateBuildTasks = (value: unknown): Array<{
-    title: string;
-    description?: string;
-    agent?: string;
-    priority?: "high" | "medium" | "low";
-    predecessorIndex?: number | null;
-  }> | null => {
-    try {
-      const parsed = value;
-      if (Array.isArray(parsed)) {
-        // Validate each item has at least a title
-        const valid = parsed.every(
-          (item) =>
-            typeof item === "object" &&
-            item !== null &&
-            typeof item.title === "string" &&
-            item.title.length > 0
-        );
-        if (valid) {
-          return parsed.map((item, idx) => {
-            // Validate predecessorIndex: must be a non-negative integer less than current index
-            let predecessorIndex: number | null = null;
-            if (typeof item.predecessorIndex === "number" && Number.isInteger(item.predecessorIndex) && item.predecessorIndex >= 0 && item.predecessorIndex < idx) {
-              predecessorIndex = item.predecessorIndex;
-            }
-            return {
-              title: item.title,
-              description: item.description,
-              agent: item.agent,
-              priority: item.priority === "high" || item.priority === "low" ? item.priority : "medium",
-              predecessorIndex,
-            };
-          });
-        }
-      }
-    } catch {
-      // Invalid JSON
-    }
-    return null;
-  };
-
-  // Reject responses that look like the agent went off-script (implemented code instead of outputting JSON).
-  if (OFF_SCRIPT_PATTERNS.some((p) => p.test(text))) {
-    return null;
-  }
-
-  // Reject responses that are too long (agent went off-script with prose/implementation).
-  if (text.length > 15000) {
-    return null;
-  }
-
-  // Most common case: response is pure JSON array.
-  const trimmed = text.trim();
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-    try {
-      const direct = JSON.parse(trimmed);
-      const validated = validateBuildTasks(direct);
-      if (validated) return validated;
-    } catch {
-      // Not pure JSON; continue with extraction heuristics.
-    }
-  }
-
-  // Extract the first JSON array that starts with objects.
-  const arrayMatch = text.match(/\[\s*\{[\s\S]*?\}\s*\]/);
-  if (arrayMatch) {
-    try {
-      const parsed = JSON.parse(arrayMatch[0]);
-      const validated = validateBuildTasks(parsed);
-      if (validated) return validated;
-    } catch {
-      // Invalid JSON
-    }
-  }
-
-  return null;
-}
