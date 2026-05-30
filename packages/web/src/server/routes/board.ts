@@ -417,7 +417,7 @@ board.post("/:project/board/tasks/:taskName/answer", async (c) => {
         ...task.metadata,
         annotations: {
           ...currentAnnotations,
-          [`percussionist.dev/action-answer-${taskName}`]: answer.trim(),
+          "percussionist.dev/action-answer": answer.trim(),
         },
       },
     });
