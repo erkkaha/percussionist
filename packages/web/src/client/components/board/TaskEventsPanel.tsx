@@ -57,7 +57,7 @@ function formatEventLabel(eventType: string): string {
 function PayloadBadge({ label, value }: { label: string; value: string | number | undefined | null }) {
   if (value == null) return null;
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] font-mono text-text-dim bg-surface-overlay/30 rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center gap-1 text-label-md font-mono text-text-dim bg-surface-overlay/30 rounded px-1.5 py-0.5">
       <span className="text-text-dim/60">{label}:</span>
       <span>{String(value).length > 40 ? String(value).slice(0, 40) + "…" : String(value)}</span>
     </span>
@@ -127,8 +127,8 @@ export default function TaskEventsPanel({ projectName, taskName }: TaskEventsPan
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-medium">{formatEventLabel(event.eventType)}</span>
-                <span className="text-[10px] text-text-dim/60">{formatTime(event.createdAt)}</span>
+                <span className="text-label-md font-mono uppercase">{formatEventLabel(event.eventType)}</span>
+                <span className="text-label-md text-text-dim/60">{formatTime(event.createdAt)}</span>
               </div>
               <EventPayload payload={event.payload} />
             </div>

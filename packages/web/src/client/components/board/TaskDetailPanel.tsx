@@ -248,7 +248,7 @@ function TaskDetailPanelInner({
             }
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="font-semibold text-base leading-snug">{task.spec.title}</h2>
+            <h2 className="text-body-lg font-semibold leading-snug">{task.spec.title}</h2>
             <p className="text-xs font-mono text-text-dim mt-0.5">{taskName}</p>
           </div>
         </div>
@@ -351,7 +351,7 @@ function TaskDetailPanelInner({
         {/* Request Changes inline form */}
         {showRequestChanges && (
           <div className="space-y-2 border border-border rounded-md p-3 bg-surface">
-            <p className="text-xs font-medium">Review feedback</p>
+            <p className="text-label-md font-mono uppercase text-text-dim">Review feedback</p>
             <textarea
               placeholder="Describe required changes…"
               value={requestChangesComment}
