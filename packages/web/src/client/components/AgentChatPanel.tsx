@@ -305,15 +305,26 @@ function sanitizeForSpeech(text: string): string {
           <div className="border-t border-border px-4 py-3">
             <form
               onSubmit={(e) => { e.preventDefault(); handleSend(); }}
-              className="flex gap-2 items-center"
+              className="flex gap-2 items-end"
             >
-              <input
-                type="text"
+              <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                onInput={(e) => {
+                  const el = e.currentTarget;
+                  el.style.height = "auto";
+                  el.style.height = Math.min(el.scrollHeight, 160) + "px";
+                }}
                 placeholder="Ask the agent..."
-                className="flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
-                disabled={sending}
+                rows={1}
+                readOnly={sending}
+                className="flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none resize-none overflow-y-auto max-h-[160px]"
               />
               {sttSupported && (
                 <button

@@ -114,6 +114,7 @@ stats.post("/session", async (c) => {
           tokensIn: runPayload.tokensIn ?? 0,
           tokensOut: runPayload.tokensOut ?? 0,
           error: runPayload.error,
+          createdAt: new Date().toISOString(),
         })
         .onConflictDoUpdate({
           target: runs.id,
@@ -226,6 +227,7 @@ stats.patch("/session", async (c) => {
           tokensIn: runPayload.tokensIn ?? 0,
           tokensOut: runPayload.tokensOut ?? 0,
           error: runPayload.error,
+          createdAt: new Date().toISOString(),
         })
         .onConflictDoUpdate({
           target: runs.id,

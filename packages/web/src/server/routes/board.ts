@@ -59,6 +59,7 @@ export async function appendTaskEvent(
       taskType,
       eventType,
       payload: JSON.stringify(payload),
+      createdAt: new Date().toISOString(),
     }).run();
   } catch {
     // Event logging is best-effort — never fail the main operation.

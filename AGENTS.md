@@ -218,6 +218,7 @@ Do not add `ALTER TABLE` try/catch blocks to `db.ts`. Do not duplicate DDL as ra
 - Console-based logging with timestamps (no structured logger)
 - CamelCase for TS, kebab-case for YAML
 - `runXxx` prefix for CLI action functions in `@percussionist/cli`
+- **`undefined` in merge-patches is silently dropped**: `JSON.stringify` strips `undefined` values, so a K8s merge-patch with `{ foo: undefined }` serializes to `{}` — the field is never cleared. Always use `null` to remove a field in a status patch or annotation patch passed to `patchTask` / `patchTaskStatus`.
 
 ## MCP Server Configuration
 
