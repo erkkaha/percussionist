@@ -1,7 +1,13 @@
-# PLAN: Add description field to agent form UI
+# PLAN: Remove Description column from agents table
 
 **Task:** `percussionist-dev-plan-16a91d`  
-**Problem:** The agent creation/edit form in the web UI is missing a dedicated `description` field. Currently, descriptions are embedded as YAML front-matter inside the content textarea (`---\ndescription: ...\n---`), which users must manually type. The agents list page already displays a "Description" column by parsing this front-matter via regex, but there's no proper UI input for it.
+**Problem:** The agents list page shows a "Description" column that parses descriptions from the content string via regex (`/^---\ndescription:\s*(.+?)\n---/`). However, there is no dedicated `description` field in the `ClusterAgentSpecSchema`, no description input in the form, and no type-level support for it. The column is misleading — it's a derived value from an opaque content string, not a real schema field.
+
+**Decision:** Remove the Description column from the agents table entirely. This is cleaner than adding a new schema field because:
+- `ClusterAgentSpecSchema` only has `{ content }` — no description at all
+- Adding description would require changes across 6+ files (API schema, backend routes, client types, hooks, form component, list page)
+- The regex-based extraction is fragile and error-prone (breaks if front-matter format varies)
+- Users already see the full content preview column; adding a separate description field adds complexity for marginal benefit
 
 ## Context
 
@@ -9,107 +15,83 @@
 
 | Layer | File(s) | What it does |
 |-------|---------|--------------|
-| **API Schema** | `packages/api/src/index.ts:295-298` | `ClusterAgentSpecSchema` — Zod schema defining `{ content }` only. No `description`. |
-| **Backend Routes** | `packages/web/src/server/routes/agents.ts` | POST/PUT validate body against `ClusterAgentSpecSchema`; GET list returns `{ name, content }` per agent. |
-| **Client Types** | `packages/web/src/client/lib/types.ts:122-125` | `CreateAgentRequest` interface — only `{ name?, content }`. |
-| **API Client** | `packages/web/src/client/lib/api.ts:148-179` | `submitAgent()`, `updateAgent()` send `CreateAgentRequest` to backend. |
-| **Form Component** | `packages/web/src/client/components/AgentForm.tsx` | Two fields: Name (text input) + Content (textarea with YAML front-matter placeholder). No description field. |
-| **List Page** | `packages/web/src/client/components/AgentsPage.tsx:25-28` | Extracts description from content via regex `/^---\ndescription:\s*(.+?)\n---/`. Shows it in a "Description" column. |
-| **Hooks** | `packages/web/src/client/hooks/useAgents.ts` | `AgentListItem` interface — `{ name, content }`. No description. |
+| **API Schema** | `packages/api/src/index.ts:295-298` | `ClusterAgentSpecSchema = z.object({ content: z.string().max(102400) })`. Only one field. No description. |
+| **Backend Routes** | `packages/web/src/server/routes/agents.ts` | GET list returns `{ name, content }` per agent (line 22). POST/PUT validate against schema. |
+| **Client Types** | `packages/web/src/client/lib/types.ts:122-125` | `CreateAgentRequest = { name?, content }`. No description. |
+| **API Client** | `packages/web/src/client/lib/api.ts:148-179` | `submitAgent()`, `updateAgent()` send `CreateAgentRequest`. |
+| **Form Component** | `packages/web/src/client/components/AgentForm.tsx` | Two fields: Name (text input) + Content (textarea). Description is just text inside the textarea placeholder. |
+| **List Page** | `packages/web/src/client/components/AgentsPage.tsx:25-28, 50-51` | Extracts description from content via regex `/^---\ndescription:\s*(.+?)\n---/`. Shows it in a "Description" column. |
+| **Hooks** | `packages/web/src/client/hooks/useAgents.ts` | `AgentListItem = { name, content }`. No description. |
 
-### The Gap
+### The Gap (Why Remove)
 
-The agents list page already has a "Description" column and parses descriptions from the content front-matter. But users creating/editing agents have no dedicated UI field for it — they must manually type YAML front-matter inside the content textarea. This is error-prone and unintuitive.
+The Description column pretends there's a first-class `description` field that doesn't exist:
+- Schema has no `description` — only `content`
+- Form has no description input — users type it manually in the textarea
+- Regex parsing is fragile — breaks if front-matter format varies (extra whitespace, different key order, etc.)
+- The column shows `-` for any agent whose content doesn't match the exact regex pattern
+
+Removing the column eliminates a misleading UI element. Users who need to see an agent's description can click Edit and read it in the content textarea, or use the Content Preview column which shows the raw content.
 
 ## Approach
 
-Add `description` as an **optional top-level field** in the `ClusterAgentSpecSchema`. This requires changes across all layers:
+Remove the Description column from `AgentsPage.tsx`. This is a single-file change with no schema, API, or type modifications needed.
 
-1. **API schema**: Add `description: z.string().max(8192).optional()` to `ClusterAgentSpecSchema`
-2. **Backend routes**: Zod validation auto-accepts new field; update GET list endpoint to return description
-3. **Client types**: Add `description?: string` to `CreateAgentRequest`
-4. **Form component**: Add a description `<input>` field, load it on edit, send it on create/update
-5. **List page & hooks**: Update interfaces to include description; use the new field instead of regex parsing
+### What changes
+1. Remove `<th>Description</th>` header cell (line 151)
+2. Remove `<td>extractDescription(...)</td>` data cell in `AgentRow` (lines 50-52)
+3. Remove the `extractDescription()` helper function (lines 25-28) — no longer used anywhere
+4. Update loading skeleton to remove one pulse div (line 130)
 
-### Design Decisions
-
-- **Optional field** — existing agents without `description` will show `-` (same as current fallback)
-- **Max 8192 chars** — consistent with other optional string fields in the codebase (e.g., Task description)
-- **Backward compatible** — old agents stored without `spec.description` continue to work; list page falls back to regex parsing if field is absent
-- **No K8s CRD changes needed** — ClusterAgent is a custom resource; adding an optional spec field doesn't require CRD regeneration since the K8s API accepts arbitrary object fields
+### What stays the same
+- Form component (`AgentForm.tsx`) — unchanged, description remains in content textarea
+- API schema (`ClusterAgentSpecSchema`) — unchanged, only `content` field
+- Backend routes — unchanged
+- Client types — unchanged
+- Content Preview column — stays as-is (shows raw content truncated to 120 chars)
 
 ## Tasks
 
-### Task 1: Add `description` to `ClusterAgentSpecSchema` (API layer)
-- **File:** `packages/api/src/index.ts` lines 295-298
-- **Change:** Add `description: z.string().max(8192).optional()` to the Zod object
-- **Impact:** All downstream layers that use this schema will accept/validate description
-
-### Task 2: Update client type `CreateAgentRequest`
-- **File:** `packages/web/src/client/lib/types.ts` lines 122-125
-- **Change:** Add `description?: string;` to the interface
-- **Impact:** TypeScript compilation will enforce description field in form submissions
-
-### Task 3: Update backend GET list endpoint to return description
-- **File:** `packages/web/src/server/routes/agents.ts` line 22
-- **Change:** Map `{ name, content }` → `{ name, content, description }` from `a.spec.description`
-- **Impact:** Frontend receives description in agent list responses
-
-### Task 4: Update `AgentListItem` interface and hooks
-- **File:** `packages/web/src/client/hooks/useAgents.ts` lines 4-7
-- **Change:** Add `description?: string;` to the local `AgentListItem` interface
-- **Impact:** TypeScript types flow through to AgentsPage
-
-### Task 5: Update `extractDescription` fallback in AgentsPage
-- **File:** `packages/web/src/client/components/AgentsPage.tsx` lines 25-28, 50-52
-- **Change:** Modify `AgentRow` to use `agent.description ?? extractDescription(agent.content)` — prefer the new field, fall back to regex parsing for legacy agents
-- **Impact:** Existing agents continue showing descriptions; new agents show their description directly
-
-### Task 6: Add description input field to AgentForm component
-- **File:** `packages/web/src/client/components/AgentForm.tsx`
+### Task 1: Remove Description column from AgentsPage table
+- **File:** `packages/web/src/client/components/AgentsPage.tsx`
 - **Changes:**
-  - Add `const [description, setDescription] = useState("");` state variable (line ~14)
-  - Load description from API response in the edit useEffect: `setDescription(data.spec?.description ?? "")` (lines 20-26)
-  - Insert a new `<input>` field between Name and Content fields with label "Description"
-  - Update `handleSave` to pass `{ name, description, content }` on create/update
-  - Add placeholder text: `"Brief description of this agent's role"`
-- **Impact:** Users can now enter descriptions in a dedicated UI field
+  - Remove `<th className="px-4 py-2.5 font-medium">Description</th>` at line 151
+  - Remove the entire `<td>` cell containing `extractDescription(agent.content)` at lines 50-52 in `AgentRow`
+  - Remove the `extractDescription()` helper function (lines 25-28) — verify it's unused elsewhere via grep
+  - Update loading skeleton: remove one of the four pulse divs (line 130), keep three to match remaining columns
 
-### Task 7: Regenerate CRD YAML (if needed)
-- Run `pnpm codegen` to regenerate any CRD YAML from updated Zod schemas
-- Verify no breaking changes to existing ClusterAgent CRD structure
+### Task 2: Verify no other references to extractDescription
+- **File:** `packages/web/src/client/components/AgentsPage.tsx` and all other files
+- **Change:** Confirm via grep that `extractDescription` is only used in this file (already confirmed — only 5 matches, all within AgentsPage.tsx)
+
+### Task 3: Run typecheck and build
+- **Command:** `pnpm typecheck && pnpm build` from workspace root
+- **Verify:** No TypeScript errors, build succeeds
 
 ## Acceptance Criteria
 
-1. ✅ New agent form has a "Description" input field between Name and Content
-2. ✅ Creating an agent with description saves it correctly (verified via API response)
-3. ✅ Editing an existing agent loads the description into the field
-4. ✅ Agents list page shows descriptions from the new field for newly-created agents
-5. ✅ Legacy agents (without `spec.description`) still show their description via regex fallback
-6. ✅ `pnpm build` succeeds with no type errors
-7. ✅ `pnpm codegen` produces valid CRD YAML
+1. ✅ Description column header removed from agents table
+2. ✅ Description data cells removed from all agent rows
+3. ✅ `extractDescription()` function removed (no longer referenced)
+4. ✅ Loading skeleton updated to match new column count (3 pulse divs instead of 4)
+5. ✅ Form component unchanged — description still in content textarea as before
+6. ✅ No schema/API/type changes needed or made
+7. ✅ `pnpm typecheck` passes with no errors
+8. ✅ `pnpm build` succeeds
 
 ## Risks / Open Questions
 
-- **K8s API compatibility:** Adding an optional field to ClusterAgentSpec is backward compatible — the K8s API ignores unknown fields in objects, and existing agents without `description` will simply have `undefined` for that field.
-- **CRD regeneration:** The Zod schema change may affect CRD YAML generation. Need to verify with `pnpm codegen`. If it adds a new required field or changes validation constraints, this could cause issues during rollout.
-- **Existing agents:** All existing ClusterAgent resources in the cluster will have `spec.description` as undefined. The fallback regex parsing ensures no visual regression.
+- **Visual layout:** Removing one column reduces table width. Verify the remaining columns (Name, Content Preview, Age, Actions) still provide useful information at a glance. The Content Preview column already shows raw content — this partially compensates for losing Description.
+- **User expectations:** Users accustomed to seeing descriptions in the list will need to click Edit to see them. This is acceptable since description was never a first-class field anyway.
+- **No data migration needed:** Since we're removing UI, not changing schema, no migration or backward compatibility concerns exist.
 
 ## BUILD Task Breakdown
 
-1. **BUILD 1** — API schema + client types (Tasks 1-2): Add description to Zod schema and CreateAgentRequest
-2. **BUILD 2** — Backend routes + hooks (Tasks 3-4): Update GET list endpoint, update AgentListItem interface
-3. **BUILD 3** — UI form component (Task 6): Add description input field with load/save logic
-4. **BUILD 4** — AgentsPage updates + CRD regen (Tasks 5, 7): Update list page fallback, regenerate CRDs
+1. **BUILD 1** — Remove Description column from AgentsPage (Task 1): Edit `AgentsPage.tsx` to remove header cell, data cell, helper function, and update skeleton
+2. **BUILD 2** — Verify + typecheck (Tasks 2-3): Confirm no orphaned references, run `pnpm typecheck && pnpm build`
 
 ## Files Changed Summary
 
 | File | Change Type |
 |------|-------------|
-| `packages/api/src/index.ts` | Add `description` to `ClusterAgentSpecSchema` |
-| `packages/web/src/client/lib/types.ts` | Add `description` to `CreateAgentRequest` |
-| `packages/web/src/server/routes/agents.ts` | Return description in GET list response |
-| `packages/web/src/client/hooks/useAgents.ts` | Add `description` to `AgentListItem` interface |
-| `packages/web/src/client/components/AgentForm.tsx` | Add description input field, load/save logic |
-| `packages/web/src/client/components/AgentsPage.tsx` | Use new description field with regex fallback |
-
+| `packages/web/src/client/components/AgentsPage.tsx` | Remove Description column header, data cell, `extractDescription()` helper, update skeleton pulse count |
