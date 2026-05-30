@@ -63,6 +63,9 @@ importers:
       '@percussionist/api':
         specifier: workspace:*
         version: link:../api
+      '@percussionist/kube':
+        specifier: workspace:*
+        version: link:../kube
 
   packages/kube:
     dependencies:
