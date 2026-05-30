@@ -581,7 +581,6 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
   const { task, manualActions, flow, now } = input;
   const taskName = task.metadata.name;
   const fromPhase = "awaiting-human" as TaskPhase;
-  console.log("[decideAwaitingHuman]", taskName, "manualActions=", JSON.stringify(manualActions));
 
   if (manualActions.abandon) {
     const consumedKeys = getConsumedAnnotationKeys(manualActions);
