@@ -1,24 +1,23 @@
 # BUILD Task Scoping Guidelines for Percussionist Self-Dev
 
-## Context
+## Problem
 
-BUILD tasks generated from approved PLAN runs should be decomposed at **feature-level granularity**, not step-level. A single feature change — e.g., a schema update, the logic that consumes it, the codegen step that regenerates CRDs, and a build verification — is one logical unit of work, not five separate tasks.
+BUILD tasks generated from approved PLAN runs are being decomposed into excessively small units. A single feature change — e.g., a schema update, the logic that consumes it, the codegen step that regenerates CRDs, and a build verification — is routinely split into 5+ separate BUILD tasks. This creates:
 
-Over-splitting creates:
 - **Management overhead**: Each task requires its own run pod, worktree branch (under feature branching), merge cycle, and review gate.
-- **Merge coordination cost**: Under `featureBranchingEnabled: true`, each BUILD gets a unique branch that must be merged sequentially via predecessor dependencies or independently in parallel. Five tiny tasks means five branches, five merges.
+- **Merge coordination cost**: Under `featureBranchingEnabled: true`, each BUILD gets a unique branch (`feature/{plan-id}--{build-id}`) that must be merged sequentially via predecessor dependencies or independently in parallel. Five tiny tasks means five branches, five merges.
 - **Review fatigue**: Each task triggers its own meta-review cycle (typecheck + build), which is expensive for changes that are logically one unit of work.
 - **Agent context fragmentation**: BUILD agents receive only their slice of the plan and must infer how it fits into the larger change, increasing the chance of subtle inconsistencies.
 
 ## Guiding Principles
 
-1. **One commit, one BUILD task.** A BUILD task should represent a single logical change that justifies its own commit and review cycle. If two changes must happen in the same commit to be correct (e.g., schema change + codegen), they belong in the same BUILD task.
+1. **One commit = one BUILD task.** A BUILD task should represent a single logical change that justifies its own commit and review cycle. If two changes must happen in the same commit to be correct (e.g., schema change + codegen), they belong in the same BUILD task.
 2. **Bundle tightly-coupled changes.** Schema updates, their downstream consumers, codegen regeneration, and YAML manifest updates are all part of one logical change — not separate tasks.
 3. **Build verification is not a standalone task.** Running `pnpm build` or `pnpm typecheck` is the builder's responsibility at the end of every BUILD task. It should never be a separate BUILD task.
 4. **Discovery and implementation are bundled.** If a task requires exploring code to understand how to implement something, that exploration belongs in the same BUILD task — not a separate "research" task.
 5. **Split only when truly independent.** Two BUILD tasks should only be split when they touch disjoint parts of the codebase AND can be merged in any order without conflicts (or have a clear predecessor relationship).
 
-## Bundling Rules (Concrete)
+## Bundling Rules
 
 | Scenario | Guidance |
 |----------|----------|
@@ -38,24 +37,23 @@ Over-splitting creates:
 
 ## Correct vs Incorrect Decomposition
 
-### Example: Adding a new field to a CRD schema
+### Example: Adding a new CRD field
 
-**INCORRECT (5 tasks):**
-1. "Add new field to Zod schema"
+**Incorrect (4 tasks):**
+1. "Add new field to Project Zod schema"
 2. "Update TypeScript types for the new field"
 3. "Regenerate CRD YAML with pnpm codegen"
-4. "Update operator logic to handle the new field"
-5. "Run pnpm build and pnpm typecheck"
+4. "Run pnpm build and pnpm typecheck"
 
-**CORRECT (1 task):**
-1. "Add new field to CRD schema, update Zod types, regenerate CRDs, and update operator logic"
+**Correct (1 task):**
+1. "Add new field to Project schema, update all consumers, regenerate CRDs"
 
-### Example: Fixing a bug in one module
+### Example: Refactoring a module
 
-**INCORRECT (3 tasks):**
-1. "Explore the codebase to understand the bug"
-2. "Implement the fix for the bug"
-3. "Run pnpm typecheck to verify no regressions"
+**Incorrect (3 tasks):**
+1. "Explore the manager-controller worker-builder module"
+2. "Refactor truncateK8sName function"
+3. "Run pnpm typecheck to verify"
 
-**CORRECT (1 task):**
-1. "Fix the bug in module X — explore, implement, and verify with pnpm typecheck"
+**Correct (1 task):**
+1. "Refactor truncateK8sName in worker-builder and update all callers"

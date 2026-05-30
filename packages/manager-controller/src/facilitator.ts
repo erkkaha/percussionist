@@ -312,6 +312,8 @@ export async function buildBuildTaskGeneratorRun(
     `- Do NOT use any tool other than percussionist_dispatcher_complete_run.`,
     `- Do NOT output anything other than the JSON array via the summary field.`,
     `- If you are unsure, still output ONLY the JSON array — never output prose or attempts.`,
+    `- Do NOT create standalone BUILD tasks for build verification, type-checking, or CRD regeneration. These are part of every builder's verification step.`,
+    `- Do NOT split tightly-coupled changes (schema + codegen, API + consumers) into separate BUILD tasks. Bundle them as one logical change.`,
   ].join("\n");
 
   return buildFacilitatorRun(

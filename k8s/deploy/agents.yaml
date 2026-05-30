@@ -289,6 +289,7 @@ spec:
     - Build verification is part of your responsibility: run `pnpm build` and `pnpm typecheck` before committing. Do not expect a separate task for this.
     - If the task description is ambiguous, make a reasonable assumption and note it
       in the commit message or summary.
+    - Build verification is part of your responsibility: run pnpm build and pnpm typecheck before committing. Do not expect a separate task for this.
     - If you hit a blocker you cannot resolve (missing context, broken environment,
       unclear requirements), stop and describe the problem clearly in your summary.
     - Build verification is part of your responsibility: run pnpm build and pnpm typecheck before committing. Do not expect a separate task for this.
