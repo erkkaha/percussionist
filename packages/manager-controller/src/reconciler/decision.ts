@@ -749,7 +749,6 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
 
   if (!buildgenRunName) {
     const succeededRunName = task.status?.worker?.runName;
-    console.log("[decideGeneratingBuilds]", taskName, "buildgenRunName=", buildgenRunName, "succeededRunName=", succeededRunName);
     if (!succeededRunName) {
       return {
         taskName,
@@ -771,7 +770,13 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
   }
 
   const buildgenRun = observed.buildgen;
-  if (!buildgenRun || buildgenRun.status?.phase === "Failed") {
+  if (!buildgenRun) {
+    // Run name is set but the run doesn't exist yet (still being created).
+    // Wait for the next reconcile cycle instead of bouncing back.
+    return { taskName, fromPhase, effects: [], events: [] };
+  }
+
+  if (buildgenRun.status?.phase === "Failed") {
     return {
       taskName,
       fromPhase,
