@@ -156,12 +156,14 @@ export async function executeEffects(
             undefined,
             allTasks,
           );
+          // Delete existing run with the same name (e.g. a previous failed
+          // buildgen) so the new run gets a clean start.
           try {
-            await createRun(buildgenRun, namespace);
+            await deleteRun(effect.buildgenRunName, namespace);
           } catch (e: unknown) {
-            const msg = (e as Error).message;
-            if (!/already exists/i.test(msg)) throw e;
+            if (!isNotFound(e)) throw e;
           }
+          await createRun(buildgenRun, namespace);
           break;
         }
         case "CreateRun": {
