@@ -10,6 +10,7 @@ describe("resolveFlow", () => {
     expect(flow.plan.onApprove).toBe("generate-builds");
     expect(flow.build.onApprove).toBe("merge");
     expect(flow.merge.mode).toBe("auto");
+    expect(flow.merge.agent).toBe("integrator");
     expect(flow.humanApproval.plan).toBe("required");
     expect(flow.humanApproval.build).toBe("required");
   });
@@ -204,11 +205,21 @@ describe("resolveFlow", () => {
     expect(flow.merge.agent).toBe("integrator");
   });
 
-  it("leaves merge.agent undefined when not configured", () => {
+  it("uses merge.agent preset default when not configured", () => {
     const project = makeProject("test-project");
     project.spec.flow = { preset: "plan-build-review-merge" };
     const flow = resolveFlow(project);
-    expect(flow.merge.agent).toBeUndefined();
+    expect(flow.merge.agent).toBe("integrator");
+  });
+
+  it("overrides merge.agent from flow config", () => {
+    const project = makeProject("test-project");
+    project.spec.flow = {
+      preset: "plan-build-review-merge",
+      merge: { agent: "custom-merger" },
+    };
+    const flow = resolveFlow(project);
+    expect(flow.merge.agent).toBe("custom-merger");
   });
 
   it("uses preset default for plan.defaultAgent", () => {

@@ -867,7 +867,7 @@ export const ProjectSpecSchema = z.object({
     }).optional(),
     merge: z.object({
       mode: z.enum(["auto", "manual", "disabled"]).default("auto").optional(),
-      agent: z.string().max(63).optional(),
+      agent: z.string().max(63).default("integrator").optional(),
     }).optional(),
     review: z.object({
       aiReviewerEnabled: z.boolean().default(false).optional(),

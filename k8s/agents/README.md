@@ -12,6 +12,7 @@ percussionist project. Customize them for your own use case or use them as-is.
 | `buildgen` | Generates BUILD tasks from a completed PLAN |
 | `reviewer` | Performs a success-review pass after a worker completes |
 | `failure-analyst` | Diagnoses repeated task failures and recommends a next action |
+| `integrator` | Merges an approved feature branch into the target branch and pushes to remote |
 
 ## Self-development agents
 

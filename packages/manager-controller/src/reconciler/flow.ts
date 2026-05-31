@@ -21,7 +21,7 @@ export interface ResolvedFlow {
   };
   merge: {
     mode: "auto" | "manual" | "disabled";
-    agent?: string;
+    agent: string;
   };
   review: {
     aiReviewerEnabled: boolean;
@@ -49,7 +49,7 @@ const PRESETS: Record<string, Partial<ResolvedFlow>> = {
     humanApproval: { plan: "disabled", build: "disabled" },
     plan: { onApprove: "done", buildGeneration: "disabled", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
     build: { onSuccess: "done", onApprove: "done", defaultAgent: "builder" },
-    merge: { mode: "disabled" },
+    merge: { mode: "disabled", agent: "integrator" },
     review: { aiReviewerEnabled: false, agent: "reviewer", maxAutoReworks: 0 },
     retry: { enabled: false, maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2, maxBackoffSeconds: 300, poisonPillThresholdSeconds: 30 },
   },
@@ -57,7 +57,7 @@ const PRESETS: Record<string, Partial<ResolvedFlow>> = {
     humanApproval: { plan: "required", build: "required" },
     plan: { onApprove: "done", buildGeneration: "disabled", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
     build: { onSuccess: "human-review", onApprove: "done", defaultAgent: "builder" },
-    merge: { mode: "disabled" },
+    merge: { mode: "disabled", agent: "integrator" },
     review: { aiReviewerEnabled: false, agent: "reviewer", maxAutoReworks: 0 },
     retry: { enabled: false, maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2, maxBackoffSeconds: 300, poisonPillThresholdSeconds: 30 },
   },
@@ -65,15 +65,15 @@ const PRESETS: Record<string, Partial<ResolvedFlow>> = {
     humanApproval: { plan: "required", build: "required" },
     plan: { onApprove: "generate-builds", buildGeneration: "ai", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
     build: { onSuccess: "human-review", onApprove: "done", defaultAgent: "builder" },
-    merge: { mode: "disabled" },
+    merge: { mode: "disabled", agent: "integrator" },
     review: { aiReviewerEnabled: false, agent: "reviewer", maxAutoReworks: 0 },
     retry: { enabled: false, maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2, maxBackoffSeconds: 300, poisonPillThresholdSeconds: 30 },
   },
   "plan-build-review-merge": {
-    humanApproval: { plan: "required", build: "required" },
-    plan: { onApprove: "generate-builds", buildGeneration: "ai", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
-    build: { onSuccess: "human-review", onApprove: "merge", defaultAgent: "builder" },
-    merge: { mode: "auto" },
+      humanApproval: { plan: "required", build: "required" },
+      plan: { onApprove: "generate-builds", buildGeneration: "ai", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
+      build: { onSuccess: "human-review", onApprove: "merge", defaultAgent: "builder" },
+      merge: { mode: "auto", agent: "integrator" },
     review: { aiReviewerEnabled: false, agent: "reviewer", maxAutoReworks: 2 },
     retry: { enabled: false, maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2, maxBackoffSeconds: 300, poisonPillThresholdSeconds: 30 },
   },
@@ -122,7 +122,7 @@ export function resolveFlow(project: Project): ResolvedFlow {
     },
     merge: {
       mode: flowMerge?.mode ?? preset.merge!.mode ?? "auto",
-      agent: flowMerge?.agent,
+      agent: flowMerge?.agent ?? preset.merge!.agent ?? "integrator",
     },
     review: {
       aiReviewerEnabled: flowReview?.aiReviewerEnabled ?? legacyReview?.aiReviewerEnabled ?? preset.review!.aiReviewerEnabled ?? false,
