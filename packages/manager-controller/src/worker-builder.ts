@@ -333,8 +333,12 @@ export function auxiliaryRunName(
   randomSuffix: string,
 ): string {
   const sanitized = taskName.toLowerCase().replace(/[^a-z0-9]/g, "-");
+  // Strip project name prefix from the task name to avoid duplication
+  // (e.g. "myproject-build-123" → "build-123" since project is already in the run name).
+  const projKey = projectName.toLowerCase().replace(/[^a-z0-9]/g, "-");
+  const stripped = sanitized.startsWith(`${projKey}-`) ? sanitized.slice(projKey.length + 1) : sanitized;
   const reserved = projectName.length + 1 + kind.length + 1 + 1 + randomSuffix.length;
   const maxMid = 63 - reserved;
-  const mid = maxMid > 0 ? sanitized.slice(0, maxMid).replace(/-+$/, "") : sanitized.slice(0, 1);
+  const mid = maxMid > 0 ? stripped.slice(0, maxMid).replace(/-+$/, "") : stripped.slice(0, 1);
   return truncateK8sName(`${projectName}-${kind}-${mid}-${randomSuffix}`);
 }
