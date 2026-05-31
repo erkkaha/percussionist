@@ -149,6 +149,19 @@ export const CodeServerSpecSchema = z.object({
 });
 export type CodeServerSpec = z.infer<typeof CodeServerSpecSchema>;
 
+export const MEMORY_SERVICE_PORT = 4100;
+export const MEMORY_SERVICE_DEFAULT_IMAGE = "ghcr.io/erkkaha/percussionist/memory:latest";
+
+// Embedding / vector memory configuration for per-project memory service.
+export const EmbeddingSpecSchema = z.object({
+  enabled: z.boolean().default(false),
+  model: z.string().default("nomic-embed-text"),
+  dimensions: z.number().int().default(768),
+  ollamaUrl: z.string().optional(),
+  resources: ResourceRequirementsSchema.optional(),
+});
+export type EmbeddingSpec = z.infer<typeof EmbeddingSpecSchema>;
+
 // DEPRECATED — cluster-level secrets are managed via ClusterSettings.
 // This schema is kept for backwards compatibility only.
 export const SecretsRefSchema = z
@@ -894,6 +907,12 @@ export const ProjectSpecSchema = z.object({
   // Requires source.git or source.local (needs a data PVC to mount).
   // Access via kubectl port-forward, or configure ingress in infrastructure.
   codeServer: CodeServerSpecSchema.optional(),
+
+  // Per-project memory service with vector embeddings for agent context/memory.
+  // Requires source.git or source.local (needs a data PVC to mount).
+  // When enabled, the operator deploys a memory-{project} Deployment + Service
+  // that stores and searches semantic vectors via bun:sqlite + sqlite-vec.
+  embedding: EmbeddingSpecSchema.optional(),
 });
 
 export type ProjectSpec = z.infer<typeof ProjectSpecSchema>;

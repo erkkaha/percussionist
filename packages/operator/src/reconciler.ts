@@ -45,6 +45,13 @@ import {
   codeServerDeploymentName,
   codeServerServiceName,
 } from "./code-server.js";
+import {
+  shouldReconcileMemoryService,
+  renderMemoryServiceDeployment,
+  renderMemoryServiceService,
+  memoryServiceDeploymentName,
+  memoryServiceServiceName,
+} from "./memory-service.js";
 
 const log = (...args: unknown[]) =>
   console.log(`[operator ${new Date().toISOString()}]`, ...args);
@@ -783,6 +790,90 @@ export async function reconcileProject(project: Project): Promise<void> {
     // codeServer disabled or no source — clean up if exists
     await cleanupCodeServer(project);
   }
+
+  // ── Memory / embedding service ─────────────────────────────────────────
+  if (shouldReconcileMemoryService(project)) {
+    log(`${logPrefix} reconciling memory-service resources`);
+
+    // Ensure data PVC exists first (memory-service needs it).
+    const projectUid = project.metadata.uid!;
+    const pvcName = project.spec.data?.pvcName ?? `${name}-data`;
+    try {
+      await ensureDataPVC({
+        projectName: name,
+        namespace: ns,
+        projectUid,
+        storageClass: project.spec.data?.storageClass,
+        pvcName,
+      });
+    } catch (e) {
+      err(`${logPrefix} failed to ensure data PVC:`, (e as Error).message);
+      return; // Cannot proceed without PVC
+    }
+
+    // Upsert Deployment
+    const memDeployName = memoryServiceDeploymentName(project);
+    try {
+      await apps.readNamespacedDeployment({ name: memDeployName, namespace: ns });
+      // Exists — patch it via SSA
+      await apps.patchNamespacedDeployment(
+        {
+          name: memDeployName,
+          namespace: ns,
+          body: renderMemoryServiceDeployment(project),
+          fieldManager: "percussionist-operator",
+          force: true,
+        },
+        setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply),
+      );
+      log(`${logPrefix} patched deployment ${memDeployName}`);
+    } catch (e) {
+      if (isNotFound(e)) {
+        await apps.createNamespacedDeployment({
+          namespace: ns,
+          body: renderMemoryServiceDeployment(project),
+        });
+        log(`${logPrefix} created deployment ${memDeployName}`);
+      } else {
+        err(`${logPrefix} deployment error:`, (e as Error).message);
+        throw e;
+      }
+    }
+
+    // Upsert Service
+    const memSvcName = memoryServiceServiceName(project);
+    try {
+      await core.readNamespacedService({ name: memSvcName, namespace: ns });
+      // Exists — patch it via SSA
+      await core.patchNamespacedService(
+        {
+          name: memSvcName,
+          namespace: ns,
+          body: renderMemoryServiceService(project),
+          fieldManager: "percussionist-operator",
+          force: true,
+        },
+        setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply),
+      );
+      log(`${logPrefix} patched service ${memSvcName}`);
+    } catch (e) {
+      if (isNotFound(e)) {
+        await core.createNamespacedService({
+          namespace: ns,
+          body: renderMemoryServiceService(project),
+        });
+        log(`${logPrefix} created service ${memSvcName}`);
+      } else {
+        err(`${logPrefix} service error:`, (e as Error).message);
+        throw e;
+      }
+    }
+
+    log(`${logPrefix} memory-service resources reconciled`);
+  } else {
+    // memory-service disabled or no source — clean up if exists
+    await cleanupMemoryService(project);
+  }
 }
 
 /**
@@ -809,6 +900,37 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
   try {
     await apps.deleteNamespacedDeployment({ name: deployName, namespace: ns });
     log(`${logPrefix} deleted code-server deployment ${deployName}`);
+  } catch (e) {
+    if (!isNotFound(e)) {
+      err(`${logPrefix} failed to delete deployment:`, (e as Error).message);
+    }
+  }
+}
+
+/**
+ * Cleans up memory-service resources when embedding is disabled or project is deleted.
+ */
+export async function cleanupMemoryService(project: Project): Promise<void> {
+  const name = project.metadata.name!;
+  const ns = project.metadata.namespace!;
+  const logPrefix = `[project/${ns}/${name}]`;
+
+  // Delete Service (ignore 404)
+  const svcName = memoryServiceServiceName(project);
+  try {
+    await core.deleteNamespacedService({ name: svcName, namespace: ns });
+    log(`${logPrefix} deleted memory-service service ${svcName}`);
+  } catch (e) {
+    if (!isNotFound(e)) {
+      err(`${logPrefix} failed to delete service:`, (e as Error).message);
+    }
+  }
+
+  // Delete Deployment (ignore 404)
+  const deployName = memoryServiceDeploymentName(project);
+  try {
+    await apps.deleteNamespacedDeployment({ name: deployName, namespace: ns });
+    log(`${logPrefix} deleted memory-service deployment ${deployName}`);
   } catch (e) {
     if (!isNotFound(e)) {
       err(`${logPrefix} failed to delete deployment:`, (e as Error).message);

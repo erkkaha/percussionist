@@ -36,6 +36,12 @@ try {
 const EXPOSE_WEB_DEFAULT =
   process.env.PERCUSSIONIST_EXPOSE_WEB_DEFAULT !== "false";
 
+// Memory / embedding service defaults.
+const OLLAMA_BASE_URL =
+  process.env.OLLAMA_BASE_URL ??
+  `http://ollama.${NAMESPACE}.svc.cluster.local:11434`;
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "nomic-embed-text";
+
 export {
   NAMESPACE,
   SELF_NAMESPACE,
@@ -47,4 +53,6 @@ export {
   INGRESS_CLASS,
   INGRESS_ANNOTATIONS,
   EXPOSE_WEB_DEFAULT,
+  OLLAMA_BASE_URL,
+  EMBEDDING_MODEL,
 };

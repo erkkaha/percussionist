@@ -36,7 +36,8 @@ import {
   createTask,
   apps,
 } from "@percussionist/kube";
-import { LABELS, type Project, type Task, type TaskPhase, type TaskSpec } from "@percussionist/api";
+import { LABELS, MEMORY_SERVICE_PORT, type Project, type Task, type TaskPhase, type TaskSpec } from "@percussionist/api";
+import { storeMemory, queryMemory, getContext } from "./memory-client.js";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
 import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
@@ -483,6 +484,53 @@ const TOOLS = [
         limit: { type: "number", description: "Max events to return (default: 50, max: 500)" },
       },
       required: ["project"],
+    },
+  },
+  {
+    name: "store_memory",
+    description:
+      "Store a memory with semantic embedding for future context retrieval. " +
+      "The content is embedded via Ollama and stored in the project's vector database. " +
+      "Requires the project to have spec.embedding.enabled.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (required)" },
+        content: { type: "string", description: "Text content to store as memory" },
+        metadata: { type: "object", description: "Optional metadata JSON (task, run, etc.)" },
+      },
+      required: ["project", "content"],
+    },
+  },
+  {
+    name: "query_memory",
+    description:
+      "Semantic search across stored memories. Returns the most relevant memories " +
+      "ranked by cosine distance. Requires the project to have spec.embedding.enabled.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (required)" },
+        query: { type: "string", description: "Natural language query text" },
+        limit: { type: "number", description: "Max results (default: 10, max: 100)" },
+      },
+      required: ["project", "query"],
+    },
+  },
+  {
+    name: "get_context",
+    description:
+      "Retrieve relevant context from past runs and memories, formatted for prompt " +
+      "injection. Uses semantic search to find the most relevant memories for a given " +
+      "query. Requires the project to have spec.embedding.enabled.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (required)" },
+        query: { type: "string", description: "Natural language query for context retrieval" },
+        task: { type: "string", description: "Optional task identifier for filtering context" },
+      },
+      required: ["project", "query"],
     },
   },
 ];
@@ -1596,6 +1644,36 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       }
       const body = (await res.json()) as { events: unknown };
       return body.events ?? [];
+    }
+
+    case "store_memory": {
+      const project = String(args.project ?? "");
+      const content = String(args.content ?? "");
+      const metadata = args.metadata as Record<string, unknown> | undefined;
+      if (!project || !content) {
+        throw new Error("project and content are required");
+      }
+      return await storeMemory(project, content, metadata);
+    }
+
+    case "query_memory": {
+      const project = String(args.project ?? "");
+      const query = String(args.query ?? "");
+      const limit = args.limit ? parseInt(String(args.limit), 10) : undefined;
+      if (!project || !query) {
+        throw new Error("project and query are required");
+      }
+      return await queryMemory(project, query, limit);
+    }
+
+    case "get_context": {
+      const project = String(args.project ?? "");
+      const query = String(args.query ?? "");
+      const task = args.task ? String(args.task) : undefined;
+      if (!project || !query) {
+        throw new Error("project and query are required");
+      }
+      return await getContext(project, query, task);
     }
 
     default:
