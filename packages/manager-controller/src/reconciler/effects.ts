@@ -12,6 +12,7 @@ export type ReconcileEffect =
   | { type: "ScheduleRun"; runName: string; retryCount: number; reworkFeedback?: string }
   | { type: "ScheduleReviewRun"; reviewRunName: string; succeededRunName: string; reviewAgent: string }
   | { type: "ScheduleBuildGenRun"; buildgenRunName: string; succeededRunName: string }
+  | { type: "ScheduleMergeRun"; mergeRunName: string }
   | { type: "CreateRun"; run: Run }
   | { type: "DeleteRun"; name: string; reason: string }
   | { type: "PatchTaskStatus"; patch: Record<string, unknown> }
@@ -159,6 +160,26 @@ export async function executeEffects(
           );
           try {
             await createRun(buildgenRun, namespace);
+          } catch (e: unknown) {
+            const msg = (e as Error).message;
+            if (!/already exists/i.test(msg)) throw e;
+          }
+          break;
+        }
+        case "ScheduleMergeRun": {
+          if (!project) {
+            throw new Error("Project metadata required for ScheduleMergeRun effect");
+          }
+          const fullProject = project as unknown as import("@percussionist/api").Project;
+          const mergeRun = await buildMergeRun(
+            fullProject,
+            task,
+            effect.mergeRunName,
+            allTasks,
+            flow.merge.agent,
+          );
+          try {
+            await createRun(mergeRun, namespace);
           } catch (e: unknown) {
             const msg = (e as Error).message;
             if (!/already exists/i.test(msg)) throw e;

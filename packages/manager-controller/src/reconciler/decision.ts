@@ -7,6 +7,7 @@ import { isValidTransition } from "./transitions.js";
 import { isActivePhase } from "./scheduler.js";
 import { workerRunName, auxiliaryRunName } from "../worker-builder.js";
 import { getReviewVerdict, getConsumedAnnotationKeys } from "./observations.js";
+import { createHash } from "node:crypto";
 
 export interface ObservedRuns {
   worker?: Run;
@@ -643,11 +644,21 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
           events: [makeEvent(input, fromPhase, "done", "BuildApprovedDone")],
         };
       }
+      const retryCount = task.status?.worker?.retryCount ?? 0;
+      const mergeSeq = createHash("sha256")
+        .update(`${input.project.metadata.name}:${taskName}:${retryCount}`)
+        .digest("hex")
+        .slice(0, 8);
+      const mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSeq);
       return {
         taskName,
         fromPhase,
         toPhase: "awaiting-merge",
-        effects: [{ type: "ClearTaskAnnotations", keys: consumedKeys }],
+        statusPatch: { worker: { mergeRunName } },
+        effects: [
+          { type: "ClearTaskAnnotations", keys: consumedKeys },
+          { type: "ScheduleMergeRun", mergeRunName },
+        ],
         events: [makeEvent(input, fromPhase, "awaiting-merge", "BuildApprovedMerge")],
       };
     }
@@ -660,10 +671,23 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
   const { task, flow, observed, now } = input;
   const taskName = task.metadata.name;
   const fromPhase = "awaiting-merge" as TaskPhase;
-  const mergeRunName = task.status?.worker?.mergeRunName;
+  let mergeRunName = task.status?.worker?.mergeRunName;
 
   if (!mergeRunName) {
-    return { taskName, fromPhase, effects: [], events: [] };
+    const retryCount = task.status?.worker?.retryCount ?? 0;
+    const mergeSeq = createHash("sha256")
+      .update(`${input.project.metadata.name}:${taskName}:${retryCount}`)
+      .digest("hex")
+      .slice(0, 8);
+    mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSeq);
+    return {
+      taskName,
+      fromPhase,
+      toPhase: undefined,
+      statusPatch: { worker: { mergeRunName } },
+      effects: [{ type: "ScheduleMergeRun", mergeRunName }],
+      events: [makeEvent(input, fromPhase, "awaiting-merge", "MergeRunScheduled")],
+    };
   }
 
   const mergeRun = observed.merge;
