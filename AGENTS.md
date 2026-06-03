@@ -639,6 +639,27 @@ ConfigMap budget. Do not raise the web pod memory limit to mask this issue.
 retrieval so large live sessions can be viewed incrementally instead of falling back
 to a truncated snapshot.
 
+## Tagging
+
+Release tags follow `v<major>.<minor>.<patch>` semver format (e.g. `v0.15.0`).
+CI triggers on any push matching `v*`.
+
+**Do not guess tags.** Always derive from existing remote tags:
+
+```bash
+git fetch --tags origin
+git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1V -k2,2V -k3,3V | tail -1
+```
+
+Start from that tag, increment the appropriate segment, create, and push:
+
+```bash
+git tag v0.15.1
+git push origin v0.15.1
+```
+
+Never invent a version — read what exists and increment.
+
 ## Self-Development Workflow
 
 Percussionist dogfoods itself for development using resources in `k8s/self-dev/`.
