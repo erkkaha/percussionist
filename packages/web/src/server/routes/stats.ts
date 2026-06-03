@@ -18,7 +18,7 @@
 //     days=N   — look-back window in days (default: 30; 0 = all time)
 
 import { Hono } from "hono";
-import { getDb, runs, messages, toolCalls, fileOps } from "../db.js";
+import { getDb, runs, messages, toolCalls, fileOps, toolEvents } from "../db.js";
 import { lt, gte, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
@@ -60,6 +60,20 @@ interface ToolCallPayload {
   success?: boolean;
   error?: string;
   durationMs?: number;
+}
+
+interface ToolEventPayload {
+  id: string;
+  sessionId: string;
+  runName: string;
+  toolName: string;
+  isMcp?: boolean;
+  calledAt: string;
+  durationMs?: number;
+  success?: boolean;
+  resultSize?: number;
+  resultTruncated?: boolean;
+  error?: string;
 }
 
 interface FileOpPayload {
@@ -312,6 +326,53 @@ stats.get("/exists/:sessionID", (c) => {
   const db = getDb();
   const row = db.select({ id: runs.id }).from(runs).where(eq(runs.id, sessionID)).get();
   return c.json({ exists: row !== undefined });
+});
+
+// POST /api/stats/tool-events — batch ingest of tool invocation events.
+// Called by the dispatcher periodically during a run. Each event captures a
+// single tool invocation (native OpenCode tool or MCP tool call).
+stats.post("/tool-events", async (c) => {
+  let body: { events: ToolEventPayload[] };
+  try {
+    body = (await c.req.json()) as { events: ToolEventPayload[] };
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+
+  if (!body.events?.length) {
+    return c.json({ error: "events array is required" }, 400);
+  }
+
+  const db = getDb();
+  let inserted = 0;
+
+  try {
+    for (const e of body.events) {
+      if (!e.id || !e.sessionId || !e.runName) continue;
+      db.insert(toolEvents)
+        .values({
+          id: e.id,
+          sessionId: e.sessionId,
+          runName: e.runName,
+          toolName: e.toolName,
+          isMcp: e.isMcp ?? false,
+          calledAt: e.calledAt,
+          durationMs: e.durationMs,
+          success: e.success,
+          resultSize: e.resultSize,
+          resultTruncated: e.resultTruncated,
+          error: e.error,
+        })
+        .onConflictDoNothing()
+        .run();
+      inserted++;
+    }
+  } catch (err) {
+    console.error("[stats] tool-events persist error:", (err as Error).message);
+    return c.json({ error: "failed to persist tool events" }, 500);
+  }
+
+  return c.json({ ok: true, inserted });
 });
 
 // GET /api/stats/export?days=30 — full dump for LLM analysis.

@@ -24,6 +24,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes } from "node:crypto";
 import { DISPATCHER_MCP_PORT } from "@percussionist/api";
 import { getProject, buildTask, createTask } from "@percussionist/kube";
+import { recordToolEvent } from "./tool-events-reporter.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-dispatcher";
@@ -244,12 +245,24 @@ function handleMcp(
 
     case "tools/call": {
       const toolName = (req.params?.name as string | undefined) ?? "";
+      const calledAt = new Date().toISOString();
+      const start = Date.now();
+
+      const record = (success: boolean, error?: string): void => {
+        recordToolEvent({
+          toolName, isMcp: true, calledAt, success,
+          durationMs: Date.now() - start,
+          error,
+        });
+      };
+
       if (toolName === "fail_run") {
         const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
         const reason = typeof args["reason"] === "string"
           ? args["reason"]
           : "agent called fail_run without a reason";
         onFailRun(reason);
+        record(true);
         return ok(req.id, {
           content: [{ type: "text", text: "Run marked as failed. The orchestrator will investigate." }],
         });
@@ -261,6 +274,7 @@ function handleMcp(
           ? args["summary"]
           : "agent called complete_run without a summary";
         onCompleteRun(summary);
+        record(true);
         return ok(req.id, {
           content: [{ type: "text", text: "Run marked as complete. The orchestrator will review the result." }],
         });
@@ -272,6 +286,7 @@ function handleMcp(
           ? args["summary"]
           : "agent called complete_plan without a summary";
         onCompletePlan(summary);
+        record(true);
         return ok(req.id, {
           content: [{ type: "text", text: "Plan marked as complete. The orchestrator will review the plan artifact." }],
         });
@@ -280,19 +295,30 @@ function handleMcp(
       if (toolName === "get_status") {
         const status = getStatus();
         if (!status) {
+          record(false, "status not available");
           return ok(req.id, {
             content: [{ type: "text", text: JSON.stringify({ phase: "unknown", error: "status not yet available" }) }],
           });
         }
+        record(true);
         return ok(req.id, {
           content: [{ type: "text", text: JSON.stringify(status) }],
         });
       }
 
       if (toolName === "create_task") {
-        return handleCreateTask(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>);
+        const result = handleCreateTask(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>);
+        if (result instanceof Promise) {
+          return result.then(
+            (res) => { record(true); return res; },
+            (err) => { record(false, (err as Error).message); throw err; },
+          );
+        }
+        record(true);
+        return result;
       }
 
+      record(false, "unknown tool");
       return rpcError(req.id, -32602, `unknown tool: ${toolName}`);
     }
 
