@@ -7,7 +7,7 @@ import { isValidTransition } from "./transitions.js";
 import { isActivePhase } from "./scheduler.js";
 import { workerRunName, auxiliaryRunName } from "../worker-builder.js";
 import { getReviewVerdict, getConsumedAnnotationKeys } from "./observations.js";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 function summarizeEffect(input: ReconcileInput, run: Run): ReconcileEffect | undefined {
   if (!input.project.spec.embedding?.enabled) return undefined;
@@ -806,8 +806,8 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
         events: [makeEvent(input, fromPhase, "awaiting-human", "NoWorkerRunForBuildGen")],
       };
     }
-    const retryCount = task.status?.worker?.retryCount ?? 0;
-    const name = auxiliaryRunName(input.project.metadata.name, "buildgen", taskName, String(retryCount));
+    const suffix = randomBytes(3).toString("hex");
+    const name = auxiliaryRunName(input.project.metadata.name, "buildgen", taskName, suffix);
     return {
       taskName,
       fromPhase,

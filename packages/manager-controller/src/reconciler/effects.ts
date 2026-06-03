@@ -164,6 +164,11 @@ export async function executeEffects(
           } catch (e: unknown) {
             const msg = (e as Error).message;
             if (!/already exists/i.test(msg)) throw e;
+            const existing = await getRun(effect.buildgenRunName, namespace).catch(() => undefined);
+            if (existing?.status?.phase === "Failed" || existing?.status?.phase === "Cancelled") {
+              await deleteRun(effect.buildgenRunName, namespace);
+              await createRun(buildgenRun, namespace);
+            }
           }
           break;
         }
