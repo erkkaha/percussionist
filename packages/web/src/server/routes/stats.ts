@@ -448,7 +448,7 @@ export function runRetentionCleanup(): void {
 stats.get("/tool-metrics", (c) => {
   const daysParam = c.req.query("days") ?? "30";
   const days = parseInt(daysParam, 10);
-  const project = c.req.query("project"); // optional project filter
+  const project = c.req.query("project");
 
   const db = getDb();
   const cutoff =
@@ -456,10 +456,11 @@ stats.get("/tool-metrics", (c) => {
       ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
       : null;
 
-  const conditions = cutoff ? [gte(toolEvents.calledAt, cutoff)] : [];
-  if (project) conditions.push(eq(toolEvents.sessionId, project));
+  const conditions: ReturnType<typeof gte>[] = [];
+  if (cutoff) conditions.push(gte(toolEvents.calledAt, cutoff));
+  if (project) conditions.push(sql`${toolEvents.sessionId} = ${project}`);
 
-  const rows = db
+  const baseQuery = db
     .select({
       toolName: toolEvents.toolName,
       calls: sql<number>`COUNT(*)`.as("calls"),
@@ -469,8 +470,12 @@ stats.get("/tool-metrics", (c) => {
       totalErrors: sql<number>`SUM(CASE WHEN ${toolEvents.success} = 0 THEN 1 ELSE 0 END)`.as("total_errors"),
       sessionsUsing: sql<number>`COUNT(DISTINCT ${toolEvents.sessionId})`.as("sessions_using"),
     })
-    .from(toolEvents)
-    .where(and(...conditions))
+    .from(toolEvents);
+
+  const rows = (conditions.length > 0
+    ? baseQuery.where(and(...conditions))
+    : baseQuery
+  )
     .groupBy(toolEvents.toolName)
     .orderBy(desc(sql`COUNT(*)`))
     .all() as Array<{
@@ -484,11 +489,13 @@ stats.get("/tool-metrics", (c) => {
     }>;
 
   const totalCalls = rows.reduce((s, r) => s + r.calls, 0);
-  const totalSessions = db
+  const countQuery = db
     .select({ count: sql<number>`COUNT(DISTINCT ${toolEvents.sessionId})` })
-    .from(toolEvents)
-    .where(and(...conditions))
-    .get();
+    .from(toolEvents);
+  const totalSessions = (conditions.length > 0
+    ? countQuery.where(and(...conditions))
+    : countQuery
+  ).get();
 
   return c.json({
     tools: rows,
@@ -516,10 +523,11 @@ stats.get("/tool-events", (c) => {
   if (runName) conditions.push(eq(toolEvents.runName, runName));
   if (tool) conditions.push(eq(toolEvents.toolName, tool));
 
-  const rows = db
-    .select()
-    .from(toolEvents)
-    .where(and(...conditions))
+  const baseQuery = db.select().from(toolEvents);
+  const rows = (conditions.length > 0
+    ? baseQuery.where(and(...conditions))
+    : baseQuery
+  )
     .orderBy(desc(toolEvents.calledAt))
     .limit(limit)
     .all();
