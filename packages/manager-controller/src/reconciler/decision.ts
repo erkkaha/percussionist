@@ -9,6 +9,18 @@ import { workerRunName, auxiliaryRunName } from "../worker-builder.js";
 import { getReviewVerdict, getConsumedAnnotationKeys } from "./observations.js";
 import { createHash } from "node:crypto";
 
+function summarizeEffect(input: ReconcileInput, run: Run): ReconcileEffect | undefined {
+  if (!input.project.spec.embedding?.enabled) return undefined;
+  const sessionID = run.status?.sessionID;
+  if (!sessionID) return undefined;
+  return {
+    type: "SummarizeSession",
+    project: input.project.metadata.name,
+    runName: run.metadata.name,
+    sessionID,
+  };
+}
+
 export interface ObservedRuns {
   worker?: Run;
   review?: Run;
@@ -262,23 +274,29 @@ function decideInitializing(input: ReconcileInput): ReconcileDecision {
   }
 
   if (runPhase === "Failed") {
+    const effects: ReconcileEffect[] = [];
+    const summary = summarizeEffect(input, run);
+    if (summary) effects.push(summary);
     return {
       taskName,
       fromPhase,
       toPhase: "failed",
       statusPatch: { worker: { status: "Failed", completedAt: now } },
-      effects: [],
+      effects,
       events: [makeEvent(input, fromPhase, "failed", "WorkerRunFailed", "Run failed during initialization")],
     };
   }
 
   if (runPhase === "Succeeded") {
+    const effects: ReconcileEffect[] = [];
+    const summary = summarizeEffect(input, run);
+    if (summary) effects.push(summary);
     return {
       taskName,
       fromPhase,
       toPhase: "succeeded",
       statusPatch: { worker: { status: "Succeeded", completedAt: now } },
-      effects: [],
+      effects,
       events: [makeEvent(input, fromPhase, "succeeded", "WorkerRunSucceeded", "Run completed before running transition")],
     };
   }
@@ -306,23 +324,29 @@ function decideRunning(input: ReconcileInput): ReconcileDecision {
   const runPhase = run.status?.phase;
 
   if (runPhase === "Succeeded") {
+    const effects: ReconcileEffect[] = [];
+    const summary = summarizeEffect(input, run);
+    if (summary) effects.push(summary);
     return {
       taskName,
       fromPhase,
       toPhase: "succeeded",
       statusPatch: { worker: { status: "Succeeded", completedAt: now } },
-      effects: [],
+      effects,
       events: [makeEvent(input, fromPhase, "succeeded", "WorkerRunSucceeded")],
     };
   }
 
   if (runPhase === "Failed") {
+    const effects: ReconcileEffect[] = [];
+    const summary = summarizeEffect(input, run);
+    if (summary) effects.push(summary);
     return {
       taskName,
       fromPhase,
       toPhase: "failed",
       statusPatch: { worker: { status: "Failed", completedAt: now } },
-      effects: [],
+      effects,
       events: [makeEvent(input, fromPhase, "failed", "WorkerRunFailed")],
     };
   }

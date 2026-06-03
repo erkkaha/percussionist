@@ -117,6 +117,14 @@ export interface CreateProjectRequest {
     aiReviewerAgent?: string;
     maxAutoReworks?: number;
   };
+
+  /** Per-project memory service with vector embeddings for agent context/memory. */
+  embedding?: {
+    enabled?: boolean;
+    model?: string;
+    dimensions?: number;
+    ollamaUrl?: string;
+  };
 }
 
 export interface CreateAgentRequest {

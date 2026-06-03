@@ -23,6 +23,28 @@ import { truncateK8sName } from "./worker-builder.js";
 
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
 
+const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
+
+// Read a stored session summary from the run's session ConfigMap, if one exists.
+// Scans for any `summary-*` key since we may not know the sessionID at call time.
+async function readStoredSessionSummary(runName: string): Promise<string | undefined> {
+  try {
+    const cm = await core().readNamespacedConfigMap({
+      name: `${runName}-session`,
+      namespace: NAMESPACE,
+    });
+    const data = cm.data ?? {};
+    for (const [key, value] of Object.entries(data)) {
+      if (key.startsWith("summary-") && typeof value === "string" && value.length > 0) {
+        return value;
+      }
+    }
+  } catch {
+    // ConfigMap not found — summary not available yet.
+  }
+  return undefined;
+}
+
 // Build the facilitator Run spec for a FAILED worker run.
 export async function buildFacilitationRun(
   project: Project,
@@ -230,11 +252,14 @@ export async function buildBuildTaskGeneratorRun(
     },
   });
 
+  // Prefer explicitly passed summary, then fall back to stored ConfigMap summary.
+  const actualSummary = sessionSummary || (await readStoredSessionSummary(succeededRunName)) || "";
+
   const facilitationSpec: FacilitationSpec = {
     targetRunName: succeededRunName,
     targetTaskId: planTask.metadata.name,
     failureReason: "BUILD task generation from approved PLAN",
-    sessionSummary: "", 
+    sessionSummary: actualSummary,
     successReview: false,
   };
 
@@ -251,7 +276,7 @@ export async function buildBuildTaskGeneratorRun(
     `PLAN WORKER RUN: ${succeededRunName}`,
     "",
     `PLAN SESSION CONTEXT:`,
-    sessionSummary || "(none available — use the task description above)",
+    actualSummary || "(none available — use the task description above)",
     "",
     `PLAN ARTIFACT PATH: .percussionist/plans/${planTask.metadata.name}.md`,
     "",

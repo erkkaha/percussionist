@@ -67,6 +67,12 @@ Manager polls `Run.status.phase`:
 - `WaitingForInput` → `waiting-for-input` (PLAN only; BUILD tasks go straight to `failed`)
 - Running but no events beyond `flow.timeouts.runningStaleSeconds` (default 1800s/30min) → `failed` (staleness guard)
 
+When the run completes (`Succeeded` or `Failed`), if `project.spec.embedding.enabled`
+is true, the manager fires a fire-and-forget `SummarizeSession` effect that uses the
+LLM to produce a 2-3 paragraph summary of the session and stores it in the
+`{runName}-session` ConfigMap (`summary-{sessionID}`) and the project's vector
+memory database.
+
 The agent is working during this phase. It calls `complete_run` or `complete_plan` on the dispatcher when done. The dispatcher records the signal and exits 0. The pod reaches Succeeded, the operator mirrors it, and the manager picks it up on the next reconcile.
 
 ### `waiting-for-input` *(PLAN only)*
@@ -110,9 +116,12 @@ Manager creates a merge facilitator Run whose agent merges the BUILD's feature b
 Manager spawns a buildgen facilitator Run. The buildgen agent reads
 `.percussionist/plans/{plan-task-id}.md` from the git worktree and creates BUILD
 Task CRs directly via MCP tools (each with `spec.parentTaskRef` +
-`spec.predecessorRef` for serial chaining). The manager's decision engine watches
-for child Tasks with `parentTaskRef === taskName` to appear. When all child Tasks
-exist → PLAN task transitions to `done`.
+`spec.predecessorRef` for serial chaining). When `spec.embedding.enabled` is true,
+the buildgen agent's prompt includes a `PLAN SESSION CONTEXT:` section populated
+from the stored session summary of the preceding PLAN worker run (read from the
+`{runName}-session` ConfigMap via `readStoredSessionSummary()`). The manager's
+decision engine watches for child Tasks with `parentTaskRef === taskName` to
+appear. When all child Tasks exist → PLAN task transitions to `done`.
 
 ### `rework-requested`
 Waits for a scheduling slot (same `canSchedule` check as `pending`). When available → `scheduled`. The next run gets the stored `worker.reviewFeedback` injected into its prompt as rework context.

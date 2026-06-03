@@ -120,6 +120,19 @@ export default function CreateProjectForm({
     String(initialSpec?.reviewPolicy?.maxAutoReworks ?? 2),
   );
 
+  const [embeddingEnabled, setEmbeddingEnabled] = useState<boolean>(
+    initialSpec?.embedding?.enabled ?? false,
+  );
+  const [embeddingModel, setEmbeddingModel] = useState<string>(
+    initialSpec?.embedding?.model ?? "nomic-embed-text",
+  );
+  const [embeddingDimensions, setEmbeddingDimensions] = useState<string>(
+    String(initialSpec?.embedding?.dimensions ?? 768),
+  );
+  const [embeddingOllamaUrl, setEmbeddingOllamaUrl] = useState<string>(
+    initialSpec?.embedding?.ollamaUrl ?? "",
+  );
+
   // All ClusterAgents in cluster — used to populate the roster add dropdown.
   const { data: clusterAgents = [] } = useQuery({
     queryKey: ["agents"],
@@ -282,6 +295,14 @@ export default function CreateProjectForm({
         aiReviewerEnabled: true,
         aiReviewerAgent: reviewPolicyAiReviewerAgent.trim() || "reviewer",
         maxAutoReworks: parseInt(reviewPolicyMaxAutoReworks, 10) || 2,
+      };
+    }
+    if (embeddingEnabled) {
+      req.embedding = {
+        enabled: true,
+        model: embeddingModel.trim() || undefined,
+        dimensions: parseInt(embeddingDimensions, 10) || undefined,
+        ollamaUrl: embeddingOllamaUrl.trim() || undefined,
       };
     }
     mutation.mutate(req);
@@ -632,6 +653,63 @@ export default function CreateProjectForm({
                 </div>
               </div>
             </>
+          )}
+        </fieldset>
+
+        {/* Memory / Embeddings */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Memory / Embeddings</legend>
+          <p className="text-xs text-text-dim">
+            Enable the per-project vector memory service for agent context retrieval
+            and semantic search across runs. Requires a data PVC and a running Ollama instance.
+          </p>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={embeddingEnabled}
+              onChange={(e) => setEmbeddingEnabled(e.target.checked)}
+              className="rounded border-border"
+            />
+            <span className="text-sm text-text-muted">Enable memory service</span>
+          </label>
+          {embeddingEnabled && (
+            <div className="ml-6 space-y-3 pt-1">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-text-muted">Embedding model</label>
+                <input
+                  type="text"
+                  value={embeddingModel}
+                  onChange={(e) => setEmbeddingModel(e.target.value)}
+                  placeholder="nomic-embed-text"
+                  className={monoInputClass}
+                />
+                <p className="text-xs text-text-dim">Ollama model name used for generating embeddings.</p>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-text-muted">Vector dimensions</label>
+                <input
+                  type="number"
+                  min={64} max={4096}
+                  value={embeddingDimensions}
+                  onChange={(e) => setEmbeddingDimensions(e.target.value)}
+                  className={monoInputClass}
+                />
+                <p className="text-xs text-text-dim">Dimensionality of the embedding vectors (must match the model).</p>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-text-muted">Ollama URL</label>
+                <input
+                  type="text"
+                  value={embeddingOllamaUrl}
+                  onChange={(e) => setEmbeddingOllamaUrl(e.target.value)}
+                  placeholder="http://ollama:11434"
+                  className={monoInputClass}
+                />
+                <p className="text-xs text-text-dim">
+                  Overrides the cluster default Ollama service URL. Leave empty to use the built-in Ollama service.
+                </p>
+              </div>
+            </div>
           )}
         </fieldset>
 

@@ -101,6 +101,99 @@ The code-server mounts the project's data PVC at `/data`, giving access to:
 |-----------|-------------|----------------|--------------|
 | code-server | 100m | 256Mi | 512Mi |
 
+## Vector Memory Service
+
+Projects can enable a per-project vector memory service for semantic context
+retrieval and session summarization. When `spec.embedding.enabled: true`, the
+operator deploys a `memory-{project}` Deployment + Service running a Bun server
+with bun:sqlite and sqlite-vec for vector storage and search.
+
+### How It Works
+
+1. **Memory Service Pod** — A `memory-{project}` Bun container runs alongside
+   the project's data PVC. It exposes REST endpoints on port 4100 for storing
+   memories, semantic search, and context retrieval. It calls Ollama's
+   `/api/embeddings` endpoint to generate vector embeddings.
+
+2. **Context Injection** — When `buildWorkerRun()` constructs the worker prompt
+   (see `worker-builder.ts`), if `spec.embedding.enabled: true` it queries the
+   memory service with the task description as the search query. Matching results
+   are injected into the prompt as a `RELEVANT PROJECT CONTEXT:` block so the
+   agent has relevant past decisions and findings without manual context loading.
+
+3. **Session Summarization** — When a worker run completes (`Succeeded` or
+   `Failed`), if `spec.embedding.enabled: true`, the manager fires a fire-and-forget
+   `SummarizeSession` effect. The session-summarizer reads the session messages
+   from the dispatcher's ConfigMap snapshot, compacts them, sends them to the LLM
+   for a 2-3 paragraph summary, and stores the summary in:
+   - The run's `{runName}-session` ConfigMap under key `summary-{sessionID}`
+   - The project's vector memory database (via `POST /memory`), tagged with
+     `type: "session-summary"`
+
+4. **BUILD Task Generation Context** — The `buildBuildTaskGeneratorRun()`
+   function (in `facilitator.ts`) reads stored session summaries from the
+   ConfigMap before constructing the buildgen agent's prompt. If a stored
+   summary exists for the preceding PLAN worker run, it is included as
+   `PLAN SESSION CONTEXT:` so the buildgen agent has high-level context
+   without needing to read the full session.
+
+### Enable
+
+```yaml
+apiVersion: percussionist.dev/v1alpha1
+kind: Project
+metadata:
+  name: my-project
+spec:
+  source:
+    git:
+      url: https://github.com/example/repo.git
+  embedding:
+    enabled: true
+    # Optional overrides:
+    # model: nomic-embed-text           # default
+    # dimensions: 768                    # default
+    # ollamaUrl: http://ollama:11434     # default (cluster DNS)
+    # resources:
+    #   requests: { cpu: "100m", memory: "256Mi" }
+    #   limits: { memory: "512Mi" }
+```
+
+### Prerequisites
+
+- **Ollama Deployment** — The cluster must have an Ollama service running the
+  embedding model:
+  ```bash
+  kubectl apply -f k8s/deploy/ollama.yaml
+  kubectl -n percussionist wait --for=condition=Ready pod -l app.kubernetes.io/component=ollama
+  kubectl exec -n percussionist deploy/ollama -- ollama pull nomic-embed-text
+  ```
+- `source.git` or `source.local` must be set (needs a data PVC)
+
+### Available MCP Tools
+
+When the memory service is enabled, the manager MCP server (port 4097) exposes
+these tools for agent use:
+
+| Tool | Purpose |
+|------|---------|
+| `store_memory` | Store a memory with semantic embedding for future context retrieval |
+| `query_memory` | Semantic search across stored memories, ranked by cosine distance |
+| `get_context` | Retrieve relevant context from past runs and memories, formatted for prompt injection |
+
+### Resources
+
+| Component | CPU Request | Memory Request | Memory Limit |
+|-----------|-------------|----------------|--------------|
+| memory service | 100m | 256Mi | 512Mi |
+
+### Lifecycle
+
+- **Created**: Automatically when a Project with `spec.embedding.enabled: true`
+  is created and has `source.git` or `source.local` configured.
+- **Deleted**: Automatically when the Project is deleted (via owner references)
+  or when `embedding.enabled` is set to `false`.
+
 ## Git Workspace Modes
 
 ### Remote git (`source.git`)
@@ -270,6 +363,9 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `pause_reconciliation` | Pause the manager reconcile loop for a project (auto-resumes after timeout) |
 | `resume_reconciliation` | Resume a paused reconcile loop |
 | `get_reconcile_status` | Check whether the reconcile loop is paused and when it was last paused |
+| `store_memory` | Store a memory with semantic embedding for future context retrieval |
+| `query_memory` | Semantic search across stored memories, ranked by cosine distance |
+| `get_context` | Retrieve relevant context from past runs and memories, formatted for prompt injection |
 
 **`create_run`** — Direct run creation without waiting for reconcile cycle.
 - Requires: `project`, `task` (Task CR name)
@@ -535,5 +631,6 @@ Setup instructions: `k8s/self-dev/secrets/README.md`
 3. `@percussionist/operator` - Run reconciler; creates Pod/Service/Ingress/ConfigMap
 4. `@percussionist/dispatcher` - Sidecar; session lifecycle, SSE streaming, analytics
 5. `@percussionist/manager-controller` - Project board controller + embedded agent module (decision engine, MCP tools on :4097, chat handler on :4098, opencode-web sidecar on :4096)
-6. `@percussionist/web` - Hono + React dashboard; REST APIs, stats DB (SQLite via Drizzle)
-7. `@percussionist/cli` - beatctl CLI; talks to K8s API directly (includes `chat` command)
+6. `@percussionist/memory-service` - Per-project vector embedding server; REST API for storing, searching, and retrieving memories (Bun + sqlite-vec)
+7. `@percussionist/web` - Hono + React dashboard; REST APIs, stats DB (SQLite via Drizzle)
+8. `@percussionist/cli` - beatctl CLI; talks to K8s API directly (includes `chat` command)

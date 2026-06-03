@@ -19,7 +19,8 @@ export type ReconcileEffect =
   | { type: "CreateTask"; task: Task }
   | { type: "ClearTaskAnnotations"; keys: string[] }
   | { type: "ClearProjectAnnotations"; keys: string[] }
-  | { type: "CleanupWorktree"; runName: string };
+  | { type: "CleanupWorktree"; runName: string }
+  | { type: "SummarizeSession"; project: string; runName: string; sessionID: string };
 
 export interface ExecutionResult {
   applied: boolean;
@@ -153,7 +154,7 @@ export async function executeEffects(
             task,
             effect.succeededRunName,
             effect.buildgenRunName,
-            succeededStatus.message ?? "",
+            "",
             flow.plan.buildGenerationAgent,
             allTasks,
             flow.build.defaultAgent,
@@ -235,6 +236,13 @@ export async function executeEffects(
         case "CleanupWorktree": {
           // Best-effort.
           console.log(`[effects] CleanupWorktree ${effect.runName} (best-effort)`);
+          break;
+        }
+        case "SummarizeSession": {
+          // Fire-and-forget — never blocks the reconcile cycle.
+          import("../session-summarizer.js").then(({ summarizeSession }) => {
+            summarizeSession(effect.project, effect.runName, effect.sessionID, namespace);
+          }).catch(() => {});
           break;
         }
         case "CreateTask": {

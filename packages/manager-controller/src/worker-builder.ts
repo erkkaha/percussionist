@@ -18,6 +18,7 @@ import {
   resolveMergeBranch,
 } from "./branch-resolver.js";
 import { getClusterAgent, getClusterSettings } from "@percussionist/kube";
+import { getContext } from "./agent/memory-client.js";
 
 const MAX_RETRIES = 3;
 
@@ -117,6 +118,23 @@ export async function buildWorkerRun(
       "- Keep your changes aligned with the plan's acceptance criteria and sequencing notes.",
       "",
     );
+  }
+
+  // Inject relevant memory context if vector memory is enabled.
+  if (project.spec.embedding?.enabled) {
+    try {
+      const query = task.spec.description ?? task.spec.title ?? taskName;
+      const { context } = await getContext(projectName, query);
+      if (context && context !== "No relevant context found.") {
+        promptLines.push(
+          "RELEVANT PROJECT CONTEXT:",
+          context,
+          "",
+        );
+      }
+    } catch {
+      // Memory service unavailable — skip silently.
+    }
   }
 
   // Feature branching: override git ref with task's branch.
