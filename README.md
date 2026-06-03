@@ -36,6 +36,7 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
   imported once and shared cluster-wide via Kubernetes Secrets.
 - **Manager agent** — the manager controller embeds an OpenCode agent (opencode-web sidecar) with K8s tool access, a decision engine that diagnoses failures and parses ambiguous output, and an interactive chat API. Chat via the web dashboard or `beatctl chat`.
 - **Vector memory** — per-project semantic memory service with LLM-powered context injection (`RELEVANT PROJECT CONTEXT:` in worker prompts) and automatic session summarization on run completion; summaries are stored in ConfigMaps and the vector database for use by BUILD task generators.
+- **Runner packages** — declare Alpine packages (`spec.runner.packages`) that get installed at pod init time; the manager injects `AVAILABLE SYSTEM TOOLS:` into agent prompts so agents know what's available.
 
 ## Repo layout
 
@@ -775,6 +776,7 @@ Tasks are standalone `Task` CRs (not embedded in the project spec).
 | `spec.agents[]` | AgentRef[] | — | ClusterAgent names available as task assignees |
 | `spec.phase` | enum | Active | Board lifecycle: Active / Complete / Archived |
 | `spec.embedding` | EmbeddingSpec | optional | Per-project vector memory configuration. See [Vector Memory](#vector-memory) below. |
+| `spec.runner` | RunnerPackages | optional | Alpine packages installed in every run pod. See [Runner Packages](#runner-packages) below. |
 
 ### Task fields
 
@@ -1398,3 +1400,46 @@ three related tools to agents:
 | `store_memory(project, content, metadata?)` | Store a memory with semantic embedding |
 | `query_memory(project, query, limit?)` | Semantic search across stored memories |
 | `get_context(project, query, task?)` | Get relevant context formatted for prompt injection |
+
+## Runner Packages
+
+Projects can declare Alpine Linux packages to install in every run pod
+via `spec.runner.packages`. These are installed at pod initialization
+time in the workspace-init container through `apk add`.
+
+### Enable
+
+```yaml
+apiVersion: percussionist.dev/v1alpha1
+kind: Project
+metadata:
+  name: my-project
+spec:
+  runner:
+    packages:
+      - ripgrep
+      - jq
+      - tree
+```
+
+### How it works
+
+1. The workspace-init container runs `apk update --quiet && apk add --no-cache <packages>`
+   before git mirror fetch or worktree setup.
+2. All declared packages are available via `$PATH` in the runner pod.
+3. The manager injects the package list as `AVAILABLE SYSTEM TOOLS:` in the
+   agent prompt so agents know what's available without manual discovery.
+4. Per-run override via `spec.runner.packages` on a Run CR.
+
+### Manager MCP tools
+
+| Tool | Description |
+|------|-------------|
+| `list_available_packages(project)` | Returns the packages declared for a project |
+| `install_packages(project, packages)` | Installs ad-hoc packages via a maintenance pod (not persistent across restarts) |
+
+### Base image
+
+Packages are installed on top of the runner image
+(`ghcr.io/erkkaha/percussionist/runner:latest`). The base image always
+includes git, openssh, node, npm, bash, curl, unzip, and github-cli.

@@ -269,6 +269,55 @@ Each run gets its own worktree at `/data/worktrees/{run-name}/` checking out the
 - Only new tasks use feature branches
 - Projects can migrate gradually
 
+## Runner Packages
+
+Projects can declare Alpine Linux packages to install in every run pod
+via `spec.runner.packages`. These are installed at pod initialization
+time in the workspace-init container through `apk add`.
+
+### Enable
+
+```yaml
+apiVersion: percussionist.dev/v1alpha1
+kind: Project
+metadata:
+  name: my-project
+spec:
+  runner:
+    packages:
+      - ripgrep
+      - jq
+      - tree
+      - postgresql-client
+```
+
+### How it works
+
+1. The workspace-init container runs `apk update --quiet && apk add --no-cache <packages>`
+   before git mirror fetch or worktree setup.
+2. The runner pod starts with all declared packages available via `$PATH`.
+3. The manager injects the package list into the agent prompt as
+   `AVAILABLE SYSTEM TOOLS:` so agents know what's available without
+   manual discovery.
+4. Per-run override: `spec.runner.packages` on a Run CR overrides the
+   project defaults.
+
+### Manager MCP tools
+
+When the memory service is enabled, the manager MCP server (port 4097) exposes
+additional tools for package management:
+
+| Tool | Purpose |
+|------|---------|
+| `list_available_packages(project)` | Returns the packages declared for a project |
+| `install_packages(project, packages)` | Installs ad-hoc packages via a maintenance pod (not persistent across restarts) |
+
+### Base image
+
+Packages are installed on top of the runner image
+(`ghcr.io/erkkaha/percussionist/runner:latest`). The base image always
+includes git, openssh, node, npm, bash, curl, unzip, and github-cli.
+
 ## Architecture
 - All packages are ESM (`"type": "module"`)
 - Strict TypeScript everywhere (`noUncheckedIndexedAccess`, `noImplicitOverride`)
