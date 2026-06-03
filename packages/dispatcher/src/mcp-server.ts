@@ -22,6 +22,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
+import { execFile } from "node:child_process";
 import { DISPATCHER_MCP_PORT } from "@percussionist/api";
 import { getProject, buildTask, createTask } from "@percussionist/kube";
 import { recordToolEvent } from "./tool-events-reporter.js";
@@ -99,9 +100,9 @@ const TOOL_CREATE_TASK = {
   name: "create_task",
   description:
     "Create a new BUILD Task CR for the current project. " +
-    "Starts in 'pending' phase (backlog column). " +
+    "Starts in pending phase (backlog column). " +
     "The agent name must be in the project's agent roster. " +
-    "Returns the created task name via a 'taskName' field for use with predecessorRef.",
+    "Returns the created task name via a taskName field for use with predecessorRef.",
   inputSchema: {
     type: "object",
     properties: {
@@ -114,6 +115,283 @@ const TOOL_CREATE_TASK = {
     required: ["title", "agent"],
   },
 };
+
+const TOOL_SEARCH_CODE = {
+  name: "search_code",
+  description:
+    "Search the codebase for a regex or literal pattern. Returns structured matches " +
+    "with file paths, line numbers, and surrounding context. Uses ripgrep (rg) when " +
+    "available, falls back to grep. Results are capped at 200 matches.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Search pattern (regex by default, literal when fixedStrings is true)" },
+      path: { type: "string", description: "Subdirectory to search (default: /workspace)" },
+      filePattern: { type: "string", description: "Glob pattern to filter files, e.g. *.ts, *.go (optional)" },
+      contextLines: { type: "number", description: "Lines of context before/after each match (default: 2, max: 10)" },
+      maxResults: { type: "number", description: "Maximum matches to return (default: 50, max: 200)" },
+      fixedStrings: { type: "boolean", description: "Treat query as literal string, not regex (default: false)" },
+      mode: { type: "string", enum: ["content", "files", "count"], description: "Output mode (default: content)" },
+    },
+    required: ["query"],
+  },
+};
+
+// ---------------------------------------------------------------------------
+// search_code handler
+
+interface SearchMatch {
+  file: string;
+  line: number;
+  column: number;
+  match: string;
+  contextBefore: string[];
+  contextAfter: string[];
+}
+
+interface SearchResult {
+  matches: SearchMatch[];
+  totalMatches: number;
+  returnedMatches: number;
+  truncated: boolean;
+}
+
+function execCommand(cmd: string, args: string[], timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(cmd, args, {
+      maxBuffer: 5 * 1024 * 1024,
+      timeout: timeoutMs,
+      cwd: "/workspace",
+    }, (err, stdout, stderr) => {
+      const exitCode = (err as { code?: unknown } | null)?.code;
+      // rg and grep exit 1 when no matches found — not an error.
+      if (exitCode === 1) {
+        resolve({ stdout: stdout ?? "", stderr: stderr ?? "" });
+        return;
+      }
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve({ stdout: stdout ?? "", stderr: stderr ?? "" });
+    });
+  });
+}
+
+async function handleSearchCode(id: JsonRpcRequest["id"], args: Record<string, unknown>): Promise<JsonRpcResponse> {
+  const query = String(args.query ?? "");
+  if (!query) {
+    return ok(id, { content: [{ type: "text", text: JSON.stringify({ error: "query is required" }) }] });
+  }
+
+  const searchPath = String(args.path ?? "/workspace");
+  const filePattern = args.filePattern ? String(args.filePattern) : undefined;
+  const contextLines = Math.min(Math.max(Number(args.contextLines) || 2, 0), 10);
+  const maxResults = Math.min(Math.max(Number(args.maxResults) || 50, 1), 200);
+  const fixedStrings = args.fixedStrings === true;
+  const mode = String(args.mode ?? "content") as "content" | "files" | "count";
+
+  const timeoutMs = 30_000;
+
+  // Check if rg (ripgrep) is available.
+  const useRg = await hasRipgrep();
+  const isContextMode = mode === "content";
+
+  let stdout: string;
+  if (useRg) {
+    const rgArgs: string[] = ["--json", "-i", "--no-heading"];
+    if (isContextMode) rgArgs.push("-C", String(contextLines));
+    if (filePattern) rgArgs.push("-g", filePattern);
+    if (fixedStrings) rgArgs.push("-F");
+    rgArgs.push(query, searchPath);
+    const result = await execCommand("rg", rgArgs, timeoutMs);
+    stdout = result.stdout;
+  } else {
+    // Fallback to grep -rn
+    const grepArgs: string[] = ["-rn", "-i"];
+    if (fixedStrings) grepArgs.push("-F");
+    if (filePattern) grepArgs.push("--include", filePattern);
+    if (isContextMode && contextLines > 0) grepArgs.push("-C", String(contextLines));
+    grepArgs.push(query, searchPath);
+    const result = await execCommand("grep", grepArgs, timeoutMs);
+    stdout = result.stdout;
+  }
+
+  // Parse output
+  let matches: SearchMatch[];
+  let totalMatches: number;
+
+  if (useRg) {
+    const parsed = parseRgJson(stdout, searchPath, isContextMode, contextLines);
+    matches = parsed.matches;
+    totalMatches = parsed.total;
+  } else {
+    const parsed = parseGrepOutput(stdout, searchPath, isContextMode, contextLines);
+    matches = parsed.matches;
+    totalMatches = parsed.total;
+  }
+
+  if (mode === "count") {
+    return ok(id, { content: [{ type: "text", text: JSON.stringify({ totalMatches, searchPath, query }) }] });
+  }
+
+  if (mode === "files") {
+    const files = [...new Set(matches.map((m) => m.file))];
+    return ok(id, { content: [{ type: "text", text: JSON.stringify({ files, totalFiles: files.length, searchPath, query }) }] });
+  }
+
+  const truncated = matches.length > maxResults;
+  const returned = matches.slice(0, maxResults);
+
+  return ok(id, {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          matches: returned,
+          totalMatches,
+          returnedMatches: returned.length,
+          truncated,
+          engine: useRg ? "ripgrep" : "grep",
+        }),
+      },
+    ],
+  });
+}
+
+let _hasRg: boolean | undefined;
+
+async function hasRipgrep(): Promise<boolean> {
+  if (_hasRg !== undefined) return _hasRg;
+  try {
+    await execCommand("rg", ["--version"], 5000);
+    _hasRg = true;
+  } catch {
+    _hasRg = false;
+  }
+  return _hasRg;
+}
+
+// ---------------------------------------------------------------------------
+// rg JSON output parser
+
+interface RgMatch {
+  type: string;
+  data: {
+    path?: { text: string };
+    lines?: { text: string };
+    line_number?: number;
+    absolute_offset?: number;
+    submatches?: Array<{ match: { text: string }; start: number; end: number }>;
+  };
+}
+
+function parseRgJson(
+  stdout: string,
+  _searchPath: string,
+  _isContextMode: boolean,
+  _contextLines: number,
+): { matches: SearchMatch[]; total: number } {
+  const matches: SearchMatch[] = [];
+  const contextBuffer = new Map<string, string[]>();
+
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    let parsed: RgMatch;
+    try {
+      parsed = JSON.parse(line) as RgMatch;
+    } catch {
+      continue;
+    }
+
+    if (parsed.type === "match") {
+      const file = parsed.data.path?.text ?? "";
+      const lineNum = parsed.data.line_number ?? 0;
+      const matchText = parsed.data.lines?.text?.trimEnd() ?? "";
+      const column = parsed.data.submatches?.[0]?.start ?? 0;
+
+      // Collect context lines around this match from surrounding context events.
+      const key = `${file}:${lineNum}`;
+      const before = (contextBuffer.get(`${file}:${lineNum - 1}`) ?? []).slice(-_contextLines);
+      const after = (contextBuffer.get(`${file}:${lineNum + 1}`) ?? []).slice(0, _contextLines);
+
+      matches.push({
+        file,
+        line: lineNum,
+        column: column + 1,
+        match: matchText,
+        contextBefore: before,
+        contextAfter: after,
+      });
+    } else if (parsed.type === "context") {
+      const file = parsed.data.path?.text ?? "";
+      const lineNum = parsed.data.line_number ?? 0;
+      const text = parsed.data.lines?.text?.trimEnd() ?? "";
+      contextBuffer.set(`${file}:${lineNum}`, [
+        ...(contextBuffer.get(`${file}:${lineNum - 1}`) ?? []),
+        `${lineNum}: ${text}`,
+      ]);
+    }
+  }
+
+  return { matches, total: matches.length };
+}
+
+// ---------------------------------------------------------------------------
+// grep -rn output parser
+
+function parseGrepOutput(
+  stdout: string,
+  _searchPath: string,
+  _isContextMode: boolean,
+  _contextLines: number,
+): { matches: SearchMatch[]; total: number } {
+  const matches: SearchMatch[] = [];
+  // Context lines from grep -C output are separated by --
+  const blocks = stdout.split("\n--\n");
+
+  for (const block of blocks) {
+    const lines = block.split("\n").filter(Boolean);
+    const matchLines: string[] = [];
+    const contextBefore: string[] = [];
+    const contextAfter: string[] = [];
+    let inContextAfter = false;
+
+    for (const line of lines) {
+      // Grep match format: file:line:content
+      const match = line.match(/^([^:]+):(\d+):(.+)$/);
+      if (match) {
+        matchLines.push(line);
+        inContextAfter = false;
+      } else if (line.startsWith("-")) {
+        inContextAfter = true;
+      } else if (inContextAfter) {
+        contextAfter.push(line);
+      } else {
+        contextBefore.push(line);
+      }
+    }
+
+    for (const ml of matchLines) {
+      const m = ml.match(/^([^:]+):(\d+):(.+)$/);
+      if (!m) continue;
+      const file = m[1] ?? "";
+      const lineNum = parseInt(m[2] ?? "0", 10);
+      const matchText = m[3] ?? "";
+
+      matches.push({
+        file,
+        line: lineNum,
+        column: 1,
+        match: matchText,
+        contextBefore: contextBefore.slice(-_contextLines),
+        contextAfter: contextAfter.slice(0, _contextLines),
+      });
+    }
+  }
+
+  return { matches, total: matches.length };
+}
 
 // ---------------------------------------------------------------------------
 // JSON-RPC helpers
@@ -241,7 +519,7 @@ function handleMcp(
       return ok(req.id, {});
 
     case "tools/list":
-      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_COMPLETE_PLAN, TOOL_GET_STATUS, TOOL_CREATE_TASK] });
+      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_COMPLETE_PLAN, TOOL_GET_STATUS, TOOL_CREATE_TASK, TOOL_SEARCH_CODE] });
 
     case "tools/call": {
       const toolName = (req.params?.name as string | undefined) ?? "";
@@ -308,6 +586,19 @@ function handleMcp(
 
       if (toolName === "create_task") {
         const result = handleCreateTask(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>);
+        if (result instanceof Promise) {
+          return result.then(
+            (res) => { record(true); return res; },
+            (err) => { record(false, (err as Error).message); throw err; },
+          );
+        }
+        record(true);
+        return result;
+      }
+
+      if (toolName === "search_code") {
+        const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
+        const result = handleSearchCode(req.id, args);
         if (result instanceof Promise) {
           return result.then(
             (res) => { record(true); return res; },
