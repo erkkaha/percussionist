@@ -19,7 +19,7 @@
 
 import { Hono } from "hono";
 import { getDb, runs, messages, toolCalls, fileOps, toolEvents } from "../db.js";
-import { lt, gte, eq } from "drizzle-orm";
+import { lt, gte, eq, and, like, desc, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -443,5 +443,88 @@ export function runRetentionCleanup(): void {
     );
   }
 }
+
+// GET /api/stats/tool-metrics?days=30&project=X — aggregated tool usage stats.
+stats.get("/tool-metrics", (c) => {
+  const daysParam = c.req.query("days") ?? "30";
+  const days = parseInt(daysParam, 10);
+  const project = c.req.query("project"); // optional project filter
+
+  const db = getDb();
+  const cutoff =
+    days > 0
+      ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+
+  const conditions = cutoff ? [gte(toolEvents.calledAt, cutoff)] : [];
+  if (project) conditions.push(eq(toolEvents.sessionId, project));
+
+  const rows = db
+    .select({
+      toolName: toolEvents.toolName,
+      calls: sql<number>`COUNT(*)`.as("calls"),
+      avgDurationMs: sql<number>`AVG(${toolEvents.durationMs})`.as("avg_duration_ms"),
+      successRate: sql<number>`SUM(CASE WHEN ${toolEvents.success} = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*)`.as("success_rate"),
+      avgResultSize: sql<number>`AVG(${toolEvents.resultSize})`.as("avg_result_size"),
+      totalErrors: sql<number>`SUM(CASE WHEN ${toolEvents.success} = 0 THEN 1 ELSE 0 END)`.as("total_errors"),
+      sessionsUsing: sql<number>`COUNT(DISTINCT ${toolEvents.sessionId})`.as("sessions_using"),
+    })
+    .from(toolEvents)
+    .where(and(...conditions))
+    .groupBy(toolEvents.toolName)
+    .orderBy(desc(sql`COUNT(*)`))
+    .all() as Array<{
+      toolName: string;
+      calls: number;
+      avgDurationMs: number | null;
+      successRate: number | null;
+      avgResultSize: number | null;
+      totalErrors: number;
+      sessionsUsing: number;
+    }>;
+
+  const totalCalls = rows.reduce((s, r) => s + r.calls, 0);
+  const totalSessions = db
+    .select({ count: sql<number>`COUNT(DISTINCT ${toolEvents.sessionId})` })
+    .from(toolEvents)
+    .where(and(...conditions))
+    .get();
+
+  return c.json({
+    tools: rows,
+    totalCalls,
+    totalSessions: totalSessions?.count ?? 0,
+    period: {
+      days,
+      from: cutoff,
+      to: new Date().toISOString(),
+    },
+  });
+});
+
+// GET /api/stats/tool-events?sessionId=X&runName=Y&limit=100 — raw tool events.
+stats.get("/tool-events", (c) => {
+  const sessionId = c.req.query("sessionId");
+  const runName = c.req.query("runName");
+  const tool = c.req.query("tool");
+  const limitParam = c.req.query("limit") ?? "100";
+  const limit = Math.min(Math.max(parseInt(limitParam, 10) || 100, 1), 1000);
+
+  const db = getDb();
+  const conditions: ReturnType<typeof eq>[] = [];
+  if (sessionId) conditions.push(eq(toolEvents.sessionId, sessionId));
+  if (runName) conditions.push(eq(toolEvents.runName, runName));
+  if (tool) conditions.push(eq(toolEvents.toolName, tool));
+
+  const rows = db
+    .select()
+    .from(toolEvents)
+    .where(and(...conditions))
+    .orderBy(desc(toolEvents.calledAt))
+    .limit(limit)
+    .all();
+
+  return c.json({ events: rows, total: rows.length });
+});
 
 export default stats;

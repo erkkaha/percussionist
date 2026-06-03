@@ -767,6 +767,17 @@ export type ManagerMetrics = z.infer<typeof ManagerMetricsSchema>;
 
 // Project-level board status summary — only lightweight metrics remain here.
 // Full task state lives in Task CRs.
+export const SuggestionSchema = z.object({
+  type: z.enum(["missing_tool", "performance", "reliability"]),
+  severity: z.enum(["info", "suggestion", "warning"]),
+  source: z.string(),
+  message: z.string(),
+  recommendation: z.string(),
+  taskName: z.string().optional(),
+  createdAt: z.string(),
+});
+export type Suggestion = z.infer<typeof SuggestionSchema>;
+
 export const BoardStatusSchema = z.object({
   activeWorkers: z.number().int().min(0).default(0),
   escalations: z.string().array().optional(),
@@ -775,6 +786,8 @@ export const BoardStatusSchema = z.object({
   lastEventAt: z.string().optional(),
   /** Manager reconciliation metrics — written by manager-controller. */
   managerMetrics: ManagerMetricsSchema.optional(),
+  /** Tool gap analysis suggestions. */
+  suggestions: SuggestionSchema.array().optional(),
 });
 
 export type BoardStatus = z.infer<typeof BoardStatusSchema>;
