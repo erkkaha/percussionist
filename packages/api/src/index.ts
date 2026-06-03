@@ -110,6 +110,17 @@ export interface RunnerImageSpec {
   configMapKey: string;
 }
 
+// ---------------------------------------------------------------------------
+// Runner tool packages
+//
+// System packages (apk) installed into every run pod for this project.
+// Declared at the project level, inherited by all runs.
+
+export const RunnerPackagesSchema = z.object({
+  packages: z.array(z.string()).max(50).optional(),
+}).optional();
+export type RunnerPackages = z.infer<typeof RunnerPackagesSchema>;
+
 /** Default RunnerImageSpec — points at the opencode runtime. */
 export const OPENCODE_RUNNER_DEFAULTS: RunnerImageSpec = {
   image: "ghcr.io/anomalyco/opencode:latest",
@@ -531,6 +542,9 @@ export const RunSpecSchema = z
         worktreeReuse: z.boolean().default(true),
       })
       .optional(),
+
+    // System packages inherited from project or overridden per-run.
+    runner: RunnerPackagesSchema,
   })
   .refine((s) => s.interactive || !!s.task, {
     message: "spec.task is required unless spec.interactive is true",
@@ -913,6 +927,10 @@ export const ProjectSpecSchema = z.object({
   // When enabled, the operator deploys a memory-{project} Deployment + Service
   // that stores and searches semantic vectors via bun:sqlite + sqlite-vec.
   embedding: EmbeddingSpecSchema.optional(),
+
+  // System packages (apk) installed into every run pod for this project.
+  // Declared once on the project, inherited by all runs and board workers.
+  runner: RunnerPackagesSchema,
 });
 
 export type ProjectSpec = z.infer<typeof ProjectSpecSchema>;
@@ -1123,6 +1141,7 @@ export interface ResolvedRunConfig {
   initScript?: string;
   data?: { pvcName?: string; mountPath?: string; storageClass?: string };
   gitCache?: { worktreeReuse?: boolean };
+  packages?: string[];
 }
 
 // clusterBase — optional cluster-level defaults from ClusterSettings.spec.
@@ -1166,6 +1185,7 @@ export function resolveRunConfig(
     initScript: project.initScript,
     data: runOverrides?.data ?? project.data,
     gitCache: runOverrides?.gitCache ?? project.gitCache,
+    packages: runOverrides?.packages ?? project.runner?.packages,
   };
 }
 

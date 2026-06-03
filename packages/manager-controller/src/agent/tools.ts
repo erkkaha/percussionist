@@ -533,6 +533,38 @@ const TOOLS = [
       required: ["project", "query"],
     },
   },
+  {
+    name: "list_available_packages",
+    description:
+      "List the system packages installed in the runner environment for a project. " +
+      "Returns the packages declared in spec.runner.packages on the Project CR.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (required)" },
+      },
+      required: ["project"],
+    },
+  },
+  {
+    name: "install_packages",
+    description:
+      "Install additional system packages in the project's runner environment. " +
+      "Shells out to the maintenance pod to run apk add. Changes are not persistent " +
+      "across pod restarts — add packages to spec.runner.packages for permanence.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (required)" },
+        packages: {
+          type: "array",
+          items: { type: "string" },
+          description: "Package names to install (e.g. [\"ripgrep\", \"jq\"])",
+        },
+      },
+      required: ["project", "packages"],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1674,6 +1706,22 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         throw new Error("project and query are required");
       }
       return await getContext(project, query, task);
+    }
+
+    case "list_available_packages": {
+      const project = String(args.project ?? "");
+      if (!project) throw new Error("project is required");
+      const p = await getProject(project, MANAGER_NAMESPACE);
+      return { packages: p.spec.runner?.packages ?? [] };
+    }
+
+    case "install_packages": {
+      const project = String(args.project ?? "");
+      const pkgs = (args.packages ?? []) as string[];
+      if (!project || !pkgs.length) throw new Error("project and packages are required");
+      const cmd = `apk update --quiet && apk add --no-cache ${pkgs.join(" ")}`;
+      const result = await execInWorkspace(project, cmd, undefined, undefined, MANAGER_NAMESPACE);
+      return { installed: pkgs, output: result.stdout ?? "", exitCode: result.exitCode };
     }
 
     default:

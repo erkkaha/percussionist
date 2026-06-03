@@ -445,6 +445,14 @@ spec:
                         limits:
                           type: object
                           x-kubernetes-preserve-unknown-fields: true
+                runner:
+                  type: object
+                  properties:
+                    packages:
+                      type: array
+                      items:
+                        type: string
+                      maxItems: 50
             status:
               type: object
               properties:

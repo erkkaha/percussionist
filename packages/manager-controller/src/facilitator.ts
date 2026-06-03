@@ -95,6 +95,10 @@ export async function buildFacilitationRun(
           "",
         ]
       : []),
+    project.spec.runner?.packages?.length
+      ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(", ")}`
+      : "RUNNER PACKAGES: (base image only)",
+    "",
     `Analyze the failure above and output ONLY valid JSON (no markdown, no explanation):`,
     JSON.stringify({
       diagnosis: "(root cause in 1-2 sentences)",
@@ -207,6 +211,10 @@ export async function buildSuccessReviewRun(
           "",
         ]
       : []),
+    project.spec.runner?.packages?.length
+      ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(", ")}`
+      : "RUNNER PACKAGES: (base image only)",
+    "",
     `Review the above and output ONLY valid JSON (no markdown, no explanation):`,
     JSON.stringify({
       diagnosis: "(1-2 sentences: did the worker actually complete the task?)",
@@ -294,6 +302,10 @@ export async function buildBuildTaskGeneratorRun(
           "",
         ]
       : []),
+    (project.spec.runner?.packages?.length
+      ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(", ")}`
+      : "RUNNER PACKAGES: (none declared beyond base image)"),
+    "",
     `AVAILABLE TOOLS:`,
     `- create_task(title, description?, agent, priority?, predecessorRef?) — creates a BUILD Task CR and returns { taskName, project, type, phase }`,
     `- percussionist_dispatcher_complete_run — call after all BUILD tasks are created to signal completion`,

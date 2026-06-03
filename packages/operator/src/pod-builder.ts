@@ -291,6 +291,16 @@ export function renderPod(
                 ? // ── Remote git ──────────────────────────────────────────
                   [
                     "set -e",
+                    ...(spec.runner?.packages?.length
+                      ? [
+                          '# Install runner packages declared in spec.runner.packages',
+                          'if [ -n "${RUNNER_PACKAGES}" ]; then',
+                          '  echo "[workspace-init] installing packages: $RUNNER_PACKAGES"',
+                          '  apk update --quiet && apk add --no-cache $RUNNER_PACKAGES',
+                          '  echo "[workspace-init] package installation complete"',
+                          "fi",
+                        ]
+                      : []),
                     `MIRROR_DIR="${dataMountPath}/git-mirrors/${urlHash}"`,
                     `WORKTREE_DIR="${dataMountPath}/worktrees/${runName}"`,
                     `LOCK_FILE="${dataMountPath}/git-mirrors/${urlHash}.lock"`,
@@ -466,6 +476,16 @@ export function renderPod(
                 : // ── Local git ──────────────────────────────────────────
                   [
                     "set -e",
+                    ...(spec.runner?.packages?.length
+                      ? [
+                          '# Install runner packages declared in spec.runner.packages',
+                          'if [ -n "${RUNNER_PACKAGES}" ]; then',
+                          '  echo "[workspace-init] installing packages: $RUNNER_PACKAGES"',
+                          '  apk update --quiet && apk add --no-cache $RUNNER_PACKAGES',
+                          '  echo "[workspace-init] package installation complete"',
+                          "fi",
+                        ]
+                      : []),
                     `WORKSPACE_DIR="${dataMountPath}/workspace"`,
                     `mkdir -p "$WORKSPACE_DIR"`,
                     `if [ ! -d "$WORKSPACE_DIR/.git" ]; then`,
@@ -502,6 +522,9 @@ export function renderPod(
               { name: "NPM_CONFIG_CACHE", value: `${dataMountPath}/cache/npm` },
               { name: "BUN_INSTALL_CACHE_DIR", value: `${dataMountPath}/cache/bun` },
               { name: "TURBO_CACHE_DIR", value: `${dataMountPath}/cache/turbo` },
+              ...(spec.runner?.packages?.length
+                ? [{ name: "RUNNER_PACKAGES", value: spec.runner.packages!.join(" ") }]
+                : []),
             ],
             volumeMounts: [
               { name: "data", mountPath: dataMountPath },

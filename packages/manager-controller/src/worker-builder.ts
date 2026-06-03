@@ -137,6 +137,19 @@ export async function buildWorkerRun(
     }
   }
 
+  // Inject available system tools if declared.
+  if (resolved.packages && resolved.packages.length > 0) {
+    promptLines.push(
+      "AVAILABLE SYSTEM TOOLS:",
+      "The following packages are installed in this run environment:",
+      resolved.packages.map((p) => `  - ${p}`).join("\n"),
+      "",
+      "The opencode-native tools grep, glob, read, list, edit, and bash are always available.",
+      "Use `which <tool>` to check if a specific tool is available at runtime.",
+      "",
+    );
+  }
+
   // Feature branching: override git ref with task's branch.
   if (project.spec.featureBranchingEnabled && resolved.source?.git) {
     const gitBranch = resolveTaskBranch(task, project, allTasks ?? []);
