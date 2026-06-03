@@ -42,6 +42,20 @@ import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
 import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
 import { isValidTransition, TRANSITION_TABLE } from "../reconciler/transitions.js";
 
+// ---------------------------------------------------------------------------
+// Phase-aware agent resolution
+
+/**
+ * Resolve the appropriate agent name for a task based on its current phase.
+ * Returns `undefined` when the default (`task.spec.agent`) should be used.
+ */
+function resolveAgentForPhase(task: Task, currentPhase: TaskPhase): string | undefined {
+  if (currentPhase === "generating-builds") {
+    return "facilitator-buildgen";
+  }
+  return undefined;
+}
+
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-manager-agent";
 const SERVER_VERSION = "1.0";
@@ -822,7 +836,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
       const runName = workerRunName(projectName, taskName, retryCount);
       const workerRun = await buildWorkerRun(project, task, runName, retryCount, reworkFeedback, projectTasks);
-      if (agentOverride) workerRun.spec.agent = agentOverride;
+      const resolvedAgent = resolveAgentForPhase(task, currentPhase);
+      if (agentOverride ?? resolvedAgent) workerRun.spec.agent = agentOverride ?? resolvedAgent;
       if (modelOverride) workerRun.spec.model = modelOverride;
 
       await patchTaskStatus(taskName, {
@@ -941,7 +956,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       if (shouldCreate) {
         const runName = workerRunName(projectName, taskName, retryCount);
         const workerRun = await buildWorkerRun(project, task, runName, retryCount, undefined, projectTasks);
-        if (agentOverride) workerRun.spec.agent = agentOverride;
+        const resolvedAgent = resolveAgentForPhase(task, currentPhase);
+        if (agentOverride ?? resolvedAgent) workerRun.spec.agent = agentOverride ?? resolvedAgent;
         if (modelOverride) workerRun.spec.model = modelOverride;
 
         await patchTaskStatus(taskName, {
