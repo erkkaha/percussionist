@@ -713,12 +713,8 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
   let mergeRunName = task.status?.worker?.mergeRunName;
 
   if (!mergeRunName) {
-    const retryCount = task.status?.worker?.retryCount ?? 0;
-    const mergeSeq = createHash("sha256")
-      .update(`${input.project.metadata.name}:${taskName}:${retryCount}`)
-      .digest("hex")
-      .slice(0, 8);
-    mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSeq);
+    const suffix = randomBytes(3).toString("hex");
+    mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, suffix);
     return {
       taskName,
       fromPhase,
@@ -1012,9 +1008,39 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideFailed(input: ReconcileInput): ReconcileDecision {
-  const { task, flow, now } = input;
+  const { task, flow, manualActions, now } = input;
   const taskName = task.metadata.name;
   const fromPhase = "failed" as TaskPhase;
+
+  // Handle human-triggered actions (via approve/request-changes annotations).
+  if (manualActions.approved) {
+    const consumedKeys = getConsumedAnnotationKeys(manualActions);
+    const worker = task.status?.worker;
+
+    if (worker?.mergeError || worker?.mergeRunName) {
+      // Merge failure — clear old mergeRunName so decideAwaitingMerge()
+      // generates a fresh, uniquely-named merge run.
+      return {
+        taskName,
+        fromPhase,
+        toPhase: "awaiting-merge",
+        statusPatch: { worker: { mergeRunName: null, mergeError: null } },
+        effects: [{ type: "ClearTaskAnnotations", keys: consumedKeys }],
+        events: [makeEvent(input, fromPhase, "awaiting-merge", "MergeRetryApproved",
+          "Human approved retry of failed merge")],
+      };
+    }
+
+    // Other failure — escalate to human.
+    return {
+      taskName,
+      fromPhase,
+      toPhase: "awaiting-human",
+      effects: [{ type: "ClearTaskAnnotations", keys: consumedKeys }],
+      events: [makeEvent(input, fromPhase, "awaiting-human", "FailureEscalated",
+        "Human reviewed failed task")],
+    };
+  }
 
   if (!flow.retry.enabled) {
     return { taskName, fromPhase, effects: [], events: [] };
