@@ -12,17 +12,19 @@ import {
 import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan, moveTask } from "../../lib/api";
 import type { Task, Run } from "../../lib/types";
 import { useTaskRuns } from "../../hooks/useTaskRuns";
+import { useTaskDiff } from "../../hooks/useTaskDiff";
 import StatusBadge from "../StatusBadge";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "../CodeBlock";
 import TaskRunsPanel from "./TaskRunsPanel";
 import TaskEventsPanel from "./TaskEventsPanel";
+import { FileDiff } from "../FileDiff";
 import type React from "react";
 
 const remarkPlugins = [remarkGfm];
 
-type Tab = "overview" | "runs" | "events" | "plan";
+type Tab = "overview" | "runs" | "events" | "plan" | "diff";
 
 interface TaskDetailPanelProps {
   task: Task;
@@ -88,6 +90,41 @@ function PlanContent({ projectName, taskName }: { projectName: string; taskName:
       >
         {data.content}
       </ReactMarkdown>
+    </div>
+  );
+}
+
+function DiffContent({ projectName, taskName }: { projectName: string; taskName: string }) {
+  const { data, status, fetchStatus, error } = useTaskDiff(projectName, taskName, true);
+
+  const isFirstLoad = status === "pending" && fetchStatus === "fetching";
+  if (isFirstLoad) return <p className="text-xs text-text-dim p-4">Loading diff...</p>;
+  if (error) return <p className="text-xs text-phase-failed p-4">Failed to load diff: {(error as Error).message}</p>;
+  if (!data) return <p className="text-xs text-text-dim p-4">No diff data available.</p>;
+
+  return (
+    <div className="space-y-3 px-4 py-3">
+      <div className="rounded border border-border-muted bg-surface-overlay/30 px-3 py-2 text-xs text-text-dim">
+        Base: <span className="font-mono text-text">{data.baseRef}</span>
+        {"  "}
+        Head: <span className="font-mono text-text">{data.headRef}</span>
+        {"  "}
+        Default: <span className="font-mono text-text">{data.defaultRef}</span>
+      </div>
+
+      {data.empty && (
+        <div className="rounded border border-border-muted bg-surface px-3 py-2 text-xs text-text-dim">
+          {data.reason ?? "No file changes for this task."}
+        </div>
+      )}
+
+      {!data.empty && data.files.length > 0 && (
+        <div className="space-y-2">
+          {data.files.map((file) => (
+            <FileDiff key={`${file.path}-${file.diff.length}`} filename={file.path} path={file.path} diff={file.diff} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -253,6 +290,7 @@ function TaskDetailPanelInner({
   const worker = task.status?.worker;
   const isBuild = task.spec.type === "BUILD";
   const isPlan = task.spec.type === "PLAN";
+  const canShowDiff = task.status?.phase === "done" || task.status?.phase === "awaiting-human" || task.status?.phase === "rework-requested";
   const approvalState = approvals?.[taskName];
   const alreadyApproved = approvalState?.approved === true;
 
@@ -288,6 +326,7 @@ function TaskDetailPanelInner({
     { id: "runs", label: "Runs" },
     { id: "events", label: "Events" },
     ...(isPlan ? [{ id: "plan" as Tab, label: "Plan" }] : []),
+    ...(canShowDiff ? [{ id: "diff" as Tab, label: "Diff" }] : []),
   ];
 
   // If current tab is not available (e.g. run just removed), reset
@@ -473,6 +512,11 @@ function TaskDetailPanelInner({
         {isPlan && (
           <div className={activeTab === "plan" ? "" : "hidden"}>
             <PlanContent projectName={projectName} taskName={taskName} />
+          </div>
+        )}
+        {canShowDiff && (
+          <div className={activeTab === "diff" ? "" : "hidden"}>
+            <DiffContent projectName={projectName} taskName={taskName} />
           </div>
         )}
       </div>

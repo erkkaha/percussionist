@@ -262,3 +262,19 @@ export interface PlanResponse {
   taskId: string;
   project: string;
 }
+
+export interface TaskDiffFile {
+  path: string;
+  diff: string;
+}
+
+export interface TaskDiffResponse {
+  project: string;
+  task: string;
+  defaultRef: string;
+  baseRef: string;
+  headRef: string;
+  files: TaskDiffFile[];
+  empty: boolean;
+  reason?: string;
+}

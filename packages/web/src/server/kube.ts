@@ -46,6 +46,7 @@ export {
   postSessionMessage,
   postPermissionReply,
   readSessionConfigMap,
+  execInWorkspace,
   // Metrics helpers
   listNodeMetrics,
   listPodMetrics,

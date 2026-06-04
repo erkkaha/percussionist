@@ -5,6 +5,7 @@ import type {
   LogsResponse,
   SessionResponse,
   PlanResponse,
+  TaskDiffResponse,
   CreateRunRequest,
   Project,
   ProjectDetail,
@@ -83,6 +84,12 @@ export async function fetchSession(name: string): Promise<SessionResponse> {
 export async function fetchPlan(project: string, taskId: string): Promise<PlanResponse> {
   return fetchJSON<PlanResponse>(
     `/projects/${encodeURIComponent(project)}/plans/${encodeURIComponent(taskId)}`
+  );
+}
+
+export async function fetchTaskDiff(project: string, taskName: string): Promise<TaskDiffResponse> {
+  return fetchJSON<TaskDiffResponse>(
+    `/projects/${encodeURIComponent(project)}/tasks/${encodeURIComponent(taskName)}/diff`
   );
 }
 
