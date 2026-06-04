@@ -124,6 +124,12 @@ export function decide(input: ReconcileInput): ReconcileDecision {
     case "generating-builds":
       decision = decideGeneratingBuilds(input);
       break;
+    case "awaiting-children":
+      decision = decideAwaitingChildren(input);
+      break;
+    case "awaiting-feature-merge":
+      decision = decideAwaitingFeatureMerge(input);
+      break;
     case "failed":
       decision = decideFailed(input);
       break;
@@ -809,7 +815,7 @@ function decideReworkRequested(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
-  const { task, observed, now } = input;
+  const { task, project, observed, now } = input;
   const taskName = task.metadata.name;
   const fromPhase = "generating-builds" as TaskPhase;
   const buildgenRunName = task.status?.worker?.buildTasksFacilitatorRun;
@@ -879,11 +885,11 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
     };
   }
 
-  // Child tasks exist — mark as done.
+  // Child tasks exist — wait for them to complete.
   return {
     taskName,
     fromPhase,
-    toPhase: "done",
+    toPhase: "awaiting-children",
     statusPatch: {
       worker: {
         buildTasksCreated: true,
@@ -891,8 +897,133 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
       },
     },
     effects: [],
-    events: [makeEvent(input, fromPhase, "done", "BuildGenSucceeded", `Created ${childTasks.length} BUILD task(s)`)],
+    events: [makeEvent(input, fromPhase, "awaiting-children", "BuildGenSucceeded", `Created ${childTasks.length} BUILD task(s)` + (project.spec.featureBranchingEnabled ? ", waiting for children before feature branch merge" : ""))],
   };
+}
+
+function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
+  const { task, project, allTasks, flow, now } = input;
+  const taskName = task.metadata.name;
+  const fromPhase = "awaiting-children" as TaskPhase;
+
+  const childTasks = allTasks.filter(
+    (t) => t.spec.type === "BUILD" && t.spec.parentTaskRef === taskName,
+  );
+  const allDone = childTasks.every((t) => t.status?.phase === "done");
+
+  if (!allDone) {
+    // Check stale timeout — if children have been pending too long, escalate.
+    const staleThresholdMs = flow.timeouts.buildgenStaleSeconds * 1000;
+    const completedAt = task.status?.worker?.completedAt;
+    if (completedAt) {
+      const elapsed = new Date(now).getTime() - new Date(completedAt).getTime();
+      if (elapsed > staleThresholdMs) {
+        return {
+          taskName, fromPhase,
+          toPhase: "awaiting-human",
+          effects: [],
+          events: [makeEvent(input, fromPhase, "awaiting-human", "ChildrenStale",
+            `Child BUILD tasks not done after ${flow.timeouts.buildgenStaleSeconds}s`)],
+        };
+      }
+    }
+    return { taskName, fromPhase, effects: [], events: [] };
+  }
+
+  // All children done — decide next step based on integration config.
+  if (!project.spec.featureBranchingEnabled || flow.integration.mode === "disabled") {
+    return {
+      taskName, fromPhase,
+      toPhase: "done",
+      effects: [],
+      events: [makeEvent(input, fromPhase, "done", "AllChildrenDoneNoIntegration")],
+    };
+  }
+
+  if (flow.integration.mode === "manual") {
+    return {
+      taskName, fromPhase,
+      toPhase: "awaiting-human",
+      effects: [],
+      events: [makeEvent(input, fromPhase, "awaiting-human", "AllChildrenDoneManualMerge",
+        "All BUILD tasks complete. Merge feature branch to target manually.")],
+    };
+  }
+
+  // auto-merge mode — schedule merge run for feature branch → target.
+  const retryCount = task.status?.worker?.retryCount ?? 0;
+  const mergeSeq = createHash("sha256")
+    .update(`${input.project.metadata.name}:${taskName}:${retryCount}`)
+    .digest("hex")
+    .slice(0, 8);
+  const mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSeq);
+
+  return {
+    taskName, fromPhase,
+    toPhase: "awaiting-feature-merge",
+    statusPatch: { worker: { mergeRunName } },
+    effects: [{ type: "ScheduleMergeRun", mergeRunName }],
+    events: [makeEvent(input, fromPhase, "awaiting-feature-merge", "AutoMergingFeatureBranch",
+      `Scheduled merge run for feature branch merge to target`)],
+  };
+}
+
+function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
+  const { task, observed, now } = input;
+  const taskName = task.metadata.name;
+  const fromPhase = "awaiting-feature-merge" as TaskPhase;
+  const mergeRunName = task.status?.worker?.mergeRunName;
+
+  if (!mergeRunName) {
+    // Create merge run if not yet assigned.
+    const retryCount = task.status?.worker?.retryCount ?? 0;
+    const mergeSeq = createHash("sha256")
+      .update(`${input.project.metadata.name}:${taskName}:${retryCount}`)
+      .digest("hex").slice(0, 8);
+    const name = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSeq);
+    return {
+      taskName, fromPhase,
+      toPhase: undefined,
+      statusPatch: { worker: { mergeRunName: name } },
+      effects: [{ type: "ScheduleMergeRun", mergeRunName: name }],
+      events: [makeEvent(input, fromPhase, "awaiting-feature-merge", "MergeRunScheduled")],
+    };
+  }
+
+  const mergeRun = observed.merge;
+  if (!mergeRun) {
+    return {
+      taskName, fromPhase,
+      toPhase: "failed",
+      statusPatch: { worker: { mergeError: "Merge run disappeared" } },
+      effects: [{ type: "CleanupWorktree", runName: mergeRunName }],
+      events: [makeEvent(input, fromPhase, "failed", "MergeRunMissing")],
+    };
+  }
+
+  if (mergeRun.status?.phase === "Succeeded") {
+    return {
+      taskName, fromPhase,
+      toPhase: "done",
+      statusPatch: { worker: { mergedAt: now } },
+      effects: [{ type: "CleanupWorktree", runName: mergeRunName }],
+      events: [makeEvent(input, fromPhase, "done", "FeatureBranchMerged")],
+    };
+  }
+
+  if (mergeRun.status?.phase === "Failed") {
+    return {
+      taskName, fromPhase,
+      toPhase: "awaiting-human",
+      statusPatch: { worker: { mergeError: mergeRun.status?.message } },
+      effects: [{ type: "CleanupWorktree", runName: mergeRunName }],
+      events: [makeEvent(input, fromPhase, "awaiting-human", "FeatureBranchMergeFailed",
+        mergeRun.status?.message ?? "Merge run failed")],
+    };
+  }
+
+  // Still running or unknown — wait.
+  return { taskName, fromPhase, effects: [], events: [] };
 }
 
 function decideFailed(input: ReconcileInput): ReconcileDecision {

@@ -28,6 +28,10 @@ export interface ResolvedFlow {
     agent: string;
     maxAutoReworks: number;
   };
+  integration: {
+    mode: "auto-merge" | "manual" | "disabled";
+    agent: string;
+  };
   retry: {
     enabled: boolean;
     maxAttempts: number;
@@ -50,6 +54,7 @@ const PRESETS: Record<string, Partial<ResolvedFlow>> = {
     plan: { onApprove: "done", buildGeneration: "disabled", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
     build: { onSuccess: "done", onApprove: "done", defaultAgent: "builder" },
     merge: { mode: "disabled", agent: "integrator" },
+    integration: { mode: "disabled", agent: "integrator" },
     review: { aiReviewerEnabled: false, agent: "reviewer", maxAutoReworks: 0 },
     retry: { enabled: false, maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2, maxBackoffSeconds: 300, poisonPillThresholdSeconds: 30 },
   },
@@ -58,6 +63,7 @@ const PRESETS: Record<string, Partial<ResolvedFlow>> = {
     plan: { onApprove: "done", buildGeneration: "disabled", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
     build: { onSuccess: "human-review", onApprove: "done", defaultAgent: "builder" },
     merge: { mode: "disabled", agent: "integrator" },
+    integration: { mode: "disabled", agent: "integrator" },
     review: { aiReviewerEnabled: false, agent: "reviewer", maxAutoReworks: 0 },
     retry: { enabled: false, maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2, maxBackoffSeconds: 300, poisonPillThresholdSeconds: 30 },
   },
@@ -66,6 +72,7 @@ const PRESETS: Record<string, Partial<ResolvedFlow>> = {
     plan: { onApprove: "generate-builds", buildGeneration: "ai", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
     build: { onSuccess: "human-review", onApprove: "done", defaultAgent: "builder" },
     merge: { mode: "disabled", agent: "integrator" },
+    integration: { mode: "auto-merge", agent: "integrator" },
     review: { aiReviewerEnabled: false, agent: "reviewer", maxAutoReworks: 0 },
     retry: { enabled: false, maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2, maxBackoffSeconds: 300, poisonPillThresholdSeconds: 30 },
   },
@@ -74,6 +81,7 @@ const PRESETS: Record<string, Partial<ResolvedFlow>> = {
       plan: { onApprove: "generate-builds", buildGeneration: "ai", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
       build: { onSuccess: "human-review", onApprove: "merge", defaultAgent: "builder" },
       merge: { mode: "auto", agent: "integrator" },
+    integration: { mode: "auto-merge", agent: "integrator" },
     review: { aiReviewerEnabled: false, agent: "reviewer", maxAutoReworks: 2 },
     retry: { enabled: false, maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2, maxBackoffSeconds: 300, poisonPillThresholdSeconds: 30 },
   },
@@ -102,6 +110,7 @@ export function resolveFlow(project: Project): ResolvedFlow {
   const flowPlan = flowConfig?.plan;
   const flowBuild = flowConfig?.build;
   const flowMerge = flowConfig?.merge;
+  const flowIntegration = flowConfig?.integration;
 
   return {
     preset: presetName,
@@ -123,6 +132,10 @@ export function resolveFlow(project: Project): ResolvedFlow {
     merge: {
       mode: flowMerge?.mode ?? preset.merge!.mode ?? "auto",
       agent: flowMerge?.agent ?? preset.merge!.agent ?? "integrator",
+    },
+    integration: {
+      mode: flowIntegration?.mode ?? preset.integration!.mode ?? "auto-merge",
+      agent: flowIntegration?.agent ?? preset.integration!.agent ?? "integrator",
     },
     review: {
       aiReviewerEnabled: flowReview?.aiReviewerEnabled ?? legacyReview?.aiReviewerEnabled ?? preset.review!.aiReviewerEnabled ?? false,

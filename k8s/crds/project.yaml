@@ -353,6 +353,18 @@ spec:
                         agent:
                           type: string
                           maxLength: 63
+                    integration:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum:
+                            - auto-merge
+                            - manual
+                            - disabled
+                        agent:
+                          type: string
+                          maxLength: 63
                     review:
                       type: object
                       properties:

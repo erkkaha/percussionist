@@ -673,6 +673,8 @@ export const TaskPhase = z.enum([
   "awaiting-merge",    // Merge run in progress
   "rework-requested",  // Human gave feedback, waiting for scheduling slot
   "generating-builds", // PLAN-only: buildgen facilitator splitting into tasks
+  "awaiting-children",     // Waiting for all child tasks to complete
+  "awaiting-feature-merge", // Feature branch merge run in progress
   // Terminal
   "done",              // Complete
   // Failure
@@ -907,6 +909,10 @@ export const ProjectSpecSchema = z.object({
     }).optional(),
     merge: z.object({
       mode: z.enum(["auto", "manual", "disabled"]).default("auto").optional(),
+      agent: z.string().max(63).default("integrator").optional(),
+    }).optional(),
+    integration: z.object({
+      mode: z.enum(["auto-merge", "manual", "disabled"]).default("auto-merge").optional(),
       agent: z.string().max(63).default("integrator").optional(),
     }).optional(),
     review: z.object({

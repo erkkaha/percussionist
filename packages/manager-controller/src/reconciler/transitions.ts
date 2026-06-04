@@ -14,7 +14,9 @@ export const TRANSITION_TABLE: Record<TaskPhase, TaskPhase[]> = {
   "awaiting-human": ["awaiting-merge", "generating-builds", "rework-requested", "done", "failed"],
   "awaiting-merge": ["done", "failed"],
   "rework-requested": ["scheduled"],
-  "generating-builds": ["done", "awaiting-human", "failed"],
+  "generating-builds": ["awaiting-children", "awaiting-human", "failed"],
+  "awaiting-children": ["awaiting-feature-merge", "awaiting-human", "done", "failed"],
+  "awaiting-feature-merge": ["done", "awaiting-human", "failed"],
   failed: ["pending", "awaiting-human"],
   done: [],
 };
