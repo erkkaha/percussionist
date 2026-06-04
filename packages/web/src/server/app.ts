@@ -18,6 +18,7 @@ import agentChat from "./routes/agent-chat.js";
 import settings from "./routes/settings.js";
 import activity from "./routes/activity.js";
 import plans from "./routes/plans.js";
+import taskDiff from "./routes/task-diff.js";
 import upgrade from "./routes/upgrade.js";
 import providers from "./routes/providers.js";
 import { NAMESPACE } from "./kube.js";
@@ -40,6 +41,7 @@ export function createApp() {
   app.route("/api/settings", settings);
   app.route("/api/activity", activity);
   app.route("/api/projects", plans);
+  app.route("/api/projects", taskDiff);
   app.route("/api/upgrade", upgrade);
   app.route("/api/providers", providers);
 

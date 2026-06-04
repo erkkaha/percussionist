@@ -17,6 +17,7 @@ export async function persistEvent(
       metadata: {
         namespace,
         generateName: `${taskName}-`,
+        labels: { "percussionist.dev/project": event.project },
       },
       involvedObject: {
         apiVersion: `${API_GROUP}/${API_VERSION}`,

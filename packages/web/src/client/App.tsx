@@ -1,3 +1,4 @@
+import { useState, useRef, useCallback } from "react";
 import { Routes, Route } from "react-router-dom";
 import Layout from "./components/Layout";
 import RunList from "./components/RunList";
@@ -11,34 +12,51 @@ import AgentsPage from "./components/AgentsPage";
 import AgentForm from "./components/AgentForm";
 import BoardView from "./components/BoardView";
 import MetricsView from "./components/MetricsView";
+import ToolMetricsView from "./components/ToolMetricsView";
 import AgentChatPanel from "./components/AgentChatPanel";
 import SettingsPage from "./components/SettingsPage";
 import PlanView from "./components/PlanView";
 import ActivityPage from "./pages/ActivityPage";
+import { ChatContext } from "./lib/chat-context";
+import type { Task } from "./lib/types";
 
 export default function App() {
+  const [chatOpen, setChatOpen] = useState(false);
+  const injectRef = useRef<(task: Task, projectName: string) => void>(undefined);
+
+  const injectTask = useCallback((task: Task, projectName: string) => {
+    injectRef.current?.(task, projectName);
+  }, []);
+
+  const handleChatReady = useCallback((api: { injectTask: (task: Task, projectName: string) => void }) => {
+    injectRef.current = api.injectTask;
+  }, []);
+
   return (
     <>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route index element={<ActivityPage />} />
-          <Route path="/runs" element={<RunList />} />
-          <Route path="/runs/new" element={<CreateRunForm />} />
-          <Route path="/runs/:name" element={<RunDetail />} />
-          <Route path="/stats" element={<StatsView />} />
-          <Route path="/metrics" element={<MetricsView />} />
-          <Route path="/projects" element={<ProjectsPage />} />
-          <Route path="/projects/new" element={<CreateProjectForm />} />
-          <Route path="/projects/:name/edit" element={<EditProjectPage />} />
-          <Route path="/projects/:name/board" element={<BoardView />} />
-          <Route path="/projects/:name/plans/:taskId" element={<PlanView />} />
-          <Route path="/agents" element={<AgentsPage />} />
-          <Route path="/agents/new" element={<AgentForm />} />
-          <Route path="/agents/:name/edit" element={<AgentForm />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Route>
-      </Routes>
-      <AgentChatPanel />
+      <ChatContext.Provider value={{ injectTask }}>
+        <Routes>
+          <Route element={<Layout chatOpen={chatOpen} />}>
+            <Route index element={<ActivityPage />} />
+            <Route path="/runs" element={<RunList />} />
+            <Route path="/runs/new" element={<CreateRunForm />} />
+            <Route path="/runs/:name" element={<RunDetail />} />
+            <Route path="/stats" element={<StatsView />} />
+            <Route path="/metrics" element={<MetricsView />} />
+            <Route path="/tools" element={<ToolMetricsView />} />
+            <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/projects/new" element={<CreateProjectForm />} />
+            <Route path="/projects/:name/edit" element={<EditProjectPage />} />
+            <Route path="/projects/:name/board" element={<BoardView />} />
+            <Route path="/projects/:name/plans/:taskId" element={<PlanView />} />
+            <Route path="/agents" element={<AgentsPage />} />
+            <Route path="/agents/new" element={<AgentForm />} />
+            <Route path="/agents/:name/edit" element={<AgentForm />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Route>
+        </Routes>
+        <AgentChatPanel onOpenChange={setChatOpen} onChatReady={handleChatReady} />
+      </ChatContext.Provider>
     </>
   );
 }

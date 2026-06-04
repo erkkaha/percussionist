@@ -318,6 +318,12 @@ spec:
                             - ai
                             - manual
                             - disabled
+                        buildGenerationAgent:
+                          type: string
+                          maxLength: 63
+                        defaultAgent:
+                          type: string
+                          maxLength: 63
                     build:
                       type: object
                       properties:
@@ -332,6 +338,9 @@ spec:
                           enum:
                             - merge
                             - done
+                        defaultAgent:
+                          type: string
+                          maxLength: 63
                     merge:
                       type: object
                       properties:
@@ -341,12 +350,27 @@ spec:
                             - auto
                             - manual
                             - disabled
+                        agent:
+                          type: string
+                          maxLength: 63
+                    integration:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum:
+                            - auto-merge
+                            - manual
+                            - disabled
+                        agent:
+                          type: string
+                          maxLength: 63
                     review:
                       type: object
                       properties:
                         aiReviewerEnabled:
                           type: boolean
-                        aiReviewerAgent:
+                        agent:
                           type: string
                           maxLength: 63
                         maxAutoReworks:
@@ -413,6 +437,34 @@ spec:
                         limits:
                           type: object
                           x-kubernetes-preserve-unknown-fields: true
+                embedding:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                    model:
+                      type: string
+                    dimensions:
+                      type: integer
+                    ollamaUrl:
+                      type: string
+                    resources:
+                      type: object
+                      properties:
+                        requests:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        limits:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                runner:
+                  type: object
+                  properties:
+                    packages:
+                      type: array
+                      items:
+                        type: string
+                      maxItems: 50
             status:
               type: object
               properties:
@@ -494,5 +546,39 @@ spec:
                         tasksReworked:
                           type: integer
                           minimum: 0
+                    suggestions:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          type:
+                            type: string
+                            enum:
+                              - missing_tool
+                              - performance
+                              - reliability
+                          severity:
+                            type: string
+                            enum:
+                              - info
+                              - suggestion
+                              - warning
+                          source:
+                            type: string
+                          message:
+                            type: string
+                          recommendation:
+                            type: string
+                          taskName:
+                            type: string
+                          createdAt:
+                            type: string
+                        required:
+                          - type
+                          - severity
+                          - source
+                          - message
+                          - recommendation
+                          - createdAt
           required:
             - spec

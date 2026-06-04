@@ -44,6 +44,9 @@ jobs:
           - image: web
             dockerfile: images/web/Dockerfile
             context: .
+          - image: memory
+            dockerfile: images/memory/Dockerfile
+            context: .
 
     steps:
       - uses: actions/checkout@v4

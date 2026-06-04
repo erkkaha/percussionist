@@ -57,7 +57,7 @@ router.get("/status", async (c) => {
     const mcpResponse = (await res.json()) as {
       jsonrpc: string;
       id: number;
-      result?: { content: Array<{ type: string; text: string }> };
+      result?: { isError?: boolean; content: Array<{ type: string; text: string }> };
       error?: { code: number; message: string };
     };
 
@@ -74,6 +74,19 @@ router.get("/status", async (c) => {
     }
 
     const rawText = mcpResponse.result?.content?.[0]?.text;
+
+    if (mcpResponse.result?.isError) {
+      return c.json(
+        {
+          current: { operator: null, manager: null, web: null },
+          latest: null,
+          updateAvailable: false,
+          error: rawText ?? "Unknown MCP tool error",
+        } satisfies UpdateStatus,
+        500,
+      );
+    }
+
     if (!rawText) {
       return c.json(
         {
@@ -144,7 +157,7 @@ router.post("/apply", async (c) => {
     const mcpResponse = (await res.json()) as {
       jsonrpc: string;
       id: number;
-      result?: { content: Array<{ type: string; text: string }> };
+      result?: { isError?: boolean; content: Array<{ type: string; text: string }> };
       error?: { code: number; message: string };
     };
 
@@ -153,6 +166,11 @@ router.post("/apply", async (c) => {
     }
 
     const rawText = mcpResponse.result?.content?.[0]?.text;
+
+    if (mcpResponse.result?.isError) {
+      return c.json({ error: rawText ?? "Unknown MCP tool error" } satisfies Partial<UpgradeResult>, 500);
+    }
+
     if (!rawText) {
       return c.json({ error: "Empty response from manager" } satisfies Partial<UpgradeResult>, 500);
     }

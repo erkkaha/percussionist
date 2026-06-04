@@ -287,6 +287,14 @@ spec:
                   properties:
                     worktreeReuse:
                       type: boolean
+                runner:
+                  type: object
+                  properties:
+                    packages:
+                      type: array
+                      items:
+                        type: string
+                      maxItems: 50
               required:
                 - project
             status:

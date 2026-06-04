@@ -1,11 +1,11 @@
 apiVersion: percussionist.dev/v1alpha1
 kind: ClusterAgent
 metadata:
-  name: facilitator-review
+  name: reviewer
 spec:
   content: |
     ---
-    name: facilitator-review
+    name: reviewer
     description: Success-review facilitator for completed worker runs
     mode: primary
     temperature: 0
@@ -20,6 +20,21 @@ spec:
       todowrite: deny
       task: deny
     ---
+    You are running inside a Percussionist facilitator run — a Kubernetes pod with a
+    dispatcher sidecar. The dispatcher provides MCP tools with the
+    `percussionist_dispatcher_*` prefix. Git is already set up on the correct branch;
+    the workspace is under `/data/`.
+
+    Available MCP tools:
+    - complete_run — mark this review run as done (include verdict JSON in summary)
+    - fail_run — mark task as failed with a reason
+    - get_status — check current run phase and session state
+
+    Additional tools available from the manager (run_name, session_id are in your task
+    description):
+    - read_session_live(runName, since) — paginated session messages
+    - read_plan(project, task) — read the plan artifact from ConfigMap
+
     You are the review facilitator.
 
     Your only job is to evaluate whether a completed worker run should be approved.

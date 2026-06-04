@@ -8,7 +8,7 @@ import NotificationBell from "./NotificationBell";
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "./ui/sidebar";
 import { AppSidebar } from "./app-sidebar";
 
-export default function Layout() {
+export default function Layout({ chatOpen }: { chatOpen?: boolean }) {
   const { connected: runsSseConnected, eventTick } = useRunsEvents();
   void eventTick;
   const { data: runs } = useRuns(runsSseConnected ? false : 5_000);
@@ -31,7 +31,7 @@ export default function Layout() {
   return (
     <SidebarProvider>
       <AppSidebar playing={hasInProgress} managerAvailable={managerAvailable} />
-      <SidebarInset>
+      <SidebarInset className={chatOpen ? "mr-96 transition-all duration-300 ease-in-out" : "transition-all duration-300 ease-in-out"}>
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-surface-raised px-4">
           <div className="flex items-center gap-2">
             <SidebarTrigger className="-ml-1 data-[state=open]:rotate-180" />

@@ -1,10 +1,27 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { X, Send, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
+import { Send, Mic, MicOff, Volume2, VolumeX, MessageSquarePlus } from "lucide-react";
 import { DrumLogo } from "./app-sidebar";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import type { Task } from "@/lib/types";
 
 interface ChatMessage {
   role: "user" | "assistant" | "system";
   text: string;
+  id?: string;
+  created?: number;
+}
+
+function formatTaskContext(task: Task, projectName: string): string {
+  const lines: string[] = [];
+  lines.push(`@task ${task.metadata.name} (project: ${projectName})`);
+  lines.push(`Title: ${task.spec.title}`);
+  if (task.spec.description) lines.push(`Description: ${task.spec.description}`);
+  lines.push(`Type: ${task.spec.type}`);
+  lines.push(`Priority: ${task.spec.priority ?? "medium"}`);
+  lines.push(`Status: ${task.status?.phase ?? "unknown"}`);
+  if (task.spec.agent) lines.push(`Agent: ${task.spec.agent}`);
+  if (task.spec.parentTaskRef) lines.push(`Parent: ${task.spec.parentTaskRef}`);
+  return lines.join("\n");
 }
 
 type SpeechRecognitionType = new () => {
@@ -25,12 +42,34 @@ const SpeechRecognitionAPI =
        (window as unknown as { webkitSpeechRecognition?: SpeechRecognitionType }).webkitSpeechRecognition)
     : null;
 
+function timeAgo(ts: number): string {
+  const seconds = Math.floor((Date.now() - ts) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
 function messageKey(m: ChatMessage): string {
   return `${m.role}\0${m.text}`;
 }
 
-export default function AgentChatPanel() {
+interface AgentChatPanelProps {
+  onOpenChange?: (open: boolean) => void;
+  onChatReady?: (api: { injectTask: (task: Task, projectName: string) => void }) => void;
+}
+
+export default function AgentChatPanel({ onOpenChange, onChatReady }: AgentChatPanelProps) {
   const [open, setOpen] = useState(false);
+
+  function handleOpenChange(next: boolean) {
+    setOpen(next);
+    onOpenChange?.(next);
+  }
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [input, setInput] = useState("");
@@ -42,6 +81,7 @@ export default function AgentChatPanel() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const seenKeysRef = useRef<Set<string>>(new Set());
   const speakEnabledRef = useRef(false);
+  const speakAfterCreatedRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
@@ -70,14 +110,15 @@ function sanitizeForSpeech(text: string): string {
     if (seenKeysRef.current.has(key)) return;
     seenKeysRef.current.add(key);
     setMessages((prev) => [...prev, msg]);
-    if (msg.role === "assistant" && speakEnabledRef.current) {
+    if (msg.role !== "assistant") return;
+    const isNew = msg.created != null && msg.created > speakAfterCreatedRef.current;
+    if (isNew || speakEnabledRef.current) {
       setTimeout(() => speak(msg.text), 300);
     }
   }, [speak]);
 
   const resetSeen = useCallback(() => {
     seenKeysRef.current = new Set();
-    speakEnabledRef.current = false;
   }, []);
 
   const startRecording = useCallback(() => {
@@ -135,21 +176,22 @@ function sanitizeForSpeech(text: string): string {
     if (!open) return;
     setHistoryLoaded(false);
     resetSeen();
+    setMessages([]);
+    speakAfterCreatedRef.current = 0;
     fetch("/api/agent/chat/history")
       .then((r) => r.json())
       .then((d) => {
-        if (d.history?.length) {
-          setMessages(d.history);
-          for (const m of d.history) {
-            seenKeysRef.current.add(messageKey(m as ChatMessage));
-          }
+        const history = d.history as ChatMessage[] | undefined;
+        setMessages(history ?? []);
+        let maxCreated = 0;
+        for (const m of history ?? []) {
+          seenKeysRef.current.add(messageKey(m));
+          if (m.created && m.created > maxCreated) maxCreated = m.created;
         }
+        speakAfterCreatedRef.current = maxCreated;
       })
       .catch(() => {})
-      .finally(() => {
-        speakEnabledRef.current = true;
-        setHistoryLoaded(true);
-      });
+      .finally(() => setHistoryLoaded(true));
   }, [open, resetSeen]);
 
   // SSE stream for real-time updates — only open after history is loaded to avoid race
@@ -194,10 +236,9 @@ function sanitizeForSpeech(text: string): string {
     setSending(false);
   }
 
-  async function handleSend() {
-    const text = input.trim();
+  const sendText = useCallback(async (text: string) => {
     if (!text || sending) return;
-    setInput("");
+    speakEnabledRef.current = true;
     setSending(true);
     addMessageIfNew({ role: "user", text });
 
@@ -230,36 +271,46 @@ function sanitizeForSpeech(text: string): string {
       if (abortRef.current === ac) abortRef.current = null;
       setSending(false);
     }
+  }, [sending, addMessageIfNew]);
+
+  // Register chat API for external injection (called from board)
+  useEffect(() => {
+    if (!onChatReady) return;
+    onChatReady({
+      injectTask(task, projectName) {
+        setOpen(true);
+        const msg = formatTaskContext(task, projectName);
+        sendText(msg);
+      },
+    });
+    return () => onChatReady({ injectTask: () => {} });
+  }, [onChatReady, sendText]);
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!text || sending) return;
+    setInput("");
+    await sendText(text);
   }
 
   if (available === false) return null;
 
   return (
-    <>
-      {/* Toggle button */}
-      {!open && (
+    <Sheet open={open} onOpenChange={handleOpenChange}>
+      <SheetTrigger asChild>
         <button
-          onClick={() => setOpen(true)}
           className="fixed bottom-4 right-4 z-50 w-12 h-12 rounded-md bg-accent text-surface shadow-lg hover:bg-accent/80 flex items-center justify-center"
           title="Chat with manager agent"
         >
           <DrumLogo playing={false} size={40} />
         </button>
-      )}
-
-      {/* Chat panel */}
-      {open && (
-        <div className="fixed z-50 bg-surface shadow-xl border border-border flex flex-col inset-0 w-full h-dvh sm:inset-auto sm:bottom-4 sm:right-4 sm:w-96 sm:h-[32rem] sm:rounded-lg">
-          {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface-raised sm:rounded-t-lg">
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${available === null ? "bg-phase-pending" : available ? "bg-phase-succeeded" : "bg-phase-failed"}`} />
-              <span className="font-medium text-sm text-text">Manager Agent</span>
-            </div>
-            <button onClick={() => setOpen(false)} className="text-text-dim hover:text-text-muted transition-colors">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+      </SheetTrigger>
+      <SheetContent side="right" className="w-96 sm:max-w-md p-0 flex flex-col">
+        {/* Header */}
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-surface-raised pr-10">
+          <div className={`w-2 h-2 rounded-full ${available === null ? "bg-phase-pending" : available ? "bg-phase-succeeded" : "bg-phase-failed"}`} />
+          <span className="font-medium text-sm text-text">Manager Agent</span>
+        </div>
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
@@ -279,7 +330,10 @@ function sanitizeForSpeech(text: string): string {
                         : "bg-surface-raised text-text border border-border-muted"
                   }`}
                 >
-                  {msg.text}
+                  <div>{msg.text}</div>
+                  {msg.created && (
+                    <div className="text-[10px] text-text-dim/60 mt-1 leading-none">{timeAgo(msg.created)}</div>
+                  )}
                 </div>
               </div>
             ))}
@@ -305,15 +359,26 @@ function sanitizeForSpeech(text: string): string {
           <div className="border-t border-border px-4 py-3">
             <form
               onSubmit={(e) => { e.preventDefault(); handleSend(); }}
-              className="flex gap-2 items-center"
+              className="flex gap-2 items-end"
             >
-              <input
-                type="text"
+              <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                onInput={(e) => {
+                  const el = e.currentTarget;
+                  el.style.height = "auto";
+                  el.style.height = Math.min(el.scrollHeight, 160) + "px";
+                }}
                 placeholder="Ask the agent..."
-                className="flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
-                disabled={sending}
+                rows={1}
+                readOnly={sending}
+                className="flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none resize-none overflow-y-auto max-h-[160px]"
               />
               {sttSupported && (
                 <button
@@ -360,9 +425,8 @@ function sanitizeForSpeech(text: string): string {
                 </button>
               )}
             </form>
-          </div>
         </div>
-      )}
-    </>
+      </SheetContent>
+    </Sheet>
   );
 }

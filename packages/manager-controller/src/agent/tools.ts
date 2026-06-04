@@ -36,15 +36,43 @@ import {
   createTask,
   apps,
 } from "@percussionist/kube";
-import { LABELS, type Project, type Task, type TaskPhase, type TaskSpec } from "@percussionist/api";
+import { LABELS, MEMORY_SERVICE_PORT, type Project, type Task, type TaskPhase, type TaskSpec } from "@percussionist/api";
+import { storeMemory, queryMemory, getContext } from "./memory-client.js";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
 import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
 import { isValidTransition, TRANSITION_TABLE } from "../reconciler/transitions.js";
+import { resolveFlow } from "../reconciler/flow.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-manager-agent";
 const SERVER_VERSION = "1.0";
+
+// ---------------------------------------------------------------------------
+// Phase-aware agent resolution
+
+function resolvePhaseAgent(
+  task: Task,
+  project: Project,
+  currentPhase: TaskPhase,
+): string | undefined {
+  if (currentPhase !== "generating-builds") return undefined;
+
+  const flow = resolveFlow(project);
+  const agent = flow.plan.buildGenerationAgent;
+
+  const roster = (project.spec.agents ?? []).map((a: { name: string }) => a.name);
+  if (!roster.includes(agent)) {
+    console.log(
+      `[resolvePhaseAgent] ${task.metadata.name}: ` +
+      `buildGenerationAgent "${agent}" not in project roster, ` +
+      `defaulting to "${task.spec.agent}"`,
+    );
+    return undefined;
+  }
+
+  return agent;
+}
 
 // ---------------------------------------------------------------------------
 // Tool definitions
@@ -469,6 +497,101 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "list_task_events",
+    description:
+      "List task lifecycle events from the audit log. Events include phase transitions, " +
+      "review verdicts, failures, and manual actions. Events are recorded by the reconciler " +
+      "and persisted to the web server's SQLite database.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (required)" },
+        task: { type: "string", description: "Optional task CR name to filter events (e.g. 'BUILD-4')" },
+        limit: { type: "number", description: "Max events to return (default: 50, max: 500)" },
+      },
+      required: ["project"],
+    },
+  },
+  {
+    name: "store_memory",
+    description:
+      "Store a memory with semantic embedding for future context retrieval. " +
+      "The content is embedded via Ollama and stored in the project's vector database. " +
+      "Requires the project to have spec.embedding.enabled.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (required)" },
+        content: { type: "string", description: "Text content to store as memory" },
+        metadata: { type: "object", description: "Optional metadata JSON (task, run, etc.)" },
+      },
+      required: ["project", "content"],
+    },
+  },
+  {
+    name: "query_memory",
+    description:
+      "Semantic search across stored memories. Returns the most relevant memories " +
+      "ranked by cosine distance. Requires the project to have spec.embedding.enabled.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (required)" },
+        query: { type: "string", description: "Natural language query text" },
+        limit: { type: "number", description: "Max results (default: 10, max: 100)" },
+      },
+      required: ["project", "query"],
+    },
+  },
+  {
+    name: "get_context",
+    description:
+      "Retrieve relevant context from past runs and memories, formatted for prompt " +
+      "injection. Uses semantic search to find the most relevant memories for a given " +
+      "query. Requires the project to have spec.embedding.enabled.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (required)" },
+        query: { type: "string", description: "Natural language query for context retrieval" },
+        task: { type: "string", description: "Optional task identifier for filtering context" },
+      },
+      required: ["project", "query"],
+    },
+  },
+  {
+    name: "list_available_packages",
+    description:
+      "List the system packages installed in the runner environment for a project. " +
+      "Returns the packages declared in spec.runner.packages on the Project CR.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (required)" },
+      },
+      required: ["project"],
+    },
+  },
+  {
+    name: "install_packages",
+    description:
+      "Install additional system packages in the project's runner environment. " +
+      "Shells out to the maintenance pod to run apk add. Changes are not persistent " +
+      "across pod restarts — add packages to spec.runner.packages for permanence.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name (required)" },
+        packages: {
+          type: "array",
+          items: { type: "string" },
+          description: "Package names to install (e.g. [\"ripgrep\", \"jq\"])",
+        },
+      },
+      required: ["project", "packages"],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -822,7 +945,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
       const runName = workerRunName(projectName, taskName, retryCount);
       const workerRun = await buildWorkerRun(project, task, runName, retryCount, reworkFeedback, projectTasks);
-      if (agentOverride) workerRun.spec.agent = agentOverride;
+      const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
+      if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
       if (modelOverride) workerRun.spec.model = modelOverride;
 
       await patchTaskStatus(taskName, {
@@ -941,7 +1065,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       if (shouldCreate) {
         const runName = workerRunName(projectName, taskName, retryCount);
         const workerRun = await buildWorkerRun(project, task, runName, retryCount, undefined, projectTasks);
-        if (agentOverride) workerRun.spec.agent = agentOverride;
+        const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
+        if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
         if (modelOverride) workerRun.spec.model = modelOverride;
 
         await patchTaskStatus(taskName, {
@@ -1561,6 +1686,71 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         return match;
       }
       return normalized;
+    }
+
+    case "list_task_events": {
+      const project = String(args.project ?? "");
+      const taskFilter = args.task ? String(args.task) : undefined;
+      const limit = Math.min(parseInt(String(args.limit ?? "50"), 10), 500);
+      const webUrl =
+        process.env.WEB_SERVICE_URL ??
+        `http://percussionist-web.${MANAGER_NAMESPACE}.svc.cluster.local:8080`;
+      let path = `/api/board/${encodeURIComponent(project)}/events?limit=${limit}`;
+      if (taskFilter) {
+        path = `/api/board/${encodeURIComponent(project)}/tasks/${encodeURIComponent(taskFilter)}/events?limit=${limit}`;
+      }
+      const res = await fetch(`${webUrl}${path}`);
+      if (!res.ok) {
+        throw new Error(`web server returned ${res.status}: ${res.statusText}`);
+      }
+      const body = (await res.json()) as { events: unknown };
+      return body.events ?? [];
+    }
+
+    case "store_memory": {
+      const project = String(args.project ?? "");
+      const content = String(args.content ?? "");
+      const metadata = args.metadata as Record<string, unknown> | undefined;
+      if (!project || !content) {
+        throw new Error("project and content are required");
+      }
+      return await storeMemory(project, content, metadata);
+    }
+
+    case "query_memory": {
+      const project = String(args.project ?? "");
+      const query = String(args.query ?? "");
+      const limit = args.limit ? parseInt(String(args.limit), 10) : undefined;
+      if (!project || !query) {
+        throw new Error("project and query are required");
+      }
+      return await queryMemory(project, query, limit);
+    }
+
+    case "get_context": {
+      const project = String(args.project ?? "");
+      const query = String(args.query ?? "");
+      const task = args.task ? String(args.task) : undefined;
+      if (!project || !query) {
+        throw new Error("project and query are required");
+      }
+      return await getContext(project, query, task);
+    }
+
+    case "list_available_packages": {
+      const project = String(args.project ?? "");
+      if (!project) throw new Error("project is required");
+      const p = await getProject(project, MANAGER_NAMESPACE);
+      return { packages: p.spec.runner?.packages ?? [] };
+    }
+
+    case "install_packages": {
+      const project = String(args.project ?? "");
+      const pkgs = (args.packages ?? []) as string[];
+      if (!project || !pkgs.length) throw new Error("project and packages are required");
+      const cmd = `apk update --quiet && apk add --no-cache ${pkgs.join(" ")}`;
+      const result = await execInWorkspace(project, cmd, undefined, undefined, MANAGER_NAMESPACE);
+      return { installed: pkgs, output: result.stdout ?? "", exitCode: result.exitCode };
     }
 
     default:

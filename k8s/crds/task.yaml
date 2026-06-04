@@ -110,6 +110,8 @@ spec:
                     - awaiting-merge
                     - rework-requested
                     - generating-builds
+                    - awaiting-children
+                    - awaiting-feature-merge
                     - done
                     - failed
                 blocked:

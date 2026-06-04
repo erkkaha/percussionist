@@ -129,7 +129,7 @@ function wrapPatchStatus(fn: typeof patchStatus) {
 // Main
 
 async function main(): Promise<void> {
-  // Start the MCP server immediately so fail_run/complete_run/get_status are
+  // Start the MCP server immediately so MCP tools are
   // available as soon as opencode accepts connections.
   let resolveFailure!: (reason: string) => void;
   const failureSignal = new Promise<string>((resolve) => { resolveFailure = resolve; });
@@ -138,6 +138,10 @@ async function main(): Promise<void> {
   let resolveCompletion!: (summary: string) => void;
   const completionSignal = new Promise<string>((resolve) => { resolveCompletion = resolve; });
   let completionSignalled = false;
+
+  let resolvePlan!: (summary: string) => void;
+  const planSignal = new Promise<string>((resolve) => { resolvePlan = resolve; });
+  let planSignalled = false;
 
   const patchedPatchStatus = wrapPatchStatus(patchStatus);
 
@@ -152,6 +156,12 @@ async function main(): Promise<void> {
       if (completionSignalled) return;
       completionSignalled = true;
       resolveCompletion(summary);
+    },
+    (summary) => {
+      if (planSignalled) return;
+      planSignalled = true;
+      log(`complete_plan called by agent: ${summary}`);
+      resolvePlan(summary);
     },
     () => _lastStatus,
   );
@@ -182,6 +192,7 @@ async function main(): Promise<void> {
         RUN_UID,
         failureSignal,
         completionSignal,
+        planSignal,
       );
       _activeSessionID = result.sessionID;
       _runStartedAt = result.startedAt;

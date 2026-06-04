@@ -110,6 +110,14 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["create", "patch"]
+  # create_task tool: dispatcher reads project to validate agent roster, then
+  # creates a Task CR and patches its status to set initial phase.
+  - apiGroups: ["percussionist.dev"]
+    resources: ["projects"]
+    verbs: ["get"]
+  - apiGroups: ["percussionist.dev"]
+    resources: ["tasks", "tasks/status"]
+    verbs: ["get", "create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

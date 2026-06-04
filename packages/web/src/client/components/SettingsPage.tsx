@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -622,6 +622,15 @@ function UpdatesPanel() {
     return [operator, manager, web].filter(Boolean).every((v) => v === target);
   })();
 
+  const hasReloaded = useRef(false);
+  useEffect(() => {
+    if (upgradeComplete && !hasReloaded.current) {
+      hasReloaded.current = true;
+      const timer = setTimeout(() => window.location.reload(), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [upgradeComplete]);
+
   const currentTag =
     data?.current?.operator ??
     data?.current?.manager ??
@@ -688,8 +697,8 @@ function UpdatesPanel() {
               <Loader2 className="h-4 w-4 animate-spin shrink-0" />
               <span>Installing update — deployments are rolling out…</span>
             </div>
-            <div className="h-1.5 w-full rounded-full bg-surface-raised overflow-hidden">
-              <div className="h-full bg-accent rounded-full animate-[progress-indeterminate_1.5s_ease-in-out_infinite]" style={{ width: "40%" }} />
+            <div className="h-1.5 w-full rounded-none bg-surface-raised overflow-hidden">
+              <div className="h-full bg-accent rounded-none animate-[progress-indeterminate_1.5s_ease-in-out_infinite]" style={{ width: "40%" }} />
             </div>
           </div>
         )}

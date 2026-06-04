@@ -7,7 +7,6 @@
 export type {
   Run,
   Project,
-  Task,
   ClusterAgent,
   BoardStatus,
   ManagerMetrics,
@@ -17,11 +16,20 @@ export type {
 } from "@percussionist/api";
 export { RunPhase, TERMINAL_PHASES } from "@percussionist/api";
 
-import type { Project as _Project } from "@percussionist/api";
+import type { Project as _Project, Task as _Task } from "@percussionist/api";
 
 /** GET /api/projects/:name augments the CR with inject file contents for UI pre-population. */
 export interface ProjectDetail extends _Project {
   injectFileContents?: Array<{ filename: string; content: string }>;
+}
+
+/** Tasks in board responses may include computed child progress for awaiting-children phase. */
+export interface Task extends _Task {
+  childProgress?: {
+    total: number;
+    completed: number;
+    childRefs: string[];
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -191,11 +199,19 @@ export interface CreateProjectRequest {
     mountPath?: string;
     storageClass?: string;
   };
-}
+
+  /** Per-project memory service with vector embeddings for agent context/memory. */
+  embedding?: {
+    enabled?: boolean;
+    model?: string;
+    dimensions?: number;
+    ollamaUrl?: string;
+  };
 
 export interface CreateAgentRequest {
   name?: string;
   content: string;
+  model?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -318,4 +334,20 @@ export interface PlanResponse {
   content: string;
   taskId: string;
   project: string;
+}
+
+export interface TaskDiffFile {
+  path: string;
+  diff: string;
+}
+
+export interface TaskDiffResponse {
+  project: string;
+  task: string;
+  defaultRef: string;
+  baseRef: string;
+  headRef: string;
+  files: TaskDiffFile[];
+  empty: boolean;
+  reason?: string;
 }

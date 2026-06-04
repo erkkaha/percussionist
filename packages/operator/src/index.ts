@@ -22,6 +22,7 @@ import {
   reconcileClusterSettings,
   reconcileProject,
   cleanupCodeServer,
+  cleanupMemoryService,
 } from "./reconciler.js";
 import { INGRESS_BASE_URL, INGRESS_CLASS } from "./config.js";
 import { startTTLCleanup } from "./ttl.js";
@@ -110,6 +111,7 @@ async function main(): Promise<void> {
   });
   projectInformer.on("delete", (obj) => {
     void cleanupCodeServer(obj as unknown as Project);
+    void cleanupMemoryService(obj as unknown as Project);
   });
   projectInformer.on("error", (e) => {
     err("project informer error:", (e as Error).message);
