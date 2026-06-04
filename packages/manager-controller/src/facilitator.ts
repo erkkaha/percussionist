@@ -17,7 +17,7 @@ import {
   Task,
   resolveRunConfig,
 } from "@percussionist/api";
-import { fetchSessionMessages, readPodLog, core, getClusterSettings, readPlanFromConfigMap } from "@percussionist/kube";
+import { fetchSessionMessages, readPodLog, core, getClusterSettings, readPlanFromConfigMap, getClusterAgent } from "@percussionist/kube";
 import { resolveParentBranch, resolveTaskBranch } from "./branch-resolver.js";
 import { truncateK8sName } from "./worker-builder.js";
 
@@ -108,7 +108,7 @@ export async function buildFacilitationRun(
     }),
   ].join("\n");
 
-  return buildFacilitatorRun(
+  return await buildFacilitatorRun(
     project,
     task,
     runName,
@@ -229,7 +229,7 @@ export async function buildSuccessReviewRun(
     `Use "escalate" if human review is needed.`,
   ].join("\n");
 
-  return buildFacilitatorRun(
+  return await buildFacilitatorRun(
     project,
     task,
     runName,
@@ -354,7 +354,7 @@ export async function buildBuildTaskGeneratorRun(
     `- Do NOT output JSON or prose — just call the tools.`,
   ].join("\n");
 
-  return buildFacilitatorRun(
+  return await buildFacilitatorRun(
     project,
     planTask,
     runName,
@@ -368,7 +368,7 @@ export async function buildBuildTaskGeneratorRun(
 
 // Build a review Run spec without session summary.
 // The reviewer agent uses MCP tools (read_session_live) to fetch session data itself.
-export function buildReviewRun(
+export async function buildReviewRun(
   project: Project,
   task: Task,
   succeededRunName: string,
@@ -377,7 +377,7 @@ export function buildReviewRun(
   branchName: string | undefined,
   facilitatorAgentName: string,
   allTasks: Task[] = [],
-): Run {
+): Promise<Run> {
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
       image: undefined,
@@ -468,7 +468,7 @@ export function buildReviewRun(
     successReview: true,
   };
 
-  return buildFacilitatorRun(
+  return await buildFacilitatorRun(
     project,
     task,
     runName,
@@ -481,7 +481,7 @@ export function buildReviewRun(
 }
 
 // Shared helper — constructs the Run for any facilitator invocation.
-function buildFacilitatorRun(
+async function buildFacilitatorRun(
   project: Project,
   task: Task,
   runName: string,
@@ -490,7 +490,16 @@ function buildFacilitatorRun(
   resolved: ReturnType<typeof resolveRunConfig>,
   facilitatorAgentName: string,
   allTasks: Task[] = [],
-): Run {
+): Promise<Run> {
+  // Resolve agent-level model override, same as buildWorkerRun does.
+  try {
+    const agent = await getClusterAgent(facilitatorAgentName);
+    if (agent.spec.model) {
+      resolved.model = agent.spec.model;
+    }
+  } catch {
+    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
+  }
   const source = resolved.source
     ? { ...resolved.source, ...(resolved.source.git ? { git: { ...resolved.source.git } } : {}) }
     : undefined;

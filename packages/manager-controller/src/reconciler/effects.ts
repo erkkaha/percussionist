@@ -122,7 +122,7 @@ export async function executeEffects(
           const branchName = task.status?.worker?.gitBranch;
 
           const { buildReviewRun } = await import("../facilitator.js");
-          const reviewRun = buildReviewRun(
+          const reviewRun = await buildReviewRun(
             fullProject,
             task,
             effect.succeededRunName,
