@@ -80,6 +80,7 @@ export interface CreateProjectRequest {
       githubTokenSecret?: { name: string; key?: string };
       author?: { name: string; email: string };
     };
+    local?: boolean;
   };
   /** Project-level sidecars injected into every run pod. */
   sidecars?: Array<{
@@ -116,6 +117,79 @@ export interface CreateProjectRequest {
     aiReviewerEnabled?: boolean;
     aiReviewerAgent?: string;
     maxAutoReworks?: number;
+  };
+
+  /** Project-level runner image override. */
+  image?: string;
+
+  /** Pod resource requirements at project level. */
+  resources?: {
+    requests?: Record<string, string>;
+    limits?: Record<string, string>;
+  };
+
+  /** Board lifecycle phase: Active / Complete / Archived. */
+  phase?: "Active" | "Complete" | "Archived";
+
+  /** Git workspace caching and persistence options. */
+  gitCache?: {
+    worktreeReuse?: boolean;
+  };
+
+  /** Task lifecycle presets and overrides. */
+  flow?: {
+    preset?: "simple" | "review" | "plan-build" | "plan-build-review-merge";
+    humanApproval?: {
+      plan?: "required" | "disabled";
+      build?: "required" | "disabled";
+    };
+    plan?: {
+      onApprove?: "generate-builds" | "done";
+      buildGeneration?: "ai" | "manual" | "disabled";
+    };
+    build?: {
+      onSuccess?: "human-review" | "ai-review" | "done";
+      onApprove?: "merge" | "done";
+    };
+    merge?: {
+      mode?: "auto" | "manual" | "disabled";
+    };
+    review?: {
+      aiReviewerEnabled?: boolean;
+      aiReviewerAgent?: string;
+      maxAutoReworks?: number;
+    };
+    retry?: {
+      enabled?: boolean;
+      maxAttempts?: number;
+      backoffSeconds?: number;
+      backoffMultiplier?: number;
+      maxBackoffSeconds?: number;
+      poisonPillThresholdSeconds?: number;
+    };
+    timeouts?: {
+      runningStaleSeconds?: number;
+      reviewStaleSeconds?: number;
+      mergeStaleSeconds?: number;
+      buildgenStaleSeconds?: number;
+    };
+  };
+
+  /** Per-project code-server for interactive workspace access. */
+  codeServer?: {
+    enabled?: boolean;
+    image?: string;
+    resources?: {
+      requests?: Record<string, string>;
+      limits?: Record<string, string>;
+    };
+  };
+
+  /** Data PVC configuration — shared cache, git mirrors and worktrees. */
+  data?: {
+    pvcName?: string;
+    mountPath?: string;
+    storageClass?: string;
   };
 }
 
