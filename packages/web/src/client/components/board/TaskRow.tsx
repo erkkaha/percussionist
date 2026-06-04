@@ -1,7 +1,8 @@
 // TaskRow.tsx — compact clickable task row for the list panel.
 
-import { Wrench, FileText, Flag, User, ExternalLink } from "lucide-react";
+import { Wrench, FileText, Flag, User, ExternalLink, MessageSquarePlus } from "lucide-react";
 import type { Task } from "../../lib/types";
+import { useChat } from "../../lib/chat-context";
 
 function age(iso: string | undefined): string {
   if (!iso) return "";
@@ -31,18 +32,21 @@ interface TaskRowProps {
   col: string;
   isSelected: boolean;
   onClick: () => void;
+  projectName: string;
 }
 
-export function TaskRow({ task, col, isSelected, onClick }: TaskRowProps) {
+export function TaskRow({ task, col, isSelected, onClick, projectName }: TaskRowProps) {
   const worker = task.status?.worker;
   const isBuild = task.spec.type === "BUILD";
   const colColor = COLUMN_COLORS[col] ?? "bg-surface-overlay text-text-dim";
   const lastActivity = worker?.completedAt ?? worker?.startedAt ?? task.metadata.creationTimestamp;
+  const hasActiveRun = col === "in-progress" && worker?.runName;
+  const { injectTask } = useChat();
 
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left rounded-md px-3 py-2.5 transition-colors border ${
+      className={`w-full text-left rounded-md px-3 py-2.5 transition-colors border group ${
         isSelected
           ? "bg-surface-overlay border-border"
           : "bg-transparent border-transparent hover:bg-surface-overlay hover:border-border/50"
@@ -94,17 +98,17 @@ export function TaskRow({ task, col, isSelected, onClick }: TaskRowProps) {
             )}
 
             {/* Escalated */}
-            {worker?.status === "Escalated" && (
+            {!hasActiveRun && worker?.status === "Escalated" && (
               <span className="text-label-md font-mono uppercase text-phase-failed">escalated</span>
             )}
 
             {/* Succeeded */}
-            {worker?.status === "Succeeded" && (
+            {!hasActiveRun && worker?.status === "Succeeded" && (
               <span className="text-label-md font-mono uppercase text-phase-succeeded">succeeded</span>
             )}
 
             {/* Failed */}
-            {worker?.status === "Failed" && (
+            {!hasActiveRun && worker?.status === "Failed" && (
               <span className="text-label-md font-mono uppercase text-phase-failed">failed</span>
             )}
           </div>
@@ -126,10 +130,20 @@ export function TaskRow({ task, col, isSelected, onClick }: TaskRowProps) {
           )}
         </div>
 
-        {/* Selection indicator */}
-        {isSelected && (
-          <div className="mt-1 shrink-0 w-1.5 h-1.5 rounded-full bg-accent" />
-        )}
+        {/* Actions */}
+        <div className="mt-0.5 shrink-0 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); injectTask(task, projectName); }}
+            className="opacity-0 group-hover:opacity-60 hover:opacity-100 transition-opacity p-0.5 rounded text-text-dim hover:text-accent"
+            title="Inject task into chat"
+          >
+            <MessageSquarePlus className="h-3.5 w-3.5" />
+          </button>
+          {isSelected && (
+            <div className="w-1.5 h-1.5 rounded-full bg-accent" />
+          )}
+        </div>
       </div>
     </button>
   );

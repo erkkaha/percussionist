@@ -260,6 +260,7 @@ export function TaskListPanel({
                         col={col}
                         isSelected={selectedTaskName === task.metadata.name}
                         onClick={() => onSelectTask(task.metadata.name)}
+                        projectName={projectName}
                       />
                     ))
                   )}

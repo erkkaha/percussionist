@@ -10,7 +10,9 @@ import {
   Wrench, FileText, RefreshCw, MousePointerClick, ArrowRight,
 } from "lucide-react";
 import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan, moveTask } from "../../lib/api";
-import type { Task } from "../../lib/types";
+import type { Task, Run } from "../../lib/types";
+import { useTaskRuns } from "../../hooks/useTaskRuns";
+import StatusBadge from "../StatusBadge";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "../CodeBlock";
@@ -95,7 +97,14 @@ function PlanContent({ projectName, taskName }: { projectName: string; taskName:
 // ---------------------------------------------------------------------------
 function OverviewContent({ task, col, projectName }: { task: Task; col: string; projectName: string }) {
   const worker = task.status?.worker;
-  const runs = [
+  const { data: runsData } = useTaskRuns(task.metadata.name);
+  const latestRun = [...(runsData ?? [])]
+    .sort((a, b) => {
+      const aTime = a.status?.completedAt ?? a.status?.startedAt ?? a.metadata.creationTimestamp ?? "";
+      const bTime = b.status?.completedAt ?? b.status?.startedAt ?? b.metadata.creationTimestamp ?? "";
+      return bTime.localeCompare(aTime);
+    })[0];
+  const runLinks = [
     worker?.runName ? { label: "Run", name: worker.runName } : null,
     worker?.reviewRunName ? { label: "Reviewer", name: worker.reviewRunName } : null,
     worker?.mergeRunName ? { label: "Merge", name: worker.mergeRunName } : null,
@@ -133,12 +142,32 @@ function OverviewContent({ task, col, projectName }: { task: Task; col: string; 
         </div>
       )}
 
+      {/* Latest run output */}
+      {latestRun?.status?.message && (
+        <div>
+          <div className="flex items-center gap-2 mb-1.5">
+            <p className="text-label-md font-mono uppercase text-text-dim">Latest Run</p>
+            <StatusBadge phase={latestRun.status.phase} />
+          </div>
+          <div className="rounded-md border border-border-muted bg-surface-overlay px-3 py-2 space-y-1">
+            <Link
+              to={`/runs/${encodeURIComponent(latestRun.metadata.name)}`}
+              className="flex items-center gap-1.5 text-xs font-mono text-text-dim hover:text-text transition-colors"
+            >
+              <ExternalLink className="h-3 w-3 shrink-0" />
+              {latestRun.metadata.name}
+            </Link>
+            <p className="text-sm whitespace-pre-wrap leading-relaxed text-text">{latestRun.status.message}</p>
+          </div>
+        </div>
+      )}
+
       {/* Run links */}
-      {runs.length > 0 && (
+      {runLinks.length > 0 && (
         <div>
           <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">Runs</p>
           <div className="space-y-1">
-            {runs.map(({ label, name }) => (
+            {runLinks.map(({ label, name }) => (
               <Link
                 key={name}
                 to={`/runs/${encodeURIComponent(name)}`}

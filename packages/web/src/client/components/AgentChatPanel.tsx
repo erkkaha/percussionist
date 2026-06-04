@@ -1,13 +1,27 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
+import { Send, Mic, MicOff, Volume2, VolumeX, MessageSquarePlus } from "lucide-react";
 import { DrumLogo } from "./app-sidebar";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import type { Task } from "@/lib/types";
 
 interface ChatMessage {
   role: "user" | "assistant" | "system";
   text: string;
   id?: string;
   created?: number;
+}
+
+function formatTaskContext(task: Task, projectName: string): string {
+  const lines: string[] = [];
+  lines.push(`@task ${task.metadata.name} (project: ${projectName})`);
+  lines.push(`Title: ${task.spec.title}`);
+  if (task.spec.description) lines.push(`Description: ${task.spec.description}`);
+  lines.push(`Type: ${task.spec.type}`);
+  lines.push(`Priority: ${task.spec.priority ?? "medium"}`);
+  lines.push(`Status: ${task.status?.phase ?? "unknown"}`);
+  if (task.spec.agent) lines.push(`Agent: ${task.spec.agent}`);
+  if (task.spec.parentTaskRef) lines.push(`Parent: ${task.spec.parentTaskRef}`);
+  return lines.join("\n");
 }
 
 type SpeechRecognitionType = new () => {
@@ -46,9 +60,10 @@ function messageKey(m: ChatMessage): string {
 
 interface AgentChatPanelProps {
   onOpenChange?: (open: boolean) => void;
+  onChatReady?: (api: { injectTask: (task: Task, projectName: string) => void }) => void;
 }
 
-export default function AgentChatPanel({ onOpenChange }: AgentChatPanelProps) {
+export default function AgentChatPanel({ onOpenChange, onChatReady }: AgentChatPanelProps) {
   const [open, setOpen] = useState(false);
 
   function handleOpenChange(next: boolean) {
@@ -221,10 +236,8 @@ function sanitizeForSpeech(text: string): string {
     setSending(false);
   }
 
-  async function handleSend() {
-    const text = input.trim();
+  const sendText = useCallback(async (text: string) => {
     if (!text || sending) return;
-    setInput("");
     speakEnabledRef.current = true;
     setSending(true);
     addMessageIfNew({ role: "user", text });
@@ -258,6 +271,26 @@ function sanitizeForSpeech(text: string): string {
       if (abortRef.current === ac) abortRef.current = null;
       setSending(false);
     }
+  }, [sending, addMessageIfNew]);
+
+  // Register chat API for external injection (called from board)
+  useEffect(() => {
+    if (!onChatReady) return;
+    onChatReady({
+      injectTask(task, projectName) {
+        setOpen(true);
+        const msg = formatTaskContext(task, projectName);
+        sendText(msg);
+      },
+    });
+    return () => onChatReady({ injectTask: () => {} });
+  }, [onChatReady, sendText]);
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!text || sending) return;
+    setInput("");
+    await sendText(text);
   }
 
   if (available === false) return null;
