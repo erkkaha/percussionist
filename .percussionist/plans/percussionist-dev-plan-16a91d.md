@@ -70,14 +70,18 @@ Remove the Description column from `AgentsPage.tsx`. This is a single-file chang
 
 ## Acceptance Criteria
 
-1. ✅ Description column header removed from agents table
-2. ✅ Description data cells removed from all agent rows
-3. ✅ `extractDescription()` function removed (no longer referenced)
-4. ✅ Loading skeleton updated to match new column count (3 pulse divs instead of 4)
-5. ✅ Form component unchanged — description still in content textarea as before
-6. ✅ No schema/API/type changes needed or made
-7. ✅ `pnpm typecheck` passes with no errors
-8. ✅ `pnpm build` succeeds
+1. Description column header removed from agents table
+2. Description data cells removed from all agent rows
+3. `extractDescription()` function removed (no longer referenced)
+4. Loading skeleton updated to match new column count (3 pulse divs instead of 4)
+5. Form component unchanged — description still in content textarea as before
+6. No schema/API/type changes needed or made
+7. `pnpm typecheck` passes with no errors
+8. `pnpm build` succeeds
+
+## Implementation Status
+
+Implementation completed: commit `ecea394` removes the Description column from `AgentsPage.tsx`.
 
 ## Risks / Open Questions
 
