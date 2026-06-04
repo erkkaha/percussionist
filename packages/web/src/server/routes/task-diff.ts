@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { NAMESPACE, getProject, getTask, getRun, execInWorkspace } from "../kube.js";
+import { NAMESPACE, getProject, getTask, getRun } from "../kube.js";
 
 type DiffFile = {
   path: string;
@@ -50,6 +50,61 @@ function splitDiffByFile(diffText: string): DiffFile[] {
 }
 
 const router = new Hono();
+const MANAGER_SERVICE = `http://percussionist-manager.${NAMESPACE}.svc.cluster.local`;
+const MCP_URL = `${MANAGER_SERVICE}:4097/mcp`;
+
+async function execInWorkspaceViaManager(
+  project: string,
+  command: string,
+  timeoutMs: number,
+): Promise<{ stdout: string; exitCode: number | null }> {
+  const mcpRequest = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "exec_in_workspace",
+      arguments: {
+        project,
+        command,
+        mountPath: "/data",
+        timeoutSeconds: Math.ceil(timeoutMs / 1000),
+        namespace: NAMESPACE,
+      },
+    },
+  };
+
+  const res = await fetch(MCP_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(mcpRequest),
+    signal: AbortSignal.timeout(timeoutMs + 5_000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Manager MCP service returned ${res.status}`);
+  }
+
+  const mcpResponse = (await res.json()) as {
+    result?: { content?: Array<{ type: string; text: string }> };
+    error?: { message?: string };
+  };
+
+  if (mcpResponse.error) {
+    throw new Error(mcpResponse.error.message ?? "Manager MCP error");
+  }
+
+  const rawText = mcpResponse.result?.content?.[0]?.text ?? "{}";
+  const parsed = JSON.parse(rawText) as {
+    stdout?: string;
+    exitCode?: number | null;
+  };
+
+  return {
+    stdout: parsed.stdout ?? "",
+    exitCode: parsed.exitCode ?? null,
+  };
+}
 
 router.get("/:project/tasks/:taskName/diff", async (c) => {
   const projectName = c.req.param("project");
@@ -143,7 +198,7 @@ router.get("/:project/tasks/:taskName/diff", async (c) => {
       "git -C \"$REPO\" diff --no-color --find-renames --binary \"$BASE...$HEAD\" -- || git -C \"$REPO\" diff --no-color --find-renames --binary \"$BASE..$HEAD\" --",
     ].join("; ");
 
-    const result = await execInWorkspace(projectName, cmd, "/data", 120_000, NAMESPACE);
+    const result = await execInWorkspaceViaManager(projectName, cmd, 120_000);
     const output = result.stdout.trim();
 
     if (output.startsWith("__PERCUSSIONIST_ERROR__")) {
