@@ -647,6 +647,18 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
   if (manualActions.approved) {
     const consumedKeys = getConsumedAnnotationKeys(manualActions);
     if (task.spec.type === "PLAN") {
+      // Merge failure retry — skip buildgen cycle, retry merge directly.
+      if (task.status?.worker?.mergeError) {
+        return {
+          taskName,
+          fromPhase,
+          toPhase: "awaiting-feature-merge",
+          statusPatch: { worker: { mergeRunName: null, mergeError: null } },
+          effects: [{ type: "ClearTaskAnnotations", keys: consumedKeys }],
+          events: [makeEvent(input, fromPhase, "awaiting-feature-merge", "MergeRetryApproved",
+            "Human approved retry of failed feature merge")],
+        };
+      }
       if (flow.plan.onApprove === "done") {
         const planRunName = task.status?.worker?.runName;
         return {
@@ -932,12 +944,8 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
   }
 
   // auto-merge mode — schedule merge run for feature branch → target.
-  const retryCount = task.status?.worker?.retryCount ?? 0;
-  const mergeSeq = createHash("sha256")
-    .update(`${input.project.metadata.name}:${taskName}:${retryCount}`)
-    .digest("hex")
-    .slice(0, 8);
-  const mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSeq);
+  const mergeSuffix = randomBytes(3).toString("hex");
+  const mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSuffix);
 
   return {
     taskName, fromPhase,
@@ -957,11 +965,8 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
 
   if (!mergeRunName) {
     // Create merge run if not yet assigned.
-    const retryCount = task.status?.worker?.retryCount ?? 0;
-    const mergeSeq = createHash("sha256")
-      .update(`${input.project.metadata.name}:${taskName}:${retryCount}`)
-      .digest("hex").slice(0, 8);
-    const name = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSeq);
+    const suffix = randomBytes(3).toString("hex");
+    const name = auxiliaryRunName(input.project.metadata.name, "merge", taskName, suffix);
     return {
       taskName, fromPhase,
       toPhase: undefined,
