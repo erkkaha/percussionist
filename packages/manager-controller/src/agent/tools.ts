@@ -42,10 +42,37 @@ import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
 import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
 import { isValidTransition, TRANSITION_TABLE } from "../reconciler/transitions.js";
+import { resolveFlow } from "../reconciler/flow.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-manager-agent";
 const SERVER_VERSION = "1.0";
+
+// ---------------------------------------------------------------------------
+// Phase-aware agent resolution
+
+function resolvePhaseAgent(
+  task: Task,
+  project: Project,
+  currentPhase: TaskPhase,
+): string | undefined {
+  if (currentPhase !== "generating-builds") return undefined;
+
+  const flow = resolveFlow(project);
+  const agent = flow.plan.buildGenerationAgent;
+
+  const roster = (project.spec.agents ?? []).map((a: { name: string }) => a.name);
+  if (!roster.includes(agent)) {
+    console.log(
+      `[resolvePhaseAgent] ${task.metadata.name}: ` +
+      `buildGenerationAgent "${agent}" not in project roster, ` +
+      `defaulting to "${task.spec.agent}"`,
+    );
+    return undefined;
+  }
+
+  return agent;
+}
 
 // ---------------------------------------------------------------------------
 // Tool definitions
@@ -918,7 +945,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
       const runName = workerRunName(projectName, taskName, retryCount);
       const workerRun = await buildWorkerRun(project, task, runName, retryCount, reworkFeedback, projectTasks);
-      if (agentOverride) workerRun.spec.agent = agentOverride;
+      const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
+      if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
       if (modelOverride) workerRun.spec.model = modelOverride;
 
       await patchTaskStatus(taskName, {
@@ -1037,7 +1065,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       if (shouldCreate) {
         const runName = workerRunName(projectName, taskName, retryCount);
         const workerRun = await buildWorkerRun(project, task, runName, retryCount, undefined, projectTasks);
-        if (agentOverride) workerRun.spec.agent = agentOverride;
+        const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
+        if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
         if (modelOverride) workerRun.spec.model = modelOverride;
 
         await patchTaskStatus(taskName, {
