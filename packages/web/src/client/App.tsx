@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Routes, Route } from "react-router-dom";
 import Layout from "./components/Layout";
 import RunList from "./components/RunList";
@@ -18,10 +19,12 @@ import PlanView from "./components/PlanView";
 import ActivityPage from "./pages/ActivityPage";
 
 export default function App() {
+  const [chatOpen, setChatOpen] = useState(false);
+
   return (
     <>
       <Routes>
-        <Route element={<Layout />}>
+        <Route element={<Layout chatOpen={chatOpen} />}>
           <Route index element={<ActivityPage />} />
           <Route path="/runs" element={<RunList />} />
           <Route path="/runs/new" element={<CreateRunForm />} />
@@ -40,7 +43,7 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Routes>
-      <AgentChatPanel />
+      <AgentChatPanel onOpenChange={setChatOpen} />
     </>
   );
 }

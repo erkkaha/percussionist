@@ -866,9 +866,17 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
   );
 
   if (childTasks.length === 0) {
-    // Buildgen succeeded but no child tasks yet — the agent may still be creating them.
-    // Stay in generating-builds; the next reconcile will check again.
-    return { taskName, fromPhase, effects: [], events: [] };
+    // Buildgen succeeded but created 0 child BUILD tasks. The agent either
+    // decided no tasks are needed or failed to generate them. Escalate to human.
+    return {
+      taskName,
+      fromPhase,
+      toPhase: "awaiting-human",
+      statusPatch: { worker: { buildTasksFacilitatorRun: null } },
+      effects: [],
+      events: [makeEvent(input, fromPhase, "awaiting-human", "NoBuildTasksCreated",
+        `Buildgen "${buildgenRunName}" finished without creating any BUILD tasks`)],
+    };
   }
 
   // Child tasks exist — mark as done.

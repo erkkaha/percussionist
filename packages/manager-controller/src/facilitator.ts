@@ -17,7 +17,7 @@ import {
   Task,
   resolveRunConfig,
 } from "@percussionist/api";
-import { fetchSessionMessages, readPodLog, core, getClusterSettings } from "@percussionist/kube";
+import { fetchSessionMessages, readPodLog, core, getClusterSettings, readPlanFromConfigMap } from "@percussionist/kube";
 import { resolveParentBranch, resolveTaskBranch } from "./branch-resolver.js";
 import { truncateK8sName } from "./worker-builder.js";
 
@@ -263,6 +263,13 @@ export async function buildBuildTaskGeneratorRun(
   // Prefer explicitly passed summary, then fall back to stored ConfigMap summary.
   const actualSummary = sessionSummary || (await readStoredSessionSummary(succeededRunName)) || "";
 
+  // Read the full plan artifact from ConfigMap so the buildgen agent can work
+  // from the actual plan content without needing workspace file access.
+  const planContent = await readPlanFromConfigMap(
+    project.metadata.name,
+    planTask.metadata.name,
+  ).catch(() => null);
+
   const facilitationSpec: FacilitationSpec = {
     targetRunName: succeededRunName,
     targetTaskId: planTask.metadata.name,
@@ -286,6 +293,9 @@ export async function buildBuildTaskGeneratorRun(
     `PLAN SESSION CONTEXT:`,
     actualSummary || "(none available — use the task description above)",
     "",
+    ...(planContent
+      ? ["", `PLAN ARTIFACT CONTENT:`, planContent, ""]
+      : []),
     `PLAN ARTIFACT PATH: .percussionist/plans/${planTask.metadata.name}.md`,
     "",
     `The PLAN task has been approved by a human reviewer. Your job is to call the`,

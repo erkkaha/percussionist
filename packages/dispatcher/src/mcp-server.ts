@@ -24,7 +24,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { DISPATCHER_MCP_PORT } from "@percussionist/api";
-import { getProject, buildTask, createTask } from "@percussionist/kube";
+import { getProject, buildTask, createTask, writePlanToConfigMap, readPlanFromConfigMap } from "@percussionist/kube";
 import { recordToolEvent } from "./tool-events-reporter.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
@@ -134,6 +134,38 @@ const TOOL_SEARCH_CODE = {
       mode: { type: "string", enum: ["content", "files", "count"], description: "Output mode (default: content)" },
     },
     required: ["query"],
+  },
+};
+
+const TOOL_WRITE_PLAN = {
+  name: "write_plan",
+  description:
+    "Persist a plan artifact to the project's plans ConfigMap. " +
+    "Planner agents call this after creating their plan markdown file, " +
+    "so the plan is queryable via read_plan even after worktrees are cleaned up.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      project: { type: "string", description: "Project name" },
+      task: { type: "string", description: "Plan task ID" },
+      content: { type: "string", description: "Full markdown content of the plan" },
+    },
+    required: ["project", "task", "content"],
+  },
+};
+
+const TOOL_READ_PLAN = {
+  name: "read_plan",
+  description:
+    "Read a plan artifact from the project's plans ConfigMap. " +
+    "Returns plan content if it exists, or null if no plan has been written yet.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      project: { type: "string", description: "Project name" },
+      task: { type: "string", description: "Plan task ID" },
+    },
+    required: ["project", "task"],
   },
 };
 
@@ -394,6 +426,42 @@ function parseGrepOutput(
 }
 
 // ---------------------------------------------------------------------------
+// write_plan / read_plan handlers
+
+async function handleWritePlan(id: JsonRpcRequest["id"], args: Record<string, unknown>): Promise<JsonRpcResponse> {
+  const project = String(args.project ?? "");
+  const task = String(args.task ?? "");
+  const content = String(args.content ?? "");
+  if (!project || !task || !content) {
+    return rpcError(id, -32602, "project, task, and content are required");
+  }
+  try {
+    const result = await writePlanToConfigMap(project, task, content);
+    return ok(id, {
+      content: [{ type: "text", text: JSON.stringify(result) }],
+    });
+  } catch (e) {
+    return rpcError(id, -32603, `failed to write plan: ${(e as Error).message}`);
+  }
+}
+
+async function handleReadPlan(id: JsonRpcRequest["id"], args: Record<string, unknown>): Promise<JsonRpcResponse> {
+  const project = String(args.project ?? "");
+  const task = String(args.task ?? "");
+  if (!project || !task) {
+    return rpcError(id, -32602, "project and task are required");
+  }
+  try {
+    const content = await readPlanFromConfigMap(project, task);
+    return ok(id, {
+      content: [{ type: "text", text: JSON.stringify({ exists: content !== null, content }) }],
+    });
+  } catch (e) {
+    return rpcError(id, -32603, `failed to read plan: ${(e as Error).message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // JSON-RPC helpers
 
 type JsonRpcRequest = {
@@ -519,7 +587,7 @@ function handleMcp(
       return ok(req.id, {});
 
     case "tools/list":
-      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_COMPLETE_PLAN, TOOL_GET_STATUS, TOOL_CREATE_TASK, TOOL_SEARCH_CODE] });
+      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_COMPLETE_PLAN, TOOL_GET_STATUS, TOOL_CREATE_TASK, TOOL_SEARCH_CODE, TOOL_WRITE_PLAN, TOOL_READ_PLAN] });
 
     case "tools/call": {
       const toolName = (req.params?.name as string | undefined) ?? "";
@@ -607,6 +675,18 @@ function handleMcp(
         }
         record(true);
         return result;
+      }
+
+      if (toolName === "write_plan") {
+        return handleWritePlan(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>)
+          .then((res) => { record(true); return res; })
+          .catch((err) => { record(false, (err as Error).message); throw err; });
+      }
+
+      if (toolName === "read_plan") {
+        return handleReadPlan(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>)
+          .then((res) => { record(true); return res; })
+          .catch((err) => { record(false, (err as Error).message); throw err; });
       }
 
       record(false, "unknown tool");
