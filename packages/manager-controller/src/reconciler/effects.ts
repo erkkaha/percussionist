@@ -239,8 +239,24 @@ export async function executeEffects(
           break;
         }
         case "CleanupWorktree": {
-          // Best-effort.
-          console.log(`[effects] CleanupWorktree ${effect.runName} (best-effort)`);
+          if (!project) {
+            console.warn(`[effects] CleanupWorktree: no project context for ${effect.runName}, skipping`);
+            break;
+          }
+          const fullProject = project as unknown as import("@percussionist/api").Project;
+          const projectName = fullProject.metadata.name;
+          const gitUrl = (fullProject.spec.source as { git?: { url?: string } } | undefined)?.git?.url;
+          const runnerImage = (fullProject.spec.runner as { image?: string } | undefined)?.image;
+          const image = runnerImage ?? fullProject.spec.image ?? "alpine/git";
+          const { spawnWorktreeCleanupPod } = await import("../worktree-cleanup.js");
+          spawnWorktreeCleanupPod({
+            task: currentTask,
+            runName: effect.runName,
+            projectName,
+            namespace,
+            image,
+            gitUrl,
+          }).catch((e: Error) => console.warn(`[effects] CleanupWorktree pod failed:`, e.message));
           break;
         }
         case "SummarizeSession": {

@@ -263,6 +263,12 @@ export async function buildMergeRun(
     // Agent CR not found or inaccessible — fall back to project/cluster defaults.
   }
 
+  // Set git.ref so the init container checks out the source branch as a worktree.
+  if (resolved.source?.git) {
+    resolved.source.git.ref = sourceBranch;
+    resolved.source.git.parentRef = targetBranch;
+  }
+
   const promptLines = [
     `TASK: Merge approved changes for ${taskName}`,
     "",
@@ -273,6 +279,8 @@ export async function buildMergeRun(
     "Requirements:",
     "- Merge the source branch into the target branch.",
     "- Do not perform any code changes.",
+    "- If the merge is a fast-forward (source contains target), use:",
+    `    git push origin ${sourceBranch}:refs/heads/${targetBranch}`,
     "- If the branches are already merged, report success — do not re-create runs or PRs.",
     "- Push the merged result to the remote repository.",
     "",

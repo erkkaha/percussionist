@@ -422,12 +422,13 @@ function decideSucceeded(input: ReconcileInput): ReconcileDecision {
   // For BUILD tasks, check flow.build.onSuccess.
   if (task.spec.type === "BUILD") {
     if (flow.build.onSuccess === "done") {
+      const buildRunName = task.status?.worker?.runName;
       return {
         taskName,
         fromPhase,
         toPhase: "done",
         statusPatch: { worker: { status: "Succeeded", completedAt: now } },
-        effects: [],
+        effects: buildRunName ? [{ type: "CleanupWorktree", runName: buildRunName }] : [],
         events: [makeEvent(input, fromPhase, "done", "BuildSucceededAutoDone")],
       };
     }
@@ -641,11 +642,15 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
     const consumedKeys = getConsumedAnnotationKeys(manualActions);
     if (task.spec.type === "PLAN") {
       if (flow.plan.onApprove === "done") {
+        const planRunName = task.status?.worker?.runName;
         return {
           taskName,
           fromPhase,
           toPhase: "done",
-          effects: [{ type: "ClearTaskAnnotations", keys: consumedKeys }],
+          effects: [
+            { type: "ClearTaskAnnotations", keys: consumedKeys },
+            ...(planRunName ? [{ type: "CleanupWorktree" as const, runName: planRunName }] : []),
+          ],
           events: [makeEvent(input, fromPhase, "done", "PlanApprovedDone")],
         };
       }
@@ -660,11 +665,15 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
 
     if (task.spec.type === "BUILD") {
       if (flow.build.onApprove === "done" || flow.merge.mode === "disabled") {
+        const buildRunName = task.status?.worker?.runName;
         return {
           taskName,
           fromPhase,
           toPhase: "done",
-          effects: [{ type: "ClearTaskAnnotations", keys: consumedKeys }],
+          effects: [
+            { type: "ClearTaskAnnotations", keys: consumedKeys },
+            ...(buildRunName ? [{ type: "CleanupWorktree" as const, runName: buildRunName }] : []),
+          ],
           events: [makeEvent(input, fromPhase, "done", "BuildApprovedDone")],
         };
       }
@@ -721,12 +730,19 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
       fromPhase,
       toPhase: "failed",
       statusPatch: { worker: { status: "Failed", mergeError: "Merge run disappeared" } },
-      effects: [],
+      effects: [{ type: "CleanupWorktree", runName: mergeRunName }],
       events: [makeEvent(input, fromPhase, "failed", "MergeRunMissing")],
     };
   }
 
   if (mergeRun.status?.phase === "Succeeded") {
+    const buildRunName = task.status?.worker?.runName;
+    const cleanupEffects: ReconcileEffect[] = [
+      { type: "CleanupWorktree", runName: mergeRunName },
+    ];
+    if (buildRunName) {
+      cleanupEffects.push({ type: "CleanupWorktree", runName: buildRunName });
+    }
     return {
       taskName,
       fromPhase,
@@ -734,7 +750,7 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
       statusPatch: {
         worker: { status: "Succeeded", mergedAt: now, completedAt: now },
       },
-      effects: [],
+      effects: cleanupEffects,
       events: [makeEvent(input, fromPhase, "done", "MergeSucceeded")],
     };
   }
@@ -745,7 +761,7 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
       fromPhase,
       toPhase: "failed",
       statusPatch: { worker: { status: "Failed", mergeError: mergeRun.status?.message ?? "Merge failed" } },
-      effects: [],
+      effects: [{ type: "CleanupWorktree", runName: mergeRunName }],
       events: [makeEvent(input, fromPhase, "failed", "MergeFailed")],
     };
   }
@@ -761,7 +777,10 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
           fromPhase,
           toPhase: "failed",
           statusPatch: { worker: { status: "Failed", mergeError: `Stale after ${flow.timeouts.mergeStaleSeconds}s` } },
-          effects: [{ type: "DeleteRun", name: mergeRunName, reason: "MergeRunStale" }],
+          effects: [
+            { type: "DeleteRun", name: mergeRunName, reason: "MergeRunStale" },
+            { type: "CleanupWorktree", runName: mergeRunName },
+          ],
           events: [makeEvent(input, fromPhase, "failed", "MergeRunStale")],
         };
       }
