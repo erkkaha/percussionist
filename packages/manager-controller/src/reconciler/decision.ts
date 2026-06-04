@@ -912,21 +912,6 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
   const allDone = childTasks.every((t) => t.status?.phase === "done");
 
   if (!allDone) {
-    // Check stale timeout — if children have been pending too long, escalate.
-    const staleThresholdMs = flow.timeouts.buildgenStaleSeconds * 1000;
-    const completedAt = task.status?.worker?.completedAt;
-    if (completedAt) {
-      const elapsed = new Date(now).getTime() - new Date(completedAt).getTime();
-      if (elapsed > staleThresholdMs) {
-        return {
-          taskName, fromPhase,
-          toPhase: "awaiting-human",
-          effects: [],
-          events: [makeEvent(input, fromPhase, "awaiting-human", "ChildrenStale",
-            `Child BUILD tasks not done after ${flow.timeouts.buildgenStaleSeconds}s`)],
-        };
-      }
-    }
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
