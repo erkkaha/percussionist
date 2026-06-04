@@ -85,7 +85,11 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
   );
 }
 
-export default function AgentsPage() {
+interface AgentsPageProps {
+  showHeader?: boolean;
+}
+
+export default function AgentsPage({ showHeader = true }: AgentsPageProps) {
   const { connected: agentsSseConnected, eventTick } = useAgentsEvents();
   void eventTick;
   const { data: agents, error, isLoading, isFetching } = useAgents(
@@ -104,26 +108,28 @@ export default function AgentsPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Agents</h1>
-          <p className="text-sm text-text-muted">
-            Cluster-scoped reusable agent definitions.
-            {isFetching && !isLoading && (
-              <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
-            )}
-          </p>
-          <p className="text-xs text-text-dim mt-0.5">
-            Updates: {agentsSseConnected ? "live stream" : "polling fallback"}
-          </p>
+      {showHeader !== false && (
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold">Agents</h1>
+            <p className="text-sm text-text-muted">
+              Cluster-scoped reusable agent definitions.
+              {isFetching && !isLoading && (
+                <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
+              )}
+            </p>
+            <p className="text-xs text-text-dim mt-0.5">
+              Updates: {agentsSseConnected ? "live stream" : "polling fallback"}
+            </p>
+          </div>
+          <Link
+            to="/agents/new"
+            className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
+          >
+            + New Agent
+          </Link>
         </div>
-        <Link
-          to="/agents/new"
-          className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
-        >
-          + New Agent
-        </Link>
-      </div>
+      )}
 
       {isLoading ? (
         <div className="rounded-lg border border-border overflow-hidden">
