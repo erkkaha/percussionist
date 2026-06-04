@@ -144,6 +144,29 @@ export function TaskRow({ task, col, isSelected, onClick, projectName }: TaskRow
               )}
             </div>
           )}
+
+          {/* Waiting phase status message */}
+          {task.status?.phase === "awaiting-children" && task.childProgress && (
+            <div className="flex items-center gap-2 pt-0.5">
+              <span className="text-label-md font-mono text-text-dim/60">
+                {task.childProgress.completed}/{task.childProgress.total} child BUILD tasks complete
+              </span>
+              {/* Progress bar */}
+              <div className="h-1 w-16 bg-surface-overlay rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-phase-pending transition-all"
+                  style={{ width: `${task.childProgress.total > 0 ? (task.childProgress.completed / task.childProgress.total) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+          {task.status?.phase === "awaiting-feature-merge" && (
+            <div className="pt-0.5">
+              <span className="text-label-md font-mono text-text-dim/60">
+                Merging feature branch to target
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Actions */}

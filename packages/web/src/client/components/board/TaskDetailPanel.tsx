@@ -182,6 +182,34 @@ function OverviewContent({ task, col, projectName }: { task: Task; col: string; 
         </div>
       )}
 
+      {/* Child task progress (awaiting-children only) */}
+      {task.status?.phase === "awaiting-children" && task.childProgress && (
+        <div>
+          <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">
+            Child Tasks ({task.childProgress.completed}/{task.childProgress.total} complete)
+          </p>
+          <div className="space-y-1">
+            {task.childProgress.childRefs.map((childName) => (
+              <button
+                key={childName}
+                onClick={() => {
+                  // Update URL query param to show child task detail
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("task", childName);
+                  window.history.pushState({}, "", url);
+                  // Trigger a popstate event so React Router picks it up
+                  window.dispatchEvent(new PopStateEvent("popstate"));
+                }}
+                className="flex items-center gap-1.5 text-sm text-text-dim hover:text-text transition-colors w-full text-left"
+              >
+                <Wrench className="h-3.5 w-3.5 shrink-0" />
+                <span className="font-mono text-xs">{childName}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Plan link for PLAN tasks */}
       {task.spec.type === "PLAN" && worker?.runName && (
         <Link
