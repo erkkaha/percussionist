@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { NAMESPACE, getProject, getTask, execInWorkspace } from "../kube.js";
+import { NAMESPACE, getProject, getTask, getRun, execInWorkspace } from "../kube.js";
 
 type DiffFile = {
   path: string;
@@ -68,8 +68,23 @@ router.get("/:project/tasks/:taskName/diff", async (c) => {
     const worker = task.status?.worker;
     const defaultRef = project.spec.source?.git?.ref ?? "main";
 
-    const baseRef = worker?.mergeIntoBranch ?? worker?.parentBranch ?? defaultRef;
-    const headRef = worker?.gitBranch ?? defaultRef;
+    let baseRef = worker?.mergeIntoBranch ?? worker?.parentBranch;
+    let headRef = worker?.gitBranch;
+
+    // Fallback for clusters where branch metadata is not patched to Task.status.worker.
+    // The run spec still contains the concrete git refs that were checked out.
+    if ((!baseRef || !headRef) && worker?.runName) {
+      try {
+        const run = await getRun(worker.runName, NAMESPACE);
+        baseRef = baseRef ?? run.spec.source?.git?.parentRef;
+        headRef = headRef ?? run.spec.source?.git?.ref;
+      } catch {
+        // Best-effort fallback; continue with project defaults.
+      }
+    }
+
+    baseRef = baseRef ?? defaultRef;
+    headRef = headRef ?? defaultRef;
 
     if (baseRef === headRef) {
       return c.json({
