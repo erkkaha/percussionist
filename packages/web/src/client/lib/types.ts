@@ -207,6 +207,7 @@ export interface CreateProjectRequest {
     dimensions?: number;
     ollamaUrl?: string;
   };
+}
 
 export interface CreateAgentRequest {
   name?: string;
