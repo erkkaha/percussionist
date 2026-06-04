@@ -542,6 +542,52 @@ label selectors used are:
 - Web: `app.kubernetes.io/component=web`
 These match the `matchLabels` in each Deployment's spec.selector.
 
+## Deployment Discipline
+
+### NEVER do the following
+
+**1. Never hot-deploy code changes to a running cluster.**
+Code fixes go through commit → tag → push → CI. The CI pipeline builds images,
+pushes to ghcr.io, and the cluster picks up the new tag on next pod restart.
+Hot-deploying by rebuilding Docker images and `minikube image load` is fragile:
+- Images silently fail to load when old image is pinned by a running pod
+- The manager deployment references `ghcr.io/erkkaha/percussionist/manager:latest` —
+  a locally tagged `:latest` may not match what the cluster expects
+- Docker builds are memory-heavy and can OOM the host
+- The running reconciler will override any manual status patches immediately
+
+**2. Never delete and recreate the minikube cluster.**
+`minikube delete` wipes ALL cluster state: CRDs, deployments, PVCs, all existing
+tasks, runs, and project data. The cluster cannot be recovered after this.
+If minikube is OOM or stuck, tell the human — don't try to fix it.
+
+**3. Never attempt Docker builds on a memory-constrained system.**
+The multi-stage `images/node/Dockerfile` runs `pnpm build` which compiles all
+TypeScript packages. This requires several GB of free memory. If `free -h` shows
+less than 2GB available, Docker builds will OOM. Stop and report.
+
+**4. Never chain destructive cluster operations.**
+If a deployment step fails (e.g. image not found), stop. Don't:
+- Delete pods to force restart
+- Reapply CRDs or manifests
+- Rebuild other images
+- Recreate the cluster
+Each of these compounds the problem. Stop and ask the human.
+
+### The correct deploy flow
+
+1. Commit code changes
+2. Tag with the next semver: `git tag v0.X.Y && git push origin v0.X.Y`
+3. CI builds images and pushes to ghcr.io automatically
+4. When ready to deploy: `kubectl -n percussionist rollout restart deploy/<name>`
+5. Verify: `kubectl -n percussionist rollout status deploy/<name>`
+
+### If the cluster is down
+
+- Tell the human. Include what you know: OOM, node not ready, API server down.
+- Do NOT try to fix it. Cluster recovery is a human operation.
+- The code changes are safe in git — they'll deploy when the cluster is back.
+
 ## Tailscale (Mobile HTTPS Access)
 
 The web pod runs a Tailscale sidecar (`tailscale/tailscale:latest`) that provisions
