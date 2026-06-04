@@ -77,13 +77,36 @@ board.get("/:project/board", async (c) => {
       listTasks(name),
     ]);
 
+    // Build a map of child progress for PLAN tasks in awaiting-children phase.
+    const childProgressMap = new Map<string, { total: number; completed: number; childRefs: string[] }>();
+    for (const task of tasks) {
+      if (task.spec.type === "PLAN" && task.status?.phase === "awaiting-children") {
+        const taskName = task.metadata.name;
+        const children = tasks.filter(
+          (t) => t.spec.type === "BUILD" && t.spec.parentTaskRef === taskName,
+        );
+        const completed = children.filter((t) => t.status?.phase === "done").length;
+        childProgressMap.set(taskName, {
+          total: children.length,
+          completed,
+          childRefs: children.map((t) => t.metadata.name),
+        });
+      }
+    }
+
     // Group tasks by board column derived from phase (authoritative).
     const columns: Record<string, unknown[]> = {};
     for (const task of tasks) {
       const phase = task.status?.phase ?? "pending";
       const col = task.status?.blocked ? "blocked" : computeBoardColumn(phase);
       if (!columns[col]) columns[col] = [];
-      columns[col]!.push(task);
+      
+      // Attach child progress if available.
+      const taskWithProgress = {
+        ...task,
+        childProgress: childProgressMap.get(task.metadata.name),
+      };
+      columns[col]!.push(taskWithProgress);
     }
 
     // Collect per-task approval annotations from task metadata.

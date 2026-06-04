@@ -7,7 +7,6 @@
 export type {
   Run,
   Project,
-  Task,
   ClusterAgent,
   BoardStatus,
   ManagerMetrics,
@@ -17,11 +16,20 @@ export type {
 } from "@percussionist/api";
 export { RunPhase, TERMINAL_PHASES } from "@percussionist/api";
 
-import type { Project as _Project } from "@percussionist/api";
+import type { Project as _Project, Task as _Task } from "@percussionist/api";
 
 /** GET /api/projects/:name augments the CR with inject file contents for UI pre-population. */
 export interface ProjectDetail extends _Project {
   injectFileContents?: Array<{ filename: string; content: string }>;
+}
+
+/** Tasks in board responses may include computed child progress for awaiting-children phase. */
+export interface Task extends _Task {
+  childProgress?: {
+    total: number;
+    completed: number;
+    childRefs: string[];
+  };
 }
 
 // ---------------------------------------------------------------------------

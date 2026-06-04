@@ -1,6 +1,6 @@
 // TaskRow.tsx — compact clickable task row for the list panel.
 
-import { Wrench, FileText, Flag, User, ExternalLink, MessageSquarePlus } from "lucide-react";
+import { Wrench, FileText, Flag, User, ExternalLink, MessageSquarePlus, Clock, GitMerge } from "lucide-react";
 import type { Task } from "../../lib/types";
 import { useChat } from "../../lib/chat-context";
 
@@ -110,6 +110,22 @@ export function TaskRow({ task, col, isSelected, onClick, projectName }: TaskRow
             {/* Failed */}
             {!hasActiveRun && worker?.status === "Failed" && (
               <span className="text-label-md font-mono uppercase text-phase-failed">failed</span>
+            )}
+
+            {/* Awaiting children */}
+            {col === "in-progress" && !hasActiveRun && task.status?.phase === "awaiting-children" && (
+              <span className="text-label-md font-mono uppercase text-phase-pending flex items-center gap-0.5">
+                <Clock className="h-2.5 w-2.5" />
+                waiting for children
+              </span>
+            )}
+
+            {/* Awaiting feature merge */}
+            {col === "in-progress" && !hasActiveRun && task.status?.phase === "awaiting-feature-merge" && (
+              <span className="text-label-md font-mono uppercase text-phase-pending flex items-center gap-0.5">
+                <GitMerge className="h-2.5 w-2.5" />
+                merging
+              </span>
             )}
           </div>
 
