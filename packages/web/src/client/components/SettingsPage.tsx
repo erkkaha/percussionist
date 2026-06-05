@@ -22,8 +22,9 @@ import { RefreshCw, Loader2 } from "lucide-react";
 import ModelSelector from "./ModelSelector";
 import ProjectsPage from "./ProjectsPage";
 import AgentsPage from "./AgentsPage";
+import NotificationsPanel from "./NotificationsPanel";
 
-type Tab = "projects" | "agents" | "secrets" | "opencode" | "manager" | "runner" | "updates";
+type Tab = "projects" | "agents" | "secrets" | "opencode" | "manager" | "runner" | "notifications" | "updates";
 type SettingsSpec = Record<string, unknown> & {
   runnerConfig?: Record<string, unknown>;
 };
@@ -92,6 +93,7 @@ export default function SettingsPage() {
     { id: "opencode", label: "OpenCode Config" },
     { id: "manager", label: "Manager Agent" },
     { id: "runner", label: "Runner Defaults" },
+    { id: "notifications", label: "Notifications" },
     { id: "updates", label: "Updates" },
   ];
 
@@ -178,6 +180,8 @@ export default function SettingsPage() {
           saving={saveMutation.isPending}
         />
       )}
+
+      {activeTab === "notifications" && <NotificationsPanel />}
 
       {activeTab === "updates" && <UpdatesPanel />}
     </div>
