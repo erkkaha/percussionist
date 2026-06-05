@@ -82,6 +82,16 @@
   --color-phase-failed: var(--phase-failed);
   --color-phase-cancelled: var(--phase-cancelled);
 
+  /* ── Shadcn compat ── */
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-foreground: var(--foreground);
+
   /* ── Sidebar ── */
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -220,6 +230,16 @@
   --phase-succeeded: #58ea8a;
   --phase-failed: #ffb4ab;
   --phase-cancelled: #514537;
+
+  /* ── Shadcn compat ── */
+  --popover: #333539;
+  --popover-foreground: #e2e2e8;
+  --muted: #1e2024;
+  --muted-foreground: #9e8e7e;
+  --ring: #e8a852;
+  --input: #514537;
+  --accent-foreground: #633e00;
+  --foreground: #e2e2e8;
 
   /* ── Sidebar ── */
   --sidebar: #1a1c20;
