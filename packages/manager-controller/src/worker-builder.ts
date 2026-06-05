@@ -46,25 +46,25 @@ export async function buildWorkerRun(
     },
   });
 
-  // Per-agent model override: if the task's agent has a `model` field set in
-  // the project roster, use it instead of the project-level default.
+  // ClusterAgent model override (overrides project default, not per-agent).
   // Resolution order (highest → lowest):
   //   explicit run override (MCP tool) → per-agent model → ClusterAgent model → project.spec.model
+  try {
+    const agent = await getClusterAgent(task.spec.agent);
+    if (agent.spec.model) {
+      resolved.model = agent.spec.model;
+    }
+  } catch {
+    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
+  }
+
+  // Per-agent model override: if the task's agent has a `model` field set in
+  // the project roster, use it instead of the ClusterAgent or project-level default.
   const agentOverride = (project.spec.agents ?? []).find(
     (a) => a.name === task.spec.agent,
   );
   if (agentOverride?.model) {
     resolved.model = agentOverride.model;
-  }
-
-  // ClusterAgent model override (fallback if no per-agent model is set).
-  try {
-    const agent = await getClusterAgent(task.spec.agent);
-    if (agent.spec.model) {
-      resolved.model ??= agent.spec.model;
-    }
-  } catch {
-    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
   }
 
   const taskName = task.metadata.name;
@@ -267,22 +267,22 @@ export async function buildMergeRun(
         ? MERGING_AGENT
         : task.spec.agent;
 
-  // Per-agent model override for the merge agent (project roster takes priority).
+  // ClusterAgent model override (overrides project default, not per-agent).
+  try {
+    const agent = await getClusterAgent(mergeAgent);
+    if (agent.spec.model) {
+      resolved.model = agent.spec.model;
+    }
+  } catch {
+    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
+  }
+
+  // Per-agent model override (project roster takes priority over ClusterAgent).
   const mergeAgentOverride = (project.spec.agents ?? []).find(
     (a) => a.name === mergeAgent,
   );
   if (mergeAgentOverride?.model) {
     resolved.model = mergeAgentOverride.model;
-  }
-
-  // ClusterAgent model override (fallback if no per-agent model is set).
-  try {
-    const agent = await getClusterAgent(mergeAgent);
-    if (agent.spec.model) {
-      resolved.model ??= agent.spec.model;
-    }
-  } catch {
-    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
   }
 
   // Set git.ref so the init container checks out the source branch as a worktree.
