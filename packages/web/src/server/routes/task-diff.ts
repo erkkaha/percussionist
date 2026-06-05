@@ -156,12 +156,18 @@ router.get("/:project/tasks/:taskName/diff", async (c) => {
 
     const source = project.spec.source;
     let repoPath: string;
+    let worktreePath: string | null = null;
 
     if (source?.local) {
       repoPath = "/data/workspace";
     } else if (source?.git?.url) {
       const urlHash = gitUrlHash(source.git.url);
       repoPath = `/data/git-mirrors/${urlHash}`;
+      // Use the worktree HEAD for accurate diffs — the agent may have committed
+      // locally without pushing, and mirror refs can be stale for active worktrees.
+      if (worker?.runName) {
+        worktreePath = `/data/worktrees/${worker.runName}`;
+      }
     } else {
       return c.json(
         {
@@ -183,6 +189,18 @@ router.get("/:project/tasks/:taskName/diff", async (c) => {
       `REPO=${quoteSh(repoPath)}`,
       `BASE=${quoteSh(baseRef)}`,
       `HEAD=${quoteSh(headRef)}`,
+      ...(worktreePath ? [`WORKTREE=${quoteSh(worktreePath)}`] : []),
+      // If worktree exists, resolve its actual HEAD for the diff. This captures
+      // commits the agent made locally that may not have been pushed to the remote
+      // (the mirror's refs/heads/* can be stale for active worktrees).
+      ...(worktreePath
+        ? [
+          'if [ -d "$WORKTREE" ] && git -C "$WORKTREE" rev-parse --verify HEAD >/dev/null 2>&1; then',
+          '  HEAD_HASH=$(git -C "$WORKTREE" rev-parse HEAD)',
+          '  HEAD="$HEAD_HASH"',
+          'fi',
+        ]
+        : []),
       "if [ ! -d \"$REPO\" ]; then",
       "  printf '__PERCUSSIONIST_ERROR__ repo_not_found %s\\n' \"$REPO\"",
       "  exit 0",
@@ -195,7 +213,19 @@ router.get("/:project/tasks/:taskName/diff", async (c) => {
       "  printf '__PERCUSSIONIST_ERROR__ head_missing %s\\n' \"$HEAD\"",
       "  exit 0",
       "fi",
+      // Show committed changes between base and head
       "git -C \"$REPO\" diff --no-color --find-renames --binary \"$BASE...$HEAD\" -- || git -C \"$REPO\" diff --no-color --find-renames --binary \"$BASE..$HEAD\" --",
+      // Also show uncommitted changes when diffing against a worktree
+      ...(worktreePath
+        ? [
+          'if [ -d "$WORKTREE" ]; then',
+          '  UNCOMMITTED=$(git -C "$WORKTREE" diff --no-color --find-renames --binary HEAD -- 2>/dev/null)',
+          '  if [ -n "$UNCOMMITTED" ]; then',
+          '    printf "\\n%s\\n" "$UNCOMMITTED"',
+          '  fi',
+          'fi',
+        ]
+        : []),
     ].join("; ");
 
     const result = await execInWorkspaceViaManager(projectName, cmd, 120_000);
