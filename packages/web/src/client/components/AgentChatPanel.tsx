@@ -300,7 +300,7 @@ function sanitizeForSpeech(text: string): string {
       )}
 
       {open && (
-        <div className="w-96 flex-shrink-0 border-l border-border flex flex-col bg-background h-full">
+        <div className="w-96 flex-shrink-0 border-l border-border flex flex-col bg-background">
           {/* Header */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-surface-raised">
             <div className={`w-2 h-2 rounded-full ${available === null ? "bg-phase-pending" : available ? "bg-phase-succeeded" : "bg-phase-failed"}`} />
@@ -314,7 +314,7 @@ function sanitizeForSpeech(text: string): string {
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
             {messages.length === 0 && (
               <p className="text-text-dim text-sm text-center mt-8">
                 Ask the manager agent about board state, task status, or cluster issues.
