@@ -566,15 +566,36 @@ stats.get("/metrics-timeseries", async (c) => {
     buckets.set(key, b);
   }
 
-  const dataPoints: Array<{ recordedAt: string; cpuPct: number; memPct: number }> = [];
-  const nodeBuckets = new Map<string, typeof dataPoints>();
+  // Build per-node-per-minute averages.
+  const nodeBuckets = new Map<string, Array<{ recordedAt: string; cpuPct: number; memPct: number }>>();
   for (const [key, b] of buckets) {
     const [node, minute] = key.split("|") as [string, string];
-    const pt = { recordedAt: minute, cpuPct: Math.round((b.cpuSum / b.count) * 10) / 10, memPct: Math.round((b.memSum / b.count) * 10) / 10 };
-    dataPoints.push({ ...pt, recordedAt: minute + ":00" });
+    const pt = { recordedAt: minute + ":00", cpuPct: Math.round((b.cpuSum / b.count) * 10) / 10, memPct: Math.round((b.memSum / b.count) * 10) / 10 };
     const nb = nodeBuckets.get(node) ?? [];
-    nb.push({ ...pt, recordedAt: minute + ":00" });
+    nb.push(pt);
     nodeBuckets.set(node, nb);
+  }
+
+  // Average across all nodes per minute for the "all nodes" view.
+  const minuteBuckets = new Map<string, { cpuSum: number; memSum: number; count: number }>();
+  for (const [key, b] of buckets) {
+    const [, minute] = key.split("|") as [string, string];
+    const avgCpu = b.cpuSum / b.count;
+    const avgMem = b.memSum / b.count;
+    const mb = minuteBuckets.get(minute) ?? { cpuSum: 0, memSum: 0, count: 0 };
+    mb.cpuSum += avgCpu;
+    mb.memSum += avgMem;
+    mb.count += 1;
+    minuteBuckets.set(minute, mb);
+  }
+
+  const dataPoints: Array<{ recordedAt: string; cpuPct: number; memPct: number }> = [];
+  for (const [minute, mb] of minuteBuckets) {
+    dataPoints.push({
+      recordedAt: minute + ":00",
+      cpuPct: Math.round((mb.cpuSum / mb.count) * 10) / 10,
+      memPct: Math.round((mb.memSum / mb.count) * 10) / 10,
+    });
   }
   dataPoints.sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));
 
