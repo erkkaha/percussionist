@@ -1,6 +1,10 @@
+import { useState } from "react";
 import { useMetrics, type NodeMetricRow, type PodMetricRow } from "../hooks/useMetrics";
 import { useMetricsEvents } from "../hooks/useMetricsEvents";
-import { BarChart3 } from "lucide-react";
+import { useMetricsTimeSeries } from "../hooks/useMetricsTimeSeries";
+import { BarChart3, Clock } from "lucide-react";
+import MetricsTimeSeriesChart from "./MetricsTimeSeriesChart";
+import { cn } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,8 +35,10 @@ function age(iso: string | null): string {
 // Node card
 
 function NodeCard({ node }: { node: NodeMetricRow }) {
-  const cpuPct = Math.min((node.cpuMillicores / 1000) * 100, 100);
-  const memPct = Math.min((node.memoryBytes / (2 * 1024 * 1024 * 1024)) * 100, 100);
+  const cpuTotal = node.capacityCpuMillicores || 1000;
+  const memTotal = node.capacityMemoryBytes || 2 * 1024 * 1024 * 1024;
+  const cpuPct = Math.min((node.cpuMillicores / cpuTotal) * 100, 100);
+  const memPct = Math.min((node.memoryBytes / memTotal) * 100, 100);
 
   return (
     <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-3">
@@ -40,8 +46,8 @@ function NodeCard({ node }: { node: NodeMetricRow }) {
         <h3 className="font-mono text-sm text-text truncate" title={node.name}>{node.name}</h3>
         <span className="text-xs text-text-dim">{age(node.timestamp)} ago</span>
       </div>
-      <MetricBar label="CPU" value={fmtCpu(node.cpuMillicores)} pct={cpuPct} />
-      <MetricBar label="Memory" value={fmtMemory(node.memoryBytes)} pct={memPct} />
+      <MetricBar label="CPU" value={`${fmtCpu(node.cpuMillicores)} / ${fmtCpu(cpuTotal)}`} pct={cpuPct} />
+      <MetricBar label="Memory" value={`${fmtMemory(node.memoryBytes)} / ${fmtMemory(memTotal)}`} pct={memPct} />
     </div>
   );
 }
@@ -114,14 +120,36 @@ function PodTable({ pods }: { pods: PodMetricRow[] }) {
 }
 
 // ---------------------------------------------------------------------------
+// Tab bar
+
+const TABS = [
+  { id: "live", label: "Live", icon: BarChart3 },
+  { id: "history", label: "History", icon: Clock },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
+
+// ---------------------------------------------------------------------------
 // Main view
 
 export default function MetricsView() {
+  const [tab, setTab] = useState<TabId>("live");
+
   const { connected, eventTick } = useMetricsEvents();
   void eventTick;
   const { data, error, isLoading, isFetching } = useMetrics(connected ? false : 15_000);
 
+  const [historyHours, setHistoryHours] = useState(1);
+  const [historyNode, setHistoryNode] = useState("all");
+  const {
+    data: historyData,
+    error: historyError,
+    isLoading: historyLoading,
+  } = useMetricsTimeSeries(historyHours, historyNode);
+
   const unavailable = error != null && !isLoading;
+
+  const nodeNames = data?.nodes.map((n) => n.name) ?? [];
 
   return (
     <div className="space-y-6">
@@ -140,45 +168,91 @@ export default function MetricsView() {
         </div>
       </div>
 
-      {unavailable && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-6 text-amber-600">
-          <h2 className="text-lg font-semibold mb-1">Metrics server not available</h2>
-          <p className="text-sm">
-            The Kubernetes metrics-server addon is required for this view.
-            Install it with: <code className="px-1.5 py-0.5 bg-amber-500/20 rounded text-xs font-mono">kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml</code>
-          </p>
-        </div>
-      )}
+      {/* Tab toggle */}
+      <div className="flex gap-1 border-b border-border">
+        {TABS.map((t) => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={cn(
+                "flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px",
+                tab === t.id
+                  ? "border-primary text-text"
+                  : "border-transparent text-text-muted hover:text-text",
+              )}
+            >
+              <Icon className="w-4 h-4" />
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
 
-      {isLoading && (
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="rounded-lg border border-border bg-surface-raised p-4 h-28 animate-pulse" />
-            ))}
-          </div>
-          <div className="rounded-lg border border-border bg-surface-raised h-48 animate-pulse" />
-        </div>
-      )}
-
-      {data && (
+      {/* Live tab */}
+      {tab === "live" && (
         <>
-          {data.nodes.length > 0 && (
-            <section>
-              <h2 className="text-sm font-semibold text-text-muted mb-3">Nodes</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {data.nodes.map((n) => (
-                  <NodeCard key={n.name} node={n} />
-                ))}
-              </div>
-            </section>
+          {unavailable && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-6 text-amber-600">
+              <h2 className="text-lg font-semibold mb-1">Metrics server not available</h2>
+              <p className="text-sm">
+                The Kubernetes metrics-server addon is required for this view.
+                Install it with: <code className="px-1.5 py-0.5 bg-amber-500/20 rounded text-xs font-mono">kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml</code>
+              </p>
+            </div>
           )}
 
-          <section>
-            <h2 className="text-sm font-semibold text-text-muted mb-3">Pods</h2>
-            <PodTable pods={data.pods} />
-          </section>
+          {isLoading && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="rounded-lg border border-border bg-surface-raised p-4 h-28 animate-pulse" />
+                ))}
+              </div>
+              <div className="rounded-lg border border-border bg-surface-raised h-48 animate-pulse" />
+            </div>
+          )}
+
+          {data && (
+            <>
+              {data.nodes.length > 0 && (
+                <section>
+                  <h2 className="text-sm font-semibold text-text-muted mb-3">Nodes</h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {data.nodes.map((n) => (
+                      <NodeCard key={n.name} node={n} />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <section>
+                <h2 className="text-sm font-semibold text-text-muted mb-3">Pods</h2>
+                <PodTable pods={data.pods} />
+              </section>
+            </>
+          )}
         </>
+      )}
+
+      {/* History tab */}
+      {tab === "history" && (
+        <MetricsTimeSeriesChart
+          dataPoints={historyData?.dataPoints ?? []}
+          runWindows={historyData?.runWindows ?? []}
+          nodeNames={nodeNames}
+          hours={historyHours}
+          selectedNode={historyNode}
+          onHoursChange={(h) => {
+            setHistoryHours(h);
+          }}
+          onNodeChange={(n) => {
+            setHistoryNode(n);
+          }}
+          loading={historyLoading}
+          error={historyError}
+        />
       )}
     </div>
   );

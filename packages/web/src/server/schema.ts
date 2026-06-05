@@ -90,6 +90,25 @@ export const fileOps = sqliteTable(
   ],
 );
 
+export const metricSnapshots = sqliteTable(
+  "metric_snapshots",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    node: text("node").notNull(),
+    cpuUsageMillicores: integer("cpu_usage_millicores").notNull(),
+    memoryUsageBytes: integer("memory_usage_bytes").notNull(),
+    cpuCapacityMillicores: integer("cpu_capacity_millicores").notNull(),
+    memoryCapacityBytes: integer("memory_capacity_bytes").notNull(),
+    recordedAt: text("recorded_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("idx_metric_snapshots_node_recorded").on(table.node, table.recordedAt),
+    index("idx_metric_snapshots_recorded").on(table.recordedAt),
+  ],
+);
+
 export const taskEvents = sqliteTable(
   "task_events",
   {

@@ -18,8 +18,8 @@
 //     days=N   — look-back window in days (default: 30; 0 = all time)
 
 import { Hono } from "hono";
-import { getDb, runs, messages, toolCalls, fileOps } from "../db.js";
-import { lt, gte, eq, and, like, desc, sql } from "drizzle-orm";
+import { getDb, runs, messages, toolCalls, fileOps, metricSnapshots } from "../db.js";
+import { lt, gte, eq, and, like, desc, sql, asc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -524,6 +524,87 @@ stats.get("/tool-metrics", (c) => {
       to: new Date().toISOString(),
     },
   });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/stats/metrics-timeseries — time-series metrics data.
+// Query params: hours=N (default 1), node=X (default "all")
+
+stats.get("/metrics-timeseries", async (c) => {
+  const hours = Math.min(Math.max(parseInt(c.req.query("hours") ?? "1", 10) || 1, 1), 168);
+  const nodeFilter = c.req.query("node") ?? "all";
+
+  const db = getDb();
+  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+  const where = and(
+    gte(metricSnapshots.recordedAt, cutoff),
+    nodeFilter !== "all" ? eq(metricSnapshots.node, nodeFilter) : undefined,
+  );
+
+  const rows = db
+    .select({
+      recordedAt: metricSnapshots.recordedAt,
+      node: metricSnapshots.node,
+      cpuPct: sql<number>`ROUND(CAST(${metricSnapshots.cpuUsageMillicores} AS REAL) / NULLIF(${metricSnapshots.cpuCapacityMillicores}, 0) * 100, 1)`,
+      memPct: sql<number>`ROUND(CAST(${metricSnapshots.memoryUsageBytes} AS REAL) / NULLIF(${metricSnapshots.memoryCapacityBytes}, 0) * 100, 1)`,
+    })
+    .from(metricSnapshots)
+    .where(where)
+    .orderBy(asc(metricSnapshots.recordedAt))
+    .all();
+
+  // Bucket by minute: average per node per minute.
+  const buckets = new Map<string, { cpuSum: number; memSum: number; count: number }>();
+  for (const r of rows) {
+    const minute = r.recordedAt.slice(0, 16); // "2024-01-01T12:00"
+    const key = `${r.node}|${minute}`;
+    const b = buckets.get(key) ?? { cpuSum: 0, memSum: 0, count: 0 };
+    b.cpuSum += r.cpuPct;
+    b.memSum += r.memPct;
+    b.count += 1;
+    buckets.set(key, b);
+  }
+
+  const dataPoints: Array<{ recordedAt: string; cpuPct: number; memPct: number }> = [];
+  const nodeBuckets = new Map<string, typeof dataPoints>();
+  for (const [key, b] of buckets) {
+    const [node, minute] = key.split("|") as [string, string];
+    const pt = { recordedAt: minute, cpuPct: Math.round((b.cpuSum / b.count) * 10) / 10, memPct: Math.round((b.memSum / b.count) * 10) / 10 };
+    dataPoints.push({ ...pt, recordedAt: minute + ":00" });
+    const nb = nodeBuckets.get(node) ?? [];
+    nb.push({ ...pt, recordedAt: minute + ":00" });
+    nodeBuckets.set(node, nb);
+  }
+  dataPoints.sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));
+
+  // Fetch run windows within the same time window.
+  const runWindows = db
+    .select({
+      name: runs.name,
+      agent: runs.agent,
+      task: runs.task,
+      startedAt: runs.startedAt,
+      completedAt: runs.completedAt,
+    })
+    .from(runs)
+    .where(
+      and(
+        gte(runs.startedAt, cutoff),
+      ),
+    )
+    .orderBy(asc(runs.startedAt))
+    .all()
+    .filter((r) => r.startedAt && r.completedAt)
+    .map((r) => ({
+      name: r.name,
+      agent: r.agent ?? "",
+      task: r.task ?? "",
+      startedAt: r.startedAt!,
+      completedAt: r.completedAt!,
+    }));
+
+  return c.json({ dataPoints, runWindows, nodeBuckets: Object.fromEntries(nodeBuckets) });
 });
 
 export default stats;
