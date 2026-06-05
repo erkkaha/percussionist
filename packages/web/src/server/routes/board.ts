@@ -13,11 +13,10 @@
 
 import { Hono } from "hono";
 import { randomBytes } from "node:crypto";
-import { computeBoardColumn, annotationKey, ANNOTATION_PREFIXES } from "@percussionist/api";
+import { computeBoardColumn } from "@percussionist/api";
 import {
   getProject,
   patchProjectSpec,
-  patchProject,
   listTasks,
   getTask,
   deleteTask,
@@ -60,6 +59,7 @@ export async function appendTaskEvent(
       taskType,
       eventType,
       payload: JSON.stringify(payload),
+      createdAt: new Date().toISOString(),
     }).run();
   } catch {
     // Event logging is best-effort — never fail the main operation.
@@ -77,23 +77,59 @@ board.get("/:project/board", async (c) => {
       listTasks(name),
     ]);
 
+    // Build a map of child progress for PLAN tasks in awaiting-children phase.
+    const childProgressMap = new Map<string, { total: number; completed: number; childRefs: string[] }>();
+    for (const task of tasks) {
+      if (task.spec.type === "PLAN" && task.status?.phase === "awaiting-children") {
+        const taskName = task.metadata.name;
+        const children = tasks.filter(
+          (t) => t.spec.type === "BUILD" && t.spec.parentTaskRef === taskName,
+        );
+        const completed = children.filter((t) => t.status?.phase === "done").length;
+        childProgressMap.set(taskName, {
+          total: children.length,
+          completed,
+          childRefs: children.map((t) => t.metadata.name),
+        });
+      }
+    }
+
     // Group tasks by board column derived from phase (authoritative).
     const columns: Record<string, unknown[]> = {};
     for (const task of tasks) {
       const phase = task.status?.phase ?? "pending";
-      const col = task.status?.blocked ? "blocked" : computeBoardColumn(phase);
+      let col: string;
+      if (task.status?.blocked) {
+        col = "blocked";
+      } else {
+        col = computeBoardColumn(phase);
+        // Override to blocked if waiting for a predecessor that isn't done.
+        const predRef = task.spec.predecessorRef;
+        if (predRef && phase !== "done") {
+          const pred = tasks.find((t) => t.metadata.name === predRef);
+          if (!pred || pred.status?.phase !== "done") {
+            col = "blocked";
+            task.status = { ...task.status, blockedReason: `Waiting for: ${predRef}` };
+          }
+        }
+      }
       if (!columns[col]) columns[col] = [];
-      columns[col]!.push(task);
+      
+      // Attach child progress if available.
+      const taskWithProgress = {
+        ...task,
+        childProgress: childProgressMap.get(task.metadata.name),
+      };
+      columns[col]!.push(taskWithProgress);
     }
 
-    const annotations = project.metadata.annotations ?? {};
-    // Collect per-task approval annotations.
+    // Collect per-task approval annotations from task metadata.
     const approvals: Record<string, { approved: boolean; requestChanges: boolean }> = {};
     for (const task of tasks) {
-      const tn = task.metadata.name;
-      approvals[tn] = {
-        approved: annotations[`percussionist.dev/${annotationKey("approved", tn)}`] === "true",
-        requestChanges: annotations[`percussionist.dev/${annotationKey("request-changes", tn)}`] === "true",
+      const taskAnnotations = task.metadata.annotations ?? {};
+      approvals[task.metadata.name] = {
+        approved: taskAnnotations["percussionist.dev/action-approved"] === "true",
+        requestChanges: taskAnnotations["percussionist.dev/action-request-changes"] === "true",
       };
     }
 
@@ -130,13 +166,17 @@ board.get("/:project/board/events", async (c) => {
         getProject(name),
         listTasks(name),
       ]);
-      const annotations = project.metadata.annotations ?? {};
-      const taskApprovalAnnotations = Object.keys(annotations)
-        .filter((k) =>
-          ANNOTATION_PREFIXES.some((p) => k.startsWith(`percussionist.dev/${p}-`)),
-        )
-        .sort()
-        .map((k) => [k, annotations[k]]);
+      // Collect task annotations for change detection.
+      const taskApprovalAnnotations: [string, string][] = [];
+      for (const task of tasks) {
+        const taskAnnotations = task.metadata.annotations ?? {};
+        for (const key of Object.keys(taskAnnotations)) {
+          if (key.startsWith("percussionist.dev/action-")) {
+            taskApprovalAnnotations.push([key, taskAnnotations[key] ?? ""]);
+          }
+        }
+      }
+      taskApprovalAnnotations.sort((a, b) => a[0].localeCompare(b[0]));
 
       // Include task resourceVersions so any task status change triggers an event.
       const taskVersions = tasks.map((t) => `${t.metadata.name}:${t.metadata.resourceVersion}`).join(",");
@@ -325,22 +365,6 @@ board.post("/:project/board/tasks/:taskName/approve", async (c) => {
         },
       },
     });
-    // Also write legacy Project annotation for backward compatibility during migration.
-    try {
-      const project = await getProject(name);
-      const projAnnotations = project.metadata.annotations ?? {};
-      await patchProject(name, {
-        metadata: {
-          annotations: {
-            ...projAnnotations,
-            [`percussionist.dev/${annotationKey("approved", taskName)}`]: "true",
-            [`percussionist.dev/${annotationKey("request-changes", taskName)}`]: "false",
-          },
-        },
-      });
-    } catch {
-      // Legacy annotation write is best-effort during migration.
-    }
     await appendTaskEvent(name, taskName, "unknown", "approved", {});
     return c.json({ success: true });
   } catch (e) {
@@ -375,22 +399,6 @@ board.post("/:project/board/tasks/:taskName/request-changes", async (c) => {
         },
       },
     });
-    // Also write legacy Project annotation for backward compatibility during migration.
-    try {
-      const project = await getProject(name);
-      const projAnnotations = project.metadata.annotations ?? {};
-      await patchProject(name, {
-        metadata: {
-          annotations: {
-            ...projAnnotations,
-            [`percussionist.dev/${annotationKey("rework", taskName)}`]: feedback.trim(),
-            [`percussionist.dev/${annotationKey("request-changes", taskName)}`]: "true",
-          },
-        },
-      });
-    } catch {
-      // Legacy annotation write is best-effort during migration.
-    }
     await appendTaskEvent(name, taskName, "unknown", "request-changes", { feedback: feedback.trim() });
     return c.json({ success: true });
   } catch (e) {
@@ -418,21 +426,6 @@ board.post("/:project/board/tasks/:taskName/abandon", async (c) => {
         },
       },
     });
-    // Also write legacy Project annotation for backward compatibility during migration.
-    try {
-      const project = await getProject(name);
-      const projAnnotations = project.metadata.annotations ?? {};
-      await patchProject(name, {
-        metadata: {
-          annotations: {
-            ...projAnnotations,
-            [`percussionist.dev/${annotationKey("abandon", taskName)}`]: "true",
-          },
-        },
-      });
-    } catch {
-      // Legacy annotation write is best-effort during migration.
-    }
     await appendTaskEvent(name, taskName, "unknown", "abandoned", {});
     return c.json({ success: true });
   } catch (e) {
@@ -462,7 +455,7 @@ board.post("/:project/board/tasks/:taskName/answer", async (c) => {
         ...task.metadata,
         annotations: {
           ...currentAnnotations,
-          [`percussionist.dev/${annotationKey("answer", taskName)}`]: answer.trim(),
+          "percussionist.dev/action-answer": answer.trim(),
         },
       },
     });

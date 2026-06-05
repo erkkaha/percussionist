@@ -11,9 +11,14 @@ import {
 const runs = new Hono();
 
 // GET /api/runs — list all Runs in the namespace.
+// Optional query param: ?task=<taskName> to filter by task CR name.
 runs.get("/", async (c) => {
   try {
-    const items = await listRuns();
+    const taskFilter = c.req.query("task");
+    let items = await listRuns();
+    if (taskFilter) {
+      items = items.filter((r) => r.spec.boardTask === taskFilter);
+    }
     return c.json({ items });
   } catch (e: unknown) {
     const msg = (e as { body?: { message?: string } })?.body?.message ?? String(e);

@@ -20,7 +20,6 @@ Workflow:
    - Integration points with existing code
 5. Run all tests — both new and existing. All must pass.
 6. Commit with message: "<taskId>: add tests for <feature>"
-7. Push branch and open PR via `gh pr create`
 
 Before pushing:
 - Every test must pass (run the full test suite, not just new tests)

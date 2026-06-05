@@ -466,7 +466,7 @@ describe("decide — reviewing", () => {
 });
 
 describe("decide — generating-builds", () => {
-  it("generating-builds + buildgen succeeded with child Tasks → done", () => {
+  it("generating-builds + buildgen succeeded with child Tasks → awaiting-children", () => {
     const planTask = makeTask("plan-1", "test-project", { phase: "generating-builds", type: "PLAN" });
     (planTask.status!.worker as any) = { buildTasksFacilitatorRun: "buildgen-1" };
     const buildgenRun = makeRun("buildgen-1", { phase: "Succeeded" });
@@ -475,11 +475,11 @@ describe("decide — generating-builds", () => {
       observed: { buildgen: buildgenRun },
       allTasks: [planTask, childTask],
     }));
-    expect(result.toPhase).toBe("done");
+    expect(result.toPhase).toBe("awaiting-children");
     expect((result.statusPatch?.worker as any).buildTasksCreated).toBe(true);
   });
 
-  it("generating-builds + buildgen succeeded but no child Tasks yet → no-op", () => {
+  it("generating-builds + buildgen succeeded but no child Tasks → awaiting-human", () => {
     const planTask = makeTask("plan-1", "test-project", { phase: "generating-builds", type: "PLAN" });
     (planTask.status!.worker as any) = { buildTasksFacilitatorRun: "buildgen-1" };
     const buildgenRun = makeRun("buildgen-1", { phase: "Succeeded" });
@@ -487,7 +487,22 @@ describe("decide — generating-builds", () => {
       observed: { buildgen: buildgenRun },
       allTasks: [planTask],
     }));
+    expect(result.toPhase).toBe("awaiting-human");
+  });
+
+  it("generating-builds + no buildgenRunName + worker run exists → ScheduleBuildGenRun effect", () => {
+    const planTask = makeTask("plan-1", "test-project", { phase: "generating-builds", type: "PLAN", runName: "plan-worker-1" });
+    const result = decide(makeInput(planTask));
     expect(result.toPhase).toBeUndefined();
+    expect(result.effects.some((e) => e.type === "ScheduleBuildGenRun")).toBe(true);
+    expect((result.statusPatch?.worker as any).buildTasksFacilitatorRun).toBeDefined();
+  });
+
+  it("generating-builds + no buildgenRunName + no worker run → awaiting-human", () => {
+    const planTask = makeTask("plan-1", "test-project", { phase: "generating-builds", type: "PLAN" });
+    const result = decide(makeInput(planTask));
+    expect(result.toPhase).toBe("awaiting-human");
+    expect(result.events[0]?.reason).toBe("NoWorkerRunForBuildGen");
   });
 });
 

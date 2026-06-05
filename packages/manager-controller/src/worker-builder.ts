@@ -17,7 +17,8 @@ import {
   resolveParentBranch,
   resolveMergeBranch,
 } from "./branch-resolver.js";
-import { getClusterSettings } from "@percussionist/kube";
+import { getClusterAgent, getClusterSettings } from "@percussionist/kube";
+import { getContext } from "./agent/memory-client.js";
 
 const MAX_RETRIES = 3;
 
@@ -48,12 +49,22 @@ export async function buildWorkerRun(
   // Per-agent model override: if the task's agent has a `model` field set in
   // the project roster, use it instead of the project-level default.
   // Resolution order (highest → lowest):
-  //   explicit run override (MCP tool) → per-agent model → project.spec.model
+  //   explicit run override (MCP tool) → per-agent model → ClusterAgent model → project.spec.model
   const agentOverride = (project.spec.agents ?? []).find(
     (a) => a.name === task.spec.agent,
   );
   if (agentOverride?.model) {
     resolved.model = agentOverride.model;
+  }
+
+  // ClusterAgent model override (fallback if no per-agent model is set).
+  try {
+    const agent = await getClusterAgent(task.spec.agent);
+    if (agent.spec.model) {
+      resolved.model ??= agent.spec.model;
+    }
+  } catch {
+    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
   }
 
   const taskName = task.metadata.name;
@@ -103,7 +114,7 @@ export async function buildWorkerRun(
       `- Create or update ${planPath} in the repository.`,
       "- The file is the authoritative PLAN output and will be reviewed by facilitator/human reviewers.",
       "- Include implementation context, scope boundaries, risks, acceptance criteria, and proposed BUILD task breakdown.",
-      "- Commit and push the plan artifact on this task branch before completing the run.",
+      "- Commit the plan artifact on this task branch before completing the run.",
       `- After committing, call write_plan(project="${projectName}", task="${taskName}", content=<plan-content>) to persist it to ConfigMap.`,
       `- Mention ${planPath} in the completion summary.`,
       `- When done, call percussionist_dispatcher_complete_plan instead of complete_run.`,
@@ -116,6 +127,36 @@ export async function buildWorkerRun(
       `- Read ${planPathForParent} before implementing.`,
       "- Treat that PLAN artifact as the full feature context, even if this BUILD task covers only one slice.",
       "- Keep your changes aligned with the plan's acceptance criteria and sequencing notes.",
+      "",
+    );
+  }
+
+  // Inject relevant memory context if vector memory is enabled.
+  if (project.spec.embedding?.enabled) {
+    try {
+      const query = task.spec.description ?? task.spec.title ?? taskName;
+      const { context } = await getContext(projectName, query);
+      if (context && context !== "No relevant context found.") {
+        promptLines.push(
+          "RELEVANT PROJECT CONTEXT:",
+          context,
+          "",
+        );
+      }
+    } catch {
+      // Memory service unavailable — skip silently.
+    }
+  }
+
+  // Inject available system tools if declared.
+  if (resolved.packages && resolved.packages.length > 0) {
+    promptLines.push(
+      "AVAILABLE SYSTEM TOOLS:",
+      "The following packages are installed in this run environment:",
+      resolved.packages.map((p) => `  - ${p}`).join("\n"),
+      "",
+      "The opencode-native tools grep, glob, read, list, edit, and bash are always available.",
+      "Use `which <tool>` to check if a specific tool is available at runtime.",
       "",
     );
   }
@@ -183,7 +224,8 @@ export async function buildMergeRun(
   project: Project,
   task: Task,
   runName: string,
-  allTasks?: Task[]
+  allTasks?: Task[],
+  mergeAgentName?: string,
 ): Promise<Run> {
   const clusterSettings = await getClusterSettings().catch(() => undefined);
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
@@ -193,36 +235,21 @@ export async function buildMergeRun(
     },
   });
 
-  // Per-agent model override for the merge agent.
-  const MERGING_AGENT = process.env.MERGING_AGENT;
-  const mergeAgent =
-    MERGING_AGENT && (project.spec.agents ?? []).some((a) => a.name === MERGING_AGENT)
-      ? MERGING_AGENT
-      : task.spec.agent;
-
-  // Resolve per-agent model for the effective merge agent.
-  const mergeAgentOverride = (project.spec.agents ?? []).find(
-    (a) => a.name === mergeAgent,
-  );
-  if (mergeAgentOverride?.model) {
-    resolved.model = mergeAgentOverride.model;
-  }
-
   const projectName = project.metadata.name;
   const taskName = task.metadata.name;
-  
+
   // Determine source and target branches based on feature branching config.
   let sourceBranch: string;
   let targetBranch: string;
-  
+
   if (project.spec.featureBranchingEnabled) {
     const gitBranch = resolveTaskBranch(task, project, allTasks ?? []);
     const mergeBranch = resolveMergeBranch(task, project, allTasks ?? []);
-    
+
     if (!gitBranch) {
       throw new Error(`Task ${taskName} has no git branch (feature branching enabled but branch not resolved)`);
     }
-    
+
     sourceBranch = gitBranch;
     targetBranch = mergeBranch ?? "main"; // Fallback to main if no merge target
   } else {
@@ -231,6 +258,38 @@ export async function buildMergeRun(
     targetBranch = "main";
   }
 
+  // Determine merge agent: prefer explicit name, then env var, then task agent.
+  const MERGING_AGENT = process.env.MERGING_AGENT;
+  const mergeAgent =
+    mergeAgentName && (project.spec.agents ?? []).some((a) => a.name === mergeAgentName)
+      ? mergeAgentName
+      : MERGING_AGENT && (project.spec.agents ?? []).some((a) => a.name === MERGING_AGENT)
+        ? MERGING_AGENT
+        : task.spec.agent;
+
+  // Per-agent model override for the merge agent (project roster takes priority).
+  const mergeAgentOverride = (project.spec.agents ?? []).find(
+    (a) => a.name === mergeAgent,
+  );
+  if (mergeAgentOverride?.model) {
+    resolved.model = mergeAgentOverride.model;
+  }
+
+  // ClusterAgent model override (fallback if no per-agent model is set).
+  try {
+    const agent = await getClusterAgent(mergeAgent);
+    if (agent.spec.model) {
+      resolved.model ??= agent.spec.model;
+    }
+  } catch {
+    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
+  }
+
+  // Set git.ref so the init container checks out the source branch as a worktree.
+  if (resolved.source?.git) {
+    resolved.source.git.ref = sourceBranch;
+    resolved.source.git.parentRef = targetBranch;
+  }
   const promptLines = [
     `TASK: Merge approved changes for ${taskName}`,
     "",
@@ -241,6 +300,12 @@ export async function buildMergeRun(
     "Requirements:",
     "- Merge the source branch into the target branch.",
     "- Do not perform any code changes.",
+    "- If the merge is a fast-forward (source contains target), use:",
+    `    git push origin ${sourceBranch}:refs/heads/${targetBranch}`,
+    "- If the merge is NOT a fast-forward (target has diverged since source was created):",
+    `    1. git fetch origin ${targetBranch}`,
+    `    2. git merge origin/${targetBranch} --no-edit`,
+    `    3. git push origin HEAD:refs/heads/${targetBranch}`,
     "- If the branches are already merged, report success — do not re-create runs or PRs.",
     "- Push the merged result to the remote repository.",
     "",
@@ -332,8 +397,12 @@ export function auxiliaryRunName(
   randomSuffix: string,
 ): string {
   const sanitized = taskName.toLowerCase().replace(/[^a-z0-9]/g, "-");
+  // Strip project name prefix from the task name to avoid duplication
+  // (e.g. "myproject-build-123" → "build-123" since project is already in the run name).
+  const projKey = projectName.toLowerCase().replace(/[^a-z0-9]/g, "-");
+  const stripped = sanitized.startsWith(`${projKey}-`) ? sanitized.slice(projKey.length + 1) : sanitized;
   const reserved = projectName.length + 1 + kind.length + 1 + 1 + randomSuffix.length;
   const maxMid = 63 - reserved;
-  const mid = maxMid > 0 ? sanitized.slice(0, maxMid).replace(/-+$/, "") : sanitized.slice(0, 1);
+  const mid = maxMid > 0 ? stripped.slice(0, maxMid).replace(/-+$/, "") : stripped.slice(0, 1);
   return truncateK8sName(`${projectName}-${kind}-${mid}-${randomSuffix}`);
 }

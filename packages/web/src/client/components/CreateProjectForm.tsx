@@ -71,6 +71,7 @@ export default function CreateProjectForm({
   const [gitGithubTokenSecret, setGitGithubTokenSecret] = useState(initialSpec?.source?.git?.githubTokenSecret?.name ?? "");
   const [gitAuthorName, setGitAuthorName] = useState(initialSpec?.source?.git?.author?.name ?? "");
   const [gitAuthorEmail, setGitAuthorEmail] = useState(initialSpec?.source?.git?.author?.email ?? "");
+  const [sourceLocal, setSourceLocal] = useState<boolean>(initialSpec?.source?.local ?? false);
   const [llmKeysSecret, setLlmKeysSecret] = useState(initialSpec?.secrets?.llmKeysSecret ?? "");
   const [authSecret, setAuthSecret] = useState(initialSpec?.secrets?.authSecret?.name ?? "");
   const [initScript, setInitScript] = useState(initialSpec?.initScript ?? "");
@@ -120,6 +121,92 @@ export default function CreateProjectForm({
     String(initialSpec?.reviewPolicy?.maxAutoReworks ?? 2),
   );
 
+  // Runner overrides
+  const [runnerImage, setRunnerImage] = useState(initialSpec?.image ?? "");
+  const [cpuRequest, setCpuRequest] = useState(
+    (initialSpec?.resources as { requests?: Record<string, string> } | undefined)?.requests?.cpu ?? "",
+  );
+  const [memRequest, setMemRequest] = useState(
+    (initialSpec?.resources as { requests?: Record<string, string> } | undefined)?.requests?.memory ?? "",
+  );
+  const [cpuLimit, setCpuLimit] = useState(
+    (initialSpec?.resources as { limits?: Record<string, string> } | undefined)?.limits?.cpu ?? "",
+  );
+  const [memLimit, setMemLimit] = useState(
+    (initialSpec?.resources as { limits?: Record<string, string> } | undefined)?.limits?.memory ?? "",
+  );
+
+  // Phase selector (edit mode only)
+  const [phase, setPhase] = useState<"Active" | "Complete" | "Archived">(
+    initialSpec?.phase ?? "Active",
+  );
+
+  // Git cache
+  const [worktreeReuse, setWorktreeReuse] = useState<boolean>(
+    initialSpec?.gitCache?.worktreeReuse ?? true,
+  );
+
+  // Flow configuration
+  const [flowPreset, setFlowPreset] = useState<"simple" | "review" | "plan-build" | "plan-build-review-merge">(
+    initialSpec?.flow?.preset ?? "plan-build-review-merge",
+  );
+  const [flowHumanApprovalPlan, setFlowHumanApprovalPlan] = useState<"required" | "disabled">(
+    initialSpec?.flow?.humanApproval?.plan ?? "required",
+  );
+  const [flowHumanApprovalBuild, setFlowHumanApprovalBuild] = useState<"required" | "disabled">(
+    initialSpec?.flow?.humanApproval?.build ?? "required",
+  );
+  const [flowPlanOnApprove, setFlowPlanOnApprove] = useState<"generate-builds" | "done">(
+    initialSpec?.flow?.plan?.onApprove ?? "generate-builds",
+  );
+  const [flowBuildOnSuccess, setFlowBuildOnSuccess] = useState<"human-review" | "ai-review" | "done">(
+    initialSpec?.flow?.build?.onSuccess ?? "human-review",
+  );
+  const [flowBuildOnApprove, setFlowBuildOnApprove] = useState<"merge" | "done">(
+    initialSpec?.flow?.build?.onApprove ?? "merge",
+  );
+  const [flowMergeMode, setFlowMergeMode] = useState<"auto" | "manual" | "disabled">(
+    initialSpec?.flow?.merge?.mode ?? "auto",
+  );
+
+  // Code Server
+  const [codeServerEnabled, setCodeServerEnabled] = useState<boolean>(
+    initialSpec?.codeServer?.enabled ?? false,
+  );
+  const [codeServerImage, setCodeServerImage] = useState(
+    initialSpec?.codeServer?.image ?? "codercom/code-server:4.96.4",
+  );
+  const [csCpuRequest, setCSCpuRequest] = useState(
+    (initialSpec?.codeServer?.resources as { requests?: Record<string, string> } | undefined)?.requests?.cpu ?? "",
+  );
+  const [csMemRequest, setCSMemRequest] = useState(
+    (initialSpec?.codeServer?.resources as { requests?: Record<string, string> } | undefined)?.requests?.memory ?? "",
+  );
+  const [csCpuLimit, setCSCpuLimit] = useState(
+    (initialSpec?.codeServer?.resources as { limits?: Record<string, string> } | undefined)?.limits?.cpu ?? "",
+  );
+  const [csMemLimit, setCSMemLimit] = useState(
+    (initialSpec?.codeServer?.resources as { limits?: Record<string, string> } | undefined)?.limits?.memory ?? "",
+  );
+
+  // Data PVC
+  const [pvcName, setPvcName] = useState(initialSpec?.data?.pvcName ?? "");
+  const [mountPath, setMountPath] = useState(initialSpec?.data?.mountPath ?? "/data");
+  const [storageClass, setStorageClass] = useState(initialSpec?.data?.storageClass ?? "");
+
+  // Embedding / Memory service
+  const [embeddingEnabled, setEmbeddingEnabled] = useState<boolean>(
+    initialSpec?.embedding?.enabled ?? false,
+  );
+  const [embeddingModel, setEmbeddingModel] = useState<string>(
+    initialSpec?.embedding?.model ?? "nomic-embed-text",
+  );
+  const [embeddingDimensions, setEmbeddingDimensions] = useState<string>(
+    String(initialSpec?.embedding?.dimensions ?? 768),
+  );
+  const [embeddingOllamaUrl, setEmbeddingOllamaUrl] = useState<string>(
+    initialSpec?.embedding?.ollamaUrl ?? "",
+  );
   // All ClusterAgents in cluster — used to populate the roster add dropdown.
   const { data: clusterAgents = [] } = useQuery({
     queryKey: ["agents"],
@@ -202,7 +289,9 @@ export default function CreateProjectForm({
     if (model.trim()) req.model = model.trim();
     if (agent.trim()) req.agent = agent.trim();
     if (opencodeConfig !== null) req.opencodeConfig = opencodeConfig.trim() || "";
-    if (gitUrl.trim()) {
+    if (sourceLocal) {
+      req.source = { local: true };
+    } else if (gitUrl.trim()) {
       req.source = {
         git: {
           url: gitUrl.trim(),
@@ -284,6 +373,89 @@ export default function CreateProjectForm({
         maxAutoReworks: parseInt(reviewPolicyMaxAutoReworks, 10) || 2,
       };
     }
+
+    // Runner overrides
+    if (runnerImage.trim()) req.image = runnerImage.trim();
+    const resRequests: Record<string, string> = {};
+    const resLimits: Record<string, string> = {};
+    if (cpuRequest.trim()) resRequests.cpu = cpuRequest.trim();
+    if (memRequest.trim()) resRequests.memory = memRequest.trim();
+    if (cpuLimit.trim()) resLimits.cpu = cpuLimit.trim();
+    if (memLimit.trim()) resLimits.memory = memLimit.trim();
+    if (Object.keys(resRequests).length > 0 || Object.keys(resLimits).length > 0) {
+      req.resources = {
+        ...(Object.keys(resRequests).length > 0 ? { requests: resRequests } : {}),
+        ...(Object.keys(resLimits).length > 0 ? { limits: resLimits } : {}),
+      };
+    }
+
+    // Phase (edit mode)
+    if (isEdit && phase !== "Active") req.phase = phase;
+
+    // Git cache
+    req.gitCache = { worktreeReuse };
+
+    // Flow configuration
+    const flowOverrides: Record<string, unknown> = {};
+    if (flowPreset !== "plan-build-review-merge") flowOverrides.preset = flowPreset;
+    if (flowHumanApprovalPlan !== "required" || flowHumanApprovalBuild !== "required") {
+      flowOverrides.humanApproval = {
+        ...(flowHumanApprovalPlan !== "required" ? { plan: flowHumanApprovalPlan } : {}),
+        ...(flowHumanApprovalBuild !== "required" ? { build: flowHumanApprovalBuild } : {}),
+      };
+    }
+    if (flowPlanOnApprove !== "generate-builds") {
+      flowOverrides.plan = { onApprove: flowPlanOnApprove };
+    }
+    if (flowBuildOnSuccess !== "human-review" || flowBuildOnApprove !== "merge") {
+      flowOverrides.build = {
+        ...(flowBuildOnSuccess !== "human-review" ? { onSuccess: flowBuildOnSuccess } : {}),
+        ...(flowBuildOnApprove !== "merge" ? { onApprove: flowBuildOnApprove } : {}),
+      };
+    }
+    if (flowMergeMode !== "auto") {
+      flowOverrides.merge = { mode: flowMergeMode };
+    }
+    if (Object.keys(flowOverrides).length > 0) {
+      req.flow = flowOverrides;
+    }
+
+    // Code Server
+    if (codeServerEnabled) {
+      const csResources: Record<string, unknown> = {};
+      const csResRequests: Record<string, string> = {};
+      const csResLimits: Record<string, string> = {};
+      if (csCpuRequest.trim()) csResRequests.cpu = csCpuRequest.trim();
+      if (csMemRequest.trim()) csResRequests.memory = csMemRequest.trim();
+      if (csCpuLimit.trim()) csResLimits.cpu = csCpuLimit.trim();
+      if (csMemLimit.trim()) csResLimits.memory = csMemLimit.trim();
+      if (Object.keys(csResRequests).length > 0) csResources.requests = csResRequests;
+      if (Object.keys(csResLimits).length > 0) csResources.limits = csResLimits;
+      req.codeServer = {
+        enabled: true,
+        ...(codeServerImage.trim() ? { image: codeServerImage.trim() } : {}),
+        ...(Object.keys(csResources).length > 0 ? { resources: csResources } : {}),
+      };
+    }
+
+    // Data PVC (only if any field is set)
+    const dataFields: Record<string, string> = {};
+    if (pvcName.trim()) dataFields.pvcName = pvcName.trim();
+    if (mountPath !== "/data") dataFields.mountPath = mountPath;
+    if (storageClass.trim()) dataFields.storageClass = storageClass.trim();
+    if (Object.keys(dataFields).length > 0) {
+      req.data = dataFields as { pvcName?: string; mountPath?: string; storageClass?: string };
+    }
+
+    // Embedding / Memory service
+    if (embeddingEnabled) {
+      req.embedding = {
+        enabled: true,
+        model: embeddingModel.trim() || undefined,
+        dimensions: parseInt(embeddingDimensions, 10) || undefined,
+        ollamaUrl: embeddingOllamaUrl.trim() || undefined,
+      };
+    }
     mutation.mutate(req);
   }
 
@@ -311,15 +483,34 @@ export default function CreateProjectForm({
 
       <form onSubmit={handleSubmit} className="space-y-5">
         {isEdit ? (
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Name</label>
-            <input
-              type="text"
-              value={name}
-              readOnly
-              className={monoInputClass + " opacity-70"}
-            />
-          </div>
+          <>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-muted">Name</label>
+              <input
+                type="text"
+                value={name}
+                readOnly
+                className={monoInputClass + " opacity-70"}
+              />
+            </div>
+
+            {/* Phase selector (edit mode only) */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-muted">Board Phase</label>
+              <select
+                value={phase}
+                onChange={(e) => setPhase(e.target.value as "Active" | "Complete" | "Archived")}
+                className={inputClass}
+              >
+                <option value="Active">Active</option>
+                <option value="Complete">Complete</option>
+                <option value="Archived">Archived</option>
+              </select>
+              <p className="text-xs text-text-dim">
+                Controls whether the project board is active, completed, or archived.
+              </p>
+            </div>
+          </>
         ) : (
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -367,16 +558,35 @@ export default function CreateProjectForm({
         {/* Git section */}
         <fieldset className="space-y-3 rounded-md border border-border p-4">
           <legend className="px-1 text-sm font-medium text-text-muted">Git source</legend>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Repository URL</label>
+
+          {/* Local workspace toggle */}
+          <label className="flex items-center gap-2 cursor-pointer">
             <input
-              type="text"
-              value={gitUrl}
-              onChange={(e) => setGitUrl(e.target.value)}
-              placeholder="git@github.com:org/repo.git"
-              className={monoInputClass}
+              type="checkbox"
+              checked={sourceLocal}
+              onChange={(e) => setSourceLocal(e.target.checked)}
+              className="rounded border-border"
             />
-          </div>
+            <span className="text-sm text-text-muted">Local workspace (no remote repository)</span>
+          </label>
+          {sourceLocal && (
+            <p className="text-xs text-text-dim">
+              Local workspace — no remote repository will be cloned. Changes persist across runs at /data/workspace/.
+            </p>
+          )}
+
+          {!sourceLocal && (
+            <>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-text-muted">Repository URL</label>
+                <input
+                  type="text"
+                  value={gitUrl}
+                  onChange={(e) => setGitUrl(e.target.value)}
+                  placeholder="git@github.com:org/repo.git"
+                  className={monoInputClass}
+                />
+              </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-text-muted">
@@ -446,6 +656,8 @@ export default function CreateProjectForm({
             <p className="text-xs text-phase-failed">
               Git author requires both name and email.
             </p>
+          )}
+            </>
           )}
         </fieldset>
 
@@ -632,6 +844,63 @@ export default function CreateProjectForm({
                 </div>
               </div>
             </>
+          )}
+        </fieldset>
+
+        {/* Memory / Embeddings */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Memory / Embeddings</legend>
+          <p className="text-xs text-text-dim">
+            Enable the per-project vector memory service for agent context retrieval
+            and semantic search across runs. Requires a data PVC and a running Ollama instance.
+          </p>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={embeddingEnabled}
+              onChange={(e) => setEmbeddingEnabled(e.target.checked)}
+              className="rounded border-border"
+            />
+            <span className="text-sm text-text-muted">Enable memory service</span>
+          </label>
+          {embeddingEnabled && (
+            <div className="ml-6 space-y-3 pt-1">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-text-muted">Embedding model</label>
+                <input
+                  type="text"
+                  value={embeddingModel}
+                  onChange={(e) => setEmbeddingModel(e.target.value)}
+                  placeholder="nomic-embed-text"
+                  className={monoInputClass}
+                />
+                <p className="text-xs text-text-dim">Ollama model name used for generating embeddings.</p>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-text-muted">Vector dimensions</label>
+                <input
+                  type="number"
+                  min={64} max={4096}
+                  value={embeddingDimensions}
+                  onChange={(e) => setEmbeddingDimensions(e.target.value)}
+                  className={monoInputClass}
+                />
+                <p className="text-xs text-text-dim">Dimensionality of the embedding vectors (must match the model).</p>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-text-muted">Ollama URL</label>
+                <input
+                  type="text"
+                  value={embeddingOllamaUrl}
+                  onChange={(e) => setEmbeddingOllamaUrl(e.target.value)}
+                  placeholder="http://ollama:11434"
+                  className={monoInputClass}
+                />
+                <p className="text-xs text-text-dim">
+                  Overrides the cluster default Ollama service URL. Leave empty to use the built-in Ollama service.
+                </p>
+              </div>
+            </div>
           )}
         </fieldset>
 
@@ -886,6 +1155,326 @@ export default function CreateProjectForm({
             >
               Add
             </button>
+          </div>
+        </fieldset>
+
+        {/* Runner Overrides */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Runner Overrides</legend>
+          <p className="text-xs text-text-dim">
+            Override cluster-level runner defaults for this project.
+          </p>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">Runner Image</label>
+            <input
+              type="text"
+              value={runnerImage}
+              onChange={(e) => setRunnerImage(e.target.value)}
+              placeholder="percussionist/runner:dev"
+              className={monoInputClass}
+            />
+          </div>
+          <div className="border-t border-border pt-3">
+            <p className="text-xs font-medium mb-2 text-text-muted">Resource Requests</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs text-text-dim block">CPU (e.g. 100m, 1)</label>
+                <input
+                  type="text"
+                  value={cpuRequest}
+                  onChange={(e) => setCpuRequest(e.target.value)}
+                  placeholder="100m"
+                  className={monoInputClass}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs text-text-dim block">Memory (e.g. 128Mi)</label>
+                <input
+                  type="text"
+                  value={memRequest}
+                  onChange={(e) => setMemRequest(e.target.value)}
+                  placeholder="128Mi"
+                  className={monoInputClass}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="border-t border-border pt-3">
+            <p className="text-xs font-medium mb-2 text-text-muted">Resource Limits</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs text-text-dim block">CPU (e.g. 500m, 1)</label>
+                <input
+                  type="text"
+                  value={cpuLimit}
+                  onChange={(e) => setCpuLimit(e.target.value)}
+                  placeholder="500m"
+                  className={monoInputClass}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs text-text-dim block">Memory (e.g. 512Mi)</label>
+                <input
+                  type="text"
+                  value={memLimit}
+                  onChange={(e) => setMemLimit(e.target.value)}
+                  placeholder="512Mi"
+                  className={monoInputClass}
+                />
+              </div>
+            </div>
+          </div>
+        </fieldset>
+
+        {/* Git Cache */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Git Cache</legend>
+          <p className="text-xs text-text-dim">
+            Control how git worktrees are managed across runs.
+          </p>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={worktreeReuse}
+              onChange={(e) => setWorktreeReuse(e.target.checked)}
+              className="rounded border-border"
+            />
+            <span className="text-sm text-text-muted">Reuse worktrees across runs</span>
+          </label>
+          <p className="text-xs text-text-dim">
+            When enabled, subsequent runs reuse the existing worktree instead of checking out fresh.
+          </p>
+        </fieldset>
+
+        {/* Flow Configuration */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Task Lifecycle</legend>
+          <p className="text-xs text-text-dim">
+            Control how tasks flow through their lifecycle. Presets provide sensible defaults; overrides below customize specific steps.
+          </p>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">Preset</label>
+            <select
+              value={flowPreset}
+              onChange={(e) => setFlowPreset(e.target.value as typeof flowPreset)}
+              className={inputClass}
+            >
+              <option value="simple">Simple — no approvals, auto-done</option>
+              <option value="review">Review — AI review on build success</option>
+              <option value="plan-build">Plan → Build — plan generates builds, human approval</option>
+              <option value="plan-build-review-merge">Plan → Build → Review → Merge (default)</option>
+            </select>
+          </div>
+
+          {flowPreset !== "simple" && (
+            <>
+              <div className="border-t border-border pt-3 space-y-3">
+                {/* Human Approval */}
+                <div>
+                  <p className="text-xs font-medium mb-1.5 text-text-muted">Human Approval</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-text-dim block">Plan approval</label>
+                      <select
+                        value={flowHumanApprovalPlan}
+                        onChange={(e) => setFlowHumanApprovalPlan(e.target.value as "required" | "disabled")}
+                        className={inputClass}
+                      >
+                        <option value="required">Required</option>
+                        <option value="disabled">Disabled</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-text-dim block">Build approval</label>
+                      <select
+                        value={flowHumanApprovalBuild}
+                        onChange={(e) => setFlowHumanApprovalBuild(e.target.value as "required" | "disabled")}
+                        className={inputClass}
+                      >
+                        <option value="required">Required</option>
+                        <option value="disabled">Disabled</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Plan onApprove */}
+                <div className="space-y-1.5">
+                  <label className="text-xs text-text-dim block">Plan approved →</label>
+                  <select
+                    value={flowPlanOnApprove}
+                    onChange={(e) => setFlowPlanOnApprove(e.target.value as "generate-builds" | "done")}
+                    className={inputClass}
+                  >
+                    <option value="generate-builds">Generate builds</option>
+                    <option value="done">Mark done</option>
+                  </select>
+                </div>
+
+                {/* Build onSuccess */}
+                <div className="space-y-1.5">
+                  <label className="text-xs text-text-dim block">Build succeeds →</label>
+                  <select
+                    value={flowBuildOnSuccess}
+                    onChange={(e) => setFlowBuildOnSuccess(e.target.value as "human-review" | "ai-review" | "done")}
+                    className={inputClass}
+                  >
+                    <option value="human-review">Human review</option>
+                    <option value="ai-review">AI review</option>
+                    <option value="done">Mark done</option>
+                  </select>
+                </div>
+
+                {/* Build onApprove */}
+                <div className="space-y-1.5">
+                  <label className="text-xs text-text-dim block">Build approved →</label>
+                  <select
+                    value={flowBuildOnApprove}
+                    onChange={(e) => setFlowBuildOnApprove(e.target.value as "merge" | "done")}
+                    className={inputClass}
+                  >
+                    <option value="merge">Merge to parent branch</option>
+                    <option value="done">Mark done (no merge)</option>
+                  </select>
+                </div>
+
+                {/* Merge mode */}
+                <div className="space-y-1.5">
+                  <label className="text-xs text-text-dim block">Merge mode</label>
+                  <select
+                    value={flowMergeMode}
+                    onChange={(e) => setFlowMergeMode(e.target.value as "auto" | "manual" | "disabled")}
+                    className={inputClass}
+                  >
+                    <option value="auto">Auto-merge on approval</option>
+                    <option value="manual">Manual merge required</option>
+                    <option value="disabled">No merging</option>
+                  </select>
+                </div>
+              </div>
+            </>
+          )}
+        </fieldset>
+
+        {/* Code Server */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Code Server</legend>
+          <p className="text-xs text-text-dim">
+            Enable interactive VS Code access to the workspace. Requires a data PVC (git or local source).
+          </p>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={codeServerEnabled}
+              onChange={(e) => setCodeServerEnabled(e.target.checked)}
+              className="rounded border-border"
+            />
+            <span className="text-sm text-text-muted">Enable code-server sidecar</span>
+          </label>
+
+          {codeServerEnabled && (
+            <>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-text-muted">Container Image</label>
+                <input
+                  type="text"
+                  value={codeServerImage}
+                  onChange={(e) => setCodeServerImage(e.target.value)}
+                  placeholder="codercom/code-server:4.96.4"
+                  className={monoInputClass}
+                />
+              </div>
+              <div className="border-t border-border pt-3">
+                <p className="text-xs font-medium mb-2 text-text-muted">Resource Requests</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-text-dim block">CPU (e.g. 100m)</label>
+                    <input
+                      type="text"
+                      value={csCpuRequest}
+                      onChange={(e) => setCSCpuRequest(e.target.value)}
+                      placeholder="100m"
+                      className={monoInputClass}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-text-dim block">Memory (e.g. 256Mi)</label>
+                    <input
+                      type="text"
+                      value={csMemRequest}
+                      onChange={(e) => setCSMemRequest(e.target.value)}
+                      placeholder="256Mi"
+                      className={monoInputClass}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="border-t border-border pt-3">
+                <p className="text-xs font-medium mb-2 text-text-muted">Resource Limits</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-text-dim block">CPU (e.g. 500m)</label>
+                    <input
+                      type="text"
+                      value={csCpuLimit}
+                      onChange={(e) => setCSCpuLimit(e.target.value)}
+                      placeholder="500m"
+                      className={monoInputClass}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-text-dim block">Memory (e.g. 512Mi)</label>
+                    <input
+                      type="text"
+                      value={csMemLimit}
+                      onChange={(e) => setCSMemLimit(e.target.value)}
+                      placeholder="512Mi"
+                      className={monoInputClass}
+                    />
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </fieldset>
+
+        {/* Data PVC (Advanced) */}
+        <fieldset className="space-y-3 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-medium text-text-muted">Data PVC</legend>
+          <p className="text-xs text-text-dim">
+            Customize the persistent volume for workspace data. Leave blank to use defaults (&#123;project&#125;-data, mount path /data).
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-muted">PVC Name</label>
+              <input
+                type="text"
+                value={pvcName}
+                onChange={(e) => setPvcName(e.target.value)}
+                placeholder="{project}-data"
+                className={monoInputClass}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-muted">Mount Path</label>
+              <input
+                type="text"
+                value={mountPath}
+                onChange={(e) => setMountPath(e.target.value)}
+                placeholder="/data"
+                className={monoInputClass}
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-muted">Storage Class</label>
+            <input
+              type="text"
+              value={storageClass}
+              onChange={(e) => setStorageClass(e.target.value)}
+              placeholder="(use cluster default)"
+              className={monoInputClass}
+            />
           </div>
         </fieldset>
 

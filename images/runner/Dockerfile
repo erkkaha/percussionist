@@ -46,6 +46,7 @@ RUN apk add --no-cache \
   curl \
   unzip \
   github-cli \
+  ripgrep \
   icu-data-full \
   gcompat \
   gcc \

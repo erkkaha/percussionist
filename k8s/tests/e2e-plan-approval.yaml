@@ -16,7 +16,7 @@ spec:
     agents:
       - name: e2e-plan-agent
       - name: builder
-      - name: facilitator-buildgen
+      - name: buildgen
     
     tasks:
       - id: PLAN-1

@@ -17,7 +17,6 @@ Workflow:
 4. Implement the feature — write code, update tests, update docs as needed.
 5. Run lint + tests locally before committing. All existing tests must pass.
 6. Commit with message: "<taskId>: implement <feature title>"
-7. Push branch and open PR via `gh pr create`
 
 Before pushing:
 - All existing tests must still pass

@@ -101,6 +101,99 @@ The code-server mounts the project's data PVC at `/data`, giving access to:
 |-----------|-------------|----------------|--------------|
 | code-server | 100m | 256Mi | 512Mi |
 
+## Vector Memory Service
+
+Projects can enable a per-project vector memory service for semantic context
+retrieval and session summarization. When `spec.embedding.enabled: true`, the
+operator deploys a `memory-{project}` Deployment + Service running a Bun server
+with bun:sqlite and sqlite-vec for vector storage and search.
+
+### How It Works
+
+1. **Memory Service Pod** — A `memory-{project}` Bun container runs alongside
+   the project's data PVC. It exposes REST endpoints on port 4100 for storing
+   memories, semantic search, and context retrieval. It calls Ollama's
+   `/api/embeddings` endpoint to generate vector embeddings.
+
+2. **Context Injection** — When `buildWorkerRun()` constructs the worker prompt
+   (see `worker-builder.ts`), if `spec.embedding.enabled: true` it queries the
+   memory service with the task description as the search query. Matching results
+   are injected into the prompt as a `RELEVANT PROJECT CONTEXT:` block so the
+   agent has relevant past decisions and findings without manual context loading.
+
+3. **Session Summarization** — When a worker run completes (`Succeeded` or
+   `Failed`), if `spec.embedding.enabled: true`, the manager fires a fire-and-forget
+   `SummarizeSession` effect. The session-summarizer reads the session messages
+   from the dispatcher's ConfigMap snapshot, compacts them, sends them to the LLM
+   for a 2-3 paragraph summary, and stores the summary in:
+   - The run's `{runName}-session` ConfigMap under key `summary-{sessionID}`
+   - The project's vector memory database (via `POST /memory`), tagged with
+     `type: "session-summary"`
+
+4. **BUILD Task Generation Context** — The `buildBuildTaskGeneratorRun()`
+   function (in `facilitator.ts`) reads stored session summaries from the
+   ConfigMap before constructing the buildgen agent's prompt. If a stored
+   summary exists for the preceding PLAN worker run, it is included as
+   `PLAN SESSION CONTEXT:` so the buildgen agent has high-level context
+   without needing to read the full session.
+
+### Enable
+
+```yaml
+apiVersion: percussionist.dev/v1alpha1
+kind: Project
+metadata:
+  name: my-project
+spec:
+  source:
+    git:
+      url: https://github.com/example/repo.git
+  embedding:
+    enabled: true
+    # Optional overrides:
+    # model: nomic-embed-text           # default
+    # dimensions: 768                    # default
+    # ollamaUrl: http://ollama:11434     # default (cluster DNS)
+    # resources:
+    #   requests: { cpu: "100m", memory: "256Mi" }
+    #   limits: { memory: "512Mi" }
+```
+
+### Prerequisites
+
+- **Ollama Deployment** — The cluster must have an Ollama service running the
+  embedding model:
+  ```bash
+  kubectl apply -f k8s/deploy/ollama.yaml
+  kubectl -n percussionist wait --for=condition=Ready pod -l app.kubernetes.io/component=ollama
+  kubectl exec -n percussionist deploy/ollama -- ollama pull nomic-embed-text
+  ```
+- `source.git` or `source.local` must be set (needs a data PVC)
+
+### Available MCP Tools
+
+When the memory service is enabled, the manager MCP server (port 4097) exposes
+these tools for agent use:
+
+| Tool | Purpose |
+|------|---------|
+| `store_memory` | Store a memory with semantic embedding for future context retrieval |
+| `query_memory` | Semantic search across stored memories, ranked by cosine distance |
+| `get_context` | Retrieve relevant context from past runs and memories, formatted for prompt injection |
+
+### Resources
+
+| Component | CPU Request | Memory Request | Memory Limit |
+|-----------|-------------|----------------|--------------|
+| memory service | 100m | 256Mi | 512Mi |
+
+### Lifecycle
+
+- **Created**: Automatically when a Project with `spec.embedding.enabled: true`
+  is created and has `source.git` or `source.local` configured.
+- **Deleted**: Automatically when the Project is deleted (via owner references)
+  or when `embedding.enabled` is set to `false`.
+
 ## Git Workspace Modes
 
 ### Remote git (`source.git`)
@@ -176,6 +269,55 @@ Each run gets its own worktree at `/data/worktrees/{run-name}/` checking out the
 - Only new tasks use feature branches
 - Projects can migrate gradually
 
+## Runner Packages
+
+Projects can declare Alpine Linux packages to install in every run pod
+via `spec.runner.packages`. These are installed at pod initialization
+time in the workspace-init container through `apk add`.
+
+### Enable
+
+```yaml
+apiVersion: percussionist.dev/v1alpha1
+kind: Project
+metadata:
+  name: my-project
+spec:
+  runner:
+    packages:
+      - ripgrep
+      - jq
+      - tree
+      - postgresql-client
+```
+
+### How it works
+
+1. The workspace-init container runs `apk update --quiet && apk add --no-cache <packages>`
+   before git mirror fetch or worktree setup.
+2. The runner pod starts with all declared packages available via `$PATH`.
+3. The manager injects the package list into the agent prompt as
+   `AVAILABLE SYSTEM TOOLS:` so agents know what's available without
+   manual discovery.
+4. Per-run override: `spec.runner.packages` on a Run CR overrides the
+   project defaults.
+
+### Manager MCP tools
+
+When the memory service is enabled, the manager MCP server (port 4097) exposes
+additional tools for package management:
+
+| Tool | Purpose |
+|------|---------|
+| `list_available_packages(project)` | Returns the packages declared for a project |
+| `install_packages(project, packages)` | Installs ad-hoc packages via a maintenance pod (not persistent across restarts) |
+
+### Base image
+
+Packages are installed on top of the runner image
+(`ghcr.io/erkkaha/percussionist/runner:latest`). The base image always
+includes git, openssh, node, npm, bash, curl, unzip, and github-cli.
+
 ## Architecture
 - All packages are ESM (`"type": "module"`)
 - Strict TypeScript everywhere (`noUncheckedIndexedAccess`, `noImplicitOverride`)
@@ -218,6 +360,7 @@ Do not add `ALTER TABLE` try/catch blocks to `db.ts`. Do not duplicate DDL as ra
 - Console-based logging with timestamps (no structured logger)
 - CamelCase for TS, kebab-case for YAML
 - `runXxx` prefix for CLI action functions in `@percussionist/cli`
+- **`undefined` in merge-patches is silently dropped**: `JSON.stringify` strips `undefined` values, so a K8s merge-patch with `{ foo: undefined }` serializes to `{}` — the field is never cleared. Always use `null` to remove a field in a status patch or annotation patch passed to `patchTask` / `patchTaskStatus`.
 
 ## MCP Server Configuration
 
@@ -269,6 +412,9 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `pause_reconciliation` | Pause the manager reconcile loop for a project (auto-resumes after timeout) |
 | `resume_reconciliation` | Resume a paused reconcile loop |
 | `get_reconcile_status` | Check whether the reconcile loop is paused and when it was last paused |
+| `store_memory` | Store a memory with semantic embedding for future context retrieval |
+| `query_memory` | Semantic search across stored memories, ranked by cosine distance |
+| `get_context` | Retrieve relevant context from past runs and memories, formatted for prompt injection |
 
 **`create_run`** — Direct run creation without waiting for reconcile cycle.
 - Requires: `project`, `task` (Task CR name)
@@ -319,16 +465,16 @@ but served within each run pod). These tools are available to agents during run 
 
 | Tool | Purpose |
 |------|---------|
-| `complete_run` | Signal successful BUILD task completion (validates git commit+push+PR) |
-| `complete_plan` | Signal successful PLAN task completion (validates git commit+push only, no PR required) |
+| `complete_run` | Signal successful BUILD task completion |
+| `complete_plan` | Signal successful PLAN task completion |
 | `fail_run` | Signal task failure with reason, triggering facilitator analysis |
 | `get_status` | Return current run state (phase, session ID, token usage) |
 
 **`complete_plan`** vs **`complete_run`**:
 - PLAN agents should call `complete_plan` after committing their plan document to `.percussionist/plans/{task-id}.md`
-- BUILD agents should call `complete_run` after implementation is complete and PR is created
-- `complete_plan` only validates that changes are committed and pushed (no PR requirement)
-- `complete_run` validates commit+push+PR creation for full code review workflow
+- BUILD agents should call `complete_run` after implementation is committed
+- `complete_plan` signals plan artifact completion (no code work expected)
+- `complete_run` signals implementation work is done
 
 ## Dispatcher SSE Event Streaming
 
@@ -395,6 +541,52 @@ label selectors used are:
 - Operator: `app.kubernetes.io/component=operator`
 - Web: `app.kubernetes.io/component=web`
 These match the `matchLabels` in each Deployment's spec.selector.
+
+## Deployment Discipline
+
+### NEVER do the following
+
+**1. Never hot-deploy code changes to a running cluster.**
+Code fixes go through commit → tag → push → CI. The CI pipeline builds images,
+pushes to ghcr.io, and the cluster picks up the new tag on next pod restart.
+Hot-deploying by rebuilding Docker images and `minikube image load` is fragile:
+- Images silently fail to load when old image is pinned by a running pod
+- The manager deployment references `ghcr.io/erkkaha/percussionist/manager:latest` —
+  a locally tagged `:latest` may not match what the cluster expects
+- Docker builds are memory-heavy and can OOM the host
+- The running reconciler will override any manual status patches immediately
+
+**2. Never delete and recreate the minikube cluster.**
+`minikube delete` wipes ALL cluster state: CRDs, deployments, PVCs, all existing
+tasks, runs, and project data. The cluster cannot be recovered after this.
+If minikube is OOM or stuck, tell the human — don't try to fix it.
+
+**3. Never attempt Docker builds on a memory-constrained system.**
+The multi-stage `images/node/Dockerfile` runs `pnpm build` which compiles all
+TypeScript packages. This requires several GB of free memory. If `free -h` shows
+less than 2GB available, Docker builds will OOM. Stop and report.
+
+**4. Never chain destructive cluster operations.**
+If a deployment step fails (e.g. image not found), stop. Don't:
+- Delete pods to force restart
+- Reapply CRDs or manifests
+- Rebuild other images
+- Recreate the cluster
+Each of these compounds the problem. Stop and ask the human.
+
+### The correct deploy flow
+
+1. Commit code changes
+2. Tag with the next semver: `git tag v0.X.Y && git push origin v0.X.Y`
+3. CI builds images and pushes to ghcr.io automatically
+4. When ready to deploy: `kubectl -n percussionist rollout restart deploy/<name>`
+5. Verify: `kubectl -n percussionist rollout status deploy/<name>`
+
+### If the cluster is down
+
+- Tell the human. Include what you know: OOM, node not ready, API server down.
+- Do NOT try to fix it. Cluster recovery is a human operation.
+- The code changes are safe in git — they'll deploy when the cluster is back.
 
 ## Tailscale (Mobile HTTPS Access)
 
@@ -493,6 +685,27 @@ ConfigMap budget. Do not raise the web pod memory limit to mask this issue.
 retrieval so large live sessions can be viewed incrementally instead of falling back
 to a truncated snapshot.
 
+## Tagging
+
+Release tags follow `v<major>.<minor>.<patch>` semver format (e.g. `v0.15.0`).
+CI triggers on any push matching `v*`.
+
+**Do not guess tags.** Always derive from existing remote tags:
+
+```bash
+git fetch --tags origin
+git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1V -k2,2V -k3,3V | tail -1
+```
+
+Start from that tag, increment the appropriate segment, create, and push:
+
+```bash
+git tag v0.15.1
+git push origin v0.15.1
+```
+
+Never invent a version — read what exists and increment.
+
 ## Self-Development Workflow
 
 Percussionist dogfoods itself for development using resources in `k8s/self-dev/`.
@@ -534,5 +747,6 @@ Setup instructions: `k8s/self-dev/secrets/README.md`
 3. `@percussionist/operator` - Run reconciler; creates Pod/Service/Ingress/ConfigMap
 4. `@percussionist/dispatcher` - Sidecar; session lifecycle, SSE streaming, analytics
 5. `@percussionist/manager-controller` - Project board controller + embedded agent module (decision engine, MCP tools on :4097, chat handler on :4098, opencode-web sidecar on :4096)
-6. `@percussionist/web` - Hono + React dashboard; REST APIs, stats DB (SQLite via Drizzle)
-7. `@percussionist/cli` - beatctl CLI; talks to K8s API directly (includes `chat` command)
+6. `@percussionist/memory-service` - Per-project vector embedding server; REST API for storing, searching, and retrieving memories (Bun + sqlite-vec)
+7. `@percussionist/web` - Hono + React dashboard; REST APIs, stats DB (SQLite via Drizzle)
+8. `@percussionist/cli` - beatctl CLI; talks to K8s API directly (includes `chat` command)

@@ -240,7 +240,8 @@ export async function waitForCompletion(
         for (const part of msg.parts ?? []) {
           if (part.type === "text" && part.text) text += part.text;
         }
-        return text || null;
+        if (text) return text;
+        // Tool-call-only intermediate completion — keep polling
       }
     }
 

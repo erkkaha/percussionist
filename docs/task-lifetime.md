@@ -16,13 +16,13 @@
 
 ## Columns vs. Phases
 
-The board shows simplified columns. The real state machine uses 14 phases stored in `Task.status.phase`:
+The board shows simplified columns. The real state machine uses 16 phases stored in `Task.status.phase`:
 
 | Board column | Phases underneath |
 |---|---|
 | **ideas** | `idea` |
 | **backlog** | `pending` |
-| **in-progress** | `scheduled`, `initializing`, `running`, `waiting-for-input`, `awaiting-merge`, `generating-builds`, `rework-requested` |
+| **in-progress** | `scheduled`, `initializing`, `running`, `waiting-for-input`, `awaiting-merge`, `generating-builds`, `awaiting-children`, `awaiting-feature-merge`, `rework-requested` |
 | **review** | `succeeded`, `reviewing`, `awaiting-human`, `failed` |
 | **done** | `done` |
 
@@ -67,7 +67,13 @@ Manager polls `Run.status.phase`:
 - `WaitingForInput` → `waiting-for-input` (PLAN only; BUILD tasks go straight to `failed`)
 - Running but no events beyond `flow.timeouts.runningStaleSeconds` (default 1800s/30min) → `failed` (staleness guard)
 
-The agent is working during this phase. It calls `complete_run` or `complete_plan` on the dispatcher when done. The dispatcher validates the git workflow (for BUILD: checks that a commit, push, and `gh pr create` happened; for PLAN: just commit + push), then exits 0. The pod reaches Succeeded, the operator mirrors it, and the manager picks it up on the next reconcile.
+When the run completes (`Succeeded` or `Failed`), if `project.spec.embedding.enabled`
+is true, the manager fires a fire-and-forget `SummarizeSession` effect that uses the
+LLM to produce a 2-3 paragraph summary of the session and stores it in the
+`{runName}-session` ConfigMap (`summary-{sessionID}`) and the project's vector
+memory database.
+
+The agent is working during this phase. It calls `complete_run` or `complete_plan` on the dispatcher when done. The dispatcher records the signal and exits 0. The pod reaches Succeeded, the operator mirrors it, and the manager picks it up on the next reconcile.
 
 ### `waiting-for-input` *(PLAN only)*
 Manager polls for an answer annotation (`percussionist.dev/action-answer`) on the Task CR (with legacy fallback to Project CR annotations). When a human posts an answer via the web UI, the dispatcher injects it into the live session. Once the run resumes to `Running` the task goes back to `running`. The annotation is cleared.
@@ -110,9 +116,31 @@ Manager creates a merge facilitator Run whose agent merges the BUILD's feature b
 Manager spawns a buildgen facilitator Run. The buildgen agent reads
 `.percussionist/plans/{plan-task-id}.md` from the git worktree and creates BUILD
 Task CRs directly via MCP tools (each with `spec.parentTaskRef` +
-`spec.predecessorRef` for serial chaining). The manager's decision engine watches
-for child Tasks with `parentTaskRef === taskName` to appear. When all child Tasks
-exist → PLAN task transitions to `done`.
+`spec.predecessorRef` for serial chaining). When `spec.embedding.enabled` is true,
+the buildgen agent's prompt includes a `PLAN SESSION CONTEXT:` section populated
+from the stored session summary of the preceding PLAN worker run (read from the
+`{runName}-session` ConfigMap via `readStoredSessionSummary()`). The manager's
+decision engine watches for child Tasks with `parentTaskRef === taskName` to
+appear. When all child Tasks exist → PLAN task transitions to `awaiting-children`.
+
+### `awaiting-children`
+Manager polls all child BUILD tasks (those where `spec.parentTaskRef === taskName`).
+Stays in this phase until every child task reaches `done`. Once all children are
+done, the next transition depends on `flow.integration.mode`:
+- **`auto-merge`** (default for `plan-build`/`plan-build-review-merge` presets):
+  schedules a merge run for the task's feature branch → `awaiting-feature-merge`
+- **`manual`**: → `awaiting-human` so someone can merge the branch outside the system
+- **`disabled`**: → `done` without any integration step (no feature branching)
+
+If children don't complete within `flow.timeouts.buildgenStaleSeconds` (default
+600s/10min), the task escalates to `awaiting-human`.
+
+### `awaiting-feature-merge`
+Mirrors `awaiting-merge` but for a PLAN task's feature branch. The merge run
+merges the task's feature branch (`feature/{task-id}`) into the project's default
+git ref (`project.spec.source.git.ref ?? "main"`). When the merge run succeeds
+→ `done` and `worker.mergedAt` is recorded. If the merge run fails or goes stale
+→ `awaiting-human`.
 
 ### `rework-requested`
 Waits for a scheduling slot (same `canSchedule` check as `pending`). When available → `scheduled`. The next run gets the stored `worker.reviewFeedback` injected into its prompt as rework context.
@@ -131,17 +159,19 @@ Terminal. Manager never touches it again. Task CR persists until the parent Proj
 |---|---|---|
 | Created by | Human | Manager (buildgen) or human |
 | Can enter `waiting-for-input` | Yes | No — goes to `failed` |
-| Completion signal | `complete_plan` (commit + push, no PR needed) | `complete_run` (commit + push + `gh pr create`) |
+| Completion signal | `complete_plan` (plan artifact committed) | `complete_run` (work committed) |
 | On human approval | → `generating-builds` | → `awaiting-merge` |
 | Feature branch | `feature/{plan-id}` (from main) | `feature/{plan-id}--{build-id}` (from PLAN branch) |
-| Merge target | None (manual to main) | Parent PLAN branch |
-| `mergedAt` timestamp | Never | Set on `done`; required to unlock successor BUILDs |
+| Merge target | `project.spec.source.git.ref ?? "main"` (configured via `flow.integration.mode`) | Parent PLAN branch (`feature/{plan-id}`) |
+| `mergedAt` timestamp | Set on `done` via `awaiting-feature-merge` | Set on `done` via `awaiting-merge`; required to unlock successor BUILDs |
 
 ---
 
 ## Feature Branching
 
-When `Project.spec.featureBranchingEnabled: true`, every task gets its own branch. The workspace-init init container creates it from `parentRef` if it doesn't exist yet. A worktree is placed at `/data/worktrees/{run-name}/`. Retries reuse the branch — the agent picks up where it left off. When a BUILD task is approved, a merge run merges its branch into the parent PLAN branch, deletes the BUILD branch, and sets `worker.mergedAt`. The next BUILD in sequence only starts after `mergedAt` is set, so each BUILD sees its predecessor's committed code.
+When `Project.spec.featureBranchingEnabled: true`, every task gets its own branch. The workspace-init init container creates it from `parentRef` if it doesn't exist yet. A worktree is placed at `/data/worktrees/{run-name}/`. Retries reuse the branch — the agent picks up where it left off. When a BUILD task is approved, a merge run merges its branch into the parent PLAN branch and sets `worker.mergedAt`. The next BUILD in sequence only starts after `mergedAt` is set, so each BUILD sees its predecessor's committed code.
+
+When all BUILD tasks under a PLAN are done, the PLAN transitions to `awaiting-feature-merge` (if `flow.integration.mode === "auto-merge"`). A merge run merges the PLAN's feature branch (`feature/{plan-id}`) into the project's default git ref (`project.spec.source.git.ref ?? "main"`). On success the PLAN reaches `done` with `worker.mergedAt` set.
 
 ---
 
@@ -153,7 +183,8 @@ A task has up to three live Runs at once:
 |---|---|---|
 | Worker | `scheduled` | `workerRunName(project, task, retryCount)` — deterministic SHA-256 hash |
 | Review | `succeeded` | `{project}-review-{task}-{retryCount+aiReworkCount}` (`auxiliaryRunName`) |
-| Merge | `awaiting-human` (BUILD approval) | `{project}-merge-{task}-{retryCount}` (`auxiliaryRunName`) |
+| Merge (BUILD) | `awaiting-human` (BUILD approval) | `{project}-merge-{task}-{retryCount}` (`auxiliaryRunName`) |
+| Merge (feature branch) | `awaiting-children` (auto-merge mode) | `{project}-merge-{task}-{retryCount}` (`auxiliaryRunName`) |
 | Buildgen | `generating-builds` | `{project}-buildgen-{task}-0` (`auxiliaryRunName`) |
 
 Old Runs are never deleted by state transitions — they persist as history until the TTL controller removes them after `runTTLDays` days (default 7).

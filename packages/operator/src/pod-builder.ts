@@ -291,6 +291,16 @@ export function renderPod(
                 ? // ── Remote git ──────────────────────────────────────────
                   [
                     "set -e",
+                    ...(spec.runner?.packages?.length
+                      ? [
+                          '# Install runner packages declared in spec.runner.packages',
+                          'if [ -n "${RUNNER_PACKAGES}" ]; then',
+                          '  echo "[workspace-init] installing packages: $RUNNER_PACKAGES"',
+                          '  apk update --quiet && apk add --no-cache $RUNNER_PACKAGES',
+                          '  echo "[workspace-init] package installation complete"',
+                          "fi",
+                        ]
+                      : []),
                     `MIRROR_DIR="${dataMountPath}/git-mirrors/${urlHash}"`,
                     `WORKTREE_DIR="${dataMountPath}/worktrees/${runName}"`,
                     `LOCK_FILE="${dataMountPath}/git-mirrors/${urlHash}.lock"`,
@@ -319,7 +329,15 @@ export function renderPod(
                     "  flock -x 200",
                     "  if [ -d \"$MIRROR_DIR\" ]; then",
                     "    echo \"[workspace-init] updating mirror $MIRROR_DIR\"",
-                    "    git -C \"$MIRROR_DIR\" fetch --prune || echo \"[workspace-init] fetch failed, using stale mirror\"",
+                    "    # Fetch into remote-tracking refs — never blocked by worktree checkouts",
+                    "    git -C \"$MIRROR_DIR\" fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune 2>&1 || echo \"[workspace-init] fetch failed, using stale mirror\"",
+                    "    # Sync refs/heads/ from remotes/origin/ for branches NOT checked out in worktrees",
+                    "    for _REMOTE_REF in $(git -C \"$MIRROR_DIR\" for-each-ref --format='%(refname)' refs/remotes/origin/ 2>/dev/null || true); do",
+                    "      _BRANCH=\"${_REMOTE_REF#refs/remotes/origin/}\"",
+                    '      if ! git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null | grep -qF "branch refs/heads/$_BRANCH"; then',
+                    "        git -C \"$MIRROR_DIR\" update-ref \"refs/heads/$_BRANCH\" \"$_REMOTE_REF\" 2>/dev/null || true",
+                    "      fi",
+                    "    done",
                     "  else",
                     `    echo "[workspace-init] cloning mirror from ${git.url}"`,
                     `    git clone --mirror "${git.url}" "$MIRROR_DIR"`,
@@ -382,10 +400,17 @@ export function renderPod(
                                  `                      fi ;;`,
                                  `    esac`,
                                  `  done < <(git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null)`,
-                                 `  git -C "$MIRROR_DIR" worktree prune --expire=now 2>/dev/null || true`,
-                                 `  # Try to add worktree with existing ref; if not found, create new branch from parentRef`,
-                                 `  # Note: bare mirrors store branches as refs/heads/<name> — no origin/ prefix needed`,
-                                 `  if git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
+                                  `  git -C "$MIRROR_DIR" worktree prune --expire=now 2>/dev/null || true`,
+                                   `  # Re-sync refs/heads from remotes/origin after stale worktree removal`,
+                                    "  for _REMOTE_REF in $(git -C \"$MIRROR_DIR\" for-each-ref --format='%(refname)' refs/remotes/origin/ 2>/dev/null || true); do",
+                                   "    _BRANCH=\"${_REMOTE_REF#refs/remotes/origin/}\"",
+                                   '    if ! git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null | grep -qF "branch refs/heads/$_BRANCH"; then',
+                                   "      git -C \"$MIRROR_DIR\" update-ref \"refs/heads/$_BRANCH\" \"$_REMOTE_REF\" 2>/dev/null || true",
+                                   "    fi",
+                                   "  done",
+                                   `  # Try to add worktree with existing ref; if not found, create new branch from parentRef`,
+                                   `  # Note: bare mirrors store branches as refs/heads/<name> — no origin/ prefix needed`,
+                                   `  if git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
                                  `    echo "[workspace-init] worktree added with branch ${git.ref}"`,
                                  ...(git.parentRef
                                    ? [
@@ -423,10 +448,17 @@ export function renderPod(
                                  `                    fi ;;`,
                                  `  esac`,
                                  `done < <(git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null)`,
-                                 `git -C "$MIRROR_DIR" worktree prune --expire=now 2>/dev/null || true`,
+                                `git -C "$MIRROR_DIR" worktree prune --expire=now 2>/dev/null || true`,
+                                 "# Re-sync refs/heads from remotes/origin after stale worktree removal",
+                                 "for _REMOTE_REF in $(git -C \"$MIRROR_DIR\" for-each-ref --format='%(refname)' refs/remotes/origin/ 2>/dev/null || true); do",
+                                 "  _BRANCH=\"${_REMOTE_REF#refs/remotes/origin/}\"",
+                                 '  if ! git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null | grep -qF "branch refs/heads/$_BRANCH"; then',
+                                 "    git -C \"$MIRROR_DIR\" update-ref \"refs/heads/$_BRANCH\" \"$_REMOTE_REF\" 2>/dev/null || true",
+                                 "  fi",
+                                 "done",
                                  `# Try to add worktree with existing ref; if not found, create new branch from parentRef`,
-                                 `# Note: bare mirrors store branches as refs/heads/<name> — no origin/ prefix needed`,
-                                 `if git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
+                                `# Note: bare mirrors store branches as refs/heads/<name> — no origin/ prefix needed`,
+                                `if git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
                                  `  echo "[workspace-init] worktree added with branch ${git.ref}"`,
                                  ...(git.parentRef
                                    ? [
@@ -449,6 +481,8 @@ export function renderPod(
                     `git -C "$WORKTREE_DIR" remote set-url origin "${git.url}" 2>/dev/null || true`,
                     "# Unset mirror=true inherited from bare mirror so agent can push individual branches",
                     `git -C "$WORKTREE_DIR" config --local remote.origin.mirror false 2>/dev/null || true`,
+                    "# Use standard fetch refspec so git fetch origin goes to refs/remotes/origin/* instead of refs/heads/* (avoids worktree conflicts)",
+                    `git -C "$WORKTREE_DIR" config --local remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' 2>/dev/null || true`,
                     `echo "[workspace-init] HEAD=$(git -C "$WORKTREE_DIR" rev-parse HEAD)"`,
                     "",
                     ...(initScript
@@ -466,6 +500,16 @@ export function renderPod(
                 : // ── Local git ──────────────────────────────────────────
                   [
                     "set -e",
+                    ...(spec.runner?.packages?.length
+                      ? [
+                          '# Install runner packages declared in spec.runner.packages',
+                          'if [ -n "${RUNNER_PACKAGES}" ]; then',
+                          '  echo "[workspace-init] installing packages: $RUNNER_PACKAGES"',
+                          '  apk update --quiet && apk add --no-cache $RUNNER_PACKAGES',
+                          '  echo "[workspace-init] package installation complete"',
+                          "fi",
+                        ]
+                      : []),
                     `WORKSPACE_DIR="${dataMountPath}/workspace"`,
                     `mkdir -p "$WORKSPACE_DIR"`,
                     `if [ ! -d "$WORKSPACE_DIR/.git" ]; then`,
@@ -502,6 +546,9 @@ export function renderPod(
               { name: "NPM_CONFIG_CACHE", value: `${dataMountPath}/cache/npm` },
               { name: "BUN_INSTALL_CACHE_DIR", value: `${dataMountPath}/cache/bun` },
               { name: "TURBO_CACHE_DIR", value: `${dataMountPath}/cache/turbo` },
+              ...(spec.runner?.packages?.length
+                ? [{ name: "RUNNER_PACKAGES", value: spec.runner.packages!.join(" ") }]
+                : []),
             ],
             volumeMounts: [
               { name: "data", mountPath: dataMountPath },
@@ -761,6 +808,8 @@ export function renderPod(
               : []),
             ...(spec.model ? [{ name: "RUN_MODEL", value: spec.model }] : []),
             ...(spec.agent ? [{ name: "RUN_AGENT", value: spec.agent }] : []),
+            { name: "RUN_PROJECT", value: spec.project },
+            ...(spec.boardTask ? [{ name: "RUN_BOARD_TASK", value: spec.boardTask }] : []),
             { name: "RUN_TIMEOUT_SECONDS", value: String(spec.timeoutSeconds ?? 3600) },
           ],
           resources: {

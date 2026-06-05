@@ -4,20 +4,23 @@ import type { Task, TaskPhase, Run } from "@percussionist/api";
 import type { AuditEvent } from "./decision.js";
 import type { ResolvedFlow } from "./flow.js";
 import { validateTransition } from "./transitions.js";
-import { createRun, deleteRun, patchTaskStatus, getTask, patchTask, createTask, getRun } from "@percussionist/kube";
+import { createRun, deleteRun, patchTaskStatus, getTask, patchTask, createTask, getRun, getProject, patchProject } from "@percussionist/kube";
 import { buildWorkerRun, buildMergeRun, auxiliaryRunName } from "../worker-builder.js";
 import { persistEvent } from "./audit.js";
 
 export type ReconcileEffect =
   | { type: "ScheduleRun"; runName: string; retryCount: number; reworkFeedback?: string }
   | { type: "ScheduleReviewRun"; reviewRunName: string; succeededRunName: string; reviewAgent: string }
+  | { type: "ScheduleBuildGenRun"; buildgenRunName: string; succeededRunName: string }
+  | { type: "ScheduleMergeRun"; mergeRunName: string }
   | { type: "CreateRun"; run: Run }
   | { type: "DeleteRun"; name: string; reason: string }
   | { type: "PatchTaskStatus"; patch: Record<string, unknown> }
   | { type: "CreateTask"; task: Task }
   | { type: "ClearTaskAnnotations"; keys: string[] }
-  | { type: "ClearProjectAnnotations"; keys: string[]; legacyOnly?: boolean }
-  | { type: "CleanupWorktree"; runName: string };
+  | { type: "ClearProjectAnnotations"; keys: string[] }
+  | { type: "CleanupWorktree"; runName: string }
+  | { type: "SummarizeSession"; project: string; runName: string; sessionID: string };
 
 export interface ExecutionResult {
   applied: boolean;
@@ -119,7 +122,7 @@ export async function executeEffects(
           const branchName = task.status?.worker?.gitBranch;
 
           const { buildReviewRun } = await import("../facilitator.js");
-          const reviewRun = buildReviewRun(
+          const reviewRun = await buildReviewRun(
             fullProject,
             task,
             effect.succeededRunName,
@@ -131,6 +134,58 @@ export async function executeEffects(
           );
           try {
             await createRun(reviewRun, namespace);
+          } catch (e: unknown) {
+            const msg = (e as Error).message;
+            if (!/already exists/i.test(msg)) throw e;
+          }
+          break;
+        }
+        case "ScheduleBuildGenRun": {
+          if (!project) {
+            throw new Error("Project metadata required for ScheduleBuildGenRun effect");
+          }
+          const fullProject = project as unknown as import("@percussionist/api").Project;
+          const succeededRun = await getRun(effect.succeededRunName, namespace).catch(() => undefined);
+          const succeededStatus = succeededRun?.status ?? {};
+
+          const { buildBuildTaskGeneratorRun } = await import("../facilitator.js");
+          const buildgenRun = await buildBuildTaskGeneratorRun(
+            fullProject,
+            task,
+            effect.succeededRunName,
+            effect.buildgenRunName,
+            "",
+            flow.plan.buildGenerationAgent,
+            allTasks,
+            flow.build.defaultAgent,
+          );
+          try {
+            await createRun(buildgenRun, namespace);
+          } catch (e: unknown) {
+            const msg = (e as Error).message;
+            if (!/already exists/i.test(msg)) throw e;
+            const existing = await getRun(effect.buildgenRunName, namespace).catch(() => undefined);
+            if (existing?.status?.phase === "Failed" || existing?.status?.phase === "Cancelled") {
+              await deleteRun(effect.buildgenRunName, namespace);
+              await createRun(buildgenRun, namespace);
+            }
+          }
+          break;
+        }
+        case "ScheduleMergeRun": {
+          if (!project) {
+            throw new Error("Project metadata required for ScheduleMergeRun effect");
+          }
+          const fullProject = project as unknown as import("@percussionist/api").Project;
+          const mergeRun = await buildMergeRun(
+            fullProject,
+            task,
+            effect.mergeRunName,
+            allTasks,
+            flow.merge.agent,
+          );
+          try {
+            await createRun(mergeRun, namespace);
           } catch (e: unknown) {
             const msg = (e as Error).message;
             if (!/already exists/i.test(msg)) throw e;
@@ -156,29 +211,59 @@ export async function executeEffects(
         }
         case "ClearTaskAnnotations": {
           try {
-            const fresh = await getTask(taskName, namespace);
-            const annotations = { ...(fresh.metadata.annotations ?? {}) };
+            const taskPatch: Record<string, string | null> = {};
+            const projectKeys: string[] = [];
             for (const key of effect.keys) {
-              delete annotations[key];
+              if (key.startsWith("percussionist.dev/action-")) {
+                taskPatch[key] = null;
+              } else {
+                projectKeys.push(key);
+              }
             }
-            await patchTask(taskName, {
-              metadata: {
-                ...fresh.metadata,
-                annotations,
-              },
-            }, namespace);
+            const taskKeys = Object.keys(taskPatch);
+            if (taskKeys.length > 0) {
+              await patchTask(taskName, {
+                metadata: { name: taskName, annotations: taskPatch as Record<string, string> },
+              }, namespace);
+            }
+            if (projectKeys.length > 0) {
+              await clearProjectAnnotations(projectKeys, project, namespace, taskName);
+            }
           } catch (e) {
             console.warn(`[effects] ClearTaskAnnotations failed for ${taskName}:`, (e as Error).message);
           }
           break;
         }
         case "ClearProjectAnnotations": {
-          // Best-effort — handled by existing logic.
+          await clearProjectAnnotations(effect.keys, project, namespace, taskName);
           break;
         }
         case "CleanupWorktree": {
-          // Best-effort.
-          console.log(`[effects] CleanupWorktree ${effect.runName} (best-effort)`);
+          if (!project) {
+            console.warn(`[effects] CleanupWorktree: no project context for ${effect.runName}, skipping`);
+            break;
+          }
+          const fullProject = project as unknown as import("@percussionist/api").Project;
+          const projectName = fullProject.metadata.name;
+          const gitUrl = (fullProject.spec.source as { git?: { url?: string } } | undefined)?.git?.url;
+          const runnerImage = (fullProject.spec.runner as { image?: string } | undefined)?.image;
+          const image = runnerImage ?? fullProject.spec.image ?? "alpine/git";
+          const { spawnWorktreeCleanupPod } = await import("../worktree-cleanup.js");
+          spawnWorktreeCleanupPod({
+            task: currentTask,
+            runName: effect.runName,
+            projectName,
+            namespace,
+            image,
+            gitUrl,
+          }).catch((e: Error) => console.warn(`[effects] CleanupWorktree pod failed:`, e.message));
+          break;
+        }
+        case "SummarizeSession": {
+          // Fire-and-forget — never blocks the reconcile cycle.
+          import("../session-summarizer.js").then(({ summarizeSession }) => {
+            summarizeSession(effect.project, effect.runName, effect.sessionID, namespace);
+          }).catch(() => {});
           break;
         }
         case "CreateTask": {
@@ -235,4 +320,28 @@ function isNotFound(e: unknown): boolean {
     "statusCode" in e &&
     (e as { statusCode?: number }).statusCode === 404
   );
+}
+
+async function clearProjectAnnotations(
+  keys: string[],
+  projectObj: Task["metadata"] & { spec: Record<string, unknown> } | null,
+  namespace: string,
+  taskName: string,
+): Promise<void> {
+  try {
+    const projectName = (projectObj as { metadata?: { name?: string } } | null)?.metadata?.name;
+    if (!projectName) {
+      console.warn(`[effects] ClearProjectAnnotations: no project name for ${taskName}`);
+      return;
+    }
+    const patch: Record<string, string | null> = {};
+    for (const key of keys) {
+      patch[key] = null;
+    }
+    await patchProject(projectName, {
+      metadata: { name: projectName, annotations: patch as Record<string, string> },
+    }, namespace);
+  } catch (e) {
+    console.warn(`[effects] ClearProjectAnnotations failed for ${taskName}:`, (e as Error).message);
+  }
 }

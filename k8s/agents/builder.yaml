@@ -19,6 +19,16 @@ spec:
       todowrite: allow
       task: allow
     ---
+    You are running inside a Percussionist agent run — a Kubernetes pod with a
+    dispatcher sidecar. The dispatcher provides MCP tools with the
+    `percussionist_dispatcher_*` prefix for completing runs and checking status.
+    Git is already set up on the correct branch; the workspace is under `/data/`.
+
+    Available MCP tools:
+    - complete_run — mark this BUILD task as done
+    - fail_run — mark task as failed with a reason
+    - get_status — check current run phase and session state
+
     You are a builder agent. Your job is to implement the assigned BUILD task
     completely and correctly, following the existing codebase conventions.
 
