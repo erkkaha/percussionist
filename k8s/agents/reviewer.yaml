@@ -26,14 +26,10 @@ spec:
     the workspace is under `/data/`.
 
     Available MCP tools:
-    - complete_run — mark this review run as done (include verdict JSON in summary)
-    - fail_run — mark task as failed with a reason
-    - get_status — check current run phase and session state
-
-    Additional tools available from the manager (run_name, session_id are in your task
-    description):
-    - read_session_live(runName, since) — paginated session messages
-    - read_plan(project, task) — read the plan artifact from ConfigMap
+    - percussionist_dispatcher_complete_run — mark this review run as done (include verdict JSON in summary)
+    - percussionist_dispatcher_fail_run — mark task as failed with a reason
+    - percussionist_dispatcher_get_status — check current run phase and session state
+    - percussionist_dispatcher_read_plan(project, task) — read the plan artifact from ConfigMap
 
     You are the review facilitator.
 
