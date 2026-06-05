@@ -22,8 +22,9 @@ import { RefreshCw, Loader2 } from "lucide-react";
 import ModelSelector from "./ModelSelector";
 import ProjectsPage from "./ProjectsPage";
 import AgentsPage from "./AgentsPage";
+import NotificationsPanel from "./NotificationsPanel";
 
-type Tab = "projects" | "agents" | "secrets" | "opencode" | "manager" | "runner" | "updates";
+type Tab = "projects" | "agents" | "secrets" | "opencode" | "manager" | "runner" | "notifications" | "updates";
 type SettingsSpec = Record<string, unknown> & {
   runnerConfig?: Record<string, unknown>;
 };
@@ -92,11 +93,12 @@ export default function SettingsPage() {
     { id: "opencode", label: "OpenCode Config" },
     { id: "manager", label: "Manager Agent" },
     { id: "runner", label: "Runner Defaults" },
+    { id: "notifications", label: "Notifications" },
     { id: "updates", label: "Updates" },
   ];
 
   return (
-    <div className="flex flex-col gap-4 max-w-5xl mx-auto w-full">
+    <div className="flex flex-col gap-4 w-full">
       <div className="flex items-center justify-between settings-header-mobile">
         <h1 className="text-xl font-semibold text-lg sm:text-xl">Settings</h1>
         {saveMsg && (
@@ -131,9 +133,9 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {activeTab === "projects" && <ProjectsPage />}
+      {activeTab === "projects" && <ProjectsPage showHeader={false} />}
 
-      {activeTab === "agents" && <AgentsPage />}
+      {activeTab === "agents" && <AgentsPage showHeader={false} />}
 
       {settingsLoading && activeTab !== "projects" && activeTab !== "agents" && (
         <p className="text-text-dim">Loading...</p>
@@ -178,6 +180,8 @@ export default function SettingsPage() {
           saving={saveMutation.isPending}
         />
       )}
+
+      {activeTab === "notifications" && <NotificationsPanel />}
 
       {activeTab === "updates" && <UpdatesPanel />}
     </div>

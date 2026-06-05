@@ -7,7 +7,44 @@
 // in _history and broadcast via a "percussionist:notification" CustomEvent so
 // React components can subscribe without prop-drilling.
 
+import { useNotificationStore } from "../stores/settingsStore";
+
 export type DrumSound = "success" | "failure" | "cancelled" | "escalated" | "running";
+
+// ---------------------------------------------------------------------------
+// Notification preferences (localStorage)
+
+const NOTIFICATION_PREFS_KEY = "percussionist:notifications";
+
+export interface NotificationPreferences {
+  soundEnabled: boolean; // default: true — backward compatible
+}
+
+/** Read notification preferences from localStorage. Returns defaults if not set or invalid. */
+export function getNotificationPreferences(): NotificationPreferences {
+  try {
+    const raw = localStorage.getItem(NOTIFICATION_PREFS_KEY);
+    if (!raw) return { soundEnabled: true };
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.soundEnabled !== "boolean") return { soundEnabled: true };
+    return { soundEnabled: parsed.soundEnabled };
+  } catch {
+    return { soundEnabled: true };
+  }
+}
+
+/** Merge partial preferences and write to localStorage. */
+export function setNotificationPreferences(prefs: Partial<NotificationPreferences>): void {
+  const existing = getNotificationPreferences();
+  try {
+    localStorage.setItem(
+      NOTIFICATION_PREFS_KEY,
+      JSON.stringify({ ...existing, ...prefs }),
+    );
+  } catch {
+    // Non-fatal — localStorage may be full or unavailable.
+  }
+}
 
 // ---------------------------------------------------------------------------
 // History store
@@ -204,7 +241,11 @@ export function notify(opts: NotifyOptions): void {
     window.dispatchEvent(new CustomEvent(NOTIFICATION_EVENT, { detail: entry }));
   }
 
-  playDrum(opts.sound);
+  // Respect user's sound preference — skip audio but still record history and dispatch event.
+  const prefs = useNotificationStore.getState();
+  if (prefs.soundEnabled) {
+    playDrum(opts.sound);
+  }
 
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
 

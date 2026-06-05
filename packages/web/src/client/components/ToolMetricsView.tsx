@@ -118,8 +118,8 @@ export default function ToolMetricsView() {
 
   if (isLoading) {
     return (
-      <div className="p-6">
-        <h1 className="text-lg font-semibold mb-4">Tool Usage</h1>
+      <div className="space-y-4">
+        <h1 className="text-lg font-semibold">Tool Usage</h1>
         <p className="text-text-dim">Loading tool metrics...</p>
       </div>
     );
@@ -130,8 +130,8 @@ export default function ToolMetricsView() {
 
   if (error || !data) {
     return (
-      <div className="p-6">
-        <h1 className="text-lg font-semibold mb-4">Tool Usage</h1>
+      <div className="space-y-4">
+        <h1 className="text-lg font-semibold">Tool Usage</h1>
         <p className="text-text-danger">Failed to load tool metrics: {(error as Error)?.message ?? "unknown"}</p>
       </div>
     );
@@ -160,7 +160,7 @@ export default function ToolMetricsView() {
   // Render
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       {/* Header with filters */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-lg font-semibold">Tool Usage</h1>

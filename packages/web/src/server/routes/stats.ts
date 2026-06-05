@@ -435,9 +435,9 @@ stats.get("/tool-metrics", (c) => {
       tool: toolCalls.tool,
       tokensOut: messages.tokensOut,
       msgToolCount: sql<number>`(
-        SELECT CAST(COUNT(*) AS REAL) FROM ${toolCalls} tc2
-        WHERE tc2.${toolCalls.sessionId} = ${toolCalls.sessionId}
-          AND tc2.${toolCalls.messageIdx} = ${toolCalls.messageIdx}
+        SELECT CAST(COUNT(*) AS REAL) FROM tool_calls tc2
+        WHERE tc2.session_id = ${toolCalls.sessionId}
+          AND tc2.message_idx = ${toolCalls.messageIdx}
       )`.as("msg_tool_count"),
     })
     .from(toolCalls)

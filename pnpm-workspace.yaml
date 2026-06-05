@@ -5,7 +5,7 @@ ignoredBuiltDependencies:
   - esbuild
 
 minimumReleaseAge: 10080
-trustPolicy: no-downgrade
+trustPolicy: downgrade
 trustedDependencies:
   - semver
 blockExoticSubdeps: true

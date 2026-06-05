@@ -82,7 +82,7 @@ function ProjectRow({ project }: { project: Project }) {
   );
 }
 
-export default function ProjectsPage() {
+export default function ProjectsPage({ showHeader = true }: { showHeader?: boolean }) {
   const { connected: projectsSseConnected, eventTick } = useProjectsEvents();
   void eventTick;
   const { data: projects, error, isLoading, isFetching } = useProjects(
@@ -100,27 +100,28 @@ export default function ProjectsPage() {
 
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Projects</h1>
-          <p className="text-sm text-text-muted">
-            Reusable templates for run defaults (git, secrets, model).
-            {isFetching && !isLoading && (
-              <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
-            )}
-          </p>
-          <p className="text-xs text-text-dim mt-0.5">
-            Updates: {projectsSseConnected ? "live stream" : "polling fallback"}
-          </p>
+      {showHeader && (
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold">Projects</h1>
+            <p className="text-sm text-text-muted">
+              Reusable templates for run defaults (git, secrets, model).
+              {isFetching && !isLoading && (
+                <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
+              )}
+            </p>
+            <p className="text-xs text-text-dim mt-0.5">
+              Updates: {projectsSseConnected ? "live stream" : "polling fallback"}
+            </p>
+          </div>
+          <Link
+            to="/projects/new"
+            className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
+          >
+            + New Project
+          </Link>
         </div>
-        <Link
-          to="/projects/new"
-          className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
-        >
-          + New Project
-        </Link>
-      </div>
+      )}
 
       {isLoading ? (
         <div className="rounded-lg border border-border overflow-hidden">
