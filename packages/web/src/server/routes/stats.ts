@@ -444,11 +444,12 @@ export function runRetentionCleanup(): void {
   }
 }
 
-// GET /api/stats/tool-metrics?days=30&project=X — aggregated tool usage stats.
+// GET /api/stats/tool-metrics?days=30&agent=X — aggregated tool usage stats.
+// Sources data from tool_calls (message-part extraction) instead of tool_events (SSE/MCP events).
 stats.get("/tool-metrics", (c) => {
   const daysParam = c.req.query("days") ?? "30";
   const days = parseInt(daysParam, 10);
-  const project = c.req.query("project");
+  const agent = c.req.query("agent");
 
   const db = getDb();
   const cutoff =
@@ -456,51 +457,128 @@ stats.get("/tool-metrics", (c) => {
       ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
       : null;
 
-  const conditions: ReturnType<typeof gte>[] = [];
-  if (cutoff) conditions.push(gte(toolEvents.calledAt, cutoff));
-  if (project) conditions.push(sql`${toolEvents.sessionId} = ${project}`);
+  const conditions: ReturnType<typeof gte | typeof eq>[] = [];
+  if (cutoff) conditions.push(gte(runs.createdAt, cutoff));
+  if (agent) conditions.push(eq(runs.agent, agent));
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const baseQuery = db
+  // 1. Tool metrics grouped by tool name.
+  const rows = db
     .select({
-      toolName: toolEvents.toolName,
+      toolName: toolCalls.tool,
       calls: sql<number>`COUNT(*)`.as("calls"),
-      avgDurationMs: sql<number>`AVG(${toolEvents.durationMs})`.as("avg_duration_ms"),
-      successRate: sql<number>`SUM(CASE WHEN ${toolEvents.success} = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*)`.as("success_rate"),
-      avgResultSize: sql<number>`AVG(${toolEvents.resultSize})`.as("avg_result_size"),
-      totalErrors: sql<number>`SUM(CASE WHEN ${toolEvents.success} = 0 THEN 1 ELSE 0 END)`.as("total_errors"),
-      sessionsUsing: sql<number>`COUNT(DISTINCT ${toolEvents.sessionId})`.as("sessions_using"),
+      avgDurationMs: sql<number>`AVG(${toolCalls.durationMs})`.as("avg_duration_ms"),
+      successRate: sql<number>`CAST(SUM(CASE WHEN ${toolCalls.success} = 1 THEN 1 ELSE 0 END) AS REAL) / CAST(COUNT(*) AS REAL)`.as("success_rate"),
+      avgResultSize: sql<null>`NULL`.as("avg_result_size"),
+      totalErrors: sql<number>`SUM(CASE WHEN ${toolCalls.success} = 0 THEN 1 ELSE 0 END)`.as("total_errors"),
+      sessionsUsing: sql<number>`COUNT(DISTINCT ${toolCalls.sessionId})`.as("sessions_using"),
     })
-    .from(toolEvents);
-
-  const rows = (conditions.length > 0
-    ? baseQuery.where(and(...conditions))
-    : baseQuery
-  )
-    .groupBy(toolEvents.toolName)
+    .from(toolCalls)
+    .innerJoin(runs, eq(toolCalls.sessionId, runs.id))
+    .where(whereClause)
+    .groupBy(toolCalls.tool)
     .orderBy(desc(sql`COUNT(*)`))
     .all() as Array<{
       toolName: string;
       calls: number;
       avgDurationMs: number | null;
       successRate: number | null;
-      avgResultSize: number | null;
+      avgResultSize: null;
       totalErrors: number;
       sessionsUsing: number;
     }>;
 
+  // 2. Token attribution: distribute message-level tokensOut across tool calls.
+  // For each tool call, find its assistant message's tokensOut and how many
+  // tool calls share that message, then attribute tokensOut / count.
+  const tokenData = db
+    .select({
+      tool: toolCalls.tool,
+      tokensOut: messages.tokensOut,
+      msgToolCount: sql<number>`(
+        SELECT CAST(COUNT(*) AS REAL) FROM ${toolCalls} tc2
+        WHERE tc2.${toolCalls.sessionId} = ${toolCalls.sessionId}
+          AND tc2.${toolCalls.messageIdx} = ${toolCalls.messageIdx}
+      )`.as("msg_tool_count"),
+    })
+    .from(toolCalls)
+    .innerJoin(runs, eq(toolCalls.sessionId, runs.id))
+    .leftJoin(messages, and(
+      eq(toolCalls.sessionId, messages.sessionId),
+      eq(toolCalls.messageIdx, messages.idx),
+      eq(messages.role, "assistant"),
+    ))
+    .where(whereClause)
+    .all() as Array<{
+      tool: string;
+      tokensOut: number | null;
+      msgToolCount: number;
+    }>;
+
+  const tokenMap = new Map<string, { total: number; count: number }>();
+  for (const d of tokenData) {
+    if (d.tokensOut != null && d.msgToolCount > 0) {
+      const cost = d.tokensOut / d.msgToolCount;
+      const entry = tokenMap.get(d.tool) ?? { total: 0, count: 0 };
+      entry.total += cost;
+      entry.count++;
+      tokenMap.set(d.tool, entry);
+    }
+  }
+
+  for (const row of rows) {
+    const tok = tokenMap.get(row.toolName);
+    (row as Record<string, unknown>).estTokensOut = tok ? Math.round(tok.total) : 0;
+    (row as Record<string, unknown>).avgTokensOutPerCall = tok && tok.count > 0 ? Math.round(tok.total / tok.count) : 0;
+  }
+
+  // 3. Agent summary — one row per agent.
+  const agentConditions: ReturnType<typeof gte | typeof eq>[] = [];
+  if (cutoff) agentConditions.push(gte(runs.createdAt, cutoff));
+  const agentWhereClause = agentConditions.length > 0 ? and(...agentConditions) : undefined;
+
+  const agentSummary = db
+    .select({
+      agent: runs.agent,
+      calls: sql<number>`COUNT(*)`.as("calls"),
+      totalTokensOut: sql<number>`COALESCE(SUM(${messages.tokensOut}), 0)`.as("total_tokens_out"),
+      totalSessions: sql<number>`COUNT(DISTINCT ${runs.id})`.as("total_sessions"),
+    })
+    .from(toolCalls)
+    .innerJoin(runs, eq(toolCalls.sessionId, runs.id))
+    .leftJoin(messages, and(
+      eq(toolCalls.sessionId, messages.sessionId),
+      eq(toolCalls.messageIdx, messages.idx),
+      eq(messages.role, "assistant"),
+    ))
+    .where(and(
+      agentWhereClause,
+      sql`${runs.agent} IS NOT NULL`,
+    ))
+    .groupBy(runs.agent)
+    .orderBy(desc(sql`COUNT(*)`))
+    .all() as Array<{
+      agent: string;
+      calls: number;
+      totalTokensOut: number;
+      totalSessions: number;
+    }>;
+
   const totalCalls = rows.reduce((s, r) => s + r.calls, 0);
-  const countQuery = db
-    .select({ count: sql<number>`COUNT(DISTINCT ${toolEvents.sessionId})` })
-    .from(toolEvents);
-  const totalSessions = (conditions.length > 0
-    ? countQuery.where(and(...conditions))
-    : countQuery
-  ).get();
+
+  const sessionCountQuery = db
+    .select({ count: sql<number>`COUNT(DISTINCT ${toolCalls.sessionId})` })
+    .from(toolCalls)
+    .innerJoin(runs, eq(toolCalls.sessionId, runs.id));
+  const totalSessions = whereClause
+    ? sessionCountQuery.where(whereClause).get()
+    : sessionCountQuery.get();
 
   return c.json({
     tools: rows,
     totalCalls,
     totalSessions: totalSessions?.count ?? 0,
+    agentSummary,
     period: {
       days,
       from: cutoff,
