@@ -7,6 +7,7 @@ import {
   KIND_PROJECT,
   type InjectFileRef,
 } from "@percussionist/api";
+import { auth, adminAuth } from "../auth.js";
 
 const projects = new Hono();
 
@@ -123,7 +124,7 @@ async function readInjectFileContents(
 }
 
 // GET /api/projects
-projects.get("/", async (c) => {
+projects.get("/", auth(), async (c) => {
   try {
     const items = await listProjects();
     return c.json({ items });
@@ -134,7 +135,7 @@ projects.get("/", async (c) => {
 });
 
 // GET /api/projects/events — SSE stream for project list changes.
-projects.get("/events", async (c) => {
+projects.get("/events", auth(), async (c) => {
   return createPollingSseResponse({
     signal: c.req.raw.signal,
     getSignature: async () => JSON.stringify((await listProjects()).map((p) => ({
@@ -155,7 +156,7 @@ projects.get("/events", async (c) => {
 });
 
 // GET /api/projects/config/default — returns cluster-wide opencode-config content
-projects.get("/config/default", async (c) => {
+projects.get("/config/default", auth(), async (c) => {
   try {
     const cm = await core().readNamespacedConfigMap({ name: CLUSTER_CONFIG_CM, namespace: NAMESPACE });
     return c.json(cm.data?.[CONFIG_CM_KEY] ?? "");
@@ -165,7 +166,7 @@ projects.get("/config/default", async (c) => {
 });
 
 // GET /api/projects/:name/config — returns per-project opencode.json, falls back to cluster-wide
-projects.get("/:name/config", async (c) => {
+projects.get("/:name/config", auth(), async (c) => {
   const name = c.req.param("name");
   const ns = NAMESPACE;
   // Try per-project configmap first.
@@ -185,7 +186,7 @@ projects.get("/:name/config", async (c) => {
 });
 
 // GET /api/projects/:name
-projects.get("/:name", async (c) => {
+projects.get("/:name", auth(), async (c) => {
   const name = c.req.param("name");
   try {
     const project = await getProject(name);
@@ -203,7 +204,7 @@ projects.get("/:name", async (c) => {
 });
 
 // POST /api/projects
-projects.post("/", async (c) => {
+projects.post("/", adminAuth(), async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -267,7 +268,7 @@ projects.post("/", async (c) => {
 });
 
 // PUT /api/projects/:name
-projects.put("/:name", async (c) => {
+projects.put("/:name", adminAuth(), async (c) => {
   const name = c.req.param("name");
   let body: unknown;
   try {
@@ -356,7 +357,7 @@ projects.put("/:name", async (c) => {
 });
 
 // DELETE /api/projects/:name
-projects.delete("/:name", async (c) => {
+projects.delete("/:name", adminAuth(), async (c) => {
   const name = c.req.param("name");
   try {
     // Fetch project first so we know which inject-file Secrets to clean up.

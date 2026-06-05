@@ -6,6 +6,7 @@
 
 import { Hono } from "hono";
 import { NAMESPACE } from "../kube.js";
+import { auth, adminAuth } from "../auth.js";
 
 const router = new Hono();
 
@@ -28,7 +29,7 @@ export interface UpdateStatus {
 //
 // Returns the currently running component versions and the latest available
 // version from the container registry. Suitable for polling from the UI.
-router.get("/status", async (c) => {
+router.get("/status", auth(), async (c) => {
   const mcpRequest = {
     jsonrpc: "2.0",
     id: 1,
@@ -122,10 +123,7 @@ export interface UpgradeResult {
 }
 
 // POST /api/upgrade/apply
-//
-// Triggers an upgrade of all Percussionist deployments to the specified target image tag.
-// Proxies to the manager's MCP tool `apply_upgrade`.
-router.post("/apply", async (c) => {
+router.post("/apply", adminAuth(), async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { targetTag?: string };
   const targetTag = body.targetTag;
   if (!targetTag) {

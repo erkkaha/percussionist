@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { NAMESPACE, getProject, getTask, getRun } from "../kube.js";
+import { auth } from "../auth.js";
 
 type DiffFile = {
   path: string;
@@ -106,7 +107,7 @@ async function execInWorkspaceViaManager(
   };
 }
 
-router.get("/:project/tasks/:taskName/diff", async (c) => {
+router.get("/:project/tasks/:taskName/diff", auth(), async (c) => {
   const projectName = c.req.param("project");
   const taskName = c.req.param("taskName");
 

@@ -9,6 +9,7 @@
 
 import { Hono } from "hono";
 import { NAMESPACE } from "../kube.js";
+import { auth, adminAuth } from "../auth.js";
 
 const router = new Hono();
 
@@ -16,7 +17,7 @@ const MANAGER_SERVICE = `http://percussionist-manager.${NAMESPACE}.svc.cluster.l
 const CHAT_URL = `${MANAGER_SERVICE}:4098`;
 
 // POST /api/agent/chat — send a message to the manager agent, get response.
-router.post("/chat", async (c) => {
+router.post("/chat", adminAuth(), async (c) => {
   const abortController = new AbortController();
   c.req.raw.signal.addEventListener("abort", () => abortController.abort());
 
@@ -40,7 +41,7 @@ router.post("/chat", async (c) => {
 });
 
 // GET /api/agent/chat/stream — SSE stream of the agent conversation.
-router.get("/chat/stream", async (c) => {
+router.get("/chat/stream", auth(), async (c) => {
   const abortController = new AbortController();
   c.req.raw.signal.addEventListener("abort", () => abortController.abort());
 
@@ -85,7 +86,7 @@ router.get("/chat/stream", async (c) => {
 });
 
 // GET /api/agent/chat/history — get conversation history.
-router.get("/chat/history", async (c) => {
+router.get("/chat/history", auth(), async (c) => {
   try {
     const res = await fetch(`${CHAT_URL}/chat/history`, {
       signal: AbortSignal.timeout(5_000),
@@ -101,7 +102,7 @@ router.get("/chat/history", async (c) => {
 });
 
 // GET /api/agent/status — check if the agent is reachable.
-router.get("/status", async (c) => {
+router.get("/status", auth(), async (c) => {
   try {
     const res = await fetch(`${CHAT_URL}/chat/history`, {
       signal: AbortSignal.timeout(3_000),

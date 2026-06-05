@@ -7,10 +7,11 @@
 import { Hono } from "hono";
 import { listNodeMetrics, listPodMetrics, NAMESPACE, type NodeMetric, type PodMetric } from "../kube.js";
 import { createPollingSseResponse } from "../lib/sse.js";
+import { auth } from "../auth.js";
 
 const metrics = new Hono();
 
-metrics.get("/nodes", async (c) => {
+metrics.get("/nodes", auth(), async (c) => {
   try {
     const items = await listNodeMetrics();
     return c.json({ items });
@@ -24,7 +25,7 @@ metrics.get("/nodes", async (c) => {
   }
 });
 
-metrics.get("/pods", async (c) => {
+metrics.get("/pods", auth(), async (c) => {
   try {
     const items = await listPodMetrics(NAMESPACE);
     return c.json({ items });
@@ -38,7 +39,7 @@ metrics.get("/pods", async (c) => {
   }
 });
 
-metrics.get("/events", async (c) => {
+metrics.get("/events", auth(), async (c) => {
   return createPollingSseResponse({
     signal: c.req.raw.signal,
     getSignature: async () => {

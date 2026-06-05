@@ -5,6 +5,7 @@
 
 import { Hono } from "hono";
 import { NAMESPACE } from "../kube.js";
+import { auth } from "../auth.js";
 
 const router = new Hono();
 
@@ -16,7 +17,7 @@ const MCP_URL = `${MANAGER_SERVICE}:4097/mcp`;
 // Fetches the plan artifact for a given task. For BUILD tasks, this resolves
 // the parent PLAN task automatically. The plan content is read from the task's
 // most recent run workspace or ConfigMap snapshot.
-router.get("/:project/plans/:taskId", async (c) => {
+router.get("/:project/plans/:taskId", auth(), async (c) => {
   const project = c.req.param("project");
   const taskId = c.req.param("taskId");
 
