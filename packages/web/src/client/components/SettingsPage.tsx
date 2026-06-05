@@ -133,7 +133,7 @@ export default function SettingsPage() {
 
       {activeTab === "projects" && <ProjectsPage showHeader={false} />}
 
-      {activeTab === "agents" && <AgentsPage />}
+      {activeTab === "agents" && <AgentsPage showHeader={false} />}
 
       {settingsLoading && activeTab !== "projects" && activeTab !== "agents" && (
         <p className="text-text-dim">Loading...</p>
