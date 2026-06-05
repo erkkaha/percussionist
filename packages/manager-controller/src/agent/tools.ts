@@ -1531,7 +1531,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
         // 4. Fetch tag list
         const tagsRes = await fetch(
-          `https://ghcr.io/v2/${repo}/tags/list`,
+          `https://ghcr.io/v2/${repo}/tags/list?n=1000`,
           {
             headers: { Authorization: `Bearer ${token}` },
             signal: AbortSignal.timeout(10_000),
