@@ -7,8 +7,10 @@ import { TERMINAL_PHASES } from "@percussionist/api";
 import NotificationBell from "./NotificationBell";
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "./ui/sidebar";
 import { AppSidebar } from "./app-sidebar";
+import AgentChatPanel from "./AgentChatPanel";
+import type { Task } from "@/lib/types";
 
-export default function Layout({ chatOpen }: { chatOpen?: boolean }) {
+export default function Layout({ chatOpen, onChatOpenChange, onChatReady }: { chatOpen?: boolean; onChatOpenChange?: (open: boolean) => void; onChatReady?: (api: { injectTask: (task: Task, projectName: string) => void }) => void }) {
   const { connected: runsSseConnected, eventTick } = useRunsEvents();
   void eventTick;
   const { data: runs } = useRuns(runsSseConnected ? false : 5_000);
@@ -31,7 +33,7 @@ export default function Layout({ chatOpen }: { chatOpen?: boolean }) {
   return (
     <SidebarProvider>
       <AppSidebar playing={hasInProgress} managerAvailable={managerAvailable} />
-      <SidebarInset className={chatOpen ? "mr-96 transition-all duration-300 ease-in-out" : "transition-all duration-300 ease-in-out"}>
+      <SidebarInset className="transition-all duration-300 ease-in-out">
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-surface-raised px-4">
           <div className="flex items-center gap-2">
             <SidebarTrigger className="-ml-1 data-[state=open]:rotate-180" />
@@ -42,6 +44,7 @@ export default function Layout({ chatOpen }: { chatOpen?: boolean }) {
           <Outlet />
         </main>
       </SidebarInset>
+      <AgentChatPanel open={chatOpen ?? false} onOpenChange={onChatOpenChange} onChatReady={onChatReady} />
     </SidebarProvider>
   );
 }

@@ -13,7 +13,6 @@ import AgentForm from "./components/AgentForm";
 import BoardView from "./components/BoardView";
 import MetricsView from "./components/MetricsView";
 import ToolMetricsView from "./components/ToolMetricsView";
-import AgentChatPanel from "./components/AgentChatPanel";
 import SettingsPage from "./components/SettingsPage";
 import PlanView from "./components/PlanView";
 import ActivityPage from "./pages/ActivityPage";
@@ -36,7 +35,7 @@ export default function App() {
     <>
       <ChatContext.Provider value={{ injectTask }}>
         <Routes>
-          <Route element={<Layout chatOpen={chatOpen} />}>
+          <Route element={<Layout chatOpen={chatOpen} onChatOpenChange={setChatOpen} onChatReady={handleChatReady} />}>
             <Route index element={<ActivityPage />} />
             <Route path="/runs" element={<RunList />} />
             <Route path="/runs/new" element={<CreateRunForm />} />
@@ -55,7 +54,6 @@ export default function App() {
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Routes>
-        <AgentChatPanel onOpenChange={setChatOpen} onChatReady={handleChatReady} />
       </ChatContext.Provider>
     </>
   );

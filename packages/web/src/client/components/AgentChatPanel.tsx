@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, Mic, MicOff, Volume2, VolumeX, MessageSquarePlus } from "lucide-react";
+import { Send, Mic, MicOff, Volume2, VolumeX, X } from "lucide-react";
 import { DrumLogo } from "./app-sidebar";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import type { Task } from "@/lib/types";
 
 interface ChatMessage {
@@ -59,17 +58,12 @@ function messageKey(m: ChatMessage): string {
 }
 
 interface AgentChatPanelProps {
+  open?: boolean;
   onOpenChange?: (open: boolean) => void;
   onChatReady?: (api: { injectTask: (task: Task, projectName: string) => void }) => void;
 }
 
-export default function AgentChatPanel({ onOpenChange, onChatReady }: AgentChatPanelProps) {
-  const [open, setOpen] = useState(false);
-
-  function handleOpenChange(next: boolean) {
-    setOpen(next);
-    onOpenChange?.(next);
-  }
+export default function AgentChatPanel({ open, onOpenChange, onChatReady }: AgentChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [input, setInput] = useState("");
@@ -278,13 +272,13 @@ function sanitizeForSpeech(text: string): string {
     if (!onChatReady) return;
     onChatReady({
       injectTask(task, projectName) {
-        setOpen(true);
+        onOpenChange?.(true);
         const msg = formatTaskContext(task, projectName);
         sendText(msg);
       },
     });
     return () => onChatReady({ injectTask: () => {} });
-  }, [onChatReady, sendText]);
+  }, [onChatReady, sendText, onOpenChange]);
 
   async function handleSend() {
     const text = input.trim();
@@ -293,24 +287,31 @@ function sanitizeForSpeech(text: string): string {
     await sendText(text);
   }
 
-  if (available === false) return null;
-
   return (
-    <Sheet open={open} onOpenChange={handleOpenChange}>
-      <SheetTrigger asChild>
+    <>
+      {available !== false && (
         <button
+          onClick={() => onOpenChange?.(!open)}
           className="fixed bottom-4 right-4 z-50 w-12 h-12 rounded-md bg-accent text-surface shadow-lg hover:bg-accent/80 flex items-center justify-center"
-          title="Chat with manager agent"
+          title={open ? "Close chat" : "Chat with manager agent"}
         >
           <DrumLogo playing={false} size={40} />
         </button>
-      </SheetTrigger>
-      <SheetContent side="right" className="w-96 sm:max-w-md p-0 flex flex-col">
-        {/* Header */}
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-surface-raised pr-10">
-          <div className={`w-2 h-2 rounded-full ${available === null ? "bg-phase-pending" : available ? "bg-phase-succeeded" : "bg-phase-failed"}`} />
-          <span className="font-medium text-sm text-text">Manager Agent</span>
-        </div>
+      )}
+
+      {open && (
+        <div className="w-96 flex-shrink-0 border-l border-border flex flex-col bg-background h-full">
+          {/* Header */}
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-surface-raised">
+            <div className={`w-2 h-2 rounded-full ${available === null ? "bg-phase-pending" : available ? "bg-phase-succeeded" : "bg-phase-failed"}`} />
+            <span className="font-medium text-sm text-text">Manager Agent</span>
+            <button
+              onClick={() => onOpenChange?.(false)}
+              className="ml-auto rounded-sm opacity-70 hover:opacity-100 transition-opacity text-text-dim hover:text-text"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
@@ -426,7 +427,8 @@ function sanitizeForSpeech(text: string): string {
               )}
             </form>
         </div>
-      </SheetContent>
-    </Sheet>
+      </div>
+      )}
+    </>
   );
 }
