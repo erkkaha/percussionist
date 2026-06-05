@@ -334,6 +334,8 @@ The web server uses bun:sqlite via Drizzle ORM. Schema and migrations are manage
 
 **Tables:** `runs`, `messages`, `toolCalls`, `fileOps`, `taskEvents` (append-only audit log of `Task` state transitions — live task state is authoritative in the CRD status subresource).
 
+**Tool Metrics:** Tool usage data comes from `toolCalls` (extracted from message parts by the dispatcher's `stats-reporter.ts`), NOT from `toolEvents` (which was based on SSE events and was removed — OpenCode's SSE stream does not emit `tool.started`/`tool.finished`). The `GET /api/stats/tool-metrics?days=30&agent=X` endpoint queries `toolCalls` joined with `runs` and `messages` for agent breakdown and estimated token cost per tool.
+
 **Key files:**
 - `packages/web/src/server/schema.ts` — Drizzle table definitions (single source of truth; no driver imports, safe for drizzle-kit)
 - `packages/web/src/server/db.ts` — DB singleton; calls `migrate()` on first open
@@ -361,6 +363,7 @@ Do not add `ALTER TABLE` try/catch blocks to `db.ts`. Do not duplicate DDL as ra
 - CamelCase for TS, kebab-case for YAML
 - `runXxx` prefix for CLI action functions in `@percussionist/cli`
 - **`undefined` in merge-patches is silently dropped**: `JSON.stringify` strips `undefined` values, so a K8s merge-patch with `{ foo: undefined }` serializes to `{}` — the field is never cleared. Always use `null` to remove a field in a status patch or annotation patch passed to `patchTask` / `patchTaskStatus`.
+- **Drizzle `sql` template with table aliases**: When using `${table.column}` inside a raw `sql\`...\`` template with a table alias (e.g. `FROM tool_calls tc2`), the column reference expands to `"table"."column"` — so `tc2.${toolCalls.sessionId}` generates `tc2."tool_calls"."session_id"` (broken). Always use the raw column name as a string on the aliased side: `tc2.session_id` not `tc2.${toolCalls.sessionId}`. The right side of a comparison can still use `${toolCalls.sessionId}` to reference the outer query's column.
 
 ## MCP Server Configuration
 
@@ -573,6 +576,16 @@ If a deployment step fails (e.g. image not found), stop. Don't:
 - Rebuild other images
 - Recreate the cluster
 Each of these compounds the problem. Stop and ask the human.
+
+**5. Never `kubectl cp` + `kill 1` to hot-reload code on a running pod.**
+This is a more insidious form of hot-deploying. `kubectl cp` copies files into the
+container's writable overlay layer, which vanishes on pod reschedule. The deployment
+controller may replace the pod before you finish, leaving you thinking the fix is
+applied when it isn't. Additionally:
+- `kubectl cp` with a directory silently does nothing if the target exists (no error)
+- Multiple replicas mean you never know which pod serves your request
+- `kill 1` restarts the container but the copied files may not persist across restart
+- The pod's image is baked from git — only commit/tag/push/CI produces consistent results
 
 ### The correct deploy flow
 
