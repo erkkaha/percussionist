@@ -110,6 +110,17 @@ export interface RunnerImageSpec {
   configMapKey: string;
 }
 
+// ---------------------------------------------------------------------------
+// Runner tool packages
+//
+// System packages (apk) installed into every run pod for this project.
+// Declared at the project level, inherited by all runs.
+
+export const RunnerPackagesSchema = z.object({
+  packages: z.array(z.string()).max(50).optional(),
+}).optional();
+export type RunnerPackages = z.infer<typeof RunnerPackagesSchema>;
+
 /** Default RunnerImageSpec — points at the opencode runtime. */
 export const OPENCODE_RUNNER_DEFAULTS: RunnerImageSpec = {
   image: "ghcr.io/anomalyco/opencode:latest",
@@ -148,6 +159,19 @@ export const CodeServerSpecSchema = z.object({
   resources: ResourceRequirementsSchema.optional(),
 });
 export type CodeServerSpec = z.infer<typeof CodeServerSpecSchema>;
+
+export const MEMORY_SERVICE_PORT = 4100;
+export const MEMORY_SERVICE_DEFAULT_IMAGE = "ghcr.io/erkkaha/percussionist/memory:latest";
+
+// Embedding / vector memory configuration for per-project memory service.
+export const EmbeddingSpecSchema = z.object({
+  enabled: z.boolean().default(false),
+  model: z.string().default("nomic-embed-text"),
+  dimensions: z.number().int().default(768),
+  ollamaUrl: z.string().optional(),
+  resources: ResourceRequirementsSchema.optional(),
+});
+export type EmbeddingSpec = z.infer<typeof EmbeddingSpecSchema>;
 
 // DEPRECATED — cluster-level secrets are managed via ClusterSettings.
 // This schema is kept for backwards compatibility only.
@@ -274,8 +298,10 @@ export const SidecarSpecSchema = z.object({
 export type SidecarSpec = z.infer<typeof SidecarSpecSchema>;
 
 // A reference to a ClusterAgent by name.
+// Optional `model` overrides the project-level default for this agent specifically.
 export const AgentRefSchema = z.object({
   name: z.string().min(1).max(63),
+  model: z.string().optional(),
 });
 
 export type AgentRef = z.infer<typeof AgentRefSchema>;
@@ -295,6 +321,8 @@ export type AgentDef = z.infer<typeof AgentDefSchema>;
 export const ClusterAgentSpecSchema = z.object({
   // Full .md file contents (YAML front-matter + system prompt). Max 100KB.
   content: z.string().max(102400),
+  // Optional model override for runs using this agent. Resolved between board and project level.
+  model: z.string().optional(),
 });
 
 export type ClusterAgentSpec = z.infer<typeof ClusterAgentSpecSchema>;
@@ -516,6 +544,9 @@ export const RunSpecSchema = z
         worktreeReuse: z.boolean().default(true),
       })
       .optional(),
+
+    // System packages inherited from project or overridden per-run.
+    runner: RunnerPackagesSchema,
   })
   .refine((s) => s.interactive || !!s.task, {
     message: "spec.task is required unless spec.interactive is true",
@@ -644,6 +675,8 @@ export const TaskPhase = z.enum([
   "awaiting-merge",    // Merge run in progress
   "rework-requested",  // Human gave feedback, waiting for scheduling slot
   "generating-builds", // PLAN-only: buildgen facilitator splitting into tasks
+  "awaiting-children",     // Waiting for all child tasks to complete
+  "awaiting-feature-merge", // Feature branch merge run in progress
   // Terminal
   "done",              // Complete
   // Failure
@@ -738,6 +771,17 @@ export type ManagerMetrics = z.infer<typeof ManagerMetricsSchema>;
 
 // Project-level board status summary — only lightweight metrics remain here.
 // Full task state lives in Task CRs.
+export const SuggestionSchema = z.object({
+  type: z.enum(["missing_tool", "performance", "reliability"]),
+  severity: z.enum(["info", "suggestion", "warning"]),
+  source: z.string(),
+  message: z.string(),
+  recommendation: z.string(),
+  taskName: z.string().optional(),
+  createdAt: z.string(),
+});
+export type Suggestion = z.infer<typeof SuggestionSchema>;
+
 export const BoardStatusSchema = z.object({
   activeWorkers: z.number().int().min(0).default(0),
   escalations: z.string().array().optional(),
@@ -746,6 +790,8 @@ export const BoardStatusSchema = z.object({
   lastEventAt: z.string().optional(),
   /** Manager reconciliation metrics — written by manager-controller. */
   managerMetrics: ManagerMetricsSchema.optional(),
+  /** Tool gap analysis suggestions. */
+  suggestions: SuggestionSchema.array().optional(),
 });
 
 export type BoardStatus = z.infer<typeof BoardStatusSchema>;
@@ -855,17 +901,25 @@ export const ProjectSpecSchema = z.object({
     plan: z.object({
       onApprove: z.enum(["generate-builds", "done"]).default("generate-builds").optional(),
       buildGeneration: z.enum(["ai", "manual", "disabled"]).default("ai").optional(),
+      buildGenerationAgent: z.string().max(63).default("buildgen").optional(),
+      defaultAgent: z.string().max(63).default("planner").optional(),
     }).optional(),
     build: z.object({
       onSuccess: z.enum(["human-review", "ai-review", "done"]).default("human-review").optional(),
       onApprove: z.enum(["merge", "done"]).default("merge").optional(),
+      defaultAgent: z.string().max(63).default("builder").optional(),
     }).optional(),
     merge: z.object({
       mode: z.enum(["auto", "manual", "disabled"]).default("auto").optional(),
+      agent: z.string().max(63).default("integrator").optional(),
+    }).optional(),
+    integration: z.object({
+      mode: z.enum(["auto-merge", "manual", "disabled"]).default("auto-merge").optional(),
+      agent: z.string().max(63).default("integrator").optional(),
     }).optional(),
     review: z.object({
       aiReviewerEnabled: z.boolean().default(false).optional(),
-      aiReviewerAgent: z.string().max(63).default("reviewer").optional(),
+      agent: z.string().max(63).default("reviewer").optional(),
       maxAutoReworks: z.number().int().min(1).max(10).default(2).optional(),
     }).optional(),
     retry: z.object({
@@ -888,6 +942,16 @@ export const ProjectSpecSchema = z.object({
   // Requires source.git or source.local (needs a data PVC to mount).
   // Access via kubectl port-forward, or configure ingress in infrastructure.
   codeServer: CodeServerSpecSchema.optional(),
+
+  // Per-project memory service with vector embeddings for agent context/memory.
+  // Requires source.git or source.local (needs a data PVC to mount).
+  // When enabled, the operator deploys a memory-{project} Deployment + Service
+  // that stores and searches semantic vectors via bun:sqlite + sqlite-vec.
+  embedding: EmbeddingSpecSchema.optional(),
+
+  // System packages (apk) installed into every run pod for this project.
+  // Declared once on the project, inherited by all runs and board workers.
+  runner: RunnerPackagesSchema,
 });
 
 export type ProjectSpec = z.infer<typeof ProjectSpecSchema>;
@@ -1098,6 +1162,7 @@ export interface ResolvedRunConfig {
   initScript?: string;
   data?: { pvcName?: string; mountPath?: string; storageClass?: string };
   gitCache?: { worktreeReuse?: boolean };
+  packages?: string[];
 }
 
 // clusterBase — optional cluster-level defaults from ClusterSettings.spec.
@@ -1141,6 +1206,7 @@ export function resolveRunConfig(
     initScript: project.initScript,
     data: runOverrides?.data ?? project.data,
     gitCache: runOverrides?.gitCache ?? project.gitCache,
+    packages: runOverrides?.packages ?? project.runner?.packages,
   };
 }
 

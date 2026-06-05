@@ -90,10 +90,6 @@ export const fileOps = sqliteTable(
   ],
 );
 
-// ---------------------------------------------------------------------------
-// Task events — append-only audit log of Task state transitions.
-// CRDs are authoritative for live task state; this table is for history/analytics.
-
 export const taskEvents = sqliteTable(
   "task_events",
   {

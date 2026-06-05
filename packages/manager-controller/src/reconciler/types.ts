@@ -16,7 +16,7 @@ export interface ResolvedConfig {
   };
   reviewPolicy: {
     aiReviewerEnabled: boolean;
-    aiReviewerAgent: string;
+    agent: string;
     maxAutoReworks: number;
   };
   flow: ResolvedFlow;

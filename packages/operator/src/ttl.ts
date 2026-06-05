@@ -11,7 +11,9 @@ import {
   type Run,
   type ClusterSettings,
 } from "@percussionist/api";
-import { co, NAMESPACE } from "./reconciler.js";
+import { CoreV1Api } from "@kubernetes/client-node";
+import { co, kc, NAMESPACE } from "./reconciler.js";
+const coreV1 = kc.makeApiClient(CoreV1Api);
 
 const log = (...args: unknown[]) =>
   console.log(`[ttl ${new Date().toISOString()}]`, ...args);
@@ -81,6 +83,7 @@ export async function runTTLCleanup(): Promise<void> {
       });
       log(`deleted expired Run ${name} (past ${ttlDays}d TTL)`);
       deleted++;
+      cleanupExpiredRunWorktree(run).catch(() => {});
     } catch (e: unknown) {
       if (!isNotFound(e)) {
         err(`delete Run ${name}:`, (e as Error).message);
@@ -90,6 +93,93 @@ export async function runTTLCleanup(): Promise<void> {
 
   if (deleted > 0) {
     log(`cleanup complete: ${deleted} Run(s) deleted`);
+  }
+}
+
+/**
+ * djb2-style hex hash — must match the hash function in pod-builder.ts.
+ */
+function mirrorHash(url: string): string {
+  let h = 5381;
+  for (let i = 0; i < url.length; i++) {
+    h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/**
+ * Spawn a fire-and-forget pod to remove a run's worktree directory from the PVC.
+ */
+async function cleanupExpiredRunWorktree(run: Run): Promise<void> {
+  const runName = run.metadata.name;
+  const projectName = run.metadata.labels?.["percussionist.dev/project"];
+  if (!projectName) return;
+
+  const dataMountPath = "/data";
+  const worktreeDir = `${dataMountPath}/worktrees/${runName}`;
+  const gitUrl = (run.spec as { source?: { git?: { url?: string } } } | undefined)?.source?.git?.url;
+
+  const scriptLines: string[] = [
+    "set -e",
+    `echo "[cleanup-ttl] removing worktree ${worktreeDir}"`,
+    `rm -rf ${worktreeDir}`,
+  ];
+
+  if (gitUrl) {
+    const hash = mirrorHash(gitUrl);
+    const mirrorDir = `${dataMountPath}/git-mirrors/${hash}`;
+    scriptLines.push(
+      `if [ -d "${mirrorDir}" ]; then`,
+      `  echo "[cleanup-ttl] pruning mirror ${mirrorDir}"`,
+      `  git -C "${mirrorDir}" worktree prune --expire=now 2>/dev/null || true`,
+      "fi",
+    );
+  }
+
+  scriptLines.push('echo "[cleanup-ttl] done"');
+
+  const podName = `cleanup-ttl-${runName}`
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .slice(0, 63)
+    .replace(/-+$/, "");
+
+  const pod = {
+    apiVersion: "v1",
+    kind: "Pod",
+    metadata: { name: podName, namespace: NAMESPACE },
+    spec: {
+      restartPolicy: "Never",
+      containers: [
+        {
+          name: "cleanup",
+          image: "alpine/git",
+          imagePullPolicy: "IfNotPresent",
+          command: ["/bin/sh", "-c"],
+          args: [scriptLines.join("\n")],
+          resources: {
+            requests: { cpu: "50m", memory: "64Mi" },
+            limits: { cpu: "200m", memory: "256Mi" },
+          },
+          volumeMounts: [{ name: "data", mountPath: dataMountPath }],
+        },
+      ],
+      volumes: [
+        {
+          name: "data",
+          persistentVolumeClaim: { claimName: `${projectName}-data` },
+        },
+      ],
+    },
+  };
+
+  try {
+    await coreV1.createNamespacedPod({ namespace: NAMESPACE, body: pod });
+    log(`cleanup pod ${podName} created for run ${runName}`);
+  } catch (e: unknown) {
+    if ((e as { statusCode?: number }).statusCode !== 409) {
+      err(`cleanup pod for ${runName}:`, (e as Error).message);
+    }
   }
 }
 

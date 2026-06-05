@@ -35,6 +35,8 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 - **Provider auth** — OAuth tokens (GitHub Copilot, ChatGPT Plus, Claude Pro)
   imported once and shared cluster-wide via Kubernetes Secrets.
 - **Manager agent** — the manager controller embeds an OpenCode agent (opencode-web sidecar) with K8s tool access, a decision engine that diagnoses failures and parses ambiguous output, and an interactive chat API. Chat via the web dashboard or `beatctl chat`.
+- **Vector memory** — per-project semantic memory service with LLM-powered context injection (`RELEVANT PROJECT CONTEXT:` in worker prompts) and automatic session summarization on run completion; summaries are stored in ConfigMaps and the vector database for use by BUILD task generators.
+- **Runner packages** — declare Alpine packages (`spec.runner.packages`) that get installed at pod init time; the manager injects `AVAILABLE SYSTEM TOOLS:` into agent prompts so agents know what's available.
 
 ## Repo layout
 
@@ -66,6 +68,7 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 │   ├── operator/        # CRD reconciler (informer + reconciler loop)
 │   ├── dispatcher/      # Sidecar: session driver + MCP server (fail_run, get_status)
 │   ├── manager-controller/  # Board controller + decision engine + MCP tools
+│   ├── memory-service/      # Per-project vector embedding service (Bun + sqlite-vec)
 │   ├── web/             # Dashboard SPA + Hono server + bun:sqlite stats DB
 │   └── cli/             # beatctl — user-facing CLI
 └── scripts/            # Cluster image loader + smoke test helpers
@@ -228,8 +231,8 @@ flowchart TD
   patches the CR to `Succeeded` (or `Failed` on error) and exits. A 1-hour
   hard timeout guard exits with code 3 if the run stalls indefinitely. The
   dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
-  - `complete_run(...)` — signal BUILD task completion (validates commit+push+PR)
-  - `complete_plan(...)` — signal PLAN task completion (validates commit+push only)
+  - `complete_run(...)` — signal BUILD task completion
+  - `complete_plan(...)` — signal PLAN task completion
   - `fail_run(reason)` — signal task failure, triggering facilitator analysis
   - `get_status()` — return current run state (phase, session ID, tokens)
 - **sidecar containers** (`spec.sidecars[]`) are user-defined pods that start
@@ -397,8 +400,8 @@ flowchart TD
   patches the CR to `Succeeded` (or `Failed` on error) and exits. A 1-hour
   hard timeout guard exits with code 3 if the run stalls indefinitely. The
   dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
-  - `complete_run(...)` — signal BUILD task completion (validates commit+push+PR)
-  - `complete_plan(...)` — signal PLAN task completion (validates commit+push only)
+  - `complete_run(...)` — signal BUILD task completion
+  - `complete_plan(...)` — signal PLAN task completion
   - `fail_run(reason)` — signal task failure, triggering facilitator analysis
   - `get_status()` — return current run state (phase, session ID, tokens)
 - **sidecar containers** (`spec.sidecars[]`) are user-defined pods that start
@@ -664,7 +667,7 @@ Typical improvements for a monorepo with ~100 packages:
 
 ### GitHub token (`gh` CLI authentication)
 
-To allow the agent to use `gh` CLI (create PRs, comment on issues, etc.),
+To allow the agent to use `gh` CLI (push, create PRs, comment on issues, etc.),
 provide a GitHub personal access token stored in a Kubernetes Secret:
 
 ```bash
@@ -772,6 +775,8 @@ Tasks are standalone `Task` CRs (not embedded in the project spec).
 | `spec.maxParallel` | int | 2 | WIP limit: max concurrent worker runs (1–20) |
 | `spec.agents[]` | AgentRef[] | — | ClusterAgent names available as task assignees |
 | `spec.phase` | enum | Active | Board lifecycle: Active / Complete / Archived |
+| `spec.embedding` | EmbeddingSpec | optional | Per-project vector memory configuration. See [Vector Memory](#vector-memory) below. |
+| `spec.runner` | RunnerPackages | optional | Alpine packages installed in every run pod. See [Runner Packages](#runner-packages) below. |
 
 ### Task fields
 
@@ -1293,3 +1298,148 @@ http://percussionist-web.<namespace>.svc.cluster.local:8080
 
 Override by setting `WEB_STATS_URL` on the operator Deployment if the web pod
 lives elsewhere. Set it to an empty string to disable stats collection entirely.
+
+## Vector Memory
+
+Percussionist provides a per-project vector memory service that enables
+semantic context injection and automatic session summarization.
+
+### Architecture
+
+When you set `spec.embedding.enabled: true` on a Project:
+1. The operator deploys a `memory-{project}` Deployment + Service running a
+   Bun server with bun:sqlite and the sqlite-vec vector extension.
+2. The memory service calls Ollama's embedding API to generate 768-dimensional
+   vectors (configurable via `spec.embedding.model` and `spec.embedding.dimensions`).
+3. The manager controller's MCP tools and prompt builder interact with the
+   memory service via cluster DNS at `http://memory-{project}.percussionist.svc.cluster.local:4100`.
+
+### Features
+
+#### Context Injection in Worker Prompts
+
+When `buildWorkerRun()` prepares a task's prompt (in `worker-builder.ts`), it
+queries the memory service for relevant context using the task's description
+and title as the semantic query. Matching memories are injected as:
+
+```
+RELEVANT PROJECT CONTEXT:
+[1] (relevance: 0.923)
+<memory content>
+```
+
+This gives each worker agent visibility into past relevant decisions, findings,
+and session summaries without manual context loading.
+
+#### Automatic Session Summarization
+
+When a worker run reaches `Succeeded` or `Failed` phase, and
+`spec.embedding.enabled: true`, the manager fires a fire-and-forget
+`SummarizeSession` effect:
+
+1. **Reads session data** from the dispatcher's ConfigMap snapshot
+2. **Compacts messages** to fit within the LLM context window (60K chars max)
+3. **Calls the LLM** via the manager's opencode-web sidecar with a summarization prompt
+4. **Stores the summary** in:
+   - The `{runName}-session` ConfigMap as `summary-{sessionID}` (up to 16K chars)
+   - The vector memory database, tagged as `type: "session-summary"`, for future
+     context retrieval
+
+Summaries are idempotent — if a summary already exists for a session ID, the
+summarizer skips it.
+
+#### BUILD Task Generator Reads Summaries
+
+The BUILD task generation facilitator (`buildBuildTaskGeneratorRun()` in
+`facilitator.ts`) reads stored session summaries from the `{runName}-session`
+ConfigMap before constructing its prompt. It scans for any `summary-*` key
+and includes the content as `PLAN SESSION CONTEXT:` in the buildgen agent's
+prompt. If no stored summary is available, it falls back to the task description.
+
+### Configuration
+
+```yaml
+apiVersion: percussionist.dev/v1alpha1
+kind: Project
+metadata:
+  name: my-project
+spec:
+  source:
+    git:
+      url: https://github.com/example/repo.git
+  embedding:
+    enabled: true
+    model: nomic-embed-text    # Ollama embedding model (default)
+    dimensions: 768             # Vector dimensions (default)
+    ollamaUrl: http://ollama:11434  # Ollama service URL (default: cluster DNS)
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+```
+
+### Prerequisites
+
+The cluster must have Ollama running with an embedding model:
+
+```bash
+kubectl apply -f k8s/deploy/ollama.yaml
+kubectl -n percussionist wait --for=condition=Ready pod -l app.kubernetes.io/component=ollama
+kubectl exec -n percussionist deploy/ollama -- ollama pull nomic-embed-text
+```
+
+### MCP Tools
+
+When the memory service is enabled, the manager MCP server (port 4097) exposes
+three related tools to agents:
+
+| Tool | Description |
+|------|-------------|
+| `store_memory(project, content, metadata?)` | Store a memory with semantic embedding |
+| `query_memory(project, query, limit?)` | Semantic search across stored memories |
+| `get_context(project, query, task?)` | Get relevant context formatted for prompt injection |
+
+## Runner Packages
+
+Projects can declare Alpine Linux packages to install in every run pod
+via `spec.runner.packages`. These are installed at pod initialization
+time in the workspace-init container through `apk add`.
+
+### Enable
+
+```yaml
+apiVersion: percussionist.dev/v1alpha1
+kind: Project
+metadata:
+  name: my-project
+spec:
+  runner:
+    packages:
+      - ripgrep
+      - jq
+      - tree
+```
+
+### How it works
+
+1. The workspace-init container runs `apk update --quiet && apk add --no-cache <packages>`
+   before git mirror fetch or worktree setup.
+2. All declared packages are available via `$PATH` in the runner pod.
+3. The manager injects the package list as `AVAILABLE SYSTEM TOOLS:` in the
+   agent prompt so agents know what's available without manual discovery.
+4. Per-run override via `spec.runner.packages` on a Run CR.
+
+### Manager MCP tools
+
+| Tool | Description |
+|------|-------------|
+| `list_available_packages(project)` | Returns the packages declared for a project |
+| `install_packages(project, packages)` | Installs ad-hoc packages via a maintenance pod (not persistent across restarts) |
+
+### Base image
+
+Packages are installed on top of the runner image
+(`ghcr.io/erkkaha/percussionist/runner:latest`). The base image always
+includes git, openssh, node, npm, bash, curl, unzip, and github-cli.

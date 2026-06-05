@@ -261,7 +261,7 @@ async function handleStream(req: IncomingMessage, res: ServerResponse): Promise<
             if (part.type === "text" && part.text) text += part.text;
           }
           if (text) {
-            res.write(`data: ${JSON.stringify({ role: "assistant", text, completed: !!msg.info?.time?.completed })}\n\n`);
+            res.write(`data: ${JSON.stringify({ role: "assistant", text, completed: !!msg.info?.time?.completed, id: msg.info?.id, created: msg.info?.time?.created })}\n\n`);
           }
         }
       }

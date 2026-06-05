@@ -5,6 +5,7 @@ import { observe, getConsumedAnnotationKeys } from "./observations.js";
 import { decide } from "./decision.js";
 import { executeEffects } from "./effects.js";
 import { persistEvent } from "./audit.js";
+import { emitEvent } from "../events.js";
 import { resolveFlow } from "./flow.js";
 import { byPriority, isActivePhase } from "./scheduler.js";
 
@@ -48,14 +49,16 @@ export async function reconcileProject(
       // Decide: pure function returns next phase, effects, and audit events.
       const decision = decide(input);
 
-      if (!decision.toPhase) {
-        // No decision — task stays in current phase.
+      if (!decision.toPhase && !decision.effects.length && !decision.statusPatch) {
+        // No decision — task stays in current phase with no side effects.
         continue;
       }
 
-      console.log(
-        `[reconcile] ${task.metadata.name} transitioning: ${phase} → ${decision.toPhase}`,
-      );
+      if (decision.toPhase) {
+        console.log(
+          `[reconcile] ${task.metadata.name} transitioning: ${phase} → ${decision.toPhase}`,
+        );
+      }
 
       // Execute: apply effects and patch status.
       const result = await executeEffects(
@@ -77,14 +80,22 @@ export async function reconcileProject(
         continue;
       }
 
-      // Persist audit events.
+      // Persist audit events to K8s Events and SQLite (via web service).
       const taskUid = task.metadata.uid ?? "";
       for (const event of decision.events) {
         await persistEvent(event, namespace, task.metadata.name, taskUid);
+        emitEvent(
+          event.project,
+          event.task,
+          task.spec.type,
+          event.reason,
+          { fromPhase: event.fromPhase, toPhase: event.toPhase, message: event.message, effects: event.effects },
+        );
       }
 
       // Adjust active count only when membership changes.
-      const nowActive = isActivePhase(decision.toPhase);
+      const newPhase = decision.toPhase ?? phase;
+      const nowActive = isActivePhase(newPhase);
       if (wasActive && !nowActive) {
         activeCount--;
       } else if (!wasActive && nowActive) {

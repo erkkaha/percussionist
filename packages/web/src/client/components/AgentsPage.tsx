@@ -7,6 +7,7 @@ import { deleteAgent } from "../lib/api";
 interface AgentListItem {
   name: string;
   content: string;
+  model?: string;
 }
 
 function age(iso: string | undefined): string {
@@ -41,6 +42,9 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
     <tr className="hover:bg-surface-raised/60 transition-colors">
       <td className="px-4 py-3 font-medium text-text font-mono text-sm">
         {agent.name}
+      </td>
+      <td className="px-4 py-3 text-text-muted font-mono text-xs">
+        {agent.model ?? "-"}
       </td>
       <td className="px-4 py-3 text-text-muted font-mono text-xs max-w-md truncate" title={agent.content}>
         {truncate(agent.content, 120)}
@@ -119,7 +123,9 @@ export default function AgentsPage() {
             {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="px-4 py-4 flex gap-6">
                 <div className="h-4 w-32 rounded bg-surface-overlay animate-pulse" />
+                <div className="h-4 w-32 rounded bg-surface-overlay animate-pulse" />
                 <div className="h-4 w-48 rounded bg-surface-overlay animate-pulse" />
+                <div className="h-4 w-16 rounded bg-surface-overlay animate-pulse" />
                 <div className="h-4 w-16 rounded bg-surface-overlay animate-pulse" />
               </div>
             ))}
@@ -139,6 +145,7 @@ export default function AgentsPage() {
             <thead>
               <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
                 <th className="px-4 py-2.5 font-medium">Name</th>
+                <th className="px-4 py-2.5 font-medium">Model</th>
                 <th className="px-4 py-2.5 font-medium">Content Preview</th>
                 <th className="px-4 py-2.5 font-medium">Age</th>
                 <th className="px-4 py-2.5 font-medium" />

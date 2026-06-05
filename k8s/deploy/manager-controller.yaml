@@ -52,7 +52,7 @@ rules:
     verbs: ["get", "list", "create", "delete"]
   - apiGroups: [""]
     resources: ["events"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "create"]
   # Deployments — read image tags and patch for upgrades.
   - apiGroups: ["apps"]
     resources: ["deployments"]

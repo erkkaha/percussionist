@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAgent } from "../hooks/useAgent";
 import { submitAgent, updateAgent as apiUpdateAgent } from "../lib/api";
+import ModelSelector from "./ModelSelector";
 
 export default function AgentForm() {
   const { name: editName } = useParams<{ name: string }>();
@@ -12,6 +13,7 @@ export default function AgentForm() {
 
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
+  const [model, setModel] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   // Load existing agent when editing.
@@ -19,9 +21,10 @@ export default function AgentForm() {
     if (!isEdit) return;
     fetch(`/api/agents/${encodeURIComponent(editName!)}`)
       .then((r) => r.json())
-      .then((data: { metadata?: { name?: string }; spec?: { content?: string } }) => {
+      .then((data: { metadata?: { name?: string }; spec?: { content?: string; model?: string } }) => {
         setName(data.metadata?.name ?? "");
         setContent(data.spec?.content ?? "");
+        setModel(data.spec?.model ?? "");
       })
       .catch(() => {});
   }, [isEdit, editName]);
@@ -31,9 +34,9 @@ export default function AgentForm() {
     setSubmitting(true);
     try {
       if (isEdit) {
-        await apiUpdateAgent(name.trim(), { content });
+        await apiUpdateAgent(name.trim(), { content, model: model || undefined });
       } else {
-        await submitAgent({ name: name.trim(), content });
+        await submitAgent({ name: name.trim(), content, model: model || undefined });
       }
       queryClient.invalidateQueries({ queryKey: ["agents"] });
       navigate("/settings?tab=agents");
@@ -76,6 +79,15 @@ export default function AgentForm() {
             onChange={(e) => setName(e.target.value)}
             placeholder="agent-name (lowercase alphanumeric + hyphens)"
             className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm font-mono text-text placeholder:text-text-dim focus:outline-none focus:border-accent/60"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-text-muted">Model</label>
+          <ModelSelector
+            value={model}
+            onChange={setModel}
+            placeholder="e.g. anthropic/claude-sonnet-4-20250514"
           />
         </div>
 

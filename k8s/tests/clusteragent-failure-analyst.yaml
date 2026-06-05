@@ -1,11 +1,11 @@
 apiVersion: percussionist.dev/v1alpha1
 kind: ClusterAgent
 metadata:
-  name: facilitator-failure
+  name: failure-analyst
 spec:
   content: |
     ---
-    name: facilitator-failure
+    name: failure-analyst
     ---
     You are a failure-analysis facilitator agent. You analyze failed worker task
     runs and recommend a course of action.

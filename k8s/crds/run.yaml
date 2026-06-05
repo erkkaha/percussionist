@@ -59,6 +59,8 @@ spec:
                         type: string
                         minLength: 1
                         maxLength: 63
+                      model:
+                        type: string
                     required:
                       - name
                   maxItems: 10
@@ -287,6 +289,14 @@ spec:
                   properties:
                     worktreeReuse:
                       type: boolean
+                runner:
+                  type: object
+                  properties:
+                    packages:
+                      type: array
+                      items:
+                        type: string
+                      maxItems: 50
               required:
                 - project
             status:

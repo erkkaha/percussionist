@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchBoard, deleteBoardTask, retryEscalatedTask, approveTask, requestChangesTask } from "../lib/api";
 import type { Task, ManagerMetrics } from "../lib/types";
@@ -30,7 +30,8 @@ export default function BoardView() {
   }, [eventTick, projectName, queryClient]);
 
   const [showAddTask, setShowAddTask] = useState(false);
-  const [selectedTaskName, setSelectedTaskName] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedTaskName = searchParams.get("task") ?? null;
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const allTasks: Task[] = data ? Object.values(data.columns).flat() : [];
@@ -39,9 +40,9 @@ export default function BoardView() {
 
   const deleteMutation = useMutation({
     mutationFn: (taskName: string) => deleteBoardTask(projectName, taskName),
-    onSuccess: (_data, taskName) => {
+    onSuccess: () => {
       invalidateBoard();
-      setSelectedTaskName((prev) => (prev === taskName ? null : prev));
+      setSearchParams({}, { replace: true });
       setSheetOpen(false);
     },
   });
@@ -65,7 +66,7 @@ export default function BoardView() {
   useBoardNotifications(projectName, allTasks);
 
   const handleSelectTask = (name: string) => {
-    setSelectedTaskName(name);
+    setSearchParams({ task: name }, { replace: true });
     // Only open the sheet on mobile (below md breakpoint).
     // On desktop the detail panel is rendered inline; opening the Sheet would
     // trigger its backdrop overlay even though SheetContent is hidden via CSS.
@@ -76,7 +77,7 @@ export default function BoardView() {
 
   const handleSheetClose = (open: boolean) => {
     setSheetOpen(open);
-    if (!open) setSelectedTaskName(null);
+    if (!open) setSearchParams({}, { replace: true });
   };
 
   // Stabilise approvals reference so TaskDetailPanel's memo comparator isn't
@@ -106,7 +107,7 @@ export default function BoardView() {
       col={selectedCol}
       projectName={projectName}
       approvals={approvals}
-      onDeleted={() => { setSelectedTaskName(null); setSheetOpen(false); }}
+      onDeleted={() => { setSearchParams({}, { replace: true }); setSheetOpen(false); }}
     />
   ) : null;
 

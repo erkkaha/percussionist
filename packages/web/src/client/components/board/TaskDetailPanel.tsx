@@ -1,5 +1,5 @@
 // TaskDetailPanel.tsx — tabbed detail view for a selected task.
-// Shows: Overview, Session (live), Logs, Plan (PLAN tasks only).
+// Shows: Overview, Runs (with per-run Session/Logs), Events, Plan (PLAN tasks only).
 // Actions: Approve, Request Changes, Retry, Delete.
 
 import { useState, memo } from "react";
@@ -9,21 +9,22 @@ import {
   ExternalLink, Check, X, Trash2, Flag, User,
   Wrench, FileText, RefreshCw, MousePointerClick, ArrowRight,
 } from "lucide-react";
-import { useRun } from "../../hooks/useRun";
-import { useRunEvents } from "../../hooks/useRunEvents";
 import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan, moveTask } from "../../lib/api";
-import { TERMINAL_PHASES } from "../../lib/types";
-import type { Task } from "../../lib/types";
-import SessionView from "../SessionView";
-import LogViewer from "../LogViewer";
+import type { Task, Run } from "../../lib/types";
+import { useTaskRuns } from "../../hooks/useTaskRuns";
+import { useTaskDiff } from "../../hooks/useTaskDiff";
+import StatusBadge from "../StatusBadge";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "../CodeBlock";
+import TaskRunsPanel from "./TaskRunsPanel";
+import TaskEventsPanel from "./TaskEventsPanel";
+import { FileDiff } from "../FileDiff";
 import type React from "react";
 
 const remarkPlugins = [remarkGfm];
 
-type Tab = "overview" | "session" | "logs" | "plan";
+type Tab = "overview" | "runs" | "events" | "plan" | "diff";
 
 interface TaskDetailPanelProps {
   task: Task;
@@ -31,43 +32,6 @@ interface TaskDetailPanelProps {
   projectName: string;
   approvals: Record<string, { approved: boolean; requestChanges: boolean }> | undefined;
   onDeleted: () => void;
-}
-
-// ---------------------------------------------------------------------------
-// Run sub-panel — fetches and displays run info with session/logs
-// ---------------------------------------------------------------------------
-function RunPanel({ runName, tab }: { runName: string; tab: "session" | "logs" }) {
-  const { data: run } = useRun(runName, 5_000);
-  const runPhase = run?.status?.phase;
-  const isActive = !!run && (!runPhase || !TERMINAL_PHASES.has(runPhase));
-  const { connected: sseConnected, eventTick } = useRunEvents(runName, isActive);
-
-  if (!run) return <p className="text-xs text-text-dim p-4">Loading run…</p>;
-
-  if (tab === "session") {
-    return (
-      <div className="px-4 py-3">
-        <SessionView
-          name={runName}
-          hasSession={!!run.status?.sessionID}
-          active={isActive}
-          sseConnected={sseConnected}
-          eventTick={eventTick}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div className="px-4 py-3">
-      <LogViewer
-        name={runName}
-        active={isActive}
-        sseConnected={sseConnected}
-        eventTick={eventTick}
-      />
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -130,12 +94,54 @@ function PlanContent({ projectName, taskName }: { projectName: string; taskName:
   );
 }
 
+function DiffContent({ projectName, taskName }: { projectName: string; taskName: string }) {
+  const { data, status, fetchStatus, error } = useTaskDiff(projectName, taskName, true);
+
+  const isFirstLoad = status === "pending" && fetchStatus === "fetching";
+  if (isFirstLoad) return <p className="text-xs text-text-dim p-4">Loading diff...</p>;
+  if (error) return <p className="text-xs text-phase-failed p-4">Failed to load diff: {(error as Error).message}</p>;
+  if (!data) return <p className="text-xs text-text-dim p-4">No diff data available.</p>;
+
+  return (
+    <div className="space-y-3 px-4 py-3">
+      <div className="rounded border border-border-muted bg-surface-overlay/30 px-3 py-2 text-xs text-text-dim">
+        Base: <span className="font-mono text-text">{data.baseRef}</span>
+        {"  "}
+        Head: <span className="font-mono text-text">{data.headRef}</span>
+        {"  "}
+        Default: <span className="font-mono text-text">{data.defaultRef}</span>
+      </div>
+
+      {data.empty && (
+        <div className="rounded border border-border-muted bg-surface px-3 py-2 text-xs text-text-dim">
+          {data.reason ?? "No file changes for this task."}
+        </div>
+      )}
+
+      {!data.empty && data.files.length > 0 && (
+        <div className="space-y-2">
+          {data.files.map((file) => (
+            <FileDiff key={`${file.path}-${file.diff.length}`} filename={file.path} path={file.path} diff={file.diff} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Overview tab content
 // ---------------------------------------------------------------------------
 function OverviewContent({ task, col, projectName }: { task: Task; col: string; projectName: string }) {
   const worker = task.status?.worker;
-  const runs = [
+  const { data: runsData } = useTaskRuns(task.metadata.name);
+  const latestRun = [...(runsData ?? [])]
+    .sort((a, b) => {
+      const aTime = a.status?.completedAt ?? a.status?.startedAt ?? a.metadata.creationTimestamp ?? "";
+      const bTime = b.status?.completedAt ?? b.status?.startedAt ?? b.metadata.creationTimestamp ?? "";
+      return bTime.localeCompare(aTime);
+    })[0];
+  const runLinks = [
     worker?.runName ? { label: "Run", name: worker.runName } : null,
     worker?.reviewRunName ? { label: "Reviewer", name: worker.reviewRunName } : null,
     worker?.mergeRunName ? { label: "Merge", name: worker.mergeRunName } : null,
@@ -173,12 +179,32 @@ function OverviewContent({ task, col, projectName }: { task: Task; col: string; 
         </div>
       )}
 
+      {/* Latest run output */}
+      {latestRun?.status?.message && (
+        <div>
+          <div className="flex items-center gap-2 mb-1.5">
+            <p className="text-label-md font-mono uppercase text-text-dim">Latest Run</p>
+            <StatusBadge phase={latestRun.status.phase} />
+          </div>
+          <div className="rounded-md border border-border-muted bg-surface-overlay px-3 py-2 space-y-1">
+            <Link
+              to={`/runs/${encodeURIComponent(latestRun.metadata.name)}`}
+              className="flex items-center gap-1.5 text-xs font-mono text-text-dim hover:text-text transition-colors"
+            >
+              <ExternalLink className="h-3 w-3 shrink-0" />
+              {latestRun.metadata.name}
+            </Link>
+            <p className="text-sm whitespace-pre-wrap leading-relaxed text-text">{latestRun.status.message}</p>
+          </div>
+        </div>
+      )}
+
       {/* Run links */}
-      {runs.length > 0 && (
+      {runLinks.length > 0 && (
         <div>
           <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">Runs</p>
           <div className="space-y-1">
-            {runs.map(({ label, name }) => (
+            {runLinks.map(({ label, name }) => (
               <Link
                 key={name}
                 to={`/runs/${encodeURIComponent(name)}`}
@@ -188,6 +214,34 @@ function OverviewContent({ task, col, projectName }: { task: Task; col: string; 
                 <span className="font-mono text-xs">{name}</span>
                 <span className="text-text-dim/50 text-xs">({label})</span>
               </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Child task progress (awaiting-children only) */}
+      {task.status?.phase === "awaiting-children" && task.childProgress && (
+        <div>
+          <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">
+            Child Tasks ({task.childProgress.completed}/{task.childProgress.total} complete)
+          </p>
+          <div className="space-y-1">
+            {task.childProgress.childRefs.map((childName) => (
+              <button
+                key={childName}
+                onClick={() => {
+                  // Update URL query param to show child task detail
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("task", childName);
+                  window.history.pushState({}, "", url);
+                  // Trigger a popstate event so React Router picks it up
+                  window.dispatchEvent(new PopStateEvent("popstate"));
+                }}
+                className="flex items-center gap-1.5 text-sm text-text-dim hover:text-text transition-colors w-full text-left"
+              >
+                <Wrench className="h-3.5 w-3.5 shrink-0" />
+                <span className="font-mono text-xs">{childName}</span>
+              </button>
             ))}
           </div>
         </div>
@@ -236,9 +290,9 @@ function TaskDetailPanelInner({
   const worker = task.status?.worker;
   const isBuild = task.spec.type === "BUILD";
   const isPlan = task.spec.type === "PLAN";
+  const canShowDiff = task.status?.phase === "done" || task.status?.phase === "awaiting-human" || task.status?.phase === "rework-requested";
   const approvalState = approvals?.[taskName];
   const alreadyApproved = approvalState?.approved === true;
-  const primaryRunName = worker?.runName;
 
   const invalidateBoard = () => queryClient.invalidateQueries({ queryKey: ["board", projectName] });
 
@@ -269,9 +323,10 @@ function TaskDetailPanelInner({
 
   const availableTabs: Array<{ id: Tab; label: string }> = [
     { id: "overview", label: "Overview" },
-    ...(primaryRunName ? [{ id: "session" as Tab, label: "Session" }] : []),
-    ...(primaryRunName ? [{ id: "logs" as Tab, label: "Logs" }] : []),
-    ...(isPlan && primaryRunName ? [{ id: "plan" as Tab, label: "Plan" }] : []),
+    { id: "runs", label: "Runs" },
+    { id: "events", label: "Events" },
+    ...(isPlan ? [{ id: "plan" as Tab, label: "Plan" }] : []),
+    ...(canShowDiff ? [{ id: "diff" as Tab, label: "Diff" }] : []),
   ];
 
   // If current tab is not available (e.g. run just removed), reset
@@ -289,7 +344,7 @@ function TaskDetailPanelInner({
             }
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="font-semibold text-base leading-snug">{task.spec.title}</h2>
+            <h2 className="text-body-lg font-semibold leading-snug">{task.spec.title}</h2>
             <p className="text-xs font-mono text-text-dim mt-0.5">{taskName}</p>
           </div>
         </div>
@@ -392,7 +447,7 @@ function TaskDetailPanelInner({
         {/* Request Changes inline form */}
         {showRequestChanges && (
           <div className="space-y-2 border border-border rounded-md p-3 bg-surface">
-            <p className="text-xs font-medium">Review feedback</p>
+            <p className="text-label-md font-mono uppercase text-text-dim">Review feedback</p>
             <textarea
               placeholder="Describe required changes…"
               value={requestChangesComment}
@@ -448,15 +503,20 @@ function TaskDetailPanelInner({
         {activeTab === "overview" && (
           <OverviewContent task={task} col={col} projectName={projectName} />
         )}
-        {activeTab === "session" && primaryRunName && (
-          <RunPanel runName={primaryRunName} tab="session" />
+        {activeTab === "runs" && (
+          <TaskRunsPanel projectName={projectName} taskName={taskName} />
         )}
-        {activeTab === "logs" && primaryRunName && (
-          <RunPanel runName={primaryRunName} tab="logs" />
+        {activeTab === "events" && (
+          <TaskEventsPanel projectName={projectName} taskName={taskName} />
         )}
         {isPlan && (
           <div className={activeTab === "plan" ? "" : "hidden"}>
             <PlanContent projectName={projectName} taskName={taskName} />
+          </div>
+        )}
+        {canShowDiff && (
+          <div className={activeTab === "diff" ? "" : "hidden"}>
+            <DiffContent projectName={projectName} taskName={taskName} />
           </div>
         )}
       </div>

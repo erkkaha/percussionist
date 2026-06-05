@@ -7,7 +7,6 @@
 export type {
   Run,
   Project,
-  Task,
   ClusterAgent,
   BoardStatus,
   ManagerMetrics,
@@ -17,11 +16,20 @@ export type {
 } from "@percussionist/api";
 export { RunPhase, TERMINAL_PHASES } from "@percussionist/api";
 
-import type { Project as _Project } from "@percussionist/api";
+import type { Project as _Project, Task as _Task } from "@percussionist/api";
 
 /** GET /api/projects/:name augments the CR with inject file contents for UI pre-population. */
 export interface ProjectDetail extends _Project {
   injectFileContents?: Array<{ filename: string; content: string }>;
+}
+
+/** Tasks in board responses may include computed child progress for awaiting-children phase. */
+export interface Task extends _Task {
+  childProgress?: {
+    total: number;
+    completed: number;
+    childRefs: string[];
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +88,7 @@ export interface CreateProjectRequest {
       githubTokenSecret?: { name: string; key?: string };
       author?: { name: string; email: string };
     };
+    local?: boolean;
   };
   /** Project-level sidecars injected into every run pod. */
   sidecars?: Array<{
@@ -117,11 +126,93 @@ export interface CreateProjectRequest {
     aiReviewerAgent?: string;
     maxAutoReworks?: number;
   };
+
+  /** Project-level runner image override. */
+  image?: string;
+
+  /** Pod resource requirements at project level. */
+  resources?: {
+    requests?: Record<string, string>;
+    limits?: Record<string, string>;
+  };
+
+  /** Board lifecycle phase: Active / Complete / Archived. */
+  phase?: "Active" | "Complete" | "Archived";
+
+  /** Git workspace caching and persistence options. */
+  gitCache?: {
+    worktreeReuse?: boolean;
+  };
+
+  /** Task lifecycle presets and overrides. */
+  flow?: {
+    preset?: "simple" | "review" | "plan-build" | "plan-build-review-merge";
+    humanApproval?: {
+      plan?: "required" | "disabled";
+      build?: "required" | "disabled";
+    };
+    plan?: {
+      onApprove?: "generate-builds" | "done";
+      buildGeneration?: "ai" | "manual" | "disabled";
+    };
+    build?: {
+      onSuccess?: "human-review" | "ai-review" | "done";
+      onApprove?: "merge" | "done";
+    };
+    merge?: {
+      mode?: "auto" | "manual" | "disabled";
+    };
+    review?: {
+      aiReviewerEnabled?: boolean;
+      aiReviewerAgent?: string;
+      maxAutoReworks?: number;
+    };
+    retry?: {
+      enabled?: boolean;
+      maxAttempts?: number;
+      backoffSeconds?: number;
+      backoffMultiplier?: number;
+      maxBackoffSeconds?: number;
+      poisonPillThresholdSeconds?: number;
+    };
+    timeouts?: {
+      runningStaleSeconds?: number;
+      reviewStaleSeconds?: number;
+      mergeStaleSeconds?: number;
+      buildgenStaleSeconds?: number;
+    };
+  };
+
+  /** Per-project code-server for interactive workspace access. */
+  codeServer?: {
+    enabled?: boolean;
+    image?: string;
+    resources?: {
+      requests?: Record<string, string>;
+      limits?: Record<string, string>;
+    };
+  };
+
+  /** Data PVC configuration — shared cache, git mirrors and worktrees. */
+  data?: {
+    pvcName?: string;
+    mountPath?: string;
+    storageClass?: string;
+  };
+
+  /** Per-project memory service with vector embeddings for agent context/memory. */
+  embedding?: {
+    enabled?: boolean;
+    model?: string;
+    dimensions?: number;
+    ollamaUrl?: string;
+  };
 }
 
 export interface CreateAgentRequest {
   name?: string;
   content: string;
+  model?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -244,4 +335,20 @@ export interface PlanResponse {
   content: string;
   taskId: string;
   project: string;
+}
+
+export interface TaskDiffFile {
+  path: string;
+  diff: string;
+}
+
+export interface TaskDiffResponse {
+  project: string;
+  task: string;
+  defaultRef: string;
+  baseRef: string;
+  headRef: string;
+  files: TaskDiffFile[];
+  empty: boolean;
+  reason?: string;
 }

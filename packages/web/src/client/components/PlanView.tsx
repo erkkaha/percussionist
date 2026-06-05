@@ -73,7 +73,7 @@ export default function PlanView() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-text mb-1">Plan: {taskId}</h1>
+          <h1 className="text-xl font-semibold text-text mb-1">Plan: {taskId}</h1>
           <p className="text-sm text-text-dim">Project: {projectName}</p>
         </div>
       </div>
@@ -81,7 +81,7 @@ export default function PlanView() {
       {/* Plan content */}
       <Card>
         <CardHeader className="border-b border-border-muted">
-          <CardTitle className="text-sm font-medium text-text-muted">Plan Content</CardTitle>
+          <CardTitle className="text-label-md font-mono uppercase text-text-dim">Plan Content</CardTitle>
         </CardHeader>
         <CardContent className="p-6">
           <div className="prose prose-sm prose-slate dark:prose-invert max-w-none">
