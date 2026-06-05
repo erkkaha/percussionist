@@ -352,6 +352,13 @@ git add src/server/schema.ts migrations/
 ```
 The server applies all pending migrations automatically on startup via `migrate()` in `getDb()`. No manual ALTER TABLE blocks.
 
+**Removing tables — always use drizzle-kit generate, never manual surgery:**
+Never delete a migration file or manually edit `migrations/meta/_journal.json` or `migrations/meta/0000_snapshot.json`. The journal tracks which migrations have been applied to production databases — removing an entry causes migration desync. To remove a table:
+1. Delete the table definition from `schema.ts`
+2. Run `cd packages/web && npx drizzle-kit generate`
+3. Commit `schema.ts` + the new migration file together
+Drizzle-kit will produce a `DROP TABLE` migration and update the journal/snapshot automatically.
+
 **Adding columns — what NOT to do:**
 Do not add `ALTER TABLE` try/catch blocks to `db.ts`. Do not duplicate DDL as raw SQL strings in `db.ts`. Always use drizzle-kit generate to produce a migration file.
 
