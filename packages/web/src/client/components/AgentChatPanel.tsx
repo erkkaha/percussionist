@@ -289,18 +289,18 @@ function sanitizeForSpeech(text: string): string {
 
   return (
     <>
-      {available !== false && (
+      {available !== false && !open && (
         <button
-          onClick={() => onOpenChange?.(!open)}
+          onClick={() => onOpenChange?.(true)}
           className="fixed bottom-4 right-4 z-50 w-12 h-12 rounded-md bg-accent text-surface shadow-lg hover:bg-accent/80 flex items-center justify-center"
-          title={open ? "Close chat" : "Chat with manager agent"}
+          title="Chat with manager agent"
         >
           <DrumLogo playing={false} size={40} />
         </button>
       )}
 
       {open && (
-        <div className="w-96 flex-shrink-0 border-l border-border flex flex-col bg-background">
+        <div className="w-96 flex-shrink-0 border-l border-border flex flex-col bg-background max-h-screen sticky top-0">
           {/* Header */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-surface-raised">
             <div className={`w-2 h-2 rounded-full ${available === null ? "bg-phase-pending" : available ? "bg-phase-succeeded" : "bg-phase-failed"}`} />
