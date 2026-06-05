@@ -98,7 +98,21 @@ board.get("/:project/board", async (c) => {
     const columns: Record<string, unknown[]> = {};
     for (const task of tasks) {
       const phase = task.status?.phase ?? "pending";
-      const col = task.status?.blocked ? "blocked" : computeBoardColumn(phase);
+      let col: string;
+      if (task.status?.blocked) {
+        col = "blocked";
+      } else {
+        col = computeBoardColumn(phase);
+        // Override to blocked if waiting for a predecessor that isn't done.
+        const predRef = task.spec.predecessorRef;
+        if (predRef && phase !== "done") {
+          const pred = tasks.find((t) => t.metadata.name === predRef);
+          if (!pred || pred.status?.phase !== "done") {
+            col = "blocked";
+            task.status = { ...task.status, blockedReason: `Waiting for: ${predRef}` };
+          }
+        }
+      }
       if (!columns[col]) columns[col] = [];
       
       // Attach child progress if available.

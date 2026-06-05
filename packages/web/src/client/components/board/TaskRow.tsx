@@ -112,6 +112,13 @@ export function TaskRow({ task, col, isSelected, onClick, projectName }: TaskRow
               <span className="text-label-md font-mono uppercase text-phase-failed">failed</span>
             )}
 
+            {/* Waiting for prerequisite */}
+            {col === "blocked" && task.status?.blockedReason && (
+              <span className="text-label-md font-mono uppercase text-phase-failed" title={task.status.blockedReason}>
+                {task.status.blockedReason}
+              </span>
+            )}
+
             {/* Awaiting children */}
             {col === "in-progress" && !hasActiveRun && task.status?.phase === "awaiting-children" && (
               <span className="text-label-md font-mono uppercase text-phase-pending flex items-center gap-0.5">
