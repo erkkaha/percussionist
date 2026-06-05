@@ -92,6 +92,13 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-foreground: var(--foreground);
 
+  /* ── Chart colors ── */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
   /* ── Sidebar ── */
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -230,6 +237,13 @@
   --phase-succeeded: #58ea8a;
   --phase-failed: #ffb4ab;
   --phase-cancelled: #514537;
+
+  /* ── Chart colors ── */
+  --chart-1: #58c4dd;
+  --chart-2: #e8a852;
+  --chart-3: #58ea8a;
+  --chart-4: #c8c5cb;
+  --chart-5: #ffb4ab;
 
   /* ── Shadcn compat ── */
   --popover: #333539;

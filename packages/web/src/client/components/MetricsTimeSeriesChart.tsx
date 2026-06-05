@@ -192,7 +192,10 @@ export default function MetricsTimeSeriesChart({
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
-                tickFormatter={(t: number) => fmtTime(new Date(t).toISOString())}
+                tickFormatter={(t: number) => {
+                  const d = new Date(t)
+                  return Number.isFinite(d.getTime()) ? fmtTime(d.toISOString()) : ""
+                }}
                 minTickGap={48}
               />
               <YAxis
