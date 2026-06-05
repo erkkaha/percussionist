@@ -16,5 +16,19 @@
       "tag": "0001_task_events",
       "breakpoints": true
     },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1779035020222,
+      "tag": "0002_tool_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1780682562485,
+      "tag": "0003_curly_the_spike",
+      "breakpoints": true
+    }
   ]
 }
