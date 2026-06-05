@@ -1,73 +1,83 @@
-import { useState } from "react";
+import { playDrum, type DrumSound } from "../lib/notifications";
+import { useNotificationStore, NOTIFICATION_SOUNDS } from "../stores/settingsStore";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "./ui/card";
-import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
+import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
-import { playDrum, getNotificationPreferences, setNotificationPreferences, type DrumSound } from "../lib/notifications";
-
-interface SoundInfo {
-  name: string;
-  description: string;
-  sound: DrumSound;
-}
-
-const SOUND_LIST: SoundInfo[] = [
-  { name: "Success", description: "Rimshot — played when a run succeeds", sound: "success" },
-  { name: "Failure", description: "Low tom thud — played when a run fails", sound: "failure" },
-  { name: "Cancelled", description: "Muted cymbal — played when a run is cancelled", sound: "cancelled" },
-  { name: "Escalated", description: "Double hi-hat tick — played on task escalation", sound: "escalated" },
-  { name: "Running", description: "Short kick drum — played when a run starts", sound: "running" },
-];
+import { Volume2, VolumeX, Play } from "lucide-react";
 
 export default function NotificationsPanel() {
-  const prefs = getNotificationPreferences();
-  const [soundEnabled, setSoundEnabled] = useState(prefs.soundEnabled);
-
-  // Persist immediately on toggle change.
-  function handleToggleChange(next: boolean) {
-    setSoundEnabled(next);
-    setNotificationPreferences({ soundEnabled: next });
-  }
+  const soundEnabled = useNotificationStore((s) => s.soundEnabled);
+  const setSoundEnabled = useNotificationStore((s) => s.setSoundEnabled);
+  const selectedSound = useNotificationStore((s) => s.selectedSound);
+  const setSelectedSound = useNotificationStore((s) => s.setSelectedSound);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Notifications</CardTitle>
+        <div className="flex items-center gap-2">
+          {soundEnabled ? (
+            <Volume2 className="h-5 w-5 text-accent" />
+          ) : (
+            <VolumeX className="h-5 w-5 text-text-dim" />
+          )}
+          <CardTitle>Notifications</CardTitle>
+        </div>
         <CardDescription>
-          Control notification sounds and preview the available drum hits.
-          Preferences are stored locally in your browser.
+          Control notification sound playback. Preferences are stored locally in your browser and persist across page reloads.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {/* Sound toggle */}
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">Play notification sounds</span>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-sm font-medium">Play notification sounds</span>
+            <span className="text-xs text-text-dim">
+              {soundEnabled ? "Sounds will play on run events" : "All notification sounds are muted"}
+            </span>
+          </div>
           <Switch
             checked={soundEnabled}
-            onCheckedChange={handleToggleChange}
+            onCheckedChange={(checked: boolean) => setSoundEnabled(checked)}
           />
         </div>
 
-        {/* Sound preview section — only shown when enabled */}
         {soundEnabled && (
           <>
             <Separator />
-            <p className="text-sm font-medium">Sound Preview</p>
+
+            {/* Selected sound */}
             <div className="flex flex-col gap-2">
-              {SOUND_LIST.map((s) => (
-                <div
-                  key={s.sound}
-                  className="flex items-center justify-between rounded-md border border-border p-3 hover:bg-surface-overlay"
-                >
-                  <div>
-                    <p className="text-sm font-medium">{s.name}</p>
-                    <p className="text-xs text-text-dim">{s.description}</p>
+              <span className="text-sm font-medium">Default notification sound</span>
+              <select
+                value={selectedSound}
+                onChange={(e) => setSelectedSound(e.target.value)}
+                className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                {NOTIFICATION_SOUNDS.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Sound preview list */}
+            <div className="flex flex-col gap-3">
+              <span className="text-sm font-medium">Preview sounds</span>
+              {NOTIFICATION_SOUNDS.map((sound) => (
+                <div key={sound.id} className="flex items-center justify-between">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm">{sound.label}</span>
+                    <span className="text-xs text-text-dim">{sound.description}</span>
                   </div>
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
-                    onClick={() => playDrum(s.sound)}
+                    onClick={() => playDrum(sound.id as DrumSound)}
+                    className="gap-1.5 shrink-0"
                   >
+                    <Play className="h-3 w-3" />
                     Play
                   </Button>
                 </div>

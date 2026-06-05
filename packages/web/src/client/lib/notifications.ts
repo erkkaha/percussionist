@@ -7,6 +7,8 @@
 // in _history and broadcast via a "percussionist:notification" CustomEvent so
 // React components can subscribe without prop-drilling.
 
+import { useNotificationStore } from "../stores/settingsStore";
+
 export type DrumSound = "success" | "failure" | "cancelled" | "escalated" | "running";
 
 // ---------------------------------------------------------------------------
@@ -239,8 +241,9 @@ export function notify(opts: NotifyOptions): void {
     window.dispatchEvent(new CustomEvent(NOTIFICATION_EVENT, { detail: entry }));
   }
 
-  // Play drum sound only if enabled (preview buttons bypass this check).
-  if (getNotificationPreferences().soundEnabled) {
+  // Respect user's sound preference — skip audio but still record history and dispatch event.
+  const prefs = useNotificationStore.getState();
+  if (prefs.soundEnabled) {
     playDrum(opts.sound);
   }
 
