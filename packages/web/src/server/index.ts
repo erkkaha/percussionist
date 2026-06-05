@@ -13,6 +13,7 @@ import { createApp } from "./app.js";
 import stats, { runRetentionCleanup, RETENTION_DAYS } from "./routes/stats.js";
 import { NAMESPACE } from "./kube.js";
 import { getDb } from "./db.js";
+import { startMetricsCollector } from "./metrics-collector.js";
 
 void stats; // imported for side-effect registration only (retention helpers)
 
@@ -83,6 +84,11 @@ console.log(
 
 runRetentionCleanup();
 setInterval(runRetentionCleanup, 60 * 60 * 1000);
+
+// ---------------------------------------------------------------------------
+// Metrics snapshot collector — starts only if metrics-server is available.
+
+void startMetricsCollector();
 
 // ---------------------------------------------------------------------------
 // Start server

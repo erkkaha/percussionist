@@ -1074,12 +1074,44 @@ export interface NodeMetric {
   usage: { cpu: string; memory: string };
 }
 
+export interface NodeCapacity {
+  name: string;
+  cpu: string;
+  memory: string;
+}
+
 export interface PodMetric {
   name: string;
   namespace: string;
   timestamp: string;
   window: string;
   containers: { name: string; usage: { cpu: string; memory: string } }[];
+}
+
+/** Fetch node capacity (allocatable CPU/memory) from the core API. */
+export async function listNodeCapacities(): Promise<NodeCapacity[]> {
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error("No service account token available");
+
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const url = `https://${host}:${port}/api/v1/nodes`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`node API ${res.status}: ${await res.text().catch(() => "")}`);
+  type NodeItem = { metadata: { name: string }; status: { allocatable: { cpu: string; memory: string } } };
+  const body = (await res.json()) as { items: NodeItem[] };
+  return (body.items ?? []).map((item) => ({
+    name: item.metadata.name,
+    cpu: item.status.allocatable.cpu,
+    memory: item.status.allocatable.memory,
+  }));
 }
 
 export async function listNodeMetrics(): Promise<NodeMetric[]> {

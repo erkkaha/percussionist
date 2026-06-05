@@ -5,15 +5,23 @@
 // GET /api/metrics/events — SSE stream for metric changes (polling-based).
 
 import { Hono } from "hono";
-import { listNodeMetrics, listPodMetrics, NAMESPACE, type NodeMetric, type PodMetric } from "../kube.js";
+import { listNodeMetrics, listPodMetrics, listNodeCapacities, NAMESPACE, type NodeMetric, type NodeCapacity, type PodMetric } from "../kube.js";
 import { createPollingSseResponse } from "../lib/sse.js";
 
 const metrics = new Hono();
 
 metrics.get("/nodes", async (c) => {
   try {
-    const items = await listNodeMetrics();
-    return c.json({ items });
+    const [items, capacities] = await Promise.all([
+      listNodeMetrics(),
+      listNodeCapacities().catch((): NodeCapacity[] => []),
+    ]);
+    const capMap = new Map(capacities.map((c) => [c.name, c]));
+    const nodes = items.map((n) => ({
+      ...n,
+      capacity: capMap.get(n.name) ?? null,
+    }));
+    return c.json({ items: nodes });
   } catch (e: unknown) {
     const statusCode = (e as { statusCode?: number })?.statusCode;
     const msg = (e as { body?: { message?: string } })?.body?.message ?? (e as Error).message ?? String(e);
@@ -42,12 +50,14 @@ metrics.get("/events", async (c) => {
   return createPollingSseResponse({
     signal: c.req.raw.signal,
     getSignature: async () => {
-      const [nodes, pods] = await Promise.all([
+      const [nodes, pods, capacities] = await Promise.all([
         listNodeMetrics().catch((): NodeMetric[] => []),
         listPodMetrics(NAMESPACE).catch((): PodMetric[] => []),
+        listNodeCapacities().catch((): NodeCapacity[] => []),
       ]);
+      const capMap = new Map(capacities.map((c) => [c.name, c]));
       return JSON.stringify({
-        n: nodes.map((n) => `${n.name}:${n.usage.cpu}:${n.usage.memory}`),
+        n: nodes.map((n) => `${n.name}:${n.usage.cpu}:${n.usage.memory}:${(capMap.get(n.name)?.cpu) ?? ""}:${(capMap.get(n.name)?.memory) ?? ""}`),
         p: pods.map((p) => `${p.name}:${p.containers.map((c) => `${c.name}:${c.usage.cpu}:${c.usage.memory}`).join(",")}`),
       });
     },

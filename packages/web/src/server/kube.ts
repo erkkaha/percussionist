@@ -50,7 +50,9 @@ export {
   // Metrics helpers
   listNodeMetrics,
   listPodMetrics,
+  listNodeCapacities,
   type NodeMetric,
+  type NodeCapacity,
   type PodMetric,
 } from "@percussionist/kube";
 
