@@ -4,7 +4,7 @@ import { RunPhase } from "@percussionist/api";
 import { BASE_URL, listSessions, fetchMessages, checkHealth, compactMessagesForSnapshot } from "./session.js";
 import http from "node:http";
 import { sendStats, incrementalFlush } from "./stats-reporter.js";
-import { handleToolSseEvent, initToolEvents } from "./tool-events-reporter.js";
+
 import type { RawMessage } from "./session.js";
 
 const log = (...args: unknown[]) =>
@@ -224,7 +224,6 @@ export async function runInteractive(
             log(`discovered session ${s.id}`);
             if (!firstSessionID) {
               firstSessionID = s.id;
-              initToolEvents(runName, firstSessionID);
               await patchStatus({ sessionID: firstSessionID, message: "session active" });
               // Snapshot immediately on first session discovery.
               maybeSnapshot("session discovered");
@@ -269,9 +268,6 @@ export async function runInteractive(
             let evt: { type?: string; properties?: Record<string, unknown> };
             try { evt = JSON.parse(dataLines.join("\n")); } catch { continue; }
             logEvent(evt);
-            if (evt.type?.startsWith("tool.") && evt.properties) {
-              handleToolSseEvent(evt.type, evt.properties);
-            }
             if (evt.type === "session.status") {
               // Snapshot after the first assistant turn completes.
               const p = evt.properties as { busy?: boolean } | undefined;
@@ -415,8 +411,6 @@ export async function runPrompt(
   const sessionData = (await sessionRes.json()) as { id: string };
   const sessionID = sessionData.id;
   log(`created session ${sessionID}`);
-  initToolEvents(runName, sessionID);
-
   const runStartedAt = new Date().toISOString();
   await patchStatus({ phase: RunPhase.Running, sessionID, startedAt: runStartedAt, message: "dispatching prompt" });
 

@@ -90,35 +90,6 @@ export const fileOps = sqliteTable(
   ],
 );
 
-// ---------------------------------------------------------------------------
-// Task events — append-only audit log of Task state transitions.
-// CRDs are authoritative for live task state; this table is for history/analytics.
-
-// ---------------------------------------------------------------------------
-// Tool events — every tool invocation during a run, captured from SSE events
-// and MCP middleware. Used to analyze tool usage patterns and detect gaps.
-
-export const toolEvents = sqliteTable(
-  "tool_events",
-  {
-    id: text("id").primaryKey(),
-    sessionId: text("session_id").notNull(),
-    runName: text("run_name").notNull(),
-    toolName: text("tool_name").notNull(),
-    isMcp: integer("is_mcp", { mode: "boolean" }).notNull().default(false),
-    calledAt: text("called_at").notNull(),
-    durationMs: integer("duration_ms"),
-    success: integer("success", { mode: "boolean" }),
-    resultSize: integer("result_size"),
-    resultTruncated: integer("result_truncated", { mode: "boolean" }),
-    error: text("error"),
-  },
-  (table) => [
-    index("idx_tool_events_session_id").on(table.sessionId),
-    index("idx_tool_events_run_name").on(table.runName),
-  ],
-);
-
 export const taskEvents = sqliteTable(
   "task_events",
   {

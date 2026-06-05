@@ -18,7 +18,7 @@
 //     days=N   — look-back window in days (default: 30; 0 = all time)
 
 import { Hono } from "hono";
-import { getDb, runs, messages, toolCalls, fileOps, toolEvents } from "../db.js";
+import { getDb, runs, messages, toolCalls, fileOps } from "../db.js";
 import { lt, gte, eq, and, like, desc, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
@@ -60,20 +60,6 @@ interface ToolCallPayload {
   success?: boolean;
   error?: string;
   durationMs?: number;
-}
-
-interface ToolEventPayload {
-  id: string;
-  sessionId: string;
-  runName: string;
-  toolName: string;
-  isMcp?: boolean;
-  calledAt: string;
-  durationMs?: number;
-  success?: boolean;
-  resultSize?: number;
-  resultTruncated?: boolean;
-  error?: string;
 }
 
 interface FileOpPayload {
@@ -328,53 +314,6 @@ stats.get("/exists/:sessionID", (c) => {
   return c.json({ exists: row !== undefined });
 });
 
-// POST /api/stats/tool-events — batch ingest of tool invocation events.
-// Called by the dispatcher periodically during a run. Each event captures a
-// single tool invocation (native OpenCode tool or MCP tool call).
-stats.post("/tool-events", async (c) => {
-  let body: { events: ToolEventPayload[] };
-  try {
-    body = (await c.req.json()) as { events: ToolEventPayload[] };
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-
-  if (!body.events?.length) {
-    return c.json({ error: "events array is required" }, 400);
-  }
-
-  const db = getDb();
-  let inserted = 0;
-
-  try {
-    for (const e of body.events) {
-      if (!e.id || !e.sessionId || !e.runName) continue;
-      db.insert(toolEvents)
-        .values({
-          id: e.id,
-          sessionId: e.sessionId,
-          runName: e.runName,
-          toolName: e.toolName,
-          isMcp: e.isMcp ?? false,
-          calledAt: e.calledAt,
-          durationMs: e.durationMs,
-          success: e.success,
-          resultSize: e.resultSize,
-          resultTruncated: e.resultTruncated,
-          error: e.error,
-        })
-        .onConflictDoNothing()
-        .run();
-      inserted++;
-    }
-  } catch (err) {
-    console.error("[stats] tool-events persist error:", (err as Error).message);
-    return c.json({ error: "failed to persist tool events" }, 500);
-  }
-
-  return c.json({ ok: true, inserted });
-});
-
 // GET /api/stats/export?days=30 — full dump for LLM analysis.
 //
 // Returns a JSON array where each element is a session with nested messages,
@@ -585,32 +524,6 @@ stats.get("/tool-metrics", (c) => {
       to: new Date().toISOString(),
     },
   });
-});
-
-// GET /api/stats/tool-events?sessionId=X&runName=Y&limit=100 — raw tool events.
-stats.get("/tool-events", (c) => {
-  const sessionId = c.req.query("sessionId");
-  const runName = c.req.query("runName");
-  const tool = c.req.query("tool");
-  const limitParam = c.req.query("limit") ?? "100";
-  const limit = Math.min(Math.max(parseInt(limitParam, 10) || 100, 1), 1000);
-
-  const db = getDb();
-  const conditions: ReturnType<typeof eq>[] = [];
-  if (sessionId) conditions.push(eq(toolEvents.sessionId, sessionId));
-  if (runName) conditions.push(eq(toolEvents.runName, runName));
-  if (tool) conditions.push(eq(toolEvents.toolName, tool));
-
-  const baseQuery = db.select().from(toolEvents);
-  const rows = (conditions.length > 0
-    ? baseQuery.where(and(...conditions))
-    : baseQuery
-  )
-    .orderBy(desc(toolEvents.calledAt))
-    .limit(limit)
-    .all();
-
-  return c.json({ events: rows, total: rows.length });
 });
 
 export default stats;
