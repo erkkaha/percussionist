@@ -46,11 +46,22 @@ export async function buildWorkerRun(
     },
   });
 
-  // Agent-level model override (between board and project in resolution hierarchy).
+  // Per-agent model override: if the task's agent has a `model` field set in
+  // the project roster, use it instead of the project-level default.
+  // Resolution order (highest → lowest):
+  //   explicit run override (MCP tool) → per-agent model → ClusterAgent model → project.spec.model
+  const agentOverride = (project.spec.agents ?? []).find(
+    (a) => a.name === task.spec.agent,
+  );
+  if (agentOverride?.model) {
+    resolved.model = agentOverride.model;
+  }
+
+  // ClusterAgent model override (fallback if no per-agent model is set).
   try {
     const agent = await getClusterAgent(task.spec.agent);
     if (agent.spec.model) {
-      resolved.model = agent.spec.model;
+      resolved.model ??= agent.spec.model;
     }
   } catch {
     // Agent CR not found or inaccessible — fall back to project/cluster defaults.
@@ -226,19 +237,19 @@ export async function buildMergeRun(
 
   const projectName = project.metadata.name;
   const taskName = task.metadata.name;
-  
+
   // Determine source and target branches based on feature branching config.
   let sourceBranch: string;
   let targetBranch: string;
-  
+
   if (project.spec.featureBranchingEnabled) {
     const gitBranch = resolveTaskBranch(task, project, allTasks ?? []);
     const mergeBranch = resolveMergeBranch(task, project, allTasks ?? []);
-    
+
     if (!gitBranch) {
       throw new Error(`Task ${taskName} has no git branch (feature branching enabled but branch not resolved)`);
     }
-    
+
     sourceBranch = gitBranch;
     targetBranch = mergeBranch ?? "main"; // Fallback to main if no merge target
   } else {
@@ -247,17 +258,28 @@ export async function buildMergeRun(
     targetBranch = "main";
   }
 
-  // Use a dedicated merge agent if configured, otherwise fall back to the task's agent.
+  // Determine merge agent: prefer explicit name, then env var, then task agent.
+  const MERGING_AGENT = process.env.MERGING_AGENT;
   const mergeAgent =
     mergeAgentName && (project.spec.agents ?? []).some((a) => a.name === mergeAgentName)
       ? mergeAgentName
-      : task.spec.agent;
+      : MERGING_AGENT && (project.spec.agents ?? []).some((a) => a.name === MERGING_AGENT)
+        ? MERGING_AGENT
+        : task.spec.agent;
 
-  // Agent-level model override (between board and project in resolution hierarchy).
+  // Per-agent model override for the merge agent (project roster takes priority).
+  const mergeAgentOverride = (project.spec.agents ?? []).find(
+    (a) => a.name === mergeAgent,
+  );
+  if (mergeAgentOverride?.model) {
+    resolved.model = mergeAgentOverride.model;
+  }
+
+  // ClusterAgent model override (fallback if no per-agent model is set).
   try {
     const agent = await getClusterAgent(mergeAgent);
     if (agent.spec.model) {
-      resolved.model = agent.spec.model;
+      resolved.model ??= agent.spec.model;
     }
   } catch {
     // Agent CR not found or inaccessible — fall back to project/cluster defaults.
@@ -268,7 +290,6 @@ export async function buildMergeRun(
     resolved.source.git.ref = sourceBranch;
     resolved.source.git.parentRef = targetBranch;
   }
-
   const promptLines = [
     `TASK: Merge approved changes for ${taskName}`,
     "",

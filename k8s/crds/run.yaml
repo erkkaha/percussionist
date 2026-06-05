@@ -59,6 +59,8 @@ spec:
                         type: string
                         minLength: 1
                         maxLength: 63
+                      model:
+                        type: string
                     required:
                       - name
                   maxItems: 10
