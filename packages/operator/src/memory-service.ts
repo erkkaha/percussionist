@@ -65,6 +65,7 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
     { name: "MEMORY_DB_PATH", value: `${mountPath}/memory/vectors.db` },
     { name: "OLLAMA_BASE_URL", value: embedding.ollamaUrl ?? OLLAMA_BASE_URL },
     { name: "EMBEDDING_MODEL", value: embedding.model },
+    { name: "EMBEDDING_DIMENSIONS", value: String(embedding.dimensions ?? 768) },
   ];
 
   const labels = {

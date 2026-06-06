@@ -15,6 +15,7 @@ via Ollama and stores them in a local SQLite database backed by sqlite-vec.
 | `MEMORY_DB_PATH` | `/data/memory/vectors.db` | SQLite database path |
 | `OLLAMA_BASE_URL` | `http://ollama.percussionist.svc.cluster.local:11434` | Ollama API endpoint |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Ollama embedding model name |
+| `EMBEDDING_DIMENSIONS` | `768` | Vector dimension count (must match the model's output) |
 | `PERCUSSIONIST_NAMESPACE` | `percussionist` | Cluster namespace |
 
 ## API
@@ -43,9 +44,12 @@ Semantic search across stored memories.
 ```json
 {
   "query": "What language preference was recorded?",
-  "limit": 10
+  "limit": 10,
+  "task": "task-abc"
 }
 ```
+
+The optional `task` field filters results to memories whose `metadata.task` matches the given value.
 
 **Response:**
 ```json

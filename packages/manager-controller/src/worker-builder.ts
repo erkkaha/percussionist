@@ -135,7 +135,7 @@ export async function buildWorkerRun(
   if (project.spec.embedding?.enabled) {
     try {
       const query = task.spec.description ?? task.spec.title ?? taskName;
-      const { context } = await getContext(projectName, query);
+      const { context } = await getContext(projectName, query, taskName);
       if (context && context !== "No relevant context found.") {
         promptLines.push(
           "RELEVANT PROJECT CONTEXT:",
