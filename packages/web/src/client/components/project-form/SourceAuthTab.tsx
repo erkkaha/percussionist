@@ -2,6 +2,9 @@ import { Link } from "react-router-dom";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import type { ProjectFormHookReturn } from "./useProjectForm";
+import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
+import { Switch } from "../ui/switch";
 
 interface SourceAuthTabProps {
   form: Pick<ProjectFormHookReturn, "gitUrl" | "gitRef" | "gitSshSecret" | "gitGithubTokenSecret" | "gitAuthorName" | "gitAuthorEmail" | "sourceLocal" | "llmKeysSecret" | "authSecret" | "opencodeConfig" | "configJsonError"> &
@@ -17,15 +20,10 @@ export default function SourceAuthTab({ form }: SourceAuthTabProps) {
         <legend className="px-1 text-sm font-medium text-text-muted">Git source</legend>
 
         {/* Local workspace toggle */}
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={form.sourceLocal}
-            onChange={(e) => form.setSourceLocal(e.target.checked)}
-            className="rounded border-border"
-          />
-          <span className="text-sm text-text-muted">Local workspace (no remote repository)</span>
-        </label>
+        <Switch
+          checked={form.sourceLocal}
+          onCheckedChange={(v) => form.setSourceLocal(v)}
+        />
         {form.sourceLocal && (
           <p className="text-xs text-text-dim">
             Local workspace — no remote repository will be cloned. Changes persist across runs at /data/workspace/.

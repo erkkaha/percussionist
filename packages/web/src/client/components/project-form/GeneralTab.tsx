@@ -1,6 +1,7 @@
-import { Input } from "../ui/input";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../ui/select";
 import type { ProjectFormHookReturn } from "./useProjectForm";
+import { Input } from "../ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 
 interface GeneralTabProps {
   isEdit: boolean;
@@ -17,14 +18,19 @@ export default function GeneralTab({ form, isEdit }: GeneralTabProps) {
         <>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Name</label>
-            <Input value={form.name} readOnly className="opacity-70" />
+            <Input
+              type="text"
+              value={form.name}
+              readOnly
+              className="font-mono opacity-70"
+            />
           </div>
 
           {/* Phase selector (edit mode only) */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Board Phase</label>
             <Select value={form.phase} onValueChange={(v) => form.setPhase(v as "Active" | "Complete" | "Archived")}>
-              <SelectTrigger className="w-full">
+              <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -41,6 +47,7 @@ export default function GeneralTab({ form, isEdit }: GeneralTabProps) {
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Display Name</label>
             <Input
+              type="text"
               value={form.displayName}
               onChange={(e) => form.setDisplayName(e.target.value)}
               placeholder="My Repository"
@@ -126,15 +133,10 @@ export default function GeneralTab({ form, isEdit }: GeneralTabProps) {
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-muted">Feature Branching</label>
-          <label className="flex items-center gap-2 cursor-pointer h-9">
-            <input
-              type="checkbox"
-              checked={form.featureBranchingEnabled}
-              onChange={(e) => form.setFeatureBranchingEnabled(e.target.checked)}
-              className="rounded border-border"
-            />
-            <span className="text-sm text-text-muted">Enable per-task branches</span>
-          </label>
+          <Switch
+            checked={form.featureBranchingEnabled}
+            onCheckedChange={(v) => form.setFeatureBranchingEnabled(v)}
+          />
         </div>
       </div>
     </div>

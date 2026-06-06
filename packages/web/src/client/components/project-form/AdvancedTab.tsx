@@ -1,6 +1,9 @@
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import type { ProjectFormHookReturn } from "./useProjectForm";
+import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 interface AdvancedTabProps {
   form: Pick<ProjectFormHookReturn, "sidecars" | "injectFiles" | "initScript" | "rosterAgents" | "rosterPickerValue" | "sidecarErrors" | "hasSidecarErrors" | "injectFileErrors" | "hasInjectFileErrors"> &
@@ -136,8 +139,7 @@ export default function AdvancedTab({ form }: AdvancedTabProps) {
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-text-muted">
-                    Filename <span className="text-phase-failed">*</span>
-                    <span className="text-text-dim font-normal ml-1">(mounted at /workspace/&lt;filename&gt;)</span>
+                    Filename <span className="text-text-dim font-normal ml-1">(mounted at /workspace/&lt;filename&gt;)</span>
                   </label>
                   <Input
                     type="text"
@@ -218,14 +220,12 @@ export default function AdvancedTab({ form }: AdvancedTabProps) {
           </ul>
         )}
         <div className="flex items-center gap-2">
-          <select
-            value={form.rosterPickerValue}
-            onChange={(e) => form.setRosterPickerValue(e.target.value)}
-            className="flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
-          >
-            <option value="">— add agent —</option>
+          <Select value={form.rosterPickerValue} onValueChange={(v) => form.setRosterPickerValue(v)}>
+            <SelectTrigger className="flex-1">
+              <SelectValue placeholder="— add agent —" />
+            </SelectTrigger>
             {/* roster picker is populated by the parent component via useQuery */}
-          </select>
+          </Select>
         </div>
       </fieldset>
     </div>

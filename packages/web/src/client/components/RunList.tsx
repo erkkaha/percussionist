@@ -110,7 +110,7 @@ export default function RunList() {
         <Link
           to="/runs/new"
         >
-          <Button variant="secondary" size="sm">+ New Run</Button>
+          <Button>+ New Run</Button>
         </Link>
       </div>
 
@@ -228,7 +228,9 @@ function RunRow({ run }: { run: Run }) {
         <div className="flex items-center gap-1.5">
           {isActive && <AttachButton name={run.metadata.name} namespace={run.metadata.namespace} />}
           <OpenOpencodeButton run={run} compact />
-          <Link to={`/runs/new?copyFrom=${encodeURIComponent(run.metadata.name)}`}>
+          <Link
+            to={`/runs/new?copyFrom=${encodeURIComponent(run.metadata.name)}`}
+          >
             <Button variant="outline" size="sm">Copy</Button>
           </Link>
         </div>
@@ -266,9 +268,7 @@ function FilterButton({
   count?: number;
 }) {
   return (
-    <Button
-      variant={active ? "secondary" : "ghost"}
-      size="sm"
+    <button
       onClick={onClick}
       className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
         active
@@ -280,7 +280,7 @@ function FilterButton({
       {count != null && (
         <span className="ml-1 text-text-dim">{count}</span>
       )}
-    </Button>
+    </button>
   );
 }
 
@@ -338,20 +338,17 @@ function AttachButton({ name, namespace }: { name: string; namespace?: string })
   }
 
   return (
-    <Button
-      variant="outline"
-      size="sm"
+    <button
       onClick={handleCopy}
       title={`Copy: ${attachCommand(name, namespace)}`}
-      className={`px-2 py-1 text-xs font-medium transition-colors ${
+      className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
         copied
           ? "border-phase-succeeded/40 text-phase-succeeded bg-phase-succeeded/10"
           : "border-border-muted text-text-dim hover:border-border hover:text-text-muted"
       }`}
     >
       {copied ? "Copied!" : "Attach"}
-    </Button>
-  );
+    </button>  );
 }
 
 function truncate(s: string, max: number): string {

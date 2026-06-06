@@ -16,7 +16,6 @@ import { useProjectForm, buildProjectRequest } from "./project-form/useProjectFo
 
 // Tabs UI component
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
-import { Button } from "./ui/button";
 
 // ---------------------------------------------------------------------------
 // Tab definitions (ordered list)
@@ -108,6 +107,11 @@ export default function CreateProjectForm({
     const req = buildProjectRequest(form, isEdit);
     mutation.mutate(req);
   }
+
+  // Shared input classes — kept for backward compat with any remaining inline patterns
+  const inputClass =
+    "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none";
+  const monoInputClass = inputClass + " font-mono";
 
   // Build the props for each tab (typed slices of form state)
   const generalProps = {
@@ -249,19 +253,20 @@ export default function CreateProjectForm({
 
         {/* Error banner (visible regardless of active tab) */}
         {mutation.error && (
-          <div className="mt-4 rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
+          <div className="mt-4 rounded-md border border-error/30 bg-error-container px-4 py-3 text-sm text-on-error-container">
             {mutation.error.message}
           </div>
         )}
 
         {/* Submit bar */}
         <div className="flex items-center gap-3 pt-4 mt-2 border-t border-border">
-          <Button
+          <button
             type="submit"
             disabled={(!isEdit && !form.name.trim()) || mutation.isPending || form.gitAuthorIncomplete || !!form.configJsonError || form.hasSidecarErrors || form.hasInjectFileErrors}
+            className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
           >
             {mutation.isPending ? (isEdit ? "Saving…" : "Creating…") : (isEdit ? "Save Changes" : "Create Project")}
-          </Button>
+          </button>
           <Link to="/settings?tab=projects" className="text-sm text-text-muted hover:text-text transition-colors">
             Cancel
           </Link>

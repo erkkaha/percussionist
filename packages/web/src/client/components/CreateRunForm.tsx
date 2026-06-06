@@ -9,6 +9,14 @@ import type { CreateRunRequest, Project, Run, AgentDef } from "../lib/types";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { Button } from "./ui/button";
+import { Switch } from "./ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 
 interface ClusterAgent {
   name: string;
@@ -227,19 +235,18 @@ export default function CreateRunForm() {
           <label className="text-sm font-medium text-text-muted">
             Project <span className="text-phase-failed">*</span>
           </label>
-          <select
-            value={selectedProject}
-            onChange={(e) => handleProjectChange(e.target.value)}
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
-            required
-          >
-            <option value="">— select a project —</option>
-            {(projects ?? []).map((p) => (
-              <option key={p.metadata.name} value={p.metadata.name}>
-                {p.spec.displayName ?? p.metadata.name}
-              </option>
-            ))}
-          </select>
+          <Select value={selectedProject} onValueChange={(v) => handleProjectChange(v)}>
+            <SelectTrigger className="bg-surface">
+              <SelectValue placeholder="— select a project —" />
+            </SelectTrigger>
+            <SelectContent>
+              {(projects ?? []).map((p) => (
+                <SelectItem key={p.metadata.name} value={p.metadata.name}>
+                  {p.spec.displayName ?? p.metadata.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {!selectedProject && (
             <p className="text-xs text-text-dim">
               A project is required.{" "}
@@ -252,25 +259,7 @@ export default function CreateRunForm() {
 
         {/* Interactive toggle */}
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={interactive}
-            onClick={() => setInteractive((v) => !v)}
-            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border transition-colors focus:outline-none ${
-              interactive
-                ? "border-phase-running bg-phase-running/20"
-                : "border-border bg-surface-overlay"
-            }`}
-          >
-            <span
-              className={`inline-block h-3.5 w-3.5 rounded-full bg-current transition-transform mt-[3px] ${
-                interactive
-                  ? "translate-x-[18px] text-phase-running"
-                  : "translate-x-[3px] text-text-dim"
-              }`}
-            />
-          </button>
+          <Switch checked={interactive} onCheckedChange={(v) => setInteractive(v)} />
           <span className="text-sm text-text">Interactive mode</span>
           <span className="text-xs text-text-dim">
             (no task — connect via <code className="font-mono">beatctl attach</code>)
@@ -319,16 +308,16 @@ export default function CreateRunForm() {
         {/* Cluster agent selector */}
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-muted">Cluster agents</label>
-          <select
-            value={selectedClusterAgent}
-            onChange={(e) => handleClusterAgentSelect(e.target.value)}
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
-          >
-            <option value="">— none —</option>
-            {visibleAgents.map((ca) => (
-              <option key={ca.name} value={ca.name}>{ca.name}</option>
-            ))}
-          </select>
+          <Select value={selectedClusterAgent} onValueChange={(v) => handleClusterAgentSelect(v)}>
+            <SelectTrigger>
+              <SelectValue placeholder="— none —" />
+            </SelectTrigger>
+            <SelectContent>
+              {visibleAgents.map((ca) => (
+                <SelectItem key={ca.name} value={ca.name}>{ca.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Inline agents */}
@@ -348,14 +337,16 @@ export default function CreateRunForm() {
             <div key={i} className="space-y-2 rounded-md border border-border bg-surface p-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-text-muted">Agent {i + 1}</span>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => removeAgent(i)}
                   disabled={agents.length <= 1}
-                  className="text-xs text-phase-failed hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="text-phase-failed hover:text-red-400 disabled:opacity-30"
                 >
                   Remove
-                </button>
+                </Button>
               </div>
               <Input
                 type="text"
@@ -445,7 +436,7 @@ export default function CreateRunForm() {
               Inherited from project:{" "}
               <span className="font-mono text-text">{selectedProjectSpec?.source?.git?.url}</span>
               {selectedProjectSpec?.source?.git?.ref && (
-                <span className="text-text-dim font-normal"> @ <span className="font-mono text-text">{selectedProjectSpec.source.git.ref}</span></span>
+                <span className="text-text-dim"> @ <span className="font-mono text-text">{selectedProjectSpec.source.git.ref}</span></span>
               )}
             </p>
           </div>
@@ -543,7 +534,7 @@ export default function CreateRunForm() {
 
         {/* Error */}
         {mutation.error && (
-          <div className="rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
+          <div className="rounded-md border border-error/30 bg-error-container px-4 py-3 text-sm text-on-error-container">
             {mutation.error.message}
           </div>
         )}
@@ -556,10 +547,7 @@ export default function CreateRunForm() {
           >
             {mutation.isPending ? "Submitting..." : "Submit Run"}
           </Button>
-          <Link
-            to="/"
-            className="text-sm text-text-muted hover:text-text transition-colors"
-          >
+          <Link to="/" className="text-sm text-text-muted hover:text-text transition-colors">
             Cancel
           </Link>
         </div>

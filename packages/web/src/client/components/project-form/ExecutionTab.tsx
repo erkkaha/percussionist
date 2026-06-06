@@ -1,5 +1,7 @@
-import { Input } from "../ui/input";
 import type { ProjectFormHookReturn } from "./useProjectForm";
+import { Input } from "../ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 
 interface ExecutionTabProps {
   form: Pick<ProjectFormHookReturn, "retryPolicyEnabled" | "retryPolicyMaxAttempts" | "retryPolicyBackoffSeconds" | "retryPolicyBackoffMultiplier" | "retryPolicyMaxBackoffSeconds" | "retryPolicyPoisonPillThreshold" | "reviewPolicyAiReviewerEnabled" | "reviewPolicyAiReviewerAgent" | "reviewPolicyMaxAutoReworks" | "runnerImage" | "cpuRequest" | "memRequest" | "cpuLimit" | "memLimit" | "worktreeReuse" | "flowPreset" | "flowHumanApprovalPlan" | "flowHumanApprovalBuild" | "flowPlanOnApprove" | "flowBuildOnSuccess" | "flowBuildOnApprove" | "flowMergeMode"> &
@@ -13,15 +15,10 @@ export default function ExecutionTab({ form }: ExecutionTabProps) {
       {/* Retry Policy */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
         <legend className="px-1 text-sm font-medium text-text-muted">Retry Policy</legend>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={form.retryPolicyEnabled}
-            onChange={(e) => form.setRetryPolicyEnabled(e.target.checked)}
-            className="rounded border-border"
-          />
-          <span className="text-sm text-text-muted">Auto-retry failed tasks with exponential backoff</span>
-        </label>
+        <Switch
+          checked={form.retryPolicyEnabled}
+          onCheckedChange={(v) => form.setRetryPolicyEnabled(v)}
+        />
         {form.retryPolicyEnabled && (
           <>
             <p className="text-xs text-text-dim">
@@ -92,15 +89,10 @@ export default function ExecutionTab({ form }: ExecutionTabProps) {
       {/* Review Policy */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
         <legend className="px-1 text-sm font-medium text-text-muted">Review Policy</legend>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={form.reviewPolicyAiReviewerEnabled}
-            onChange={(e) => form.setReviewPolicyAiReviewerEnabled(e.target.checked)}
-            className="rounded border-border"
-          />
-          <span className="text-sm text-text-muted">Enable automated AI review of completed tasks</span>
-        </label>
+        <Switch
+          checked={form.reviewPolicyAiReviewerEnabled}
+          onCheckedChange={(v) => form.setReviewPolicyAiReviewerEnabled(v)}
+        />
         {form.reviewPolicyAiReviewerEnabled && (
           <>
             <p className="text-xs text-text-dim">
@@ -209,15 +201,10 @@ export default function ExecutionTab({ form }: ExecutionTabProps) {
         <p className="text-xs text-text-dim">
           Control how git worktrees are managed across runs.
         </p>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={form.worktreeReuse}
-            onChange={(e) => form.setWorktreeReuse(e.target.checked)}
-            className="rounded border-border"
-          />
-          <span className="text-sm text-text-muted">Reuse worktrees across runs</span>
-        </label>
+        <Switch
+          checked={form.worktreeReuse}
+          onCheckedChange={(v) => form.setWorktreeReuse(v)}
+        />
         <p className="text-xs text-text-dim">
           When enabled, subsequent runs reuse the existing worktree instead of checking out fresh.
         </p>
@@ -231,16 +218,17 @@ export default function ExecutionTab({ form }: ExecutionTabProps) {
         </p>
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-muted">Preset</label>
-          <select
-            value={form.flowPreset}
-            onChange={(e) => form.setFlowPreset(e.target.value as typeof form.flowPreset)}
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
-          >
-            <option value="simple">Simple — no approvals, auto-done</option>
-            <option value="review">Review — AI review on build success</option>
-            <option value="plan-build">Plan → Build — plan generates builds, human approval</option>
-            <option value="plan-build-review-merge">Plan → Build → Review → Merge (default)</option>
-          </select>
+          <Select value={form.flowPreset} onValueChange={(v) => form.setFlowPreset(v as typeof form.flowPreset)}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="simple">Simple — no approvals, auto-done</SelectItem>
+              <SelectItem value="review">Review — AI review on build success</SelectItem>
+              <SelectItem value="plan-build">Plan → Build — plan generates builds, human approval</SelectItem>
+              <SelectItem value="plan-build-review-merge">Plan → Build → Review → Merge (default)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {form.flowPreset !== "simple" && (
@@ -252,25 +240,27 @@ export default function ExecutionTab({ form }: ExecutionTabProps) {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label className="text-xs text-text-dim block">Plan approval</label>
-                    <select
-                      value={form.flowHumanApprovalPlan}
-                      onChange={(e) => form.setFlowHumanApprovalPlan(e.target.value as "required" | "disabled")}
-                      className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
-                    >
-                      <option value="required">Required</option>
-                      <option value="disabled">Disabled</option>
-                    </select>
+                    <Select value={form.flowHumanApprovalPlan} onValueChange={(v) => form.setFlowHumanApprovalPlan(v as "required" | "disabled")}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="required">Required</SelectItem>
+                        <SelectItem value="disabled">Disabled</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs text-text-dim block">Build approval</label>
-                    <select
-                      value={form.flowHumanApprovalBuild}
-                      onChange={(e) => form.setFlowHumanApprovalBuild(e.target.value as "required" | "disabled")}
-                      className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
-                    >
-                      <option value="required">Required</option>
-                      <option value="disabled">Disabled</option>
-                    </select>
+                    <Select value={form.flowHumanApprovalBuild} onValueChange={(v) => form.setFlowHumanApprovalBuild(v as "required" | "disabled")}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="required">Required</SelectItem>
+                        <SelectItem value="disabled">Disabled</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
               </div>
@@ -278,55 +268,59 @@ export default function ExecutionTab({ form }: ExecutionTabProps) {
               {/* Plan onApprove */}
               <div className="space-y-1.5">
                 <label className="text-xs text-text-dim block">Plan approved →</label>
-                <select
-                  value={form.flowPlanOnApprove}
-                  onChange={(e) => form.setFlowPlanOnApprove(e.target.value as "generate-builds" | "done")}
-                  className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
-                >
-                  <option value="generate-builds">Generate builds</option>
-                  <option value="done">Mark done</option>
-                </select>
+                <Select value={form.flowPlanOnApprove} onValueChange={(v) => form.setFlowPlanOnApprove(v as "generate-builds" | "done")}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="generate-builds">Generate builds</SelectItem>
+                    <SelectItem value="done">Mark done</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Build onSuccess */}
               <div className="space-y-1.5">
                 <label className="text-xs text-text-dim block">Build succeeds →</label>
-                <select
-                  value={form.flowBuildOnSuccess}
-                  onChange={(e) => form.setFlowBuildOnSuccess(e.target.value as "human-review" | "ai-review" | "done")}
-                  className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
-                >
-                  <option value="human-review">Human review</option>
-                  <option value="ai-review">AI review</option>
-                  <option value="done">Mark done</option>
-                </select>
+                <Select value={form.flowBuildOnSuccess} onValueChange={(v) => form.setFlowBuildOnSuccess(v as "human-review" | "ai-review" | "done")}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="human-review">Human review</SelectItem>
+                    <SelectItem value="ai-review">AI review</SelectItem>
+                    <SelectItem value="done">Mark done</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Build onApprove */}
               <div className="space-y-1.5">
                 <label className="text-xs text-text-dim block">Build approved →</label>
-                <select
-                  value={form.flowBuildOnApprove}
-                  onChange={(e) => form.setFlowBuildOnApprove(e.target.value as "merge" | "done")}
-                  className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
-                >
-                  <option value="merge">Merge to parent branch</option>
-                  <option value="done">Mark done (no merge)</option>
-                </select>
+                <Select value={form.flowBuildOnApprove} onValueChange={(v) => form.setFlowBuildOnApprove(v as "merge" | "done")}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="merge">Merge to parent branch</SelectItem>
+                    <SelectItem value="done">Mark done (no merge)</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Merge mode */}
               <div className="space-y-1.5">
                 <label className="text-xs text-text-dim block">Merge mode</label>
-                <select
-                  value={form.flowMergeMode}
-                  onChange={(e) => form.setFlowMergeMode(e.target.value as "auto" | "manual" | "disabled")}
-                  className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
-                >
-                  <option value="auto">Auto-merge on approval</option>
-                  <option value="manual">Manual merge required</option>
-                  <option value="disabled">No merging</option>
-                </select>
+                <Select value={form.flowMergeMode} onValueChange={(v) => form.setFlowMergeMode(v as "auto" | "manual" | "disabled")}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto-merge on approval</SelectItem>
+                    <SelectItem value="manual">Manual merge required</SelectItem>
+                    <SelectItem value="disabled">No merging</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </>

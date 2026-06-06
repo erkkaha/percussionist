@@ -54,16 +54,17 @@ function ProjectRow({ project }: { project: Project }) {
       </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => navigate(`/projects/${encodeURIComponent(project.metadata.name)}/edit`)}
-            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-accent/60 hover:text-text transition-colors"
           >
             Edit
-          </button>
-          <Link to={`/projects/${encodeURIComponent(project.metadata.name)}/board`}
-            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-accent/60 hover:text-text transition-colors"
+          </Button>
+          <Link
+            to={`/projects/${encodeURIComponent(project.metadata.name)}/board`}
           >
-            Board
+            <Button variant="outline" size="sm">Board</Button>
           </Link>
           <Button
             variant="destructive"
@@ -74,7 +75,6 @@ function ProjectRow({ project }: { project: Project }) {
               }
             }}
             disabled={del.isPending}
-            className="px-2 py-1 text-xs"
           >
             {del.isPending ? "Deleting…" : "Delete"}
           </Button>
@@ -117,7 +117,7 @@ export default function ProjectsPage({ showHeader = true }: { showHeader?: boole
             </p>
           </div>
           <Link to="/projects/new">
-            <Button variant="secondary" size="sm">+ New Project</Button>
+            <Button>+ New Project</Button>
           </Link>
         </div>
       )}

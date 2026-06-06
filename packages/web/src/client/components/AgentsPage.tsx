@@ -3,14 +3,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAgents } from "../hooks/useAgents";
 import { useAgentsEvents } from "../hooks/useAgentsEvents";
 import { deleteAgent } from "../lib/api";
+import { Button } from "./ui/button";
 
 interface AgentListItem {
   name: string;
   content: string;
   model?: string;
 }
-
-import { Button } from "./ui/button";
 
 function age(iso: string | undefined): string {
   if (!iso) return "-";
@@ -56,12 +55,13 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
       </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => navigate(`/agents/${encodeURIComponent(agent.name)}/edit`)}
-            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-accent/60 hover:text-text transition-colors"
           >
             Edit
-          </button>
+          </Button>
           <Button
             variant="destructive"
             size="sm"
@@ -71,7 +71,6 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
               }
             }}
             disabled={del.isPending}
-            className="px-2 py-1 text-xs"
           >
             {del.isPending ? "Deleting\u2026" : "Delete"}
           </Button>
@@ -114,7 +113,7 @@ export default function AgentsPage({ showHeader = true }: { showHeader?: boolean
             </p>
           </div>
           <Link to="/agents/new">
-            <Button variant="secondary" size="sm">+ New Agent</Button>
+            <Button>+ New Agent</Button>
           </Link>
         </div>
       )}

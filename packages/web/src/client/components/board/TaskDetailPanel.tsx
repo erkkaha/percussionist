@@ -20,7 +20,8 @@ import { CodeBlock } from "../CodeBlock";
 import TaskRunsPanel from "./TaskRunsPanel";
 import TaskEventsPanel from "./TaskEventsPanel";
 import { FileDiff } from "../FileDiff";
-import type React from "react";
+import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import { Button } from "../ui/button";
 
 const remarkPlugins = [remarkGfm];
@@ -374,72 +375,67 @@ function TaskDetailPanelInner({
         {/* Action buttons */}
         <div className="flex items-center gap-2 flex-wrap">
           {col === "ideas" && (
-            <Button
-              variant="outline"
-              size="sm"
+            <button
               onClick={() => promoteIdeaMutation.mutate()}
               disabled={promoteIdeaMutation.isPending}
+              className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text transition-colors disabled:opacity-40"
             >
               <ArrowRight className="h-3.5 w-3.5" />
               {promoteIdeaMutation.isPending ? "Promoting…" : "Promote to Backlog"}
-            </Button>
+            </button>
           )}
 
           {col === "review" && (
             <>
-              <Button
-                variant={alreadyApproved ? "secondary" : "default"}
-                size="sm"
+              <button
                 onClick={() => approveMutation.mutate()}
                 disabled={approveMutation.isPending || alreadyApproved}
-                className={alreadyApproved ? "bg-phase-succeeded/20 text-phase-succeeded border border-phase-succeeded/30 cursor-default" : ""}
+                className={`flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  alreadyApproved
+                    ? "bg-phase-succeeded/20 text-phase-succeeded border border-phase-succeeded/30 cursor-default"
+                    : "bg-surface-container-high hover:bg-surface-container-highest text-text disabled:opacity-40"
+                }`}
               >
                 <Check className="h-3.5 w-3.5" />
                 {alreadyApproved ? "Approved" : approveMutation.isPending ? "Approving…" : "Approve"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
+              </button>
+              <button
                 onClick={() => setShowRequestChanges(true)}
-                className="text-text-dim hover:text-phase-failed hover:border-phase-failed/40"
+                className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-phase-failed hover:border-phase-failed/40 transition-colors"
               >
                 <X className="h-3.5 w-3.5" /> Request Changes
-              </Button>
+              </button>
             </>
           )}
 
           {(worker?.status === "Failed" || worker?.status === "Escalated") && (
-            <Button
-              variant="outline"
-              size="sm"
+            <button
               onClick={() => retryMutation.mutate()}
               disabled={retryMutation.isPending}
+              className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text transition-colors disabled:opacity-40"
             >
               <RefreshCw className="h-3.5 w-3.5" />
               {retryMutation.isPending ? "Retrying…" : "Retry"}
-            </Button>
+            </button>
           )}
 
           {!confirmDelete ? (
-            <Button
-              variant="outline"
-              size="sm"
+            <button
               onClick={() => setConfirmDelete(true)}
-              className="text-text-dim hover:text-phase-failed hover:border-phase-failed/40 ml-auto"
+              className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-phase-failed hover:border-phase-failed/40 transition-colors ml-auto"
             >
               <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+            </button>
           ) : (
             <div className="flex items-center gap-2 ml-auto">
               <span className="text-xs text-text-dim">Delete task?</span>
-              <Button
-                variant="destructive"
-                size="sm"
+              <button
                 onClick={() => deleteMutation.mutate()}
                 disabled={deleteMutation.isPending}
+                className="rounded-md bg-phase-failed/20 border border-phase-failed/40 px-2 py-1 text-xs text-phase-failed hover:bg-phase-failed/30 transition-colors disabled:opacity-50"
               >
                 {deleteMutation.isPending ? "Deleting…" : "Confirm"}
-              </Button>
+              </button>
               <button
                 onClick={() => setConfirmDelete(false)}
                 className="text-xs text-text-dim hover:text-text transition-colors"
@@ -454,28 +450,31 @@ function TaskDetailPanelInner({
         {showRequestChanges && (
           <div className="space-y-2 border border-border rounded-md p-3 bg-surface">
             <p className="text-label-md font-mono uppercase text-text-dim">Review feedback</p>
-            <textarea
+            <Textarea
               placeholder="Describe required changes…"
               value={requestChangesComment}
               onChange={(e) => setRequestChangesComment(e.target.value)}
               rows={4}
-              className="w-full rounded border border-border bg-surface-raised px-2 py-1.5 text-sm resize-y focus:outline-none focus:ring-1 focus:ring-border"
               autoFocus
             />
             <div className="flex gap-2 justify-end">
-              <Button
-                variant="outline"
-                size="sm"
+              <button
                 onClick={() => { setShowRequestChanges(false); setRequestChangesComment(""); }}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-text-dim hover:text-text transition-colors"
               >
                 Cancel
-              </Button>
-              <Button
-                size="sm"
+              </button>
+              <button
+                onClick={() => {
+                  if (requestChangesComment.trim()) {
+                    requestChangesMutation.mutate(requestChangesComment.trim());
+                  }
+                }}
                 disabled={requestChangesMutation.isPending || !requestChangesComment.trim()}
+                className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 px-3 py-1.5 text-xs font-medium text-text transition-colors"
               >
                 {requestChangesMutation.isPending ? "Submitting…" : "Submit"}
-              </Button>
+              </button>
             </div>
           </div>
         )}

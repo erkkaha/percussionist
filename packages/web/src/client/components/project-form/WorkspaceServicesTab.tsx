@@ -1,5 +1,7 @@
 import { Input } from "../ui/input";
 import type { ProjectFormHookReturn } from "./useProjectForm";
+import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
 
 interface WorkspaceServicesTabProps {
   form: Pick<ProjectFormHookReturn, "codeServerEnabled" | "codeServerImage" | "csCpuRequest" | "csMemRequest" | "csCpuLimit" | "csMemLimit" | "pvcName" | "mountPath" | "storageClass" | "embeddingEnabled" | "embeddingModel" | "embeddingDimensions" | "embeddingOllamaUrl"> &
@@ -16,15 +18,10 @@ export default function WorkspaceServicesTab({ form }: WorkspaceServicesTabProps
         <p className="text-xs text-text-dim">
           Enable interactive VS Code access to the workspace. Requires a data PVC (git or local source).
         </p>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={form.codeServerEnabled}
-            onChange={(e) => form.setCodeServerEnabled(e.target.checked)}
-            className="rounded border-border"
-          />
-          <span className="text-sm text-text-muted">Enable code-server sidecar</span>
-        </label>
+        <Switch
+          checked={form.codeServerEnabled}
+          onCheckedChange={(v) => form.setCodeServerEnabled(v)}
+        />
 
         {form.codeServerEnabled && (
           <>
@@ -139,15 +136,10 @@ export default function WorkspaceServicesTab({ form }: WorkspaceServicesTabProps
           Enable the per-project vector memory service for agent context retrieval
           and semantic search across runs. Requires a data PVC and a running Ollama instance.
         </p>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={form.embeddingEnabled}
-            onChange={(e) => form.setEmbeddingEnabled(e.target.checked)}
-            className="rounded border-border"
-          />
-          <span className="text-sm text-text-muted">Enable memory service</span>
-        </label>
+        <Switch
+          checked={form.embeddingEnabled}
+          onCheckedChange={(v) => form.setEmbeddingEnabled(v)}
+        />
         {form.embeddingEnabled && (
           <div className="ml-6 space-y-3 pt-1">
             <div className="space-y-1.5">
