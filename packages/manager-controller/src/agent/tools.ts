@@ -38,6 +38,7 @@ import {
 } from "@percussionist/kube";
 import { LABELS, MEMORY_SERVICE_PORT, type Project, type Task, type TaskPhase, type TaskSpec } from "@percussionist/api";
 import { storeMemory, queryMemory, getContext } from "./memory-client.js";
+import { isValidPackageName, sanitizeCommand, logSecurityEvent } from "./security.js";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
 import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
@@ -1391,6 +1392,15 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
       if (!command) throw new Error("command is required");
 
+      // Security: sanitize command before execution to prevent shell injection.
+      const sanitizationError = sanitizeCommand(command);
+      if (sanitizationError) {
+        logSecurityEvent("exec_in_workspace.rejected", { project: projectName, reason: sanitizationError });
+        throw new Error(sanitizationError);
+      }
+
+      console.log(`[exec_in_workspace] project=${projectName} command="${command.slice(0, 200)}"`);
+
       const result = await execInWorkspace(projectName, command, mountPath, timeoutMs, resourceNs);
       return {
         project: projectName,
@@ -1748,7 +1758,21 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const project = String(args.project ?? "");
       const pkgs = (args.packages ?? []) as string[];
       if (!project || !pkgs.length) throw new Error("project and packages are required");
+
+      // Security: validate each package name against Alpine package naming rules.
+      // Rejects shell metacharacters that could enable command injection via execInWorkspace.
+      for (const pkg of pkgs) {
+        if (!isValidPackageName(pkg)) {
+          logSecurityEvent("install_packages.rejected", { project, package: pkg });
+          throw new Error(
+            `Invalid package name "${pkg}": only alphanumeric characters, hyphens, dots, and plus signs are allowed.`,
+          );
+        }
+      }
+
       const cmd = `apk update --quiet && apk add --no-cache ${pkgs.join(" ")}`;
+      console.log(`[install_packages] project=${project} packages=[${pkgs.join(", ")}]`);
+
       const result = await execInWorkspace(project, cmd, undefined, undefined, MANAGER_NAMESPACE);
       return { installed: pkgs, output: result.stdout ?? "", exitCode: result.exitCode };
     }
