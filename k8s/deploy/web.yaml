@@ -101,7 +101,7 @@ rules:
     resources: ["clusteragents", "clustersettings"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
 ---
-# ClusterRole for node metrics (observability view).
+# ClusterRole for node metrics (observability view) + node capacity.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -110,6 +110,12 @@ rules:
   - apiGroups: ["metrics.k8s.io"]
     resources: ["nodes"]
     verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes/proxy"]
+    verbs: ["get"] # needed for kubelet /stats/summary (host-level memory)
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

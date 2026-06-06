@@ -12,7 +12,6 @@ import AgentsPage from "./components/AgentsPage";
 import AgentForm from "./components/AgentForm";
 import BoardView from "./components/BoardView";
 import MetricsView from "./components/MetricsView";
-import ToolMetricsView from "./components/ToolMetricsView";
 import SettingsPage from "./components/SettingsPage";
 import PlanView from "./components/PlanView";
 import ActivityPage from "./pages/ActivityPage";
@@ -42,7 +41,6 @@ export default function App() {
             <Route path="/runs/:name" element={<RunDetail />} />
             <Route path="/stats" element={<StatsView />} />
             <Route path="/metrics" element={<MetricsView />} />
-            <Route path="/tools" element={<ToolMetricsView />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/new" element={<CreateProjectForm />} />
             <Route path="/projects/:name/edit" element={<EditProjectPage />} />

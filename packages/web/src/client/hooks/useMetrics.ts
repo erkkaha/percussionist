@@ -22,6 +22,9 @@ export interface NodeMetricRow {
   usage: { cpu: string; memory: string };
   cpuMillicores: number;
   memoryBytes: number;
+  capacity: { cpu: string; memory: string } | null;
+  capacityCpuMillicores: number;
+  capacityMemoryBytes: number;
 }
 
 function parseCpu(raw: string): number {
@@ -54,7 +57,7 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
         throw new Error(nodeErr.error ?? "metrics unavailable");
       }
 
-      const nodesData = nodesRes.ok ? (await nodesRes.json() as { items: Array<{ name: string; timestamp: string; window: string; usage: { cpu: string; memory: string } }> }) : { items: [] };
+      const nodesData = nodesRes.ok ? (await nodesRes.json() as { items: Array<{ name: string; timestamp: string; window: string; usage: { cpu: string; memory: string }; capacity: { cpu: string; memory: string } | null }> }) : { items: [] };
       const podsData = podsRes.ok ? (await podsRes.json() as { items: Array<{ name: string; namespace: string; timestamp: string; window: string; containers: ContainerUsage[] }> }) : { items: [] };
 
       const nodes: NodeMetricRow[] = nodesData.items.map((n) => ({
@@ -64,6 +67,9 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
         usage: n.usage,
         cpuMillicores: parseCpu(n.usage.cpu),
         memoryBytes: parseMemory(n.usage.memory),
+        capacity: n.capacity,
+        capacityCpuMillicores: n.capacity ? parseCpu(n.capacity.cpu) : 0,
+        capacityMemoryBytes: n.capacity ? parseMemory(n.capacity.memory) : 0,
       }));
 
       const pods: PodMetricRow[] = podsData.items.map((p) => {

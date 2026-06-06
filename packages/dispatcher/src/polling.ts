@@ -4,7 +4,7 @@ import { RunPhase } from "@percussionist/api";
 import { BASE_URL, listSessions, fetchMessages, checkHealth, compactMessagesForSnapshot } from "./session.js";
 import http from "node:http";
 import { sendStats, incrementalFlush } from "./stats-reporter.js";
-import { handleToolSseEvent, initToolEvents } from "./tool-events-reporter.js";
+
 import type { RawMessage } from "./session.js";
 
 const log = (...args: unknown[]) =>
@@ -56,6 +56,8 @@ const TASK = process.env.RUN_TASK ?? "";
 // poll loop to enforce this first-response deadline.
 const FIRST_RESPONSE_TIMEOUT_MS = 3_600_000;
 const HARD_TIMEOUT_MS = FIRST_RESPONSE_TIMEOUT_MS + 300_000;
+const SETTLE_MS = 10_000;
+const IDLE_TIMEOUT_MS = 900_000;
 
 // ---------------------------------------------------------------------------
 // Token aggregator
@@ -224,7 +226,6 @@ export async function runInteractive(
             log(`discovered session ${s.id}`);
             if (!firstSessionID) {
               firstSessionID = s.id;
-              initToolEvents(runName, firstSessionID);
               await patchStatus({ sessionID: firstSessionID, message: "session active" });
               // Snapshot immediately on first session discovery.
               maybeSnapshot("session discovered");
@@ -269,9 +270,6 @@ export async function runInteractive(
             let evt: { type?: string; properties?: Record<string, unknown> };
             try { evt = JSON.parse(dataLines.join("\n")); } catch { continue; }
             logEvent(evt);
-            if (evt.type?.startsWith("tool.") && evt.properties) {
-              handleToolSseEvent(evt.type, evt.properties);
-            }
             if (evt.type === "session.status") {
               // Snapshot after the first assistant turn completes.
               const p = evt.properties as { busy?: boolean } | undefined;
@@ -415,8 +413,6 @@ export async function runPrompt(
   const sessionData = (await sessionRes.json()) as { id: string };
   const sessionID = sessionData.id;
   log(`created session ${sessionID}`);
-  initToolEvents(runName, sessionID);
-
   const runStartedAt = new Date().toISOString();
   await patchStatus({ phase: RunPhase.Running, sessionID, startedAt: runStartedAt, message: "dispatching prompt" });
 
@@ -435,6 +431,9 @@ export async function runPrompt(
   let waitingForInput = false;
   let terminate = false;
   let promptFlushCursor = 0;
+  let completingSince: number | undefined;
+  let idleSince: number | undefined;
+  let lastMessageId: string | undefined;
 
   // Transient error codes that warrant a retry of the prompt POST.
   const RETRYABLE_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "EPIPE", "ETIMEDOUT"]);
@@ -522,6 +521,14 @@ export async function runPrompt(
           throw new Error(`opencode did not produce an assistant response within ${FIRST_RESPONSE_TIMEOUT_MS / 1000}s of dispatch`);
         }
 
+        // Activity detection — any new message (user or assistant) resets
+        // the idle timer and settling counter.
+        if (last?.info?.id && last.info.id !== lastMessageId) {
+          lastMessageId = last.info.id;
+          idleSince = undefined;
+          completingSince = undefined;
+        }
+
         if (last?.info?.role === "assistant") {
           sawBusy = true;
           const t = last.info.tokens;
@@ -557,12 +564,27 @@ export async function runPrompt(
                 throw new Error("opencode produced an assistant response with zero token usage before any work was done");
               }
               waitingForInput = true;
-            } else {
-              log("last assistant message completed — done");
+              idleSince ??= Date.now();
+            } else if (completingSince && Date.now() - completingSince >= SETTLE_MS) {
+              log("last assistant message completed — settled, done");
               terminate = true;
               return;
+            } else if (!completingSince) {
+              completingSince = Date.now();
             }
           }
+        }
+
+        // --- idle timeout: terminate if session is idle for too long ---
+        if (waitingForInput) {
+          if (idleSince === undefined) idleSince = Date.now();
+          if (Date.now() - idleSince >= IDLE_TIMEOUT_MS) {
+            log("session idle for too long — terminating");
+            terminate = true;
+            return;
+          }
+        } else {
+          idleSince = undefined;
         }
       } catch (e) {
         if (terminate) return;
@@ -755,12 +777,16 @@ export async function runPrompt(
     throw raceError;
   }
 
-  await sendStats(sessionID, RunPhase.Succeeded, runStartedAt, completedAt, tokensIn, tokensOut);
-  const completionMessage = agentCompletionSummary
-    ? `agent signalled completion — ${agentCompletionSummary}`
-    : "session completed";
-  await patchStatus({ phase: RunPhase.Succeeded, message: completionMessage, completedAt });
-  log("done");
+  if (agentCompletionSummary) {
+    await sendStats(sessionID, RunPhase.Succeeded, runStartedAt, completedAt, tokensIn, tokensOut);
+    await patchStatus({ phase: RunPhase.Succeeded, message: `agent signalled completion — ${agentCompletionSummary}`, completedAt });
+    log("done");
+  } else {
+    const msg = "session ended without completion signal";
+    await sendStats(sessionID, RunPhase.Failed, runStartedAt, completedAt, tokensIn, tokensOut, msg);
+    await patchStatus({ phase: RunPhase.Failed, message: msg, completedAt });
+    log("done (failed — no explicit completion signal)");
+  }
 
   return { sessionID, startedAt: runStartedAt };
 }

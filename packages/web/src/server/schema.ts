@@ -90,32 +90,22 @@ export const fileOps = sqliteTable(
   ],
 );
 
-// ---------------------------------------------------------------------------
-// Task events — append-only audit log of Task state transitions.
-// CRDs are authoritative for live task state; this table is for history/analytics.
-
-// ---------------------------------------------------------------------------
-// Tool events — every tool invocation during a run, captured from SSE events
-// and MCP middleware. Used to analyze tool usage patterns and detect gaps.
-
-export const toolEvents = sqliteTable(
-  "tool_events",
+export const metricSnapshots = sqliteTable(
+  "metric_snapshots",
   {
-    id: text("id").primaryKey(),
-    sessionId: text("session_id").notNull(),
-    runName: text("run_name").notNull(),
-    toolName: text("tool_name").notNull(),
-    isMcp: integer("is_mcp", { mode: "boolean" }).notNull().default(false),
-    calledAt: text("called_at").notNull(),
-    durationMs: integer("duration_ms"),
-    success: integer("success", { mode: "boolean" }),
-    resultSize: integer("result_size"),
-    resultTruncated: integer("result_truncated", { mode: "boolean" }),
-    error: text("error"),
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    node: text("node").notNull(),
+    cpuUsageMillicores: integer("cpu_usage_millicores").notNull(),
+    memoryUsageBytes: integer("memory_usage_bytes").notNull(),
+    cpuCapacityMillicores: integer("cpu_capacity_millicores").notNull(),
+    memoryCapacityBytes: integer("memory_capacity_bytes").notNull(),
+    recordedAt: text("recorded_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
   },
   (table) => [
-    index("idx_tool_events_session_id").on(table.sessionId),
-    index("idx_tool_events_run_name").on(table.runName),
+    index("idx_metric_snapshots_node_recorded").on(table.node, table.recordedAt),
+    index("idx_metric_snapshots_recorded").on(table.recordedAt),
   ],
 );
 

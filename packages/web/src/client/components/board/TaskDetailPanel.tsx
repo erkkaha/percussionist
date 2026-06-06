@@ -20,7 +20,9 @@ import { CodeBlock } from "../CodeBlock";
 import TaskRunsPanel from "./TaskRunsPanel";
 import TaskEventsPanel from "./TaskEventsPanel";
 import { FileDiff } from "../FileDiff";
-import type React from "react";
+import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
+import { Button } from "../ui/button";
 
 const remarkPlugins = [remarkGfm];
 
@@ -52,10 +54,14 @@ const planMarkdownComponents: React.ComponentProps<typeof ReactMarkdown>["compon
     }
     return <span className="bg-surface-sunken rounded px-1 py-0.5 text-xs font-mono">{children}</span>;
   },
-  h1: ({ children }) => <h1 className="text-2xl font-bold mt-4 mb-1">{children}</h1>,
-  h2: ({ children }) => <h2 className="text-xl font-semibold mt-3 mb-1">{children}</h2>,
-  h3: ({ children }) => <h3 className="text-lg font-semibold mt-2 mb-1">{children}</h3>,
-  h4: ({ children }) => <h4 className="text-base font-semibold mt-2 mb-0.5">{children}</h4>,
+  h1: ({ children }) => <h1 className="text-headline-lg font-bold mt-4 mb-1">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-headline-md font-semibold mt-3 mb-1">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-body-lg font-semibold mt-2 mb-1">{children}</h3>,
+  h4: ({ children }) => <h4 className="text-body-sm font-semibold mt-2 mb-0.5">{children}</h4>,
+  ul: ({ children }) => <ul className="list-disc pl-5 space-y-1">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1">{children}</ol>,
+  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  hr: () => <hr className="my-3 border-border-muted" />,
   table: ({ children }) => (
     <div className="overflow-x-auto mb-2">
       <table className="border-collapse text-xs w-full">{children}</table>
@@ -83,7 +89,7 @@ function PlanContent({ projectName, taskName }: { projectName: string; taskName:
   if (!data?.content) return <p className="text-xs text-text-dim p-4">No plan artifact found.</p>;
 
   return (
-    <div className="prose prose-sm prose-invert max-w-none px-4 py-3">
+    <div className="text-xs max-w-none px-4 py-3" style={{ fontSize: "12px", lineHeight: "1.5" }}>
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         components={planMarkdownComponents}
@@ -448,12 +454,11 @@ function TaskDetailPanelInner({
         {showRequestChanges && (
           <div className="space-y-2 border border-border rounded-md p-3 bg-surface">
             <p className="text-label-md font-mono uppercase text-text-dim">Review feedback</p>
-            <textarea
+            <Textarea
               placeholder="Describe required changes…"
               value={requestChangesComment}
               onChange={(e) => setRequestChangesComment(e.target.value)}
               rows={4}
-              className="w-full rounded border border-border bg-surface-raised px-2 py-1.5 text-sm resize-y focus:outline-none focus:ring-1 focus:ring-border"
               autoFocus
             />
             <div className="flex gap-2 justify-end">

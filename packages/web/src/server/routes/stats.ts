@@ -18,8 +18,8 @@
 //     days=N   — look-back window in days (default: 30; 0 = all time)
 
 import { Hono } from "hono";
-import { getDb, runs, messages, toolCalls, fileOps, toolEvents } from "../db.js";
-import { lt, gte, eq, and, like, desc, sql } from "drizzle-orm";
+import { getDb, runs, messages, toolCalls, fileOps, metricSnapshots } from "../db.js";
+import { lt, gte, eq, and, like, desc, sql, asc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -60,20 +60,6 @@ interface ToolCallPayload {
   success?: boolean;
   error?: string;
   durationMs?: number;
-}
-
-interface ToolEventPayload {
-  id: string;
-  sessionId: string;
-  runName: string;
-  toolName: string;
-  isMcp?: boolean;
-  calledAt: string;
-  durationMs?: number;
-  success?: boolean;
-  resultSize?: number;
-  resultTruncated?: boolean;
-  error?: string;
 }
 
 interface FileOpPayload {
@@ -328,53 +314,6 @@ stats.get("/exists/:sessionID", (c) => {
   return c.json({ exists: row !== undefined });
 });
 
-// POST /api/stats/tool-events — batch ingest of tool invocation events.
-// Called by the dispatcher periodically during a run. Each event captures a
-// single tool invocation (native OpenCode tool or MCP tool call).
-stats.post("/tool-events", async (c) => {
-  let body: { events: ToolEventPayload[] };
-  try {
-    body = (await c.req.json()) as { events: ToolEventPayload[] };
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-
-  if (!body.events?.length) {
-    return c.json({ error: "events array is required" }, 400);
-  }
-
-  const db = getDb();
-  let inserted = 0;
-
-  try {
-    for (const e of body.events) {
-      if (!e.id || !e.sessionId || !e.runName) continue;
-      db.insert(toolEvents)
-        .values({
-          id: e.id,
-          sessionId: e.sessionId,
-          runName: e.runName,
-          toolName: e.toolName,
-          isMcp: e.isMcp ?? false,
-          calledAt: e.calledAt,
-          durationMs: e.durationMs,
-          success: e.success,
-          resultSize: e.resultSize,
-          resultTruncated: e.resultTruncated,
-          error: e.error,
-        })
-        .onConflictDoNothing()
-        .run();
-      inserted++;
-    }
-  } catch (err) {
-    console.error("[stats] tool-events persist error:", (err as Error).message);
-    return c.json({ error: "failed to persist tool events" }, 500);
-  }
-
-  return c.json({ ok: true, inserted });
-});
-
 // GET /api/stats/export?days=30 — full dump for LLM analysis.
 //
 // Returns a JSON array where each element is a session with nested messages,
@@ -496,9 +435,9 @@ stats.get("/tool-metrics", (c) => {
       tool: toolCalls.tool,
       tokensOut: messages.tokensOut,
       msgToolCount: sql<number>`(
-        SELECT CAST(COUNT(*) AS REAL) FROM ${toolCalls} tc2
-        WHERE tc2.${toolCalls.sessionId} = ${toolCalls.sessionId}
-          AND tc2.${toolCalls.messageIdx} = ${toolCalls.messageIdx}
+        SELECT CAST(COUNT(*) AS REAL) FROM tool_calls tc2
+        WHERE tc2.session_id = ${toolCalls.sessionId}
+          AND tc2.message_idx = ${toolCalls.messageIdx}
       )`.as("msg_tool_count"),
     })
     .from(toolCalls)
@@ -587,30 +526,225 @@ stats.get("/tool-metrics", (c) => {
   });
 });
 
-// GET /api/stats/tool-events?sessionId=X&runName=Y&limit=100 — raw tool events.
-stats.get("/tool-events", (c) => {
-  const sessionId = c.req.query("sessionId");
-  const runName = c.req.query("runName");
-  const tool = c.req.query("tool");
-  const limitParam = c.req.query("limit") ?? "100";
-  const limit = Math.min(Math.max(parseInt(limitParam, 10) || 100, 1), 1000);
+// ---------------------------------------------------------------------------
+// GET /api/stats/metrics-timeseries — time-series metrics data.
+// Query params: hours=N (default 1), node=X (default "all")
+
+stats.get("/metrics-timeseries", async (c) => {
+  const hours = Math.min(Math.max(parseInt(c.req.query("hours") ?? "1", 10) || 1, 1), 168);
+  const nodeFilter = c.req.query("node") ?? "all";
 
   const db = getDb();
-  const conditions: ReturnType<typeof eq>[] = [];
-  if (sessionId) conditions.push(eq(toolEvents.sessionId, sessionId));
-  if (runName) conditions.push(eq(toolEvents.runName, runName));
-  if (tool) conditions.push(eq(toolEvents.toolName, tool));
+  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
-  const baseQuery = db.select().from(toolEvents);
-  const rows = (conditions.length > 0
-    ? baseQuery.where(and(...conditions))
-    : baseQuery
-  )
-    .orderBy(desc(toolEvents.calledAt))
-    .limit(limit)
+  const where = and(
+    gte(metricSnapshots.recordedAt, cutoff),
+    nodeFilter !== "all" ? eq(metricSnapshots.node, nodeFilter) : undefined,
+  );
+
+  const rows = db
+    .select({
+      recordedAt: metricSnapshots.recordedAt,
+      node: metricSnapshots.node,
+      cpuPct: sql<number>`ROUND(CAST(${metricSnapshots.cpuUsageMillicores} AS REAL) / NULLIF(${metricSnapshots.cpuCapacityMillicores}, 0) * 100, 1)`,
+      memPct: sql<number>`ROUND(CAST(${metricSnapshots.memoryUsageBytes} AS REAL) / NULLIF(${metricSnapshots.memoryCapacityBytes}, 0) * 100, 1)`,
+    })
+    .from(metricSnapshots)
+    .where(where)
+    .orderBy(asc(metricSnapshots.recordedAt))
     .all();
 
-  return c.json({ events: rows, total: rows.length });
+  // Bucket by minute: average per node per minute.
+  const buckets = new Map<string, { cpuSum: number; memSum: number; count: number }>();
+  for (const r of rows) {
+    const minute = r.recordedAt.slice(0, 16); // "2024-01-01T12:00"
+    const key = `${r.node}|${minute}`;
+    const b = buckets.get(key) ?? { cpuSum: 0, memSum: 0, count: 0 };
+    b.cpuSum += r.cpuPct;
+    b.memSum += r.memPct;
+    b.count += 1;
+    buckets.set(key, b);
+  }
+
+  // Build per-node-per-minute averages.
+  const nodeBuckets = new Map<string, Array<{ recordedAt: string; cpuPct: number; memPct: number }>>();
+  for (const [key, b] of buckets) {
+    const [node, minute] = key.split("|") as [string, string];
+    const pt = { recordedAt: minute + ":00", cpuPct: Math.round((b.cpuSum / b.count) * 10) / 10, memPct: Math.round((b.memSum / b.count) * 10) / 10 };
+    const nb = nodeBuckets.get(node) ?? [];
+    nb.push(pt);
+    nodeBuckets.set(node, nb);
+  }
+
+  // Average across all nodes per minute for the "all nodes" view.
+  const minuteBuckets = new Map<string, { cpuSum: number; memSum: number; count: number }>();
+  for (const [key, b] of buckets) {
+    const [, minute] = key.split("|") as [string, string];
+    const avgCpu = b.cpuSum / b.count;
+    const avgMem = b.memSum / b.count;
+    const mb = minuteBuckets.get(minute) ?? { cpuSum: 0, memSum: 0, count: 0 };
+    mb.cpuSum += avgCpu;
+    mb.memSum += avgMem;
+    mb.count += 1;
+    minuteBuckets.set(minute, mb);
+  }
+
+  const dataPoints: Array<{ recordedAt: string; cpuPct: number; memPct: number }> = [];
+  for (const [minute, mb] of minuteBuckets) {
+    dataPoints.push({
+      recordedAt: minute + ":00",
+      cpuPct: Math.round((mb.cpuSum / mb.count) * 10) / 10,
+      memPct: Math.round((mb.memSum / mb.count) * 10) / 10,
+    });
+  }
+  dataPoints.sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));
+
+  // Fetch run windows within the same time window.
+  const runWindows = db
+    .select({
+      name: runs.name,
+      agent: runs.agent,
+      task: runs.task,
+      startedAt: runs.startedAt,
+      completedAt: runs.completedAt,
+    })
+    .from(runs)
+    .where(
+      and(
+        gte(runs.startedAt, cutoff),
+      ),
+    )
+    .orderBy(asc(runs.startedAt))
+    .all()
+    .filter((r) => r.startedAt && r.completedAt)
+    .map((r) => ({
+      name: r.name,
+      agent: r.agent ?? "",
+      task: r.task ?? "",
+      startedAt: r.startedAt!,
+      completedAt: r.completedAt!,
+    }));
+
+  return c.json({ dataPoints, runWindows, nodeBuckets: Object.fromEntries(nodeBuckets) });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/stats/trends?days=30 — daily aggregated trend data for charts.
+// Returns: { trendPoints: TrendPoint[], modelTrendPoints: ModelTrendPoint[] }
+
+interface TrendPoint {
+  date: string;
+  runs: number;
+  succeeded: number;
+  failed: number;
+  successRate: number;
+  avgDurationMs: number | null;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+interface ModelTrendPoint {
+  date: string;
+  [key: string]: string | number;
+}
+
+stats.get("/trends", (c) => {
+  const daysParam = c.req.query("days") ?? "30";
+  const days = parseInt(daysParam, 10);
+
+  const db = getDb();
+  const cutoff =
+    days > 0
+      ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+
+  const whereClause = cutoff ? gte(runs.startedAt, cutoff) : undefined;
+
+  // Daily run aggregates
+  const dailyRows = db
+    .select({
+      date: sql<string>`DATE(${runs.startedAt})`.as("date"),
+      runs: sql<number>`COUNT(*)`.as("runs"),
+      succeeded: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Succeeded' THEN 1 ELSE 0 END)`.as("succeeded"),
+      failed: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Failed' THEN 1 ELSE 0 END)`.as("failed"),
+      avgDurationMs: sql<number>`AVG(CASE WHEN ${runs.startedAt} IS NOT NULL AND ${runs.completedAt} IS NOT NULL
+        THEN (julianday(${runs.completedAt}) - julianday(${runs.startedAt})) * 86400000 ELSE NULL END)`.as("avg_duration_ms"),
+      tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as("tokens_in"),
+      tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as("tokens_out"),
+    })
+    .from(runs)
+    .where(whereClause)
+    .groupBy(sql`DATE(${runs.startedAt})`)
+    .orderBy(asc(sql`DATE(${runs.startedAt})`))
+    .all() as Array<{
+      date: string;
+      runs: number;
+      succeeded: number;
+      failed: number;
+      avgDurationMs: number | null;
+      tokensIn: number;
+      tokensOut: number;
+    }>;
+
+  const trendPoints: TrendPoint[] = dailyRows.map((r) => ({
+    date: r.date,
+    runs: r.runs,
+    succeeded: r.succeeded,
+    failed: r.failed,
+    successRate: r.runs > 0 ? Math.round((r.succeeded / r.runs) * 100) : 0,
+    avgDurationMs: r.avgDurationMs != null ? Math.round(r.avgDurationMs) : null,
+    tokensIn: r.tokensIn,
+    tokensOut: r.tokensOut,
+  }));
+
+  // Tokens per model per day
+  const modelRows = db
+    .select({
+      date: sql<string>`DATE(${runs.startedAt})`.as("date"),
+      model: runs.model,
+      tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as("tokens_in"),
+      tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as("tokens_out"),
+    })
+    .from(runs)
+    .where(and(
+      whereClause,
+      sql`${runs.model} IS NOT NULL`,
+    ))
+    .groupBy(sql`DATE(${runs.startedAt})`, runs.model)
+    .orderBy(asc(sql`DATE(${runs.startedAt})`))
+    .all() as Array<{
+      date: string;
+      model: string | null;
+      tokensIn: number;
+      tokensOut: number;
+    }>;
+
+  // Pivot into per-date, per-model total tokens (in + out)
+  const pivotMap = new Map<string, Map<string, number>>();
+  for (const r of modelRows) {
+    if (!r.model) continue;
+    const total = r.tokensIn + r.tokensOut;
+    const dateMap = pivotMap.get(r.date) ?? new Map();
+    dateMap.set(r.model, (dateMap.get(r.model) ?? 0) + total);
+    pivotMap.set(r.date, dateMap);
+  }
+
+  const allModels = new Set<string>();
+  for (const dateMap of pivotMap.values()) {
+    for (const model of dateMap.keys()) allModels.add(model);
+  }
+
+  const sortedDates = [...pivotMap.keys()].sort();
+  const modelTrendPoints: ModelTrendPoint[] = sortedDates.map((date) => {
+    const entry: ModelTrendPoint = { date };
+    const dateMap = pivotMap.get(date)!;
+    for (const model of allModels) {
+      entry[model] = dateMap.get(model) ?? 0;
+    }
+    return entry;
+  });
+
+  return c.json({ trendPoints, modelTrendPoints });
 });
 
 export default stats;

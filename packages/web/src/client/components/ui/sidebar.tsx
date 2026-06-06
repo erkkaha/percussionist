@@ -586,6 +586,20 @@ const SidebarMenuButton = React.forwardRef<
       }
     }
 
+    // Default tooltip content classes for collapsed sidebar tooltips —
+    // use the sidebar palette so the surface is always opaque and readable
+    // regardless of what page content sits behind it.
+    const defaultTooltipClassName =
+      "bg-sidebar-accent text-sidebar-accent-foreground border-sidebar-border"
+
+    let tooltipProps: React.ComponentProps<typeof TooltipContent> | undefined
+    if (typeof tooltip === "object") {
+      const { className: cls, ...rest } = tooltip
+      tooltipProps = { ...rest, className: cn(defaultTooltipClassName, cls) }
+    } else {
+      tooltipProps = { className: defaultTooltipClassName }
+    }
+
     return (
       <Tooltip>
         <TooltipTrigger asChild>{button}</TooltipTrigger>
@@ -593,7 +607,7 @@ const SidebarMenuButton = React.forwardRef<
           side="right"
           align="center"
           hidden={state !== "collapsed" || isMobile}
-          {...tooltip}
+          {...tooltipProps}
         />
       </Tooltip>
     )

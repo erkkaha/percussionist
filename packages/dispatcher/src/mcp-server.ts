@@ -24,8 +24,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { DISPATCHER_MCP_PORT } from "@percussionist/api";
-import { getProject, buildTask, createTask, writePlanToConfigMap, readPlanFromConfigMap } from "@percussionist/kube";
-import { recordToolEvent } from "./tool-events-reporter.js";
+import { getProject, buildTask, createTask, patchTaskStatus, writePlanToConfigMap, readPlanFromConfigMap } from "@percussionist/kube";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-dispatcher";
@@ -558,6 +557,10 @@ async function handleCreateTask(
 
     await createTask(task, ns);
 
+    // Ensure status.phase is persisted (defense-in-depth; buildTask sets it
+    // but K8s may strip initial status on some CRD setups).
+    await patchTaskStatus(taskName, { phase: "pending" }, ns).catch(() => { /* best effort */ });
+
     return ok(id, {
       content: [{ type: "text", text: JSON.stringify({ taskName, project: projectName, type: "BUILD", phase: "pending" }) }],
     });
@@ -591,16 +594,6 @@ function handleMcp(
 
     case "tools/call": {
       const toolName = (req.params?.name as string | undefined) ?? "";
-      const calledAt = new Date().toISOString();
-      const start = Date.now();
-
-      const record = (success: boolean, error?: string): void => {
-        recordToolEvent({
-          toolName, isMcp: true, calledAt, success,
-          durationMs: Date.now() - start,
-          error,
-        });
-      };
 
       if (toolName === "fail_run") {
         const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
@@ -608,7 +601,6 @@ function handleMcp(
           ? args["reason"]
           : "agent called fail_run without a reason";
         onFailRun(reason);
-        record(true);
         return ok(req.id, {
           content: [{ type: "text", text: "Run marked as failed. The orchestrator will investigate." }],
         });
@@ -620,7 +612,6 @@ function handleMcp(
           ? args["summary"]
           : "agent called complete_run without a summary";
         onCompleteRun(summary);
-        record(true);
         return ok(req.id, {
           content: [{ type: "text", text: "Run marked as complete. The orchestrator will review the result." }],
         });
@@ -632,7 +623,6 @@ function handleMcp(
           ? args["summary"]
           : "agent called complete_plan without a summary";
         onCompletePlan(summary);
-        record(true);
         return ok(req.id, {
           content: [{ type: "text", text: "Plan marked as complete. The orchestrator will review the plan artifact." }],
         });
@@ -641,55 +631,32 @@ function handleMcp(
       if (toolName === "get_status") {
         const status = getStatus();
         if (!status) {
-          record(false, "status not available");
           return ok(req.id, {
             content: [{ type: "text", text: JSON.stringify({ phase: "unknown", error: "status not yet available" }) }],
           });
         }
-        record(true);
         return ok(req.id, {
           content: [{ type: "text", text: JSON.stringify(status) }],
         });
       }
 
       if (toolName === "create_task") {
-        const result = handleCreateTask(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>);
-        if (result instanceof Promise) {
-          return result.then(
-            (res) => { record(true); return res; },
-            (err) => { record(false, (err as Error).message); throw err; },
-          );
-        }
-        record(true);
-        return result;
+        return handleCreateTask(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>);
       }
 
       if (toolName === "search_code") {
         const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
-        const result = handleSearchCode(req.id, args);
-        if (result instanceof Promise) {
-          return result.then(
-            (res) => { record(true); return res; },
-            (err) => { record(false, (err as Error).message); throw err; },
-          );
-        }
-        record(true);
-        return result;
+        return handleSearchCode(req.id, args);
       }
 
       if (toolName === "write_plan") {
-        return handleWritePlan(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>)
-          .then((res) => { record(true); return res; })
-          .catch((err) => { record(false, (err as Error).message); throw err; });
+        return handleWritePlan(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>);
       }
 
       if (toolName === "read_plan") {
-        return handleReadPlan(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>)
-          .then((res) => { record(true); return res; })
-          .catch((err) => { record(false, (err as Error).message); throw err; });
+        return handleReadPlan(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>);
       }
 
-      record(false, "unknown tool");
       return rpcError(req.id, -32602, `unknown tool: ${toolName}`);
     }
 

@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useLogs } from "../hooks/useLogs";
+import { Button } from "./ui/button";
 
 interface LogViewerProps {
   name: string;
@@ -207,17 +208,19 @@ export default function LogViewer({
         {/* Container tabs */}
         <div className="flex rounded-md border border-border overflow-hidden">
           {[...BASE_CONTAINERS].map((c) => (
-            <button
+            <Button
               key={c}
+              variant={container === c ? "secondary" : "ghost"}
+              size="sm"
               onClick={() => setContainer(c)}
-              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`rounded-none border-0 ${
                 container === c
                   ? "bg-surface-overlay text-text"
                   : "text-text-muted hover:text-text hover:bg-surface-overlay/50"
               }`}
             >
               {c}
-            </button>
+            </Button>
           ))}
         </div>
 

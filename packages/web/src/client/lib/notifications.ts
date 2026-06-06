@@ -7,7 +7,44 @@
 // in _history and broadcast via a "percussionist:notification" CustomEvent so
 // React components can subscribe without prop-drilling.
 
+import { useNotificationStore } from "../stores/settingsStore";
+
 export type DrumSound = "success" | "failure" | "cancelled" | "escalated" | "running";
+
+// ---------------------------------------------------------------------------
+// Notification preferences (localStorage)
+
+const NOTIFICATION_PREFS_KEY = "percussionist:notifications";
+
+export interface NotificationPreferences {
+  soundEnabled: boolean; // default: true — backward compatible
+}
+
+/** Read notification preferences from localStorage. Returns defaults if not set or invalid. */
+export function getNotificationPreferences(): NotificationPreferences {
+  try {
+    const raw = localStorage.getItem(NOTIFICATION_PREFS_KEY);
+    if (!raw) return { soundEnabled: true };
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.soundEnabled !== "boolean") return { soundEnabled: true };
+    return { soundEnabled: parsed.soundEnabled };
+  } catch {
+    return { soundEnabled: true };
+  }
+}
+
+/** Merge partial preferences and write to localStorage. */
+export function setNotificationPreferences(prefs: Partial<NotificationPreferences>): void {
+  const existing = getNotificationPreferences();
+  try {
+    localStorage.setItem(
+      NOTIFICATION_PREFS_KEY,
+      JSON.stringify({ ...existing, ...prefs }),
+    );
+  } catch {
+    // Non-fatal — localStorage may be full or unavailable.
+  }
+}
 
 // ---------------------------------------------------------------------------
 // History store
@@ -60,30 +97,35 @@ export function playDrum(sound: DrumSound): void {
     case "success":
       // Clean rimshot: sharp attack noise + short ring
       playNoise(ctx, now, { duration: 0.08, frequency: 900, gain: 0.55 });
-      playTone(ctx, now, { frequency: 320, duration: 0.18, gain: 0.3, decayRate: 18 });
+      playTone(ctx, now, { frequency: 320, duration: 0.18, gain: 0.3 });
       break;
 
     case "failure":
-      // Low tom thud: deep punch with a slow tail
-      playTone(ctx, now, { frequency: 68, duration: 0.35, gain: 0.7, decayRate: 9, pitchDrop: 38 });
-      playNoise(ctx, now, { duration: 0.04, frequency: 200, gain: 0.2 });
+      // Gong crash: deep resonance + metallic overtones + attack noise
+      playNoise(ctx, now, { duration: 0.08, frequency: 2000, gain: 0.3 });
+      playTone(ctx, now + 0.02, { frequency: 100, duration: 0.9, gain: 0.5, pitchDrop: 5 });
+      playTone(ctx, now + 0.02, { frequency: 235, duration: 0.6, gain: 0.2, pitchDrop: 10 });
+      playTone(ctx, now + 0.02, { frequency: 388, duration: 0.4, gain: 0.1 });
       break;
 
     case "cancelled":
-      // Muted cymbal: noise burst, short
-      playNoise(ctx, now, { duration: 0.12, frequency: 6000, gain: 0.25, highpass: true });
-      playTone(ctx, now, { frequency: 220, duration: 0.2, gain: 0.15, decayRate: 20 });
+      // Wood block: short dry "clack"
+      playNoise(ctx, now, { duration: 0.03, frequency: 2500, gain: 0.3 });
+      playTone(ctx, now, { frequency: 800, duration: 0.04, gain: 0.2 });
       break;
 
     case "escalated":
-      // Hi-hat tick × 2 — alert-like
-      playNoise(ctx, now,        { duration: 0.05, frequency: 8000, gain: 0.35, highpass: true });
-      playNoise(ctx, now + 0.12, { duration: 0.05, frequency: 8000, gain: 0.35, highpass: true });
+      // Cowbell triple: bright cutting "clank-clank-clank"
+      playCowbell(ctx, now,        { frequency: 1000, gain: 0.4 });
+      playCowbell(ctx, now + 0.12, { frequency: 1000, gain: 0.3 });
+      playCowbell(ctx, now + 0.24, { frequency: 1000, gain: 0.2 });
       break;
 
     case "running":
-      // Short kick: punchy low sine
-      playTone(ctx, now, { frequency: 90, duration: 0.2, gain: 0.5, decayRate: 22, pitchDrop: 60 });
+      // Cabasa shake: overlapping noise washes + low body pulse
+      playNoise(ctx, now,       { duration: 0.35, frequency: 5000, gain: 0.2, highpass: true });
+      playNoise(ctx, now + 0.15, { duration: 0.35, frequency: 4000, gain: 0.15, highpass: true });
+      playTone(ctx, now + 0.05, { frequency: 130, duration: 0.5, gain: 0.25, pitchDrop: 30 });
       break;
   }
 }
@@ -92,8 +134,7 @@ interface ToneOptions {
   frequency: number;
   duration: number;
   gain: number;
-  decayRate: number;
-  pitchDrop?: number; // Hz to drop from start to end
+  pitchDrop?: number;
 }
 
 function playTone(ctx: AudioContext, startTime: number, opts: ToneOptions): void {
@@ -124,6 +165,28 @@ interface NoiseOptions {
   frequency: number; // cutoff for the filter
   gain: number;
   highpass?: boolean;
+}
+
+/** Synthesize a cowbell hit: square-wave oscillator with very fast decay. */
+function playCowbell(
+  ctx: AudioContext,
+  startTime: number,
+  opts: { frequency: number; gain: number },
+): void {
+  const osc = ctx.createOscillator();
+  const env = ctx.createGain();
+
+  osc.type = "square";
+  osc.frequency.value = opts.frequency;
+
+  env.gain.setValueAtTime(opts.gain, startTime);
+  env.gain.exponentialRampToValueAtTime(0.001, startTime + 0.06);
+
+  osc.connect(env);
+  env.connect(ctx.destination);
+
+  osc.start(startTime);
+  osc.stop(startTime + 0.08);
 }
 
 function playNoise(ctx: AudioContext, startTime: number, opts: NoiseOptions): void {
@@ -204,7 +267,11 @@ export function notify(opts: NotifyOptions): void {
     window.dispatchEvent(new CustomEvent(NOTIFICATION_EVENT, { detail: entry }));
   }
 
-  playDrum(opts.sound);
+  // Respect user's sound preference — skip audio but still record history and dispatch event.
+  const prefs = useNotificationStore.getState();
+  if (prefs.soundEnabled) {
+    playDrum(opts.sound);
+  }
 
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
 

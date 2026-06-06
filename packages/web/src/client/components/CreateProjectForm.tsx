@@ -1,55 +1,57 @@
-import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { submitProject, updateProject, fetchAgents } from "../lib/api";
 import type { CreateProjectRequest, ProjectDetail } from "../lib/types";
+
+// Tab components
+import GeneralTab from "./project-form/GeneralTab";
+import SourceAuthTab from "./project-form/SourceAuthTab";
+import ExecutionTab from "./project-form/ExecutionTab";
+import WorkspaceServicesTab from "./project-form/WorkspaceServicesTab";
+import AdvancedTab from "./project-form/AdvancedTab";
+
+// Hook + helpers
+import { useProjectForm, buildProjectRequest } from "./project-form/useProjectForm";
+
+// Tabs UI component
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
+
+// ---------------------------------------------------------------------------
+// Tab definitions (ordered list)
+// ---------------------------------------------------------------------------
+
+type ProjectTabId = "general" | "source-auth" | "execution" | "workspace-services" | "advanced";
+
+const TABS: Array<{ id: ProjectTabId; label: string }> = [
+  { id: "general", label: "General" },
+  { id: "source-auth", label: "Source & Auth" },
+  { id: "execution", label: "Execution" },
+  { id: "workspace-services", label: "Workspace & Services" },
+  { id: "advanced", label: "Advanced" },
+];
+
+const DEFAULT_TAB = TABS.at(0)?.id ?? "general";
+
+function resolveTab(searchParams: URLSearchParams, hash: string): ProjectTabId {
+  // Priority: query param > hash > default
+  const qp = searchParams.get("tab");
+  if (qp && TABS.some((t) => t.id === qp)) return qp as ProjectTabId;
+  if (hash.startsWith("#")) {
+    const h = hash.slice(1);
+    if (TABS.some((t) => t.id === h)) return h as ProjectTabId;
+  }
+  return DEFAULT_TAB;
+}
+
+// ---------------------------------------------------------------------------
+// Main form component
+// ---------------------------------------------------------------------------
 
 type CreateProjectFormProps = {
   mode?: "create" | "edit";
   initialProject?: ProjectDetail;
 };
-
-// Sidecar row state — env is edited as a single "KEY=value\nKEY=value" text block.
-interface SidecarRow {
-  id: number; // local key only
-  name: string;
-  image: string;
-  ports: string; // comma-separated numbers
-  env: string;   // newline-separated KEY=VALUE pairs
-}
-
-let _sidecarIdSeq = 0;
-function nextSidecarId() { return ++_sidecarIdSeq; }
-
-// Inject file row state.
-interface InjectFileRow {
-  id: number; // local key only
-  filename: string;
-  content: string;
-}
-
-let _injectFileIdSeq = 0;
-function nextInjectFileId() { return ++_injectFileIdSeq; }
-
-function initialInjectFileRows(project: ProjectDetail | undefined): InjectFileRow[] {
-  const contents = project?.injectFileContents ?? [];
-  return contents.map((f) => ({
-    id: nextInjectFileId(),
-    filename: f.filename,
-    content: f.content,
-  }));
-}
-
-function initialSidecarRows(spec: ProjectDetail["spec"] | undefined): SidecarRow[] {
-  if (!spec?.sidecars?.length) return [];
-  return spec.sidecars.map((sc) => ({
-    id: nextSidecarId(),
-    name: sc.name,
-    image: sc.image,
-    ports: (sc.ports ?? []).join(", "),
-    env: (sc.env ?? []).map((e: { name: string; value: string }) => `${e.name}=${e.value}`).join("\n"),
-  }));
-}
 
 export default function CreateProjectForm({
   mode = "create",
@@ -58,212 +60,31 @@ export default function CreateProjectForm({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isEdit = mode === "edit";
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Tab state — synced with URL (query param + hash fallback)
+  const [activeTab, setActiveTab] = useState<ProjectTabId>(() => {
+    try { return resolveTab(searchParams, window.location.hash ?? ""); }
+    catch { return DEFAULT_TAB; }
+  });
+
+  // Sync tab changes to URL without polluting history
+  useEffect(() => {
+    setSearchParams({ tab: activeTab }, { replace: true });
+    // Also update hash for deep-link compatibility (e.g. from bookmarks)
+    if (window.location.hash !== `#${activeTab}`) {
+      window.history.replaceState(null, "", `#${activeTab}`);
+    }
+  }, [activeTab, setSearchParams]);
 
   const initialSpec = initialProject?.spec;
+  const form = useProjectForm(initialSpec, initialProject);
 
-  const [name, setName] = useState(initialProject?.metadata.name ?? "");
-  const [displayName, setDisplayName] = useState(initialSpec?.displayName ?? "");
-  const [model, setModel] = useState(initialSpec?.model ?? "");
-  const [agent, setAgent] = useState(initialSpec?.agent ?? "");
-  const [gitUrl, setGitUrl] = useState(initialSpec?.source?.git?.url ?? "");
-  const [gitRef, setGitRef] = useState(initialSpec?.source?.git?.ref ?? "");
-  const [gitSshSecret, setGitSshSecret] = useState(initialSpec?.source?.git?.sshSecret?.name ?? "");
-  const [gitGithubTokenSecret, setGitGithubTokenSecret] = useState(initialSpec?.source?.git?.githubTokenSecret?.name ?? "");
-  const [gitAuthorName, setGitAuthorName] = useState(initialSpec?.source?.git?.author?.name ?? "");
-  const [gitAuthorEmail, setGitAuthorEmail] = useState(initialSpec?.source?.git?.author?.email ?? "");
-  const [sourceLocal, setSourceLocal] = useState<boolean>(initialSpec?.source?.local ?? false);
-  const [llmKeysSecret, setLlmKeysSecret] = useState(initialSpec?.secrets?.llmKeysSecret ?? "");
-  const [authSecret, setAuthSecret] = useState(initialSpec?.secrets?.authSecret?.name ?? "");
-  const [initScript, setInitScript] = useState(initialSpec?.initScript ?? "");
-  const [opencodeConfig, setOpencodeConfig] = useState("");
-  const [sidecars, setSidecars] = useState<SidecarRow[]>(() => initialSidecarRows(initialSpec));
-  const [injectFiles, setInjectFiles] = useState<InjectFileRow[]>(() => initialInjectFileRows(initialProject));
-  const [rosterAgents, setRosterAgents] = useState<string[]>(
-    () => (initialSpec?.agents ?? []).map((a: { name: string }) => a.name),
-  );
-  const [rosterPickerValue, setRosterPickerValue] = useState("");
-  const [maxParallel, setMaxParallel] = useState<string>(
-    initialSpec?.maxParallel !== undefined ? String(initialSpec.maxParallel) : "",
-  );
-  const [timeoutSeconds, setTimeoutSeconds] = useState<string>(
-    initialSpec?.timeoutSeconds !== undefined ? String(initialSpec.timeoutSeconds) : "",
-  );
-  const [featureBranchingEnabled, setFeatureBranchingEnabled] = useState<boolean>(
-    initialSpec?.featureBranchingEnabled ?? false,
-  );
-
-  const [retryPolicyEnabled, setRetryPolicyEnabled] = useState<boolean>(
-    initialSpec?.retryPolicy?.enabled ?? false,
-  );
-  const [retryPolicyMaxAttempts, setRetryPolicyMaxAttempts] = useState<string>(
-    String(initialSpec?.retryPolicy?.maxAttempts ?? 3),
-  );
-  const [retryPolicyBackoffSeconds, setRetryPolicyBackoffSeconds] = useState<string>(
-    String(initialSpec?.retryPolicy?.backoffSeconds ?? 30),
-  );
-  const [retryPolicyBackoffMultiplier, setRetryPolicyBackoffMultiplier] = useState<string>(
-    String(initialSpec?.retryPolicy?.backoffMultiplier ?? 2),
-  );
-  const [retryPolicyMaxBackoffSeconds, setRetryPolicyMaxBackoffSeconds] = useState<string>(
-    String(initialSpec?.retryPolicy?.maxBackoffSeconds ?? 300),
-  );
-  const [retryPolicyPoisonPillThreshold, setRetryPolicyPoisonPillThreshold] = useState<string>(
-    String(initialSpec?.retryPolicy?.poisonPillThresholdSeconds ?? 30),
-  );
-
-  const [reviewPolicyAiReviewerEnabled, setReviewPolicyAiReviewerEnabled] = useState<boolean>(
-    initialSpec?.reviewPolicy?.aiReviewerEnabled ?? false,
-  );
-  const [reviewPolicyAiReviewerAgent, setReviewPolicyAiReviewerAgent] = useState<string>(
-    initialSpec?.reviewPolicy?.aiReviewerAgent ?? "reviewer",
-  );
-  const [reviewPolicyMaxAutoReworks, setReviewPolicyMaxAutoReworks] = useState<string>(
-    String(initialSpec?.reviewPolicy?.maxAutoReworks ?? 2),
-  );
-
-  // Runner overrides
-  const [runnerImage, setRunnerImage] = useState(initialSpec?.image ?? "");
-  const [cpuRequest, setCpuRequest] = useState(
-    (initialSpec?.resources as { requests?: Record<string, string> } | undefined)?.requests?.cpu ?? "",
-  );
-  const [memRequest, setMemRequest] = useState(
-    (initialSpec?.resources as { requests?: Record<string, string> } | undefined)?.requests?.memory ?? "",
-  );
-  const [cpuLimit, setCpuLimit] = useState(
-    (initialSpec?.resources as { limits?: Record<string, string> } | undefined)?.limits?.cpu ?? "",
-  );
-  const [memLimit, setMemLimit] = useState(
-    (initialSpec?.resources as { limits?: Record<string, string> } | undefined)?.limits?.memory ?? "",
-  );
-
-  // Phase selector (edit mode only)
-  const [phase, setPhase] = useState<"Active" | "Complete" | "Archived">(
-    initialSpec?.phase ?? "Active",
-  );
-
-  // Git cache
-  const [worktreeReuse, setWorktreeReuse] = useState<boolean>(
-    initialSpec?.gitCache?.worktreeReuse ?? true,
-  );
-
-  // Flow configuration
-  const [flowPreset, setFlowPreset] = useState<"simple" | "review" | "plan-build" | "plan-build-review-merge">(
-    initialSpec?.flow?.preset ?? "plan-build-review-merge",
-  );
-  const [flowHumanApprovalPlan, setFlowHumanApprovalPlan] = useState<"required" | "disabled">(
-    initialSpec?.flow?.humanApproval?.plan ?? "required",
-  );
-  const [flowHumanApprovalBuild, setFlowHumanApprovalBuild] = useState<"required" | "disabled">(
-    initialSpec?.flow?.humanApproval?.build ?? "required",
-  );
-  const [flowPlanOnApprove, setFlowPlanOnApprove] = useState<"generate-builds" | "done">(
-    initialSpec?.flow?.plan?.onApprove ?? "generate-builds",
-  );
-  const [flowBuildOnSuccess, setFlowBuildOnSuccess] = useState<"human-review" | "ai-review" | "done">(
-    initialSpec?.flow?.build?.onSuccess ?? "human-review",
-  );
-  const [flowBuildOnApprove, setFlowBuildOnApprove] = useState<"merge" | "done">(
-    initialSpec?.flow?.build?.onApprove ?? "merge",
-  );
-  const [flowMergeMode, setFlowMergeMode] = useState<"auto" | "manual" | "disabled">(
-    initialSpec?.flow?.merge?.mode ?? "auto",
-  );
-
-  // Code Server
-  const [codeServerEnabled, setCodeServerEnabled] = useState<boolean>(
-    initialSpec?.codeServer?.enabled ?? false,
-  );
-  const [codeServerImage, setCodeServerImage] = useState(
-    initialSpec?.codeServer?.image ?? "codercom/code-server:4.96.4",
-  );
-  const [csCpuRequest, setCSCpuRequest] = useState(
-    (initialSpec?.codeServer?.resources as { requests?: Record<string, string> } | undefined)?.requests?.cpu ?? "",
-  );
-  const [csMemRequest, setCSMemRequest] = useState(
-    (initialSpec?.codeServer?.resources as { requests?: Record<string, string> } | undefined)?.requests?.memory ?? "",
-  );
-  const [csCpuLimit, setCSCpuLimit] = useState(
-    (initialSpec?.codeServer?.resources as { limits?: Record<string, string> } | undefined)?.limits?.cpu ?? "",
-  );
-  const [csMemLimit, setCSMemLimit] = useState(
-    (initialSpec?.codeServer?.resources as { limits?: Record<string, string> } | undefined)?.limits?.memory ?? "",
-  );
-
-  // Data PVC
-  const [pvcName, setPvcName] = useState(initialSpec?.data?.pvcName ?? "");
-  const [mountPath, setMountPath] = useState(initialSpec?.data?.mountPath ?? "/data");
-  const [storageClass, setStorageClass] = useState(initialSpec?.data?.storageClass ?? "");
-
-  // Embedding / Memory service
-  const [embeddingEnabled, setEmbeddingEnabled] = useState<boolean>(
-    initialSpec?.embedding?.enabled ?? false,
-  );
-  const [embeddingModel, setEmbeddingModel] = useState<string>(
-    initialSpec?.embedding?.model ?? "nomic-embed-text",
-  );
-  const [embeddingDimensions, setEmbeddingDimensions] = useState<string>(
-    String(initialSpec?.embedding?.dimensions ?? 768),
-  );
-  const [embeddingOllamaUrl, setEmbeddingOllamaUrl] = useState<string>(
-    initialSpec?.embedding?.ollamaUrl ?? "",
-  );
-  // All ClusterAgents in cluster — used to populate the roster add dropdown.
+  // Fetch available agents for roster picker (needed by AdvancedTab)
   const { data: clusterAgents = [] } = useQuery({
     queryKey: ["agents"],
     queryFn: fetchAgents,
   });
-
-  // Sidecar helpers
-  function addSidecar() {
-    setSidecars((prev) => [...prev, { id: nextSidecarId(), name: "", image: "", ports: "", env: "" }]);
-  }
-  function removeSidecar(id: number) {
-    setSidecars((prev) => prev.filter((sc) => sc.id !== id));
-  }
-  function updateSidecar(id: number, field: keyof Omit<SidecarRow, "id">, value: string) {
-    setSidecars((prev) => prev.map((sc) => sc.id === id ? { ...sc, [field]: value } : sc));
-  }
-
-  // Inject file helpers
-  function addInjectFile() {
-    setInjectFiles((prev) => [...prev, { id: nextInjectFileId(), filename: "", content: "" }]);
-  }
-  function removeInjectFile(id: number) {
-    setInjectFiles((prev) => prev.filter((f) => f.id !== id));
-  }
-  function updateInjectFile(id: number, field: keyof Omit<InjectFileRow, "id">, value: string) {
-    setInjectFiles((prev) => prev.map((f) => f.id === id ? { ...f, [field]: value } : f));
-  }
-
-  // Validate sidecar rows: name and image are required; ports must be valid integers.
-  const sidecarErrors: Record<number, string> = {};
-  for (const sc of sidecars) {
-    if (!sc.name.trim()) { sidecarErrors[sc.id] = "Name is required"; continue; }
-    if (!sc.image.trim()) { sidecarErrors[sc.id] = "Image is required"; continue; }
-    if (sc.ports.trim()) {
-      const bad = sc.ports.split(",").map((p) => p.trim()).filter(Boolean).find((p) => !/^\d+$/.test(p) || Number(p) < 1 || Number(p) > 65535);
-      if (bad) { sidecarErrors[sc.id] = `Invalid port: ${bad}`; continue; }
-    }
-  }
-  const hasSidecarErrors = Object.keys(sidecarErrors).length > 0;
-
-  // Validate inject file rows: filename required, no path separators.
-  const injectFileErrors: Record<number, string> = {};
-  for (const f of injectFiles) {
-    if (!f.filename.trim()) { injectFileErrors[f.id] = "Filename is required"; continue; }
-    if (f.filename.includes("/") || f.filename.includes("\\")) { injectFileErrors[f.id] = "Filename must not contain path separators"; continue; }
-  }
-  const hasInjectFileErrors = Object.keys(injectFileErrors).length > 0;
-
-  const gitAuthorIncomplete =
-    (gitAuthorName.trim().length > 0 && gitAuthorEmail.trim().length === 0) ||
-    (gitAuthorName.trim().length === 0 && gitAuthorEmail.trim().length > 0);
-
-  const configJsonError = (() => {
-    if (!opencodeConfig?.trim()) return null;
-    try { JSON.parse(opencodeConfig); return null; }
-    catch (e) { return (e as Error).message; }
-  })();
 
   const mutation = useMutation({
     mutationFn: (req: CreateProjectRequest) => {
@@ -280,191 +101,103 @@ export default function CreateProjectForm({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (configJsonError) return;
-    if (hasSidecarErrors) return;
-    if (hasInjectFileErrors) return;
-    const req: CreateProjectRequest = {};
-    if (!isEdit && name.trim()) req.name = name.trim();
-    if (displayName.trim()) req.displayName = displayName.trim();
-    if (model.trim()) req.model = model.trim();
-    if (agent.trim()) req.agent = agent.trim();
-    if (opencodeConfig !== null) req.opencodeConfig = opencodeConfig.trim() || "";
-    if (sourceLocal) {
-      req.source = { local: true };
-    } else if (gitUrl.trim()) {
-      req.source = {
-        git: {
-          url: gitUrl.trim(),
-          ...(gitRef.trim() ? { ref: gitRef.trim() } : {}),
-          ...(gitSshSecret.trim()
-            ? { sshSecret: { name: gitSshSecret.trim() } }
-            : {}),
-          ...(gitGithubTokenSecret.trim()
-            ? { githubTokenSecret: { name: gitGithubTokenSecret.trim() } }
-            : {}),
-          ...(gitAuthorName.trim() && gitAuthorEmail.trim()
-            ? {
-                author: {
-                  name: gitAuthorName.trim(),
-                  email: gitAuthorEmail.trim(),
-                },
-              }
-            : {}),
-        },
-      };
-    }
-    if (llmKeysSecret.trim() || authSecret.trim()) {
-      req.secrets = {
-        ...(llmKeysSecret.trim() ? { llmKeysSecret: llmKeysSecret.trim() } : {}),
-        ...(authSecret.trim()
-          ? { authSecret: { name: authSecret.trim() } }
-          : {}),
-      };
-    }
-    if (initScript.trim()) {
-      req.initScript = initScript.trim();
-    }
-    req.sidecars = sidecars.length > 0
-      ? sidecars.map((sc) => {
-          const ports = sc.ports.trim()
-            ? sc.ports.split(",").map((p) => parseInt(p.trim(), 10)).filter(Boolean)
-            : undefined;
-          const env = sc.env.trim()
-            ? sc.env.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
-                const eq = line.indexOf("=");
-                return eq >= 1
-                  ? { name: line.slice(0, eq), value: line.slice(eq + 1) }
-                  : { name: line, value: "" };
-              })
-            : undefined;
-          return {
-            name: sc.name.trim(),
-            image: sc.image.trim(),
-            ...(ports?.length ? { ports } : {}),
-            ...(env?.length ? { env } : {}),
-          };
-        })
-      : [];
-    // Always send injectFiles (even empty array) so server can delete orphans on update.
-    req.injectFiles = injectFiles
-      .filter((f) => f.filename.trim())
-      .map((f) => ({ filename: f.filename.trim(), content: f.content }));
-    // Always send agents (even empty) so server can clear roster on update.
-    req.agents = rosterAgents.map((name) => ({ name }));
-    const parsedMaxParallel = maxParallel.trim() ? parseInt(maxParallel.trim(), 10) : NaN;
-    if (!isNaN(parsedMaxParallel) && parsedMaxParallel > 0) req.maxParallel = parsedMaxParallel;
-    const parsedTimeout = timeoutSeconds.trim() ? parseInt(timeoutSeconds.trim(), 10) : NaN;
-    if (!isNaN(parsedTimeout) && parsedTimeout > 0) req.timeoutSeconds = parsedTimeout;
-    req.featureBranchingEnabled = featureBranchingEnabled;
-    if (retryPolicyEnabled) {
-      req.retryPolicy = {
-        enabled: true,
-        maxAttempts: parseInt(retryPolicyMaxAttempts, 10) || 3,
-        backoffSeconds: parseInt(retryPolicyBackoffSeconds, 10) || 30,
-        backoffMultiplier: parseFloat(retryPolicyBackoffMultiplier) || 2,
-        maxBackoffSeconds: parseInt(retryPolicyMaxBackoffSeconds, 10) || 300,
-        poisonPillThresholdSeconds: parseInt(retryPolicyPoisonPillThreshold, 10) || 30,
-      };
-    }
-    if (reviewPolicyAiReviewerEnabled) {
-      req.reviewPolicy = {
-        aiReviewerEnabled: true,
-        aiReviewerAgent: reviewPolicyAiReviewerAgent.trim() || "reviewer",
-        maxAutoReworks: parseInt(reviewPolicyMaxAutoReworks, 10) || 2,
-      };
-    }
-
-    // Runner overrides
-    if (runnerImage.trim()) req.image = runnerImage.trim();
-    const resRequests: Record<string, string> = {};
-    const resLimits: Record<string, string> = {};
-    if (cpuRequest.trim()) resRequests.cpu = cpuRequest.trim();
-    if (memRequest.trim()) resRequests.memory = memRequest.trim();
-    if (cpuLimit.trim()) resLimits.cpu = cpuLimit.trim();
-    if (memLimit.trim()) resLimits.memory = memLimit.trim();
-    if (Object.keys(resRequests).length > 0 || Object.keys(resLimits).length > 0) {
-      req.resources = {
-        ...(Object.keys(resRequests).length > 0 ? { requests: resRequests } : {}),
-        ...(Object.keys(resLimits).length > 0 ? { limits: resLimits } : {}),
-      };
-    }
-
-    // Phase (edit mode)
-    if (isEdit && phase !== "Active") req.phase = phase;
-
-    // Git cache
-    req.gitCache = { worktreeReuse };
-
-    // Flow configuration
-    const flowOverrides: Record<string, unknown> = {};
-    if (flowPreset !== "plan-build-review-merge") flowOverrides.preset = flowPreset;
-    if (flowHumanApprovalPlan !== "required" || flowHumanApprovalBuild !== "required") {
-      flowOverrides.humanApproval = {
-        ...(flowHumanApprovalPlan !== "required" ? { plan: flowHumanApprovalPlan } : {}),
-        ...(flowHumanApprovalBuild !== "required" ? { build: flowHumanApprovalBuild } : {}),
-      };
-    }
-    if (flowPlanOnApprove !== "generate-builds") {
-      flowOverrides.plan = { onApprove: flowPlanOnApprove };
-    }
-    if (flowBuildOnSuccess !== "human-review" || flowBuildOnApprove !== "merge") {
-      flowOverrides.build = {
-        ...(flowBuildOnSuccess !== "human-review" ? { onSuccess: flowBuildOnSuccess } : {}),
-        ...(flowBuildOnApprove !== "merge" ? { onApprove: flowBuildOnApprove } : {}),
-      };
-    }
-    if (flowMergeMode !== "auto") {
-      flowOverrides.merge = { mode: flowMergeMode };
-    }
-    if (Object.keys(flowOverrides).length > 0) {
-      req.flow = flowOverrides;
-    }
-
-    // Code Server
-    if (codeServerEnabled) {
-      const csResources: Record<string, unknown> = {};
-      const csResRequests: Record<string, string> = {};
-      const csResLimits: Record<string, string> = {};
-      if (csCpuRequest.trim()) csResRequests.cpu = csCpuRequest.trim();
-      if (csMemRequest.trim()) csResRequests.memory = csMemRequest.trim();
-      if (csCpuLimit.trim()) csResLimits.cpu = csCpuLimit.trim();
-      if (csMemLimit.trim()) csResLimits.memory = csMemLimit.trim();
-      if (Object.keys(csResRequests).length > 0) csResources.requests = csResRequests;
-      if (Object.keys(csResLimits).length > 0) csResources.limits = csResLimits;
-      req.codeServer = {
-        enabled: true,
-        ...(codeServerImage.trim() ? { image: codeServerImage.trim() } : {}),
-        ...(Object.keys(csResources).length > 0 ? { resources: csResources } : {}),
-      };
-    }
-
-    // Data PVC (only if any field is set)
-    const dataFields: Record<string, string> = {};
-    if (pvcName.trim()) dataFields.pvcName = pvcName.trim();
-    if (mountPath !== "/data") dataFields.mountPath = mountPath;
-    if (storageClass.trim()) dataFields.storageClass = storageClass.trim();
-    if (Object.keys(dataFields).length > 0) {
-      req.data = dataFields as { pvcName?: string; mountPath?: string; storageClass?: string };
-    }
-
-    // Embedding / Memory service
-    if (embeddingEnabled) {
-      req.embedding = {
-        enabled: true,
-        model: embeddingModel.trim() || undefined,
-        dimensions: parseInt(embeddingDimensions, 10) || undefined,
-        ollamaUrl: embeddingOllamaUrl.trim() || undefined,
-      };
-    }
+    if (form.configJsonError) return;
+    if (form.hasSidecarErrors) return;
+    if (form.hasInjectFileErrors) return;
+    const req = buildProjectRequest(form, isEdit);
     mutation.mutate(req);
   }
 
+  // Shared input classes — kept for backward compat with any remaining inline patterns
   const inputClass =
     "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none";
   const monoInputClass = inputClass + " font-mono";
 
+  // Build the props for each tab (typed slices of form state)
+  const generalProps = {
+    isEdit,
+    form: {
+      name: form.name, displayName: form.displayName, model: form.model, agent: form.agent,
+      maxParallel: form.maxParallel, timeoutSeconds: form.timeoutSeconds,
+      featureBranchingEnabled: form.featureBranchingEnabled, phase: form.phase,
+      setName: form.setName, setDisplayName: form.setDisplayName, setModel: form.setModel,
+      setAgent: form.setAgent, setMaxParallel: form.setMaxParallel, setTimeoutSeconds: form.setTimeoutSeconds,
+      setFeatureBranchingEnabled: form.setFeatureBranchingEnabled, setPhase: form.setPhase,
+    },
+  };
+
+  const sourceAuthProps = {
+    form: {
+      gitUrl: form.gitUrl, gitRef: form.gitRef, gitSshSecret: form.gitSshSecret,
+      gitGithubTokenSecret: form.gitGithubTokenSecret, gitAuthorName: form.gitAuthorName,
+      gitAuthorEmail: form.gitAuthorEmail, sourceLocal: form.sourceLocal,
+      llmKeysSecret: form.llmKeysSecret, authSecret: form.authSecret,
+      opencodeConfig: form.opencodeConfig, configJsonError: form.configJsonError,
+      setGitUrl: form.setGitUrl, setGitRef: form.setGitRef, setGitSshSecret: form.setGitSshSecret,
+      setGitGithubTokenSecret: form.setGitGithubTokenSecret, setGitAuthorName: form.setGitAuthorName,
+      setGitAuthorEmail: form.setGitAuthorEmail, setSourceLocal: form.setSourceLocal,
+      setLlmKeysSecret: form.setLlmKeysSecret, setAuthSecret: form.setAuthSecret,
+      setOpencodeConfig: form.setOpencodeConfig,
+    },
+  };
+
+  const executionProps = {
+    form: {
+      retryPolicyEnabled: form.retryPolicyEnabled, retryPolicyMaxAttempts: form.retryPolicyMaxAttempts,
+      retryPolicyBackoffSeconds: form.retryPolicyBackoffSeconds, retryPolicyBackoffMultiplier: form.retryPolicyBackoffMultiplier,
+      retryPolicyMaxBackoffSeconds: form.retryPolicyMaxBackoffSeconds, retryPolicyPoisonPillThreshold: form.retryPolicyPoisonPillThreshold,
+      reviewPolicyAiReviewerEnabled: form.reviewPolicyAiReviewerEnabled, reviewPolicyAiReviewerAgent: form.reviewPolicyAiReviewerAgent,
+      reviewPolicyMaxAutoReworks: form.reviewPolicyMaxAutoReworks, runnerImage: form.runnerImage,
+      cpuRequest: form.cpuRequest, memRequest: form.memRequest, cpuLimit: form.cpuLimit, memLimit: form.memLimit,
+      worktreeReuse: form.worktreeReuse, flowPreset: form.flowPreset,
+      flowHumanApprovalPlan: form.flowHumanApprovalPlan, flowHumanApprovalBuild: form.flowHumanApprovalBuild,
+      flowPlanOnApprove: form.flowPlanOnApprove, flowBuildOnSuccess: form.flowBuildOnSuccess,
+      flowBuildOnApprove: form.flowBuildOnApprove, flowMergeMode: form.flowMergeMode,
+      setRetryPolicyEnabled: form.setRetryPolicyEnabled, setRetryPolicyMaxAttempts: form.setRetryPolicyMaxAttempts,
+      setRetryPolicyBackoffSeconds: form.setRetryPolicyBackoffSeconds, setRetryPolicyBackoffMultiplier: form.setRetryPolicyBackoffMultiplier,
+      setRetryPolicyMaxBackoffSeconds: form.setRetryPolicyMaxBackoffSeconds, setRetryPolicyPoisonPillThreshold: form.setRetryPolicyPoisonPillThreshold,
+      setReviewPolicyAiReviewerEnabled: form.setReviewPolicyAiReviewerEnabled, setReviewPolicyAiReviewerAgent: form.setReviewPolicyAiReviewerAgent,
+      setReviewPolicyMaxAutoReworks: form.setReviewPolicyMaxAutoReworks, setRunnerImage: form.setRunnerImage,
+      setCpuRequest: form.setCpuRequest, setMemRequest: form.setMemRequest, setCpuLimit: form.setCpuLimit, setMemLimit: form.setMemLimit,
+      setWorktreeReuse: form.setWorktreeReuse, setFlowPreset: form.setFlowPreset,
+      setFlowHumanApprovalPlan: form.setFlowHumanApprovalPlan, setFlowHumanApprovalBuild: form.setFlowHumanApprovalBuild,
+      setFlowPlanOnApprove: form.setFlowPlanOnApprove, setFlowBuildOnSuccess: form.setFlowBuildOnSuccess,
+      setFlowBuildOnApprove: form.setFlowBuildOnApprove, setFlowMergeMode: form.setFlowMergeMode,
+    },
+  };
+
+  const workspaceServicesProps = {
+    form: {
+      codeServerEnabled: form.codeServerEnabled, codeServerImage: form.codeServerImage,
+      csCpuRequest: form.csCpuRequest, csMemRequest: form.csMemRequest,
+      csCpuLimit: form.csCpuLimit, csMemLimit: form.csMemLimit,
+      pvcName: form.pvcName, mountPath: form.mountPath, storageClass: form.storageClass,
+      embeddingEnabled: form.embeddingEnabled, embeddingModel: form.embeddingModel,
+      embeddingDimensions: form.embeddingDimensions, embeddingOllamaUrl: form.embeddingOllamaUrl,
+      setCodeServerEnabled: form.setCodeServerEnabled, setCodeServerImage: form.setCodeServerImage,
+      setCSCpuRequest: form.setCSCpuRequest, setCSMemRequest: form.setCSMemRequest,
+      setCSCpuLimit: form.setCSCpuLimit, setCSMemLimit: form.setCSMemLimit,
+      setPvcName: form.setPvcName, setMountPath: form.setMountPath, setStorageClass: form.setStorageClass,
+      setEmbeddingEnabled: form.setEmbeddingEnabled, setEmbeddingModel: form.setEmbeddingModel,
+      setEmbeddingDimensions: form.setEmbeddingDimensions, setEmbeddingOllamaUrl: form.setEmbeddingOllamaUrl,
+    },
+  };
+
+  const advancedProps = {
+    form: {
+      sidecars: form.sidecars, injectFiles: form.injectFiles, initScript: form.initScript,
+      rosterAgents: form.rosterAgents, rosterPickerValue: form.rosterPickerValue,
+      sidecarErrors: form.sidecarErrors, hasSidecarErrors: form.hasSidecarErrors,
+      injectFileErrors: form.injectFileErrors, hasInjectFileErrors: form.hasInjectFileErrors,
+      setSidecars: form.setSidecars, setInjectFiles: form.setInjectFiles, setInitScript: form.setInitScript,
+      setRosterAgents: form.setRosterAgents, setRosterPickerValue: form.setRosterPickerValue,
+      addSidecar: form.addSidecar, removeSidecar: form.removeSidecar, updateSidecar: form.updateSidecar,
+      addInjectFile: form.addInjectFile, removeInjectFile: form.removeInjectFile, updateInjectFile: form.updateInjectFile,
+    },
+  };
+
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6 max-w-3xl">
       <Link
         to="/settings?tab=projects"
         className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text transition-colors"
@@ -473,1021 +206,63 @@ export default function CreateProjectForm({
       </Link>
 
       <div>
-        <h1 className="text-xl font-semibold">{isEdit ? "Edit Project" : "New Project"}</h1>
-        <p className="text-sm text-text-muted mt-1">
+        <h1 className="text-headline-lg">{isEdit ? "Edit Project" : "New Project"}</h1>
+        <p className="text-caption-xs text-text-muted mt-1">
           {isEdit
             ? "Update reusable defaults for this project."
             : "Save reusable defaults — git URL, secrets, model — under a short name. Pick this project when creating a run to pre-fill those fields."}
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-5">
-        {isEdit ? (
-          <>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">Name</label>
-              <input
-                type="text"
-                value={name}
-                readOnly
-                className={monoInputClass + " opacity-70"}
-              />
-            </div>
+      <form onSubmit={handleSubmit}>
+        {/* Tab navigation */}
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ProjectTabId)}>
+          <TabsList className="mb-4">
+            {TABS.map((tab) => (
+              <TabsTrigger key={tab.id} value={tab.id}>
+                {tab.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
 
-            {/* Phase selector (edit mode only) */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">Board Phase</label>
-              <select
-                value={phase}
-                onChange={(e) => setPhase(e.target.value as "Active" | "Complete" | "Archived")}
-                className={inputClass}
-              >
-                <option value="Active">Active</option>
-                <option value="Complete">Complete</option>
-                <option value="Archived">Archived</option>
-              </select>
-              <p className="text-xs text-text-dim">
-                Controls whether the project board is active, completed, or archived.
-              </p>
-            </div>
-          </>
-        ) : (
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">
-                Name <span className="text-phase-failed">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="my-repo"
-                className={monoInputClass}
-              />
-              <p className="text-xs text-text-dim">
-                Kubernetes resource name (lowercase, hyphens)
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">Display Name</label>
-              <input
-                type="text"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="My Repository"
-                className={inputClass}
-              />
-            </div>
-          </div>
-        )}
+          {/* General tab */}
+          <TabsContent value="general" className="space-y-5">
+            <GeneralTab form={generalProps.form} isEdit={generalProps.isEdit} />
+          </TabsContent>
 
-        {isEdit && (
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Display Name</label>
-            <input
-              type="text"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="My Repository"
-              className={inputClass}
-            />
-          </div>
-        )}
+          {/* Source & Auth tab */}
+          <TabsContent value="source-auth" className="space-y-5">
+            <SourceAuthTab form={sourceAuthProps.form} />
+          </TabsContent>
 
-        {/* Git section */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Git source</legend>
+          {/* Execution tab */}
+          <TabsContent value="execution" className="space-y-5">
+            <ExecutionTab form={executionProps.form} />
+          </TabsContent>
 
-          {/* Local workspace toggle */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={sourceLocal}
-              onChange={(e) => setSourceLocal(e.target.checked)}
-              className="rounded border-border"
-            />
-            <span className="text-sm text-text-muted">Local workspace (no remote repository)</span>
-          </label>
-          {sourceLocal && (
-            <p className="text-xs text-text-dim">
-              Local workspace — no remote repository will be cloned. Changes persist across runs at /data/workspace/.
-            </p>
-          )}
+          {/* Workspace & Services tab */}
+          <TabsContent value="workspace-services" className="space-y-5">
+            <WorkspaceServicesTab form={workspaceServicesProps.form} />
+          </TabsContent>
 
-          {!sourceLocal && (
-            <>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-text-muted">Repository URL</label>
-                <input
-                  type="text"
-                  value={gitUrl}
-                  onChange={(e) => setGitUrl(e.target.value)}
-                  placeholder="git@github.com:org/repo.git"
-                  className={monoInputClass}
-                />
-              </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">
-                Ref <span className="text-text-dim font-normal">(branch / tag / SHA)</span>
-              </label>
-              <input
-                type="text"
-                value={gitRef}
-                onChange={(e) => setGitRef(e.target.value)}
-                placeholder="main"
-                className={monoInputClass}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">SSH Secret</label>
-              <input
-                type="text"
-                value={gitSshSecret}
-                onChange={(e) => setGitSshSecret(e.target.value)}
-                placeholder="git-ssh-key"
-                className={monoInputClass}
-              />
-              <p className="text-xs text-text-dim">
-                Secret name from{" "}
-                <code className="font-mono">beatctl ssh-key create</code>
-              </p>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">GitHub Token Secret</label>
-            <input
-              type="text"
-              value={gitGithubTokenSecret}
-              onChange={(e) => setGitGithubTokenSecret(e.target.value)}
-              placeholder="git-github-token"
-              className={monoInputClass}
-            />
-            <p className="text-xs text-text-dim">
-              Secret name from{" "}
-              <code className="font-mono">beatctl github-token create</code>
-              {" "}— authenticates <code className="font-mono">gh</code> CLI in the runner
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">Author name</label>
-              <input
-                type="text"
-                value={gitAuthorName}
-                onChange={(e) => setGitAuthorName(e.target.value)}
-                placeholder="Percussionist Agent"
-                className={inputClass}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">Author email</label>
-              <input
-                type="email"
-                value={gitAuthorEmail}
-                onChange={(e) => setGitAuthorEmail(e.target.value)}
-                placeholder="agent@example.com"
-                className={monoInputClass}
-              />
-            </div>
-          </div>
-          {gitAuthorIncomplete && (
-            <p className="text-xs text-phase-failed">
-              Git author requires both name and email.
-            </p>
-          )}
-            </>
-          )}
-        </fieldset>
+          {/* Advanced tab */}
+          <TabsContent value="advanced" className="space-y-5">
+            <AdvancedTab form={advancedProps.form} />
+          </TabsContent>
+        </Tabs>
 
-        {/* Model + Agent */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Default Model</label>
-            <input
-              type="text"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="anthropic/claude-sonnet-4-20250514"
-              className={monoInputClass}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Default Agent</label>
-            <input
-              type="text"
-              value={agent}
-              onChange={(e) => setAgent(e.target.value)}
-              placeholder="build"
-              className={inputClass}
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Max Parallel Tasks</label>
-            <input
-              type="number"
-              min={1}
-              value={maxParallel}
-              onChange={(e) => setMaxParallel(e.target.value)}
-              placeholder="2"
-              className={monoInputClass}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Timeout (seconds)</label>
-            <input
-              type="number"
-              min={1}
-              value={timeoutSeconds}
-              onChange={(e) => setTimeoutSeconds(e.target.value)}
-              placeholder="3600"
-              className={monoInputClass}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Feature Branching</label>
-            <label className="flex items-center gap-2 cursor-pointer h-9">
-              <input
-                type="checkbox"
-                checked={featureBranchingEnabled}
-                onChange={(e) => setFeatureBranchingEnabled(e.target.checked)}
-                className="rounded border-border"
-              />
-              <span className="text-sm text-text-muted">Enable per-task branches</span>
-            </label>
-          </div>
-        </div>
-
-        {/* Retry Policy */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Retry Policy</legend>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={retryPolicyEnabled}
-              onChange={(e) => setRetryPolicyEnabled(e.target.checked)}
-              className="rounded border-border"
-            />
-            <span className="text-sm text-text-muted">Auto-retry failed tasks with exponential backoff</span>
-          </label>
-          {retryPolicyEnabled && (
-            <>
-              <p className="text-xs text-text-dim">
-                Retries use exponential backoff — each attempt waits longer than the last.
-                If a retry finishes faster than the poison pill threshold, the task is considered stuck and retries stop.
-              </p>
-              <div className="grid grid-cols-3 gap-4 pt-2">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-text-muted">Max attempts</label>
-                  <input
-                    type="number"
-                    min={1} max={10}
-                    value={retryPolicyMaxAttempts}
-                    onChange={(e) => setRetryPolicyMaxAttempts(e.target.value)}
-                    className={monoInputClass}
-                  />
-                  <p className="text-xs text-text-dim">Total retries before giving up.</p>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-text-muted">Initial backoff (s)</label>
-                  <input
-                    type="number"
-                    min={5} max={600}
-                    value={retryPolicyBackoffSeconds}
-                    onChange={(e) => setRetryPolicyBackoffSeconds(e.target.value)}
-                    className={monoInputClass}
-                  />
-                  <p className="text-xs text-text-dim">Delay before first retry.</p>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-text-muted">Backoff multiplier</label>
-                  <input
-                    type="number"
-                    min={1} max={5} step={0.1}
-                    value={retryPolicyBackoffMultiplier}
-                    onChange={(e) => setRetryPolicyBackoffMultiplier(e.target.value)}
-                    className={monoInputClass}
-                  />
-                  <p className="text-xs text-text-dim">Factor applied each retry (e.g. 2 → 30s, 60s, 120s).</p>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-text-muted">Max backoff (s)</label>
-                  <input
-                    type="number"
-                    min={5} max={3600}
-                    value={retryPolicyMaxBackoffSeconds}
-                    onChange={(e) => setRetryPolicyMaxBackoffSeconds(e.target.value)}
-                    className={monoInputClass}
-                  />
-                  <p className="text-xs text-text-dim">Ceiling for backoff growth.</p>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-text-muted">Poison pill threshold (s)</label>
-                  <input
-                    type="number"
-                    min={5} max={300}
-                    value={retryPolicyPoisonPillThreshold}
-                    onChange={(e) => setRetryPolicyPoisonPillThreshold(e.target.value)}
-                    className={monoInputClass}
-                  />
-                  <p className="text-xs text-text-dim">Retries completing faster than this are treated as stuck.</p>
-                </div>
-              </div>
-            </>
-          )}
-        </fieldset>
-
-        {/* Review Policy */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Review Policy</legend>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={reviewPolicyAiReviewerEnabled}
-              onChange={(e) => setReviewPolicyAiReviewerEnabled(e.target.checked)}
-              className="rounded border-border"
-            />
-            <span className="text-sm text-text-muted">Enable automated AI review of completed tasks</span>
-          </label>
-          {reviewPolicyAiReviewerEnabled && (
-            <>
-              <p className="text-xs text-text-dim">
-                When the reviewer rejects a task, it is sent back for rework automatically.
-                After the max rework count is exceeded, it requires manual review.
-              </p>
-              <div className="grid grid-cols-2 gap-4 pt-2">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-text-muted">Reviewer agent</label>
-                  <input
-                    type="text"
-                    value={reviewPolicyAiReviewerAgent}
-                    onChange={(e) => setReviewPolicyAiReviewerAgent(e.target.value)}
-                    placeholder="reviewer"
-                    className={monoInputClass}
-                  />
-                  <p className="text-xs text-text-dim">ClusterAgent assigned to review completed tasks.</p>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-text-muted">Max auto-reworks</label>
-                  <input
-                    type="number"
-                    min={1} max={10}
-                    value={reviewPolicyMaxAutoReworks}
-                    onChange={(e) => setReviewPolicyMaxAutoReworks(e.target.value)}
-                    className={monoInputClass}
-                  />
-                  <p className="text-xs text-text-dim">Reworks exhausted → manual review required.</p>
-                </div>
-              </div>
-            </>
-          )}
-        </fieldset>
-
-        {/* Memory / Embeddings */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Memory / Embeddings</legend>
-          <p className="text-xs text-text-dim">
-            Enable the per-project vector memory service for agent context retrieval
-            and semantic search across runs. Requires a data PVC and a running Ollama instance.
-          </p>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={embeddingEnabled}
-              onChange={(e) => setEmbeddingEnabled(e.target.checked)}
-              className="rounded border-border"
-            />
-            <span className="text-sm text-text-muted">Enable memory service</span>
-          </label>
-          {embeddingEnabled && (
-            <div className="ml-6 space-y-3 pt-1">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-muted">Embedding model</label>
-                <input
-                  type="text"
-                  value={embeddingModel}
-                  onChange={(e) => setEmbeddingModel(e.target.value)}
-                  placeholder="nomic-embed-text"
-                  className={monoInputClass}
-                />
-                <p className="text-xs text-text-dim">Ollama model name used for generating embeddings.</p>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-muted">Vector dimensions</label>
-                <input
-                  type="number"
-                  min={64} max={4096}
-                  value={embeddingDimensions}
-                  onChange={(e) => setEmbeddingDimensions(e.target.value)}
-                  className={monoInputClass}
-                />
-                <p className="text-xs text-text-dim">Dimensionality of the embedding vectors (must match the model).</p>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-muted">Ollama URL</label>
-                <input
-                  type="text"
-                  value={embeddingOllamaUrl}
-                  onChange={(e) => setEmbeddingOllamaUrl(e.target.value)}
-                  placeholder="http://ollama:11434"
-                  className={monoInputClass}
-                />
-                <p className="text-xs text-text-dim">
-                  Overrides the cluster default Ollama service URL. Leave empty to use the built-in Ollama service.
-                </p>
-              </div>
-            </div>
-          )}
-        </fieldset>
-
-        {/* OpenCode Config */}
-        <fieldset className="rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">OpenCode config</legend>
-          <p className="text-xs text-text-dim mb-2">
-            Configure OpenCode at the project level. To set cluster-wide OpenCode config, use{" "}
-            <Link to="/settings" className="underline hover:text-text">Settings</Link>.
-          </p>
-          <textarea
-            value={opencodeConfig ?? ""}
-            onChange={(e) => setOpencodeConfig(e.target.value)}
-            rows={10}
-            spellCheck={false}
-            placeholder={'{\n  "providers": [...],\n  "mcp": {...}\n}'}
-            className={monoInputClass + " resize-y text-xs leading-5 w-full"}
-          />
-          {configJsonError && (
-            <p className="text-xs text-phase-failed mt-1">Invalid JSON: {configJsonError}</p>
-          )}
-        </fieldset>
-
-        {/* Sidecars */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Sidecars</legend>
-          <p className="text-xs text-text-dim">
-            Extra containers injected into every run pod alongside the agent — e.g. a test database.
-            The agent reaches them via <code className="font-mono">localhost</code>.
-            opencode waits for all declared ports to be reachable before starting.
-          </p>
-
-          {sidecars.length > 0 && (
-            <div className="space-y-4">
-              {sidecars.map((sc, idx) => (
-                <div key={sc.id} className="rounded-md border border-border-muted p-3 space-y-3 relative">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-text-muted">Sidecar {idx + 1}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeSidecar(sc.id)}
-                      className="text-xs text-text-dim hover:text-phase-failed transition-colors"
-                    >
-                      Remove
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-text-muted">
-                        Name <span className="text-phase-failed">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={sc.name}
-                        onChange={(e) => updateSidecar(sc.id, "name", e.target.value)}
-                        placeholder="postgres"
-                        className={monoInputClass}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-text-muted">
-                        Image <span className="text-phase-failed">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={sc.image}
-                        onChange={(e) => updateSidecar(sc.id, "image", e.target.value)}
-                        placeholder="postgres:16-alpine"
-                        className={monoInputClass}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-text-muted">
-                      Ports{" "}
-                      <span className="text-text-dim font-normal">(comma-separated)</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={sc.ports}
-                      onChange={(e) => updateSidecar(sc.id, "ports", e.target.value)}
-                      placeholder="5432"
-                      className={monoInputClass}
-                    />
-                    <p className="text-xs text-text-dim">
-                      opencode waits for these ports before starting.
-                    </p>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-text-muted">
-                      Environment{" "}
-                      <span className="text-text-dim font-normal">(one KEY=VALUE per line)</span>
-                    </label>
-                    <textarea
-                      value={sc.env}
-                      onChange={(e) => updateSidecar(sc.id, "env", e.target.value)}
-                      rows={3}
-                      spellCheck={false}
-                      placeholder={"POSTGRES_PASSWORD=test\nPOSTGRES_DB=testdb"}
-                      className={monoInputClass + " resize-y text-xs leading-5"}
-                    />
-                  </div>
-
-                  {sidecarErrors[sc.id] && (
-                    <p className="text-xs text-phase-failed">{sidecarErrors[sc.id]}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={addSidecar}
-            className="rounded-md border border-border px-3 py-1.5 text-xs text-text-muted hover:text-text hover:border-accent/60 transition-colors"
-          >
-            + Add sidecar
-          </button>
-        </fieldset>
-
-        {/* Injected Files */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Injected Files</legend>
-          <p className="text-xs text-text-dim">
-            Files written into <code className="font-mono">/workspace/</code> inside every run pod.
-            Content is stored as K8s Secrets. Useful for <code className="font-mono">.env</code> files or other config files the agent needs.
-          </p>
-
-          {injectFiles.length > 0 && (
-            <div className="space-y-4">
-              {injectFiles.map((f, idx) => (
-                <div key={f.id} className="rounded-md border border-border-muted p-3 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-text-muted">File {idx + 1}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeInjectFile(f.id)}
-                      className="text-xs text-text-dim hover:text-phase-failed transition-colors"
-                    >
-                      Remove
-                    </button>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-text-muted">
-                      Filename <span className="text-phase-failed">*</span>
-                      <span className="text-text-dim font-normal ml-1">(mounted at /workspace/&lt;filename&gt;)</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={f.filename}
-                      onChange={(e) => updateInjectFile(f.id, "filename", e.target.value)}
-                      placeholder=".env"
-                      className={monoInputClass}
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-text-muted">Content</label>
-                    <textarea
-                      value={f.content}
-                      onChange={(e) => updateInjectFile(f.id, "content", e.target.value)}
-                      rows={8}
-                      spellCheck={false}
-                      placeholder={"DATABASE_URL=postgres://...\nAPI_KEY=..."}
-                      className={monoInputClass + " resize-y text-xs leading-5"}
-                    />
-                  </div>
-
-                  {injectFileErrors[f.id] && (
-                    <p className="text-xs text-phase-failed">{injectFileErrors[f.id]}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={addInjectFile}
-            className="rounded-md border border-border px-3 py-1.5 text-xs text-text-muted hover:text-text hover:border-accent/60 transition-colors"
-          >
-            + Add file
-          </button>
-        </fieldset>
-
-        {/* Init Script */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Init script</legend>
-          <p className="text-xs text-text-dim">
-            Shell script to run after git clone completes, before opencode starts.
-            Runs in the init container — failure (non-zero exit) will prevent the pod from starting.
-            Working directory is <code className="font-mono">/workspace</code> (the cloned repo root).
-          </p>
-          <textarea
-            value={initScript}
-            onChange={(e) => setInitScript(e.target.value)}
-            rows={6}
-            spellCheck={false}
-            placeholder={"npm ci\nnpm run build"}
-            className={monoInputClass + " resize-y text-xs leading-5 font-mono"}
-          />
-        </fieldset>
-
-        {/* Agent roster */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Agent roster</legend>
-          <p className="text-xs text-text-dim">
-            ClusterAgents available to tasks in this project. Tasks must reference an agent from this list.
-          </p>
-          {rosterAgents.length > 0 && (
-            <ul className="space-y-1">
-              {rosterAgents.map((agentName) => (
-                <li key={agentName} className="flex items-center justify-between rounded border border-border bg-surface-raised px-3 py-1.5 text-sm">
-                  <span className="font-mono">{agentName}</span>
-                  <button
-                    type="button"
-                    onClick={() => setRosterAgents((prev) => prev.filter((n) => n !== agentName))}
-                    className="text-text-dim hover:text-phase-failed transition-colors text-xs ml-4"
-                  >
-                    remove
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="flex items-center gap-2">
-            <select
-              value={rosterPickerValue}
-              onChange={(e) => setRosterPickerValue(e.target.value)}
-              className="flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
-            >
-              <option value="">— add agent —</option>
-              {clusterAgents
-                .filter((a) => !rosterAgents.includes(a.name))
-                .map((a) => <option key={a.name} value={a.name}>{a.name}</option>)
-              }
-            </select>
-            <button
-              type="button"
-              disabled={!rosterPickerValue}
-              onClick={() => {
-                if (rosterPickerValue && !rosterAgents.includes(rosterPickerValue)) {
-                  setRosterAgents((prev) => [...prev, rosterPickerValue]);
-                  setRosterPickerValue("");
-                }
-              }}
-              className="rounded-md border border-border hover:bg-surface-raised disabled:opacity-40 px-3 py-1.5 text-sm transition-colors"
-            >
-              Add
-            </button>
-          </div>
-        </fieldset>
-
-        {/* Runner Overrides */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Runner Overrides</legend>
-          <p className="text-xs text-text-dim">
-            Override cluster-level runner defaults for this project.
-          </p>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Runner Image</label>
-            <input
-              type="text"
-              value={runnerImage}
-              onChange={(e) => setRunnerImage(e.target.value)}
-              placeholder="percussionist/runner:dev"
-              className={monoInputClass}
-            />
-          </div>
-          <div className="border-t border-border pt-3">
-            <p className="text-xs font-medium mb-2 text-text-muted">Resource Requests</p>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-xs text-text-dim block">CPU (e.g. 100m, 1)</label>
-                <input
-                  type="text"
-                  value={cpuRequest}
-                  onChange={(e) => setCpuRequest(e.target.value)}
-                  placeholder="100m"
-                  className={monoInputClass}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs text-text-dim block">Memory (e.g. 128Mi)</label>
-                <input
-                  type="text"
-                  value={memRequest}
-                  onChange={(e) => setMemRequest(e.target.value)}
-                  placeholder="128Mi"
-                  className={monoInputClass}
-                />
-              </div>
-            </div>
-          </div>
-          <div className="border-t border-border pt-3">
-            <p className="text-xs font-medium mb-2 text-text-muted">Resource Limits</p>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-xs text-text-dim block">CPU (e.g. 500m, 1)</label>
-                <input
-                  type="text"
-                  value={cpuLimit}
-                  onChange={(e) => setCpuLimit(e.target.value)}
-                  placeholder="500m"
-                  className={monoInputClass}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs text-text-dim block">Memory (e.g. 512Mi)</label>
-                <input
-                  type="text"
-                  value={memLimit}
-                  onChange={(e) => setMemLimit(e.target.value)}
-                  placeholder="512Mi"
-                  className={monoInputClass}
-                />
-              </div>
-            </div>
-          </div>
-        </fieldset>
-
-        {/* Git Cache */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Git Cache</legend>
-          <p className="text-xs text-text-dim">
-            Control how git worktrees are managed across runs.
-          </p>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={worktreeReuse}
-              onChange={(e) => setWorktreeReuse(e.target.checked)}
-              className="rounded border-border"
-            />
-            <span className="text-sm text-text-muted">Reuse worktrees across runs</span>
-          </label>
-          <p className="text-xs text-text-dim">
-            When enabled, subsequent runs reuse the existing worktree instead of checking out fresh.
-          </p>
-        </fieldset>
-
-        {/* Flow Configuration */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Task Lifecycle</legend>
-          <p className="text-xs text-text-dim">
-            Control how tasks flow through their lifecycle. Presets provide sensible defaults; overrides below customize specific steps.
-          </p>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Preset</label>
-            <select
-              value={flowPreset}
-              onChange={(e) => setFlowPreset(e.target.value as typeof flowPreset)}
-              className={inputClass}
-            >
-              <option value="simple">Simple — no approvals, auto-done</option>
-              <option value="review">Review — AI review on build success</option>
-              <option value="plan-build">Plan → Build — plan generates builds, human approval</option>
-              <option value="plan-build-review-merge">Plan → Build → Review → Merge (default)</option>
-            </select>
-          </div>
-
-          {flowPreset !== "simple" && (
-            <>
-              <div className="border-t border-border pt-3 space-y-3">
-                {/* Human Approval */}
-                <div>
-                  <p className="text-xs font-medium mb-1.5 text-text-muted">Human Approval</p>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-xs text-text-dim block">Plan approval</label>
-                      <select
-                        value={flowHumanApprovalPlan}
-                        onChange={(e) => setFlowHumanApprovalPlan(e.target.value as "required" | "disabled")}
-                        className={inputClass}
-                      >
-                        <option value="required">Required</option>
-                        <option value="disabled">Disabled</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-xs text-text-dim block">Build approval</label>
-                      <select
-                        value={flowHumanApprovalBuild}
-                        onChange={(e) => setFlowHumanApprovalBuild(e.target.value as "required" | "disabled")}
-                        className={inputClass}
-                      >
-                        <option value="required">Required</option>
-                        <option value="disabled">Disabled</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Plan onApprove */}
-                <div className="space-y-1.5">
-                  <label className="text-xs text-text-dim block">Plan approved →</label>
-                  <select
-                    value={flowPlanOnApprove}
-                    onChange={(e) => setFlowPlanOnApprove(e.target.value as "generate-builds" | "done")}
-                    className={inputClass}
-                  >
-                    <option value="generate-builds">Generate builds</option>
-                    <option value="done">Mark done</option>
-                  </select>
-                </div>
-
-                {/* Build onSuccess */}
-                <div className="space-y-1.5">
-                  <label className="text-xs text-text-dim block">Build succeeds →</label>
-                  <select
-                    value={flowBuildOnSuccess}
-                    onChange={(e) => setFlowBuildOnSuccess(e.target.value as "human-review" | "ai-review" | "done")}
-                    className={inputClass}
-                  >
-                    <option value="human-review">Human review</option>
-                    <option value="ai-review">AI review</option>
-                    <option value="done">Mark done</option>
-                  </select>
-                </div>
-
-                {/* Build onApprove */}
-                <div className="space-y-1.5">
-                  <label className="text-xs text-text-dim block">Build approved →</label>
-                  <select
-                    value={flowBuildOnApprove}
-                    onChange={(e) => setFlowBuildOnApprove(e.target.value as "merge" | "done")}
-                    className={inputClass}
-                  >
-                    <option value="merge">Merge to parent branch</option>
-                    <option value="done">Mark done (no merge)</option>
-                  </select>
-                </div>
-
-                {/* Merge mode */}
-                <div className="space-y-1.5">
-                  <label className="text-xs text-text-dim block">Merge mode</label>
-                  <select
-                    value={flowMergeMode}
-                    onChange={(e) => setFlowMergeMode(e.target.value as "auto" | "manual" | "disabled")}
-                    className={inputClass}
-                  >
-                    <option value="auto">Auto-merge on approval</option>
-                    <option value="manual">Manual merge required</option>
-                    <option value="disabled">No merging</option>
-                  </select>
-                </div>
-              </div>
-            </>
-          )}
-        </fieldset>
-
-        {/* Code Server */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Code Server</legend>
-          <p className="text-xs text-text-dim">
-            Enable interactive VS Code access to the workspace. Requires a data PVC (git or local source).
-          </p>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={codeServerEnabled}
-              onChange={(e) => setCodeServerEnabled(e.target.checked)}
-              className="rounded border-border"
-            />
-            <span className="text-sm text-text-muted">Enable code-server sidecar</span>
-          </label>
-
-          {codeServerEnabled && (
-            <>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-text-muted">Container Image</label>
-                <input
-                  type="text"
-                  value={codeServerImage}
-                  onChange={(e) => setCodeServerImage(e.target.value)}
-                  placeholder="codercom/code-server:4.96.4"
-                  className={monoInputClass}
-                />
-              </div>
-              <div className="border-t border-border pt-3">
-                <p className="text-xs font-medium mb-2 text-text-muted">Resource Requests</p>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-text-dim block">CPU (e.g. 100m)</label>
-                    <input
-                      type="text"
-                      value={csCpuRequest}
-                      onChange={(e) => setCSCpuRequest(e.target.value)}
-                      placeholder="100m"
-                      className={monoInputClass}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-text-dim block">Memory (e.g. 256Mi)</label>
-                    <input
-                      type="text"
-                      value={csMemRequest}
-                      onChange={(e) => setCSMemRequest(e.target.value)}
-                      placeholder="256Mi"
-                      className={monoInputClass}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div className="border-t border-border pt-3">
-                <p className="text-xs font-medium mb-2 text-text-muted">Resource Limits</p>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-text-dim block">CPU (e.g. 500m)</label>
-                    <input
-                      type="text"
-                      value={csCpuLimit}
-                      onChange={(e) => setCSCpuLimit(e.target.value)}
-                      placeholder="500m"
-                      className={monoInputClass}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-text-dim block">Memory (e.g. 512Mi)</label>
-                    <input
-                      type="text"
-                      value={csMemLimit}
-                      onChange={(e) => setCSMemLimit(e.target.value)}
-                      placeholder="512Mi"
-                      className={monoInputClass}
-                    />
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-        </fieldset>
-
-        {/* Data PVC (Advanced) */}
-        <fieldset className="space-y-3 rounded-md border border-border p-4">
-          <legend className="px-1 text-sm font-medium text-text-muted">Data PVC</legend>
-          <p className="text-xs text-text-dim">
-            Customize the persistent volume for workspace data. Leave blank to use defaults (&#123;project&#125;-data, mount path /data).
-          </p>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">PVC Name</label>
-              <input
-                type="text"
-                value={pvcName}
-                onChange={(e) => setPvcName(e.target.value)}
-                placeholder="{project}-data"
-                className={monoInputClass}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">Mount Path</label>
-              <input
-                type="text"
-                value={mountPath}
-                onChange={(e) => setMountPath(e.target.value)}
-                placeholder="/data"
-                className={monoInputClass}
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Storage Class</label>
-            <input
-              type="text"
-              value={storageClass}
-              onChange={(e) => setStorageClass(e.target.value)}
-              placeholder="(use cluster default)"
-              className={monoInputClass}
-            />
-          </div>
-        </fieldset>
-
+        {/* Error banner (visible regardless of active tab) */}
         {mutation.error && (
-          <div className="rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
+          <div className="mt-4 rounded-md border border-error/30 bg-error-container px-4 py-3 text-sm text-on-error-container">
             {mutation.error.message}
           </div>
         )}
 
-        <div className="flex items-center gap-3 pt-1">
+        {/* Submit bar */}
+        <div className="flex items-center gap-3 pt-4 mt-2 border-t border-border">
           <button
             type="submit"
-            disabled={(!isEdit && !name.trim()) || mutation.isPending || gitAuthorIncomplete || !!configJsonError || hasSidecarErrors || hasInjectFileErrors}
+            disabled={(!isEdit && !form.name.trim()) || mutation.isPending || form.gitAuthorIncomplete || !!form.configJsonError || form.hasSidecarErrors || form.hasInjectFileErrors}
             className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
           >
             {mutation.isPending ? (isEdit ? "Saving…" : "Creating…") : (isEdit ? "Save Changes" : "Create Project")}

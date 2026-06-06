@@ -610,7 +610,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
-  const { task, manualActions, flow, now } = input;
+  const { task, manualActions, flow, now, capacity } = input;
   const taskName = task.metadata.name;
   const fromPhase = "awaiting-human" as TaskPhase;
 
@@ -672,6 +672,9 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
           events: [makeEvent(input, fromPhase, "done", "PlanApprovedDone")],
         };
       }
+      if (capacity.activeCount >= capacity.maxParallel) {
+        return { taskName, fromPhase, effects: [], events: [] };
+      }
       return {
         taskName,
         fromPhase,
@@ -700,6 +703,9 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
         .update(`${input.project.metadata.name}:${taskName}:${retryCount}`)
         .digest("hex")
         .slice(0, 8);
+      if (capacity.activeCount >= capacity.maxParallel) {
+        return { taskName, fromPhase, effects: [], events: [] };
+      }
       const mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSeq);
       return {
         taskName,
@@ -1013,7 +1019,7 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideFailed(input: ReconcileInput): ReconcileDecision {
-  const { task, flow, manualActions, now } = input;
+  const { task, flow, manualActions, now, capacity } = input;
   const taskName = task.metadata.name;
   const fromPhase = "failed" as TaskPhase;
 
@@ -1025,6 +1031,9 @@ function decideFailed(input: ReconcileInput): ReconcileDecision {
     if (worker?.mergeError || worker?.mergeRunName) {
       // Merge failure — clear old mergeRunName so decideAwaitingMerge()
       // generates a fresh, uniquely-named merge run.
+      if (capacity.activeCount >= capacity.maxParallel) {
+        return { taskName, fromPhase, effects: [], events: [] };
+      }
       return {
         taskName,
         fromPhase,

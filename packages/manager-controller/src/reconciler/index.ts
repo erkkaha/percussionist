@@ -18,11 +18,28 @@ export async function reconcileProject(
   console.log(`[reconcile] ${projectName} starting`);
 
   // Fetch all tasks for this project.
-  const { listTasks, getRun } = await import("@percussionist/kube");
+  const { listTasks, patchTaskStatus } = await import("@percussionist/kube");
   const tasks = await listTasks(projectName, namespace);
 
+  // Auto-heal: detect tasks missing status.phase and repair them to pending.
+  // This catches legacy/manual Task CRs that were created without a phase,
+  // which would otherwise be invisible to scheduling logic.
+  for (const task of tasks) {
+    if (!task.status?.phase) {
+      console.log(
+        `[reconcile] ${task.metadata.name}: missing status.phase — healing to "pending"`,
+      );
+      await patchTaskStatus(task.metadata.name!, { phase: "pending" }, namespace).catch(() => {
+        // Best-effort heal; reconciler will retry on next cycle.
+      });
+    }
+  }
+
+  // Re-fetch tasks after healing (to get fresh data with patched phases).
+  const refreshedTasks = await listTasks(projectName, namespace);
+
   // Filter to active tasks (not idea or done).
-  const activeTasks = tasks.filter((t) => {
+  const activeTasks = refreshedTasks.filter((t) => {
     const phase = t.status?.phase;
     return phase !== "idea" && phase !== "done";
   });
@@ -31,7 +48,7 @@ export async function reconcileProject(
   activeTasks.sort(byPriority);
 
   // Track active count across transitions in this cycle to respect maxParallel.
-  let activeCount = tasks.filter((t) => isActivePhase(t.status?.phase ?? "pending")).length;
+  let activeCount = refreshedTasks.filter((t) => isActivePhase(t.status?.phase ?? "pending")).length;
 
   // Reconcile each active task.
   for (const task of activeTasks) {
@@ -39,12 +56,28 @@ export async function reconcileProject(
       continue; // Skip blocked tasks.
     }
 
-    const phase = (task.status?.phase ?? "pending") as TaskPhase;
+    // Auto-heal: detect and repair tasks with missing status.phase.
+    // This is a defense-in-depth safety net — all first-party creation paths
+    // should set phase at create time, but legacy/manual/external creation
+    // can produce limbo tasks without a persisted phase.
+    if (task.status?.phase === undefined) {
+      console.log(
+        `[reconcile] ${task.metadata.name} healing: missing status.phase → pending`,
+      );
+      try {
+        await patchTaskStatus(task.metadata.name, { phase: "pending" }, namespace);
+      } catch (e) {
+        console.error(`[reconcile] ${task.metadata.name} heal failed:`, e);
+      }
+      continue; // Skip further processing; next reconcile cycle will handle normally.
+    }
+
+    const phase = task.status.phase as TaskPhase;
     const wasActive = isActivePhase(phase);
 
     try {
       // Observe: normalize K8s resources into decision input.
-      const input = await observe(task, project, tasks, namespace, activeCount);
+      const input = await observe(task, project, refreshedTasks, namespace, activeCount);
 
       // Decide: pure function returns next phase, effects, and audit events.
       const decision = decide(input);
@@ -69,7 +102,7 @@ export async function reconcileProject(
         namespace,
         project as never,
         input.flow,
-        tasks,
+        refreshedTasks,
       );
 
       if (!result.applied) {

@@ -33,7 +33,9 @@ spec:
 
   agents:
     - name: planner
+      model: lmstudio/qwen3.6-35b-a3b@q4_k_s
     - name: builder
+      model: lmstudio/qwen3.6-35b-a3b@q4_k_s
     - name: meta-reviewer
     - name: meta-smoke-tester
     - name: meta-integrator

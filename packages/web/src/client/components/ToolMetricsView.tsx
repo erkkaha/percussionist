@@ -1,6 +1,10 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+interface Props {
+  days: number;
+}
+
 // ---------------------------------------------------------------------------
 // Types matching GET /api/stats/tool-metrics response
 
@@ -52,13 +56,6 @@ function fmtTokens(n: number): string {
   return `${(n / 1000).toFixed(1)}K`;
 }
 
-const DAY_OPTIONS = [
-  { label: "7d", value: 7 },
-  { label: "30d", value: 30 },
-  { label: "90d", value: 90 },
-  { label: "All", value: 0 },
-];
-
 // ---------------------------------------------------------------------------
 // MetricCard
 
@@ -91,8 +88,7 @@ function AgentCard({ agent, calls, totalTokensOut, totalSessions }: AgentSummary
 // ---------------------------------------------------------------------------
 // Main component
 
-export default function ToolMetricsView() {
-  const [days, setDays] = useState(30);
+export default function ToolMetricsView({ days }: Props) {
   const [agentFilter, setAgentFilter] = useState("");
 
   const { data, isLoading, error } = useQuery<ToolMetricsResponse>({
@@ -117,24 +113,14 @@ export default function ToolMetricsView() {
   // Loading
 
   if (isLoading) {
-    return (
-      <div className="p-6">
-        <h1 className="text-lg font-semibold mb-4">Tool Usage</h1>
-        <p className="text-text-dim">Loading tool metrics...</p>
-      </div>
-    );
+    return <p className="text-text-dim">Loading tool metrics...</p>;
   }
 
   // -----------------------------------------------------------------------
   // Error
 
   if (error || !data) {
-    return (
-      <div className="p-6">
-        <h1 className="text-lg font-semibold mb-4">Tool Usage</h1>
-        <p className="text-text-danger">Failed to load tool metrics: {(error as Error)?.message ?? "unknown"}</p>
-      </div>
-    );
+    return <p className="text-text-danger">Failed to load tool metrics: {(error as Error)?.message ?? "unknown"}</p>;
   }
 
   // -----------------------------------------------------------------------
@@ -160,10 +146,12 @@ export default function ToolMetricsView() {
   // Render
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       {/* Header with filters */}
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-lg font-semibold">Tool Usage</h1>
+        <div>
+          <p className="text-sm text-text-muted">{data.tools.length} tools</p>
+        </div>
         <div className="flex gap-2 flex-wrap">
           {/* Agent filter */}
           {agents.length > 0 && (
@@ -178,22 +166,6 @@ export default function ToolMetricsView() {
               ))}
             </select>
           )}
-          {/* Day filter */}
-          <div className="flex gap-1">
-            {DAY_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setDays(opt.value)}
-                className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${
-                  days === opt.value
-                    ? "bg-primary-container text-primary"
-                    : "bg-surface-overlay text-text-dim hover:text-text"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
         </div>
       </div>
 

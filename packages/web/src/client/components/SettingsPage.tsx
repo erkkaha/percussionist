@@ -16,14 +16,16 @@ import {
 } from "../lib/api";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./ui/card";
 import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { RefreshCw, Loader2 } from "lucide-react";
 import ModelSelector from "./ModelSelector";
 import ProjectsPage from "./ProjectsPage";
 import AgentsPage from "./AgentsPage";
+import NotificationsPanel from "./NotificationsPanel";
 
-type Tab = "projects" | "agents" | "secrets" | "opencode" | "manager" | "runner" | "updates";
+type Tab = "projects" | "agents" | "secrets" | "opencode" | "manager" | "runner" | "notifications" | "updates";
 type SettingsSpec = Record<string, unknown> & {
   runnerConfig?: Record<string, unknown>;
 };
@@ -92,17 +94,18 @@ export default function SettingsPage() {
     { id: "opencode", label: "OpenCode Config" },
     { id: "manager", label: "Manager Agent" },
     { id: "runner", label: "Runner Defaults" },
+    { id: "notifications", label: "Notifications" },
     { id: "updates", label: "Updates" },
   ];
 
   return (
-    <div className="flex flex-col gap-4 max-w-5xl mx-auto w-full">
+    <div className="flex flex-col gap-4 w-full">
       <div className="flex items-center justify-between settings-header-mobile">
         <h1 className="text-xl font-semibold text-lg sm:text-xl">Settings</h1>
         {saveMsg && (
           <span className={cn(
             "text-sm",
-            saveMsg.startsWith("Error") ? "text-red-500" : "text-green-500"
+            saveMsg.startsWith("Error") ? "text-phase-failed" : "text-phase-succeeded"
           )}>{saveMsg}</span>
         )}
       </div>
@@ -124,16 +127,16 @@ export default function SettingsPage() {
             <span className="relative">
               {t.label}
               {t.id === "updates" && updateStatus?.updateAvailable && (
-                <span className="absolute -top-0.5 -right-2.5 w-2 h-2 rounded-full bg-amber-400" />
+                <span className="absolute -top-0.5 -right-2.5 w-2 h-2 rounded-full bg-accent" />
               )}
             </span>
           </button>
         ))}
       </div>
 
-      {activeTab === "projects" && <ProjectsPage />}
+      {activeTab === "projects" && <ProjectsPage showHeader={false} />}
 
-      {activeTab === "agents" && <AgentsPage />}
+      {activeTab === "agents" && <AgentsPage showHeader={false} />}
 
       {settingsLoading && activeTab !== "projects" && activeTab !== "agents" && (
         <p className="text-text-dim">Loading...</p>
@@ -178,6 +181,8 @@ export default function SettingsPage() {
           saving={saveMutation.isPending}
         />
       )}
+
+      {activeTab === "notifications" && <NotificationsPanel />}
 
       {activeTab === "updates" && <UpdatesPanel />}
     </div>
@@ -327,16 +332,16 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <textarea
-          className="w-full h-64 sm:h-80 font-mono text-sm border border-input bg-background rounded-md p-3 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
+        <Textarea
+          className="h-64 sm:h-80 font-mono text-sm"
           value={value}
           onChange={(e) => handleChange(e.target.value)}
           spellCheck={false}
           placeholder={'{\n  "providers": [...],\n  "mcp": {...}\n}'}
         />
-        {jsonError && <p className="text-xs text-red-500 mt-1">{jsonError}</p>}
+        {jsonError && <p className="text-xs text-phase-failed mt-1">{jsonError}</p>}
         {!jsonError && value.trim() && (
-          <p className="text-xs text-green-500 mt-1">Valid JSON</p>
+          <p className="text-xs text-phase-succeeded mt-1">Valid JSON</p>
         )}
       </CardContent>
       <CardFooter className="sm:flex-row flex-col gap-2">
@@ -423,8 +428,8 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
         </div>
         <div>
           <label className="text-sm font-medium block mb-1">Decision Agent Content (.md)</label>
-          <textarea
-            className="w-full h-48 font-mono text-sm border border-input bg-background rounded-md p-3 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
+          <Textarea
+            className="h-48 font-mono text-sm"
             value={decisionAgentContent}
             onChange={(e) => setDecisionAgentContent(e.target.value)}
             placeholder={"---\ndescription: ...\nmode: subagent\npermission:\n  edit: allow\n  bash: allow\n---\n\nYou are the decision-making agent..."}
@@ -674,19 +679,19 @@ function UpdatesPanel() {
         )}
 
         {isError && !upgradeMutation.isPending && !upgradeMutation.isSuccess && (
-          <p className="text-red-500 text-sm">
+          <p className="text-phase-failed text-sm">
             Could not check for updates: {(error as Error).message}
           </p>
         )}
 
         {data?.error && !upgradeMutation.isPending && (
-          <p className="text-amber-500 text-sm">
+          <p className="text-text-dim text-sm">
             Registry check failed: {data.error}
           </p>
         )}
 
         {upgradeMutation.isError && (
-          <p className="text-red-500 text-sm">
+          <p className="text-phase-failed text-sm">
             Upgrade failed: {upgradeMutation.error.message}
           </p>
         )}
@@ -725,7 +730,7 @@ function UpdatesPanel() {
               {data.updateAvailable && data.latest ? (
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2">
-                    <span className="inline-block w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                    <span className="inline-block w-2 h-2 rounded-full bg-accent shrink-0" />
                     <p className="text-sm font-medium">
                       Version <span className="font-mono">{data.latest}</span> is available
                       {currentTag && (

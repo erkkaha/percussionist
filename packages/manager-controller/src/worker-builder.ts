@@ -46,7 +46,9 @@ export async function buildWorkerRun(
     },
   });
 
-  // Agent-level model override (between board and project in resolution hierarchy).
+  // ClusterAgent model override (overrides project default, not per-agent).
+  // Resolution order (highest → lowest):
+  //   explicit run override (MCP tool) → per-agent model → ClusterAgent model → project.spec.model
   try {
     const agent = await getClusterAgent(task.spec.agent);
     if (agent.spec.model) {
@@ -54,6 +56,15 @@ export async function buildWorkerRun(
     }
   } catch {
     // Agent CR not found or inaccessible — fall back to project/cluster defaults.
+  }
+
+  // Per-agent model override: if the task's agent has a `model` field set in
+  // the project roster, use it instead of the ClusterAgent or project-level default.
+  const agentOverride = (project.spec.agents ?? []).find(
+    (a) => a.name === task.spec.agent,
+  );
+  if (agentOverride?.model) {
+    resolved.model = agentOverride.model;
   }
 
   const taskName = task.metadata.name;
@@ -91,7 +102,7 @@ export async function buildWorkerRun(
         "IDEMPOTENCY CHECK (do this first, before any exploration):",
         `- Run: \`cat ${planPath}\``,
         "- If the file exists and is non-empty:",
-        `  1. Call write_plan(project="${projectName}", task="${taskName}", content=<file-content>) to ensure it is persisted.`,
+        `  1. Call percussionist_dispatcher_write_plan(project="${projectName}", task="${taskName}", content=<file-content>) to ensure it is persisted.`,
         "  2. Call percussionist_dispatcher_complete_plan with a brief summary of the existing plan.",
         "  3. Do NOT re-explore or re-plan — the work is already done.",
         "- Only proceed with planning if the file does not exist or is empty.",
@@ -104,7 +115,7 @@ export async function buildWorkerRun(
       "- The file is the authoritative PLAN output and will be reviewed by facilitator/human reviewers.",
       "- Include implementation context, scope boundaries, risks, acceptance criteria, and proposed BUILD task breakdown.",
       "- Commit the plan artifact on this task branch before completing the run.",
-      `- After committing, call write_plan(project="${projectName}", task="${taskName}", content=<plan-content>) to persist it to ConfigMap.`,
+      `- After committing, call percussionist_dispatcher_write_plan(project="${projectName}", task="${taskName}", content=<plan-content>) to persist it to ConfigMap.`,
       `- Mention ${planPath} in the completion summary.`,
       `- When done, call percussionist_dispatcher_complete_plan instead of complete_run.`,
       "",
@@ -124,7 +135,7 @@ export async function buildWorkerRun(
   if (project.spec.embedding?.enabled) {
     try {
       const query = task.spec.description ?? task.spec.title ?? taskName;
-      const { context } = await getContext(projectName, query);
+      const { context } = await getContext(projectName, query, taskName);
       if (context && context !== "No relevant context found.") {
         promptLines.push(
           "RELEVANT PROJECT CONTEXT:",
@@ -226,19 +237,19 @@ export async function buildMergeRun(
 
   const projectName = project.metadata.name;
   const taskName = task.metadata.name;
-  
+
   // Determine source and target branches based on feature branching config.
   let sourceBranch: string;
   let targetBranch: string;
-  
+
   if (project.spec.featureBranchingEnabled) {
     const gitBranch = resolveTaskBranch(task, project, allTasks ?? []);
     const mergeBranch = resolveMergeBranch(task, project, allTasks ?? []);
-    
+
     if (!gitBranch) {
       throw new Error(`Task ${taskName} has no git branch (feature branching enabled but branch not resolved)`);
     }
-    
+
     sourceBranch = gitBranch;
     targetBranch = mergeBranch ?? "main"; // Fallback to main if no merge target
   } else {
@@ -247,13 +258,16 @@ export async function buildMergeRun(
     targetBranch = "main";
   }
 
-  // Use a dedicated merge agent if configured, otherwise fall back to the task's agent.
+  // Determine merge agent: prefer explicit name, then env var, then task agent.
+  const MERGING_AGENT = process.env.MERGING_AGENT;
   const mergeAgent =
     mergeAgentName && (project.spec.agents ?? []).some((a) => a.name === mergeAgentName)
       ? mergeAgentName
-      : task.spec.agent;
+      : MERGING_AGENT && (project.spec.agents ?? []).some((a) => a.name === MERGING_AGENT)
+        ? MERGING_AGENT
+        : task.spec.agent;
 
-  // Agent-level model override (between board and project in resolution hierarchy).
+  // ClusterAgent model override (overrides project default, not per-agent).
   try {
     const agent = await getClusterAgent(mergeAgent);
     if (agent.spec.model) {
@@ -263,12 +277,19 @@ export async function buildMergeRun(
     // Agent CR not found or inaccessible — fall back to project/cluster defaults.
   }
 
+  // Per-agent model override (project roster takes priority over ClusterAgent).
+  const mergeAgentOverride = (project.spec.agents ?? []).find(
+    (a) => a.name === mergeAgent,
+  );
+  if (mergeAgentOverride?.model) {
+    resolved.model = mergeAgentOverride.model;
+  }
+
   // Set git.ref so the init container checks out the source branch as a worktree.
   if (resolved.source?.git) {
     resolved.source.git.ref = sourceBranch;
     resolved.source.git.parentRef = targetBranch;
   }
-
   const promptLines = [
     `TASK: Merge approved changes for ${taskName}`,
     "",

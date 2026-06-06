@@ -17,9 +17,30 @@ export function makeTask(
     status?: string;
     mergedAt?: string;
     gitBranch?: string;
+    /** When true, omit the entire `status` field (simulates a task created without phase). */
+    noStatus?: boolean;
   },
 ): Task {
   const now = "2026-05-29T00:00:00.000Z";
+
+  if (overrides?.noStatus) {
+    return {
+      apiVersion: "percussionist.dev/v1alpha1",
+      kind: "Task",
+      metadata: { name, namespace: "percussionist", uid: `uid-${name}` },
+      spec: {
+        projectRef,
+        type: overrides?.type ?? "BUILD",
+        title: name,
+        description: "",
+        agent: "builder",
+        priority: overrides?.priority ?? "medium",
+        ...(overrides?.predecessorRef ? { predecessorRef: overrides.predecessorRef } : {}),
+        ...(overrides?.parentTaskRef ? { parentTaskRef: overrides.parentTaskRef } : {}),
+      },
+    } as Task;
+  }
+
   return {
     apiVersion: "percussionist.dev/v1alpha1",
     kind: "Task",

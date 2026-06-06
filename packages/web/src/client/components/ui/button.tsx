@@ -14,6 +14,8 @@ const buttonVariants = cva(
           "border border-border-muted text-text-dim hover:border-border hover:text-text-muted",
         ghost: "text-text-dim hover:bg-surface-overlay hover:text-text-muted",
         link: "text-accent underline-offset-4 hover:underline",
+        destructive:
+          "bg-error-container text-on-error-container hover:bg-error/90 border border-error/30",
       },
       size: {
         default: "h-9 px-4 py-2",

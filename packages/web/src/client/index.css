@@ -82,6 +82,23 @@
   --color-phase-failed: var(--phase-failed);
   --color-phase-cancelled: var(--phase-cancelled);
 
+  /* ── Shadcn compat ── */
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-foreground: var(--foreground);
+
+  /* ── Chart colors ── */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
   /* ── Sidebar ── */
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -121,6 +138,11 @@
   --text-code-block:
     13px;
   --text-code-block--line-height: 20px;
+
+  /* ── Caption / meta text (for descriptions, timestamps, tiny labels) ── */
+  --text-caption-xs:
+    11px;
+  --text-caption-xs--line-height: 16px;
 
   /* ── Rounded ── */
   --radius-sm: 0.125rem;
@@ -209,6 +231,25 @@
   --border: #514537;
   --border-muted: #333539;
   --text: #e2e2e8;
+
+  /* ── Diff view (react-diff-view) dark theme overrides ── */
+  --diff-background-color: var(--surface);
+  --diff-text-color: var(--text);
+  --diff-gutter-insert-background-color: rgba(88, 234, 138, 0.12);
+  --diff-gutter-insert-text-color: var(--tertiary);
+  --diff-gutter-delete-background-color: rgba(255, 180, 171, 0.12);
+  --diff-gutter-delete-text-color: var(--error);
+  --diff-code-insert-background-color: rgba(88, 234, 138, 0.06);
+  --diff-code-insert-text-color: var(--text);
+  --diff-code-delete-background-color: rgba(255, 180, 171, 0.06);
+  --diff-code-delete-text-color: var(--text);
+  --diff-code-insert-edit-background-color: rgba(88, 234, 138, 0.18);
+  --diff-code-insert-edit-text-color: var(--text);
+  --diff-code-delete-edit-background-color: rgba(255, 180, 171, 0.18);
+  --diff-code-delete-edit-text-color: var(--text);
+  --diff-gutter-selected-background-color: var(--surface-overlay);
+  --diff-code-selected-background-color: var(--surface-overlay);
+  --diff-font-family: "JetBrains Mono", ui-monospace, monospace;
   --text-muted: #d5c4b2;
   --text-dim: #9e8e7e;
   --accent: #e8a852;
@@ -220,6 +261,23 @@
   --phase-succeeded: #58ea8a;
   --phase-failed: #ffb4ab;
   --phase-cancelled: #514537;
+
+  /* ── Chart colors ── */
+  --chart-1: #58c4dd;
+  --chart-2: #e8a852;
+  --chart-3: #58ea8a;
+  --chart-4: #c8c5cb;
+  --chart-5: #ffb4ab;
+
+  /* ── Shadcn compat ── */
+  --popover: #333539;
+  --popover-foreground: #e2e2e8;
+  --muted: #1e2024;
+  --muted-foreground: #9e8e7e;
+  --ring: #e8a852;
+  --input: #514537;
+  --accent-foreground: #633e00;
+  --foreground: #e2e2e8;
 
   /* ── Sidebar ── */
   --sidebar: #1a1c20;

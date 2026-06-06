@@ -20,6 +20,7 @@ interface StoreMemoryResponse {
 interface SearchRequest {
   query: string;
   limit?: number;
+  task?: string;
 }
 
 interface SearchResult {
@@ -43,6 +44,7 @@ interface ContextResponse {
 // Initialise vector tables
 
 export function initDb(): void {
+  const dims = parseInt(process.env.EMBEDDING_DIMENSIONS ?? "768", 10);
   const raw = getRawDb();
   raw.run(`
     CREATE TABLE IF NOT EXISTS memories (
@@ -55,7 +57,7 @@ export function initDb(): void {
   `);
   raw.run(`
     CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
-      embedding float[768]
+      embedding float[${dims}]
     )
   `);
   raw.run(
@@ -111,38 +113,42 @@ export async function handleSearch(
 
   const ids = rows.map((r) => r.rowid);
   const placeholders = ids.map(() => "?").join(",");
+  const params: (string | number)[] = [...ids];
+  let memSql = `SELECT rowid, id, content, metadata, created_at FROM memories WHERE rowid IN (${placeholders})`;
+  if (body.task) {
+    memSql += ` AND json_extract(metadata, '$.task') = ?`;
+    params.push(body.task);
+  }
   const memRows = raw
-    .prepare(`SELECT id, content, metadata, created_at FROM memories WHERE rowid IN (${placeholders})`)
-    .all(...ids) as {
+    .prepare(memSql)
+    .all(...params) as {
+    rowid: number;
     id: string;
     content: string;
     metadata: string | null;
     created_at: string | null;
   }[];
 
-  const memMap = new Map(memRows.map((m) => [m.id, m]));
+  const memMap = new Map(memRows.map((m) => [m.rowid, m]));
 
-  return rows.map((r) => {
-    // vec0 rowid maps to memories rowid
-    const mem = memMap.get(
-      (raw
-        .prepare(`SELECT id FROM memories WHERE rowid = ?`)
-        .get(r.rowid) as { id: string } | undefined)?.id ?? "",
-    );
-    return {
-      id: mem?.id ?? "",
-      content: mem?.content ?? "",
-      metadata: mem?.metadata ? safeParseJson(mem.metadata) : null,
-      distance: r.distance,
-      createdAt: mem?.created_at ?? null,
-    };
-  });
+  return rows
+    .filter((r) => memMap.has(r.rowid))
+    .map((r) => {
+      const mem = memMap.get(r.rowid)!;
+      return {
+        id: mem.id,
+        content: mem.content,
+        metadata: mem.metadata ? safeParseJson(mem.metadata) : null,
+        distance: r.distance,
+        createdAt: mem.created_at,
+      };
+    });
 }
 
 export async function handleContext(
   body: ContextRequest,
 ): Promise<ContextResponse> {
-  const results = await handleSearch({ query: body.query, limit: 5 });
+  const results = await handleSearch({ query: body.query, limit: 5, task: body.task });
   if (results.length === 0) {
     return { context: "No relevant context found." };
   }

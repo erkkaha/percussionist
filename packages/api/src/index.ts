@@ -298,8 +298,10 @@ export const SidecarSpecSchema = z.object({
 export type SidecarSpec = z.infer<typeof SidecarSpecSchema>;
 
 // A reference to a ClusterAgent by name.
+// Optional `model` overrides the project-level default for this agent specifically.
 export const AgentRefSchema = z.object({
   name: z.string().min(1).max(63),
+  model: z.string().optional(),
 });
 
 export type AgentRef = z.infer<typeof AgentRefSchema>;
@@ -683,7 +685,7 @@ export const TaskPhase = z.enum([
 export type TaskPhase = z.infer<typeof TaskPhase>;
 
 // Board column enum — computed client-side from phase, never stored
-export const BoardColumn = z.enum(["ideas", "backlog", "in-progress", "review", "done"]);
+export const BoardColumn = z.enum(["ideas", "backlog", "in-progress", "review", "done", "blocked"]);
 export type BoardColumn = z.infer<typeof BoardColumn>;
 
 // Compute board column from task phase
@@ -691,6 +693,7 @@ export function computeBoardColumn(phase: TaskPhase): BoardColumn {
   if (phase === "idea") return "ideas";
   if (phase === "pending") return "backlog";
   if (phase === "done") return "done";
+  if (phase === "awaiting-children") return "blocked";
   if (["waiting-for-input", "succeeded", "reviewing", "awaiting-human", "failed"].includes(phase))
     return "review";
   return "in-progress";
