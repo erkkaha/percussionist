@@ -9,6 +9,7 @@ import { FilterBar } from "./FilterBar";
 import type { FilterState } from "./FilterBar";
 import { TaskRow } from "./TaskRow";
 import { addBoardTask } from "../../lib/api";
+import { Button } from "../ui/button";
 
 const DEFAULT_COLUMNS = ["ideas", "backlog", "blocked", "in-progress", "review", "done"] as const;
 
@@ -102,16 +103,15 @@ function AddTaskForm({ projectName, roster, defaultColumn = "backlog", onClose }
           <option value="medium">Medium</option>
           <option value="low">Low</option>
         </select>
-        <button
+        <Button
           onClick={() => {
             if (!taskTitle.trim() || !taskAgent) { setError("Title and agent required"); return; }
             addMutation.mutate({ type: taskType, title: taskTitle.trim(), description: taskDesc.trim() || undefined, agent: taskAgent, priority: taskPriority });
           }}
           disabled={addMutation.isPending}
-          className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 px-3 py-1.5 text-sm font-medium text-text transition-colors"
         >
           {addMutation.isPending ? "Adding…" : "Add"}
-        </button>
+        </Button>
         <button onClick={onClose} className="text-sm text-text-dim hover:text-text transition-colors">Cancel</button>
       </div>
       {error && <p className="text-xs text-phase-failed">{error}</p>}

@@ -21,6 +21,7 @@ import TaskRunsPanel from "./TaskRunsPanel";
 import TaskEventsPanel from "./TaskEventsPanel";
 import { FileDiff } from "../FileDiff";
 import type React from "react";
+import { Button } from "../ui/button";
 
 const remarkPlugins = [remarkGfm];
 
@@ -373,67 +374,72 @@ function TaskDetailPanelInner({
         {/* Action buttons */}
         <div className="flex items-center gap-2 flex-wrap">
           {col === "ideas" && (
-            <button
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => promoteIdeaMutation.mutate()}
               disabled={promoteIdeaMutation.isPending}
-              className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text transition-colors disabled:opacity-40"
             >
               <ArrowRight className="h-3.5 w-3.5" />
               {promoteIdeaMutation.isPending ? "Promoting…" : "Promote to Backlog"}
-            </button>
+            </Button>
           )}
 
           {col === "review" && (
             <>
-              <button
+              <Button
+                variant={alreadyApproved ? "secondary" : "default"}
+                size="sm"
                 onClick={() => approveMutation.mutate()}
                 disabled={approveMutation.isPending || alreadyApproved}
-                className={`flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                  alreadyApproved
-                    ? "bg-phase-succeeded/20 text-phase-succeeded border border-phase-succeeded/30 cursor-default"
-                    : "bg-surface-container-high hover:bg-surface-container-highest text-text disabled:opacity-40"
-                }`}
+                className={alreadyApproved ? "bg-phase-succeeded/20 text-phase-succeeded border border-phase-succeeded/30 cursor-default" : ""}
               >
                 <Check className="h-3.5 w-3.5" />
                 {alreadyApproved ? "Approved" : approveMutation.isPending ? "Approving…" : "Approve"}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => setShowRequestChanges(true)}
-                className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-phase-failed hover:border-phase-failed/40 transition-colors"
+                className="text-text-dim hover:text-phase-failed hover:border-phase-failed/40"
               >
                 <X className="h-3.5 w-3.5" /> Request Changes
-              </button>
+              </Button>
             </>
           )}
 
           {(worker?.status === "Failed" || worker?.status === "Escalated") && (
-            <button
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => retryMutation.mutate()}
               disabled={retryMutation.isPending}
-              className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text transition-colors disabled:opacity-40"
             >
               <RefreshCw className="h-3.5 w-3.5" />
               {retryMutation.isPending ? "Retrying…" : "Retry"}
-            </button>
+            </Button>
           )}
 
           {!confirmDelete ? (
-            <button
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setConfirmDelete(true)}
-              className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-phase-failed hover:border-phase-failed/40 transition-colors ml-auto"
+              className="text-text-dim hover:text-phase-failed hover:border-phase-failed/40 ml-auto"
             >
               <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           ) : (
             <div className="flex items-center gap-2 ml-auto">
               <span className="text-xs text-text-dim">Delete task?</span>
-              <button
+              <Button
+                variant="destructive"
+                size="sm"
                 onClick={() => deleteMutation.mutate()}
                 disabled={deleteMutation.isPending}
-                className="rounded-md bg-phase-failed/20 border border-phase-failed/40 px-2 py-1 text-xs text-phase-failed hover:bg-phase-failed/30 transition-colors disabled:opacity-50"
               >
                 {deleteMutation.isPending ? "Deleting…" : "Confirm"}
-              </button>
+              </Button>
               <button
                 onClick={() => setConfirmDelete(false)}
                 className="text-xs text-text-dim hover:text-text transition-colors"
@@ -457,23 +463,19 @@ function TaskDetailPanelInner({
               autoFocus
             />
             <div className="flex gap-2 justify-end">
-              <button
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => { setShowRequestChanges(false); setRequestChangesComment(""); }}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-text-dim hover:text-text transition-colors"
               >
                 Cancel
-              </button>
-              <button
-                onClick={() => {
-                  if (requestChangesComment.trim()) {
-                    requestChangesMutation.mutate(requestChangesComment.trim());
-                  }
-                }}
+              </Button>
+              <Button
+                size="sm"
                 disabled={requestChangesMutation.isPending || !requestChangesComment.trim()}
-                className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 px-3 py-1.5 text-xs font-medium text-text transition-colors"
               >
                 {requestChangesMutation.isPending ? "Submitting…" : "Submit"}
-              </button>
+              </Button>
             </div>
           </div>
         )}

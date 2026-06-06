@@ -16,7 +16,9 @@ import {
 } from "../lib/api";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./ui/card";
 import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
 import { Button } from "./ui/button";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
 import { cn } from "../lib/utils";
 import { RefreshCw, Loader2 } from "lucide-react";
 import ModelSelector from "./ModelSelector";
@@ -110,80 +112,115 @@ export default function SettingsPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b border-border settings-tabs-wrap overflow-x-auto sm:overflow-visible">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setActiveTab(t.id)}
-            className={cn(
-              "px-4 py-2 text-sm font-medium transition-colors",
-              "border-b-2 -mb-px",
-              activeTab === t.id
-                ? "border-accent text-accent"
-                : "border-transparent text-text-dim hover:text-text"
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)} className="w-full">
+        <TabsList className="mb-4 settings-tabs-wrap overflow-x-auto sm:overflow-visible">
+          {tabs.map((t) => (
+            <TabsTrigger key={t.id} value={t.id}>
+              <span className="relative">
+                {t.label}
+                {t.id === "updates" && updateStatus?.updateAvailable && (
+                  <span className="absolute -top-0.5 -right-2.5 w-2 h-2 rounded-full bg-amber-400" />
+                )}
+              </span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        {activeTab === "projects" && <TabsContent value="projects"><ProjectsPage showHeader={false} /></TabsContent>}
+        {activeTab === "agents" && <TabsContent value="agents"><AgentsPage showHeader={false} /></TabsContent>}
+
+        {!settingsLoading && activeTab !== "projects" && activeTab !== "agents" && (
+          <TabsContent value={activeTab}>
+            {activeTab === "secrets" && (
+              <SecretsPanel
+                spec={spec}
+                secretsList={secretsList?.items ?? []}
+                onSave={(newSpec) => saveMutation.mutate(newSpec)}
+                onSecretOp={(name, data, op) => secretMutation.mutate({ name, data, op })}
+                saving={saveMutation.isPending}
+              />
             )}
-          >
-            <span className="relative">
-              {t.label}
-              {t.id === "updates" && updateStatus?.updateAvailable && (
-                <span className="absolute -top-0.5 -right-2.5 w-2 h-2 rounded-full bg-amber-400" />
-              )}
-            </span>
-          </button>
-        ))}
-      </div>
+            {activeTab === "opencode" && (
+              <OpencodePanel
+                config={(opencodeConfig as string) ?? ""}
+                onSave={(config) => saveMutation.mutate({ 
+                  ...spec, 
+                  runnerConfig: { 
+                    ...(spec.runnerConfig as Record<string, unknown> | undefined), 
+                    config 
+                  } 
+                })}
+                saving={saveMutation.isPending}
+              />
+            )}
+            {activeTab === "manager" && (
+              <ManagerPanel
+                spec={spec}
+                onSave={(newSpec) => saveMutation.mutate(newSpec)}
+                saving={saveMutation.isPending}
+              />
+            )}
+            {activeTab === "runner" && (
+              <RunnerPanel
+                spec={spec}
+                onSave={(newSpec) => saveMutation.mutate(newSpec)}
+                saving={saveMutation.isPending}
+              />
+            )}
+          </TabsContent>
+        )}
 
-      {activeTab === "projects" && <ProjectsPage showHeader={false} />}
+        {!settingsLoading && activeTab === "secrets" && (
+          <TabsContent value="secrets">
+            <SecretsPanel
+              spec={spec}
+              secretsList={secretsList?.items ?? []}
+              onSave={(newSpec) => saveMutation.mutate(newSpec)}
+              onSecretOp={(name, data, op) => secretMutation.mutate({ name, data, op })}
+              saving={saveMutation.isPending}
+            />
+          </TabsContent>
+        )}
 
-      {activeTab === "agents" && <AgentsPage showHeader={false} />}
+        {!settingsLoading && activeTab === "opencode" && (
+          <TabsContent value="opencode">
+            <OpencodePanel
+              config={(opencodeConfig as string) ?? ""}
+              onSave={(config) => saveMutation.mutate({ 
+                ...spec, 
+                runnerConfig: { 
+                  ...(spec.runnerConfig as Record<string, unknown> | undefined), 
+                  config 
+                } 
+              })}
+              saving={saveMutation.isPending}
+            />
+          </TabsContent>
+        )}
 
-      {settingsLoading && activeTab !== "projects" && activeTab !== "agents" && (
-        <p className="text-text-dim">Loading...</p>
-      )}
+        {!settingsLoading && activeTab === "manager" && (
+          <TabsContent value="manager">
+            <ManagerPanel
+              spec={spec}
+              onSave={(newSpec) => saveMutation.mutate(newSpec)}
+              saving={saveMutation.isPending}
+            />
+          </TabsContent>
+        )}
 
-      {!settingsLoading && activeTab === "secrets" && (
-        <SecretsPanel
-          spec={spec}
-          secretsList={secretsList?.items ?? []}
-          onSave={(newSpec) => saveMutation.mutate(newSpec)}
-          onSecretOp={(name, data, op) => secretMutation.mutate({ name, data, op })}
-          saving={saveMutation.isPending}
-        />
-      )}
+        {!settingsLoading && activeTab === "runner" && (
+          <TabsContent value="runner">
+            <RunnerPanel
+              spec={spec}
+              onSave={(newSpec) => saveMutation.mutate(newSpec)}
+              saving={saveMutation.isPending}
+            />
+          </TabsContent>
+        )}
 
-      {!settingsLoading && activeTab === "opencode" && (
-        <OpencodePanel
-          config={(opencodeConfig as string) ?? ""}
-          onSave={(config) => saveMutation.mutate({ 
-            ...spec, 
-            runnerConfig: { 
-              ...(spec.runnerConfig as Record<string, unknown> | undefined), 
-              config 
-            } 
-          })}
-          saving={saveMutation.isPending}
-        />
-      )}
-
-      {!settingsLoading && activeTab === "manager" && (
-        <ManagerPanel
-          spec={spec}
-          onSave={(newSpec) => saveMutation.mutate(newSpec)}
-          saving={saveMutation.isPending}
-        />
-      )}
-
-      {!settingsLoading && activeTab === "runner" && (
-        <RunnerPanel
-          spec={spec}
-          onSave={(newSpec) => saveMutation.mutate(newSpec)}
-          saving={saveMutation.isPending}
-        />
-      )}
-
-      {activeTab === "notifications" && <NotificationsPanel />}
-
-      {activeTab === "updates" && <UpdatesPanel />}
+        {activeTab === "notifications" && <TabsContent value="notifications"><NotificationsPanel /></TabsContent>}
+        {activeTab === "updates" && <TabsContent value="updates"><UpdatesPanel /></TabsContent>}
+      </Tabs>
     </div>
   );
 }
@@ -331,10 +368,10 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <textarea
-          className="w-full h-64 sm:h-80 font-mono text-sm border border-input bg-background rounded-md p-3 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
+        <Textarea
+          className="h-64 sm:h-80 font-mono text-sm"
           value={value}
-          onChange={(e) => handleChange(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleChange(e.target.value)}
           spellCheck={false}
           placeholder={'{\n  "providers": [...],\n  "mcp": {...}\n}'}
         />
@@ -427,10 +464,10 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
         </div>
         <div>
           <label className="text-sm font-medium block mb-1">Decision Agent Content (.md)</label>
-          <textarea
-            className="w-full h-48 font-mono text-sm border border-input bg-background rounded-md p-3 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
+          <Textarea
+            className="h-48 font-mono text-sm"
             value={decisionAgentContent}
-            onChange={(e) => setDecisionAgentContent(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDecisionAgentContent(e.target.value)}
             placeholder={"---\ndescription: ...\nmode: subagent\npermission:\n  edit: allow\n  bash: allow\n---\n\nYou are the decision-making agent..."}
             spellCheck={false}
           />

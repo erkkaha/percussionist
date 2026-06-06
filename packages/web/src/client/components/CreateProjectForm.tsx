@@ -16,6 +16,7 @@ import { useProjectForm, buildProjectRequest } from "./project-form/useProjectFo
 
 // Tabs UI component
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
+import { Button } from "./ui/button";
 
 // ---------------------------------------------------------------------------
 // Tab definitions (ordered list)
@@ -107,11 +108,6 @@ export default function CreateProjectForm({
     const req = buildProjectRequest(form, isEdit);
     mutation.mutate(req);
   }
-
-  // Shared input classes
-  const inputClass =
-    "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none";
-  const monoInputClass = inputClass + " font-mono";
 
   // Build the props for each tab (typed slices of form state)
   const generalProps = {
@@ -227,27 +223,27 @@ export default function CreateProjectForm({
 
           {/* General tab */}
           <TabsContent value="general" className="space-y-5">
-            <GeneralTab form={generalProps.form} isEdit={generalProps.isEdit} inputClass={inputClass} monoInputClass={monoInputClass} />
+            <GeneralTab form={generalProps.form} isEdit={generalProps.isEdit} />
           </TabsContent>
 
           {/* Source & Auth tab */}
           <TabsContent value="source-auth" className="space-y-5">
-            <SourceAuthTab form={sourceAuthProps.form} inputClass={inputClass} monoInputClass={monoInputClass} />
+            <SourceAuthTab form={sourceAuthProps.form} />
           </TabsContent>
 
           {/* Execution tab */}
           <TabsContent value="execution" className="space-y-5">
-            <ExecutionTab form={executionProps.form} inputClass={inputClass} monoInputClass={monoInputClass} />
+            <ExecutionTab form={executionProps.form} />
           </TabsContent>
 
           {/* Workspace & Services tab */}
           <TabsContent value="workspace-services" className="space-y-5">
-            <WorkspaceServicesTab form={workspaceServicesProps.form} inputClass={inputClass} monoInputClass={monoInputClass} />
+            <WorkspaceServicesTab form={workspaceServicesProps.form} />
           </TabsContent>
 
           {/* Advanced tab */}
           <TabsContent value="advanced" className="space-y-5">
-            <AdvancedTab form={advancedProps.form} inputClass={inputClass} monoInputClass={monoInputClass} />
+            <AdvancedTab form={advancedProps.form} />
           </TabsContent>
         </Tabs>
 
@@ -260,13 +256,12 @@ export default function CreateProjectForm({
 
         {/* Submit bar */}
         <div className="flex items-center gap-3 pt-4 mt-2 border-t border-border">
-          <button
+          <Button
             type="submit"
             disabled={(!isEdit && !form.name.trim()) || mutation.isPending || form.gitAuthorIncomplete || !!form.configJsonError || form.hasSidecarErrors || form.hasInjectFileErrors}
-            className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
           >
             {mutation.isPending ? (isEdit ? "Saving…" : "Creating…") : (isEdit ? "Save Changes" : "Create Project")}
-          </button>
+          </Button>
           <Link to="/settings?tab=projects" className="text-sm text-text-muted hover:text-text transition-colors">
             Cancel
           </Link>

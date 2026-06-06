@@ -7,6 +7,7 @@ import TokenCounter from "./TokenCounter";
 import OpenOpencodeButton from "./OpenOpencodeButton";
 import type { RunPhase, Run } from "../lib/types";
 import { TERMINAL_PHASES } from "../lib/types";
+import { Button } from "./ui/button";
 const ALL_PHASES: RunPhase[] = [
   "Pending",
   "Initializing",
@@ -108,9 +109,8 @@ export default function RunList() {
         </div>
         <Link
           to="/runs/new"
-          className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
         >
-          + New Run
+          <Button variant="secondary" size="sm">+ New Run</Button>
         </Link>
       </div>
 
@@ -228,11 +228,8 @@ function RunRow({ run }: { run: Run }) {
         <div className="flex items-center gap-1.5">
           {isActive && <AttachButton name={run.metadata.name} namespace={run.metadata.namespace} />}
           <OpenOpencodeButton run={run} compact />
-          <Link
-            to={`/runs/new?copyFrom=${encodeURIComponent(run.metadata.name)}`}
-            className="rounded border border-border-muted px-2 py-1 text-xs font-medium text-text-dim hover:border-border hover:text-text-muted transition-colors"
-          >
-            Copy
+          <Link to={`/runs/new?copyFrom=${encodeURIComponent(run.metadata.name)}`}>
+            <Button variant="outline" size="sm">Copy</Button>
           </Link>
         </div>
       </td>
@@ -269,7 +266,9 @@ function FilterButton({
   count?: number;
 }) {
   return (
-    <button
+    <Button
+      variant={active ? "secondary" : "ghost"}
+      size="sm"
       onClick={onClick}
       className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
         active
@@ -281,7 +280,7 @@ function FilterButton({
       {count != null && (
         <span className="ml-1 text-text-dim">{count}</span>
       )}
-    </button>
+    </Button>
   );
 }
 
@@ -339,17 +338,19 @@ function AttachButton({ name, namespace }: { name: string; namespace?: string })
   }
 
   return (
-    <button
+    <Button
+      variant="outline"
+      size="sm"
       onClick={handleCopy}
       title={`Copy: ${attachCommand(name, namespace)}`}
-      className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
+      className={`px-2 py-1 text-xs font-medium transition-colors ${
         copied
           ? "border-phase-succeeded/40 text-phase-succeeded bg-phase-succeeded/10"
           : "border-border-muted text-text-dim hover:border-border hover:text-text-muted"
       }`}
     >
       {copied ? "Copied!" : "Attach"}
-    </button>
+    </Button>
   );
 }
 

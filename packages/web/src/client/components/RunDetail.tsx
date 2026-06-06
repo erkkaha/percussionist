@@ -11,6 +11,7 @@ import SessionView from "./SessionView";
 import { TERMINAL_PHASES } from "../lib/types";
 import OpenOpencodeButton from "./OpenOpencodeButton";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
+import { Button } from "./ui/button";
 
 const WORKSPACE_INIT_CONTAINER = "workspace-init";
 const DEFAULT_NAMESPACE = "percussionist";
@@ -49,17 +50,19 @@ function AttachButton({ name, namespace }: { name: string; namespace?: string })
   }
 
   return (
-    <button
+    <Button
+      variant="outline"
+      size="sm"
       onClick={handleCopy}
       title={`Copy: ${attachCommand(name, namespace)}`}
-      className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+      className={`${
         copied
           ? "border-phase-succeeded/40 text-phase-succeeded bg-phase-succeeded/10"
           : "border-border-muted text-text-muted hover:border-border hover:text-text"
       }`}
     >
       {copied ? "Copied!" : "Attach"}
-    </button>
+    </Button>
   );
 }
 
@@ -167,30 +170,29 @@ export default function RunDetail() {
               <AttachButton name={name!} namespace={run.metadata.namespace} />
             )}
           {run && <OpenOpencodeButton run={run} />}
-          <Link
-            to={`/runs/new?copyFrom=${encodeURIComponent(name!)}`}
-            className="rounded-md border border-border-muted px-3 py-1.5 text-sm font-medium text-text-muted hover:border-border hover:text-text transition-colors"
-          >
-            Copy
+          <Link to={`/runs/new?copyFrom=${encodeURIComponent(name!)}`}>
+            <Button variant="outline" size="sm">Copy</Button>
           </Link>
           {/* Cancel / Delete button */}
           {!confirmDelete ? (
-            <button
+            <Button
+              variant="destructive"
+              size="sm"
               onClick={() => setConfirmDelete(true)}
-              className="rounded-md border border-phase-failed/40 px-3 py-1.5 text-sm text-phase-failed hover:bg-phase-failed/10 transition-colors"
             >
               {isActive ? "Cancel Run" : "Delete Run"}
-            </button>
+            </Button>
           ) : (
             <div className="flex items-center gap-2">
               <span className="text-xs text-text-muted">Sure?</span>
-              <button
+              <Button
+                variant="destructive"
+                size="sm"
                 onClick={() => deleteMutation.mutate()}
                 disabled={deleteMutation.isPending}
-                className="rounded-md bg-phase-failed/20 border border-phase-failed/40 px-3 py-1.5 text-sm text-phase-failed hover:bg-phase-failed/30 transition-colors disabled:opacity-50"
               >
                 {deleteMutation.isPending ? "Deleting..." : "Confirm"}
-              </button>
+              </Button>
               <button
                 onClick={() => setConfirmDelete(false)}
                 className="text-sm text-text-muted hover:text-text transition-colors"

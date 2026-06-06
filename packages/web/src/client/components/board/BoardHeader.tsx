@@ -2,6 +2,7 @@
 
 import { Link } from "react-router-dom";
 import type { ManagerMetrics } from "../../lib/types";
+import { Button } from "../ui/button";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -88,12 +89,13 @@ export function BoardHeader({
           </div>
         )}
       </div>
-      <button
+      <Button
         onClick={onAddTask}
-        className="shrink-0 rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
+        variant="secondary"
+        size="sm"
       >
         {showAddTask ? "Cancel" : "+ Add Task"}
-      </button>
+      </Button>
     </div>
   );
 }

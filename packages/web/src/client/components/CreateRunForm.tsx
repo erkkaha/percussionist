@@ -6,6 +6,9 @@ import { useProjects } from "../hooks/useProjects";
 import { useRun } from "../hooks/useRun";
 import ModelSelector from "./ModelSelector";
 import type { CreateRunRequest, Project, Run, AgentDef } from "../lib/types";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
+import { Button } from "./ui/button";
 
 interface ClusterAgent {
   name: string;
@@ -200,9 +203,6 @@ export default function CreateRunForm() {
 
   const canSubmit = (interactive || task.trim().length > 0) && !gitAuthorIncomplete && selectedProject.length > 0;
 
-  const inputClass =
-    "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none";
-
   return (
     <div className="space-y-6 max-w-2xl">
       <Link
@@ -230,7 +230,7 @@ export default function CreateRunForm() {
           <select
             value={selectedProject}
             onChange={(e) => handleProjectChange(e.target.value)}
-            className={inputClass + " bg-surface"}
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
             required
           >
             <option value="">— select a project —</option>
@@ -282,7 +282,7 @@ export default function CreateRunForm() {
           <label className="text-sm font-medium text-text-muted">
             Task {!interactive && <span className="text-phase-failed">*</span>}
           </label>
-          <textarea
+          <Textarea
             value={task}
             onChange={(e) => setTask(e.target.value)}
             disabled={interactive}
@@ -292,7 +292,6 @@ export default function CreateRunForm() {
                 ? "Not required in interactive mode"
                 : "Describe what the agent should do..."
             }
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none resize-y disabled:opacity-40 disabled:cursor-not-allowed"
           />
         </div>
 
@@ -308,12 +307,11 @@ export default function CreateRunForm() {
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Agent</label>
-            <input
+            <Input
               type="text"
               value={agent}
               onChange={(e) => setAgent(e.target.value)}
               placeholder="e.g. build"
-              className={inputClass}
             />
           </div>
         </div>
@@ -324,7 +322,7 @@ export default function CreateRunForm() {
           <select
             value={selectedClusterAgent}
             onChange={(e) => handleClusterAgentSelect(e.target.value)}
-            className={inputClass}
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
           >
             <option value="">— none —</option>
             {visibleAgents.map((ca) => (
@@ -359,19 +357,19 @@ export default function CreateRunForm() {
                   Remove
                 </button>
               </div>
-              <input
+              <Input
                 type="text"
                 value={a.name}
                 onChange={(e) => updateAgent(i, "name", e.target.value)}
                 placeholder="agent-name (used as filename)"
-                className={inputClass + " font-mono"}
+                className="font-mono"
               />
-              <textarea
+              <Textarea
                 value={a.content}
                 onChange={(e) => updateAgent(i, "content", e.target.value)}
                 placeholder={`---\ndescription: What this agent does\n---\nSystem prompt...`}
                 rows={6}
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none resize-y font-mono"
+                className="font-mono"
               />
               <p className="text-xs text-text-dim">
                 {a.content.length > 0 ? `${(a.content.length / 1024).toFixed(1)} KB` : "Paste agent .md content here"}
@@ -394,12 +392,12 @@ export default function CreateRunForm() {
               <label className="text-sm font-medium text-text-muted">
                 LLM keys Secret name
               </label>
-              <input
+              <Input
                 type="text"
                 value={llmKeysSecret}
                 onChange={(e) => setLlmKeysSecret(e.target.value)}
                 placeholder="llm-keys"
-                className={inputClass + " font-mono"}
+                className="font-mono"
               />
               <p className="text-xs text-text-dim">
                 Secret whose keys are injected as env vars (API keys).
@@ -409,12 +407,12 @@ export default function CreateRunForm() {
               <label className="text-sm font-medium text-text-muted">
                 OpenCode auth Secret name
               </label>
-              <input
+              <Input
                 type="text"
                 value={authSecretName}
                 onChange={(e) => setOpencodeAuthSecretName(e.target.value)}
                 placeholder="opencode-auth"
-                className={inputClass + " font-mono"}
+                className="font-mono"
               />
               <p className="text-xs text-text-dim">
                 Secret holding <code className="font-mono">auth.json</code> for OAuth providers. Populate with{" "}
@@ -430,12 +428,12 @@ export default function CreateRunForm() {
           <label className="text-sm font-medium text-text-muted">
             Timeout (seconds)
           </label>
-          <input
+          <Input
             type="number"
             min={1}
             value={timeoutSeconds}
             onChange={(e) => setTimeoutSeconds(Number(e.target.value))}
-            className="w-40 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text focus:border-accent/60 focus:outline-none tabular-nums"
+            className="w-40 tabular-nums"
           />
         </div>
 
@@ -447,7 +445,7 @@ export default function CreateRunForm() {
               Inherited from project:{" "}
               <span className="font-mono text-text">{selectedProjectSpec?.source?.git?.url}</span>
               {selectedProjectSpec?.source?.git?.ref && (
-                <span className="text-text-dim"> @ <span className="font-mono text-text">{selectedProjectSpec.source.git.ref}</span></span>
+                <span className="text-text-dim font-normal"> @ <span className="font-mono text-text">{selectedProjectSpec.source.git.ref}</span></span>
               )}
             </p>
           </div>
@@ -465,34 +463,34 @@ export default function CreateRunForm() {
             <div className="pl-4 border-l border-border-muted space-y-3">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-text-muted">Repository URL</label>
-                <input
+                <Input
                   type="text"
                   value={gitUrl}
                   onChange={(e) => setGitUrl(e.target.value)}
                   placeholder="https://github.com/org/repo.git"
-                  className={inputClass + " font-mono"}
+                  className="font-mono"
                 />
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-text-muted">
                   Ref <span className="text-text-dim font-normal">(branch / tag / SHA)</span>
                 </label>
-                <input
+                <Input
                   type="text"
                   value={gitRef}
                   onChange={(e) => setGitRef(e.target.value)}
                   placeholder="main"
-                  className={inputClass + " font-mono"}
+                  className="font-mono"
                 />
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-text-muted">SSH Secret</label>
-                <input
+                <Input
                   type="text"
                   value={gitSshSecret}
                   onChange={(e) => setGitSshSecret(e.target.value)}
                   placeholder="git-ssh-key"
-                  className={inputClass + " font-mono"}
+                  className="font-mono"
                 />
                 <p className="text-xs text-text-dim">
                   Secret name from <code className="font-mono">beatctl ssh-key create</code>
@@ -500,12 +498,12 @@ export default function CreateRunForm() {
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-text-muted">GitHub Token Secret</label>
-                <input
+                <Input
                   type="text"
                   value={gitGithubTokenSecret}
                   onChange={(e) => setGitGithubTokenSecret(e.target.value)}
                   placeholder="git-github-token"
-                  className={inputClass + " font-mono"}
+                  className="font-mono"
                 />
                 <p className="text-xs text-text-dim">
                   Secret name from <code className="font-mono">beatctl github-token create</code>
@@ -515,22 +513,21 @@ export default function CreateRunForm() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium text-text-muted">Author name</label>
-                  <input
+                  <Input
                     type="text"
                     value={gitAuthorName}
                     onChange={(e) => setGitAuthorName(e.target.value)}
                     placeholder="Percussionist Agent"
-                    className={inputClass}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium text-text-muted">Author email</label>
-                  <input
+                  <Input
                     type="email"
                     value={gitAuthorEmail}
                     onChange={(e) => setGitAuthorEmail(e.target.value)}
                     placeholder="agent@example.com"
-                    className={inputClass + " font-mono"}
+                    className="font-mono"
                   />
                 </div>
               </div>
@@ -553,13 +550,12 @@ export default function CreateRunForm() {
 
         {/* Actions */}
         <div className="flex items-center gap-3 pt-1">
-          <button
+          <Button
             type="submit"
             disabled={!canSubmit || mutation.isPending}
-            className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-text transition-colors"
           >
             {mutation.isPending ? "Submitting..." : "Submit Run"}
-          </button>
+          </Button>
           <Link
             to="/"
             className="text-sm text-text-muted hover:text-text transition-colors"

@@ -10,6 +10,8 @@ interface AgentListItem {
   model?: string;
 }
 
+import { Button } from "./ui/button";
+
 function age(iso: string | undefined): string {
   if (!iso) return "-";
   const ms = Date.now() - new Date(iso).getTime();
@@ -60,17 +62,19 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
           >
             Edit
           </button>
-          <button
+          <Button
+            variant="destructive"
+            size="sm"
             onClick={() => {
               if (confirm(`Delete agent "${agent.name}"?`)) {
                 del.mutate();
               }
             }}
             disabled={del.isPending}
-            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-phase-failed/50 hover:text-phase-failed transition-colors disabled:opacity-40"
+            className="px-2 py-1 text-xs"
           >
             {del.isPending ? "Deleting\u2026" : "Delete"}
-          </button>
+          </Button>
         </div>
       </td>
     </tr>
@@ -109,11 +113,8 @@ export default function AgentsPage({ showHeader = true }: { showHeader?: boolean
               Updates: {agentsSseConnected ? "live stream" : "polling fallback"}
             </p>
           </div>
-          <Link
-            to="/agents/new"
-            className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
-          >
-            + New Agent
+          <Link to="/agents/new">
+            <Button variant="secondary" size="sm">+ New Agent</Button>
           </Link>
         </div>
       )}
