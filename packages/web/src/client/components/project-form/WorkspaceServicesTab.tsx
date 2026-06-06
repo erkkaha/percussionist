@@ -1,3 +1,4 @@
+import { Checkbox } from "../ui/checkbox";
 import type { ProjectFormHookReturn } from "./useProjectForm";
 
 interface WorkspaceServicesTabProps {
@@ -17,15 +18,13 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
         <p className="text-xs text-text-dim">
           Enable interactive VS Code access to the workspace. Requires a data PVC (git or local source).
         </p>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
+        <div className="flex items-center gap-2">
+          <Checkbox
             checked={form.codeServerEnabled}
-            onChange={(e) => form.setCodeServerEnabled(e.target.checked)}
-            className="rounded border-border"
+            onCheckedChange={(v) => form.setCodeServerEnabled(v === true)}
           />
           <span className="text-sm text-text-muted">Enable code-server sidecar</span>
-        </label>
+        </div>
 
         {form.codeServerEnabled && (
           <>
@@ -140,15 +139,13 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
           Enable the per-project vector memory service for agent context retrieval
           and semantic search across runs. Requires a data PVC and a running Ollama instance.
         </p>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
+        <div className="flex items-center gap-2">
+          <Checkbox
             checked={form.embeddingEnabled}
-            onChange={(e) => form.setEmbeddingEnabled(e.target.checked)}
-            className="rounded border-border"
+            onCheckedChange={(v) => form.setEmbeddingEnabled(v === true)}
           />
           <span className="text-sm text-text-muted">Enable memory service</span>
-        </label>
+        </div>
         {form.embeddingEnabled && (
           <div className="ml-6 space-y-3 pt-1">
             <div className="space-y-1.5">

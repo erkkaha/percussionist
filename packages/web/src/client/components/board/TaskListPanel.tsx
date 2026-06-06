@@ -9,6 +9,7 @@ import { FilterBar } from "./FilterBar";
 import type { FilterState } from "./FilterBar";
 import { TaskRow } from "./TaskRow";
 import { addBoardTask } from "../../lib/api";
+import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
 
 const DEFAULT_COLUMNS = ["ideas", "backlog", "blocked", "in-progress", "review", "done"] as const;
 
@@ -43,20 +44,14 @@ function AddTaskForm({ projectName, roster, defaultColumn = "backlog", onClose }
       <h2 className="text-sm font-semibold">Add Task {defaultColumn === "ideas" ? "to Ideas" : "to Backlog"}</h2>
 
       {/* Type */}
-      <div className="flex gap-4">
+      <RadioGroup value={taskType} onValueChange={(v) => setTaskType(v as "PLAN" | "BUILD")} className="flex gap-4">
         {(["PLAN", "BUILD"] as const).map((t) => (
-          <label key={t} className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              value={t}
-              checked={taskType === t}
-              onChange={() => setTaskType(t)}
-              className="cursor-pointer"
-            />
-            <span className="text-sm">{t}</span>
-          </label>
+          <div key={t} className="flex items-center gap-2 cursor-pointer">
+            <RadioGroupItem value={t} id={`task-type-${t}`} />
+            <label htmlFor={`task-type-${t}`} className="text-sm cursor-pointer">{t}</label>
+          </div>
         ))}
-      </div>
+      </RadioGroup>
 
       {/* Agent */}
       {roster.length === 0 ? (

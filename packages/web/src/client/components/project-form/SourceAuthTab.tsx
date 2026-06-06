@@ -1,3 +1,4 @@
+import { Checkbox } from "../ui/checkbox";
 import { Link } from "react-router-dom";
 import type { ProjectFormHookReturn } from "./useProjectForm";
 
@@ -17,15 +18,13 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
         <legend className="px-1 text-sm font-medium text-text-muted">Git source</legend>
 
         {/* Local workspace toggle */}
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
+        <div className="flex items-center gap-2">
+          <Checkbox
             checked={form.sourceLocal}
-            onChange={(e) => form.setSourceLocal(e.target.checked)}
-            className="rounded border-border"
+            onCheckedChange={(v) => form.setSourceLocal(v === true)}
           />
           <span className="text-sm text-text-muted">Local workspace (no remote repository)</span>
-        </label>
+        </div>
         {form.sourceLocal && (
           <p className="text-xs text-text-dim">
             Local workspace — no remote repository will be cloned. Changes persist across runs at /data/workspace/.

@@ -1,3 +1,4 @@
+import { Checkbox } from "../ui/checkbox";
 import type { ProjectFormHookReturn } from "./useProjectForm";
 
 interface GeneralTabProps {
@@ -134,15 +135,13 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-muted">Feature Branching</label>
-          <label className="flex items-center gap-2 cursor-pointer h-9">
-            <input
-              type="checkbox"
-              checked={form.featureBranchingEnabled}
-              onChange={(e) => form.setFeatureBranchingEnabled(e.target.checked)}
-              className="rounded border-border"
-            />
-            <span className="text-sm text-text-muted">Enable per-task branches</span>
-          </label>
+        <div className="flex items-center gap-2 h-9">
+          <Checkbox
+            checked={form.featureBranchingEnabled}
+            onCheckedChange={(v) => form.setFeatureBranchingEnabled(v === true)}
+          />
+          <span className="text-sm text-text-muted">Enable per-task branches</span>
+        </div>
         </div>
       </div>
     </div>

@@ -1,3 +1,4 @@
+import { Checkbox } from "../ui/checkbox";
 import type { ProjectFormHookReturn } from "./useProjectForm";
 
 interface ExecutionTabProps {
@@ -14,15 +15,13 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
       {/* Retry Policy */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
         <legend className="px-1 text-sm font-medium text-text-muted">Retry Policy</legend>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
+        <div className="flex items-center gap-2">
+          <Checkbox
             checked={form.retryPolicyEnabled}
-            onChange={(e) => form.setRetryPolicyEnabled(e.target.checked)}
-            className="rounded border-border"
+            onCheckedChange={(v) => form.setRetryPolicyEnabled(v === true)}
           />
           <span className="text-sm text-text-muted">Auto-retry failed tasks with exponential backoff</span>
-        </label>
+        </div>
         {form.retryPolicyEnabled && (
           <>
             <p className="text-xs text-text-dim">
@@ -93,15 +92,13 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
       {/* Review Policy */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
         <legend className="px-1 text-sm font-medium text-text-muted">Review Policy</legend>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
+        <div className="flex items-center gap-2">
+          <Checkbox
             checked={form.reviewPolicyAiReviewerEnabled}
-            onChange={(e) => form.setReviewPolicyAiReviewerEnabled(e.target.checked)}
-            className="rounded border-border"
+            onCheckedChange={(v) => form.setReviewPolicyAiReviewerEnabled(v === true)}
           />
           <span className="text-sm text-text-muted">Enable automated AI review of completed tasks</span>
-        </label>
+        </div>
         {form.reviewPolicyAiReviewerEnabled && (
           <>
             <p className="text-xs text-text-dim">
@@ -210,15 +207,13 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
         <p className="text-xs text-text-dim">
           Control how git worktrees are managed across runs.
         </p>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
+        <div className="flex items-center gap-2">
+          <Checkbox
             checked={form.worktreeReuse}
-            onChange={(e) => form.setWorktreeReuse(e.target.checked)}
-            className="rounded border-border"
+            onCheckedChange={(v) => form.setWorktreeReuse(v === true)}
           />
           <span className="text-sm text-text-muted">Reuse worktrees across runs</span>
-        </label>
+        </div>
         <p className="text-xs text-text-dim">
           When enabled, subsequent runs reuse the existing worktree instead of checking out fresh.
         </p>
