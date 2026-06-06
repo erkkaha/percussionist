@@ -5,7 +5,7 @@
 // GET /api/metrics/events — SSE stream for metric changes (polling-based).
 
 import { Hono } from "hono";
-import { listNodeMetrics, listPodMetrics, listNodeCapacities, NAMESPACE, type NodeMetric, type NodeCapacity, type PodMetric } from "../kube.js";
+import { listNodeMetrics, listPodMetrics, listNodeCapacities, listNodeHostStats, NAMESPACE, type NodeMetric, type NodeCapacityTotal, type NodeHostStats, type PodMetric } from "../kube.js";
 import { createPollingSseResponse } from "../lib/sse.js";
 
 const metrics = new Hono();
@@ -14,13 +14,37 @@ metrics.get("/nodes", async (c) => {
   try {
     const [items, capacities] = await Promise.all([
       listNodeMetrics(),
-      listNodeCapacities().catch((): NodeCapacity[] => []),
+      listNodeCapacities().catch((): NodeCapacityTotal[] => []),
     ]);
     const capMap = new Map(capacities.map((c) => [c.name, c]));
-    const nodes = items.map((n) => ({
-      ...n,
-      capacity: capMap.get(n.name) ?? null,
-    }));
+
+    // Fetch host-level memory from kubelet for each node (fallback to metrics-server cgroup data).
+    const hostStats = await Promise.all(
+      items.map((n) => listNodeHostStats(n.name).catch((): NodeHostStats | null => null)),
+    );
+    const hostMap = new Map<string, NodeHostStats>();
+    for (const hs of hostStats) {
+      if (hs) hostMap.set(hs.name, hs);
+    }
+
+    const nodes = items.map((n) => {
+      const cap = capMap.get(n.name);
+      const hs = hostMap.get(n.name);
+      return {
+        ...n,
+        usage: {
+          cpu: n.usage.cpu,
+          // Use host-level memory when available, fall back to cgroup memory.
+          memory: hs ? String(hs.hostMemoryBytes) : n.usage.memory,
+        },
+        capacity: cap
+          ? { cpu: cap.capacityCpu, memory: cap.capacityMemory }
+          : null,
+        allocatable: cap
+          ? { cpu: cap.allocatableCpu, memory: cap.allocatableMemory }
+          : null,
+      };
+    });
     return c.json({ items: nodes });
   } catch (e: unknown) {
     const statusCode = (e as { statusCode?: number })?.statusCode;
@@ -53,11 +77,11 @@ metrics.get("/events", async (c) => {
       const [nodes, pods, capacities] = await Promise.all([
         listNodeMetrics().catch((): NodeMetric[] => []),
         listPodMetrics(NAMESPACE).catch((): PodMetric[] => []),
-        listNodeCapacities().catch((): NodeCapacity[] => []),
+        listNodeCapacities().catch((): NodeCapacityTotal[] => []),
       ]);
       const capMap = new Map(capacities.map((c) => [c.name, c]));
       return JSON.stringify({
-        n: nodes.map((n) => `${n.name}:${n.usage.cpu}:${n.usage.memory}:${(capMap.get(n.name)?.cpu) ?? ""}:${(capMap.get(n.name)?.memory) ?? ""}`),
+        n: nodes.map((n) => `${n.name}:${n.usage.cpu}:${n.usage.memory}:${(capMap.get(n.name)?.capacityCpu) ?? ""}:${(capMap.get(n.name)?.capacityMemory) ?? ""}`),
         p: pods.map((p) => `${p.name}:${p.containers.map((c) => `${c.name}:${c.usage.cpu}:${c.usage.memory}`).join(",")}`),
       });
     },

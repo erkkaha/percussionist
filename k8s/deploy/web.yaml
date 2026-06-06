@@ -112,7 +112,10 @@ rules:
     verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["nodes"]
-    verbs: ["get", "list"] # needed for node capacity (allocatable resources)
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes/proxy"]
+    verbs: ["get"] # needed for kubelet /stats/summary (host-level memory)
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
