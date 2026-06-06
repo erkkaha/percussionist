@@ -13,8 +13,8 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
     <div className="space-y-5">
       {/* Sidecars */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Sidecars</legend>
-        <p className="text-xs text-text-dim">
+        <legend className="px-1 text-label-md">Sidecars</legend>
+        <p className="text-caption-xs text-text-dim">
           Extra containers injected into every run pod alongside the agent — e.g. a test database.
           The agent reaches them via <code className="font-mono">localhost</code>.
           opencode waits for all declared ports to be reachable before starting.
@@ -25,7 +25,7 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
             {form.sidecars.map((sc, idx) => (
               <div key={sc.id} className="rounded-md border border-border-muted p-3 space-y-3 relative">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-text-muted">Sidecar {idx + 1}</span>
+                  <span className="text-label-md text-text-muted">Sidecar {idx + 1}</span>
                   <button
                     type="button"
                     onClick={() => form.removeSidecar(sc.id)}
@@ -37,7 +37,7 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-text-muted">
+                    <label className="text-label-md">
                       Name <span className="text-phase-failed">*</span>
                     </label>
                     <input
@@ -49,7 +49,7 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-text-muted">
+                    <label className="text-label-md">
                       Image <span className="text-phase-failed">*</span>
                     </label>
                     <input
@@ -63,7 +63,7 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-text-muted">
+                  <label className="text-label-md">
                     Ports{" "}
                     <span className="text-text-dim font-normal">(comma-separated)</span>
                   </label>
@@ -74,13 +74,13 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
                     placeholder="5432"
                     className={monoInputClass}
                   />
-                  <p className="text-xs text-text-dim">
+                  <p className="text-caption-xs text-text-dim">
                     opencode waits for these ports before starting.
                   </p>
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-text-muted">
+                  <label className="text-label-md">
                     Environment{" "}
                     <span className="text-text-dim font-normal">(one KEY=VALUE per line)</span>
                   </label>
@@ -113,8 +113,8 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
 
       {/* Injected Files */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Injected Files</legend>
-        <p className="text-xs text-text-dim">
+        <legend className="px-1 text-label-md">Injected Files</legend>
+        <p className="text-caption-xs text-text-dim">
           Files written into <code className="font-mono">/workspace/</code> inside every run pod.
           Content is stored as K8s Secrets. Useful for <code className="font-mono">.env</code> files or other config files the agent needs.
         </p>
@@ -124,7 +124,7 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
             {form.injectFiles.map((f, idx) => (
               <div key={f.id} className="rounded-md border border-border-muted p-3 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-text-muted">File {idx + 1}</span>
+                  <span className="text-label-md text-text-muted">File {idx + 1}</span>
                   <button
                     type="button"
                     onClick={() => form.removeInjectFile(f.id)}
@@ -135,7 +135,7 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-text-muted">
+                  <label className="text-label-md">
                     Filename <span className="text-phase-failed">*</span>
                     <span className="text-text-dim font-normal ml-1">(mounted at /workspace/&lt;filename&gt;)</span>
                   </label>
@@ -149,7 +149,7 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-text-muted">Content</label>
+                  <label className="text-label-md">Content</label>
                   <textarea
                     value={f.content}
                     onChange={(e) => form.updateInjectFile(f.id, "content", e.target.value)}
@@ -179,8 +179,8 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
 
       {/* Init Script */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Init script</legend>
-        <p className="text-xs text-text-dim">
+        <legend className="px-1 text-label-md">Init script</legend>
+        <p className="text-caption-xs text-text-dim">
           Shell script to run after git clone completes, before opencode starts.
           Runs in the init container — failure (non-zero exit) will prevent the pod from starting.
           Working directory is <code className="font-mono">/workspace</code> (the cloned repo root).
@@ -197,8 +197,8 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
 
       {/* Agent roster */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Agent roster</legend>
-        <p className="text-xs text-text-dim">
+        <legend className="px-1 text-label-md">Agent roster</legend>
+        <p className="text-caption-xs text-text-dim">
           ClusterAgents available to tasks in this project. Tasks must reference an agent from this list.
         </p>
         {form.rosterAgents.length > 0 && (

@@ -52,10 +52,10 @@ const planMarkdownComponents: React.ComponentProps<typeof ReactMarkdown>["compon
     }
     return <span className="bg-surface-sunken rounded px-1 py-0.5 text-xs font-mono">{children}</span>;
   },
-  h1: ({ children }) => <h1 className="text-2xl font-bold mt-4 mb-1">{children}</h1>,
-  h2: ({ children }) => <h2 className="text-xl font-semibold mt-3 mb-1">{children}</h2>,
-  h3: ({ children }) => <h3 className="text-lg font-semibold mt-2 mb-1">{children}</h3>,
-  h4: ({ children }) => <h4 className="text-base font-semibold mt-2 mb-0.5">{children}</h4>,
+  h1: ({ children }) => <h1 className="text-headline-lg font-bold mt-4 mb-1">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-headline-md font-semibold mt-3 mb-1">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-body-lg font-semibold mt-2 mb-1">{children}</h3>,
+  h4: ({ children }) => <h4 className="text-body-sm font-semibold mt-2 mb-0.5">{children}</h4>,
   table: ({ children }) => (
     <div className="overflow-x-auto mb-2">
       <table className="border-collapse text-xs w-full">{children}</table>

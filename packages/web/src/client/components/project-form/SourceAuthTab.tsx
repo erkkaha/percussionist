@@ -14,7 +14,7 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
     <div className="space-y-5">
       {/* Git source */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Git source</legend>
+        <legend className="px-1 text-label-md">Git source</legend>
 
         {/* Local workspace toggle */}
         <label className="flex items-center gap-2 cursor-pointer">
@@ -24,10 +24,10 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
             onChange={(e) => form.setSourceLocal(e.target.checked)}
             className="rounded border-border"
           />
-          <span className="text-sm text-text-muted">Local workspace (no remote repository)</span>
+          <span className="text-body-sm text-text-muted">Local workspace (no remote repository)</span>
         </label>
         {form.sourceLocal && (
-          <p className="text-xs text-text-dim">
+          <p className="text-caption-xs text-text-dim">
             Local workspace — no remote repository will be cloned. Changes persist across runs at /data/workspace/.
           </p>
         )}
@@ -35,7 +35,7 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
         {!form.sourceLocal && (
           <>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">Repository URL</label>
+              <label className="text-label-md">Repository URL</label>
               <input
                 type="text"
                 value={form.gitUrl}
@@ -46,7 +46,7 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-text-muted">
+                <label className="text-label-md">
                   Ref <span className="text-text-dim font-normal">(branch / tag / SHA)</span>
                 </label>
                 <input
@@ -58,7 +58,7 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-text-muted">SSH Secret</label>
+                <label className="text-label-md">SSH Secret</label>
                 <input
                   type="text"
                   value={form.gitSshSecret}
@@ -66,14 +66,14 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
                   placeholder="git-ssh-key"
                   className={monoInputClass}
                 />
-                <p className="text-xs text-text-dim">
+                <p className="text-caption-xs text-text-dim">
                   Secret name from{" "}
                   <code className="font-mono">beatctl ssh-key create</code>
                 </p>
               </div>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">GitHub Token Secret</label>
+              <label className="text-label-md">GitHub Token Secret</label>
               <input
                 type="text"
                 value={form.gitGithubTokenSecret}
@@ -81,7 +81,7 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
                 placeholder="git-github-token"
                 className={monoInputClass}
               />
-              <p className="text-xs text-text-dim">
+              <p className="text-caption-xs text-text-dim">
                 Secret name from{" "}
                 <code className="font-mono">beatctl github-token create</code>
                 {" "}— authenticates <code className="font-mono">gh</code> CLI in the runner
@@ -89,7 +89,7 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-text-muted">Author name</label>
+                <label className="text-label-md">Author name</label>
                 <input
                   type="text"
                   value={form.gitAuthorName}
@@ -99,7 +99,7 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-text-muted">Author email</label>
+                <label className="text-label-md">Author email</label>
                 <input
                   type="email"
                   value={form.gitAuthorEmail}
@@ -115,10 +115,10 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
 
       {/* Secrets */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Secrets</legend>
+        <legend className="px-1 text-label-md">Secrets</legend>
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">LLM Keys Secret</label>
+            <label className="text-label-md">LLM Keys Secret</label>
             <input
               type="text"
               value={form.llmKeysSecret}
@@ -128,7 +128,7 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Auth Secret</label>
+            <label className="text-label-md">Auth Secret</label>
             <input
               type="text"
               value={form.authSecret}
@@ -142,8 +142,8 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
 
       {/* OpenCode Config */}
       <fieldset className="rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">OpenCode config</legend>
-        <p className="text-xs text-text-dim mb-2">
+        <legend className="px-1 text-label-md">OpenCode config</legend>
+        <p className="text-caption-xs text-text-dim mb-2">
           Configure OpenCode at the project level. To set cluster-wide OpenCode config, use{" "}
           <Link to="/settings" className="underline hover:text-text">Settings</Link>.
         </p>
@@ -156,7 +156,7 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
           className={monoInputClass + " resize-y text-xs leading-5 w-full"}
         />
         {form.configJsonError && (
-          <p className="text-xs text-phase-failed mt-1">Invalid JSON: {form.configJsonError}</p>
+          <p className="text-caption-xs text-phase-failed mt-1">Invalid JSON: {form.configJsonError}</p>
         )}
       </fieldset>
     </div>

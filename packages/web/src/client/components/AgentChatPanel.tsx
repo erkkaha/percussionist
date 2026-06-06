@@ -333,7 +333,7 @@ function sanitizeForSpeech(text: string): string {
                 >
                   <div>{msg.text}</div>
                   {msg.created && (
-                    <div className="text-[10px] text-text-dim/60 mt-1 leading-none">{timeAgo(msg.created)}</div>
+                    <div className="text-caption-xs text-text-dim/60 mt-1 leading-none">{timeAgo(msg.created)}</div>
                   )}
                 </div>
               </div>

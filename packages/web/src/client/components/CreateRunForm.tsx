@@ -213,8 +213,8 @@ export default function CreateRunForm() {
       </Link>
 
       <div>
-        <h1 className="text-xl font-semibold">{copyFromName ? "Copy Run" : "New Run"}</h1>
-        <p className="text-sm text-text-muted mt-1">
+        <h1 className="text-headline-lg">{copyFromName ? "Copy Run" : "New Run"}</h1>
+        <p className="text-caption-xs text-text-muted mt-1">
           {copyFromName
             ? `Pre-filled from run \u201c${copyFromName}\u201d, including Secret references.`
             : "Submit a task for an OpenCode agent to work on."}
@@ -224,7 +224,7 @@ export default function CreateRunForm() {
       <form onSubmit={handleSubmit} className="space-y-5">
         {/* Project picker — required */}
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">
+          <label className="text-label-md">
             Project <span className="text-phase-failed">*</span>
           </label>
           <select
@@ -241,7 +241,7 @@ export default function CreateRunForm() {
             ))}
           </select>
           {!selectedProject && (
-            <p className="text-xs text-text-dim">
+            <p className="text-caption-xs text-text-dim">
               A project is required.{" "}
               <Link to="/projects/new" className="underline hover:text-text-muted transition-colors">
                 Create one
@@ -271,15 +271,15 @@ export default function CreateRunForm() {
               }`}
             />
           </button>
-          <span className="text-sm text-text">Interactive mode</span>
-          <span className="text-xs text-text-dim">
+          <span className="text-body-sm text-text">Interactive mode</span>
+          <span className="text-caption-xs text-text-dim">
             (no task — connect via <code className="font-mono">beatctl attach</code>)
           </span>
         </div>
 
         {/* Task */}
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">
+          <label className="text-label-md">
             Task {!interactive && <span className="text-phase-failed">*</span>}
           </label>
           <textarea
@@ -299,7 +299,7 @@ export default function CreateRunForm() {
         {/* Model + Agent row */}
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Model</label>
+            <label className="text-label-md">Model</label>
             <ModelSelector
               value={model}
               onChange={setModel}
@@ -307,7 +307,7 @@ export default function CreateRunForm() {
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Agent</label>
+            <label className="text-label-md">Agent</label>
             <input
               type="text"
               value={agent}
@@ -320,7 +320,7 @@ export default function CreateRunForm() {
 
         {/* Cluster agent selector */}
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">Cluster agents</label>
+          <label className="text-label-md">Cluster agents</label>
           <select
             value={selectedClusterAgent}
             onChange={(e) => handleClusterAgentSelect(e.target.value)}
@@ -336,7 +336,7 @@ export default function CreateRunForm() {
         {/* Inline agents */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <label className="text-sm font-medium text-text-muted">Inline agents</label>
+            <label className="text-label-md">Inline agents</label>
             <button
               type="button"
               onClick={addAgent}
@@ -349,7 +349,7 @@ export default function CreateRunForm() {
           {agents.map((a, i) => (
             <div key={i} className="space-y-2 rounded-md border border-border bg-surface p-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-text-muted">Agent {i + 1}</span>
+                <span className="text-label-md text-text-muted">Agent {i + 1}</span>
                 <button
                   type="button"
                   onClick={() => removeAgent(i)}
@@ -373,7 +373,7 @@ export default function CreateRunForm() {
                 rows={6}
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none resize-y font-mono"
               />
-              <p className="text-xs text-text-dim">
+              <p className="text-caption-xs text-text-dim">
                 {a.content.length > 0 ? `${(a.content.length / 1024).toFixed(1)} KB` : "Paste agent .md content here"}
                 {a.content.length >= 102400 && (
                   <span className="text-phase-failed ml-1">— exceeds 100KB limit</span>
@@ -386,12 +386,12 @@ export default function CreateRunForm() {
         {/* Secrets row — hidden when project is selected (inherited from project) */}
         {!projectHasSecrets && (
         <div className="space-y-3">
-          <p className="text-sm font-medium text-text-muted">
+          <p className="text-label-md text-text-muted">
             Kubernetes Secret references
           </p>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">
+              <label className="text-label-md">
                 LLM keys Secret name
               </label>
               <input
@@ -401,12 +401,12 @@ export default function CreateRunForm() {
                 placeholder="llm-keys"
                 className={inputClass + " font-mono"}
               />
-              <p className="text-xs text-text-dim">
+              <p className="text-caption-xs text-text-dim">
                 Secret whose keys are injected as env vars (API keys).
               </p>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">
+              <label className="text-label-md">
                 OpenCode auth Secret name
               </label>
               <input
@@ -416,7 +416,7 @@ export default function CreateRunForm() {
                 placeholder="opencode-auth"
                 className={inputClass + " font-mono"}
               />
-              <p className="text-xs text-text-dim">
+              <p className="text-caption-xs text-text-dim">
                 Secret holding <code className="font-mono">auth.json</code> for OAuth providers. Populate with{" "}
                 <code className="font-mono">beatctl auth import</code>.
               </p>
@@ -427,7 +427,7 @@ export default function CreateRunForm() {
 
         {/* Timeout */}
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">
+          <label className="text-label-md">
             Timeout (seconds)
           </label>
           <input
@@ -442,8 +442,8 @@ export default function CreateRunForm() {
         {/* Git source — hidden when project provides it (inherited automatically) */}
         {projectHasGit ? (
           <div className="space-y-1.5">
-            <p className="text-sm font-medium text-text-muted">Git source</p>
-            <p className="text-sm text-text-dim">
+            <p className="text-label-md text-text-muted">Git source</p>
+            <p className="text-caption-xs text-text-dim">
               Inherited from project:{" "}
               <span className="font-mono text-text">{selectedProjectSpec?.source?.git?.url}</span>
               {selectedProjectSpec?.source?.git?.ref && (
@@ -464,7 +464,7 @@ export default function CreateRunForm() {
           {showGit && (
             <div className="pl-4 border-l border-border-muted space-y-3">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-text-muted">Repository URL</label>
+                <label className="text-label-md">Repository URL</label>
                 <input
                   type="text"
                   value={gitUrl}
@@ -474,7 +474,7 @@ export default function CreateRunForm() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-text-muted">
+                <label className="text-label-md">
                   Ref <span className="text-text-dim font-normal">(branch / tag / SHA)</span>
                 </label>
                 <input
@@ -486,7 +486,7 @@ export default function CreateRunForm() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-text-muted">SSH Secret</label>
+                <label className="text-label-md">SSH Secret</label>
                 <input
                   type="text"
                   value={gitSshSecret}
@@ -494,12 +494,12 @@ export default function CreateRunForm() {
                   placeholder="git-ssh-key"
                   className={inputClass + " font-mono"}
                 />
-                <p className="text-xs text-text-dim">
+                <p className="text-caption-xs text-text-dim">
                   Secret name from <code className="font-mono">beatctl ssh-key create</code>
                 </p>
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-text-muted">GitHub Token Secret</label>
+                <label className="text-label-md">GitHub Token Secret</label>
                 <input
                   type="text"
                   value={gitGithubTokenSecret}
@@ -507,14 +507,14 @@ export default function CreateRunForm() {
                   placeholder="git-github-token"
                   className={inputClass + " font-mono"}
                 />
-                <p className="text-xs text-text-dim">
-                  Secret name from <code className="font-mono">beatctl github-token create</code>
-                  {" "}— authenticates <code className="font-mono">gh</code> CLI in the runner
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-text-muted">Author name</label>
+              <p className="text-caption-xs text-text-dim">
+                Secret name from <code className="font-mono">beatctl github-token create</code>
+                {" "}— authenticates <code className="font-mono">gh</code> CLI in the runner
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-label-md">Author name</label>
                   <input
                     type="text"
                     value={gitAuthorName}
@@ -524,7 +524,7 @@ export default function CreateRunForm() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-text-muted">Author email</label>
+                  <label className="text-label-md">Author email</label>
                   <input
                     type="email"
                     value={gitAuthorEmail}
@@ -535,9 +535,9 @@ export default function CreateRunForm() {
                 </div>
               </div>
               {gitAuthorIncomplete && (
-                <p className="text-xs text-phase-failed">
-                  Git author requires both name and email.
-                </p>
+              <p className="text-caption-xs text-phase-failed">
+                Git author requires both name and email.
+              </p>
               )}
             </div>
           )}

@@ -13,8 +13,8 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
     <div className="space-y-5">
       {/* Code Server */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Code Server</legend>
-        <p className="text-xs text-text-dim">
+        <legend className="px-1 text-label-md">Code Server</legend>
+        <p className="text-caption-xs text-text-dim">
           Enable interactive VS Code access to the workspace. Requires a data PVC (git or local source).
         </p>
         <label className="flex items-center gap-2 cursor-pointer">
@@ -24,13 +24,13 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
             onChange={(e) => form.setCodeServerEnabled(e.target.checked)}
             className="rounded border-border"
           />
-          <span className="text-sm text-text-muted">Enable code-server sidecar</span>
+          <span className="text-body-sm text-text-muted">Enable code-server sidecar</span>
         </label>
 
         {form.codeServerEnabled && (
           <>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-muted">Container Image</label>
+              <label className="text-label-md">Container Image</label>
               <input
                 type="text"
                 value={form.codeServerImage}
@@ -40,10 +40,10 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
               />
             </div>
             <div className="border-t border-border pt-3">
-              <p className="text-xs font-medium mb-2 text-text-muted">Resource Requests</p>
+              <p className="text-caption-xs font-medium mb-2 text-text-muted">Resource Requests</p>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs text-text-dim block">CPU (e.g. 100m)</label>
+                  <label className="text-caption-xs text-text-dim block">CPU (e.g. 100m)</label>
                   <input
                     type="text"
                     value={form.csCpuRequest}
@@ -53,7 +53,7 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs text-text-dim block">Memory (e.g. 256Mi)</label>
+                  <label className="text-caption-xs text-text-dim block">Memory (e.g. 256Mi)</label>
                   <input
                     type="text"
                     value={form.csMemRequest}
@@ -65,10 +65,10 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
               </div>
             </div>
             <div className="border-t border-border pt-3">
-              <p className="text-xs font-medium mb-2 text-text-muted">Resource Limits</p>
+              <p className="text-caption-xs font-medium mb-2 text-text-muted">Resource Limits</p>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs text-text-dim block">CPU (e.g. 500m)</label>
+                  <label className="text-caption-xs text-text-dim block">CPU (e.g. 500m)</label>
                   <input
                     type="text"
                     value={form.csCpuLimit}
@@ -78,7 +78,7 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs text-text-dim block">Memory (e.g. 512Mi)</label>
+                  <label className="text-caption-xs text-text-dim block">Memory (e.g. 512Mi)</label>
                   <input
                     type="text"
                     value={form.csMemLimit}
@@ -95,13 +95,13 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
 
       {/* Data PVC */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Data PVC</legend>
-        <p className="text-xs text-text-dim">
+        <legend className="px-1 text-label-md">Data PVC</legend>
+        <p className="text-caption-xs text-text-dim">
           Customize the persistent volume for workspace data. Leave blank to use defaults (&#123;project&#125;-data, mount path /data).
         </p>
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">PVC Name</label>
+            <label className="text-label-md">PVC Name</label>
             <input
               type="text"
               value={form.pvcName}
@@ -111,7 +111,7 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Mount Path</label>
+            <label className="text-label-md">Mount Path</label>
             <input
               type="text"
               value={form.mountPath}
@@ -122,7 +122,7 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
           </div>
         </div>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">Storage Class</label>
+            <label className="text-label-md">Storage Class</label>
           <input
             type="text"
             value={form.storageClass}
@@ -135,8 +135,8 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
 
       {/* Embedding / Memory service */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Memory / Embeddings</legend>
-        <p className="text-xs text-text-dim">
+        <legend className="px-1 text-label-md">Memory / Embeddings</legend>
+        <p className="text-caption-xs text-text-dim">
           Enable the per-project vector memory service for agent context retrieval
           and semantic search across runs. Requires a data PVC and a running Ollama instance.
         </p>
@@ -147,12 +147,12 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
             onChange={(e) => form.setEmbeddingEnabled(e.target.checked)}
             className="rounded border-border"
           />
-          <span className="text-sm text-text-muted">Enable memory service</span>
+          <span className="text-body-sm text-text-muted">Enable memory service</span>
         </label>
         {form.embeddingEnabled && (
           <div className="ml-6 space-y-3 pt-1">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-muted">Embedding model</label>
+              <label className="text-label-md">Embedding model</label>
               <input
                 type="text"
                 value={form.embeddingModel}
@@ -160,10 +160,10 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
                 placeholder="nomic-embed-text"
                 className={monoInputClass}
               />
-              <p className="text-xs text-text-dim">Ollama model name used for generating embeddings.</p>
+              <p className="text-caption-xs text-text-dim">Ollama model name used for generating embeddings.</p>
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-muted">Vector dimensions</label>
+              <label className="text-label-md">Vector dimensions</label>
               <input
                 type="number"
                 min={64} max={4096}
@@ -171,10 +171,10 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
                 onChange={(e) => form.setEmbeddingDimensions(e.target.value)}
                 className={monoInputClass}
               />
-              <p className="text-xs text-text-dim">Dimensionality of the embedding vectors (must match the model).</p>
+              <p className="text-caption-xs text-text-dim">Dimensionality of the embedding vectors (must match the model).</p>
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-muted">Ollama URL</label>
+              <label className="text-label-md">Ollama URL</label>
               <input
                 type="text"
                 value={form.embeddingOllamaUrl}
@@ -182,7 +182,7 @@ export default function WorkspaceServicesTab({ form, inputClass, monoInputClass 
                 placeholder="http://ollama:11434"
                 className={monoInputClass}
               />
-              <p className="text-xs text-text-dim">
+              <p className="text-caption-xs text-text-dim">
                 Overrides the cluster default Ollama service URL. Leave empty to use the built-in Ollama service.
               </p>
             </div>

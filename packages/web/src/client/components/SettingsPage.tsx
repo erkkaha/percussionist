@@ -100,10 +100,10 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col gap-4 w-full">
       <div className="flex items-center justify-between settings-header-mobile">
-        <h1 className="text-xl font-semibold text-lg sm:text-xl">Settings</h1>
+        <h1 className="text-headline-lg">Settings</h1>
         {saveMsg && (
           <span className={cn(
-            "text-sm",
+            "text-caption-xs",
             saveMsg.startsWith("Error") ? "text-red-500" : "text-green-500"
           )}>{saveMsg}</span>
         )}
@@ -116,7 +116,7 @@ export default function SettingsPage() {
             key={t.id}
             onClick={() => setActiveTab(t.id)}
             className={cn(
-              "px-4 py-2 text-sm font-medium transition-colors",
+              "px-4 py-2 text-label-md transition-colors",
               "border-b-2 -mb-px",
               activeTab === t.id
                 ? "border-accent text-accent"
@@ -225,7 +225,7 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div>
-          <label className="text-sm font-medium block mb-1">LLM Keys Secret Name</label>
+          <label className="text-label-md block mb-1">LLM Keys Secret Name</label>
           <div className="flex gap-2 flex-wrap">
             <Input
               value={llmKeysSecret}
@@ -244,14 +244,14 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
             </Button>
           </div>
           {existingLlmSecret && (
-            <p className="text-xs text-text-dim mt-1">
+            <p className="text-caption-xs text-text-dim mt-1">
               Existing secret. Keys: {existingLlmSecret.keys.join(", ") || "(empty)"}
             </p>
           )}
         </div>
 
         <div className="border-t border-border pt-4">
-          <label className="text-sm font-medium block mb-1">OpenCode Auth Secret Name</label>
+          <label className="text-label-md block mb-1">OpenCode Auth Secret Name</label>
           <div className="flex gap-2 flex-wrap">
             <Input
               value={authSecretName}
@@ -270,7 +270,7 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
             </Button>
           </div>
           {existingAuthSecret && (
-            <p className="text-xs text-text-dim mt-1">
+            <p className="text-caption-xs text-text-dim mt-1">
               Existing secret. Keys: {existingAuthSecret.keys.join(", ") || "(empty)"}
             </p>
           )}
@@ -324,8 +324,8 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
       <CardHeader>
         <CardTitle>OpenCode Configuration</CardTitle>
         <CardDescription>
-          Raw <code className="font-mono text-xs">opencode.json</code> content applied
-          cluster-wide. Stored in the <code className="font-mono text-xs">opencode-config</code>{" "}
+          Raw <code className="text-caption-xs font-mono">opencode.json</code> content applied
+          cluster-wide. Stored in the <code className="text-caption-xs font-mono">opencode-config</code>{" "}
           ConfigMap by the operator. Supports providers, MCP servers, skills, and all other
           opencode settings.
         </CardDescription>
@@ -338,9 +338,9 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
           spellCheck={false}
           placeholder={'{\n  "providers": [...],\n  "mcp": {...}\n}'}
         />
-        {jsonError && <p className="text-xs text-red-500 mt-1">{jsonError}</p>}
+        {jsonError && <p className="text-caption-xs text-red-500 mt-1">{jsonError}</p>}
         {!jsonError && value.trim() && (
-          <p className="text-xs text-green-500 mt-1">Valid JSON</p>
+          <p className="text-caption-xs text-green-500 mt-1">Valid JSON</p>
         )}
       </CardContent>
       <CardFooter className="sm:flex-row flex-col gap-2">
@@ -388,17 +388,17 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
       <CardContent className="flex flex-col gap-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="text-sm font-medium block mb-1">Agent Name</label>
+            <label className="text-label-md block mb-1">Agent Name</label>
             <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} />
           </div>
           <div>
-            <label className="text-sm font-medium block mb-1">Decision Agent Name</label>
+            <label className="text-label-md block mb-1">Decision Agent Name</label>
             <Input value={decisionAgentName} onChange={(e) => setDecisionAgentName(e.target.value)} />
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="text-sm font-medium block mb-1">Model</label>
+            <label className="text-label-md block mb-1">Model</label>
             <ModelSelector
               value={model}
               onChange={setModel}
@@ -406,7 +406,7 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
             />
           </div>
           <div>
-            <label className="text-sm font-medium block mb-1">Timeout (seconds)</label>
+            <label className="text-label-md block mb-1">Timeout (seconds)</label>
             <Input
               type="number"
               value={timeoutSec}
@@ -416,7 +416,7 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
           </div>
         </div>
         <div>
-          <label className="text-sm font-medium block mb-1">First Response Timeout (seconds) <span className="text-text-dim font-normal">— empty = default (min of overall timeout, 60s)</span></label>
+          <label className="text-label-md block mb-1">First Response Timeout (seconds) <span className="text-text-dim font-normal">— empty = default (min of overall timeout, 60s)</span></label>
           <Input
             type="number"
             value={firstResponseTimeoutSec}
@@ -426,7 +426,7 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
           />
         </div>
         <div>
-          <label className="text-sm font-medium block mb-1">Decision Agent Content (.md)</label>
+          <label className="text-label-md block mb-1">Decision Agent Content (.md)</label>
           <textarea
             className="w-full h-48 font-mono text-sm border border-input bg-background rounded-md p-3 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
             value={decisionAgentContent}
@@ -507,11 +507,11 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
       <CardContent className="flex flex-col gap-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="text-sm font-medium block mb-1">Runner Image</label>
+            <label className="text-label-md block mb-1">Runner Image</label>
             <Input value={image} onChange={(e) => setImage(e.target.value)} />
           </div>
           <div>
-            <label className="text-sm font-medium block mb-1">Timeout (seconds)</label>
+            <label className="text-label-md block mb-1">Timeout (seconds)</label>
             <Input
               type="number"
               value={timeoutSeconds}
@@ -521,42 +521,42 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
           </div>
         </div>
         <div className="border-t border-border pt-4">
-          <p className="text-sm font-medium mb-2">Resource Requests</p>
+          <p className="text-label-md mb-2">Resource Requests</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs text-text-dim block mb-1">CPU request (e.g. 100m, 1)</label>
+              <label className="text-caption-xs text-text-dim block mb-1">CPU request (e.g. 100m, 1)</label>
               <Input value={cpuRequest} onChange={(e) => setCpuRequest(e.target.value)} placeholder="100m" />
             </div>
             <div>
-              <label className="text-xs text-text-dim block mb-1">Memory request (e.g. 128Mi)</label>
+              <label className="text-caption-xs text-text-dim block mb-1">Memory request (e.g. 128Mi)</label>
               <Input value={memRequest} onChange={(e) => setMemRequest(e.target.value)} placeholder="128Mi" />
             </div>
           </div>
         </div>
         <div>
-          <p className="text-sm font-medium mb-2">Resource Limits</p>
+          <p className="text-label-md mb-2">Resource Limits</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs text-text-dim block mb-1">CPU limit (e.g. 500m, 1)</label>
+              <label className="text-caption-xs text-text-dim block mb-1">CPU limit (e.g. 500m, 1)</label>
               <Input value={cpuLimit} onChange={(e) => setCpuLimit(e.target.value)} placeholder="500m" />
             </div>
             <div>
-              <label className="text-xs text-text-dim block mb-1">Memory limit (e.g. 512Mi)</label>
+              <label className="text-caption-xs text-text-dim block mb-1">Memory limit (e.g. 512Mi)</label>
               <Input value={memLimit} onChange={(e) => setMemLimit(e.target.value)} placeholder="512Mi" />
             </div>
           </div>
         </div>
         <div className="border-t border-border pt-4">
-          <p className="text-sm font-medium mb-2">Cleanup</p>
+          <p className="text-label-md mb-2">Cleanup</p>
           <div>
-            <label className="text-xs text-text-dim block mb-1">Run TTL (days)</label>
+            <label className="text-caption-xs text-text-dim block mb-1">Run TTL (days)</label>
             <Input
               type="number"
               min={1}
               value={runTTLDays}
               onChange={(e) => setRunTTLDays(e.target.value)}
             />
-            <p className="text-xs text-text-dim mt-1">
+            <p className="text-caption-xs text-text-dim mt-1">
               Completed Run CRs are automatically cleaned up after this many days.
             </p>
           </div>
@@ -674,30 +674,30 @@ function UpdatesPanel() {
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {isLoading && (
-          <p className="text-text-dim text-sm">Checking for updates...</p>
+          <p className="text-caption-xs text-text-dim">Checking for updates...</p>
         )}
 
         {isError && !upgradeMutation.isPending && !upgradeMutation.isSuccess && (
-          <p className="text-red-500 text-sm">
+          <p className="text-caption-xs text-red-500">
             Could not check for updates: {(error as Error).message}
           </p>
         )}
 
         {data?.error && !upgradeMutation.isPending && (
-          <p className="text-amber-500 text-sm">
+          <p className="text-caption-xs text-amber-500">
             Registry check failed: {data.error}
           </p>
         )}
 
         {upgradeMutation.isError && (
-          <p className="text-red-500 text-sm">
+          <p className="text-caption-xs text-red-500">
             Upgrade failed: {upgradeMutation.error.message}
           </p>
         )}
 
         {(upgradeMutation.isPending || (upgradeMutation.isSuccess && !upgradeComplete)) && (
           <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 text-sm text-text-dim">
+            <div className="flex items-center gap-2 text-caption-xs text-text-dim">
               <Loader2 className="h-4 w-4 animate-spin shrink-0" />
               <span>Installing update — deployments are rolling out…</span>
             </div>
@@ -710,7 +710,7 @@ function UpdatesPanel() {
         {data && (
           <>
             <div className="flex flex-col gap-1">
-              <p className="text-sm font-medium mb-1">Running versions</p>
+              <p className="text-label-md mb-1">Running versions</p>
               {(
                 [
                   ["operator", data.current.operator],
@@ -718,7 +718,7 @@ function UpdatesPanel() {
                   ["web", data.current.web],
                 ] as [string, string | null][]
               ).map(([name, tag]) => (
-                <div key={name} className="flex items-center gap-2 text-sm">
+                <div key={name} className="flex items-center gap-2 text-body-sm">
                   <span className="text-text-dim w-20">{name}</span>
                   <span className="font-mono">{tag ?? <span className="text-text-dim italic">unknown</span>}</span>
                 </div>
@@ -730,7 +730,7 @@ function UpdatesPanel() {
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2">
                     <span className="inline-block w-2 h-2 rounded-full bg-amber-400 shrink-0" />
-                    <p className="text-sm font-medium">
+                    <p className="text-label-md">
                       Version <span className="font-mono">{data.latest}</span> is available
                       {currentTag && (
                         <span className="text-text-dim font-normal">
@@ -749,12 +749,12 @@ function UpdatesPanel() {
                       {upgradeMutation.isPending ? "Upgrading..." : "Upgrade"}
                     </Button>
                     {releaseUrl && (
-                      <a
-                        href={releaseUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-accent underline underline-offset-2"
-                      >
+                    <a
+                      href={releaseUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-caption-xs text-accent underline underline-offset-2"
+                    >
                         View release notes
                       </a>
                     )}
@@ -763,7 +763,7 @@ function UpdatesPanel() {
               ) : data.latest && !data.error ? (
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-2 h-2 rounded-full bg-phase-succeeded shrink-0" />
-                  <p className="text-sm">
+                  <p className="text-body-sm">
                     Up to date{" "}
                     <span className="text-text-dim font-normal">
                       (<span className="font-mono">{data.latest}</span>)
@@ -771,7 +771,7 @@ function UpdatesPanel() {
                   </p>
                 </div>
               ) : !data.error ? (
-                <p className="text-text-dim text-sm">Latest version unavailable</p>
+                <p className="text-caption-xs text-text-dim">Latest version unavailable</p>
               ) : null}
             </div>
           </>

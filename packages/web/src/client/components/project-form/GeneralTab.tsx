@@ -16,7 +16,7 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
       {isEdit ? (
         <>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Name</label>
+            <label className="text-label-md">Name</label>
             <input
               type="text"
               value={form.name}
@@ -37,13 +37,13 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
               <option value="Complete">Complete</option>
               <option value="Archived">Archived</option>
             </select>
-            <p className="text-xs text-text-dim">
+            <p className="text-caption-xs text-text-dim">
               Controls whether the project board is active, completed, or archived.
             </p>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Display Name</label>
+            <label className="text-label-md">Display Name</label>
             <input
               type="text"
               value={form.displayName}
@@ -56,7 +56,7 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
       ) : (
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">
+            <label className="text-label-md">
               Name <span className="text-phase-failed">*</span>
             </label>
             <input
@@ -67,12 +67,12 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
               placeholder="my-repo"
               className={monoInputClass}
             />
-            <p className="text-xs text-text-dim">
+            <p className="text-caption-xs text-text-dim">
               Kubernetes resource name (lowercase, hyphens)
             </p>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-muted">Display Name</label>
+            <label className="text-label-md">Display Name</label>
             <input
               type="text"
               value={form.displayName}
@@ -87,7 +87,7 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
       {/* Model + Agent */}
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">Default Model</label>
+          <label className="text-label-md">Default Model</label>
           <input
             type="text"
             value={form.model}
@@ -97,7 +97,7 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
           />
         </div>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">Default Agent</label>
+          <label className="text-label-md">Default Agent</label>
           <input
             type="text"
             value={form.agent}
@@ -111,7 +111,7 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
       {/* Max Parallel / Timeout / Feature Branching */}
       <div className="grid grid-cols-3 gap-4">
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">Max Parallel Tasks</label>
+          <label className="text-label-md">Max Parallel Tasks</label>
           <input
             type="number"
             min={1}
@@ -122,7 +122,7 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
           />
         </div>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">Timeout (seconds)</label>
+          <label className="text-label-md">Timeout (seconds)</label>
           <input
             type="number"
             min={1}
@@ -133,7 +133,7 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
           />
         </div>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">Feature Branching</label>
+          <label className="text-label-md">Feature Branching</label>
           <label className="flex items-center gap-2 cursor-pointer h-9">
             <input
               type="checkbox"
@@ -141,7 +141,7 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
               onChange={(e) => form.setFeatureBranchingEnabled(e.target.checked)}
               className="rounded border-border"
             />
-            <span className="text-sm text-text-muted">Enable per-task branches</span>
+            <span className="text-body-sm text-text-muted">Enable per-task branches</span>
           </label>
         </div>
       </div>

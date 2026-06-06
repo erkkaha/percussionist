@@ -87,8 +87,8 @@ export default function AgentsPage({ showHeader = true }: { showHeader?: boolean
   if (error) {
     return (
       <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
-        <h2 className="text-lg font-semibold mb-1">Failed to load agents</h2>
-        <p className="text-sm">{error.message}</p>
+        <h2 className="text-headline-md mb-1">Failed to load agents</h2>
+        <p className="text-caption-xs">{error.message}</p>
       </div>
     );
   }
@@ -98,14 +98,14 @@ export default function AgentsPage({ showHeader = true }: { showHeader?: boolean
       {showHeader && (
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold">Agents</h1>
-            <p className="text-sm text-text-muted">
+            <h1 className="text-headline-lg">Agents</h1>
+            <p className="text-caption-xs text-text-muted">
               Cluster-scoped reusable agent definitions.
               {isFetching && !isLoading && (
                 <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
               )}
             </p>
-            <p className="text-xs text-text-dim mt-0.5">
+            <p className="text-caption-xs text-text-dim mt-0.5">
               Updates: {agentsSseConnected ? "live stream" : "polling fallback"}
             </p>
           </div>

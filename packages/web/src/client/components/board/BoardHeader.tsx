@@ -55,8 +55,8 @@ export function BoardHeader({
           <span>/</span>
           <span className="text-text shrink-0">Board</span>
         </div>
-        <h1 className="text-xl font-semibold mt-1 truncate">{projectName}</h1>
-        <p className="text-sm text-text-dim mt-0.5 flex flex-wrap items-center gap-x-1">
+        <h1 className="text-headline-lg mt-1 truncate">{projectName}</h1>
+        <p className="text-caption-xs text-text-dim mt-0.5 flex flex-wrap items-center gap-x-1">
           <span>Team:</span>
           {roster.length > 0 ? (
             <span className="truncate">{roster.join(", ")}</span>

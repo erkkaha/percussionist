@@ -13,7 +13,7 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
     <div className="space-y-5">
       {/* Retry Policy */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Retry Policy</legend>
+        <legend className="px-1 text-label-md">Retry Policy</legend>
         <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
@@ -21,17 +21,17 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
             onChange={(e) => form.setRetryPolicyEnabled(e.target.checked)}
             className="rounded border-border"
           />
-          <span className="text-sm text-text-muted">Auto-retry failed tasks with exponential backoff</span>
+          <span className="text-body-sm text-text-muted">Auto-retry failed tasks with exponential backoff</span>
         </label>
         {form.retryPolicyEnabled && (
           <>
-            <p className="text-xs text-text-dim">
+            <p className="text-caption-xs text-text-dim">
               Retries use exponential backoff — each attempt waits longer than the last.
               If a retry finishes faster than the poison pill threshold, the task is considered stuck and retries stop.
             </p>
             <div className="grid grid-cols-3 gap-4 pt-2">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-muted">Max attempts</label>
+                <label className="text-label-md">Max attempts</label>
                 <input
                   type="number"
                   min={1} max={10}
@@ -39,10 +39,10 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
                   onChange={(e) => form.setRetryPolicyMaxAttempts(e.target.value)}
                   className={monoInputClass}
                 />
-                <p className="text-xs text-text-dim">Total retries before giving up.</p>
+                <p className="text-caption-xs text-text-dim">Total retries before giving up.</p>
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-muted">Initial backoff (s)</label>
+                <label className="text-label-md">Initial backoff (s)</label>
                 <input
                   type="number"
                   min={5} max={600}
@@ -50,10 +50,10 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
                   onChange={(e) => form.setRetryPolicyBackoffSeconds(e.target.value)}
                   className={monoInputClass}
                 />
-                <p className="text-xs text-text-dim">Delay before first retry.</p>
+                <p className="text-caption-xs text-text-dim">Delay before first retry.</p>
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-muted">Backoff multiplier</label>
+                <label className="text-label-md">Backoff multiplier</label>
                 <input
                   type="number"
                   min={1} max={5} step={0.1}
@@ -61,10 +61,10 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
                   onChange={(e) => form.setRetryPolicyBackoffMultiplier(e.target.value)}
                   className={monoInputClass}
                 />
-                <p className="text-xs text-text-dim">Factor applied each retry (e.g. 2 → 30s, 60s, 120s).</p>
+                <p className="text-caption-xs text-text-dim">Factor applied each retry (e.g. 2 → 30s, 60s, 120s).</p>
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-muted">Max backoff (s)</label>
+                <label className="text-label-md">Max backoff (s)</label>
                 <input
                   type="number"
                   min={5} max={3600}
@@ -72,10 +72,10 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
                   onChange={(e) => form.setRetryPolicyMaxBackoffSeconds(e.target.value)}
                   className={monoInputClass}
                 />
-                <p className="text-xs text-text-dim">Ceiling for backoff growth.</p>
+                <p className="text-caption-xs text-text-dim">Ceiling for backoff growth.</p>
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-muted">Poison pill threshold (s)</label>
+                <label className="text-label-md">Poison pill threshold (s)</label>
                 <input
                   type="number"
                   min={5} max={300}
@@ -83,7 +83,7 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
                   onChange={(e) => form.setRetryPolicyPoisonPillThreshold(e.target.value)}
                   className={monoInputClass}
                 />
-                <p className="text-xs text-text-dim">Retries completing faster than this are treated as stuck.</p>
+                <p className="text-caption-xs text-text-dim">Retries completing faster than this are treated as stuck.</p>
               </div>
             </div>
           </>
@@ -92,7 +92,7 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
 
       {/* Review Policy */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Review Policy</legend>
+        <legend className="px-1 text-label-md">Review Policy</legend>
         <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
@@ -100,17 +100,17 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
             onChange={(e) => form.setReviewPolicyAiReviewerEnabled(e.target.checked)}
             className="rounded border-border"
           />
-          <span className="text-sm text-text-muted">Enable automated AI review of completed tasks</span>
+          <span className="text-body-sm text-text-muted">Enable automated AI review of completed tasks</span>
         </label>
         {form.reviewPolicyAiReviewerEnabled && (
           <>
-            <p className="text-xs text-text-dim">
+            <p className="text-caption-xs text-text-dim">
               When the reviewer rejects a task, it is sent back for rework automatically.
               After the max rework count is exceeded, it requires manual review.
             </p>
             <div className="grid grid-cols-2 gap-4 pt-2">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-muted">Reviewer agent</label>
+                <label className="text-label-md">Reviewer agent</label>
                 <input
                   type="text"
                   value={form.reviewPolicyAiReviewerAgent}
@@ -118,10 +118,10 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
                   placeholder="reviewer"
                   className={monoInputClass}
                 />
-                <p className="text-xs text-text-dim">ClusterAgent assigned to review completed tasks.</p>
+                <p className="text-caption-xs text-text-dim">ClusterAgent assigned to review completed tasks.</p>
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-muted">Max auto-reworks</label>
+                <label className="text-label-md">Max auto-reworks</label>
                 <input
                   type="number"
                   min={1} max={10}
@@ -129,7 +129,7 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
                   onChange={(e) => form.setReviewPolicyMaxAutoReworks(e.target.value)}
                   className={monoInputClass}
                 />
-                <p className="text-xs text-text-dim">Reworks exhausted → manual review required.</p>
+                <p className="text-caption-xs text-text-dim">Reworks exhausted → manual review required.</p>
               </div>
             </div>
           </>
@@ -138,12 +138,12 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
 
       {/* Runner Overrides */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Runner Overrides</legend>
-        <p className="text-xs text-text-dim">
+        <legend className="px-1 text-label-md">Runner Overrides</legend>
+        <p className="text-caption-xs text-text-dim">
           Override cluster-level runner defaults for this project.
         </p>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">Runner Image</label>
+          <label className="text-label-md">Runner Image</label>
           <input
             type="text"
             value={form.runnerImage}
@@ -153,10 +153,10 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
           />
         </div>
         <div className="border-t border-border pt-3">
-          <p className="text-xs font-medium mb-2 text-text-muted">Resource Requests</p>
+          <p className="text-caption-xs font-medium mb-2 text-text-muted">Resource Requests</p>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs text-text-dim block">CPU (e.g. 100m, 1)</label>
+              <label className="text-caption-xs text-text-dim block">CPU (e.g. 100m, 1)</label>
               <input
                 type="text"
                 value={form.cpuRequest}
@@ -166,7 +166,7 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs text-text-dim block">Memory (e.g. 128Mi)</label>
+              <label className="text-caption-xs text-text-dim block">Memory (e.g. 128Mi)</label>
               <input
                 type="text"
                 value={form.memRequest}
@@ -178,10 +178,10 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
           </div>
         </div>
         <div className="border-t border-border pt-3">
-          <p className="text-xs font-medium mb-2 text-text-muted">Resource Limits</p>
+          <p className="text-caption-xs font-medium mb-2 text-text-muted">Resource Limits</p>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs text-text-dim block">CPU (e.g. 500m, 1)</label>
+              <label className="text-caption-xs text-text-dim block">CPU (e.g. 500m, 1)</label>
               <input
                 type="text"
                 value={form.cpuLimit}
@@ -191,7 +191,7 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs text-text-dim block">Memory (e.g. 512Mi)</label>
+              <label className="text-caption-xs text-text-dim block">Memory (e.g. 512Mi)</label>
               <input
                 type="text"
                 value={form.memLimit}
@@ -206,8 +206,8 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
 
       {/* Git Cache */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Git Cache</legend>
-        <p className="text-xs text-text-dim">
+        <legend className="px-1 text-label-md">Git Cache</legend>
+        <p className="text-caption-xs text-text-dim">
           Control how git worktrees are managed across runs.
         </p>
         <label className="flex items-center gap-2 cursor-pointer">
@@ -217,21 +217,21 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
             onChange={(e) => form.setWorktreeReuse(e.target.checked)}
             className="rounded border-border"
           />
-          <span className="text-sm text-text-muted">Reuse worktrees across runs</span>
+          <span className="text-body-sm text-text-muted">Reuse worktrees across runs</span>
         </label>
-        <p className="text-xs text-text-dim">
+        <p className="text-caption-xs text-text-dim">
           When enabled, subsequent runs reuse the existing worktree instead of checking out fresh.
         </p>
       </fieldset>
 
       {/* Flow Configuration */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Task Lifecycle</legend>
-        <p className="text-xs text-text-dim">
+        <legend className="px-1 text-label-md">Task Lifecycle</legend>
+        <p className="text-caption-xs text-text-dim">
           Control how tasks flow through their lifecycle. Presets provide sensible defaults; overrides below customize specific steps.
         </p>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">Preset</label>
+          <label className="text-label-md">Preset</label>
           <select
             value={form.flowPreset}
             onChange={(e) => form.setFlowPreset(e.target.value as typeof form.flowPreset)}
@@ -249,10 +249,10 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
             <div className="border-t border-border pt-3 space-y-3">
               {/* Human Approval */}
               <div>
-                <p className="text-xs font-medium mb-1.5 text-text-muted">Human Approval</p>
+                <p className="text-caption-xs font-medium mb-1.5 text-text-muted">Human Approval</p>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs text-text-dim block">Plan approval</label>
+                    <label className="text-caption-xs text-text-dim block">Plan approval</label>
                     <select
                       value={form.flowHumanApprovalPlan}
                       onChange={(e) => form.setFlowHumanApprovalPlan(e.target.value as "required" | "disabled")}
@@ -263,7 +263,7 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
                     </select>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs text-text-dim block">Build approval</label>
+                    <label className="text-caption-xs text-text-dim block">Build approval</label>
                     <select
                       value={form.flowHumanApprovalBuild}
                       onChange={(e) => form.setFlowHumanApprovalBuild(e.target.value as "required" | "disabled")}
@@ -278,7 +278,7 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
 
               {/* Plan onApprove */}
               <div className="space-y-1.5">
-                <label className="text-xs text-text-dim block">Plan approved →</label>
+                <label className="text-caption-xs text-text-dim block">Plan approved →</label>
                 <select
                   value={form.flowPlanOnApprove}
                   onChange={(e) => form.setFlowPlanOnApprove(e.target.value as "generate-builds" | "done")}
@@ -291,7 +291,7 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
 
               {/* Build onSuccess */}
               <div className="space-y-1.5">
-                <label className="text-xs text-text-dim block">Build succeeds →</label>
+                <label className="text-caption-xs text-text-dim block">Build succeeds →</label>
                 <select
                   value={form.flowBuildOnSuccess}
                   onChange={(e) => form.setFlowBuildOnSuccess(e.target.value as "human-review" | "ai-review" | "done")}
@@ -305,7 +305,7 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
 
               {/* Build onApprove */}
               <div className="space-y-1.5">
-                <label className="text-xs text-text-dim block">Build approved →</label>
+                <label className="text-caption-xs text-text-dim block">Build approved →</label>
                 <select
                   value={form.flowBuildOnApprove}
                   onChange={(e) => form.setFlowBuildOnApprove(e.target.value as "merge" | "done")}
@@ -318,7 +318,7 @@ export default function ExecutionTab({ form, inputClass, monoInputClass }: Execu
 
               {/* Merge mode */}
               <div className="space-y-1.5">
-                <label className="text-xs text-text-dim block">Merge mode</label>
+                <label className="text-caption-xs text-text-dim block">Merge mode</label>
                 <select
                   value={form.flowMergeMode}
                   onChange={(e) => form.setFlowMergeMode(e.target.value as "auto" | "manual" | "disabled")}

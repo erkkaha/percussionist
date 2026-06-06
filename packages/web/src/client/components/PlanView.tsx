@@ -73,8 +73,8 @@ export default function PlanView() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-text mb-1">Plan: {taskId}</h1>
-          <p className="text-sm text-text-dim">Project: {projectName}</p>
+          <h1 className="text-headline-lg text-text mb-1">Plan: {taskId}</h1>
+          <p className="text-caption-xs text-text-dim">Project: {projectName}</p>
         </div>
       </div>
 

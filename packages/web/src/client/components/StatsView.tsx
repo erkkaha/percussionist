@@ -481,8 +481,8 @@ export default function StatsView() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Stats</h1>
-          <p className="text-sm text-text-muted">
+          <h1 className="text-headline-lg">Stats</h1>
+          <p className="text-caption-xs text-text-muted">
             {sessions ? `${sessions.length} sessions` : "Loading..."}
             {isFetching && !isLoading && (
               <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
@@ -508,8 +508,8 @@ export default function StatsView() {
 
       {error && (
         <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
-          <h2 className="text-lg font-semibold mb-1">Failed to load stats</h2>
-          <p className="text-sm">{(error as Error).message}</p>
+          <h2 className="text-headline-md mb-1">Failed to load stats</h2>
+          <p className="text-caption-xs">{(error as Error).message}</p>
         </div>
       )}
 

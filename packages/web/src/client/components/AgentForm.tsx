@@ -61,8 +61,8 @@ export default function AgentForm() {
 
       {/* Header */}
       <div>
-        <h1 className="text-xl font-semibold">{isEdit ? `Edit "${name}"` : "New Agent"}</h1>
-        <p className="text-sm text-text-muted mt-0.5">
+        <h1 className="text-headline-lg">{isEdit ? `Edit "${name}"` : "New Agent"}</h1>
+        <p className="text-caption-xs text-text-muted mt-0.5">
           {isEdit
             ? `Update the agent definition for ${name}.`
             : "Define a cluster-scoped reusable agent prompt."}
@@ -72,7 +72,7 @@ export default function AgentForm() {
       {/* Form */}
       <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-4">
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">Name</label>
+          <label className="text-label-md">Name</label>
           <input
             type="text"
             value={name}
@@ -83,7 +83,7 @@ export default function AgentForm() {
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">Model</label>
+          <label className="text-label-md">Model</label>
           <ModelSelector
             value={model}
             onChange={setModel}
@@ -92,7 +92,7 @@ export default function AgentForm() {
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-muted">Content</label>
+          <label className="text-label-md">Content</label>
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
@@ -100,7 +100,7 @@ export default function AgentForm() {
             rows={16}
             className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm font-mono text-text placeholder:text-text-dim focus:outline-none focus:border-accent/60 resize-y"
           />
-          <div className="flex items-center justify-between text-xs text-text-muted">
+          <div className="flex items-center justify-between text-caption-xs text-text-muted">
             <span>YAML front-matter + system prompt</span>
             <span>{kbCount}</span>
           </div>

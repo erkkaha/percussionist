@@ -114,39 +114,39 @@ export function SessionTimeline({
 
   if (collapsed) {
     return (
-      <div className="flex flex-col w-16 border-r dark:border-gray-700 bg-white dark:bg-gray-900">
+      <div className="flex flex-col w-16 border-r border-border-muted bg-surface">
         <button
           onClick={() => setCollapsed(false)}
-          className="flex items-center justify-center h-12 border-b dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          className="flex items-center justify-center h-12 border-b border-border-muted hover:bg-surface-overlay transition-colors"
           title="Expand timeline"
         >
-          <Menu className="h-5 w-5 text-gray-600 dark:text-gray-400" />
+          <Menu className="h-5 w-5 text-text-dim" />
         </button>
         <div className="flex-1 overflow-y-auto">
           {items.map((item) => (
             <button
               key={item.id}
               onClick={() => onMessageClick(item.id)}
-              className={`w-full p-3 flex items-center justify-center border-b dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors ${
+              className={`w-full p-3 flex items-center justify-center border-b border-border-muted hover:bg-surface-overlay transition-colors ${
                 item.id === currentMessageId
-                  ? "bg-blue-50 dark:bg-blue-900/20 border-l-2 border-l-blue-500"
+                  ? "bg-surface-overlay border-l-2 border-accent"
                   : ""
               }`}
               title={item.summary}
             >
               {item.type === "message" && (
-                <MessageSquare className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+                <MessageSquare className="h-4 w-4 text-text-dim" />
               )}
               {item.type === "tool" && (
                 <Wrench
                   className={`h-4 w-4 ${
                     item.status === "completed"
-                      ? "text-green-600 dark:text-green-400"
+                      ? "text-phase-succeeded"
                       : item.status === "error"
-                        ? "text-red-600 dark:text-red-400"
+                        ? "text-phase-failed"
                         : item.status === "running"
-                          ? "text-blue-600 dark:text-blue-400"
-                          : "text-gray-600 dark:text-gray-400"
+                          ? "text-accent animate-pulse"
+                          : "text-text-dim"
                   }`}
                 />
               )}
@@ -164,17 +164,17 @@ export function SessionTimeline({
   }
 
   return (
-    <div className="flex flex-col w-64 border-r dark:border-gray-700 bg-white dark:bg-gray-900">
-      <div className="flex items-center justify-between h-12 px-4 border-b dark:border-gray-700">
-        <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+    <div className="flex flex-col w-64 border-l border-border-muted bg-surface">
+      <div className="flex items-center justify-between h-12 px-4 border-b border-border-muted">
+        <span className="text-body-sm font-semibold text-text">
           Activity
         </span>
         <button
           onClick={() => setCollapsed(true)}
-          className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors"
+          className="p-1 hover:bg-surface-overlay rounded transition-colors"
           title="Collapse timeline"
         >
-          <X className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+          <X className="h-4 w-4 text-text-dim" />
         </button>
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -182,26 +182,26 @@ export function SessionTimeline({
           <button
             key={item.id}
             onClick={() => onMessageClick(item.id)}
-            className={`w-full p-3 flex items-start gap-3 border-b dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left ${
+            className={`w-full p-3 flex items-start gap-3 border-b border-border-muted hover:bg-surface-overlay transition-colors text-left ${
               item.id === currentMessageId
-                ? "bg-blue-50 dark:bg-blue-900/20 border-l-2 border-l-blue-500"
+                ? "bg-surface-overlay border-l-2 border-accent"
                 : ""
             }`}
           >
             <div className="flex-shrink-0 mt-0.5">
               {item.type === "message" && (
-                <MessageSquare className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+                <MessageSquare className="h-4 w-4 text-text-dim" />
               )}
               {item.type === "tool" && (
                 <Wrench
                   className={`h-4 w-4 ${
                     item.status === "completed"
-                      ? "text-green-600 dark:text-green-400"
+                      ? "text-phase-succeeded"
                       : item.status === "error"
-                        ? "text-red-600 dark:text-red-400"
+                        ? "text-phase-failed"
                         : item.status === "running"
-                          ? "text-blue-600 dark:text-blue-400 animate-pulse"
-                          : "text-gray-600 dark:text-gray-400"
+                          ? "text-accent animate-pulse"
+                          : "text-text-dim"
                   }`}
                 />
               )}
@@ -213,10 +213,10 @@ export function SessionTimeline({
               )}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-xs text-gray-500 dark:text-gray-500 mb-1">
+              <div className="text-caption-xs text-text-dim mb-1">
                 {getRelativeTime(item.timestamp)}
               </div>
-              <div className="text-sm text-gray-900 dark:text-gray-100 truncate">
+              <div className="text-body-sm text-text truncate">
                 {item.summary}
               </div>
             </div>

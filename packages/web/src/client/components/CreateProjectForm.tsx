@@ -206,8 +206,8 @@ export default function CreateProjectForm({
       </Link>
 
       <div>
-        <h1 className="text-xl font-semibold">{isEdit ? "Edit Project" : "New Project"}</h1>
-        <p className="text-sm text-text-muted mt-1">
+        <h1 className="text-headline-lg">{isEdit ? "Edit Project" : "New Project"}</h1>
+        <p className="text-caption-xs text-text-muted mt-1">
           {isEdit
             ? "Update reusable defaults for this project."
             : "Save reusable defaults — git URL, secrets, model — under a short name. Pick this project when creating a run to pre-fill those fields."}
