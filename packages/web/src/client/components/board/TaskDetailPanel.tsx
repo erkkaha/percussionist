@@ -54,7 +54,6 @@ const planMarkdownComponents: React.ComponentProps<typeof ReactMarkdown>["compon
     }
     return <span className="bg-surface-sunken rounded px-1 py-0.5 text-xs font-mono">{children}</span>;
   },
-<<<<<<< HEAD
   h1: ({ children }) => <h1 className="text-headline-lg font-bold mt-4 mb-1">{children}</h1>,
   h2: ({ children }) => <h2 className="text-headline-md font-semibold mt-3 mb-1">{children}</h2>,
   h3: ({ children }) => <h3 className="text-body-lg font-semibold mt-2 mb-1">{children}</h3>,
