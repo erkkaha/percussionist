@@ -2,6 +2,30 @@ import { useState, useEffect } from "react";
 import { Copy, Check } from "lucide-react";
 import { useShiki } from "../hooks/useShiki";
 
+// ────────────────────────────────────────────────────────────────────────
+// TRUST BOUNDARY — dangerouslySetInnerHTML usage in CodeBlock component
+//
+// The HTML rendered via dangerouslySetInnerHTML originates exclusively from
+// Shiki's highlight() function (via useShiki hook). Shiki is a syntax-
+// highlighting library that produces deterministic, well-formed HTML with no
+// user-controlled content embedded in the markup.
+//
+// Trust chain:
+//   CodeBlockProps.code → highlight(code, language, theme) → HTML
+//
+// The `code` prop comes from ReactMarkdown's code component rendering, which
+// receives text extracted from session messages (LLM-generated or user input).
+// While the raw text is user/LLM-controlled, it is passed through Shiki's
+// highlighter which produces safe HTML tokens — no attributes, event handlers,
+// or script tags are injected by Shiki's output.
+//
+// Fallback path: if highlight() fails, escapeHtml() is used to produce a
+// fully escaped <pre><code>...</code></pre> block with no dangerouslySetInnerHTML.
+//
+// If a different data source ever needs to be rendered as HTML here, it must pass
+// through DOMPurify or an equivalent sanitizer before dangerouslySetInnerHTML.
+// ────────────────────────────────────────────────────────────────────────
+
 interface CodeBlockProps {
   code: string;
   language?: string;
