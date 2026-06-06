@@ -18,7 +18,7 @@ export async function reconcileProject(
   console.log(`[reconcile] ${projectName} starting`);
 
   // Fetch all tasks for this project.
-  const { listTasks, getRun } = await import("@percussionist/kube");
+  const { listTasks, getRun, patchTaskStatus } = await import("@percussionist/kube");
   const tasks = await listTasks(projectName, namespace);
 
   // Filter to active tasks (not idea or done).
@@ -39,7 +39,23 @@ export async function reconcileProject(
       continue; // Skip blocked tasks.
     }
 
-    const phase = (task.status?.phase ?? "pending") as TaskPhase;
+    // Auto-heal: detect and repair tasks with missing status.phase.
+    // This is a defense-in-depth safety net — all first-party creation paths
+    // should set phase at create time, but legacy/manual/external creation
+    // can produce limbo tasks without a persisted phase.
+    if (task.status?.phase === undefined) {
+      console.log(
+        `[reconcile] ${task.metadata.name} healing: missing status.phase → pending`,
+      );
+      try {
+        await patchTaskStatus(task.metadata.name, { phase: "pending" }, namespace);
+      } catch (e) {
+        console.error(`[reconcile] ${task.metadata.name} heal failed:`, e);
+      }
+      continue; // Skip further processing; next reconcile cycle will handle normally.
+    }
+
+    const phase = task.status.phase as TaskPhase;
     const wasActive = isActivePhase(phase);
 
     try {
