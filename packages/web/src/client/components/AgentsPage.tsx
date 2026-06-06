@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAgents } from "../hooks/useAgents";
 import { useAgentsEvents } from "../hooks/useAgentsEvents";
 import { deleteAgent } from "../lib/api";
+import { Button } from "./ui/button";
 
 interface AgentListItem {
   name: string;
@@ -54,23 +55,25 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
       </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => navigate(`/agents/${encodeURIComponent(agent.name)}/edit`)}
-            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-accent/60 hover:text-text transition-colors"
           >
             Edit
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
             onClick={() => {
               if (confirm(`Delete agent "${agent.name}"?`)) {
                 del.mutate();
               }
             }}
             disabled={del.isPending}
-            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-phase-failed/50 hover:text-phase-failed transition-colors disabled:opacity-40"
           >
             {del.isPending ? "Deleting\u2026" : "Delete"}
-          </button>
+          </Button>
         </div>
       </td>
     </tr>
@@ -87,8 +90,8 @@ export default function AgentsPage({ showHeader = true }: { showHeader?: boolean
   if (error) {
     return (
       <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
-        <h2 className="text-lg font-semibold mb-1">Failed to load agents</h2>
-        <p className="text-sm">{error.message}</p>
+        <h2 className="text-headline-md mb-1">Failed to load agents</h2>
+        <p className="text-caption-xs">{error.message}</p>
       </div>
     );
   }
@@ -98,22 +101,19 @@ export default function AgentsPage({ showHeader = true }: { showHeader?: boolean
       {showHeader && (
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold">Agents</h1>
-            <p className="text-sm text-text-muted">
+            <h1 className="text-headline-lg">Agents</h1>
+            <p className="text-caption-xs text-text-muted">
               Cluster-scoped reusable agent definitions.
               {isFetching && !isLoading && (
                 <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
               )}
             </p>
-            <p className="text-xs text-text-dim mt-0.5">
+            <p className="text-caption-xs text-text-dim mt-0.5">
               Updates: {agentsSseConnected ? "live stream" : "polling fallback"}
             </p>
           </div>
-          <Link
-            to="/agents/new"
-            className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
-          >
-            + New Agent
+          <Link to="/agents/new">
+            <Button>+ New Agent</Button>
           </Link>
         </div>
       )}

@@ -139,6 +139,11 @@
     13px;
   --text-code-block--line-height: 20px;
 
+  /* ── Caption / meta text (for descriptions, timestamps, tiny labels) ── */
+  --text-caption-xs:
+    11px;
+  --text-caption-xs--line-height: 16px;
+
   /* ── Rounded ── */
   --radius-sm: 0.125rem;
   --radius: 0.25rem;

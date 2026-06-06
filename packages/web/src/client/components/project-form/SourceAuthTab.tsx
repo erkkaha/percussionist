@@ -1,14 +1,15 @@
 import { Link } from "react-router-dom";
+import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import type { ProjectFormHookReturn } from "./useProjectForm";
+import { Switch } from "../ui/switch";
 
 interface SourceAuthTabProps {
   form: Pick<ProjectFormHookReturn, "gitUrl" | "gitRef" | "gitSshSecret" | "gitGithubTokenSecret" | "gitAuthorName" | "gitAuthorEmail" | "sourceLocal" | "llmKeysSecret" | "authSecret" | "opencodeConfig" | "configJsonError"> &
     Pick<ProjectFormHookReturn, "setGitUrl" | "setGitRef" | "setGitSshSecret" | "setGitGithubTokenSecret" | "setGitAuthorName" | "setGitAuthorEmail" | "setSourceLocal" | "setLlmKeysSecret" | "setAuthSecret" | "setOpencodeConfig">;
-  inputClass: string;
-  monoInputClass: string;
 }
 
-export default function SourceAuthTab({ form, inputClass, monoInputClass }: SourceAuthTabProps) {
+export default function SourceAuthTab({ form }: SourceAuthTabProps) {
 
   return (
     <div className="space-y-5">
@@ -17,15 +18,10 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
         <legend className="px-1 text-sm font-medium text-text-muted">Git source</legend>
 
         {/* Local workspace toggle */}
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={form.sourceLocal}
-            onChange={(e) => form.setSourceLocal(e.target.checked)}
-            className="rounded border-border"
-          />
-          <span className="text-sm text-text-muted">Local workspace (no remote repository)</span>
-        </label>
+        <Switch
+          checked={form.sourceLocal}
+          onCheckedChange={(v) => form.setSourceLocal(v)}
+        />
         {form.sourceLocal && (
           <p className="text-xs text-text-dim">
             Local workspace — no remote repository will be cloned. Changes persist across runs at /data/workspace/.
@@ -36,12 +32,12 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
           <>
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-text-muted">Repository URL</label>
-              <input
+              <Input
                 type="text"
                 value={form.gitUrl}
                 onChange={(e) => form.setGitUrl(e.target.value)}
                 placeholder="git@github.com:org/repo.git"
-                className={monoInputClass}
+                className="font-mono"
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -49,22 +45,22 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
                 <label className="text-sm font-medium text-text-muted">
                   Ref <span className="text-text-dim font-normal">(branch / tag / SHA)</span>
                 </label>
-                <input
+                <Input
                   type="text"
                   value={form.gitRef}
                   onChange={(e) => form.setGitRef(e.target.value)}
                   placeholder="main"
-                  className={monoInputClass}
+                  className="font-mono"
                 />
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-text-muted">SSH Secret</label>
-                <input
+                <Input
                   type="text"
                   value={form.gitSshSecret}
                   onChange={(e) => form.setGitSshSecret(e.target.value)}
                   placeholder="git-ssh-key"
-                  className={monoInputClass}
+                  className="font-mono"
                 />
                 <p className="text-xs text-text-dim">
                   Secret name from{" "}
@@ -74,12 +70,12 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-text-muted">GitHub Token Secret</label>
-              <input
+              <Input
                 type="text"
                 value={form.gitGithubTokenSecret}
                 onChange={(e) => form.setGitGithubTokenSecret(e.target.value)}
                 placeholder="git-github-token"
-                className={monoInputClass}
+                className="font-mono"
               />
               <p className="text-xs text-text-dim">
                 Secret name from{" "}
@@ -90,22 +86,21 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-text-muted">Author name</label>
-                <input
+                <Input
                   type="text"
                   value={form.gitAuthorName}
                   onChange={(e) => form.setGitAuthorName(e.target.value)}
                   placeholder="Percussionist Agent"
-                  className={inputClass}
                 />
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-text-muted">Author email</label>
-                <input
+                <Input
                   type="email"
                   value={form.gitAuthorEmail}
                   onChange={(e) => form.setGitAuthorEmail(e.target.value)}
                   placeholder="agent@example.com"
-                  className={monoInputClass}
+                  className="font-mono"
                 />
               </div>
             </div>
@@ -119,22 +114,22 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">LLM Keys Secret</label>
-            <input
+            <Input
               type="text"
               value={form.llmKeysSecret}
               onChange={(e) => form.setLlmKeysSecret(e.target.value)}
               placeholder="llm-keys"
-              className={monoInputClass}
+              className="font-mono"
             />
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Auth Secret</label>
-            <input
+            <Input
               type="text"
               value={form.authSecret}
               onChange={(e) => form.setAuthSecret(e.target.value)}
               placeholder="opencode-auth"
-              className={monoInputClass}
+              className="font-mono"
             />
           </div>
         </div>
@@ -147,13 +142,13 @@ export default function SourceAuthTab({ form, inputClass, monoInputClass }: Sour
           Configure OpenCode at the project level. To set cluster-wide OpenCode config, use{" "}
           <Link to="/settings" className="underline hover:text-text">Settings</Link>.
         </p>
-        <textarea
+        <Textarea
           value={form.opencodeConfig ?? ""}
           onChange={(e) => form.setOpencodeConfig(e.target.value)}
           rows={10}
           spellCheck={false}
           placeholder={'{\n  "providers": [...],\n  "mcp": {...}\n}'}
-          className={monoInputClass + " resize-y text-xs leading-5 w-full"}
+          className="font-mono text-xs leading-5"
         />
         {form.configJsonError && (
           <p className="text-xs text-phase-failed mt-1">Invalid JSON: {form.configJsonError}</p>

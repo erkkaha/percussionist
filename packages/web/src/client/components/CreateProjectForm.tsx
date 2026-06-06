@@ -108,7 +108,7 @@ export default function CreateProjectForm({
     mutation.mutate(req);
   }
 
-  // Shared input classes
+  // Shared input classes — kept for backward compat with any remaining inline patterns
   const inputClass =
     "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none";
   const monoInputClass = inputClass + " font-mono";
@@ -206,8 +206,8 @@ export default function CreateProjectForm({
       </Link>
 
       <div>
-        <h1 className="text-xl font-semibold">{isEdit ? "Edit Project" : "New Project"}</h1>
-        <p className="text-sm text-text-muted mt-1">
+        <h1 className="text-headline-lg">{isEdit ? "Edit Project" : "New Project"}</h1>
+        <p className="text-caption-xs text-text-muted mt-1">
           {isEdit
             ? "Update reusable defaults for this project."
             : "Save reusable defaults — git URL, secrets, model — under a short name. Pick this project when creating a run to pre-fill those fields."}
@@ -227,33 +227,33 @@ export default function CreateProjectForm({
 
           {/* General tab */}
           <TabsContent value="general" className="space-y-5">
-            <GeneralTab form={generalProps.form} isEdit={generalProps.isEdit} inputClass={inputClass} monoInputClass={monoInputClass} />
+            <GeneralTab form={generalProps.form} isEdit={generalProps.isEdit} />
           </TabsContent>
 
           {/* Source & Auth tab */}
           <TabsContent value="source-auth" className="space-y-5">
-            <SourceAuthTab form={sourceAuthProps.form} inputClass={inputClass} monoInputClass={monoInputClass} />
+            <SourceAuthTab form={sourceAuthProps.form} />
           </TabsContent>
 
           {/* Execution tab */}
           <TabsContent value="execution" className="space-y-5">
-            <ExecutionTab form={executionProps.form} inputClass={inputClass} monoInputClass={monoInputClass} />
+            <ExecutionTab form={executionProps.form} />
           </TabsContent>
 
           {/* Workspace & Services tab */}
           <TabsContent value="workspace-services" className="space-y-5">
-            <WorkspaceServicesTab form={workspaceServicesProps.form} inputClass={inputClass} monoInputClass={monoInputClass} />
+            <WorkspaceServicesTab form={workspaceServicesProps.form} />
           </TabsContent>
 
           {/* Advanced tab */}
           <TabsContent value="advanced" className="space-y-5">
-            <AdvancedTab form={advancedProps.form} inputClass={inputClass} monoInputClass={monoInputClass} />
+            <AdvancedTab form={advancedProps.form} />
           </TabsContent>
         </Tabs>
 
         {/* Error banner (visible regardless of active tab) */}
         {mutation.error && (
-          <div className="mt-4 rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
+          <div className="mt-4 rounded-md border border-error/30 bg-error-container px-4 py-3 text-sm text-on-error-container">
             {mutation.error.message}
           </div>
         )}

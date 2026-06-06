@@ -88,7 +88,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
           <DrumLogo playing={!!playing} />
           <div className="group-data-[collapsible=icon]:hidden">
             <p className="text-sm font-semibold tracking-tight text-sidebar-foreground">percussionist</p>
-            <p className="text-[10px] text-sidebar-foreground/60 mt-0.5">agent orchestration</p>
+            <p className="text-caption-xs text-sidebar-foreground/60 mt-0.5">agent orchestration</p>
           </div>
         </div>
       </SidebarHeader>
@@ -171,7 +171,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                   : "bg-phase-failed"
             }`}
           />
-          <span className="text-[10px] text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
+          <span className="text-caption-xs text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
             v{__APP_VERSION__}
           </span>
         </div>

@@ -7,6 +7,7 @@ import TokenCounter from "./TokenCounter";
 import OpenOpencodeButton from "./OpenOpencodeButton";
 import type { RunPhase, Run } from "../lib/types";
 import { TERMINAL_PHASES } from "../lib/types";
+import { Button } from "./ui/button";
 const ALL_PHASES: RunPhase[] = [
   "Pending",
   "Initializing",
@@ -84,8 +85,8 @@ export default function RunList() {
   if (error) {
     return (
       <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
-        <h2 className="text-lg font-semibold mb-1">Failed to load runs</h2>
-        <p className="text-sm">{error.message}</p>
+        <h2 className="text-headline-md mb-1">Failed to load runs</h2>
+        <p className="text-caption-xs">{error.message}</p>
       </div>
     );
   }
@@ -95,22 +96,21 @@ export default function RunList() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Runs</h1>
-          <p className="text-sm text-text-muted">
+          <h1 className="text-headline-lg">Runs</h1>
+          <p className="text-caption-xs text-text-muted">
             {runs ? `${runs.length} total` : "Loading..."}
             {isFetching && !isLoading && (
               <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
             )}
           </p>
-          <p className="text-xs text-text-dim mt-0.5">
+          <p className="text-caption-xs text-text-dim mt-0.5">
             Updates: {runsSseConnected ? "live stream" : "polling fallback"}
           </p>
         </div>
         <Link
           to="/runs/new"
-          className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
         >
-          + New Run
+          <Button>+ New Run</Button>
         </Link>
       </div>
 
@@ -230,9 +230,8 @@ function RunRow({ run }: { run: Run }) {
           <OpenOpencodeButton run={run} compact />
           <Link
             to={`/runs/new?copyFrom=${encodeURIComponent(run.metadata.name)}`}
-            className="rounded border border-border-muted px-2 py-1 text-xs font-medium text-text-dim hover:border-border hover:text-text-muted transition-colors"
           >
-            Copy
+            <Button variant="outline" size="sm">Copy</Button>
           </Link>
         </div>
       </td>
@@ -349,8 +348,7 @@ function AttachButton({ name, namespace }: { name: string; namespace?: string })
       }`}
     >
       {copied ? "Copied!" : "Attach"}
-    </button>
-  );
+    </button>  );
 }
 
 function truncate(s: string, max: number): string {
