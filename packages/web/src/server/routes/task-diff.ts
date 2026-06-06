@@ -232,7 +232,7 @@ router.get("/:project/tasks/:taskName/diff", async (c) => {
       "  exit 0",
       "fi",
       "git -C \"$REPO\" diff --no-color --find-renames --binary \"$BASE_COMMIT...$HEAD_COMMIT\" -- || git -C \"$REPO\" diff --no-color --find-renames --binary \"$BASE_COMMIT..$HEAD_COMMIT\" --",
-    ].join("; ");
+    ].join("\n");
 
     const result = await execInWorkspaceViaManager(projectName, cmd, 120_000);
     const output = result.stdout.trim();
