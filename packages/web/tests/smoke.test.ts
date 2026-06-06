@@ -20,6 +20,10 @@ const TEST_DATA_DIR = join("/tmp", `percussionist-smoke-${Date.now()}`);
 
 process.env.DATA_DIR = TEST_DATA_DIR;
 
+// Enable dev-mode auth bypass for local integration tests.
+// Security regression tests are in auth.test.ts which uses real tokens.
+process.env.AUTH_DISABLED = "1";
+
 // ---------------------------------------------------------------------------
 
 const app = createApp();

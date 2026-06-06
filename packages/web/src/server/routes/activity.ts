@@ -1,19 +1,15 @@
 // routes/activity.ts — cross-project activity feed.
-//
-// Mounted at /api/activity.
-//
-// GET /api/activity?limit=200&project=<name>&before=<id>
 
 import { Hono } from "hono";
 import { eq, lt, and, desc } from "drizzle-orm";
 import { getDb, taskEvents } from "../db.js";
+import { auth } from "../auth.js";
 
 const activity = new Hono();
 
 // ---------------------------------------------------------------------------
 // GET /api/activity
-
-activity.get("/", (c) => {
+activity.get("/", auth(), (c) => {
   const limit = Math.min(parseInt(c.req.query("limit") ?? "200", 10), 500);
   const project = c.req.query("project");
   const before = c.req.query("before");

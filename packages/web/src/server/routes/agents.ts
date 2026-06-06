@@ -12,11 +12,12 @@ import {
   API_GROUP_VERSION,
   KIND_CLUSTER_AGENT,
 } from "@percussionist/api";
+import { auth, adminAuth } from "../auth.js";
 
 const agents = new Hono();
 
 // GET /api/agents — list all cluster-scoped agents.
-agents.get("/", async (c) => {
+agents.get("/", auth(), async (c) => {
   try {
     const items = await listClusterAgents();
     return c.json({ agents: items.map((a) => ({ name: a.metadata.name!, content: a.spec.content, model: a.spec.model })) });
@@ -27,7 +28,7 @@ agents.get("/", async (c) => {
 });
 
 // GET /api/agents/events — SSE stream for agent list changes.
-agents.get("/events", async (c) => {
+agents.get("/events", auth(), async (c) => {
   return createPollingSseResponse({
     signal: c.req.raw.signal,
     getSignature: async () => {
@@ -47,7 +48,7 @@ agents.get("/events", async (c) => {
 });
 
 // GET /api/agents/:name — get a single agent.
-agents.get("/:name", async (c) => {
+agents.get("/:name", auth(), async (c) => {
   const name = c.req.param("name");
   try {
     const agent = await getClusterAgent(name);
@@ -60,7 +61,7 @@ agents.get("/:name", async (c) => {
 });
 
 // POST /api/agents — create a new ClusterAgent.
-agents.post("/", async (c) => {
+agents.post("/", adminAuth(), async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -93,7 +94,7 @@ agents.post("/", async (c) => {
 });
 
 // PUT /api/agents/:name — update an existing agent.
-agents.put("/:name", async (c) => {
+agents.put("/:name", adminAuth(), async (c) => {
   const name = c.req.param("name");
   let body: unknown;
   try {
@@ -118,7 +119,7 @@ agents.put("/:name", async (c) => {
 });
 
 // DELETE /api/agents/:name — delete an agent.
-agents.delete("/:name", async (c) => {
+agents.delete("/:name", adminAuth(), async (c) => {
   const name = c.req.param("name");
   try {
     await deleteClusterAgent(name);
