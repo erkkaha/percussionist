@@ -628,4 +628,123 @@ stats.get("/metrics-timeseries", async (c) => {
   return c.json({ dataPoints, runWindows, nodeBuckets: Object.fromEntries(nodeBuckets) });
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/stats/trends?days=30 — daily aggregated trend data for charts.
+// Returns: { trendPoints: TrendPoint[], modelTrendPoints: ModelTrendPoint[] }
+
+interface TrendPoint {
+  date: string;
+  runs: number;
+  succeeded: number;
+  failed: number;
+  successRate: number;
+  avgDurationMs: number | null;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+interface ModelTrendPoint {
+  date: string;
+  [key: string]: string | number;
+}
+
+stats.get("/trends", (c) => {
+  const daysParam = c.req.query("days") ?? "30";
+  const days = parseInt(daysParam, 10);
+
+  const db = getDb();
+  const cutoff =
+    days > 0
+      ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+
+  const whereClause = cutoff ? gte(runs.startedAt, cutoff) : undefined;
+
+  // Daily run aggregates
+  const dailyRows = db
+    .select({
+      date: sql<string>`DATE(${runs.startedAt})`.as("date"),
+      runs: sql<number>`COUNT(*)`.as("runs"),
+      succeeded: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Succeeded' THEN 1 ELSE 0 END)`.as("succeeded"),
+      failed: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Failed' THEN 1 ELSE 0 END)`.as("failed"),
+      avgDurationMs: sql<number>`AVG(CASE WHEN ${runs.startedAt} IS NOT NULL AND ${runs.completedAt} IS NOT NULL
+        THEN (julianday(${runs.completedAt}) - julianday(${runs.startedAt})) * 86400000 ELSE NULL END)`.as("avg_duration_ms"),
+      tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as("tokens_in"),
+      tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as("tokens_out"),
+    })
+    .from(runs)
+    .where(whereClause)
+    .groupBy(sql`DATE(${runs.startedAt})`)
+    .orderBy(asc(sql`DATE(${runs.startedAt})`))
+    .all() as Array<{
+      date: string;
+      runs: number;
+      succeeded: number;
+      failed: number;
+      avgDurationMs: number | null;
+      tokensIn: number;
+      tokensOut: number;
+    }>;
+
+  const trendPoints: TrendPoint[] = dailyRows.map((r) => ({
+    date: r.date,
+    runs: r.runs,
+    succeeded: r.succeeded,
+    failed: r.failed,
+    successRate: r.runs > 0 ? Math.round((r.succeeded / r.runs) * 100) : 0,
+    avgDurationMs: r.avgDurationMs != null ? Math.round(r.avgDurationMs) : null,
+    tokensIn: r.tokensIn,
+    tokensOut: r.tokensOut,
+  }));
+
+  // Tokens per model per day
+  const modelRows = db
+    .select({
+      date: sql<string>`DATE(${runs.startedAt})`.as("date"),
+      model: runs.model,
+      tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as("tokens_in"),
+      tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as("tokens_out"),
+    })
+    .from(runs)
+    .where(and(
+      whereClause,
+      sql`${runs.model} IS NOT NULL`,
+    ))
+    .groupBy(sql`DATE(${runs.startedAt})`, runs.model)
+    .orderBy(asc(sql`DATE(${runs.startedAt})`))
+    .all() as Array<{
+      date: string;
+      model: string | null;
+      tokensIn: number;
+      tokensOut: number;
+    }>;
+
+  // Pivot into per-date, per-model total tokens (in + out)
+  const pivotMap = new Map<string, Map<string, number>>();
+  for (const r of modelRows) {
+    if (!r.model) continue;
+    const total = r.tokensIn + r.tokensOut;
+    const dateMap = pivotMap.get(r.date) ?? new Map();
+    dateMap.set(r.model, (dateMap.get(r.model) ?? 0) + total);
+    pivotMap.set(r.date, dateMap);
+  }
+
+  const allModels = new Set<string>();
+  for (const dateMap of pivotMap.values()) {
+    for (const model of dateMap.keys()) allModels.add(model);
+  }
+
+  const sortedDates = [...pivotMap.keys()].sort();
+  const modelTrendPoints: ModelTrendPoint[] = sortedDates.map((date) => {
+    const entry: ModelTrendPoint = { date };
+    const dateMap = pivotMap.get(date)!;
+    for (const model of allModels) {
+      entry[model] = dateMap.get(model) ?? 0;
+    }
+    return entry;
+  });
+
+  return c.json({ trendPoints, modelTrendPoints });
+});
+
 export default stats;

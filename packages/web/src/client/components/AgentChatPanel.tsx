@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Send, Mic, MicOff, Volume2, VolumeX, X } from "lucide-react";
 import { DrumLogo } from "./app-sidebar";
 import type { Task } from "@/lib/types";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -64,6 +65,7 @@ interface AgentChatPanelProps {
 }
 
 export default function AgentChatPanel({ open, onOpenChange, onChatReady }: AgentChatPanelProps) {
+  const isMobile = useIsMobile();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [input, setInput] = useState("");
@@ -300,7 +302,7 @@ function sanitizeForSpeech(text: string): string {
       )}
 
       {open && (
-        <div className="w-96 flex-shrink-0 border-l border-border flex flex-col bg-background max-h-screen sticky top-0">
+        <div className={`${isMobile ? "fixed inset-0 z-[60] flex flex-col bg-background" : "w-96 flex-shrink-0 border-l border-border flex flex-col bg-background max-h-screen sticky top-0"}`}>
           {/* Header */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-surface-raised">
             <div className={`w-2 h-2 rounded-full ${available === null ? "bg-phase-pending" : available ? "bg-phase-succeeded" : "bg-phase-failed"}`} />
@@ -333,7 +335,7 @@ function sanitizeForSpeech(text: string): string {
                 >
                   <div>{msg.text}</div>
                   {msg.created && (
-                    <div className="text-[10px] text-text-dim/60 mt-1 leading-none">{timeAgo(msg.created)}</div>
+                    <div className="text-caption-xs text-text-dim/60 mt-1 leading-none">{timeAgo(msg.created)}</div>
                   )}
                 </div>
               </div>

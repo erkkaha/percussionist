@@ -4,6 +4,7 @@ import { useProjects } from "../hooks/useProjects";
 import { useProjectsEvents } from "../hooks/useProjectsEvents";
 import { deleteProject } from "../lib/api";
 import type { Project } from "../lib/types";
+import { Button } from "./ui/button";
 
 function age(iso: string | undefined): string {
   if (!iso) return "-";
@@ -53,29 +54,30 @@ function ProjectRow({ project }: { project: Project }) {
       </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => navigate(`/projects/${encodeURIComponent(project.metadata.name)}/edit`)}
-            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-accent/60 hover:text-text transition-colors"
           >
             Edit
-          </button>
+          </Button>
           <Link
             to={`/projects/${encodeURIComponent(project.metadata.name)}/board`}
-            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-accent/60 hover:text-text transition-colors"
           >
-            Board
+            <Button variant="outline" size="sm">Board</Button>
           </Link>
-          <button
+          <Button
+            variant="destructive"
+            size="sm"
             onClick={() => {
               if (confirm(`Delete project "${project.metadata.name}"?`)) {
                 del.mutate();
               }
             }}
             disabled={del.isPending}
-            className="rounded border border-border-muted px-2 py-1 text-xs text-text-dim hover:border-phase-failed/50 hover:text-phase-failed transition-colors disabled:opacity-40"
           >
             {del.isPending ? "Deleting…" : "Delete"}
-          </button>
+          </Button>
         </div>
       </td>
     </tr>
@@ -92,8 +94,8 @@ export default function ProjectsPage({ showHeader = true }: { showHeader?: boole
   if (error) {
     return (
       <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
-        <h2 className="text-lg font-semibold mb-1">Failed to load projects</h2>
-        <p className="text-sm">{error.message}</p>
+        <h2 className="text-headline-md mb-1">Failed to load projects</h2>
+        <p className="text-caption-xs">{error.message}</p>
       </div>
     );
   }
@@ -103,22 +105,19 @@ export default function ProjectsPage({ showHeader = true }: { showHeader?: boole
       {showHeader && (
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold">Projects</h1>
-            <p className="text-sm text-text-muted">
+            <h1 className="text-headline-lg">Projects</h1>
+            <p className="text-caption-xs text-text-muted">
               Reusable templates for run defaults (git, secrets, model).
               {isFetching && !isLoading && (
                 <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
               )}
             </p>
-            <p className="text-xs text-text-dim mt-0.5">
+            <p className="text-caption-xs text-text-dim mt-0.5">
               Updates: {projectsSseConnected ? "live stream" : "polling fallback"}
             </p>
           </div>
-          <Link
-            to="/projects/new"
-            className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
-          >
-            + New Project
+          <Link to="/projects/new">
+            <Button>+ New Project</Button>
           </Link>
         </div>
       )}

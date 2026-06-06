@@ -2,6 +2,7 @@
 
 import { Link } from "react-router-dom";
 import type { ManagerMetrics } from "../../lib/types";
+import { Button } from "../ui/button";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -55,8 +56,8 @@ export function BoardHeader({
           <span>/</span>
           <span className="text-text shrink-0">Board</span>
         </div>
-        <h1 className="text-xl font-semibold mt-1 truncate">{projectName}</h1>
-        <p className="text-sm text-text-dim mt-0.5 flex flex-wrap items-center gap-x-1">
+        <h1 className="text-headline-lg mt-1 truncate">{projectName}</h1>
+        <p className="text-caption-xs text-text-dim mt-0.5 flex flex-wrap items-center gap-x-1">
           <span>Team:</span>
           {roster.length > 0 ? (
             <span className="truncate">{roster.join(", ")}</span>
@@ -88,12 +89,13 @@ export function BoardHeader({
           </div>
         )}
       </div>
-      <button
+      <Button
         onClick={onAddTask}
-        className="shrink-0 rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
+        variant="secondary"
+        size="sm"
       >
         {showAddTask ? "Cancel" : "+ Add Task"}
-      </button>
+      </Button>
     </div>
   );
 }

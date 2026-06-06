@@ -179,9 +179,9 @@ export default function ModelSelector({
                         {provider.name ?? provider.id}
                       </span>
                       {isConnected ? (
-                        <span className="text-[10px] text-phase-running font-medium">connected</span>
+                        <span className="text-caption-xs text-phase-running font-medium">connected</span>
                       ) : (
-                        <span className="text-[10px] text-text-dim">not connected</span>
+                        <span className="text-caption-xs text-text-dim">not connected</span>
                       )}
                     </div>
                     {/* Models */}
@@ -220,7 +220,7 @@ export default function ModelSelector({
 
           {/* Footer hint */}
           <div className="px-3 py-1.5 border-t border-border">
-            <p className="text-[10px] text-text-dim">
+            <p className="text-caption-xs text-text-dim">
               Connected providers shown first. You can also type any model ID directly.
             </p>
           </div>

@@ -49,6 +49,10 @@ function splitDiffByFile(diffText: string): DiffFile[] {
   return files;
 }
 
+function firstOutputLine(output: string): string | undefined {
+  return output.split("\n").map((line) => line.trim()).find(Boolean);
+}
+
 const router = new Hono();
 const MANAGER_SERVICE = `http://percussionist-manager.${NAMESPACE}.svc.cluster.local`;
 const MCP_URL = `${MANAGER_SERVICE}:4097/mcp`;
@@ -184,20 +188,32 @@ router.get("/:project/tasks/:taskName/diff", async (c) => {
       );
     }
 
+    const resolveRefScript = [
+      'resolve_ref() { _repo="$1"; _ref="$2"; for _try in "$_ref" "refs/heads/$_ref" "refs/remotes/origin/$_ref" "origin/$_ref"; do if git -C "$_repo" rev-parse --verify "$_try^{commit}" >/dev/null 2>&1; then git -C "$_repo" rev-parse --verify "$_try^{commit}"; return 0; fi; done; return 1; }',
+    ];
+
     const cmd = [
       "apk add --no-cache git >/dev/null 2>&1",
+      ...resolveRefScript,
       `REPO=${quoteSh(repoPath)}`,
       `BASE=${quoteSh(baseRef)}`,
       `HEAD=${quoteSh(headRef)}`,
       ...(worktreePath ? [`WORKTREE=${quoteSh(worktreePath)}`] : []),
-      // If worktree exists, resolve its actual HEAD for the diff. This captures
-      // commits the agent made locally that may not have been pushed to the remote
-      // (the mirror's refs/heads/* can be stale for active worktrees).
       ...(worktreePath
         ? [
           'if [ -d "$WORKTREE" ] && git -C "$WORKTREE" rev-parse --verify HEAD >/dev/null 2>&1; then',
-          '  HEAD_HASH=$(git -C "$WORKTREE" rev-parse HEAD)',
-          '  HEAD="$HEAD_HASH"',
+          '  BASE_COMMIT=$(resolve_ref "$WORKTREE" "$BASE")',
+          '  if [ -z "$BASE_COMMIT" ]; then',
+          '    printf "__PERCUSSIONIST_ERROR__ base_missing %s\\n" "$BASE"',
+          '    exit 0',
+          '  fi',
+          '  HEAD_COMMIT=$(git -C "$WORKTREE" rev-parse --verify HEAD)',
+          '  git -C "$WORKTREE" diff --no-color --find-renames --binary "$BASE_COMMIT...$HEAD_COMMIT" -- || git -C "$WORKTREE" diff --no-color --find-renames --binary "$BASE_COMMIT..$HEAD_COMMIT" --',
+          '  UNCOMMITTED=$(git -C "$WORKTREE" diff --no-color --find-renames --binary HEAD -- 2>/dev/null)',
+          '  if [ -n "$UNCOMMITTED" ]; then',
+          '    printf "\\n%s\\n" "$UNCOMMITTED"',
+          '  fi',
+          '  exit 0',
           'fi',
         ]
         : []),
@@ -205,27 +221,17 @@ router.get("/:project/tasks/:taskName/diff", async (c) => {
       "  printf '__PERCUSSIONIST_ERROR__ repo_not_found %s\\n' \"$REPO\"",
       "  exit 0",
       "fi",
-      "if ! git -C \"$REPO\" rev-parse --verify \"$BASE^{commit}\" >/dev/null 2>&1; then",
+      "BASE_COMMIT=$(resolve_ref \"$REPO\" \"$BASE\")",
+      "if [ -z \"$BASE_COMMIT\" ]; then",
       "  printf '__PERCUSSIONIST_ERROR__ base_missing %s\\n' \"$BASE\"",
       "  exit 0",
       "fi",
-      "if ! git -C \"$REPO\" rev-parse --verify \"$HEAD^{commit}\" >/dev/null 2>&1; then",
+      "HEAD_COMMIT=$(resolve_ref \"$REPO\" \"$HEAD\")",
+      "if [ -z \"$HEAD_COMMIT\" ]; then",
       "  printf '__PERCUSSIONIST_ERROR__ head_missing %s\\n' \"$HEAD\"",
       "  exit 0",
       "fi",
-      // Show committed changes between base and head
-      "git -C \"$REPO\" diff --no-color --find-renames --binary \"$BASE...$HEAD\" -- || git -C \"$REPO\" diff --no-color --find-renames --binary \"$BASE..$HEAD\" --",
-      // Also show uncommitted changes when diffing against a worktree
-      ...(worktreePath
-        ? [
-          'if [ -d "$WORKTREE" ]; then',
-          '  UNCOMMITTED=$(git -C "$WORKTREE" diff --no-color --find-renames --binary HEAD -- 2>/dev/null)',
-          '  if [ -n "$UNCOMMITTED" ]; then',
-          '    printf "\\n%s\\n" "$UNCOMMITTED"',
-          '  fi',
-          'fi',
-        ]
-        : []),
+      "git -C \"$REPO\" diff --no-color --find-renames --binary \"$BASE_COMMIT...$HEAD_COMMIT\" -- || git -C \"$REPO\" diff --no-color --find-renames --binary \"$BASE_COMMIT..$HEAD_COMMIT\" --",
     ].join("; ");
 
     const result = await execInWorkspaceViaManager(projectName, cmd, 120_000);
@@ -248,6 +254,22 @@ router.get("/:project/tasks/:taskName/diff", async (c) => {
       );
     }
 
+    if (result.exitCode !== null && result.exitCode !== 0) {
+      return c.json(
+        {
+          project: projectName,
+          task: taskName,
+          defaultRef,
+          baseRef,
+          headRef,
+          files: [],
+          empty: true,
+          reason: firstOutputLine(output) ?? `git diff exited with code ${result.exitCode}`,
+        },
+        500,
+      );
+    }
+
     if (!output) {
       return c.json({
         project: projectName,
@@ -262,6 +284,19 @@ router.get("/:project/tasks/:taskName/diff", async (c) => {
     }
 
     const files = splitDiffByFile(output);
+    if (files.length === 0) {
+      return c.json({
+        project: projectName,
+        task: taskName,
+        defaultRef,
+        baseRef,
+        headRef,
+        files: [],
+        empty: true,
+        reason: firstOutputLine(output) ?? "Diff command produced no file sections",
+      });
+    }
+
     return c.json({
       project: projectName,
       task: taskName,

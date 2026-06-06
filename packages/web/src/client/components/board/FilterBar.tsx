@@ -1,6 +1,7 @@
 // FilterBar.tsx — column filter tabs, search, type/priority filter chips.
 
 import { Search, X } from "lucide-react";
+import { Button } from "../ui/button";
 
 const ALL_COLUMNS = ["ideas", "backlog", "blocked", "in-progress", "review", "done"] as const;
 export type ColumnKey = (typeof ALL_COLUMNS)[number];
@@ -27,7 +28,9 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
     <div className="space-y-2 shrink-0">
       {/* Column tabs — scrollable row */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none flex-wrap">
-        <button
+        <Button
+          variant={filters.column === "all" ? "secondary" : "ghost"}
+          size="sm"
           onClick={() => onChange({ ...filters, column: "all" })}
           className={`${pillBase} ${filters.column === "all" ? pillActive : pillInactive}`}
         >
@@ -35,10 +38,12 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
           <span className="ml-1 text-text-dim">
             {Object.values(columnCounts).reduce((a, b) => a + b, 0)}
           </span>
-        </button>
+        </Button>
         {ALL_COLUMNS.map((col) => (
-          <button
+          <Button
             key={col}
+            variant={filters.column === col ? "secondary" : "ghost"}
+            size="sm"
             onClick={() => onChange({ ...filters, column: col })}
             className={`${pillBase} ${filters.column === col ? pillActive : pillInactive}`}
           >
@@ -46,7 +51,7 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
             {columnCounts[col] != null && columnCounts[col]! > 0 && (
               <span className="ml-1 text-text-dim">{columnCounts[col]}</span>
             )}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -74,26 +79,30 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
         {/* Type filter */}
         <div className="flex items-center gap-1.5">
           {(["all", "PLAN", "BUILD"] as const).map((t) => (
-            <button
+            <Button
               key={t}
+              variant={filters.type === t ? "secondary" : "ghost"}
+              size="sm"
               onClick={() => onChange({ ...filters, type: t })}
               className={`${pillBase} ${filters.type === t ? pillActive : pillInactive}`}
             >
               {t === "all" ? "Any type" : t}
-            </button>
+            </Button>
           ))}
         </div>
 
         {/* Priority filter */}
         <div className="flex items-center gap-1.5">
           {(["all", "high", "medium", "low"] as const).map((p) => (
-            <button
+            <Button
               key={p}
+              variant={filters.priority === p ? "secondary" : "ghost"}
+              size="sm"
               onClick={() => onChange({ ...filters, priority: p })}
               className={`${pillBase} ${filters.priority === p ? pillActive : pillInactive}`}
             >
               {p === "all" ? "Any priority" : p}
-            </button>
+            </Button>
           ))}
         </div>
       </div>

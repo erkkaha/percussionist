@@ -7,6 +7,7 @@ const ACTIVE_PHASES: readonly TaskPhase[] = [
   "scheduled",
   "initializing",
   "running",
+  "reviewing",
   "waiting-for-input",
   "awaiting-merge",
   "generating-builds",

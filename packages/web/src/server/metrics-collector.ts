@@ -1,10 +1,11 @@
 // Metrics snapshot collector.
 //
 // Polls the metrics-server API every 30s and persists snapshots to SQLite
-// for time-series queries. Automatically disables itself if the metrics-server
-// is not installed (returns 503 from the metrics endpoint).
+// for time-series queries. Uses host-level memory from kubelet /stats/summary
+// and total VM capacity from the core API. Automatically disables itself if
+// the metrics-server is not installed.
 
-import { listNodeMetrics, listNodeCapacities } from "./kube.js";
+import { listNodeMetrics, listNodeCapacities, listNodeHostStats } from "./kube.js";
 import { getDb, metricSnapshots } from "./db.js";
 import { lt } from "drizzle-orm";
 
@@ -14,7 +15,6 @@ const TTL_DAYS = 7;
 let _interval: ReturnType<typeof setInterval> | null = null;
 
 export async function startMetricsCollector(): Promise<void> {
-  // Probe once to check if metrics-server is available.
   try {
     await listNodeMetrics();
   } catch {
@@ -23,7 +23,7 @@ export async function startMetricsCollector(): Promise<void> {
   }
 
   console.log("[metrics-collector] starting (poll every 30s)");
-  void poll(); // run once immediately
+  void poll();
   _interval = setInterval(poll, POLL_INTERVAL_MS);
 }
 
@@ -42,17 +42,28 @@ async function poll(): Promise<void> {
     ]);
     const capMap = new Map(capacities.map((c) => [c.name, c]));
 
+    // Fetch host-level memory from kubelet for each node.
+    const hostStats = await Promise.all(
+      metrics.map((m) => listNodeHostStats(m.name).catch(() => null)),
+    );
+    const hostMap = new Map<string, NonNullable<typeof hostStats[0]>>();
+    for (const hs of hostStats) {
+      if (hs) hostMap.set(hs.name, hs);
+    }
+
     const db = getDb();
     const now = new Date().toISOString();
 
     const rows = metrics.map((m) => {
       const cap = capMap.get(m.name);
+      const hs = hostMap.get(m.name);
       return {
         node: m.name,
         cpuUsageMillicores: parseCpu(m.usage.cpu),
-        memoryUsageBytes: parseMemory(m.usage.memory),
-        cpuCapacityMillicores: cap ? parseCpu(cap.cpu) : 0,
-        memoryCapacityBytes: cap ? parseMemory(cap.memory) : 0,
+        // Use host-level memory when available, fall back to cgroup.
+        memoryUsageBytes: hs ? hs.hostMemoryBytes : parseMemory(m.usage.memory),
+        cpuCapacityMillicores: cap ? parseCpu(cap.capacityCpu) : 0,
+        memoryCapacityBytes: cap ? parseMemory(cap.capacityMemory) : 0,
         recordedAt: now,
       };
     });
@@ -61,7 +72,6 @@ async function poll(): Promise<void> {
       db.insert(metricSnapshots).values(rows).run();
     }
 
-    // TTL: delete rows older than 7 days.
     const cutoff = new Date(Date.now() - TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
     db.delete(metricSnapshots).where(lt(metricSnapshots.recordedAt, cutoff)).run();
   } catch (e) {

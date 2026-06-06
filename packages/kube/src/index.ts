@@ -1082,6 +1082,22 @@ export interface NodeCapacity {
   memory: string;
 }
 
+export interface NodeCapacityTotal {
+  name: string;
+  allocatableCpu: string;
+  allocatableMemory: string;
+  capacityCpu: string;
+  capacityMemory: string;
+}
+
+export interface NodeHostStats {
+  name: string;
+  /** Host-level memory usage in bytes (node.memory.usageBytes from kubelet). */
+  hostMemoryBytes: number;
+  /** Host-level CPU usage in nanocores (node.cpu.usageNanoCores from kubelet). */
+  hostCpuNanoCores: number;
+}
+
 export interface PodMetric {
   name: string;
   namespace: string;
@@ -1090,8 +1106,48 @@ export interface PodMetric {
   containers: { name: string; usage: { cpu: string; memory: string } }[];
 }
 
-/** Fetch node capacity (allocatable CPU/memory) from the core API. */
-export async function listNodeCapacities(): Promise<NodeCapacity[]> {
+const kubeletSummaryCache = new Map<string, { data: NodeHostStats; ts: number }>();
+const KUBELET_CACHE_TTL = 5_000;
+
+/** Fetch host-level memory/CPU from kubelet's /stats/summary (proxied via API server). */
+export async function listNodeHostStats(nodeName: string): Promise<NodeHostStats> {
+  const cached = kubeletSummaryCache.get(nodeName);
+  if (cached && Date.now() - cached.ts < KUBELET_CACHE_TTL) return cached.data;
+
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error("No service account token available");
+
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const url = `https://${host}:${port}/api/v1/nodes/${encodeURIComponent(nodeName)}/proxy/stats/summary`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`kubelet summary ${res.status}: ${await res.text().catch(() => "")}`);
+
+  type SummaryResponse = {
+    node: {
+      cpu: { usageNanoCores: number };
+      memory: { usageBytes: number; availableBytes: number; workingSetBytes: number };
+    };
+  };
+  const body = (await res.json()) as SummaryResponse;
+  const result: NodeHostStats = {
+    name: nodeName,
+    hostMemoryBytes: body.node.memory.usageBytes,
+    hostCpuNanoCores: body.node.cpu.usageNanoCores,
+  };
+  kubeletSummaryCache.set(nodeName, { data: result, ts: Date.now() });
+  return result;
+}
+
+/** Fetch node capacity (allocatable + total capacity CPU/memory) from the core API. */
+export async function listNodeCapacities(): Promise<NodeCapacityTotal[]> {
   const token = readServiceAccountToken() ?? readKubeconfigToken();
   if (!token) throw new Error("No service account token available");
 
@@ -1107,12 +1163,14 @@ export async function listNodeCapacities(): Promise<NodeCapacity[]> {
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(`node API ${res.status}: ${await res.text().catch(() => "")}`);
-  type NodeItem = { metadata: { name: string }; status: { allocatable: { cpu: string; memory: string } } };
+  type NodeItem = { metadata: { name: string }; status: { allocatable: { cpu: string; memory: string }; capacity: { cpu: string; memory: string } } };
   const body = (await res.json()) as { items: NodeItem[] };
   return (body.items ?? []).map((item) => ({
     name: item.metadata.name,
-    cpu: item.status.allocatable.cpu,
-    memory: item.status.allocatable.memory,
+    allocatableCpu: item.status.allocatable.cpu,
+    allocatableMemory: item.status.allocatable.memory,
+    capacityCpu: item.status.capacity.cpu,
+    capacityMemory: item.status.capacity.memory,
   }));
 }
 

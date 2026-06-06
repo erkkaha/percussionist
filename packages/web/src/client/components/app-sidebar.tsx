@@ -7,7 +7,6 @@ import {
   Settings,
   Activity,
   Plus,
-  Wrench,
 } from "lucide-react";
 import { useProjects } from "../hooks/useProjects";
 import { useProjectsEvents } from "../hooks/useProjectsEvents";
@@ -32,7 +31,6 @@ const bottomNavItems = [
   { title: "Settings", url: "/settings", icon: Settings },
   { title: "Stats", url: "/stats", icon: TrendingUp },
   { title: "Metrics", url: "/metrics", icon: BarChart3 },
-  { title: "Tools", url: "/tools", icon: Wrench },
 ];
 
 export function DrumLogo({ playing, size = 24 }: { playing: boolean; size?: number }) {
@@ -90,7 +88,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
           <DrumLogo playing={!!playing} />
           <div className="group-data-[collapsible=icon]:hidden">
             <p className="text-sm font-semibold tracking-tight text-sidebar-foreground">percussionist</p>
-            <p className="text-[10px] text-sidebar-foreground/60 mt-0.5">agent orchestration</p>
+            <p className="text-caption-xs text-sidebar-foreground/60 mt-0.5">agent orchestration</p>
           </div>
         </div>
       </SidebarHeader>
@@ -173,7 +171,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                   : "bg-phase-failed"
             }`}
           />
-          <span className="text-[10px] text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
+          <span className="text-caption-xs text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
             v{__APP_VERSION__}
           </span>
         </div>

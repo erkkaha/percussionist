@@ -134,7 +134,7 @@ export default function NotificationBell() {
 
         {/* Unread badge */}
         {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[14px] h-[14px] px-0.5 rounded-full bg-accent text-surface text-[9px] font-bold leading-none animate-pulse">
+          <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[14px] h-[14px] px-0.5 rounded-full bg-accent text-surface text-caption-xs font-bold leading-none animate-pulse">
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         )}
@@ -145,7 +145,7 @@ export default function NotificationBell() {
         <div className="absolute right-0 top-[calc(100%+6px)] w-80 rounded-md border border-border bg-surface shadow-lg z-50 flex flex-col">
           {/* Header */}
           <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-            <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">
+            <span className="text-caption-xs font-semibold text-text-muted uppercase tracking-wider">
               Notifications
             </span>
             {entries.length > 0 && (

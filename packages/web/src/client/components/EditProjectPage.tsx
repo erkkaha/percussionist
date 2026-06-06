@@ -16,8 +16,8 @@ export default function EditProjectPage() {
   if (!name) {
     return (
       <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
-        <h2 className="text-lg font-semibold mb-1">Invalid project</h2>
-        <p className="text-sm">Missing project name in route.</p>
+        <h2 className="text-headline-md mb-1">Invalid project</h2>
+        <p className="text-caption-xs">Missing project name in route.</p>
       </div>
     );
   }
@@ -42,8 +42,8 @@ export default function EditProjectPage() {
   if (error || !project) {
     return (
       <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
-        <h2 className="text-lg font-semibold mb-1">Failed to load project</h2>
-        <p className="text-sm">{error?.message ?? "Project not found"}</p>
+        <h2 className="text-headline-md mb-1">Failed to load project</h2>
+        <p className="text-caption-xs">{error?.message ?? "Project not found"}</p>
       </div>
     );
   }
