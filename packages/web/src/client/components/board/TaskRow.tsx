@@ -1,6 +1,6 @@
 // TaskRow.tsx — compact clickable task row for the list panel.
 
-import { Wrench, FileText, Flag, User, ExternalLink, MessageSquarePlus, Clock, GitMerge } from "lucide-react";
+import { Wrench, FileText, Flag, User, MessageSquarePlus } from "lucide-react";
 import type { Task } from "../../lib/types";
 import { useChat } from "../../lib/chat-context";
 
@@ -40,7 +40,7 @@ export function TaskRow({ task, col, isSelected, onClick, projectName }: TaskRow
   const isBuild = task.spec.type === "BUILD";
   const colColor = COLUMN_COLORS[col] ?? "bg-surface-overlay text-text-dim";
   const lastActivity = worker?.completedAt ?? worker?.startedAt ?? task.metadata.creationTimestamp;
-  const hasActiveRun = col === "in-progress" && worker?.runName;
+
   const { injectTask } = useChat();
 
   return (
@@ -89,26 +89,25 @@ export function TaskRow({ task, col, isSelected, onClick, projectName }: TaskRow
               </span>
             )}
 
-            {/* Active run indicator */}
-            {worker?.runName && col === "in-progress" && (
+            {/* Phase badge (in-progress column) */}
+            {col === "in-progress" && task.status?.phase && (
               <span className="text-label-md font-mono uppercase text-phase-running flex items-center gap-0.5">
-                <ExternalLink className="h-2.5 w-2.5" />
-                running
+                {task.status.phase}
               </span>
             )}
 
             {/* Escalated */}
-            {!hasActiveRun && worker?.status === "Escalated" && (
+            {col !== "in-progress" && worker?.status === "Escalated" && (
               <span className="text-label-md font-mono uppercase text-phase-failed">escalated</span>
             )}
 
             {/* Succeeded */}
-            {!hasActiveRun && worker?.status === "Succeeded" && (
+            {col !== "in-progress" && worker?.status === "Succeeded" && (
               <span className="text-label-md font-mono uppercase text-phase-succeeded">succeeded</span>
             )}
 
             {/* Failed */}
-            {!hasActiveRun && worker?.status === "Failed" && (
+            {col !== "in-progress" && worker?.status === "Failed" && (
               <span className="text-label-md font-mono uppercase text-phase-failed">failed</span>
             )}
 
@@ -116,22 +115,6 @@ export function TaskRow({ task, col, isSelected, onClick, projectName }: TaskRow
             {col === "blocked" && task.status?.blockedReason && (
               <span className="text-label-md font-mono uppercase text-phase-failed" title={task.status.blockedReason}>
                 {task.status.blockedReason}
-              </span>
-            )}
-
-            {/* Awaiting children */}
-            {col === "in-progress" && !hasActiveRun && task.status?.phase === "awaiting-children" && (
-              <span className="text-label-md font-mono uppercase text-phase-pending flex items-center gap-0.5">
-                <Clock className="h-2.5 w-2.5" />
-                waiting for children
-              </span>
-            )}
-
-            {/* Awaiting feature merge */}
-            {col === "in-progress" && !hasActiveRun && task.status?.phase === "awaiting-feature-merge" && (
-              <span className="text-label-md font-mono uppercase text-phase-pending flex items-center gap-0.5">
-                <GitMerge className="h-2.5 w-2.5" />
-                merging
               </span>
             )}
           </div>
