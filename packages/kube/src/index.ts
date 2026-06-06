@@ -630,6 +630,7 @@ export async function patchTask(
 
 // Build a new Task object ready for createTask().
 // projectUid is needed for the ownerReference.
+// All tasks must persist a phase; "pending" is the default.
 export function buildTask({
   name,
   projectName,
@@ -665,6 +666,7 @@ export function buildTask({
       ],
     },
     spec,
+    status: { phase: "pending" as const },
   };
 }
 

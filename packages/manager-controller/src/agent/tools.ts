@@ -1028,7 +1028,6 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       });
 
       const created = await createTask(task, resourceNs);
-      await patchTaskStatus(taskName, { phase: "pending" }, resourceNs);
 
       return {
         taskName: created.metadata.name,
