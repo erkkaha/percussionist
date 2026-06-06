@@ -335,6 +335,9 @@ export async function buildBuildTaskGeneratorRun(
     `4. After ALL tasks are created, call percussionist_dispatcher_complete_run with a summary of what was created.`,
     "",
     `REQUIREMENTS:`,
+    `- PLAN ARTIFACT CONTENT (if provided above) is the source of truth for task decomposition and ordering; session summaries may be stale or incomplete`,
+    `- If the plan artifact defines an ordered/phased BUILD breakdown (for example BUILD A/B/C/D), preserve that order when creating tasks`,
+    `- For ordered/phased BUILD work, set predecessorRef to enforce the sequence (each dependent task points to the prior taskName returned by create_task)`,
     `- Each BUILD task should be concrete and actionable — one logical concern per task (roughly 1-4 hours of work)`,
     `- Split large PLAN items into multiple smaller BUILD tasks`,
     `- Include enough full-plan context in each task description that the build agent understands the larger feature`,
@@ -342,6 +345,7 @@ export async function buildBuildTaskGeneratorRun(
     `- Prefer combining discovery with the implementation task that uses the discoveries`,
     `- If a discovery task is genuinely necessary, require it to write a specific repo file such as .percussionist/findings/{task-id}.md and require every dependent task to read that exact file`,
     `- Tasks that are independent MUST NOT be chained via predecessorRef — they run in parallel`,
+    `- Mark tasks as independent only when they are genuinely disjoint (different files/modules with low merge-conflict risk); when uncertain, prefer sequencing with predecessorRef`,
     `- Only set predecessorRef when one task genuinely cannot start until another is done (imports code it creates, migrates schema it defines, etc.)`,
     `- If the PLAN requires no BUILD tasks (was purely research/planning), call percussionist_dispatcher_complete_run with summary "no build tasks required"`,
     "",
@@ -671,4 +675,3 @@ function extractFacilitationJson(text: string) {
   }
   return null;
 }
-
