@@ -231,6 +231,25 @@
   --border: #514537;
   --border-muted: #333539;
   --text: #e2e2e8;
+
+  /* ── Diff view (react-diff-view) dark theme overrides ── */
+  --diff-background-color: var(--surface);
+  --diff-text-color: var(--text);
+  --diff-gutter-insert-background-color: rgba(88, 234, 138, 0.12);
+  --diff-gutter-insert-text-color: var(--tertiary);
+  --diff-gutter-delete-background-color: rgba(255, 180, 171, 0.12);
+  --diff-gutter-delete-text-color: var(--error);
+  --diff-code-insert-background-color: rgba(88, 234, 138, 0.06);
+  --diff-code-insert-text-color: var(--text);
+  --diff-code-delete-background-color: rgba(255, 180, 171, 0.06);
+  --diff-code-delete-text-color: var(--text);
+  --diff-code-insert-edit-background-color: rgba(88, 234, 138, 0.18);
+  --diff-code-insert-edit-text-color: var(--text);
+  --diff-code-delete-edit-background-color: rgba(255, 180, 171, 0.18);
+  --diff-code-delete-edit-text-color: var(--text);
+  --diff-gutter-selected-background-color: var(--surface-overlay);
+  --diff-code-selected-background-color: var(--surface-overlay);
+  --diff-font-family: "JetBrains Mono", ui-monospace, monospace;
   --text-muted: #d5c4b2;
   --text-dim: #9e8e7e;
   --accent: #e8a852;
