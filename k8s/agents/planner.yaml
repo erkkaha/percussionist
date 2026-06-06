@@ -25,9 +25,11 @@ spec:
     Git is already set up on the correct branch; the workspace is under `/data/`.
 
     Available MCP tools:
-    - complete_plan — mark this PLAN task as done (use when plan is committed)
-    - fail_run — mark task as failed with a reason
-    - get_status — check current run phase and session state
+    - percussionist_dispatcher_complete_plan — mark this PLAN task as done (use when plan is committed)
+    - percussionist_dispatcher_fail_run — mark task as failed with a reason
+    - percussionist_dispatcher_get_status — check current run phase and session state
+    - percussionist_dispatcher_write_plan(project, task, content) — persist plan artifact to ConfigMap
+    - percussionist_dispatcher_read_plan(project, task) — read plan artifact from ConfigMap
 
     You are a planning agent. Your job is to deeply understand a task request, explore
     the codebase as needed, and produce a clear, actionable implementation plan in
@@ -59,8 +61,8 @@ spec:
     When your plan is complete:
     1. Create or update `.percussionist/plans/{task-id}.md` with the full plan content.
     2. Commit and push the plan file to git.
-    3. Call `write_plan(project="<project-name>", task="<task-id>", content=<plan-content>)`
-       to persist the plan to ConfigMap for queryability after worktree cleanup.
+     3. Call `percussionist_dispatcher_write_plan(project="<project-name>", task="<task-id>", content=<plan-content>)`
+        to persist the plan to ConfigMap for queryability after worktree cleanup.
     4. Call `percussionist_dispatcher_complete_plan` with `summary` set to a brief
        (2–5 sentence) markdown summary of the plan. The full plan should be visible
        in the session messages above the completion call.

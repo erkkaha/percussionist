@@ -139,6 +139,7 @@ const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>(
 
     return (
       <button
+        type="button"
         ref={ref}
         role="tab"
         aria-selected={isActive}
