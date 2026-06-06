@@ -7,6 +7,7 @@ import TokenCounter from "./TokenCounter";
 import OpenOpencodeButton from "./OpenOpencodeButton";
 import type { RunPhase, Run } from "../lib/types";
 import { TERMINAL_PHASES } from "../lib/types";
+import { Button } from "./ui/button";
 const ALL_PHASES: RunPhase[] = [
   "Pending",
   "Initializing",
@@ -108,9 +109,8 @@ export default function RunList() {
         </div>
         <Link
           to="/runs/new"
-          className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-sm font-medium text-text transition-colors"
         >
-          + New Run
+          <Button>+ New Run</Button>
         </Link>
       </div>
 
@@ -230,9 +230,8 @@ function RunRow({ run }: { run: Run }) {
           <OpenOpencodeButton run={run} compact />
           <Link
             to={`/runs/new?copyFrom=${encodeURIComponent(run.metadata.name)}`}
-            className="rounded border border-border-muted px-2 py-1 text-xs font-medium text-text-dim hover:border-border hover:text-text-muted transition-colors"
           >
-            Copy
+            <Button variant="outline" size="sm">Copy</Button>
           </Link>
         </div>
       </td>
@@ -349,8 +348,7 @@ function AttachButton({ name, namespace }: { name: string; namespace?: string })
       }`}
     >
       {copied ? "Copied!" : "Attach"}
-    </button>
-  );
+    </button>  );
 }
 
 function truncate(s: string, max: number): string {

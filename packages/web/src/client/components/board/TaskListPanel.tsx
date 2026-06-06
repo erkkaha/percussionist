@@ -9,6 +9,10 @@ import { FilterBar } from "./FilterBar";
 import type { FilterState } from "./FilterBar";
 import { TaskRow } from "./TaskRow";
 import { addBoardTask } from "../../lib/api";
+import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
+import { Button } from "../ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 const DEFAULT_COLUMNS = ["ideas", "backlog", "blocked", "in-progress", "review", "done"] as const;
 
@@ -67,51 +71,49 @@ function AddTaskForm({ projectName, roster, defaultColumn = "backlog", onClose }
           </Link>
         </p>
       ) : (
-        <select
-          value={taskAgent}
-          onChange={(e) => setTaskAgent(e.target.value)}
-          className="w-full rounded border border-border bg-surface-raised px-2 py-1.5 text-sm"
-        >
-          <option value="">— agent —</option>
-          {roster.map((name) => <option key={name} value={name}>{name}</option>)}
-        </select>
+        <Select value={taskAgent} onValueChange={(v) => setTaskAgent(v)}>
+          <SelectTrigger>
+            <SelectValue placeholder="— agent —" />
+          </SelectTrigger>
+          <SelectContent>
+            {roster.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
+          </SelectContent>
+        </Select>
       )}
 
-      <input
+      <Input
         placeholder="Title"
         value={taskTitle}
         onChange={(e) => setTaskTitle(e.target.value)}
-        className="w-full rounded border border-border bg-surface-raised px-2 py-1.5 text-sm"
       />
 
-      <textarea
+      <Textarea
         placeholder="Description (optional)"
         value={taskDesc}
         onChange={(e) => setTaskDesc(e.target.value)}
         rows={3}
-        className="w-full rounded border border-border bg-surface-raised px-2 py-1.5 text-sm resize-y"
       />
 
       <div className="flex items-center gap-3">
-        <select
-          value={taskPriority}
-          onChange={(e) => setTaskPriority(e.target.value as "high" | "medium" | "low")}
-          className="rounded border border-border bg-surface-raised px-2 py-1.5 text-sm"
-        >
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
-        </select>
-        <button
+        <Select value={taskPriority} onValueChange={(v) => setTaskPriority(v as "high" | "medium" | "low")}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="high">High</SelectItem>
+            <SelectItem value="medium">Medium</SelectItem>
+            <SelectItem value="low">Low</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button
           onClick={() => {
             if (!taskTitle.trim() || !taskAgent) { setError("Title and agent required"); return; }
             addMutation.mutate({ type: taskType, title: taskTitle.trim(), description: taskDesc.trim() || undefined, agent: taskAgent, priority: taskPriority });
           }}
           disabled={addMutation.isPending}
-          className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 px-3 py-1.5 text-sm font-medium text-text transition-colors"
         >
           {addMutation.isPending ? "Adding…" : "Add"}
-        </button>
+        </Button>
         <button onClick={onClose} className="text-sm text-text-dim hover:text-text transition-colors">Cancel</button>
       </div>
       {error && <p className="text-xs text-phase-failed">{error}</p>}

@@ -20,7 +20,9 @@ import { CodeBlock } from "../CodeBlock";
 import TaskRunsPanel from "./TaskRunsPanel";
 import TaskEventsPanel from "./TaskEventsPanel";
 import { FileDiff } from "../FileDiff";
-import type React from "react";
+import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
+import { Button } from "../ui/button";
 
 const remarkPlugins = [remarkGfm];
 
@@ -448,12 +450,11 @@ function TaskDetailPanelInner({
         {showRequestChanges && (
           <div className="space-y-2 border border-border rounded-md p-3 bg-surface">
             <p className="text-label-md font-mono uppercase text-text-dim">Review feedback</p>
-            <textarea
+            <Textarea
               placeholder="Describe required changes…"
               value={requestChangesComment}
               onChange={(e) => setRequestChangesComment(e.target.value)}
               rows={4}
-              className="w-full rounded border border-border bg-surface-raised px-2 py-1.5 text-sm resize-y focus:outline-none focus:ring-1 focus:ring-border"
               autoFocus
             />
             <div className="flex gap-2 justify-end">

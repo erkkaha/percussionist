@@ -1,14 +1,15 @@
 import type { ProjectFormHookReturn } from "./useProjectForm";
+import { Input } from "../ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 
 interface GeneralTabProps {
   isEdit: boolean;
   form: Pick<ProjectFormHookReturn, "name" | "displayName" | "model" | "agent" | "maxParallel" | "timeoutSeconds" | "featureBranchingEnabled" | "phase"> &
     Pick<ProjectFormHookReturn, "setName" | "setDisplayName" | "setModel" | "setAgent" | "setMaxParallel" | "setTimeoutSeconds" | "setFeatureBranchingEnabled" | "setPhase">;
-  inputClass: string;
-  monoInputClass: string;
 }
 
-export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }: GeneralTabProps) {
+export default function GeneralTab({ form, isEdit }: GeneralTabProps) {
 
   return (
     <div className="space-y-5">
@@ -17,26 +18,27 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
         <>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Name</label>
-            <input
+            <Input
               type="text"
               value={form.name}
               readOnly
-              className={monoInputClass + " opacity-70"}
+              className="font-mono opacity-70"
             />
           </div>
 
           {/* Phase selector (edit mode only) */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Board Phase</label>
-            <select
-              value={form.phase}
-              onChange={(e) => form.setPhase(e.target.value as "Active" | "Complete" | "Archived")}
-              className={inputClass}
-            >
-              <option value="Active">Active</option>
-              <option value="Complete">Complete</option>
-              <option value="Archived">Archived</option>
-            </select>
+            <Select value={form.phase} onValueChange={(v) => form.setPhase(v as "Active" | "Complete" | "Archived")}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Active">Active</SelectItem>
+                <SelectItem value="Complete">Complete</SelectItem>
+                <SelectItem value="Archived">Archived</SelectItem>
+              </SelectContent>
+            </Select>
             <p className="text-xs text-text-dim">
               Controls whether the project board is active, completed, or archived.
             </p>
@@ -44,12 +46,11 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
 
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Display Name</label>
-            <input
+            <Input
               type="text"
               value={form.displayName}
               onChange={(e) => form.setDisplayName(e.target.value)}
               placeholder="My Repository"
-              className={inputClass}
             />
           </div>
         </>
@@ -59,13 +60,13 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
             <label className="text-sm font-medium text-text-muted">
               Name <span className="text-phase-failed">*</span>
             </label>
-            <input
+            <Input
               type="text"
               required
               value={form.name}
               onChange={(e) => form.setName(e.target.value)}
               placeholder="my-repo"
-              className={monoInputClass}
+              className="font-mono"
             />
             <p className="text-xs text-text-dim">
               Kubernetes resource name (lowercase, hyphens)
@@ -73,12 +74,11 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Display Name</label>
-            <input
+            <Input
               type="text"
               value={form.displayName}
               onChange={(e) => form.setDisplayName(e.target.value)}
               placeholder="My Repository"
-              className={inputClass}
             />
           </div>
         </div>
@@ -88,22 +88,21 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-muted">Default Model</label>
-          <input
+          <Input
             type="text"
             value={form.model}
             onChange={(e) => form.setModel(e.target.value)}
             placeholder="anthropic/claude-sonnet-4-20250514"
-            className={monoInputClass}
+            className="font-mono"
           />
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-muted">Default Agent</label>
-          <input
+          <Input
             type="text"
             value={form.agent}
             onChange={(e) => form.setAgent(e.target.value)}
             placeholder="build"
-            className={inputClass}
           />
         </div>
       </div>
@@ -112,37 +111,32 @@ export default function GeneralTab({ form, isEdit, inputClass, monoInputClass }:
       <div className="grid grid-cols-3 gap-4">
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-muted">Max Parallel Tasks</label>
-          <input
+          <Input
             type="number"
             min={1}
             value={form.maxParallel}
             onChange={(e) => form.setMaxParallel(e.target.value)}
             placeholder="2"
-            className={monoInputClass}
+            className="font-mono"
           />
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-muted">Timeout (seconds)</label>
-          <input
+          <Input
             type="number"
             min={1}
             value={form.timeoutSeconds}
             onChange={(e) => form.setTimeoutSeconds(e.target.value)}
             placeholder="3600"
-            className={monoInputClass}
+            className="font-mono"
           />
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-muted">Feature Branching</label>
-          <label className="flex items-center gap-2 cursor-pointer h-9">
-            <input
-              type="checkbox"
-              checked={form.featureBranchingEnabled}
-              onChange={(e) => form.setFeatureBranchingEnabled(e.target.checked)}
-              className="rounded border-border"
-            />
-            <span className="text-sm text-text-muted">Enable per-task branches</span>
-          </label>
+          <Switch
+            checked={form.featureBranchingEnabled}
+            onCheckedChange={(v) => form.setFeatureBranchingEnabled(v)}
+          />
         </div>
       </div>
     </div>

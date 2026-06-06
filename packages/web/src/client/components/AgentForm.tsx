@@ -4,6 +4,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAgent } from "../hooks/useAgent";
 import { submitAgent, updateAgent as apiUpdateAgent } from "../lib/api";
 import ModelSelector from "./ModelSelector";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
+import { Button } from "./ui/button";
 
 export default function AgentForm() {
   const { name: editName } = useParams<{ name: string }>();
@@ -73,12 +76,12 @@ export default function AgentForm() {
       <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-4">
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-muted">Name</label>
-          <input
+          <Input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="agent-name (lowercase alphanumeric + hyphens)"
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm font-mono text-text placeholder:text-text-dim focus:outline-none focus:border-accent/60"
+            className="font-mono"
           />
         </div>
 
@@ -93,12 +96,12 @@ export default function AgentForm() {
 
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-muted">Content</label>
-          <textarea
+          <Textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             placeholder={`---\ndescription: What this agent does\nmode: primary\n---\nSystem prompt...`}
             rows={16}
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm font-mono text-text placeholder:text-text-dim focus:outline-none focus:border-accent/60 resize-y"
+            className="font-mono"
           />
           <div className="flex items-center justify-between text-xs text-text-muted">
             <span>YAML front-matter + system prompt</span>
@@ -108,13 +111,12 @@ export default function AgentForm() {
 
         {/* Actions */}
         <div className="flex items-center gap-3 pt-2 border-t border-border-muted">
-          <button
+          <Button
             onClick={handleSave}
             disabled={!name.trim() || submitting}
-            className="rounded-md bg-surface-container-high hover:bg-surface-container-highest px-4 py-1.5 text-sm font-medium text-text transition-colors disabled:opacity-40"
           >
             {submitting ? "Saving\u2026" : isEdit ? "Save Changes" : "Create Agent"}
-          </button>
+          </Button>
           <Link
             to="/settings?tab=agents"
             className="text-sm text-text-muted hover:text-text transition-colors"

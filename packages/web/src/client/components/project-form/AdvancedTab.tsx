@@ -1,13 +1,14 @@
 import type { ProjectFormHookReturn } from "./useProjectForm";
+import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 interface AdvancedTabProps {
   form: Pick<ProjectFormHookReturn, "sidecars" | "injectFiles" | "initScript" | "rosterAgents" | "rosterPickerValue" | "sidecarErrors" | "hasSidecarErrors" | "injectFileErrors" | "hasInjectFileErrors"> &
     Pick<ProjectFormHookReturn, "setSidecars" | "setInjectFiles" | "setInitScript" | "setRosterAgents" | "setRosterPickerValue" | "addSidecar" | "removeSidecar" | "updateSidecar" | "addInjectFile" | "removeInjectFile" | "updateInjectFile">;
-  inputClass: string;
-  monoInputClass: string;
 }
 
-export default function AdvancedTab({ form, inputClass, monoInputClass }: AdvancedTabProps) {
+export default function AdvancedTab({ form }: AdvancedTabProps) {
 
   return (
     <div className="space-y-5">
@@ -40,24 +41,24 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
                     <label className="text-xs font-medium text-text-muted">
                       Name <span className="text-phase-failed">*</span>
                     </label>
-                    <input
+                    <Input
                       type="text"
                       value={sc.name}
                       onChange={(e) => form.updateSidecar(sc.id, "name", e.target.value)}
                       placeholder="postgres"
-                      className={monoInputClass}
+                      className="font-mono"
                     />
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-text-muted">
                       Image <span className="text-phase-failed">*</span>
                     </label>
-                    <input
+                    <Input
                       type="text"
                       value={sc.image}
                       onChange={(e) => form.updateSidecar(sc.id, "image", e.target.value)}
                       placeholder="postgres:16-alpine"
-                      className={monoInputClass}
+                      className="font-mono"
                     />
                   </div>
                 </div>
@@ -67,12 +68,12 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
                     Ports{" "}
                     <span className="text-text-dim font-normal">(comma-separated)</span>
                   </label>
-                  <input
+                  <Input
                     type="text"
                     value={sc.ports}
                     onChange={(e) => form.updateSidecar(sc.id, "ports", e.target.value)}
                     placeholder="5432"
-                    className={monoInputClass}
+                    className="font-mono"
                   />
                   <p className="text-xs text-text-dim">
                     opencode waits for these ports before starting.
@@ -84,13 +85,13 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
                     Environment{" "}
                     <span className="text-text-dim font-normal">(one KEY=VALUE per line)</span>
                   </label>
-                  <textarea
+                  <Textarea
                     value={sc.env}
                     onChange={(e) => form.updateSidecar(sc.id, "env", e.target.value)}
                     rows={3}
                     spellCheck={false}
                     placeholder={"POSTGRES_PASSWORD=test\nPOSTGRES_DB=testdb"}
-                    className={monoInputClass + " resize-y text-xs leading-5"}
+                    className="font-mono text-xs leading-5"
                   />
                 </div>
 
@@ -136,27 +137,26 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-text-muted">
-                    Filename <span className="text-phase-failed">*</span>
-                    <span className="text-text-dim font-normal ml-1">(mounted at /workspace/&lt;filename&gt;)</span>
+                    Filename <span className="text-text-dim font-normal ml-1">(mounted at /workspace/&lt;filename&gt;)</span>
                   </label>
-                  <input
+                  <Input
                     type="text"
                     value={f.filename}
                     onChange={(e) => form.updateInjectFile(f.id, "filename", e.target.value)}
                     placeholder=".env"
-                    className={monoInputClass}
+                    className="font-mono"
                   />
                 </div>
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-text-muted">Content</label>
-                  <textarea
+                  <Textarea
                     value={f.content}
                     onChange={(e) => form.updateInjectFile(f.id, "content", e.target.value)}
                     rows={8}
                     spellCheck={false}
                     placeholder={"DATABASE_URL=postgres://...\nAPI_KEY=..."}
-                    className={monoInputClass + " resize-y text-xs leading-5"}
+                    className="font-mono text-xs leading-5"
                   />
                 </div>
 
@@ -185,13 +185,13 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
           Runs in the init container — failure (non-zero exit) will prevent the pod from starting.
           Working directory is <code className="font-mono">/workspace</code> (the cloned repo root).
         </p>
-        <textarea
+        <Textarea
           value={form.initScript}
           onChange={(e) => form.setInitScript(e.target.value)}
           rows={6}
           spellCheck={false}
           placeholder={"npm ci\nnpm run build"}
-          className={monoInputClass + " resize-y text-xs leading-5 font-mono"}
+          className="font-mono text-xs leading-5"
         />
       </fieldset>
 
@@ -218,14 +218,12 @@ export default function AdvancedTab({ form, inputClass, monoInputClass }: Advanc
           </ul>
         )}
         <div className="flex items-center gap-2">
-          <select
-            value={form.rosterPickerValue}
-            onChange={(e) => form.setRosterPickerValue(e.target.value)}
-            className="flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
-          >
-            <option value="">— add agent —</option>
+          <Select value={form.rosterPickerValue} onValueChange={(v) => form.setRosterPickerValue(v)}>
+            <SelectTrigger className="flex-1">
+              <SelectValue placeholder="— add agent —" />
+            </SelectTrigger>
             {/* roster picker is populated by the parent component via useQuery */}
-          </select>
+          </Select>
         </div>
       </fieldset>
     </div>
