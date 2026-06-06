@@ -1,9 +1,10 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
-import { BarChart3, List, Table2, Users } from "lucide-react";
+import { BarChart3, List, Table2, Users, Wrench } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import TokenCounter from "./TokenCounter";
+import ToolMetricsView from "./ToolMetricsView";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent, type ChartConfig } from "./ui/chart";
 import { cn } from "../lib/utils";
 
@@ -905,6 +906,7 @@ const TABS = [
   { id: "sessions", label: "Sessions", icon: List },
   { id: "agents", label: "Agents", icon: Users },
   { id: "models", label: "Models", icon: Table2 },
+  { id: "tools", label: "Tools", icon: Wrench },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -1024,6 +1026,11 @@ export default function StatsView() {
       {/* Models tab */}
       {tab === "models" && analytics && sessions && sessions.length > 0 && (
         <ModelBreakdown modelRows={analytics.modelRows} />
+      )}
+
+      {/* Tools tab */}
+      {tab === "tools" && (
+        <ToolMetricsView days={days} />
       )}
     </div>
   );

@@ -7,7 +7,6 @@ import {
   Settings,
   Activity,
   Plus,
-  Wrench,
 } from "lucide-react";
 import { useProjects } from "../hooks/useProjects";
 import { useProjectsEvents } from "../hooks/useProjectsEvents";
@@ -32,7 +31,6 @@ const bottomNavItems = [
   { title: "Settings", url: "/settings", icon: Settings },
   { title: "Stats", url: "/stats", icon: TrendingUp },
   { title: "Metrics", url: "/metrics", icon: BarChart3 },
-  { title: "Tools", url: "/tools", icon: Wrench },
 ];
 
 export function DrumLogo({ playing, size = 24 }: { playing: boolean; size?: number }) {
