@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Area, AreaChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
-import { BarChart3, List, Table2 } from "lucide-react";
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
+import { BarChart3, List, Table2, Users } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import TokenCounter from "./TokenCounter";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent, type ChartConfig } from "./ui/chart";
@@ -94,6 +94,10 @@ interface TrendsResponse {
 
 // ---------------------------------------------------------------------------
 // Helpers
+
+function shortModelLabel(model: string): string {
+  return model.includes("/") ? model.split("/").pop()! : model;
+}
 
 function durationMs(s: StatSession): number | null {
   if (!s.startedAt || !s.completedAt) return null;
@@ -205,6 +209,64 @@ function computeAnalytics(sessions: StatSession[]): Analytics {
 }
 
 // ---------------------------------------------------------------------------
+// Agent analytics
+
+interface AgentSummary {
+  agent: string;
+  runs: number;
+  succeeded: number;
+  failed: number;
+  successRate: number | null;
+  totalTokensIn: number;
+  totalTokensOut: number;
+  avgTokensPerRun: number;
+  avgDurationMs: number | null;
+  models: string[];
+}
+
+function computeAgentAnalytics(sessions: StatSession[]): AgentSummary[] {
+  const agentMap = new Map<string, {
+    runs: number; succeeded: number; failed: number;
+    tokensIn: number; tokensOut: number; durationSum: number; durationCount: number;
+    models: Set<string>;
+  }>();
+
+  for (const s of sessions) {
+    const agent = s.agent ?? "unknown";
+    const existing = agentMap.get(agent) ?? {
+      runs: 0, succeeded: 0, failed: 0,
+      tokensIn: 0, tokensOut: 0, durationSum: 0, durationCount: 0,
+      models: new Set<string>(),
+    };
+
+    existing.runs++;
+    if (s.phase === "Succeeded") existing.succeeded++;
+    else if (s.phase === "Failed") existing.failed++;
+    existing.tokensIn += s.tokensIn ?? 0;
+    existing.tokensOut += s.tokensOut ?? 0;
+    const d = durationMs(s);
+    if (d !== null) { existing.durationSum += d; existing.durationCount++; }
+    if (s.model) existing.models.add(s.model);
+    agentMap.set(agent, existing);
+  }
+
+  return [...agentMap.entries()]
+    .map(([agent, v]) => ({
+      agent,
+      runs: v.runs,
+      succeeded: v.succeeded,
+      failed: v.failed,
+      successRate: v.runs > 0 ? Math.round((v.succeeded / v.runs) * 100) : null,
+      totalTokensIn: v.tokensIn,
+      totalTokensOut: v.tokensOut,
+      avgTokensPerRun: v.runs > 0 ? Math.round((v.tokensIn + v.tokensOut) / v.runs) : 0,
+      avgDurationMs: v.durationCount > 0 ? Math.round(v.durationSum / v.durationCount) : null,
+      models: [...v.models],
+    }))
+    .sort((a, b) => b.runs - a.runs);
+}
+
+// ---------------------------------------------------------------------------
 // Summary cards
 
 function SummaryCards({ a }: { a: Analytics }) {
@@ -295,62 +357,6 @@ function ModelBreakdown({ modelRows }: { modelRows: Analytics["modelRows"] }) {
         <p className="px-4 py-2 text-xs text-text-dim border-t border-border-muted">
           Bar: <span className="text-primary-container">■</span> tokens in &nbsp;
           <span className="text-surface-container-high">■</span> tokens out
-        </p>
-      </div>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Tokens per run bar chart
-
-function TokensChart({ sessions }: { sessions: StatSession[] }) {
-  const sorted = [...sessions]
-    .filter((s) => (s.tokensIn ?? 0) + (s.tokensOut ?? 0) > 0)
-    .sort((a, b) => (b.tokensIn + b.tokensOut) - (a.tokensIn + a.tokensOut))
-    .slice(0, 20); // top 20 to keep it readable
-
-  if (sorted.length === 0) return null;
-
-  const first = sorted[0];
-  const maxTokens = first ? first.tokensIn + first.tokensOut : 1;
-
-  return (
-    <section>
-      <h2 className="text-sm font-semibold text-text-muted mb-3">
-        Tokens per Run {sessions.length > 20 && <span className="font-normal text-text-dim">(top 20)</span>}
-      </h2>
-      <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-2">
-        {sorted.map((s) => {
-          const total = s.tokensIn + s.tokensOut;
-          const inPct = (s.tokensIn / maxTokens) * 100;
-          const outPct = (s.tokensOut / maxTokens) * 100;
-          return (
-            <div key={s.id} className="flex items-center gap-3 text-xs">
-              <div className="w-32 shrink-0 truncate text-text-muted font-mono" title={s.name}>
-                {s.name}
-              </div>
-              <div className="flex-1 flex h-3 overflow-hidden bg-surface-overlay gap-px">
-                <div
-                  className="bg-primary-container"
-                  style={{ width: `${inPct}%` }}
-                  title={`In: ${fmtTokens(s.tokensIn)}`}
-                />
-                <div
-                  className="bg-surface-container-high"
-                  style={{ width: `${outPct}%` }}
-                  title={`Out: ${fmtTokens(s.tokensOut)}`}
-                />
-              </div>
-              <div className="w-16 shrink-0 text-right tabular-nums text-text-dim">
-                {fmtTokens(total)}
-              </div>
-            </div>
-          );
-        })}
-        <p className="text-xs text-text-dim pt-1">
-          <span className="text-text-dim">■</span> tokens in &nbsp;
-          <span className="text-text-muted">■</span> tokens out
         </p>
       </div>
     </section>
@@ -451,9 +457,11 @@ interface TrendChartProps {
   config: ChartConfig;
   series: Array<{ dataKey: string; stackId?: string }>;
   type: "area" | "line";
+  yAxisDomain?: [number, number];
+  yAxisFormatter?: (v: number) => string;
 }
 
-function TrendChart({ title, description, data, config, series, type }: TrendChartProps) {
+function TrendChart({ title, description, data, config, series, type, yAxisDomain, yAxisFormatter }: TrendChartProps) {
   return (
     <div className="rounded-lg border border-border bg-surface-raised p-4">
       <div className="mb-3">
@@ -468,15 +476,7 @@ function TrendChart({ title, description, data, config, series, type }: TrendCha
         <ChartContainer config={config} className="aspect-auto h-[180px] w-full">
           {type === "area" ? (
             <AreaChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-              <defs>
-                {series.map((s) => (
-                  <linearGradient key={s.dataKey} id={`fill-${s.dataKey}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={`var(--color-${s.dataKey})`} stopOpacity={0.3} />
-                    <stop offset="95%" stopColor={`var(--color-${s.dataKey})`} stopOpacity={0.05} />
-                  </linearGradient>
-                ))}
-              </defs>
-              <CartesianGrid vertical={false} />
+              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
               <XAxis
                 dataKey="time"
                 type="number"
@@ -489,11 +489,12 @@ function TrendChart({ title, description, data, config, series, type }: TrendCha
               />
               <YAxis
                 type="number"
+                domain={yAxisDomain}
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
-                tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
-                width={40}
+                tickFormatter={yAxisFormatter ?? ((v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v))}
+                width={55}
               />
               <ChartTooltip
                 cursor={false}
@@ -510,23 +511,28 @@ function TrendChart({ title, description, data, config, series, type }: TrendCha
                 }
               />
               <ChartLegend content={<ChartLegendContent />} />
-              {series.map((s) => (
-                <Area
-                  key={s.dataKey}
-                  dataKey={s.dataKey}
-                  type="monotone"
-                  fill={`url(#fill-${s.dataKey})`}
-                  stroke={`var(--color-${s.dataKey})`}
-                  strokeWidth={1.5}
-                  dot={false}
-                  connectNulls
-                  stackId={s.stackId}
-                />
-              ))}
+              {series.map((s) => {
+                const entry = config[s.dataKey] as { color?: string } | undefined;
+                const color = entry?.color ?? `var(--color-${s.dataKey})`;
+                return (
+                  <Area
+                    key={s.dataKey}
+                    dataKey={s.dataKey}
+                    type="monotone"
+                    fill={color}
+                    fillOpacity={s.stackId ? 0.85 : 0.35}
+                    stroke={color}
+                    strokeWidth={1.5}
+                    dot={false}
+                    connectNulls
+                    stackId={s.stackId}
+                  />
+                );
+              })}
             </AreaChart>
           ) : (
             <LineChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} />
+              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
               <XAxis
                 dataKey="time"
                 type="number"
@@ -539,11 +545,14 @@ function TrendChart({ title, description, data, config, series, type }: TrendCha
               />
               <YAxis
                 type="number"
+                domain={yAxisDomain}
+                allowDataOverflow
+                ticks={yAxisDomain ? [0, 20, 40, 60, 80, 100] : undefined}
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
-                tickFormatter={(v: number) => `${v}%`}
-                width={40}
+                tickFormatter={yAxisFormatter ?? ((v: number) => `${v}%`)}
+                width={48}
               />
               <ChartTooltip
                 cursor={false}
@@ -566,7 +575,7 @@ function TrendChart({ title, description, data, config, series, type }: TrendCha
                   dataKey={s.dataKey}
                   type="monotone"
                   stroke={`var(--color-${s.dataKey})`}
-                  strokeWidth={1.5}
+                  strokeWidth={2}
                   dot={false}
                   connectNulls
                 />
@@ -628,7 +637,7 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
     successRate: { label: "Success Rate", color: "var(--chart-1)" },
     tokensIn: { label: "Tokens In", color: "var(--chart-1)" },
     tokensOut: { label: "Tokens Out", color: "var(--chart-2)" },
-    ...Object.fromEntries(models.map((m, i) => [m, { label: m, color: `var(--chart-${(i % 5) + 1})` }])),
+    ...Object.fromEntries(models.map((m, i) => [m, { label: shortModelLabel(m), color: `var(--chart-${(i % 5) + 1})` }])),
   };
 
   return (
@@ -639,8 +648,8 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
         data={runsData}
         config={chartConfig}
         series={[
-          { dataKey: "succeeded", stackId: "runs" },
-          { dataKey: "failed", stackId: "runs" },
+          { dataKey: "succeeded" },
+          { dataKey: "failed" },
         ]}
         type="area"
       />
@@ -651,6 +660,8 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
         config={chartConfig}
         series={[{ dataKey: "successRate" }]}
         type="line"
+        yAxisDomain={[0, 100]}
+        yAxisFormatter={(v) => `${v}%`}
       />
       <TrendChart
         title="Token Usage"
@@ -658,8 +669,8 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
         data={tokenData}
         config={chartConfig}
         series={[
-          { dataKey: "tokensIn", stackId: "tokens" },
-          { dataKey: "tokensOut", stackId: "tokens" },
+          { dataKey: "tokensIn" },
+          { dataKey: "tokensOut" },
         ]}
         type="area"
       />
@@ -669,7 +680,7 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
           description="Token volume by model over time"
           data={modelData}
           config={chartConfig}
-          series={models.map((m) => ({ dataKey: m }))}
+          series={models.map((m) => ({ dataKey: m, stackId: "models" }))}
           type="area"
         />
       ) : (
@@ -688,11 +699,211 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
 }
 
 // ---------------------------------------------------------------------------
+// Agent charts
+
+const METRIC_OPTIONS = [
+  { value: "successRate", label: "Success Rate" },
+  { value: "runs", label: "Runs" },
+  { value: "avgTokensPerRun", label: "Avg Tokens / Run" },
+  { value: "avgDurationMs", label: "Avg Duration" },
+] as const;
+
+function AgentCharts({ agents }: { agents: AgentSummary[] }) {
+  const [metric, setMetric] = useState<string>("successRate");
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+
+  if (agents.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-surface-raised p-8 text-center text-text-dim">
+        No agent data available.
+      </div>
+    );
+  }
+
+  // Chart data for bar chart
+  const chartData = useMemo(() => {
+    const metricKey = metric as keyof AgentSummary;
+    return agents.map((a) => ({
+      agent: shortModelLabel(a.agent),
+      value: metricKey === "avgDurationMs" ? (a.avgDurationMs ?? 0) / 1000 : typeof a[metricKey] === "number" ? a[metricKey] as number : 0,
+      raw: a,
+    })).sort((a, b) => b.value - a.value);
+  }, [agents, metric]);
+
+  const chartConfig = {
+    value: {
+      label: METRIC_OPTIONS.find((m) => m.value === metric)?.label ?? metric,
+      color: "var(--chart-1)",
+    },
+  } satisfies ChartConfig;
+
+  const fmt = (v: number) => {
+    if (metric === "successRate") return `${Math.round(v)}%`;
+    if (metric === "avgDurationMs") return fmtDuration(Math.round(v * 1000));
+    if (metric === "avgTokensPerRun") return fmtTokens(Math.round(v));
+    return String(Math.round(v));
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Per-agent summary cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {agents.map((a) => (
+          <button
+            key={a.agent}
+            onClick={() => setSelectedAgent(selectedAgent === a.agent ? null : a.agent)}
+            className={`rounded-lg border p-4 text-left transition-colors ${
+              selectedAgent === a.agent
+                ? "border-accent/60 bg-surface-overlay"
+                : "border-border bg-surface-raised hover:border-border-muted"
+            }`}
+          >
+            <p className="text-sm font-medium text-text truncate">{shortModelLabel(a.agent)}</p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-text-dim">
+              <span>{a.runs} run{a.runs !== 1 ? "s" : ""}</span>
+              <span className={a.successRate != null && a.successRate >= 80 ? "text-phase-succeeded" : "text-phase-failed"}>
+                {a.successRate != null ? `${a.successRate}%` : "-"} ok
+              </span>
+              <span>{fmtTokens(a.totalTokensIn + a.totalTokensOut)} tok</span>
+              <span>{fmtDuration(a.avgDurationMs)}</span>
+            </div>
+            {selectedAgent === a.agent && a.models.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-border-muted">
+                <p className="text-xs text-text-dim mb-1">Models:</p>
+                <div className="flex flex-wrap gap-1">
+                  {a.models.map((m) => (
+                    <span key={m} className="px-1.5 py-0.5 text-xs bg-surface-overlay rounded font-mono text-text-muted">
+                      {shortModelLabel(m)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Metric selector + bar chart */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-text-muted">Comparison</h2>
+          <select
+            value={metric}
+            onChange={(e) => setMetric(e.target.value)}
+            className="px-2 py-1 text-xs rounded-md border border-border bg-surface-overlay text-text focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            {METRIC_OPTIONS.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="rounded-lg border border-border bg-surface-raised p-4">
+          <ChartContainer config={chartConfig} className="aspect-auto h-[250px] w-full">
+            <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 40, left: 0, bottom: 0 }}>
+              <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis
+                type="number"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(v: number) => {
+                  if (metric === "successRate") return `${v}%`;
+                  if (metric === "avgDurationMs") return `${v}s`;
+                  if (metric === "avgTokensPerRun") return v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v);
+                  return String(v);
+                }}
+                width={60}
+              />
+              <YAxis
+                dataKey="agent"
+                type="category"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                width={140}
+                tick={(props) => {
+                  const { x, y, payload } = props;
+                  const label = chartData.find((d) => d.agent === payload.value)?.raw.agent ?? payload.value;
+                  return (
+                    <text x={x} y={y} dy={4} textAnchor="end" className="text-xs fill-text-dim">
+                      {shortModelLabel(label)}
+                    </text>
+                  );
+                }}
+              />
+              <ChartTooltip
+                cursor={{ fill: "var(--surface-overlay)" }}
+                content={
+                  <ChartTooltipContent
+                    indicator="dot"
+                    formatter={(value, _name) => fmt(typeof value === "number" ? value : Number(value) || 0)}
+                  />
+                }
+              />
+              <Bar
+                dataKey="value"
+                fill="var(--color-value)"
+                radius={[0, 3, 3, 0]}
+              />
+            </BarChart>
+          </ChartContainer>
+        </div>
+      </div>
+
+      {/* Agent detail table */}
+      <div className="rounded-lg border border-border overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
+              <th className="px-4 py-2.5 font-medium">Agent</th>
+              <th className="px-4 py-2.5 font-medium">Runs</th>
+              <th className="px-4 py-2.5 font-medium">Succeeded</th>
+              <th className="px-4 py-2.5 font-medium">Failed</th>
+              <th className="px-4 py-2.5 font-medium">Success Rate</th>
+              <th className="px-4 py-2.5 font-medium">Avg Tokens</th>
+              <th className="px-4 py-2.5 font-medium">Avg Duration</th>
+              <th className="px-4 py-2.5 font-medium">Tokens In/Out</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border-muted">
+            {agents.map((a) => (
+              <tr key={a.agent} className="hover:bg-surface-raised/60 transition-colors">
+                <td className="px-4 py-2.5 font-mono text-xs text-text max-w-[160px] truncate" title={a.agent}>
+                  {shortModelLabel(a.agent)}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums text-text-muted">{a.runs}</td>
+                <td className="px-4 py-2.5 tabular-nums text-phase-succeeded">{a.succeeded}</td>
+                <td className="px-4 py-2.5 tabular-nums text-phase-failed">{a.failed}</td>
+                <td className="px-4 py-2.5 tabular-nums">
+                  <span className={a.successRate != null && a.successRate >= 80 ? "text-phase-succeeded" : "text-phase-failed"}>
+                    {a.successRate != null ? `${a.successRate}%` : "-"}
+                  </span>
+                </td>
+                <td className="px-4 py-2.5 tabular-nums font-mono text-xs text-text-muted">
+                  {fmtTokens(a.avgTokensPerRun)}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums text-text-muted">
+                  {fmtDuration(a.avgDurationMs)}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums font-mono text-xs text-text-muted">
+                  {fmtTokens(a.totalTokensIn)} / {fmtTokens(a.totalTokensOut)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Tabs
 
 const TABS = [
   { id: "overview", label: "Overview", icon: BarChart3 },
   { id: "sessions", label: "Sessions", icon: List },
+  { id: "agents", label: "Agents", icon: Users },
   { id: "models", label: "Models", icon: Table2 },
 ] as const;
 
@@ -715,6 +926,7 @@ export default function StatsView() {
   const { data: trends } = useTrends(days);
 
   const analytics = sessions ? computeAnalytics(sessions) : null;
+  const agentSummaries = useMemo(() => sessions ? computeAgentAnalytics(sessions) : null, [sessions]);
 
   return (
     <div className="space-y-6">
@@ -796,13 +1008,17 @@ export default function StatsView() {
         <>
           <SummaryCards a={analytics} />
           {trends && <TrendCharts trends={trends} />}
-          <TokensChart sessions={sessions} />
         </>
       )}
 
       {/* Sessions tab */}
       {tab === "sessions" && analytics && sessions && sessions.length > 0 && (
         <SessionsTable sessions={sessions} />
+      )}
+
+      {/* Agents tab */}
+      {tab === "agents" && agentSummaries && sessions && sessions.length > 0 && (
+        <AgentCharts agents={agentSummaries} />
       )}
 
       {/* Models tab */}
