@@ -21,6 +21,7 @@ import { Hono } from "hono";
 import { getDb, runs, messages, toolCalls, fileOps, toolEvents } from "../db.js";
 import { lt, gte, eq, and, like, desc, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { auth, adminAuth } from "../auth.js";
 
 // ---------------------------------------------------------------------------
 // Payload types (sent by the dispatcher)
@@ -96,7 +97,7 @@ interface SessionPayload {
 const stats = new Hono();
 
 // POST /api/stats/session — ingest a completed session from the dispatcher.
-stats.post("/session", async (c) => {
+stats.post("/session", adminAuth(), async (c) => {
   let body: SessionPayload;
   try {
     body = (await c.req.json()) as SessionPayload;
@@ -206,10 +207,7 @@ stats.post("/session", async (c) => {
 });
 
 // PATCH /api/stats/session — incremental flush after each assistant turn.
-// Uses insert-or-ignore so concurrent/repeated calls are idempotent and never
-// overwrite a later full POST flush. The run row is created on first call so
-// in-progress sessions show up in the UI immediately.
-stats.patch("/session", async (c) => {
+stats.patch("/session", adminAuth(), async (c) => {
   let body: SessionPayload;
   try {
     body = (await c.req.json()) as SessionPayload;
@@ -321,7 +319,7 @@ stats.patch("/session", async (c) => {
 });
 
 // GET /api/stats/exists/:sessionID — check if a session row exists (for backfill guard).
-stats.get("/exists/:sessionID", (c) => {
+stats.get("/exists/:sessionID", auth(), (c) => {
   const { sessionID } = c.req.param();
   const db = getDb();
   const row = db.select({ id: runs.id }).from(runs).where(eq(runs.id, sessionID)).get();
@@ -329,9 +327,7 @@ stats.get("/exists/:sessionID", (c) => {
 });
 
 // POST /api/stats/tool-events — batch ingest of tool invocation events.
-// Called by the dispatcher periodically during a run. Each event captures a
-// single tool invocation (native OpenCode tool or MCP tool call).
-stats.post("/tool-events", async (c) => {
+stats.post("/tool-events", adminAuth(), async (c) => {
   let body: { events: ToolEventPayload[] };
   try {
     body = (await c.req.json()) as { events: ToolEventPayload[] };
@@ -376,11 +372,7 @@ stats.post("/tool-events", async (c) => {
 });
 
 // GET /api/stats/export?days=30 — full dump for LLM analysis.
-//
-// Returns a JSON array where each element is a session with nested messages,
-// tool calls, and file operations. Intended to be saved to disk and fed to
-// an LLM wholesale: jq . sessions.json | llm "find patterns in agent usage".
-stats.get("/export", (c) => {
+stats.get("/export", auth(), (c) => {
   const daysParam = c.req.query("days") ?? "30";
   const days = parseInt(daysParam, 10);
 
@@ -445,8 +437,7 @@ export function runRetentionCleanup(): void {
 }
 
 // GET /api/stats/tool-metrics?days=30&agent=X — aggregated tool usage stats.
-// Sources data from tool_calls (message-part extraction) instead of tool_events (SSE/MCP events).
-stats.get("/tool-metrics", (c) => {
+stats.get("/tool-metrics", auth(), (c) => {
   const daysParam = c.req.query("days") ?? "30";
   const days = parseInt(daysParam, 10);
   const agent = c.req.query("agent");
@@ -588,7 +579,7 @@ stats.get("/tool-metrics", (c) => {
 });
 
 // GET /api/stats/tool-events?sessionId=X&runName=Y&limit=100 — raw tool events.
-stats.get("/tool-events", (c) => {
+stats.get("/tool-events", auth(), (c) => {
   const sessionId = c.req.query("sessionId");
   const runName = c.req.query("runName");
   const tool = c.req.query("tool");

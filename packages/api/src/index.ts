@@ -203,6 +203,20 @@ export const SecretsRefSchema = z
 
 export type SecretsRef = z.infer<typeof SecretsRefSchema>;
 
+// ---------------------------------------------------------------------------
+// SSH host key verification modes (used by GitSource)
+
+export const SshHostKeyVerificationModeSchema = z.enum([
+  "strict",     // Always verify host keys against known_hosts; reject unknown hosts.
+  "accept-new", // Accept and cache unknown host keys on first connect; reject changed keys.
+  "no",         // Never verify host keys (equivalent to StrictHostKeyChecking=no). Default for backward compatibility.
+]);
+
+export type SshHostKeyVerificationMode = z.infer<typeof SshHostKeyVerificationModeSchema>;
+
+// ---------------------------------------------------------------------------
+// Git source configuration
+
 export const GitSourceSchema = z.object({
   url: z.string().min(1),
   ref: z.string().optional(),
@@ -228,6 +242,21 @@ export const GitSourceSchema = z.object({
     .object({
       name: z.string().min(1),
       email: z.string().min(1),
+    })
+    .optional(),
+  // SSH host key verification mode. Controls how the runner validates remote
+  // git server identity over SSH. Default is "no" for backward compatibility;
+  // existing clusters will continue to work without changes. Set to "strict" or
+  // "accept-new" to enable host key verification (requires known_hostsSecret).
+  sshHostKeyVerification: SshHostKeyVerificationModeSchema.default("no"),
+  // Reference to a Secret containing SSH known_hosts entries. When set and
+  // sshHostKeyVerification is "strict" or "accept-new", the operator mounts
+  // this secret as /etc/git-ssh/known_hosts in the runner pod so that SSH
+  // host key verification can succeed against known git servers.
+  known_hostsSecret: z
+    .object({
+      name: z.string().min(1),
+      key: z.string().default("known_hosts"),
     })
     .optional(),
 });

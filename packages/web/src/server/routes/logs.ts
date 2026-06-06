@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { core, getRun, readPodLog } from "../kube.js";
 import { RUNNER_CONTAINER, DISPATCHER_CONTAINER, GIT_CLONE_CONTAINER } from "@percussionist/api";
+import { auth } from "../auth.js";
 
 const BOOTSTRAP_CONTAINER = "bootstrap";
 const BOOTSTRAP_EXCLUDE = new Set([RUNNER_CONTAINER, DISPATCHER_CONTAINER]);
@@ -79,7 +80,7 @@ async function listBootstrapContainers(
 // When the requested container is still waiting (init failed, pod never
 // started) and no explicit container was requested, we auto-fall-back to
 // the workspace-init init container so the caller always gets useful output.
-logs.get("/:name/logs", async (c) => {
+logs.get("/:name/logs", auth(), async (c) => {
   const name = c.req.param("name");
   const explicitContainer = c.req.query("container");
   const container = explicitContainer ?? RUNNER_CONTAINER;

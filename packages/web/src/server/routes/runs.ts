@@ -7,12 +7,12 @@ import {
   API_GROUP_VERSION,
   KIND_RUN,
 } from "@percussionist/api";
+import { auth, adminAuth } from "../auth.js";
 
 const runs = new Hono();
 
 // GET /api/runs — list all Runs in the namespace.
-// Optional query param: ?task=<taskName> to filter by task CR name.
-runs.get("/", async (c) => {
+runs.get("/", auth(), async (c) => {
   try {
     const taskFilter = c.req.query("task");
     let items = await listRuns();
@@ -27,7 +27,7 @@ runs.get("/", async (c) => {
 });
 
 // GET /api/runs/events — SSE stream for run list changes.
-runs.get("/events", async (c) => {
+runs.get("/events", auth(), async (c) => {
   return createPollingSseResponse({
     signal: c.req.raw.signal,
     getSignature: async () => JSON.stringify((await listRuns()).map((r) => ({
@@ -51,7 +51,7 @@ runs.get("/events", async (c) => {
 });
 
 // GET /api/runs/:name — get a single Run by name.
-runs.get("/:name", async (c) => {
+runs.get("/:name", auth(), async (c) => {
   const name = c.req.param("name");
   try {
     const run = await getRun(name);
@@ -65,9 +65,7 @@ runs.get("/:name", async (c) => {
 });
 
 // POST /api/runs — create a new Run.
-// Body: RunSpec fields (task, model, agent, interactive, source,
-// timeoutSeconds). Name is optional; auto-generated when absent.
-runs.post("/", async (c) => {
+runs.post("/", adminAuth(), async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -109,7 +107,7 @@ runs.post("/", async (c) => {
 });
 
 // DELETE /api/runs/:name — delete (cancel) a run and all its child resources.
-runs.delete("/:name", async (c) => {
+runs.delete("/:name", adminAuth(), async (c) => {
   const name = c.req.param("name");
   try {
     await deleteRun(name);
@@ -123,7 +121,7 @@ runs.delete("/:name", async (c) => {
 });
 
 // POST /api/runs/:name/reply — human answers a worker's pending question.
-runs.post("/:name/reply", async (c) => {
+runs.post("/:name/reply", adminAuth(), async (c) => {
   const runName = c.req.param("name");
 
   let run: import("@percussionist/api").Run;

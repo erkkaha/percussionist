@@ -18,6 +18,7 @@ import {
   type AgentDef,
   type SidecarSpec,
   type RunnerImageSpec,
+  type SshHostKeyVerificationMode,
 } from "@percussionist/api";
 import {
   RUNNER_IMAGE_DEFAULT,
@@ -278,6 +279,15 @@ export function renderPod(
 
   const worktreeReuse = spec.gitCache?.worktreeReuse ?? true;
 
+  // SSH host key verification configuration.
+  // Default is "no" for backward compatibility with existing clusters.
+  // When set to "strict" or "accept-new", the operator provisions a known_hosts
+  // file from the run's known_hostsSecret (if provided) and configures SSH to
+  // use it. This prevents man-in-the-middle attacks on git over SSH.
+  const sshHostKeyVerification: SshHostKeyVerificationMode =
+    git?.sshHostKeyVerification ?? "no";
+  const knownHostsSecret = git?.known_hostsSecret;
+
   const initContainers =
     git || localGit
       ? [
@@ -307,10 +317,10 @@ export function renderPod(
                     "",
                     "# SSH key setup",
                     'if [ -f /etc/git-ssh/id ]; then',
-                    '  export GIT_SSH_COMMAND="ssh -i /etc/git-ssh/id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"',
+                    `  export GIT_SSH_COMMAND="ssh -i /etc/git-ssh/id -o IdentitiesOnly=yes${sshHostKeyVerification === "strict" || sshHostKeyVerification === "accept-new" ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=/etc/git-ssh/known_hosts` : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'}"`,
                     '  echo "[workspace-init] using ssh key from secret"',
                     "else",
-                    '  export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"',
+                    `  export GIT_SSH_COMMAND="ssh${sshHostKeyVerification === "strict" || sshHostKeyVerification === "accept-new" ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=/etc/git-ssh/known_hosts` : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'}"`,
                     "fi",
                     "",
                     "# GitHub token",
@@ -558,6 +568,12 @@ export function renderPod(
               ...(githubTokenSecret
                 ? [{ name: "git-github", mountPath: "/etc/git-github", readOnly: true }]
                 : []),
+              // Mount known_hosts for SSH host key verification (read-only).
+              // When sshHostKeyVerification is strict/accept-new and a known_hostsSecret
+              // is provided, this mounts the secret as /etc/git-ssh/known_hosts.
+              ...(sshHostKeyVerification === "strict" || sshHostKeyVerification === "accept-new"
+                ? [{ name: "git-known-hosts", mountPath: "/etc/git-ssh/known_hosts", subPath: "known_hosts", readOnly: true }]
+                : []),
             ],
             resources: initContainerResources,
           },
@@ -606,6 +622,25 @@ export function renderPod(
             },
           },
         ]
+      : []),
+    ...(sshHostKeyVerification === "strict" || sshHostKeyVerification === "accept-new"
+      ? knownHostsSecret
+        ? [
+            {
+              name: "git-known-hosts",
+              secret: {
+                secretName: knownHostsSecret.name,
+                items: [{ key: knownHostsSecret.key ?? "known_hosts", path: "known_hosts" }],
+              },
+            },
+          ]
+        : [
+            // No known_hostsSecret provided but strict mode requested — create an empty
+            // file so SSH doesn't fail on missing file. Host keys will be accepted via
+            // accept-new (first connect) or rejected (strict). This is a safety net for
+            // clusters that haven't provisioned known hosts yet.
+            { name: "git-known-hosts", emptyDir: {} },
+          ]
       : []),
     ...(hasAgents
       ? [{ name: "agents-volume", configMap: { name: agentsConfigMapName(run) } }]
@@ -678,12 +713,12 @@ export function renderPod(
               ? {
                   name: "GIT_SSH_COMMAND",
                   value:
-                    "ssh -i /etc/git-ssh/id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes",
+                    `ssh -i /etc/git-ssh/id${sshHostKeyVerification === "strict" || sshHostKeyVerification === "accept-new" ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=/etc/git-ssh/known_hosts` : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'}${sshHostKeyVerification !== "strict" && sshHostKeyVerification !== "accept-new" ? " -o IdentitiesOnly=yes" : ""}`,
                 }
               : {
                   name: "GIT_SSH_COMMAND",
                   value:
-                    "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+                    `ssh${sshHostKeyVerification === "strict" || sshHostKeyVerification === "accept-new" ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=/etc/git-ssh/known_hosts` : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'}`,
                 },
             ...(spec.secrets?.authSecret
               ? [
@@ -769,6 +804,12 @@ export function renderPod(
               : []),
             ...(githubTokenSecret
               ? [{ name: "git-github", mountPath: "/etc/git-github", readOnly: true }]
+              : []),
+            // Mount known_hosts for SSH host key verification (read-only).
+            // When sshHostKeyVerification is strict/accept-new and a known_hostsSecret
+            // is provided, this mounts the secret as /etc/git-ssh/known_hosts.
+            ...(sshHostKeyVerification === "strict" || sshHostKeyVerification === "accept-new"
+              ? [{ name: "git-known-hosts", mountPath: "/etc/git-ssh/known_hosts", subPath: "known_hosts", readOnly: true }]
               : []),
             ...(hasAgents
               ? [

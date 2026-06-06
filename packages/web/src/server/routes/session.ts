@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { getRun, fetchSessionMessages, readSessionConfigMap } from "../kube.js";
 import { OPENCODE_RUNNER_DEFAULTS } from "@percussionist/api";
+import { auth } from "../auth.js";
 
 const session = new Hono();
 
@@ -12,7 +13,7 @@ const session = new Hono();
 //   2. If that fails (pod deleted, network error, etc), read the session
 //      snapshot from the ConfigMap the dispatcher wrote before exiting.
 //   3. If neither works, return an appropriate error.
-session.get("/:name/session", async (c) => {
+session.get("/:name/session", auth(), async (c) => {
   const name = c.req.param("name");
 
   // 1. Get the run to find serviceName + sessionID.
@@ -64,7 +65,7 @@ session.get("/:name/session", async (c) => {
 });
 
 // GET /api/runs/:name/session/events — proxy OpenCode SSE stream from the run service.
-session.get("/:name/session/events", async (c) => {
+session.get("/:name/session/events", auth(), async (c) => {
   const name = c.req.param("name");
 
   let serviceName: string;
