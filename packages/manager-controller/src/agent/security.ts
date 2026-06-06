@@ -28,58 +28,64 @@ export function isValidPackageName(name: string): boolean {
 
 /**
  * Dangerous shell constructs that indicate potential command injection.
- * Each pattern is tested against the raw command string.
+ * Each entry has a `pattern` (regex) and a human-readable `name` used in
+ * error messages so callers can identify the specific threat class.
  */
-const INJECTION_PATTERNS: RegExp[] = [
+interface InjectionPattern {
+  pattern: RegExp;
+  name: string;
+}
+
+const INJECTION_PATTERNS: InjectionPattern[] = [
   // Command substitution: $(...) or `...`
-  /\$\(/,           // $() subshell
-  /`[^`]*`/,        // backtick command substitution
+  { pattern: /\$\(/,           name: "$() command substitution" },
+  { pattern: /`[^`]*`/,        name: "backtick command substitution" },
 
   // Pipeline injection: ; | && ||
-  /;/,              // semicolon (command separator)
-  /\|/,             // pipe
-  /&&/,             // AND list
-  /\|\|/,           // OR list
+  { pattern: /;/,              name: "semicolon (command separator)" },
+  { pattern: /\|/,             name: "pipe" },
+  { pattern: /&&/,             name: "AND list" },
+  { pattern: /\|\|/,           name: "OR list" },
 
   // Backgrounding
-  /&\s*$/,          // trailing & for background execution
+  { pattern: /&\s*$/,          name: "background execution" },
 
   // Redirection to sensitive paths or command chaining via >
-  />[>&]/,         // output redirection (>, >>)
-  /<[>& ]/,        // input redirection (<, <<, < file)
+  { pattern: />[>&]/,         name: "output redirection (>, >>)" },
+  { pattern: /<[>& ]/,        name: "input redirection (<, <<, < file)" },
 
   // Subshell grouping
-  /\(/,            // opening paren (subshell/grouping)
-  /\)/,            // closing paren
+  { pattern: /\(/,            name: "subshell/paren" },
+  { pattern: /\)/,            name: "subshell/paren" },
 
   // Variable assignment as command prefix: FOO=bar cmd
-  /^[A-Za-z_][A-Za-z0-9_]*=/m, // env var assignment before command
+  { pattern: /^[A-Za-z_][A-Za-z0-9_]*=/m, name: "env var assignment before command" },
 
   // Here-documents
-  /<<-?\s*[A-Za-z]/, // here-document redirector
+  { pattern: /<<-?\s*[A-Za-z]/, name: "here-document redirector" },
 
   // Brace expansion (bash-specific but still dangerous)
-  /\{[^}]*\}/,      // brace expansion group
+  { pattern: /\{[^}]*\}/,      name: "brace expansion group" },
 
   // Process substitution: <(...) or >(...)
-  /[<>]\(/,         // process substitution start
+  { pattern: /[<>]\(/,         name: "process substitution start" },
 
   // Globbing that could match unexpected files in sensitive paths
-  /\*\*\/|\/\*\//,   // recursive glob patterns
+  { pattern: /\*\*\/|\/\*\//,   name: "recursive glob patterns" },
 
   // Path traversal attempts
-  /\.\.[\/]/,       // .. followed by / or \
+  { pattern: /\.\.[\/]/,       name: "path traversal attempt" },
 ];
 
 /**
  * Check whether a command string contains shell injection indicators.
  * Returns `null` if the command is safe, or an error message describing
- * what was rejected and why.
+ * what was rejected and why (including a human-readable pattern name).
  */
 export function sanitizeCommand(command: string): string | null {
-  for (const pattern of INJECTION_PATTERNS) {
+  for (const { pattern, name } of INJECTION_PATTERNS) {
     if (pattern.test(command)) {
-      return `Command rejected: contains shell metacharacter pattern matching /${pattern.source}/`;
+      return `Command rejected: contains shell metacharacter (${name})`;
     }
   }
 
