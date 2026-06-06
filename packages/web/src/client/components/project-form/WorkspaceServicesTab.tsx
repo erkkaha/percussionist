@@ -1,6 +1,5 @@
 import { Input } from "../ui/input";
 import type { ProjectFormHookReturn } from "./useProjectForm";
-import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 
 interface WorkspaceServicesTabProps {
