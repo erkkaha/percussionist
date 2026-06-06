@@ -24,7 +24,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { DISPATCHER_MCP_PORT } from "@percussionist/api";
-import { getProject, buildTask, createTask, writePlanToConfigMap, readPlanFromConfigMap } from "@percussionist/kube";
+import { getProject, buildTask, createTask, patchTaskStatus, writePlanToConfigMap, readPlanFromConfigMap } from "@percussionist/kube";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-dispatcher";
@@ -556,6 +556,10 @@ async function handleCreateTask(
     });
 
     await createTask(task, ns);
+
+    // Ensure status.phase is persisted (defense-in-depth; buildTask sets it
+    // but K8s may strip initial status on some CRD setups).
+    await patchTaskStatus(taskName, { phase: "pending" }, ns).catch(() => { /* best effort */ });
 
     return ok(id, {
       content: [{ type: "text", text: JSON.stringify({ taskName, project: projectName, type: "BUILD", phase: "pending" }) }],

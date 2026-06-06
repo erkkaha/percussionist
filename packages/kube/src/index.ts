@@ -666,7 +666,7 @@ export function buildTask({
       ],
     },
     spec,
-    status: { phase: "pending" },
+    status: { phase: "pending" as const },
   };
 }
 
