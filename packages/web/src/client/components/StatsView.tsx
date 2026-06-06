@@ -1,7 +1,11 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Area, AreaChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
+import { BarChart3, List, Table2 } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import TokenCounter from "./TokenCounter";
+import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent, type ChartConfig } from "./ui/chart";
+import { cn } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
 // Types matching /api/stats/export response
@@ -65,6 +69,30 @@ interface ContentPart {
 }
 
 // ---------------------------------------------------------------------------
+// Trend types (GET /api/stats/trends)
+
+interface TrendPoint {
+  date: string;
+  runs: number;
+  succeeded: number;
+  failed: number;
+  successRate: number;
+  avgDurationMs: number | null;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+interface ModelTrendPoint {
+  date: string;
+  [key: string]: string | number;
+}
+
+interface TrendsResponse {
+  trendPoints: TrendPoint[];
+  modelTrendPoints: ModelTrendPoint[];
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 
 function durationMs(s: StatSession): number | null {
@@ -102,22 +130,6 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-// Parse tool calls from embedded message content parts (fallback when
-// toolCalls array is empty — older dispatcher versions stored them inline).
-function extractToolsFromMessages(messages: MessageRow[]): string[] {
-  const tools: string[] = [];
-  for (const m of messages) {
-    if (!m.content) continue;
-    try {
-      const parts = JSON.parse(m.content) as ContentPart[];
-      for (const p of parts) {
-        if (p.type === "tool" && p.tool) tools.push(p.tool);
-      }
-    } catch { /* not JSON */ }
-  }
-  return tools;
-}
-
 // Resolve the model for a session: run row first, fallback to user message.
 function resolveModel(s: StatSession): string {
   if (s.model) return s.model;
@@ -153,7 +165,6 @@ interface Analytics {
   totalTokensIn: number;
   totalTokensOut: number;
   avgDurationMs: number | null;
-  toolCounts: { tool: string; count: number }[];
   modelRows: { model: string; runs: number; tokensIn: number; tokensOut: number }[];
 }
 
@@ -169,18 +180,6 @@ function computeAnalytics(sessions: StatSession[]): Analytics {
   const avgDurationMs = durations.length > 0
     ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
     : null;
-
-  // Tool usage — from toolCalls array, fallback to inline message parsing
-  const toolMap = new Map<string, number>();
-  for (const s of sessions) {
-    const tools = s.toolCalls.length > 0
-      ? s.toolCalls.map((t) => t.tool)
-      : extractToolsFromMessages(s.messages);
-    for (const t of tools) toolMap.set(t, (toolMap.get(t) ?? 0) + 1);
-  }
-  const toolCounts = [...toolMap.entries()]
-    .map(([tool, count]) => ({ tool, count }))
-    .sort((a, b) => b.count - a.count);
 
   // Model breakdown
   const modelMap = new Map<string, { runs: number; tokensIn: number; tokensOut: number }>();
@@ -201,7 +200,7 @@ function computeAnalytics(sessions: StatSession[]): Analytics {
     total, succeeded, failed,
     successRate: total > 0 ? Math.round((succeeded / total) * 100) : null,
     totalTokensIn, totalTokensOut, avgDurationMs,
-    toolCounts, modelRows,
+    modelRows,
   };
 }
 
@@ -237,48 +236,6 @@ function MetricCard({
         {value}
       </p>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Tool usage
-
-function ToolUsage({ toolCounts }: { toolCounts: Analytics["toolCounts"] }) {
-  if (toolCounts.length === 0) return null;
-  const max = toolCounts[0]?.count ?? 1;
-  return (
-    <section>
-      <h2 className="text-sm font-semibold text-text-muted mb-3">Tool Usage</h2>
-      <div className="rounded-lg border border-border bg-surface-raised overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-text-muted text-left">
-              <th className="px-4 py-2.5 font-medium">Tool</th>
-              <th className="px-4 py-2.5 font-medium">Calls</th>
-              <th className="px-4 py-2.5 font-medium w-1/2">Distribution</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border-muted">
-            {toolCounts.map(({ tool, count }) => (
-              <tr key={tool} className="hover:bg-surface-raised/60">
-                <td className="px-4 py-2.5 font-mono text-xs text-text">{tool}</td>
-                <td className="px-4 py-2.5 tabular-nums text-text-muted">{count}</td>
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 bg-surface-overlay h-1.5 overflow-hidden">
-                      <div
-                        className="h-full bg-primary-container"
-                        style={{ width: `${(count / max) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
   );
 }
 
@@ -412,8 +369,7 @@ function SessionsTable({ sessions }: { sessions: StatSession[] }) {
 
   return (
     <section>
-      <h2 className="text-sm font-semibold text-text-muted mb-3">Sessions</h2>
-      <div className="rounded-lg border border-border overflow-hidden">
+      <div className="rounded-lg border border-border overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
@@ -461,6 +417,288 @@ function SessionsTable({ sessions }: { sessions: StatSession[] }) {
 }
 
 // ---------------------------------------------------------------------------
+// useTrends hook
+
+function useTrends(days: number) {
+  return useQuery<TrendsResponse>({
+    queryKey: ["stats-trends", days],
+    queryFn: async () => {
+      const url = days === 0 ? "/api/stats/trends?days=0" : `/api/stats/trends?days=${days}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res.json() as Promise<TrendsResponse>;
+    },
+    refetchInterval: 60_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Trend charts
+
+function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+interface TrendChartProps {
+  title: string;
+  description: string;
+  data: Array<Record<string, unknown>>;
+  config: ChartConfig;
+  series: Array<{ dataKey: string; stackId?: string }>;
+  type: "area" | "line";
+}
+
+function TrendChart({ title, description, data, config, series, type }: TrendChartProps) {
+  return (
+    <div className="rounded-lg border border-border bg-surface-raised p-4">
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <p className="text-xs text-text-dim">{description}</p>
+      </div>
+      {data.length === 0 ? (
+        <div className="h-[180px] flex items-center justify-center text-text-dim text-sm">
+          No data available
+        </div>
+      ) : (
+        <ChartContainer config={config} className="aspect-auto h-[180px] w-full">
+          {type === "area" ? (
+            <AreaChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+              <defs>
+                {series.map((s) => (
+                  <linearGradient key={s.dataKey} id={`fill-${s.dataKey}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={`var(--color-${s.dataKey})`} stopOpacity={0.3} />
+                    <stop offset="95%" stopColor={`var(--color-${s.dataKey})`} stopOpacity={0.05} />
+                  </linearGradient>
+                ))}
+              </defs>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                dataKey="time"
+                type="number"
+                domain={["dataMin", "dataMax"]}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(t: number) => fmtDate(new Date(t).toISOString())}
+                minTickGap={40}
+              />
+              <YAxis
+                type="number"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
+                width={40}
+              />
+              <ChartTooltip
+                cursor={false}
+                content={
+                  <ChartTooltipContent
+                    indicator="dot"
+                    labelFormatter={(label, payload) => {
+                      if (!payload.length) return String(label);
+                      const p = payload[0] as Record<string, unknown>;
+                      const time = (p?.payload as Record<string, unknown>)?.time as number | undefined;
+                      return time ? fmtDate(new Date(time).toISOString()) : String(label);
+                    }}
+                  />
+                }
+              />
+              <ChartLegend content={<ChartLegendContent />} />
+              {series.map((s) => (
+                <Area
+                  key={s.dataKey}
+                  dataKey={s.dataKey}
+                  type="monotone"
+                  fill={`url(#fill-${s.dataKey})`}
+                  stroke={`var(--color-${s.dataKey})`}
+                  strokeWidth={1.5}
+                  dot={false}
+                  connectNulls
+                  stackId={s.stackId}
+                />
+              ))}
+            </AreaChart>
+          ) : (
+            <LineChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                dataKey="time"
+                type="number"
+                domain={["dataMin", "dataMax"]}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(t: number) => fmtDate(new Date(t).toISOString())}
+                minTickGap={40}
+              />
+              <YAxis
+                type="number"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(v: number) => `${v}%`}
+                width={40}
+              />
+              <ChartTooltip
+                cursor={false}
+                content={
+                  <ChartTooltipContent
+                    indicator="dot"
+                    labelFormatter={(label, payload) => {
+                      if (!payload.length) return String(label);
+                      const p = payload[0] as Record<string, unknown>;
+                      const time = (p?.payload as Record<string, unknown>)?.time as number | undefined;
+                      return time ? fmtDate(new Date(time).toISOString()) : String(label);
+                    }}
+                  />
+                }
+              />
+              <ChartLegend content={<ChartLegendContent />} />
+              {series.map((s) => (
+                <Line
+                  key={s.dataKey}
+                  dataKey={s.dataKey}
+                  type="monotone"
+                  stroke={`var(--color-${s.dataKey})`}
+                  strokeWidth={1.5}
+                  dot={false}
+                  connectNulls
+                />
+              ))}
+            </LineChart>
+          )}
+        </ChartContainer>
+      )}
+    </div>
+  );
+}
+
+function TrendCharts({ trends }: { trends: TrendsResponse }) {
+  const { trendPoints, modelTrendPoints } = trends;
+
+  // Build chart data with time as Unix ms
+  const runsData = useMemo(() =>
+    trendPoints.map((p) => ({
+      time: new Date(p.date).getTime(),
+      succeeded: p.succeeded,
+      failed: p.failed,
+    })),
+    [trendPoints]
+  );
+
+  const successRateData = useMemo(() =>
+    trendPoints.map((p) => ({
+      time: new Date(p.date).getTime(),
+      successRate: p.successRate,
+    })),
+    [trendPoints]
+  );
+
+  const tokenData = useMemo(() =>
+    trendPoints.map((p) => ({
+      time: new Date(p.date).getTime(),
+      tokensIn: p.tokensIn,
+      tokensOut: p.tokensOut,
+    })),
+    [trendPoints]
+  );
+
+  // Build model trend data
+  const modelData = useMemo(() => {
+    if (modelTrendPoints.length === 0) return [];
+    return modelTrendPoints.map((p) => {
+      const { date, ...rest } = p;
+      return { time: new Date(date).getTime(), ...rest };
+    });
+  }, [modelTrendPoints]);
+
+  const models = modelTrendPoints.length > 0
+    ? Object.keys(modelTrendPoints[0]!).filter((k) => k !== "date")
+    : [];
+
+  const chartConfig: ChartConfig = {
+    succeeded: { label: "Succeeded", color: "var(--chart-1)" },
+    failed: { label: "Failed", color: "var(--chart-2)" },
+    successRate: { label: "Success Rate", color: "var(--chart-1)" },
+    tokensIn: { label: "Tokens In", color: "var(--chart-1)" },
+    tokensOut: { label: "Tokens Out", color: "var(--chart-2)" },
+    ...Object.fromEntries(models.map((m, i) => [m, { label: m, color: `var(--chart-${(i % 5) + 1})` }])),
+  };
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <TrendChart
+        title="Runs"
+        description="Succeeded vs failed runs over time"
+        data={runsData}
+        config={chartConfig}
+        series={[
+          { dataKey: "succeeded", stackId: "runs" },
+          { dataKey: "failed", stackId: "runs" },
+        ]}
+        type="area"
+      />
+      <TrendChart
+        title="Success Rate"
+        description="Percentage of successful runs"
+        data={successRateData}
+        config={chartConfig}
+        series={[{ dataKey: "successRate" }]}
+        type="line"
+      />
+      <TrendChart
+        title="Token Usage"
+        description="Tokens in vs out over time"
+        data={tokenData}
+        config={chartConfig}
+        series={[
+          { dataKey: "tokensIn", stackId: "tokens" },
+          { dataKey: "tokensOut", stackId: "tokens" },
+        ]}
+        type="area"
+      />
+      {models.length > 0 ? (
+        <TrendChart
+          title="Tokens per Model"
+          description="Token volume by model over time"
+          data={modelData}
+          config={chartConfig}
+          series={models.map((m) => ({ dataKey: m }))}
+          type="area"
+        />
+      ) : (
+        <div className="rounded-lg border border-border bg-surface-raised p-4">
+          <div className="mb-3">
+            <h3 className="text-sm font-semibold">Tokens per Model</h3>
+            <p className="text-xs text-text-dim">No model data available</p>
+          </div>
+          <div className="h-[180px] flex items-center justify-center text-text-dim text-sm">
+            No data available
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tabs
+
+const TABS = [
+  { id: "overview", label: "Overview", icon: BarChart3 },
+  { id: "sessions", label: "Sessions", icon: List },
+  { id: "models", label: "Models", icon: Table2 },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
+
+// ---------------------------------------------------------------------------
 // Main view
 
 const DAY_OPTIONS = [
@@ -472,7 +710,9 @@ const DAY_OPTIONS = [
 
 export default function StatsView() {
   const [days, setDays] = useState(30);
+  const [tab, setTab] = useState<TabId>("overview");
   const { data: sessions, error, isLoading, isFetching } = useStats(days);
+  const { data: trends } = useTrends(days);
 
   const analytics = sessions ? computeAnalytics(sessions) : null;
 
@@ -506,6 +746,28 @@ export default function StatsView() {
         </div>
       </div>
 
+      {/* Tab toggle */}
+      <div className="flex gap-1 border-b border-border">
+        {TABS.map((t) => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={cn(
+                "flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px",
+                tab === t.id
+                  ? "border-primary text-text"
+                  : "border-transparent text-text-muted hover:text-text",
+              )}
+            >
+              <Icon className="w-4 h-4" />
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
       {error && (
         <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
           <h2 className="text-lg font-semibold mb-1">Failed to load stats</h2>
@@ -523,27 +785,29 @@ export default function StatsView() {
         </div>
       )}
 
-      {analytics && sessions && (
+      {analytics && sessions && sessions.length === 0 && (
+        <div className="rounded-lg border border-border-muted bg-surface-raised p-8 text-center text-text-muted">
+          No sessions found in this time window.
+        </div>
+      )}
+
+      {/* Overview tab */}
+      {tab === "overview" && analytics && sessions && sessions.length > 0 && (
         <>
           <SummaryCards a={analytics} />
-
-          {sessions.length === 0 ? (
-            <div className="rounded-lg border border-border-muted bg-surface-raised p-8 text-center text-text-muted">
-              No sessions found in this time window.
-            </div>
-          ) : (
-            <>
-              {/* Two-column section: tool usage + model breakdown */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <ToolUsage toolCounts={analytics.toolCounts} />
-                <ModelBreakdown modelRows={analytics.modelRows} />
-              </div>
-
-              <TokensChart sessions={sessions} />
-              <SessionsTable sessions={sessions} />
-            </>
-          )}
+          {trends && <TrendCharts trends={trends} />}
+          <TokensChart sessions={sessions} />
         </>
+      )}
+
+      {/* Sessions tab */}
+      {tab === "sessions" && analytics && sessions && sessions.length > 0 && (
+        <SessionsTable sessions={sessions} />
+      )}
+
+      {/* Models tab */}
+      {tab === "models" && analytics && sessions && sessions.length > 0 && (
+        <ModelBreakdown modelRows={analytics.modelRows} />
       )}
     </div>
   );
