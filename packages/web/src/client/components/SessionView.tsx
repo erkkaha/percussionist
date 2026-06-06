@@ -196,9 +196,9 @@ function MessageBubble({
                 remarkPlugins={[remarkGfm, remarkMath]}
                 rehypePlugins={[rehypeKatex]}
                 components={{
-                  h1: ({children}) => <h1 className="text-xl font-bold mt-4 mb-2">{children}</h1>,
-                  h2: ({children}) => <h2 className="text-lg font-bold mt-3 mb-2">{children}</h2>,
-                  h3: ({children}) => <h3 className="text-base font-semibold mt-3 mb-1">{children}</h3>,
+                  h1: ({children}) => <h1 className="text-headline-lg font-bold mt-4 mb-2">{children}</h1>,
+                  h2: ({children}) => <h2 className="text-headline-md font-bold mt-3 mb-2">{children}</h2>,
+                  h3: ({children}) => <h3 className="text-body-lg font-semibold mt-3 mb-1">{children}</h3>,
                   p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
                   ul: ({children}) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
                   ol: ({children}) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,

@@ -114,8 +114,8 @@ export default function RunDetail() {
       <div className="space-y-4">
         <BackLink />
         <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
-          <h2 className="text-lg font-semibold mb-1">Failed to load run</h2>
-          <p className="text-sm">{error.message}</p>
+          <h2 className="text-headline-md mb-1">Failed to load run</h2>
+          <p className="text-caption-xs">{error.message}</p>
         </div>
       </div>
     );
@@ -150,7 +150,7 @@ export default function RunDetail() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-xl font-semibold">{run.metadata.name}</h1>
+            <h1 className="text-headline-lg">{run.metadata.name}</h1>
             <StatusBadge phase={phase} />
             {isFetching && (
               <span className="text-xs text-text-dim animate-pulse">refreshing</span>

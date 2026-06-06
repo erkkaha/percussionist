@@ -155,11 +155,11 @@ export default function MetricsView() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold flex items-center gap-2">
+          <h1 className="text-headline-lg flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-text-muted" />
             Metrics
           </h1>
-          <p className="text-sm text-text-muted">
+          <p className="text-caption-xs text-text-muted">
             {data ? `${data.nodes.length} node${data.nodes.length !== 1 ? "s" : ""}, ${data.pods.length} pod${data.pods.length !== 1 ? "s" : ""}` : "Loading..."}
             {isFetching && !isLoading && (
               <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
@@ -195,8 +195,8 @@ export default function MetricsView() {
         <>
           {unavailable && (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-6 text-amber-600">
-              <h2 className="text-lg font-semibold mb-1">Metrics server not available</h2>
-              <p className="text-sm">
+              <h2 className="text-headline-md mb-1">Metrics server not available</h2>
+              <p className="text-caption-xs">
                 The Kubernetes metrics-server addon is required for this view.
                 Install it with: <code className="px-1.5 py-0.5 bg-amber-500/20 rounded text-xs font-mono">kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml</code>
               </p>
