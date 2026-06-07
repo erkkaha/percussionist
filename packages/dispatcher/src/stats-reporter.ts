@@ -12,6 +12,7 @@ const log = (...args: unknown[]) =>
   console.log(`[dispatcher ${new Date().toISOString()}]`, ...args);
 
 const WEB_STATS_URL = process.env.WEB_STATS_URL ?? "";
+const WEB_AUTH_TOKEN = process.env.WEB_AUTH_TOKEN ?? "";
 const RUN_NAME = process.env.RUN_NAME ?? "";
 const RUN_NAMESPACE = process.env.RUN_NAMESPACE ?? "";
 const TASK = process.env.RUN_TASK ?? "";
@@ -65,7 +66,7 @@ export async function incrementalFlush(
   try {
     const res = await fetch(`${WEB_STATS_URL}/api/stats/session`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(WEB_AUTH_TOKEN ? { Authorization: `Bearer ${WEB_AUTH_TOKEN}` } : {}) },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15_000),
     });
@@ -125,7 +126,7 @@ export async function sendStats(
     try {
       const res = await fetch(`${WEB_STATS_URL}/api/stats/session`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(WEB_AUTH_TOKEN ? { Authorization: `Bearer ${WEB_AUTH_TOKEN}` } : {}) },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(30_000),
       });

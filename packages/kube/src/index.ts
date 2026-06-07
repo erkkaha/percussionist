@@ -1358,6 +1358,30 @@ export async function getDeploymentImages(
   return results;
 }
 
+/**
+ * Read the DISPATCHER_IMAGE env var from the operator Deployment's pod template.
+ * Returns the parsed image info, or null if the deployment or env var is not found.
+ */
+export async function getDispatcherImageFromOperatorDeployment(
+  namespace: string,
+): Promise<DeploymentImageInfo | null> {
+  try {
+    const res = await apps().readNamespacedDeployment({ name: "percussionist-operator", namespace });
+    const env = res.spec?.template?.spec?.containers?.[0]?.env ?? [];
+    const dispatcherEnv = env.find((e) => e.name === "DISPATCHER_IMAGE");
+    const image = dispatcherEnv?.value ?? "";
+    if (!image) return null;
+    const colonIdx = image.lastIndexOf(":");
+    const tag = colonIdx >= 0 ? image.slice(colonIdx + 1) : "latest";
+    const imageWithoutTag = colonIdx >= 0 ? image.slice(0, colonIdx) : image;
+    const slashIdx = imageWithoutTag.lastIndexOf("/");
+    const registryPrefix = slashIdx >= 0 ? imageWithoutTag.slice(0, slashIdx) : imageWithoutTag;
+    return { image, tag, registryPrefix };
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Internal token helpers
 

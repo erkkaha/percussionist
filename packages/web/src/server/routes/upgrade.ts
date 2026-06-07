@@ -18,6 +18,7 @@ export interface UpdateStatus {
     operator: string | null;
     manager: string | null;
     web: string | null;
+    dispatcher: string | null;
   };
   latest: string | null;
   updateAvailable: boolean;
@@ -65,7 +66,7 @@ router.get("/status", auth(), async (c) => {
     if (mcpResponse.error) {
       return c.json(
         {
-          current: { operator: null, manager: null, web: null },
+          current: { operator: null, manager: null, web: null, dispatcher: null },
           latest: null,
           updateAvailable: false,
           error: mcpResponse.error.message,
@@ -79,7 +80,7 @@ router.get("/status", auth(), async (c) => {
     if (mcpResponse.result?.isError) {
       return c.json(
         {
-          current: { operator: null, manager: null, web: null },
+          current: { operator: null, manager: null, web: null, dispatcher: null },
           latest: null,
           updateAvailable: false,
           error: rawText ?? "Unknown MCP tool error",
@@ -91,7 +92,7 @@ router.get("/status", auth(), async (c) => {
     if (!rawText) {
       return c.json(
         {
-          current: { operator: null, manager: null, web: null },
+          current: { operator: null, manager: null, web: null, dispatcher: null },
           latest: null,
           updateAvailable: false,
           error: "Empty response from manager",
@@ -105,7 +106,7 @@ router.get("/status", auth(), async (c) => {
   } catch (e) {
     return c.json(
       {
-        current: { operator: null, manager: null, web: null },
+        current: { operator: null, manager: null, web: null, dispatcher: null },
         latest: null,
         updateAvailable: false,
         error: (e as Error).message,
