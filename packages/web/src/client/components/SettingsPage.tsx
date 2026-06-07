@@ -717,6 +717,7 @@ function UpdatesPanel() {
                   ["operator", data.current.operator],
                   ["manager", data.current.manager],
                   ["web", data.current.web],
+                  ["dispatcher", data.current.dispatcher],
                 ] as [string, string | null][]
               ).map(([name, tag]) => (
                 <div key={name} className="flex items-center gap-2 text-sm">

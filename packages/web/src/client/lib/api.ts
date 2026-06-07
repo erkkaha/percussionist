@@ -451,6 +451,7 @@ export interface UpdateStatus {
     operator: string | null;
     manager: string | null;
     web: string | null;
+    dispatcher: string | null;
   };
   latest: string | null;
   updateAvailable: boolean;

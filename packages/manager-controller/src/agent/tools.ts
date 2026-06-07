@@ -32,6 +32,7 @@ import {
   writePlanToConfigMap,
   readPlanFromConfigMap,
   getDeploymentImages,
+  getDispatcherImageFromOperatorDeployment,
   buildTask,
   createTask,
   apps,
@@ -1498,11 +1499,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       // 1. Read current image tags from live deployments
       const images = await getDeploymentImages(ns, DEPLOYMENT_NAMES);
 
-      // 2. Derive registry prefix and repo path from the operator image (or whichever is found first)
+      // 2. Read dispatcher image from the operator Deployment's DISPATCHER_IMAGE env var
+      const dispatcherInfo = await getDispatcherImageFromOperatorDeployment(ns);
+
+      // 3. Derive registry prefix and repo path from the operator image (or whichever is found first)
       const foundImage = Object.values(images)[0];
       if (!foundImage) {
         return {
-          current: { operator: null, manager: null, web: null },
+          current: { operator: null, manager: null, web: null, dispatcher: dispatcherInfo?.tag ?? null },
           latest: null,
           updateAvailable: false,
           error: "Could not read deployment images — are the deployments running?",
@@ -1517,7 +1521,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         : foundImage.image;
       const repo = imageWithoutTag.replace(/^[^/]+\//, ""); // strip registry host
 
-      // 3. Get GHCR anonymous bearer token for this repo
+      // 4. Get GHCR anonymous bearer token for this repo
       let latestTag: string | null = null;
       let registryError: string | undefined;
       try {
@@ -1528,7 +1532,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         if (!tokenRes.ok) throw new Error(`GHCR token endpoint returned ${tokenRes.status}`);
         const { token } = (await tokenRes.json()) as { token: string };
 
-        // 4. Fetch tag list
+        // 5. Fetch tag list
         const tagsRes = await fetch(
           `https://ghcr.io/v2/${repo}/tags/list?n=1000`,
           {
@@ -1539,7 +1543,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         if (!tagsRes.ok) throw new Error(`GHCR tags endpoint returned ${tagsRes.status}`);
         const { tags } = (await tagsRes.json()) as { tags: string[] };
 
-        // 5. Find latest semver tag (vMAJOR.MINOR.PATCH) via inline sort
+        // 6. Find latest semver tag (vMAJOR.MINOR.PATCH) via inline sort
         const semverTags = (tags ?? [])
           .filter((t) => /^v\d+\.\d+\.\d+$/.test(t))
           .sort((a, b) => {
@@ -1564,6 +1568,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
           operator: images["percussionist-operator"]?.tag ?? null,
           manager: images["percussionist-manager"]?.tag ?? null,
           web: images["percussionist-web"]?.tag ?? null,
+          dispatcher: dispatcherInfo?.tag ?? null,
         },
         latest: latestTag,
         updateAvailable,
@@ -1619,20 +1624,34 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         const newImage = `${registryPrefix}/${component}:${targetTag}`;
         const containerName = CONTAINER_NAMES[depName] ?? component;
 
+        // Build the patch body — for the operator deployment, also update
+        // the DISPATCHER_IMAGE env var to match the target tag
+        const containers: Array<Record<string, unknown>> = [{
+          name: containerName,
+          image: newImage,
+        }];
+
+        if (depName === "percussionist-operator") {
+          const dispatcherNewImage = `${registryPrefix}/dispatcher:${targetTag}`;
+          containers[0]!.env = [{ name: "DISPATCHER_IMAGE", value: dispatcherNewImage }];
+        }
+
+        const patchBody = {
+          spec: {
+            template: {
+              spec: {
+                containers,
+              },
+            },
+          },
+        };
+
         try {
           await apps().patchNamespacedDeployment(
             {
               name: depName,
               namespace: ns,
-              body: {
-                spec: {
-                  template: {
-                    spec: {
-                      containers: [{ name: containerName, image: newImage }],
-                    },
-                  },
-                },
-              },
+              body: patchBody,
             },
             setHeaderOptions("Content-Type", "application/strategic-merge-patch+json"),
           );
