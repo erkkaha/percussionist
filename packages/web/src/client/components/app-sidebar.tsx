@@ -20,6 +20,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "./ui/sidebar";
 
 const topNavItems = [
@@ -81,6 +82,14 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
     retry: 1,
   });
 
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  const handleNavClick = (e: React.MouseEvent) => {
+    // Skip closing on modified clicks (cmd/ctrl-click for new tab, middle-click).
+    if (e.metaKey || e.ctrlKey || e.button !== 0) return;
+    if (isMobile) setOpenMobile(false);
+  };
+
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader className="p-0">
@@ -101,7 +110,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                 isActive={location.pathname === item.url}
                 tooltip={item.title}
               >
-                <NavLink to={item.url} end>
+                <NavLink to={item.url} end onClick={handleNavClick}>
                   <item.icon />
                   <span>{item.title}</span>
                 </NavLink>
@@ -119,7 +128,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                       isActive={location.pathname.startsWith(`/projects/${encodeURIComponent(name)}`)}
                       tooltip={p.spec.displayName || name}
                     >
-                      <NavLink to={url}>
+                      <NavLink to={url} onClick={handleNavClick}>
                         <Folder />
                         <span>{p.spec.displayName || name}</span>
                       </NavLink>
@@ -134,7 +143,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                   isActive={false}
                   tooltip="New project"
                 >
-                  <NavLink to="/projects/new">
+                  <NavLink to="/projects/new" onClick={handleNavClick}>
                     <Plus />
                     <span>New project</span>
                   </NavLink>
@@ -148,7 +157,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                 isActive={location.pathname === item.url}
                 tooltip={item.title}
               >
-                  <NavLink to={item.url} end>
+                  <NavLink to={item.url} end onClick={handleNavClick}>
                     <item.icon />
                     {item.title === "Settings" && updateStatus?.updateAvailable && (
                       <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-400" />
