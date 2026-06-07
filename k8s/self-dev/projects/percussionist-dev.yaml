@@ -76,7 +76,7 @@ spec:
   # the 120s bash tool timeout. Cache persists on the data PVC across runs.
   initScript: |
     echo "[init] warming pnpm store"
-    pnpm install --frozen-lockfile --config.strict-dep-builds=false 2>&1 || echo "[init] pnpm install skipped"
+    CI=true pnpm install --frozen-lockfile --config.strict-dep-builds=false 2>&1 || echo "[init] pnpm install skipped"
 
   # Feature branching: each task works on its own branch to prevent
   # git mirror fetch conflicts when multiple tasks run in parallel.

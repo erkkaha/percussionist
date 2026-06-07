@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { canSchedule, byPriority, isActivePhase } from "../scheduler.js";
 import { makeTask, makeProject } from "./fixtures.js";
 
