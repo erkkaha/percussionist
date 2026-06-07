@@ -1,3 +1,4 @@
+import React from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   BarChart3,
@@ -84,11 +85,14 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
 
   const { isMobile, setOpenMobile } = useSidebar();
 
-  const handleNavClick = (e: React.MouseEvent) => {
-    // Skip closing on modified clicks (cmd/ctrl-click for new tab, middle-click).
-    if (e.metaKey || e.ctrlKey || e.button !== 0) return;
-    if (isMobile) setOpenMobile(false);
-  };
+  const handleNavClick = React.useCallback(
+    (e: React.MouseEvent) => {
+      // Skip closing on modified clicks (cmd/ctrl-click for new tab, middle-click).
+      if (e.metaKey || e.ctrlKey || e.button !== 0) return;
+      if (isMobile) setOpenMobile(false);
+    },
+    [isMobile, setOpenMobile],
+  );
 
   return (
     <Sidebar collapsible="icon" {...props}>
