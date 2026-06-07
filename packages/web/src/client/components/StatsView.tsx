@@ -962,7 +962,7 @@ export default function StatsView() {
       </div>
 
       {/* Tab toggle */}
-      <div className="flex gap-1 border-b border-border">
+      <div className="flex gap-1 border-b border-border overflow-x-auto sm:overflow-visible">
         {TABS.map((t) => {
           const Icon = t.icon;
           return (
@@ -970,13 +970,13 @@ export default function StatsView() {
               key={t.id}
               onClick={() => setTab(t.id)}
               className={cn(
-                "flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px",
+                "flex shrink-0 items-center gap-1.5 whitespace-nowrap px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px",
                 tab === t.id
                   ? "border-primary text-text"
                   : "border-transparent text-text-muted hover:text-text",
               )}
             >
-              <Icon className="w-4 h-4" />
+              <Icon className="w-4 h-4 shrink-0" />
               {t.label}
             </button>
           );
