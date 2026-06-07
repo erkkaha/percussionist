@@ -42,6 +42,8 @@ const OLLAMA_BASE_URL =
   `http://ollama.${NAMESPACE}.svc.cluster.local:11434`;
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "nomic-embed-text";
 
+const WEB_AUTH_TOKEN = process.env.WEB_AUTH_TOKEN ?? "";
+
 export {
   NAMESPACE,
   SELF_NAMESPACE,
@@ -49,6 +51,7 @@ export {
   DISPATCHER_IMAGE,
   DISPATCHER_SERVICE_ACCOUNT,
   WEB_STATS_URL,
+  WEB_AUTH_TOKEN,
   INGRESS_BASE_URL,
   INGRESS_CLASS,
   INGRESS_ANNOTATIONS,

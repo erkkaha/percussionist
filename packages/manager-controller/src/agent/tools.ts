@@ -1713,11 +1713,13 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const webUrl =
         process.env.WEB_SERVICE_URL ??
         `http://percussionist-web.${MANAGER_NAMESPACE}.svc.cluster.local:8080`;
+      const webAuthToken = process.env.WEB_AUTH_TOKEN ?? "";
+      const authHeaders: Record<string, string> = webAuthToken ? { Authorization: `Bearer ${webAuthToken}` } : {};
       let path = `/api/board/${encodeURIComponent(project)}/events?limit=${limit}`;
       if (taskFilter) {
         path = `/api/board/${encodeURIComponent(project)}/tasks/${encodeURIComponent(taskFilter)}/events?limit=${limit}`;
       }
-      const res = await fetch(`${webUrl}${path}`);
+      const res = await fetch(`${webUrl}${path}`, { headers: { ...authHeaders } });
       if (!res.ok) {
         throw new Error(`web server returned ${res.status}: ${res.statusText}`);
       }
