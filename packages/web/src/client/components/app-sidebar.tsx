@@ -1,3 +1,4 @@
+import React from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   BarChart3,
@@ -20,6 +21,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "./ui/sidebar";
 
 const topNavItems = [
@@ -80,6 +82,17 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
     refetchInterval: 5 * 60 * 1000,
     retry: 1,
   });
+
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  const handleNavClick = React.useCallback(
+    (e: React.MouseEvent) => {
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+    },
+    [isMobile, setOpenMobile],
+  );
 
   return (
     <Sidebar collapsible="icon" {...props}>
