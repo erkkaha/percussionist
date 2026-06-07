@@ -976,7 +976,7 @@ export default function StatsView() {
                   : "border-transparent text-text-muted hover:text-text",
               )}
             >
-              <Icon className="w-4 h-4" />
+              <Icon className="w-4 h-4 shrink-0" />
               {t.label}
             </button>
           );
