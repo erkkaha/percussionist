@@ -67,10 +67,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
-  # Read + write secrets (get for auth; create/update/patch/delete for inject-file secrets).
+  # Read + write secrets (list for settings UI; get for auth; create/update/patch/delete for inject-file secrets).
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
   # Read session snapshot ConfigMaps (fallback when live proxy is unavailable).
   # create/update/delete for per-project opencode config configmaps.
   - apiGroups: [""]
