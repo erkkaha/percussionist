@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import { BarChart3, List, Table2, Users, Wrench } from "lucide-react";
 import StatusBadge from "./StatusBadge";
+import { authHeaders } from "../lib/auth";
 import TokenCounter from "./TokenCounter";
 import ToolMetricsView from "./ToolMetricsView";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent, type ChartConfig } from "./ui/chart";
@@ -151,7 +152,7 @@ function useStats(days: number) {
     queryKey: ["stats", days],
     queryFn: async () => {
       const url = days === 0 ? "/api/stats/export?days=0" : `/api/stats/export?days=${days}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: authHeaders() });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       return res.json() as Promise<StatSession[]>;
     },
@@ -431,7 +432,7 @@ function useTrends(days: number) {
     queryKey: ["stats-trends", days],
     queryFn: async () => {
       const url = days === 0 ? "/api/stats/trends?days=0" : `/api/stats/trends?days=${days}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: authHeaders() });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       return res.json() as Promise<TrendsResponse>;
     },

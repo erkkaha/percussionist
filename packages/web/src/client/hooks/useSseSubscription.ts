@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getToken } from "../lib/auth";
 
 interface UseSseSubscriptionOptions {
   url: string;
@@ -62,7 +63,9 @@ export function useSseSubscription({
       if (stopped) return;
       closeSource();
 
-      const src = new EventSource(url);
+      const token = getToken();
+      const srcUrl = token ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : url;
+      const src = new EventSource(srcUrl);
       sourceRef.current = src;
 
       src.onopen = () => {

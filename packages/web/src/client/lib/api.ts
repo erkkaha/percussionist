@@ -15,11 +15,17 @@ import type {
   BoardStatus,
 } from "./types";
 import type { ClusterAgent, ClusterSettings } from "@percussionist/api";
+import { authHeaders, clearToken } from "./auth";
 
 const BASE = "/api";
 
 async function fetchJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
+  if (res.status === 401) {
+    clearToken();
+    window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
@@ -96,7 +102,7 @@ export async function fetchTaskDiff(project: string, taskName: string): Promise<
 export async function submitRun(req: CreateRunRequest): Promise<Run> {
   const res = await fetch(`${BASE}/runs`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(req),
   });
   const body = await res.json().catch(() => ({}));
@@ -109,6 +115,7 @@ export async function submitRun(req: CreateRunRequest): Promise<Run> {
 export async function deleteRun(name: string): Promise<void> {
   const res = await fetch(`${BASE}/runs/${encodeURIComponent(name)}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
   if (!res.ok && res.status !== 204) {
     const body = await res.json().catch(() => ({}));
@@ -131,7 +138,7 @@ export async function fetchProject(name: string): Promise<ProjectDetail> {
 export async function submitProject(req: CreateProjectRequest): Promise<Project> {
   const res = await fetch(`${BASE}/projects`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(req),
   });
   const body = await res.json().catch(() => ({}));
@@ -144,6 +151,7 @@ export async function submitProject(req: CreateProjectRequest): Promise<Project>
 export async function deleteProject(name: string): Promise<void> {
   const res = await fetch(`${BASE}/projects/${encodeURIComponent(name)}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
   if (!res.ok && res.status !== 204) {
     const body = await res.json().catch(() => ({}));
@@ -162,7 +170,7 @@ export async function fetchDefaultConfig(): Promise<string> {
 export async function updateProject(name: string, req: CreateProjectRequest): Promise<Project> {
   const res = await fetch(`${BASE}/projects/${encodeURIComponent(name)}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(req),
   });
   const body = await res.json().catch(() => ({}));
@@ -187,7 +195,7 @@ export async function fetchAgent(name: string): Promise<ClusterAgent> {
 export async function submitAgent(req: CreateAgentRequest): Promise<ClusterAgent> {
   const res = await fetch(`${BASE}/agents`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(req),
   });
   const body = await res.json().catch(() => ({}));
@@ -200,7 +208,7 @@ export async function submitAgent(req: CreateAgentRequest): Promise<ClusterAgent
 export async function updateAgent(name: string, req: CreateAgentRequest): Promise<ClusterAgent> {
   const res = await fetch(`${BASE}/agents/${encodeURIComponent(name)}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(req),
   });
   const body = await res.json().catch(() => ({}));
@@ -213,6 +221,7 @@ export async function updateAgent(name: string, req: CreateAgentRequest): Promis
 export async function deleteAgent(name: string): Promise<void> {
   const res = await fetch(`${BASE}/agents/${encodeURIComponent(name)}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
   if (!res.ok && res.status !== 204) {
     const body = await res.json().catch(() => ({}));
@@ -242,7 +251,7 @@ export async function addBoardTask(
     `${BASE}/projects/${encodeURIComponent(project)}/board/tasks`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(task),
     },
   );
@@ -259,7 +268,7 @@ export async function deleteBoardTask(
 ): Promise<void> {
   const res = await fetch(
     `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}`,
-    { method: "DELETE" },
+    { method: "DELETE", headers: authHeaders() },
   );
   if (!res.ok && res.status !== 204) {
     const body = await res.json().catch(() => ({}));
@@ -286,7 +295,7 @@ export async function retryEscalatedTask(
     `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/move`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ column: "ready" }),
     },
   );
@@ -305,7 +314,7 @@ export async function moveTask(
     `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/move`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ column }),
     },
   );
@@ -323,7 +332,7 @@ export async function patchBoardSpec(
     `${BASE}/projects/${encodeURIComponent(project)}/board/spec`,
     {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(patch),
     },
   );
@@ -347,7 +356,7 @@ export async function approveTask(
 ): Promise<void> {
   const res = await fetch(
     `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskId)}/approve`,
-    { method: "POST" },
+    { method: "POST", headers: authHeaders() },
   );
   if (!res.ok && res.status !== 204) {
     const body = await res.json().catch(() => ({}));
@@ -364,7 +373,7 @@ export async function requestChangesTask(
     `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskId)}/request-changes`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ feedback: comment }),
     },
   );
@@ -384,7 +393,7 @@ export async function fetchSettings(): Promise<ClusterSettings> {
 export async function saveSettings(spec: Record<string, unknown>): Promise<ClusterSettings> {
   const res = await fetch(`${BASE}/settings`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ spec }),
   });
   const body = await res.json().catch(() => ({}));
@@ -405,7 +414,7 @@ export async function listSecrets(): Promise<{ items: Array<{ name: string; keys
 export async function createSecret(name: string, data: Record<string, string>): Promise<void> {
   const res = await fetch(`${BASE}/settings/secrets`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ name, data }),
   });
   const body = await res.json().catch(() => ({}));
@@ -417,7 +426,7 @@ export async function createSecret(name: string, data: Record<string, string>): 
 export async function updateSecret(name: string, data: Record<string, string>): Promise<void> {
   const res = await fetch(`${BASE}/settings/secrets/${encodeURIComponent(name)}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ data }),
   });
   const body = await res.json().catch(() => ({}));
@@ -429,6 +438,7 @@ export async function updateSecret(name: string, data: Record<string, string>): 
 export async function deleteSecret(name: string): Promise<void> {
   const res = await fetch(`${BASE}/settings/secrets/${encodeURIComponent(name)}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
   if (!res.ok && res.status !== 204) {
     const body = await res.json().catch(() => ({}));
@@ -461,7 +471,7 @@ export interface UpgradeResult {
 export async function postUpgradeApply(targetTag: string): Promise<UpgradeResult> {
   const res = await fetch(`${BASE}/upgrade/apply`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ targetTag }),
   });
   if (!res.ok) {

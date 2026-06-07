@@ -19,6 +19,7 @@ import { createApp } from "../src/server/app.js";
 const TEST_DATA_DIR = join("/tmp", `percussionist-smoke-${Date.now()}`);
 
 process.env.DATA_DIR = TEST_DATA_DIR;
+process.env.AUTH_DISABLED = "1";
 
 // ---------------------------------------------------------------------------
 

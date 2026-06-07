@@ -29,6 +29,7 @@ import {
 import { getDb, taskEvents } from "../db.js";
 import type { TaskSpec, TaskPhase } from "@percussionist/api";
 import { createPollingSseResponse } from "../lib/sse.js";
+import { auth, adminAuth } from "../auth.js";
 
 const board = new Hono();
 
@@ -68,8 +69,7 @@ export async function appendTaskEvent(
 
 // ---------------------------------------------------------------------------
 // GET /api/projects/:project/board
-
-board.get("/:project/board", async (c) => {
+board.get("/:project/board", auth(), async (c) => {
   const name = c.req.param("project");
   try {
     const [project, tasks] = await Promise.all([
@@ -148,8 +148,7 @@ board.get("/:project/board", async (c) => {
 
 // ---------------------------------------------------------------------------
 // GET /api/projects/:project/board/events — SSE stream for board changes.
-
-board.get("/:project/board/events", async (c) => {
+board.get("/:project/board/events", auth(), async (c) => {
   const name = c.req.param("project");
 
   try {
@@ -197,9 +196,7 @@ board.get("/:project/board/events", async (c) => {
 
 // ---------------------------------------------------------------------------
 // PATCH /api/projects/:project/board/spec — patch project settings.
-// Body: Partial<{ maxParallel, agents, phase }>
-
-board.patch("/:project/board/spec", async (c) => {
+board.patch("/:project/board/spec", adminAuth(), async (c) => {
   const name = c.req.param("project");
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
@@ -218,9 +215,7 @@ board.patch("/:project/board/spec", async (c) => {
 
 // ---------------------------------------------------------------------------
 // POST /api/projects/:project/board/tasks — create a new Task CR.
-// Body: { type, title, agent, description?, priority? }
-
-board.post("/:project/board/tasks", async (c) => {
+board.post("/:project/board/tasks", adminAuth(), async (c) => {
   const name = c.req.param("project");
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
@@ -279,7 +274,7 @@ board.post("/:project/board/tasks", async (c) => {
 // ---------------------------------------------------------------------------
 // DELETE /api/projects/:project/board/tasks/:taskName
 
-board.delete("/:project/board/tasks/:taskName", async (c) => {
+board.delete("/:project/board/tasks/:taskName", adminAuth(), async (c) => {
   const projectName = c.req.param("project");
   const taskName = c.req.param("taskName");
   try {
@@ -301,7 +296,7 @@ board.delete("/:project/board/tasks/:taskName", async (c) => {
 // picks it up again. "column" in the body is accepted for API compatibility
 // but only "ready"/"pending" makes sense here — anything else is rejected.
 
-board.post("/:project/board/tasks/:taskName/move", async (c) => {
+board.post("/:project/board/tasks/:taskName/move", adminAuth(), async (c) => {
   const projectName = c.req.param("project");
   const taskName = c.req.param("taskName");
   let body: unknown;
@@ -348,7 +343,7 @@ board.post("/:project/board/tasks/:taskName/move", async (c) => {
 // ---------------------------------------------------------------------------
 // POST /api/projects/:project/board/tasks/:taskName/approve
 
-board.post("/:project/board/tasks/:taskName/approve", async (c) => {
+board.post("/:project/board/tasks/:taskName/approve", adminAuth(), async (c) => {
   const name = c.req.param("project");
   const taskName = c.req.param("taskName");
   try {
@@ -376,7 +371,7 @@ board.post("/:project/board/tasks/:taskName/approve", async (c) => {
 // ---------------------------------------------------------------------------
 // POST /api/projects/:project/board/tasks/:taskName/request-changes
 
-board.post("/:project/board/tasks/:taskName/request-changes", async (c) => {
+board.post("/:project/board/tasks/:taskName/request-changes", adminAuth(), async (c) => {
   const name = c.req.param("project");
   const taskName = c.req.param("taskName");
   let body: unknown;
@@ -410,7 +405,7 @@ board.post("/:project/board/tasks/:taskName/request-changes", async (c) => {
 // ---------------------------------------------------------------------------
 // POST /api/projects/:project/board/tasks/:taskName/abandon
 
-board.post("/:project/board/tasks/:taskName/abandon", async (c) => {
+board.post("/:project/board/tasks/:taskName/abandon", adminAuth(), async (c) => {
   const name = c.req.param("project");
   const taskName = c.req.param("taskName");
   try {
@@ -437,7 +432,7 @@ board.post("/:project/board/tasks/:taskName/abandon", async (c) => {
 // ---------------------------------------------------------------------------
 // POST /api/projects/:project/board/tasks/:taskName/answer
 
-board.post("/:project/board/tasks/:taskName/answer", async (c) => {
+board.post("/:project/board/tasks/:taskName/answer", adminAuth(), async (c) => {
   const name = c.req.param("project");
   const taskName = c.req.param("taskName");
   let body: unknown;
@@ -472,7 +467,7 @@ board.post("/:project/board/tasks/:taskName/answer", async (c) => {
 // manager controller to append task lifecycle events.
 // Body: { taskName, taskType, eventType, payload? }
 
-board.post("/:project/board/task-events", async (c) => {
+board.post("/:project/board/task-events", adminAuth(), async (c) => {
   const project = c.req.param("project");
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }

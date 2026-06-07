@@ -21,6 +21,7 @@ import { Hono } from "hono";
 import { getDb, runs, messages, toolCalls, fileOps, metricSnapshots } from "../db.js";
 import { lt, gte, eq, and, like, desc, sql, asc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { auth, adminAuth } from "../auth.js";
 
 // ---------------------------------------------------------------------------
 // Payload types (sent by the dispatcher)
@@ -82,7 +83,7 @@ interface SessionPayload {
 const stats = new Hono();
 
 // POST /api/stats/session — ingest a completed session from the dispatcher.
-stats.post("/session", async (c) => {
+stats.post("/session", adminAuth(), async (c) => {
   let body: SessionPayload;
   try {
     body = (await c.req.json()) as SessionPayload;
@@ -195,7 +196,7 @@ stats.post("/session", async (c) => {
 // Uses insert-or-ignore so concurrent/repeated calls are idempotent and never
 // overwrite a later full POST flush. The run row is created on first call so
 // in-progress sessions show up in the UI immediately.
-stats.patch("/session", async (c) => {
+stats.patch("/session", adminAuth(), async (c) => {
   let body: SessionPayload;
   try {
     body = (await c.req.json()) as SessionPayload;
@@ -307,7 +308,7 @@ stats.patch("/session", async (c) => {
 });
 
 // GET /api/stats/exists/:sessionID — check if a session row exists (for backfill guard).
-stats.get("/exists/:sessionID", (c) => {
+stats.get("/exists/:sessionID", auth(), (c) => {
   const { sessionID } = c.req.param();
   const db = getDb();
   const row = db.select({ id: runs.id }).from(runs).where(eq(runs.id, sessionID)).get();
@@ -319,7 +320,7 @@ stats.get("/exists/:sessionID", (c) => {
 // Returns a JSON array where each element is a session with nested messages,
 // tool calls, and file operations. Intended to be saved to disk and fed to
 // an LLM wholesale: jq . sessions.json | llm "find patterns in agent usage".
-stats.get("/export", (c) => {
+stats.get("/export", auth(), (c) => {
   const daysParam = c.req.query("days") ?? "30";
   const days = parseInt(daysParam, 10);
 
@@ -385,7 +386,7 @@ export function runRetentionCleanup(): void {
 
 // GET /api/stats/tool-metrics?days=30&agent=X — aggregated tool usage stats.
 // Sources data from tool_calls (message-part extraction) instead of tool_events (SSE/MCP events).
-stats.get("/tool-metrics", (c) => {
+stats.get("/tool-metrics", auth(), (c) => {
   const daysParam = c.req.query("days") ?? "30";
   const days = parseInt(daysParam, 10);
   const agent = c.req.query("agent");
@@ -530,7 +531,7 @@ stats.get("/tool-metrics", (c) => {
 // GET /api/stats/metrics-timeseries — time-series metrics data.
 // Query params: hours=N (default 1), node=X (default "all")
 
-stats.get("/metrics-timeseries", async (c) => {
+stats.get("/metrics-timeseries", auth(), async (c) => {
   const hours = Math.min(Math.max(parseInt(c.req.query("hours") ?? "1", 10) || 1, 1), 168);
   const nodeFilter = c.req.query("node") ?? "all";
 
@@ -648,7 +649,7 @@ interface ModelTrendPoint {
   [key: string]: string | number;
 }
 
-stats.get("/trends", (c) => {
+stats.get("/trends", auth(), (c) => {
   const daysParam = c.req.query("days") ?? "30";
   const days = parseInt(daysParam, 10);
 

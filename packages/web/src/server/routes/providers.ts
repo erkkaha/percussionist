@@ -1,18 +1,16 @@
 // routes/providers.ts — fetches available LLM providers/models by invoking the
 // manager's list_models MCP tool on port 4097.
-//
-// Port 4096 (opencode sidecar) is not exposed on the manager Service, but
-// port 4097 (MCP) is. We call list_models via JSON-RPC 2.0 directly.
 
 import { Hono } from "hono";
 import { NAMESPACE } from "../kube.js";
+import { auth } from "../auth.js";
 
 const router = new Hono();
 
 const MANAGER_MCP_URL = `http://percussionist-manager.${NAMESPACE}.svc.cluster.local:4097/mcp`;
 
 // GET /api/providers — list all providers, connected status, and defaults.
-router.get("/", async (c) => {
+router.get("/", auth(), async (c) => {
   try {
     const res = await fetch(MANAGER_MCP_URL, {
       method: "POST",

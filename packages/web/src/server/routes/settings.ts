@@ -11,8 +11,12 @@ import {
   KIND_CLUSTER_SETTINGS,
   type ClusterSettingsSpec,
 } from "@percussionist/api";
+import { auth } from "../auth.js";
 
 const settings = new Hono();
+
+// All settings endpoints are sensitive (secrets listing, cluster config).
+settings.use("/*", auth());
 
 const CLUSTER_CONFIG_CM = "opencode-config";
 const CONFIG_CM_KEY = "opencode.json";

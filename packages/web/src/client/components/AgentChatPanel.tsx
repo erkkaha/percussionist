@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Send, Mic, MicOff, Volume2, VolumeX, X } from "lucide-react";
 import { DrumLogo } from "./app-sidebar";
+import { authHeaders, getToken } from "../lib/auth";
 import type { Task } from "@/lib/types";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -157,7 +158,7 @@ function sanitizeForSpeech(text: string): string {
   // Check agent availability on mount with polling
   useEffect(() => {
     function check() {
-      fetch("/api/agent/status")
+      fetch("/api/agent/status", { headers: authHeaders() })
         .then((r) => r.json())
         .then((d) => setAvailable(d.available === true))
         .catch(() => setAvailable(false));
@@ -174,7 +175,7 @@ function sanitizeForSpeech(text: string): string {
     resetSeen();
     setMessages([]);
     speakAfterCreatedRef.current = 0;
-    fetch("/api/agent/chat/history")
+    fetch("/api/agent/chat/history", { headers: authHeaders() })
       .then((r) => r.json())
       .then((d) => {
         const history = d.history as ChatMessage[] | undefined;
@@ -193,7 +194,9 @@ function sanitizeForSpeech(text: string): string {
   // SSE stream for real-time updates — only open after history is loaded to avoid race
   useEffect(() => {
     if (!open || !historyLoaded) return;
-    const es = new EventSource("/api/agent/chat/stream");
+    const token = getToken();
+    const streamUrl = token ? `/api/agent/chat/stream?token=${encodeURIComponent(token)}` : "/api/agent/chat/stream";
+    const es = new EventSource(streamUrl);
     eventSourceRef.current = es;
 
     es.onmessage = (e) => {
@@ -244,7 +247,7 @@ function sanitizeForSpeech(text: string): string {
     try {
       const res = await fetch("/api/agent/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ message: text }),
         signal: ac.signal,
       });

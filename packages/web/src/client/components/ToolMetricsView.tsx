@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { authHeaders } from "../lib/auth";
 
 interface Props {
   days: number;
@@ -96,7 +97,7 @@ export default function ToolMetricsView({ days }: Props) {
     queryFn: async () => {
       const params = new URLSearchParams({ days: String(days) });
       if (agentFilter) params.set("agent", agentFilter);
-      const res = await fetch(`/api/stats/tool-metrics?${params}`);
+      const res = await fetch(`/api/stats/tool-metrics?${params}`, { headers: authHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json() as Promise<ToolMetricsResponse>;
     },
