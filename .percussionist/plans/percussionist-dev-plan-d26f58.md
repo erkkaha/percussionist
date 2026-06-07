@@ -1,160 +1,157 @@
-# Plan: Testing improvements for reliable agent development
+# Plan: Testing improvements for reliable, model-independent agent development
 
 ## Context
 
-- Current automation has a strong unit/integration foundation in manager reconciler tests (`packages/manager-controller/src/reconciler/__tests__/*.test.ts`) and basic package tests (`pnpm test`), but CI (`.github/workflows/ci.yml`) only enforces build + typecheck.
-- Existing E2E tests (`tests/e2e/e2e-facilitator.test.ts`, `e2e-advances.test.ts`, `e2e-achieves.test.ts`) already validate high-value lifecycle transitions (worker fail/succeed, facilitator/reviewer spawn, board done progression).
-- E2E harness entry points are centralized in:
-  - `tests/e2e/helpers/setup.ts` (cluster bootstrap + teardown)
-  - `tests/e2e/helpers/kubectl.ts` (typed wrappers)
-  - `tests/e2e/helpers/wait.ts` (polling)
-- Determinism is currently mixed:
-  - Good: `clusteragent-complete-worker.yaml` and `clusteragent-stubborn-worker.yaml` explicitly invoke `complete_run` / `fail_run`.
-  - Weak: review/facilitation assertions in `e2e-advances` and `e2e-achieves` still accept terminal ambiguity (`Succeeded` or `Failed`) and rely on model-generated JSON being parsable.
-  - Gap: plan fixture `k8s/tests/e2e-plan-agent.yaml` currently instructs `complete_run` instead of `complete_plan`, which misaligns with current PLAN semantics.
-- Self-dev smoke testing (`k8s/self-dev/agents/meta-smoke-tester.yaml`) is intentionally heavy (Docker build + image load + full E2E) and should remain a deeper confidence lane rather than baseline dev gating.
+- The current test surface is split across:
+  - **State-machine/unit tests** in `packages/manager-controller/src/reconciler/__tests__/*.test.ts` (e.g. `decision.test.ts`, `scheduler.test.ts`, `transitions.test.ts`, `flow.test.ts`, `reconcile.test.ts`).
+  - **Package-level tests** like `packages/web/tests/smoke.test.ts` and `packages/memory-service/src/__tests__/routes.test.ts`.
+  - **Cluster E2E tests** in `tests/e2e/*.test.ts` with shared harness code in `tests/e2e/helpers/setup.ts`, `kubectl.ts`, and `wait.ts`.
+- The root CI workflow (`.github/workflows/ci.yml`) currently runs only `pnpm build` and `pnpm typecheck`; no deterministic E2E is required on PRs.
+- Existing E2E already covers important orchestrator flows:
+  - `e2e-facilitator.test.ts`: worker failure triggers facilitator run.
+  - `e2e-advances.test.ts`: successful worker triggers reviewer and task reaches done.
+  - `e2e-achieves.test.ts`: failed worker + facilitator recommendation results in alternative worker success.
+- Determinism is currently uneven:
+  - Good: fixtures like `k8s/tests/clusteragent-stubborn-worker.yaml` call `fail_run` directly.
+  - Weak: some tests still allow reviewer/facilitator terminal ambiguity (`Succeeded` or `Failed`) and infer correctness from model-produced text/JSON.
+  - Gap: `k8s/tests/e2e-plan-agent.yaml` instructs a PLAN test agent to call `complete_run`, not `complete_plan`.
+- Current self-dev smoke flow (`k8s/self-dev/agents/meta-smoke-tester.yaml`) is heavy (build images, load to minikube, run full E2E) and suitable as a deep lane, not default PR gate.
 
 ## Scope boundaries
 
 ### In scope
-- Define a deterministic test strategy that supports future feature development and agent alignment.
-- Harden E2E so correctness is judged from CR/run/task state and deterministic tool calls, not model prose quality.
-- Add reusable pod-exec utilities for cases where CR status alone is insufficient.
-- Add PLAN-specific coverage using `complete_plan` semantics and plan artifact expectations.
-- Propose CI tiering so fast checks are required and heavy smoke flows are optional/scheduled.
+1. Define a clear **testing strategy** for future development and agent alignment.
+2. Make core E2E assertions **model-independent** (state/tool-driven, not prose-driven).
+3. Add safe, reusable **pod exec verification** for artifacts not represented in CR status.
+4. Add PLAN lifecycle coverage that validates `complete_plan` and plan-artifact behavior.
+5. Propose a practical **tiered CI strategy** (fast required lane + deeper optional lane).
 
 ### Out of scope
-- Rewriting reconciliation behavior solely for tests.
-- Building a full multi-cluster matrix.
-- Replacing existing smoke-test purpose (it remains the heavier integration lane).
+1. Re-architecting the reconciler solely for testability.
+2. Building a full multi-cluster or provider test matrix.
+3. Converting smoke tests into a mandatory per-PR gate.
 
 ## Assumptions
 
-1. We can introduce additional test-only ClusterAgent fixtures under `k8s/tests/`.
-2. Required CI checks must stay reasonably fast (target: minutes, not tens of minutes).
-3. For deterministic E2E, invoking dispatcher tools (`complete_run`, `complete_plan`, `fail_run`) is preferred over natural language output.
-4. Pod exec is acceptable when validating worktree/branch/session artifacts that are not exposed as stable API fields.
+1. We can add/rename test-only ClusterAgent fixtures under `k8s/tests/`.
+2. Deterministic E2E should prefer explicit MCP tool calls (`complete_plan`, `complete_run`, `fail_run`) over LLM-generated summaries.
+3. `kubectl exec` in E2E pods is acceptable when CR fields do not expose the needed fact.
+4. PR-required checks must remain relatively fast (single-digit minutes target).
 
 ## Approach
 
-1. **Adopt a layered testing model with explicit ownership**
-   - Keep package tests as the default fast guardrail.
-   - Add deterministic E2E “core” scenarios for lifecycle invariants.
-   - Keep smoke tests as a separate deep lane (manual/scheduled/release-gated).
-
-2. **Make E2E deterministic by construction (no model trust)**
-   - Use test agents that either:
-     - call dispatcher tools directly (preferred), or
-     - emit fixed JSON with strict schema and no open-ended reasoning.
-   - Convert ambiguous assertions into explicit phase/annotation/board expectations.
-
-3. **Provide pod-exec checks as targeted ground truth tools**
-   - Extend `tests/e2e/helpers/kubectl.ts` with `kubectlExec(...)` and JSON-safe helpers.
-   - Use only for verification that cannot be asserted via Task/Run/Project status (e.g., plan file presence in worktree, branch name, session snapshot availability).
-
-4. **Stabilize harness lifecycle and debugging ergonomics**
-   - Improve `setup.ts` to isolate suites (unique namespaces/project names, consistent cleanup, safer env restoration).
-   - Add structured failure dumps (runs/tasks/events/log snippets) to reduce flaky triage.
-
-5. **Align tests with actual agent workflow semantics**
-   - Add explicit PLAN E2E proving `complete_plan` and `.percussionist/plans/{task-id}.md` behavior.
-   - Ensure BUILD and facilitation/review cases reflect transition rules represented in reconciler decision tests.
-
-6. **Integrate two CI tiers**
-   - Tier 1 (required on PR): build + typecheck + deterministic E2E core subset.
-   - Tier 2 (optional/manual/scheduled): full E2E + smoke image flow + richer artifact capture.
+1. **Codify a layered test strategy** so contributors know where to add coverage (unit vs E2E vs smoke).
+2. **Redesign core E2E around deterministic control points**:
+   - deterministic test agents,
+   - strict assertions on `Run.status`, `Task.status`, and board state,
+   - no “model guessed correctly” requirements.
+3. **Use pod-exec only as a targeted oracle** for non-API-visible facts (e.g., plan artifact exists in worktree).
+4. **Separate lanes**:
+   - core deterministic E2E (PR-eligible),
+   - extended/smoke E2E (manual or scheduled).
+5. **Align PLAN semantics explicitly** by testing `complete_plan` path and `.percussionist/plans/<task-id>.md` expectations.
 
 ## Tasks
 
-1. **Write a testing strategy document**
-   - Add `docs/testing-strategy.md` (or equivalent) defining layers, commands, and deterministic rules.
-   - Document “what must be deterministic” and “what may remain model-dependent (if any)”.
+1. **Document testing strategy and boundaries**
+   - Add `docs/testing-strategy.md` defining:
+     - test layers,
+     - ownership,
+     - deterministic rules (“never trust model prose for pass/fail”),
+     - when pod-exec is allowed.
+   - Include canonical commands from root (`pnpm test`, `pnpm e2e`) and planned split commands (core vs extended).
 
-2. **Normalize and expand deterministic ClusterAgent fixtures (`k8s/tests/`)**
-   - Add/rename fixtures so intent is explicit (e.g., `clusteragent-plan-complete.yaml`, `clusteragent-reviewer-approve.yaml`, `clusteragent-facilitator-retry-alt.yaml`).
-   - Fix plan fixture semantics: ensure PLAN test agent uses `complete_plan` (not `complete_run`).
-   - Keep existing worker fixtures but remove duplicates/ambiguity where possible (`e2e-*.yaml` vs `clusteragent-*.yaml`).
+2. **Fix PLAN fixture semantics and consolidate E2E fixtures**
+   - Update `k8s/tests/e2e-plan-agent.yaml` to use `complete_plan` semantics.
+   - Reconcile overlapping fixture naming between `e2e-*.yaml` and `clusteragent-*.yaml`.
+   - Create explicit deterministic fixtures for:
+     - plan completion,
+     - reviewer approve/request_changes,
+     - facilitator retry_same/retry_alternative.
 
-3. **Upgrade kubectl helper surface in `tests/e2e/helpers/kubectl.ts`**
-   - Add `kubectlExec(namespace, target, container?, command[])` wrapper.
-   - Add helpers for JSON output extraction and strict parse errors.
-   - Add reusable diagnostics helpers (`describeResource`, `logsForRun`, `listEvents`) for failure snapshots.
+3. **Strengthen E2E helper API in `tests/e2e/helpers/kubectl.ts`**
+   - Add `kubectlExec(...)` wrapper with container targeting.
+   - Add convenience helpers for deterministic evidence collection (run logs, describe, events).
+   - Add robust JSON parsing helpers for exec output with strict error surfacing.
 
-4. **Harden setup/teardown in `tests/e2e/helpers/setup.ts`**
-   - Introduce safer setup API options (timeouts, namespace suffixes, deterministic cleanup policy).
-   - Ensure teardown and env reset execute even after assertion errors.
-   - Add explicit guardrails to avoid cross-suite namespace collisions.
+4. **Harden E2E setup/teardown ergonomics in `tests/e2e/helpers/setup.ts`**
+   - Improve namespace isolation conventions (suite-unique names/suffixes).
+   - Ensure cleanup/env restoration runs even after assertion failures.
+   - Add optional debug mode to retain namespace on failure for triage.
 
-5. **Refactor existing E2E suites to strict deterministic expectations**
-   - `tests/e2e/e2e-advances.test.ts`: require deterministic reviewer outcome (no `Succeeded|Failed` fallback if deterministic fixture used).
-   - `tests/e2e/e2e-achieves.test.ts`: require deterministic facilitator action and alternative agent dispatch outcome.
-   - `tests/e2e/e2e-facilitator.test.ts`: keep deterministic fail path, add stronger assertions on facilitation linkage and status fields.
+5. **Refactor current E2E suites to strict deterministic assertions**
+   - `tests/e2e/e2e-advances.test.ts`: stop accepting ambiguous reviewer run outcomes when deterministic fixture is used.
+   - `tests/e2e/e2e-achieves.test.ts`: assert facilitator recommendation path and alternative-agent dispatch deterministically.
+   - `tests/e2e/e2e-facilitator.test.ts`: add stronger linkage assertions (`targetRunName`, status reason/message shape).
 
-6. **Add PLAN-specific E2E coverage**
-   - New test file under `tests/e2e/` for PLAN completion lifecycle.
-   - Validate expected PLAN artifact path (`.percussionist/plans/<task-id>.md`) via pod-exec when needed.
-   - Assert downstream phase transitions that follow from approved PLAN flow.
+6. **Add new PLAN lifecycle E2E**
+   - Add `tests/e2e/e2e-plan-completion.test.ts` (name TBD).
+   - Validate:
+     - PLAN run completes via `complete_plan`,
+     - expected plan artifact path `.percussionist/plans/<task-id>.md` exists (pod-exec when needed),
+     - resulting task phase transitions align with flow settings.
 
-7. **Add dependency/feature-branch lifecycle E2E coverage (extended tier)**
-   - Add scenario verifying predecessor gating and/or merge metadata visibility for BUILD chains.
-   - Validate key worker status fields (`gitBranch`, `parentBranch`, `mergeIntoBranch`) where feature branching is enabled.
+7. **Add extended E2E for feature-branch/dependency correctness**
+   - Add scenario for predecessor gating + merged dependency behavior.
+   - Assert key worker metadata fields (`gitBranch`, `parentBranch`, `mergeIntoBranch`) under `featureBranchingEnabled: true`.
+   - Keep this scenario in extended lane unless runtime proves acceptable for core.
 
-8. **Introduce suite selection conventions and scripts**
-   - Add script variants in root `package.json` and/or `tests/e2e/package.json` (e.g., `e2e:core`, `e2e:extended`).
-   - Use file naming or env-based filtering to keep selection deterministic and maintainable.
+8. **Define and wire E2E suite tiers**
+   - Add script split in root `package.json` and/or `tests/e2e/package.json`:
+     - `e2e:core` (deterministic fast lane),
+     - `e2e:extended` (longer branch/dependency paths),
+     - keep `e2e` as aggregate if desired.
+   - Ensure test-file selection mechanism is explicit and stable.
 
-9. **Integrate CI tiers**
-   - Update `.github/workflows/ci.yml` (or add dedicated E2E workflow) so Tier 1 runs on PR.
-   - Add artifact upload for failures (kubectl diagnostics, logs, board snapshots).
-   - Keep Tier 2 on manual dispatch/schedule to avoid slowing everyday iteration.
+9. **Integrate core lane in CI and preserve deep smoke lane**
+   - Extend `.github/workflows/ci.yml` or add dedicated workflow to run deterministic core E2E on PRs.
+   - Upload diagnostics artifacts on failure (events, run summaries, logs).
+   - Keep heavy smoke (`meta-smoke-tester`) as manual/scheduled/release gate.
 
-10. **Align self-dev smoke guidance**
-    - Update `k8s/self-dev/agents/meta-smoke-tester.yaml` to run deterministic suite commands by default.
-    - Require explicit failure evidence capture and infra-vs-product failure classification in its JSON output.
-
-11. **Publish contributor workflow guidance**
-    - Update `k8s/self-dev/README.md` and/or AGENTS docs with “when to run which tier”.
-    - Provide recipe for adding a new deterministic E2E: fixture → helper usage → assertions → cleanup.
+10. **Update self-dev smoke and contributor guidance**
+    - Update `k8s/self-dev/agents/meta-smoke-tester.yaml` to prioritize deterministic suite commands and structured evidence output.
+    - Update `k8s/self-dev/README.md` (and AGENTS docs if needed) with “which lane to run when”.
+    - Add contributor checklist for adding new deterministic E2E tests (fixture + helper + assertions + cleanup).
 
 ## Acceptance criteria
 
-1. A documented testing strategy clearly defines unit/integration/E2E/smoke responsibilities and execution paths.
-2. Core E2E tests pass repeatedly without depending on model reasoning quality.
-3. PLAN E2E validates `complete_plan` semantics and plan artifact expectations.
-4. Existing facilitator/reviewer E2E tests no longer rely on permissive terminal-state assertions for deterministic fixtures.
-5. Pod-exec assertions are available as reusable helpers and used only where API state is insufficient.
-6. CI enforces at least one required deterministic test tier beyond build/typecheck.
-7. Self-dev smoke instructions and contributor docs are updated to reflect the tiered strategy.
+1. A committed testing strategy document explains test layers and deterministic rules.
+2. Core E2E tests no longer depend on model narrative quality to pass/fail.
+3. PLAN-specific E2E verifies `complete_plan` and plan artifact expectations.
+4. Existing E2E suites use strict state-based assertions instead of permissive terminal fallbacks.
+5. Pod-exec checks are implemented as reusable helpers and used only where CR status is insufficient.
+6. CI includes at least one required deterministic E2E lane in addition to build/typecheck.
+7. Self-dev smoke guidance and contributor docs match the tiered strategy.
 
 ## Risks / open questions
 
-1. **CI cluster runtime choice:** determine whether to run core E2E on GitHub-hosted Kind or self-hosted runners.
-2. **Runtime budget:** even deterministic E2E may be too slow for every PR if setup remains heavyweight.
-3. **Fixture duplication debt:** current overlap between `e2e-*.yaml` and `clusteragent-*.yaml` may cause confusion unless consolidated.
-4. **Pod-exec fragility:** commands used for exec assertions must remain minimal and image-stable.
-5. **Feature-branch coverage boundary:** decide whether branch/merge metadata checks are core or extended tier only.
+1. **Runtime budget:** even deterministic E2E may be too slow if cluster bootstrap remains expensive.
+2. **CI environment choice:** decide between GitHub-hosted Kind, self-hosted cluster, or split strategy.
+3. **Fixture migration churn:** renaming/consolidating fixtures may briefly destabilize existing test references.
+4. **Pod-exec brittleness:** checks must avoid image/path assumptions that can drift.
+5. **Tier boundary decisions:** determine whether feature-branch metadata tests stay extended or move to core.
 
 ## Proposed BUILD task breakdown
 
-1. **BUILD-A: Testing strategy + contributor docs**
-   - Deliver strategy doc and contributor guidance for tier selection and deterministic principles.
+1. **BUILD-1 — Testing strategy + docs lane definition**
+   - Deliver `docs/testing-strategy.md` and contributor lane-selection guidance.
 
-2. **BUILD-B: Deterministic fixture consolidation and PLAN semantic fix**
-   - Clean/expand `k8s/tests/` fixtures, including PLAN fixture that calls `complete_plan`.
-   - Depends on: BUILD-A.
+2. **BUILD-2 — Deterministic fixture cleanup + PLAN semantic correction**
+   - Update `k8s/tests/*` fixtures including `e2e-plan-agent.yaml` to align with `complete_plan`.
+   - Depends on: BUILD-1.
 
-3. **BUILD-C: E2E helper hardening (exec + diagnostics + lifecycle APIs)**
-   - Extend `tests/e2e/helpers/kubectl.ts` and `setup.ts` with reusable deterministic primitives.
-   - Depends on: BUILD-B.
+3. **BUILD-3 — E2E helper hardening (kubectl exec + diagnostics)**
+   - Extend `tests/e2e/helpers/kubectl.ts` and `setup.ts` with stable primitives for deterministic checks.
+   - Depends on: BUILD-2.
 
-4. **BUILD-D: Refactor existing E2E tests to strict deterministic assertions**
-   - Update `e2e-facilitator`, `e2e-advances`, `e2e-achieves` to use new fixtures/helpers and strict outcomes.
-   - Depends on: BUILD-C.
+4. **BUILD-4 — Refactor existing E2E to strict deterministic behavior**
+   - Update `e2e-facilitator`, `e2e-advances`, and `e2e-achieves` to remove model-dependent ambiguity.
+   - Depends on: BUILD-3.
 
-5. **BUILD-E: New PLAN lifecycle E2E + dependency/feature-branch extended E2E**
-   - Add missing PLAN and predecessor/branch lifecycle scenarios.
-   - Depends on: BUILD-D.
+5. **BUILD-5 — Add PLAN lifecycle and feature-branch/dependency E2E**
+   - Add missing PLAN completion coverage and extended branch/dependency scenarios.
+   - Depends on: BUILD-4.
 
-6. **BUILD-F: CI tier rollout + smoke-agent alignment**
-   - Introduce required core tier and optional extended/smoke tier; update smoke agent instructions for deterministic evidence.
-   - Depends on: BUILD-D (and BUILD-E if extended coverage is included in Tier 1/2 workflows).
+6. **BUILD-6 — CI integration + smoke-agent alignment**
+   - Wire `e2e:core` into PR CI; keep extended/smoke in optional lane; update meta-smoke tester output expectations.
+   - Depends on: BUILD-4 (and BUILD-5 if extended suite wiring is included).
