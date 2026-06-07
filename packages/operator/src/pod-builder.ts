@@ -24,6 +24,7 @@ import {
   DISPATCHER_IMAGE,
   DISPATCHER_SERVICE_ACCOUNT,
   WEB_STATS_URL,
+  WEB_AUTH_TOKEN,
   INGRESS_BASE_URL,
   INGRESS_CLASS,
   INGRESS_ANNOTATIONS,
@@ -800,6 +801,7 @@ export function renderPod(
               value: `http://127.0.0.1:${containerPort}`,
             },
             { name: "WEB_STATS_URL", value: WEB_STATS_URL },
+            { name: "WEB_AUTH_TOKEN", value: WEB_AUTH_TOKEN },
             ...(spec.task && !spec.interactive
               ? [{ name: "RUN_TASK", value: spec.task }]
               : []),

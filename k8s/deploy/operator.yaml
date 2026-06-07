@@ -55,6 +55,10 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
+  # Secrets — read web-auth token for passing to dispatcher pods.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -109,7 +113,7 @@ rules:
   # before exiting so the web dashboard can display it after the pod dies.
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["create", "patch"]
+    verbs: ["get", "create", "update", "patch"]
   # create_task tool: dispatcher reads project to validate agent roster, then
   # creates a Task CR and patches its status to set initial phase.
   - apiGroups: ["percussionist.dev"]
@@ -187,6 +191,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: WEB_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: token
+                  optional: true
             # - name: PERCUSSIONIST_INGRESS_CLASS
             #   value: nginx
             # - name: PERCUSSIONIST_INGRESS_ANNOTATIONS

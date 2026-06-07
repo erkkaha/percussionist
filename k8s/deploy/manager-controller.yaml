@@ -53,6 +53,10 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list", "create"]
+  # Secrets — read web-auth token for authenticating to the web API.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
   # Deployments — read image tags and patch for upgrades.
   - apiGroups: ["apps"]
     resources: ["deployments"]
@@ -133,6 +137,12 @@ spec:
               value: ghcr.io/erkkaha/percussionist/runner:latest
             - name: MERGING_AGENT
               value: meta-integrator
+            - name: WEB_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: token
+                  optional: true
             - name: NODE_EXTRA_CA_CERTS
               value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
           resources:
