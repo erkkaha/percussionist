@@ -7,6 +7,10 @@ of TypeScript packages under `packages/*`.
 ## Key Commands
 - `pnpm build` - Build all packages
 - `pnpm typecheck` - Type-check all packages via `tsc -b` (run before committing; respects project references, runs in topological order)
+- `pnpm test` - Run unit + smoke tests across all packages (Vitest + Bun)
+- `pnpm e2e:core` - Run deterministic E2E suites on a live cluster (PR gate)
+- `pnpm e2e:extended` - Run extended E2E suites for complex paths like feature branching
+- `pnpm e2e` - Aggregate: runs all E2E suites
 - `pnpm bundle` - Bundle CLI into standalone binary (`beatctl`)
 - `pnpm codegen` - Generate CRD YAML from Zod schemas
 - `pnpm beatctl` - Run CLI from source
@@ -22,6 +26,33 @@ of TypeScript packages under `packages/*`.
   - `images/web/` - Bun runtime
   - `images/manager/` - Node 24
 - Images are built locally (no external registry) and loaded into cluster via `scripts/minikube-load.sh`
+
+## Testing
+
+Percussionist uses a four-layer testing model. See [`docs/testing-strategy.md`](docs/testing-strategy.md) for full details including deterministic principles, responsibility boundaries, and the recipe for adding new E2E tests.
+
+| Tier | Command | When to run | Duration target |
+|------|---------|-------------|-----------------|
+| **Unit + Smoke** | `pnpm test` | Every commit; PR gate required | < 1 min |
+| **Core E2E** | `pnpm e2e:core` | Before merging feature branches; CI on every PR | < 10 min |
+| **Extended E2E** | `pnpm e2e:extended` | Before releases; manual trigger for complex paths | < 20 min |
+
+### Deterministic Principles (always apply)
+
+- **Never trust model prose for pass/fail.** Assert only on CR status fields (`Run.status.phase`, `Task.status.phase`) and board JSON columns — never on LLM-generated text.
+- **MCP tool calls are deterministic control points.** Use ClusterAgent fixtures with `CRITICAL OVERRIDE` to force specific agent behavior (`complete_run`, `complete_plan`, `fail_run`).
+- **Pod-exec is a targeted oracle.** Only use `kubectl exec` when CR status cannot express the needed fact (e.g., plan artifact existence in worktree).
+- **Tests are model-agnostic.** A test should pass regardless of which LLM provider or model is configured.
+
+### Adding a New Deterministic E2E Test
+
+1. Create a deterministic ClusterAgent fixture in `k8s/tests/` with `CRITICAL OVERRIDE` instructions
+2. Write the test file in `tests/e2e/e2e-<scenario>.test.ts` using shared harness helpers
+3. Assert only on CR status and board state — never on model output text
+4. Ensure `afterAll` always runs cleanup via `teardown(NS)`
+5. Add to `e2e:core` script for PR-required tests, or `e2e:extended` for complex paths
+
+See [`docs/testing-strategy.md`](docs/testing-strategy.md#adding-a-new-deterministic-e2e-test) for the complete recipe with code examples.
 
 ## Deployment
 - CRDs: `kubectl apply -f k8s/crds/` (must be applied first)
