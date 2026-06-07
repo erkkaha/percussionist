@@ -61,6 +61,31 @@ Tasks flow: `PLAN → BUILD → REVIEW → (SMOKE) → INTEGRATE → (DOCUMENT)`
 
 SMOKE and DOCUMENT steps are optional — add them when the task warrants it.
 
+## Testing Tiers — When to Run What
+
+Percussionist uses a four-layer testing model. See [`docs/testing-strategy.md`](../../docs/testing-strategy.md) for full details.
+
+| Tier | Command | When to run | Duration target |
+|------|---------|-------------|-----------------|
+| **Unit + Smoke** | `pnpm test` | Every commit; PR gate required | < 1 min |
+| **Core E2E** | `pnpm e2e:core` | Before merging feature branches; CI on every PR | < 10 min |
+| **Extended E2E** | `pnpm e2e:extended` | Before releases; manual trigger for complex paths | < 20 min |
+| **Smoke (agent)** | meta-smoke-tester agent | Release gate; deep validation in isolated namespace | Variable |
+
+### Contributor Checklist — Adding a New Test
+
+1. **Unit test** — Add to `packages/*/src/__tests__/` if the change touches pure logic
+2. **Smoke test** — Add to `packages/*/tests/smoke.test.ts` if it affects a web API endpoint
+3. **Core E2E** — Add to `tests/e2e/` with a deterministic ClusterAgent fixture if it changes orchestrator behavior
+4. **Extended E2E** — Add to `tests/e2e/` but mark as extended lane for complex paths (feature branching, dependencies)
+
+### Recipe for Deterministic E2E Tests
+
+See [`docs/testing-strategy.md`](../../docs/testing-strategy.md#adding-a-new-deterministic-e2e-test) for the full recipe. Key rules:
+- Use `CRITICAL OVERRIDE` in ClusterAgent fixtures to force specific MCP tool calls
+- Assert only on CR status fields and board JSON — never on model-generated text
+- Use pod-exec (`kubectl exec`) only when CR status cannot express the needed fact (e.g., plan artifact existence)
+
 ## Branch Convention
 
 Builder agents push to `agent/<task-name>` branches. The integrator merges
