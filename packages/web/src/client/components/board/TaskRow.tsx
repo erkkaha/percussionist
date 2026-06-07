@@ -164,8 +164,9 @@ export function TaskRow({ task, col, isSelected, onClick, projectName }: TaskRow
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); injectTask(task, projectName); }}
-            className="opacity-0 group-hover:opacity-60 hover:opacity-100 transition-opacity p-0.5 rounded text-text-dim hover:text-accent"
+            className="opacity-70 group-hover:opacity-60 hover:opacity-100 transition-opacity p-0.5 rounded text-text-dim hover:text-accent md:opacity-0 md:group-hover:opacity-60 md:hover:opacity-100"
             title="Inject task into chat"
+            aria-label="Inject task into chat"
           >
             <MessageSquarePlus className="h-3.5 w-3.5" />
           </button>
