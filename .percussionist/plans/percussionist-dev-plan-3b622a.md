@@ -1,69 +1,98 @@
-# Plan: Close sidebar on mobile after menu item click
+# Plan: sidebar should close on mobile after menu item click
 
 ## Context
 
-The web app layout mounts the sidebar via `SidebarProvider` in `packages/web/src/client/components/Layout.tsx`, and the navigation items are rendered in `packages/web/src/client/components/app-sidebar.tsx`.
+Relevant existing code paths:
 
-Mobile behavior is implemented in `packages/web/src/client/components/ui/sidebar.tsx`:
-- `Sidebar` renders a Radix `Sheet` when `isMobile` is true.
-- Open state is tracked as `openMobile` in `SidebarProvider` context.
-- `setOpenMobile` is available from `useSidebar()`.
+- `packages/web/src/client/components/Layout.tsx`
+  - Wraps the app in `SidebarProvider`.
+  - Renders `AppSidebar` and `SidebarInset`.
+- `packages/web/src/client/components/ui/sidebar.tsx`
+  - `SidebarProvider` owns mobile drawer state via `openMobile` / `setOpenMobile`.
+  - `Sidebar` renders a Radix `Sheet` on mobile (`isMobile === true`), controlled by `openMobile`.
+  - `useSidebar()` exposes `{ isMobile, openMobile, setOpenMobile, ... }` to descendants.
+- `packages/web/src/client/components/app-sidebar.tsx`
+  - Defines all sidebar navigation links (`NavLink`) for top items, project items, and bottom items.
+  - Currently does not call `setOpenMobile(false)` on link activation.
 
-Today, menu links (`NavLink`) in `AppSidebar` navigate correctly but do not explicitly close the mobile sheet after selection, so the drawer can remain open after route changes.
+Observed gap:
+
+- On mobile, clicking a menu item navigates but can leave the sheet open because no explicit close action is triggered from navigation links.
 
 ## Scope boundaries
 
 In scope:
-- Client-side sidebar navigation behavior for mobile in `packages/web/src/client/components/app-sidebar.tsx` (and only minimal shared sidebar surface if needed).
+
+- Mobile-only close-on-selection behavior for sidebar navigation links in `app-sidebar.tsx`.
+- Any minimal wiring needed to access sidebar context in `AppSidebar`.
 
 Out of scope:
-- Desktop collapse/expand behavior.
-- Route definitions, data fetching, or server APIs.
-- Visual redesign of sidebar or menu structure.
+
+- Desktop collapse behavior (`open`, `state`, `SidebarTrigger`, rail).
+- Route definitions, data loading hooks, API/server logic.
+- Visual redesign, new navigation groups, or broader sidebar refactors.
 
 ## Approach
 
-Use existing sidebar context (`useSidebar`) inside `AppSidebar` to close the mobile drawer on menu item activation:
+Primary strategy (recommended):
 
-1. Read `isMobile` and `setOpenMobile` from sidebar context.
-2. Add a shared click handler for sidebar `NavLink` items that calls `setOpenMobile(false)` only on mobile.
-3. Attach the handler to all navigation links rendered in `AppSidebar` (top nav, project entries/new project, bottom nav).
-4. Keep desktop behavior unchanged by guarding on `isMobile`.
+1. Consume `useSidebar()` inside `AppSidebar`.
+2. Add a single handler (e.g. `handleSidebarNavClick`) that closes the drawer only when `isMobile` is true by calling `setOpenMobile(false)`.
+3. Attach this handler to every sidebar `NavLink` rendered in `AppSidebar`:
+   - top items (`Activity`, `Runs`)
+   - project items (or `New project` fallback)
+   - bottom items (`Settings`, `Stats`, `Metrics`)
+4. Keep all current active-state (`isActive`) and tooltip behavior unchanged.
 
-Key decision:
-- Implement closure in `AppSidebar` (where navigation links are authored) rather than in low-level `SidebarMenuButton`, to avoid side effects for other consumers of sidebar UI primitives.
+Why this approach (retry refinement):
+
+- A route-change listener could miss same-route clicks (no navigation event), while click-based handling guarantees close behavior for the user action itself.
+- Implementing in `AppSidebar` keeps behavior localized to navigation semantics and avoids side effects in shared primitives like `SidebarMenuButton` used elsewhere.
 
 ## Acceptance criteria
 
-1. On viewport widths `< 768px`, opening the sidebar and selecting any menu item closes the drawer immediately.
-2. Navigation still occurs correctly to the selected route.
-3. On desktop widths (`>= 768px`), current sidebar behavior remains unchanged.
-4. No regressions to existing sidebar rendering (top nav, project links/new project, bottom nav).
+1. At mobile widths (`< md`, matching current sidebar mobile mode), selecting any sidebar menu item closes the sheet.
+2. Navigation still occurs correctly for each link target.
+3. Desktop behavior is unchanged (no forced close side effect).
+4. Existing sidebar sections still render and behave as before (top/project-or-new/bottom).
+5. Clicking an already-active link on mobile also closes the drawer.
 
 ## Proposed BUILD task breakdown
 
-1. **Wire mobile-close helper in AppSidebar**
-   - Update `packages/web/src/client/components/app-sidebar.tsx` to use `useSidebar()`.
-   - Add a single `handleNavClick` callback that closes mobile sheet with `setOpenMobile(false)` when `isMobile` is true.
+1. **Integrate sidebar context in AppSidebar**
+   - File: `packages/web/src/client/components/app-sidebar.tsx`
+   - Import and call `useSidebar()`.
+   - Extract `isMobile` and `setOpenMobile`.
 
-2. **Attach handler to all sidebar links**
-   - Apply `onClick={handleNavClick}` to each `NavLink` in top nav, project/new-project section, and bottom nav.
-   - Ensure active-state and tooltip behavior are untouched.
+2. **Create shared nav-click close handler**
+   - Add `handleSidebarNavClick` in `AppSidebar`.
+   - Handler closes only for mobile (`if (isMobile) setOpenMobile(false)`).
 
-3. **Validate behavior manually**
-   - Mobile width: open sidebar → click each menu class of item (top/project/bottom) → confirm close + navigation.
-   - Desktop width: verify no close-on-click side effect is introduced.
+3. **Apply handler consistently to all `NavLink`s**
+   - Top nav map block.
+   - Project list map block.
+   - New-project fallback link.
+   - Bottom nav map block.
 
-4. **(Optional hardening if needed during build)**
-   - If edge cases appear (modified-click/new-tab interactions), narrow closure logic to primary unmodified clicks while preserving expected browser behavior.
+4. **Manual behavior verification**
+   - Mobile viewport:
+     - open sidebar via trigger,
+     - click at least one item from each section,
+     - verify sheet closes and route updates.
+   - Desktop viewport:
+     - click sidebar items,
+     - verify no unintended close/collapse behavior.
+
+5. **Optional hardening (only if needed during implementation)**
+   - If modified-click behavior (Ctrl/Cmd/open-in-new-tab) should not close the drawer, conditionally ignore non-primary or modified clicks.
 
 ## Risks / open questions
 
-- **Modified click behavior:** If closing on every click is undesirable for cmd/ctrl-click open-in-new-tab flows, handler may need to inspect event modifiers.
-- **Non-click navigation activation:** Keyboard activation on links should still trigger close via click synthesis; verify in manual QA.
-- **Future reuse:** If additional sidebar link groups are added later, they must also use the close handler to preserve consistency.
+- **Modified clicks:** Decide whether Ctrl/Cmd/middle-click should keep the drawer open on mobile.
+- **Keyboard activation:** Ensure Enter/Space activation on focused links still closes drawer (typically synthesized click).
+- **Future link additions:** Any newly added sidebar link in `AppSidebar` must also use the shared handler.
 
 ## Assumptions
 
-- “Menu item click” refers to navigation links rendered by `AppSidebar`.
-- Desired behavior is to close mobile sidebar for any item selection, including clicking the currently active route link.
+- “Menu item click” refers to the navigation links rendered in `AppSidebar`.
+- Desired behavior is immediate mobile drawer close on user selection, even when selecting the currently active route.
