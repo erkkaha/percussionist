@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { getDb, getRawDb } from "./db.js";
 import { memories } from "./schema.js";
 import { getEmbedding } from "./embed.js";
+import { isModelReady, getModelError } from "./model-warmup.js";
 
 // ---------------------------------------------------------------------------
 // Request / Response types
@@ -163,9 +164,25 @@ export async function handleContext(
   return { context };
 }
 
-export async function handleHealth(): Promise<{ ok: boolean }> {
+export async function handleHealth(): Promise<{
+  ok: boolean;
+  db: string;
+  embedding: { ready: boolean; model: string; error?: string };
+}> {
   getDb(); // ensure DB is initialised
-  return { ok: true };
+
+  const modelReady = isModelReady();
+  const modelError = getModelError();
+
+  return {
+    ok: modelReady,
+    db: "ready",
+    embedding: {
+      ready: modelReady,
+      model: process.env.EMBEDDING_MODEL ?? "nomic-embed-text",
+      ...(modelError ? { error: modelError } : {}),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

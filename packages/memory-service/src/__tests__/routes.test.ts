@@ -20,6 +20,11 @@ mock.module("../embed.js", () => ({
   getEmbedding: async (_text: string) => FAKE_EMBEDDING,
 }));
 
+mock.module("../model-warmup.js", () => ({
+  isModelReady: () => true,
+  getModelError: () => null,
+}));
+
 const { handleStoreMemory, handleSearch, handleContext, handleHealth, initDb } =
   await import("../routes.js");
 const { getRawDb } = await import("../db.js");
@@ -74,9 +79,12 @@ function clear() {
 // ---------------------------------------------------------------------------
 
 describe("handleHealth", () => {
-  it("returns ok", async () => {
+  it("returns ok with embedding readiness info", async () => {
     const result = await handleHealth();
-    expect(result).toEqual({ ok: true });
+    expect(result.ok).toBe(true);
+    expect(result.db).toBe("ready");
+    expect(result.embedding.ready).toBe(true);
+    expect(typeof result.embedding.model).toBe("string");
   });
 });
 
