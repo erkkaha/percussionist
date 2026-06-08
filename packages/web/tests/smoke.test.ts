@@ -336,6 +336,19 @@ describe("stats API", () => {
     expect(found).toBeDefined();
   });
 
+  it("GET /api/stats/sessions → paginated result with summary/agents/models", async () => {
+    const res = await req("/api/stats/sessions?days=0");
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(Array.isArray(body.sessions)).toBe(true);
+    expect(typeof body.total).toBe("number");
+    expect(body.total).toBeGreaterThan(0);
+    expect(body.summary).toBeDefined();
+    expect((body.summary as Record<string, unknown>).total).toBeGreaterThan(0);
+    expect(Array.isArray(body.agentSummaries)).toBe(true);
+    expect(Array.isArray(body.modelRows)).toBe(true);
+  });
+
   it("POST /api/stats/session missing sessionID → 400", async () => {
     const res = await json("/api/stats/session", { run: { name: "x" } });
     expect(res.status).toBe(400);

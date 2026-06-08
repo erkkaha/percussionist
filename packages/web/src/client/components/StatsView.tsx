@@ -10,38 +10,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLe
 import { cn } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
-// Types matching /api/stats/export response
-
-interface MessageRow {
-  id: string;
-  sessionId: string;
-  idx: number;
-  role: string | null;
-  content: string | null;
-  model: string | null;
-  tokensIn: number | null;
-  tokensOut: number | null;
-  createdAt: string | null;
-  completedAt: string | null;
-}
-
-interface ToolCallRow {
-  id: string;
-  sessionId: string;
-  messageIdx: number;
-  tool: string;
-  args: string | null;
-  success: boolean | null;
-  error: string | null;
-  durationMs: number | null;
-}
-
-interface FileOpRow {
-  sessionId: string;
-  messageIdx: number;
-  filePath: string;
-  operation: string;
-}
+// Types matching /api/stats/sessions response
 
 interface StatSession {
   id: string;
@@ -57,17 +26,47 @@ interface StatSession {
   tokensOut: number;
   error: string | null;
   createdAt: string | null;
-  messages: MessageRow[];
-  toolCalls: ToolCallRow[];
-  fileOps: FileOpRow[];
+  resolvedModel: string;
 }
 
-// Content part types embedded in message content JSON
-interface ContentPart {
-  type: string;
-  tool?: string;
-  text?: string;
-  tokens?: { input?: number; output?: number; cache?: { read?: number; write?: number } };
+interface Summary {
+  total: number;
+  succeeded: number;
+  failed: number;
+  successRate: number | null;
+  totalTokensIn: number;
+  totalTokensOut: number;
+  avgDurationMs: number | null;
+}
+
+interface AgentSummary {
+  agent: string;
+  runs: number;
+  succeeded: number;
+  failed: number;
+  successRate: number | null;
+  totalTokensIn: number;
+  totalTokensOut: number;
+  avgTokensPerRun: number;
+  avgDurationMs: number | null;
+  models: string[];
+}
+
+interface ModelRow {
+  model: string;
+  runs: number;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+interface SessionsResponse {
+  sessions: StatSession[];
+  total: number;
+  limit: number;
+  offset: number;
+  summary: Summary;
+  agentSummaries: AgentSummary[];
+  modelRows: ModelRow[];
 }
 
 // ---------------------------------------------------------------------------
@@ -135,143 +134,38 @@ function fmtTokens(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
 }
+// Resolve the model for a session: resolvedModel from server, then fallback.
 
-// Resolve the model for a session: run row first, fallback to user message.
 function resolveModel(s: StatSession): string {
-  if (s.model) return s.model;
-  const userMsg = s.messages.find((m) => m.role === "user");
-  if (userMsg?.model) return userMsg.model;
-  return "unknown";
+  return s.resolvedModel ?? s.model ?? "unknown";
 }
 
 // ---------------------------------------------------------------------------
 // Fetch hook
 
-function useStats(days: number) {
-  return useQuery<StatSession[]>({
-    queryKey: ["stats", days],
+const PAGE_SIZE = 50;
+
+function useStats(days: number, page: number) {
+  return useQuery<SessionsResponse>({
+    queryKey: ["stats", days, page],
     queryFn: async () => {
-      const url = days === 0 ? "/api/stats/export?days=0" : `/api/stats/export?days=${days}`;
+      const offset = page * PAGE_SIZE;
+      const url = `/api/stats/sessions?days=${days}&limit=${PAGE_SIZE}&offset=${offset}`;
       const res = await fetch(url, { headers: authHeaders() });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      return res.json() as Promise<StatSession[]>;
+      return res.json() as Promise<SessionsResponse>;
     },
     refetchInterval: 30_000,
   });
 }
 
 // ---------------------------------------------------------------------------
-// Derived analytics
-
-interface Analytics {
-  total: number;
-  succeeded: number;
-  failed: number;
-  successRate: number | null;
-  totalTokensIn: number;
-  totalTokensOut: number;
-  avgDurationMs: number | null;
-  modelRows: { model: string; runs: number; tokensIn: number; tokensOut: number }[];
-}
-
-function computeAnalytics(sessions: StatSession[]): Analytics {
-  const total = sessions.length;
-  const succeeded = sessions.filter((s) => s.phase === "Succeeded").length;
-  const failed = sessions.filter((s) => s.phase === "Failed").length;
-  const totalTokensIn = sessions.reduce((a, s) => a + (s.tokensIn ?? 0), 0);
-  const totalTokensOut = sessions.reduce((a, s) => a + (s.tokensOut ?? 0), 0);
-
-  // Avg duration — only sessions with both timestamps
-  const durations = sessions.map(durationMs).filter((d): d is number => d !== null);
-  const avgDurationMs = durations.length > 0
-    ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
-    : null;
-
-  // Model breakdown
-  const modelMap = new Map<string, { runs: number; tokensIn: number; tokensOut: number }>();
-  for (const s of sessions) {
-    const model = resolveModel(s);
-    const existing = modelMap.get(model) ?? { runs: 0, tokensIn: 0, tokensOut: 0 };
-    modelMap.set(model, {
-      runs: existing.runs + 1,
-      tokensIn: existing.tokensIn + (s.tokensIn ?? 0),
-      tokensOut: existing.tokensOut + (s.tokensOut ?? 0),
-    });
-  }
-  const modelRows = [...modelMap.entries()]
-    .map(([model, v]) => ({ model, ...v }))
-    .sort((a, b) => b.tokensIn - a.tokensIn);
-
-  return {
-    total, succeeded, failed,
-    successRate: total > 0 ? Math.round((succeeded / total) * 100) : null,
-    totalTokensIn, totalTokensOut, avgDurationMs,
-    modelRows,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Agent analytics
-
-interface AgentSummary {
-  agent: string;
-  runs: number;
-  succeeded: number;
-  failed: number;
-  successRate: number | null;
-  totalTokensIn: number;
-  totalTokensOut: number;
-  avgTokensPerRun: number;
-  avgDurationMs: number | null;
-  models: string[];
-}
-
-function computeAgentAnalytics(sessions: StatSession[]): AgentSummary[] {
-  const agentMap = new Map<string, {
-    runs: number; succeeded: number; failed: number;
-    tokensIn: number; tokensOut: number; durationSum: number; durationCount: number;
-    models: Set<string>;
-  }>();
-
-  for (const s of sessions) {
-    const agent = s.agent ?? "unknown";
-    const existing = agentMap.get(agent) ?? {
-      runs: 0, succeeded: 0, failed: 0,
-      tokensIn: 0, tokensOut: 0, durationSum: 0, durationCount: 0,
-      models: new Set<string>(),
-    };
-
-    existing.runs++;
-    if (s.phase === "Succeeded") existing.succeeded++;
-    else if (s.phase === "Failed") existing.failed++;
-    existing.tokensIn += s.tokensIn ?? 0;
-    existing.tokensOut += s.tokensOut ?? 0;
-    const d = durationMs(s);
-    if (d !== null) { existing.durationSum += d; existing.durationCount++; }
-    if (s.model) existing.models.add(s.model);
-    agentMap.set(agent, existing);
-  }
-
-  return [...agentMap.entries()]
-    .map(([agent, v]) => ({
-      agent,
-      runs: v.runs,
-      succeeded: v.succeeded,
-      failed: v.failed,
-      successRate: v.runs > 0 ? Math.round((v.succeeded / v.runs) * 100) : null,
-      totalTokensIn: v.tokensIn,
-      totalTokensOut: v.tokensOut,
-      avgTokensPerRun: v.runs > 0 ? Math.round((v.tokensIn + v.tokensOut) / v.runs) : 0,
-      avgDurationMs: v.durationCount > 0 ? Math.round(v.durationSum / v.durationCount) : null,
-      models: [...v.models],
-    }))
-    .sort((a, b) => b.runs - a.runs);
-}
+// Server-side analytics — computed in /api/stats/sessions
 
 // ---------------------------------------------------------------------------
 // Summary cards
 
-function SummaryCards({ a }: { a: Analytics }) {
+function SummaryCards({ a }: { a: Summary }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
       <MetricCard label="Total Runs" value={a.total} />
@@ -306,7 +200,7 @@ function MetricCard({
 // ---------------------------------------------------------------------------
 // Model breakdown
 
-function ModelBreakdown({ modelRows }: { modelRows: Analytics["modelRows"] }) {
+function ModelBreakdown({ modelRows }: { modelRows: ModelRow[] }) {
   if (modelRows.length === 0) return null;
   const maxTokens = Math.max(...modelRows.map((r) => r.tokensIn + r.tokensOut));
   return (
@@ -369,12 +263,6 @@ function ModelBreakdown({ modelRows }: { modelRows: Analytics["modelRows"] }) {
 // Sessions table
 
 function SessionsTable({ sessions }: { sessions: StatSession[] }) {
-  const sorted = [...sessions].sort((a, b) => {
-    const at = a.startedAt ? new Date(a.startedAt).getTime() : 0;
-    const bt = b.startedAt ? new Date(b.startedAt).getTime() : 0;
-    return bt - at;
-  });
-
   return (
     <section>
       <div className="rounded-lg border border-border overflow-x-auto">
@@ -390,7 +278,7 @@ function SessionsTable({ sessions }: { sessions: StatSession[] }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border-muted">
-            {sorted.map((s) => (
+            {sessions.map((s) => (
               <tr key={s.id} className="hover:bg-surface-raised/60 transition-colors">
                 <td className="px-4 py-3">
                   <div className="font-medium text-text">{s.name}</div>
@@ -912,6 +800,49 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
+function Pagination({
+  total,
+  limit,
+  offset,
+  onChange,
+}: {
+  total: number;
+  limit: number;
+  offset: number;
+  onChange: (offset: number) => void;
+}) {
+  const currentPage = Math.floor(offset / limit) + 1;
+  const totalPages = Math.ceil(total / limit);
+  if (totalPages <= 1) return null;
+
+  return (
+    <div className="flex items-center justify-between mt-3">
+      <span className="text-xs text-text-dim">
+        {offset + 1}–{Math.min(offset + limit, total)} of {total} sessions
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          disabled={offset === 0}
+          onClick={() => onChange(offset - limit)}
+          className="px-3 py-1 text-xs rounded-md border border-border bg-surface-raised text-text-muted hover:text-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          Previous
+        </button>
+        <span className="text-xs text-text-dim tabular-nums">
+          {currentPage} / {totalPages}
+        </span>
+        <button
+          disabled={offset + limit >= total}
+          onClick={() => onChange(offset + limit)}
+          className="px-3 py-1 text-xs rounded-md border border-border bg-surface-raised text-text-muted hover:text-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main view
 
@@ -925,11 +856,13 @@ const DAY_OPTIONS = [
 export default function StatsView() {
   const [days, setDays] = useState(30);
   const [tab, setTab] = useState<TabId>("overview");
-  const { data: sessions, error, isLoading, isFetching } = useStats(days);
+  const [page, setPage] = useState(0);
+  const { data, error, isLoading, isFetching } = useStats(days, page);
   const { data: trends } = useTrends(days);
 
-  const analytics = sessions ? computeAnalytics(sessions) : null;
-  const agentSummaries = useMemo(() => sessions ? computeAgentAnalytics(sessions) : null, [sessions]);
+  if (page > 0 && data != null && data.offset >= data.total) {
+    setPage(0);
+  }
 
   return (
     <div className="space-y-6">
@@ -938,7 +871,7 @@ export default function StatsView() {
         <div>
           <h1 className="text-headline-lg">Stats</h1>
           <p className="text-caption-xs text-text-muted">
-            {sessions ? `${sessions.length} sessions` : "Loading..."}
+            {data ? `${data.total} sessions` : "Loading..."}
             {isFetching && !isLoading && (
               <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
             )}
@@ -948,7 +881,7 @@ export default function StatsView() {
           {DAY_OPTIONS.map((opt) => (
             <button
               key={opt.value}
-              onClick={() => setDays(opt.value)}
+              onClick={() => { setDays(opt.value); setPage(0); }}
               className={`rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
                 days === opt.value
                   ? "border-accent/60 bg-surface-overlay text-text"
@@ -1000,33 +933,41 @@ export default function StatsView() {
         </div>
       )}
 
-      {analytics && sessions && sessions.length === 0 && (
+      {!isLoading && data && data.total === 0 && (
         <div className="rounded-lg border border-border-muted bg-surface-raised p-8 text-center text-text-muted">
           No sessions found in this time window.
         </div>
       )}
 
       {/* Overview tab */}
-      {tab === "overview" && analytics && sessions && sessions.length > 0 && (
+      {tab === "overview" && data && data.total > 0 && (
         <>
-          <SummaryCards a={analytics} />
+          <SummaryCards a={data.summary} />
           {trends && <TrendCharts trends={trends} />}
         </>
       )}
 
       {/* Sessions tab */}
-      {tab === "sessions" && analytics && sessions && sessions.length > 0 && (
-        <SessionsTable sessions={sessions} />
+      {tab === "sessions" && data && data.total > 0 && (
+        <>
+          <SessionsTable sessions={data.sessions} />
+          <Pagination
+            total={data.total}
+            limit={data.limit}
+            offset={data.offset}
+            onChange={(o) => setPage(Math.floor(o / PAGE_SIZE))}
+          />
+        </>
       )}
 
       {/* Agents tab */}
-      {tab === "agents" && agentSummaries && sessions && sessions.length > 0 && (
-        <AgentCharts agents={agentSummaries} />
+      {tab === "agents" && data && data.total > 0 && (
+        <AgentCharts agents={data.agentSummaries} />
       )}
 
       {/* Models tab */}
-      {tab === "models" && analytics && sessions && sessions.length > 0 && (
-        <ModelBreakdown modelRows={analytics.modelRows} />
+      {tab === "models" && data && data.total > 0 && (
+        <ModelBreakdown modelRows={data.modelRows} />
       )}
 
       {/* Tools tab */}
