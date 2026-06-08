@@ -189,8 +189,8 @@ importers:
         specifier: 4.12.23
         version: 4.12.23
       katex:
-        specifier: 0.16.11
-        version: 0.16.11
+        specifier: 0.17.0
+        version: 0.17.0
       lucide-react:
         specifier: 1.17.0
         version: 1.17.0(react@19.2.7)
@@ -2653,12 +2653,12 @@ packages:
     engines: {node: '>=18.0.0'}
     hasBin: true
 
-  katex@0.16.11:
-    resolution: {integrity: sha512-RQrI8rlHY92OLf3rho/Ts8i/XvjgguEjOkO1BEXcU3N8BqPpSzBNwV/G0Ukr+P/l3ivvJUE/Fa/CwbS6HesGNQ==}
-    hasBin: true
-
   katex@0.16.45:
     resolution: {integrity: sha512-pQpZbdBu7wCTmQUh7ufPmLr0pFoObnGUoL/yhtwJDgmmQpbkg/0HSVti25Fu4rmd1oCR6NGWe9vqTWuWv3GcNA==}
+    hasBin: true
+
+  katex@0.17.0:
+    resolution: {integrity: sha512-Vdw0ATsQ9V+LuegM/BTwQqV/6cTl5lbGcIrU+BCgLxyf6bo38ybOr372tuSIxir3CN720flu1meYR6XzNMwQnw==}
     hasBin: true
 
   khroma@2.1.0:
@@ -5653,11 +5653,11 @@ snapshots:
       '@jsep-plugin/regex': 1.0.4(jsep@1.4.0)
       jsep: 1.4.0
 
-  katex@0.16.11:
+  katex@0.16.45:
     dependencies:
       commander: 8.3.0
 
-  katex@0.16.45:
+  katex@0.17.0:
     dependencies:
       commander: 8.3.0
 
