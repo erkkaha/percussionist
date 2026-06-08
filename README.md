@@ -1387,8 +1387,10 @@ The cluster must have Ollama running with an embedding model:
 ```bash
 kubectl apply -f k8s/deploy/ollama.yaml
 kubectl -n percussionist wait --for=condition=Ready pod -l app.kubernetes.io/component=ollama
-kubectl exec -n percussionist deploy/ollama -- ollama pull nomic-embed-text
 ```
+
+The init container on the Ollama Deployment automatically pulls `nomic-embed-text`
+before the main container starts, so no manual pull is required.
 
 ### MCP Tools
 

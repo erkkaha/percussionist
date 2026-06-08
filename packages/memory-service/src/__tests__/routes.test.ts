@@ -20,6 +20,7 @@ mock.module("../embed.js", () => ({
   getEmbedding: async (_text: string) => FAKE_EMBEDDING,
 }));
 
+
 const { handleStoreMemory, handleSearch, handleContext, handleHealth, initDb } =
   await import("../routes.js");
 const { getRawDb } = await import("../db.js");

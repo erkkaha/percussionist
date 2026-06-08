@@ -170,10 +170,6 @@ const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "nomic-embed-text";
 export async function handleHealth(): Promise<{ ok: boolean }> {
   getDb(); // ensure DB is initialised
 
-  // Verify Ollama embedding model is available before marking Ready.
-  // This prevents the memory service from accepting requests when Ollama
-  // has not yet finished pulling or loading the embedding model, which
-  // would cause transient "model not found" errors.
   try {
     const tagsUrl = `${OLLAMA_BASE_URL}/api/tags`;
     const res = await fetch(tagsUrl, {
@@ -188,7 +184,6 @@ export async function handleHealth(): Promise<{ ok: boolean }> {
       return { ok: false };
     }
   } catch {
-    // Ollama unreachable or timeout — not ready yet
     return { ok: false };
   }
 
