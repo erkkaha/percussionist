@@ -222,8 +222,7 @@ main().catch(async (e) => {
         RunPhase.Running,
         _runStartedAt ?? completedAt,
         completedAt,
-        0,
-        0,
+        { tokensIn: 0, tokensOut: 0, tokensReasoning: 0, tokensCacheRead: 0, tokensCacheWrite: 0, cost: 0 },
         "message aborted",
       ).catch(() => {});
     }
@@ -242,8 +241,7 @@ main().catch(async (e) => {
       RunPhase.Failed,
       _runStartedAt ?? completedAt,
       completedAt,
-      0,
-      0,
+      { tokensIn: 0, tokensOut: 0, tokensReasoning: 0, tokensCacheRead: 0, tokensCacheWrite: 0, cost: 0 },
       msg,
     ).catch(() => { /* best effort */ });
   }

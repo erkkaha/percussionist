@@ -322,10 +322,20 @@ function MessageBubble({
       </div>
 
       {/* Token footer for assistant messages */}
-      {!isUser && info.tokens && (
-        <div className="px-4 py-1.5 border-t border-border-muted text-xs text-text-dim tabular-nums">
-          tokens: {info.tokens.input} in / {info.tokens.output} out
-          {info.tokens.reasoning > 0 && ` / ${info.tokens.reasoning} reasoning`}
+      {!isUser && (info.tokens || info.cost) && (
+        <div className="px-4 py-1.5 border-t border-border-muted text-xs text-text-dim tabular-nums flex items-center gap-3">
+          <span>
+            tokens: {info.tokens?.input ?? 0} in / {info.tokens?.output ?? 0} out
+            {(info.tokens?.reasoning ?? 0) > 0 && ` / ${info.tokens?.reasoning} reasoning`}
+          </span>
+          {(info.tokens?.cache?.read ?? 0) > 0 && (
+            <span className="text-text-dim/60">cache: {info.tokens?.cache?.read} read / {info.tokens?.cache?.write ?? 0} write</span>
+          )}
+          {typeof info.cost === "number" && info.cost > 0 && (
+            <span className="ml-auto font-medium text-phase-running">
+              ${info.cost.toFixed(4)}
+            </span>
+          )}
         </div>
       )}
     </div>

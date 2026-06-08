@@ -270,6 +270,7 @@ export interface StepFinishPart {
   type: "step-finish";
   reason: string;
   tokens: { input: number; output: number; reasoning: number };
+  cost?: number;
 }
 
 export interface SubtaskPart {
@@ -309,7 +310,8 @@ export interface SessionMessageInfo {
   sessionID: string;
   role: "user" | "assistant";
   time: { created: number; completed?: number };
-  tokens?: { input: number; output: number; reasoning: number };
+  tokens?: { input: number; output: number; reasoning: number; cache?: { read: number; write: number } };
+  cost?: number;
   error?: { name: string; message: string };
   agent?: string;
   modelID?: string;

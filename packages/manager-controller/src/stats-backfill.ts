@@ -28,7 +28,8 @@ interface RawInfo {
   id?: string;
   role?: string;
   model?: { providerID?: string; modelID?: string };
-  tokens?: { input?: number; output?: number };
+  tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } };
+  cost?: number;
   time?: { created?: number; completed?: number };
 }
 
@@ -125,6 +126,10 @@ function buildPayload(
       model: modelStr,
       tokensIn: info.tokens?.input,
       tokensOut: info.tokens?.output,
+      tokensReasoning: info.tokens?.reasoning,
+      tokensCacheRead: info.tokens?.cache?.read,
+      tokensCacheWrite: info.tokens?.cache?.write,
+      cost: info.cost,
       createdAt: info.time?.created
         ? new Date(info.time.created).toISOString()
         : undefined,

@@ -11,6 +11,7 @@ import {
   sqliteTable,
   text,
   integer,
+  real,
   index,
   primaryKey,
 } from "drizzle-orm/sqlite-core";
@@ -30,6 +31,7 @@ export const runs = sqliteTable(
     completedAt: text("completed_at"),
     tokensIn: integer("tokens_in").default(0),
     tokensOut: integer("tokens_out").default(0),
+    cost: real("cost"),
     error: text("error"),
     createdAt: text("created_at")
       .notNull()
@@ -51,6 +53,10 @@ export const messages = sqliteTable(
     model: text("model"),
     tokensIn: integer("tokens_in"),
     tokensOut: integer("tokens_out"),
+    tokensReasoning: integer("tokens_reasoning"),
+    tokensCacheRead: integer("tokens_cache_read"),
+    tokensCacheWrite: integer("tokens_cache_write"),
+    cost: real("cost"),
     createdAt: text("created_at"),
     completedAt: text("completed_at"),
   },
