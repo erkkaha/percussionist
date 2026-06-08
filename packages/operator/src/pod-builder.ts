@@ -32,6 +32,35 @@ import {
 } from "./config.js";
 
 // ---------------------------------------------------------------------------
+// Shared shell snippets for workspace-init init container
+
+/**
+ * Parent-baseline resolution snippet (shell).
+ *
+ * When creating a new worktree branch from `parentRef`, prefer the latest
+ * fetched remote-tracking ref (`refs/remotes/origin/<parent>`) as the base,
+ * falling back to the local ref (`<parent>`) when the remote-tracking ref
+ * does not yet exist (e.g. first BUILD before parent is pushed).
+ *
+ * This avoids stale baselines caused by the mirror's refs/heads sync skipping
+ * branches that have active worktree checkouts.
+ */
+function parentBaselineResolve(git: { ref?: string; parentRef?: string }): string {
+  const ref = git.ref!;
+  const parentRef = git.parentRef!;
+  return `  # Resolve parent branch baseline: prefer remote-tracking ref for freshness,
+  # fall back to local ref if remote-tracking doesn't exist yet (first BUILD).
+  _PARENT_REMOTE_REF="refs/remotes/origin/${parentRef}"
+  _PARENT_BASE_REF="${parentRef}"
+  if git -C "$MIRROR_DIR" rev-parse "$_PARENT_REMOTE_REF" >/dev/null 2>&1; then
+    _PARENT_BASE_REF="$_PARENT_REMOTE_REF"
+    echo "[workspace-init] using remote-tracking ref $_PARENT_REMOTE_REF as parent baseline for ${ref}"
+  else
+    echo "[workspace-init] falling back to local ref ${parentRef} as parent baseline for ${ref}"
+  fi`;
+}
+
+// ---------------------------------------------------------------------------
 // Naming helpers
 
 export const serviceName = (run: Run) => run.metadata.name;
@@ -413,18 +442,19 @@ export function renderPod(
                                    `  # Note: bare mirrors store branches as refs/heads/<name> — no origin/ prefix needed`,
                                    `  if git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
                                  `    echo "[workspace-init] worktree added with branch ${git.ref}"`,
-                                 ...(git.parentRef
-                                   ? [
-                                       `  else`,
-                                       `    # Create new branch from parentRef (bare mirror: plain ref name, no origin/ prefix)`,
-                                       `    git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "${git.parentRef}"`,
-                                       `    echo "[workspace-init] created new branch ${git.ref} from ${git.parentRef}"`,
-                                     ]
-                                   : [
-                                       `  else`,
-                                       `    echo "[workspace-init] error: failed to add worktree with branch ${git.ref}"`,
-                                       `    exit 1`,
-                                     ]),
+                                   ...(git.parentRef
+                                     ? [
+                                         `  else`,
+                                         parentBaselineResolve(git),
+                                         `    # Create new branch from resolved parent baseline`,
+                                         `    git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "$_PARENT_BASE_REF"`,
+                                         `    echo "[workspace-init] created new branch ${git.ref} from $_PARENT_BASE_REF"`,
+                                       ]
+                                    : [
+                                        `  else`,
+                                        `    echo "[workspace-init] error: failed to add worktree with branch ${git.ref}"`,
+                                        `    exit 1`,
+                                      ]),
                                  `  fi`,
                               ]
                             : [`  git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR"`]),
@@ -462,17 +492,18 @@ export function renderPod(
                                 `if git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
                                  `  echo "[workspace-init] worktree added with branch ${git.ref}"`,
                                  ...(git.parentRef
-                                   ? [
-                                       `else`,
-                                       `  # Create new branch from parentRef (bare mirror: plain ref name, no origin/ prefix)`,
-                                       `  git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "${git.parentRef}"`,
-                                       `  echo "[workspace-init] created new branch ${git.ref} from ${git.parentRef}"`,
-                                     ]
-                                   : [
-                                       `else`,
-                                       `  echo "[workspace-init] error: failed to add worktree with branch ${git.ref}"`,
-                                       `  exit 1`,
-                                     ]),
+                                     ? [
+                                         `else`,
+                                         parentBaselineResolve(git),
+                                         `  # Create new branch from resolved parent baseline`,
+                                         `  git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "$_PARENT_BASE_REF"`,
+                                         `  echo "[workspace-init] created new branch ${git.ref} from $_PARENT_BASE_REF"`,
+                                       ]
+                                    : [
+                                        `else`,
+                                        `  echo "[workspace-init] error: failed to add worktree with branch ${git.ref}"`,
+                                        `  exit 1`,
+                                      ]),
                                  `fi`,
                               ]
                             : [`git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR"`]),
