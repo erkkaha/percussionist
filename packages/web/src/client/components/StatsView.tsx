@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { BarChart3, List, Table2, Users, Wrench } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import { authHeaders } from "../lib/auth";
@@ -346,12 +346,11 @@ interface TrendChartProps {
   data: Array<Record<string, unknown>>;
   config: ChartConfig;
   series: Array<{ dataKey: string; stackId?: string }>;
-  type: "area" | "line";
   yAxisDomain?: [number, number];
   yAxisFormatter?: (v: number) => string;
 }
 
-function TrendChart({ title, description, data, config, series, type, yAxisDomain, yAxisFormatter }: TrendChartProps) {
+function TrendChart({ title, description, data, config, series, yAxisDomain, yAxisFormatter }: TrendChartProps) {
   return (
     <div className="rounded-lg border border-border bg-surface-raised p-4">
       <div className="mb-3">
@@ -364,114 +363,56 @@ function TrendChart({ title, description, data, config, series, type, yAxisDomai
         </div>
       ) : (
         <ChartContainer config={config} className="aspect-auto h-[180px] w-full">
-          {type === "area" ? (
-            <AreaChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis
-                dataKey="time"
-                type="number"
-                domain={["dataMin", "dataMax"]}
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tickFormatter={(t: number) => fmtDate(new Date(t).toISOString())}
-                minTickGap={40}
-              />
-              <YAxis
-                type="number"
-                domain={yAxisDomain}
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tickFormatter={yAxisFormatter ?? ((v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v))}
-                width={55}
-              />
-              <ChartTooltip
-                cursor={false}
-                content={
-                  <ChartTooltipContent
-                    indicator="dot"
-                    labelFormatter={(label, payload) => {
-                      if (!payload.length) return String(label);
-                      const p = payload[0] as Record<string, unknown>;
-                      const time = (p?.payload as Record<string, unknown>)?.time as number | undefined;
-                      return time ? fmtDate(new Date(time).toISOString()) : String(label);
-                    }}
-                  />
-                }
-              />
-              <ChartLegend content={<ChartLegendContent />} />
-              {series.map((s) => {
-                const entry = config[s.dataKey] as { color?: string } | undefined;
-                const color = entry?.color ?? `var(--color-${s.dataKey})`;
-                return (
-                  <Area
-                    key={s.dataKey}
-                    dataKey={s.dataKey}
-                    type="monotone"
-                    fill={color}
-                    fillOpacity={s.stackId ? 0.85 : 0.35}
-                    stroke={color}
-                    strokeWidth={1.5}
-                    dot={false}
-                    connectNulls
-                    stackId={s.stackId}
-                  />
-                );
-              })}
-            </AreaChart>
-          ) : (
-            <LineChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis
-                dataKey="time"
-                type="number"
-                domain={["dataMin", "dataMax"]}
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tickFormatter={(t: number) => fmtDate(new Date(t).toISOString())}
-                minTickGap={40}
-              />
-              <YAxis
-                type="number"
-                domain={yAxisDomain}
-                allowDataOverflow
-                ticks={yAxisDomain ? [0, 20, 40, 60, 80, 100] : undefined}
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tickFormatter={yAxisFormatter ?? ((v: number) => `${v}%`)}
-                width={48}
-              />
-              <ChartTooltip
-                cursor={false}
-                content={
-                  <ChartTooltipContent
-                    indicator="dot"
-                    labelFormatter={(label, payload) => {
-                      if (!payload.length) return String(label);
-                      const p = payload[0] as Record<string, unknown>;
-                      const time = (p?.payload as Record<string, unknown>)?.time as number | undefined;
-                      return time ? fmtDate(new Date(time).toISOString()) : String(label);
-                    }}
-                  />
-                }
-              />
-              <ChartLegend content={<ChartLegendContent />} />
-              {series.map((s) => (
-                <Line
+          <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="20%">
+            <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis
+              dataKey="time"
+              type="number"
+              domain={["dataMin", "dataMax"]}
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={(t: number) => fmtDate(new Date(t).toISOString())}
+              minTickGap={40}
+            />
+            <YAxis
+              type="number"
+              domain={yAxisDomain}
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={yAxisFormatter ?? ((v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v))}
+              width={55}
+            />
+            <ChartTooltip
+              cursor={false}
+              content={
+                <ChartTooltipContent
+                  indicator="dot"
+                  labelFormatter={(label, payload) => {
+                    if (!payload.length) return String(label);
+                    const p = payload[0] as Record<string, unknown>;
+                    const time = (p?.payload as Record<string, unknown>)?.time as number | undefined;
+                    return time ? fmtDate(new Date(time).toISOString()) : String(label);
+                  }}
+                />
+              }
+            />
+            <ChartLegend content={<ChartLegendContent />} />
+            {series.map((s) => {
+              const entry = config[s.dataKey] as { color?: string } | undefined;
+              const color = entry?.color ?? `var(--color-${s.dataKey})`;
+              return (
+                <Bar
                   key={s.dataKey}
                   dataKey={s.dataKey}
-                  type="monotone"
-                  stroke={`var(--color-${s.dataKey})`}
-                  strokeWidth={2}
-                  dot={false}
-                  connectNulls
+                  fill={color}
+                  radius={[4, 4, 0, 0]}
+                  stackId={s.stackId}
                 />
-              ))}
-            </LineChart>
-          )}
+              );
+            })}
+          </BarChart>
         </ChartContainer>
       )}
     </div>
@@ -541,7 +482,6 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
           { dataKey: "succeeded" },
           { dataKey: "failed" },
         ]}
-        type="area"
       />
       <TrendChart
         title="Success Rate"
@@ -549,7 +489,6 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
         data={successRateData}
         config={chartConfig}
         series={[{ dataKey: "successRate" }]}
-        type="line"
         yAxisDomain={[0, 100]}
         yAxisFormatter={(v) => `${v}%`}
       />
@@ -562,7 +501,6 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
           { dataKey: "tokensIn" },
           { dataKey: "tokensOut" },
         ]}
-        type="area"
       />
       {models.length > 0 ? (
         <TrendChart
@@ -571,7 +509,6 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
           data={modelData}
           config={chartConfig}
           series={models.map((m) => ({ dataKey: m, stackId: "models" }))}
-          type="area"
         />
       ) : (
         <div className="rounded-lg border border-border bg-surface-raised p-4">
