@@ -26,6 +26,12 @@ runs.get("/", auth(), async (c) => {
       items = items.filter((r) => r.spec.boardTask === taskFilter);
     }
 
+    items.sort((a, b) => {
+      const aTime = a.metadata.creationTimestamp ?? "";
+      const bTime = b.metadata.creationTimestamp ?? "";
+      return bTime.localeCompare(aTime);
+    });
+
     const total = items.length;
     const limit = limitStr ? Math.max(1, Math.min(200, parseInt(limitStr, 10) || 50)) : 0;
     const offset = offsetStr ? Math.max(0, parseInt(offsetStr, 10) || 0) : 0;
