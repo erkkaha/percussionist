@@ -365,7 +365,6 @@ interface ManagerPanelProps {
 function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
   const manager = (spec.manager as Record<string, unknown> | undefined) ?? {};
   const [agentName, setAgentName] = useState((manager.agentName as string) ?? "manager-agent");
-  const [decisionAgentName, setDecisionAgentName] = useState((manager.decisionAgentName as string) ?? "manager-decision");
   const [model, setModel] = useState((manager.model as string) ?? "");
   const [timeoutSec, setTimeoutSec] = useState(String(Math.round(((manager.timeoutMs as number) ?? 30000) / 1000)));
   const [firstResponseTimeoutSec, setFirstResponseTimeoutSec] = useState(
@@ -376,6 +375,18 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
   const [decisionAgentContent, setDecisionAgentContent] = useState(
     (manager.decisionAgentContent as string) ?? ""
   );
+
+  // When the user hasn't customized the content, fetch the operator's default.
+  useEffect(() => {
+    if (!manager.decisionAgentContent) {
+      fetch("/api/settings/decision-agent-default")
+        .then((r) => r.json())
+        .then((data: { content: string }) => {
+          if (data.content) setDecisionAgentContent(data.content);
+        })
+        .catch(() => { /* fall through to empty */ });
+    }
+  }, [manager.decisionAgentContent]);
 
   return (
     <Card>
@@ -393,12 +404,6 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
             <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} />
           </div>
           <div>
-            <label className="text-sm font-medium block mb-1">Decision Agent Name</label>
-            <Input value={decisionAgentName} onChange={(e) => setDecisionAgentName(e.target.value)} />
-          </div>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
             <label className="text-sm font-medium block mb-1">Model</label>
             <ModelSelector
               value={model}
@@ -406,6 +411,8 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
               placeholder="e.g. anthropic/claude-sonnet-4-20250514"
             />
           </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-medium block mb-1">Timeout (seconds)</label>
             <Input
@@ -415,16 +422,16 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
               min={1}
             />
           </div>
-        </div>
-        <div>
-          <label className="text-sm font-medium block mb-1">First Response Timeout (seconds) <span className="text-text-dim font-normal">— empty = default (min of overall timeout, 60s)</span></label>
-          <Input
-            type="number"
-            value={firstResponseTimeoutSec}
-            onChange={(e) => setFirstResponseTimeoutSec(e.target.value)}
-            min={1}
-            placeholder="default"
-          />
+          <div>
+            <label className="text-sm font-medium block mb-1">First Response Timeout (seconds) <span className="text-text-dim font-normal">— empty = default (min of overall timeout, 60s)</span></label>
+            <Input
+              type="number"
+              value={firstResponseTimeoutSec}
+              onChange={(e) => setFirstResponseTimeoutSec(e.target.value)}
+              min={1}
+              placeholder="default"
+            />
+          </div>
         </div>
         <div>
           <label className="text-sm font-medium block mb-1">Decision Agent Content (.md)</label>
@@ -432,7 +439,6 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
             className="h-48 font-mono text-sm"
             value={decisionAgentContent}
             onChange={(e) => setDecisionAgentContent(e.target.value)}
-            placeholder={"---\ndescription: ...\nmode: subagent\npermission:\n  edit: allow\n  bash: allow\n---\n\nYou are the decision-making agent..."}
             spellCheck={false}
           />
         </div>
@@ -448,7 +454,6 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
               ...spec,
               manager: {
                 agentName: agentName.trim() || undefined,
-                decisionAgentName: decisionAgentName.trim() || undefined,
                 model: model.trim() || undefined,
                 timeoutMs: timeoutMsVal || undefined,
                 firstResponseTimeoutMs: frtVal || undefined,

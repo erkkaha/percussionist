@@ -216,7 +216,7 @@ export async function reconcileClusterSettings(
   // spec.manager is not set (use static defaults). This prevents field-manager
   // conflicts when other tools (kubectl, tofu) bootstrapped the ConfigMap.
   const agentName = spec.manager?.agentName ?? "manager-agent";
-  const decisionAgentName = spec.manager?.decisionAgentName ?? "manager-decision";
+  const decisionAgentName = "manager-decision";
   const decisionContent =
     spec.manager?.decisionAgentContent ??
     `---
@@ -302,7 +302,7 @@ will be read aloud by text-to-speech and sound garbled.`;
     [`${decisionAgentName}.md`]: decisionContent,
   });
   log(
-    `reconciled agent-config via SSA (agentName=${agentName}, decisionAgentName=${decisionAgentName})`,
+    `reconciled agent-config via SSA (agentName=${agentName})`,
   );
 }
 

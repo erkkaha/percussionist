@@ -374,7 +374,6 @@ export const ClusterSettingsSpecSchema = z.object({
   manager: z
     .object({
       agentName: z.string().default("manager-agent"),
-      decisionAgentName: z.string().default("manager-decision"),
       model: z.string().optional(),
       decisionAgentContent: z.string().max(102400).optional(),
       timeoutMs: z.number().int().positive().default(30000),
