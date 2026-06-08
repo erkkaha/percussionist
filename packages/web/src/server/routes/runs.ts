@@ -11,15 +11,57 @@ import { auth, adminAuth } from "../auth.js";
 
 const runs = new Hono();
 
-// GET /api/runs — list all Runs in the namespace.
+// GET /api/runs — list Runs in the namespace with optional pagination.
+// Supported query params: ?task=, ?limit=, ?offset=
+// Strips large spec/status fields from the response (UI only needs a subset).
+// When limit is omitted, returns all runs (backward compatible).
 runs.get("/", auth(), async (c) => {
   try {
     const taskFilter = c.req.query("task");
+    const limitStr = c.req.query("limit");
+    const offsetStr = c.req.query("offset");
+
     let items = await listRuns();
     if (taskFilter) {
       items = items.filter((r) => r.spec.boardTask === taskFilter);
     }
-    return c.json({ items });
+
+    const total = items.length;
+    const limit = limitStr ? Math.max(1, Math.min(200, parseInt(limitStr, 10) || 50)) : 0;
+    const offset = offsetStr ? Math.max(0, parseInt(offsetStr, 10) || 0) : 0;
+
+    if (limit > 0) {
+      items = items.slice(offset, offset + limit);
+    }
+
+    // Lightweight response — UI only needs these fields.
+    const stripped = items.map((r) => ({
+      metadata: {
+        name: r.metadata.name,
+        uid: r.metadata.uid,
+        namespace: r.metadata.namespace,
+        creationTimestamp: r.metadata.creationTimestamp,
+      },
+      spec: {
+        agent: r.spec.agent,
+        model: r.spec.model,
+      },
+      status: r.status
+        ? {
+            phase: r.status.phase,
+            message: r.status.message,
+            sessionID: r.status.sessionID,
+            tokensIn: r.status.tokensIn,
+            tokensOut: r.status.tokensOut,
+            startedAt: r.status.startedAt,
+            completedAt: r.status.completedAt,
+            lastEventAt: r.status.lastEventAt,
+            podName: r.status.podName,
+          }
+        : undefined,
+    }));
+
+    return c.json({ items: stripped, total });
   } catch (e: unknown) {
     const msg = (e as { body?: { message?: string } })?.body?.message ?? String(e);
     return c.json({ error: msg }, 500);
