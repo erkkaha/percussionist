@@ -3,7 +3,7 @@
  *
  * Scenario:
  *   1. Shared cluster setup (CRDs, operator, manager, namespace, RBAC, LLM secret).
- *   2. Apply ClusterAgents: e2e-failing-worker, facilitator.
+ *   2. Apply ClusterAgents: e2e-failing-worker, failure-analyst.
  *   3. Apply Project with an intentionally invalid git URL so the
  *      git-clone init container fails deterministically.
  *   4. Assert: worker Run reaches phase=Failed.
@@ -76,7 +76,7 @@ describe("facilitator", () => {
 
     await applyClusterAgents([
       "clusteragent-failing-worker.yaml",
-      "clusteragent-facilitator-failure.yaml",
+      "clusteragent-failure-analyst.yaml",
     ]);
 
     console.log(`==> Step 8: Apply Project ${PROJECT}`);
@@ -96,7 +96,7 @@ describe("facilitator", () => {
     maxParallel: 1
     agents:
       - name: e2e-failing-worker
-      - name: facilitator-failure
+      - name: failure-analyst
     overrides:
       timeoutSeconds: 120
     tasks:
@@ -143,6 +143,11 @@ describe("facilitator", () => {
       );
       const phase = await kubectlGetField("runs", workerRun, NS, "{.status.phase}");
       expect(phase).toBe("Failed");
+
+      // Strict: status message must be present and non-empty for a Failed run.
+      const msg = await kubectlGetField("runs", workerRun, NS, "{.status.message}");
+      expect(typeof msg).toBe("string");
+      expect(msg.length).toBeGreaterThan(0);
     },
     305_000,
   );
@@ -160,6 +165,7 @@ describe("facilitator", () => {
       expect(facilitatorRun).toBeTruthy();
       console.log(`    Facilitator run spawned: ${facilitatorRun}`);
 
+      // Strict: facilitation must link back to the exact worker run.
       const target = await kubectlGetField(
         "runs",
         facilitatorRun,
@@ -167,6 +173,40 @@ describe("facilitator", () => {
         "{.spec.facilitation.targetRunName}",
       );
       expect(target).toBe(workerRun);
+
+      // Strict: facilitation must reference the correct task ID.
+      const targetTaskId = await kubectlGetField(
+        "runs",
+        facilitatorRun,
+        NS,
+        "{.spec.facilitation.targetTaskId}",
+      );
+      expect(targetTaskId).toBe(TASK_ID);
+
+      // Strict: facilitation must include a non-empty failure reason.
+      const failureReason = await kubectlGetField(
+        "runs",
+        facilitatorRun,
+        NS,
+        "{.spec.facilitation.failureReason}",
+      );
+      expect(failureReason.length).toBeGreaterThan(0);
+
+      // Assert worker run status fields are populated.
+      const workerPhase = await kubectlGetField("runs", workerRun, NS, "{.status.phase}");
+      expect(workerPhase).toBe("Failed");
+      const workerMessage = await kubectlGetField("runs", workerRun, NS, "{.status.message}");
+      expect(typeof workerMessage).toBe("string");
+
+      // Assert facilitator run has a phase set (not still Pending/Initializing).
+      const facPhase = await kubectlGetField(
+        "runs",
+        facilitatorRun,
+        NS,
+        "{.status.phase}",
+      );
+      expect(facPhase).toBeTruthy();
+      expect(["Running", "WaitingForInput"]).toContain(facPhase);
 
       const board = await boardJson(PROJECT, OPERATOR_NS);
       console.log("    Board status:", JSON.stringify(board, null, 2));
