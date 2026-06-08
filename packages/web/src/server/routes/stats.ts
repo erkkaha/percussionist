@@ -37,6 +37,7 @@ interface RunPayload {
   completedAt?: string;
   tokensIn?: number;
   tokensOut?: number;
+  cost?: number;
   error?: string;
 }
 
@@ -49,6 +50,10 @@ interface MessagePayload {
   model?: string;
   tokensIn?: number;
   tokensOut?: number;
+  tokensReasoning?: number;
+  tokensCacheRead?: number;
+  tokensCacheWrite?: number;
+  cost?: number;
   createdAt?: string;
   completedAt?: string;
 }
@@ -114,6 +119,7 @@ stats.post("/session", adminAuth(), async (c) => {
           completedAt: runPayload.completedAt,
           tokensIn: runPayload.tokensIn ?? 0,
           tokensOut: runPayload.tokensOut ?? 0,
+          cost: runPayload.cost,
           error: runPayload.error,
           createdAt: new Date().toISOString(),
         })
@@ -124,6 +130,7 @@ stats.post("/session", adminAuth(), async (c) => {
             completedAt: runPayload.completedAt,
             tokensIn: runPayload.tokensIn ?? 0,
             tokensOut: runPayload.tokensOut ?? 0,
+            cost: runPayload.cost,
             error: runPayload.error,
           },
         })
@@ -143,6 +150,10 @@ stats.post("/session", adminAuth(), async (c) => {
               model: m.model,
               tokensIn: m.tokensIn,
               tokensOut: m.tokensOut,
+              tokensReasoning: m.tokensReasoning,
+              tokensCacheRead: m.tokensCacheRead,
+              tokensCacheWrite: m.tokensCacheWrite,
+              cost: m.cost,
               createdAt: m.createdAt,
               completedAt: m.completedAt,
             })
@@ -227,15 +238,17 @@ stats.patch("/session", adminAuth(), async (c) => {
           completedAt: runPayload.completedAt,
           tokensIn: runPayload.tokensIn ?? 0,
           tokensOut: runPayload.tokensOut ?? 0,
+          cost: runPayload.cost,
           error: runPayload.error,
           createdAt: new Date().toISOString(),
         })
         .onConflictDoUpdate({
           target: runs.id,
           set: {
-            // Only update token counts and phase — never overwrite name/task/model.
+            // Only update token counts, cost, and phase — never overwrite name/task/model.
             tokensIn: runPayload.tokensIn ?? 0,
             tokensOut: runPayload.tokensOut ?? 0,
+            cost: runPayload.cost,
             ...(runPayload.phase ? { phase: runPayload.phase } : {}),
             ...(runPayload.completedAt ? { completedAt: runPayload.completedAt } : {}),
             ...(runPayload.error ? { error: runPayload.error } : {}),
@@ -257,6 +270,10 @@ stats.patch("/session", adminAuth(), async (c) => {
               model: m.model,
               tokensIn: m.tokensIn,
               tokensOut: m.tokensOut,
+              tokensReasoning: m.tokensReasoning,
+              tokensCacheRead: m.tokensCacheRead,
+              tokensCacheWrite: m.tokensCacheWrite,
+              cost: m.cost,
               createdAt: m.createdAt,
               completedAt: m.completedAt,
             })
@@ -353,6 +370,174 @@ stats.get("/export", auth(), (c) => {
   void sessionIds; // unused after refactor — keep for future bulk query path
 
   return c.json(result);
+});
+
+// GET /api/stats/sessions?days=30&limit=50&offset=0 — lightweight session listing for UI.
+//
+// Returns flat run rows (no nested messages/toolCalls/fileOps) plus server-side
+// aggregated summary, agent breakdown, and model breakdown. Pagination via
+// limit/offset.
+stats.get("/sessions", auth(), (c) => {
+  const daysParam = c.req.query("days") ?? "30";
+  const days = parseInt(daysParam, 10);
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10), 200);
+  const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10), 0);
+
+  const db = getDb();
+
+  const cutoff =
+    days > 0
+      ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+
+  // Resolve model: runs.model first, fallback to first user message's model.
+  const resolvedModel = sql<string>`
+    COALESCE(${runs.model}, (
+      SELECT ${messages.model} FROM ${messages}
+      WHERE ${messages.sessionId} = ${runs.id}
+        AND ${messages.role} = 'user'
+        AND ${messages.model} IS NOT NULL
+      LIMIT 1
+    ), 'unknown')
+  `;
+
+  const baseQuery = db
+    .select({
+      id: runs.id,
+      name: runs.name,
+      namespace: runs.namespace,
+      task: runs.task,
+      model: runs.model,
+      agent: runs.agent,
+      phase: runs.phase,
+      startedAt: runs.startedAt,
+      completedAt: runs.completedAt,
+      tokensIn: runs.tokensIn,
+      tokensOut: runs.tokensOut,
+      cost: runs.cost,
+      error: runs.error,
+      createdAt: runs.createdAt,
+      resolvedModel,
+    })
+    .from(runs)
+    .orderBy(desc(runs.startedAt));
+
+  const allRows = cutoff
+    ? baseQuery.where(gte(runs.startedAt, cutoff)).all()
+    : baseQuery.all();
+
+  const total = allRows.length;
+
+  // Summary
+  const succeeded = allRows.filter((r) => r.phase === "Succeeded").length;
+  const failed = allRows.filter((r) => r.phase === "Failed").length;
+  const totalTokensIn = allRows.reduce((a, r) => a + (r.tokensIn ?? 0), 0);
+  const totalTokensOut = allRows.reduce((a, r) => a + (r.tokensOut ?? 0), 0);
+  const totalCost = allRows.reduce((a, r) => a + (r.cost ?? 0), 0);
+
+  const durations: number[] = [];
+  for (const r of allRows) {
+    if (r.startedAt && r.completedAt) {
+      const ms = new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime();
+      if (!isNaN(ms)) durations.push(ms);
+    }
+  }
+  const avgDurationMs =
+    durations.length > 0
+      ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+      : null;
+
+  // Per-model breakdown
+  const modelMap = new Map<string, { runs: number; tokensIn: number; tokensOut: number; cost: number }>();
+  for (const r of allRows) {
+    const model = r.resolvedModel ?? r.model ?? "unknown";
+    const existing = modelMap.get(model) ?? { runs: 0, tokensIn: 0, tokensOut: 0, cost: 0 };
+    modelMap.set(model, {
+      runs: existing.runs + 1,
+      tokensIn: existing.tokensIn + (r.tokensIn ?? 0),
+      tokensOut: existing.tokensOut + (r.tokensOut ?? 0),
+      cost: existing.cost + (r.cost ?? 0),
+    });
+  }
+  const modelRows = [...modelMap.entries()]
+    .map(([model, v]) => ({ model, ...v }))
+    .sort((a, b) => b.tokensIn - a.tokensIn);
+
+  // Per-agent breakdown
+  const agentMap = new Map<
+    string,
+    {
+      runs: number;
+      succeeded: number;
+      failed: number;
+      tokensIn: number;
+      tokensOut: number;
+      cost: number;
+      durationSum: number;
+      durationCount: number;
+      models: Set<string>;
+    }
+  >();
+  for (const r of allRows) {
+    const agent = r.agent ?? "unknown";
+    const existing = agentMap.get(agent) ?? {
+      runs: 0, succeeded: 0, failed: 0,
+      tokensIn: 0, tokensOut: 0, cost: 0, durationSum: 0, durationCount: 0,
+      models: new Set<string>(),
+    };
+    existing.runs++;
+    if (r.phase === "Succeeded") existing.succeeded++;
+    else if (r.phase === "Failed") existing.failed++;
+    existing.tokensIn += r.tokensIn ?? 0;
+    existing.tokensOut += r.tokensOut ?? 0;
+    existing.cost += r.cost ?? 0;
+    if (r.startedAt && r.completedAt) {
+      const ms = new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime();
+      if (!isNaN(ms)) {
+        existing.durationSum += ms;
+        existing.durationCount++;
+      }
+    }
+    if (r.model) existing.models.add(r.model);
+    agentMap.set(agent, existing);
+  }
+  const agentSummaries = [...agentMap.entries()]
+    .map(([agent, v]) => ({
+      agent,
+      runs: v.runs,
+      succeeded: v.succeeded,
+      failed: v.failed,
+      successRate: v.runs > 0 ? Math.round((v.succeeded / v.runs) * 100) : null,
+      totalTokensIn: v.tokensIn,
+      totalTokensOut: v.tokensOut,
+      totalCost: v.cost,
+      avgTokensPerRun: v.runs > 0 ? Math.round((v.tokensIn + v.tokensOut) / v.runs) : 0,
+      avgDurationMs: v.durationCount > 0 ? Math.round(v.durationSum / v.durationCount) : null,
+      models: [...v.models],
+    }))
+    .sort((a, b) => b.runs - a.runs);
+
+  // Paginate sessions for the table
+  const sessions = allRows.slice(offset, offset + limit);
+
+  return c.json({
+    sessions,
+    total,
+    limit,
+    offset,
+    summary: {
+      total,
+      succeeded,
+      failed,
+      successRate: total > 0 ? Math.round((succeeded / total) * 100) : null,
+      totalTokensIn,
+      totalTokensOut,
+      totalCost,
+      avgDurationMs,
+    },
+    agentSummaries,
+    modelRows,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -642,6 +827,7 @@ interface TrendPoint {
   avgDurationMs: number | null;
   tokensIn: number;
   tokensOut: number;
+  cost: number;
 }
 
 interface ModelTrendPoint {
@@ -672,6 +858,7 @@ stats.get("/trends", auth(), (c) => {
         THEN (julianday(${runs.completedAt}) - julianday(${runs.startedAt})) * 86400000 ELSE NULL END)`.as("avg_duration_ms"),
       tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as("tokens_in"),
       tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as("tokens_out"),
+      cost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as("cost"),
     })
     .from(runs)
     .where(whereClause)
@@ -685,6 +872,7 @@ stats.get("/trends", auth(), (c) => {
       avgDurationMs: number | null;
       tokensIn: number;
       tokensOut: number;
+      cost: number;
     }>;
 
   const trendPoints: TrendPoint[] = dailyRows.map((r) => ({
@@ -696,6 +884,7 @@ stats.get("/trends", auth(), (c) => {
     avgDurationMs: r.avgDurationMs != null ? Math.round(r.avgDurationMs) : null,
     tokensIn: r.tokensIn,
     tokensOut: r.tokensOut,
+    cost: r.cost,
   }));
 
   // Tokens per model per day

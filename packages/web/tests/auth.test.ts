@@ -222,6 +222,8 @@ describe("unauthenticated access → 401", () => {
       expectUnauthorized("/api/stats/exists/sid"));
     it("GET /api/stats/export → 401", async () =>
       expectUnauthorized("/api/stats/export"));
+    it("GET /api/stats/sessions → 401", async () =>
+      expectUnauthorized("/api/stats/sessions"));
     it("GET /api/stats/tool-metrics → 401", async () =>
       expectUnauthorized("/api/stats/tool-metrics"));
   });

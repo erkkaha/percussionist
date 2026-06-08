@@ -155,7 +155,8 @@ export async function buildWorkerRun(
       "The following packages are installed in this run environment:",
       resolved.packages.map((p) => `  - ${p}`).join("\n"),
       "",
-      "The opencode-native tools grep, glob, read, list, edit, and bash are always available.",
+      "The opencode-native tools grep, glob, read, list, edit, bash, and todowrite are always available.",
+      "Note: the task tracking tool is called `todowrite`, not `todo`.",
       "Use `which <tool>` to check if a specific tool is available at runtime.",
       "",
     );

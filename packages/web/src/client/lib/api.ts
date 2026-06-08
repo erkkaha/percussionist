@@ -38,6 +38,15 @@ export async function fetchRuns(): Promise<Run[]> {
   return data.items;
 }
 
+export async function fetchRunsPaginated(
+  limit: number,
+  offset: number,
+): Promise<{ items: Run[]; total: number }> {
+  return fetchJSON<{ items: Run[]; total: number }>(
+    `/runs?limit=${limit}&offset=${offset}`,
+  );
+}
+
 export async function fetchTaskRuns(taskName: string): Promise<Run[]> {
   const data = await fetchJSON<{ items: Run[] }>(`/runs?task=${encodeURIComponent(taskName)}`);
   return data.items;

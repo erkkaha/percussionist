@@ -140,6 +140,7 @@ export default function BoardView() {
             onSelectTask={handleSelectTask}
             showAddTask={showAddTask}
             onCloseAddTask={() => setShowAddTask(false)}
+            approvals={approvals}
           />
         </div>
 

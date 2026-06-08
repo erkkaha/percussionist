@@ -19,6 +19,15 @@ const TASK = process.env.RUN_TASK ?? "";
 const MODEL = process.env.RUN_MODEL ?? "";
 const AGENT = process.env.RUN_AGENT ?? "";
 
+interface TokenTotals {
+  tokensIn: number;
+  tokensOut: number;
+  tokensReasoning: number;
+  tokensCacheRead: number;
+  tokensCacheWrite: number;
+  cost: number;
+}
+
 // ---------------------------------------------------------------------------
 // Incremental flush — called after each assistant turn completes.
 // Fetches only messages from `fromIdx` onward, assembles the delta payload,
@@ -27,8 +36,7 @@ const AGENT = process.env.RUN_AGENT ?? "";
 export async function incrementalFlush(
   sessionID: string,
   startedAt: string,
-  tokensIn: number,
-  tokensOut: number,
+  totals: TokenTotals,
   fromIdx: number,
 ): Promise<number> {
   // Returns the new cursor (total messages seen) so the caller can advance it.
@@ -56,7 +64,8 @@ export async function incrementalFlush(
       task: TASK || undefined, model: MODEL || undefined, agent: AGENT || undefined,
       phase: "Running",
       startedAt,
-      tokensIn, tokensOut,
+      tokensIn: totals.tokensIn, tokensOut: totals.tokensOut,
+      cost: totals.cost || undefined,
     },
     messages: messagesPayload,
     toolCalls: toolCallsPayload,
@@ -90,8 +99,7 @@ export async function sendStats(
   phase: string,
   startedAt: string,
   completedAt: string | undefined,
-  tokensIn: number,
-  tokensOut: number,
+  totals: TokenTotals,
   sessionError?: string,
 ): Promise<void> {
   if (!WEB_STATS_URL) return;
@@ -114,7 +122,10 @@ export async function sendStats(
     run: {
       name: RUN_NAME, namespace: RUN_NAMESPACE,
       task: TASK || undefined, model: MODEL || undefined, agent: AGENT || undefined,
-      phase, startedAt, completedAt, tokensIn, tokensOut, error: sessionError,
+      phase, startedAt, completedAt,
+      tokensIn: totals.tokensIn, tokensOut: totals.tokensOut,
+      cost: totals.cost || undefined,
+      error: sessionError,
     },
     messages: messagesPayload,
     toolCalls: toolCallsPayload,
@@ -188,6 +199,10 @@ function buildPayloads(
       model,
       tokensIn: info.tokens?.input,
       tokensOut: info.tokens?.output,
+      tokensReasoning: info.tokens?.reasoning,
+      tokensCacheRead: info.tokens?.cache?.read,
+      tokensCacheWrite: info.tokens?.cache?.write,
+      cost: (info as { cost?: number }).cost,
       createdAt: info.time?.created ? new Date(info.time.created).toISOString() : undefined,
       completedAt: info.time?.completed ? new Date(info.time.completed).toISOString() : undefined,
     });

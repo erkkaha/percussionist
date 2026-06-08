@@ -42,7 +42,8 @@ export interface RunnerMessage {
   sessionID?: string;
   role?: "user" | "assistant";
   time?: { created?: number; completed?: number };
-  tokens?: { input?: number; output?: number };
+  tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } };
+  cost?: number;
   error?: unknown;
   textContent?: string; // pre-extracted concatenated text from all text parts
 }
@@ -51,7 +52,8 @@ export type RunnerEvent =
   | {
       type: "message.updated";
       sessionId: string;
-      tokens?: { input: number; output: number };
+      tokens?: { input: number; output: number; reasoning?: number; cache?: { read?: number; write?: number } };
+      cost?: number;
     }
   | { type: "idle"; sessionId: string }
   | { type: "permission.required"; sessionId: string; permissionId: string };
@@ -374,7 +376,6 @@ export const ClusterSettingsSpecSchema = z.object({
   manager: z
     .object({
       agentName: z.string().default("manager-agent"),
-      decisionAgentName: z.string().default("manager-decision"),
       model: z.string().optional(),
       decisionAgentContent: z.string().max(102400).optional(),
       timeoutMs: z.number().int().positive().default(30000),

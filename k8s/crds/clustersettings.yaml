@@ -79,9 +79,6 @@ spec:
                     agentName:
                       type: string
                       default: manager-agent
-                    decisionAgentName:
-                      type: string
-                      default: manager-decision
                     model:
                       type: string
                       description: Default model for manager decision sessions.

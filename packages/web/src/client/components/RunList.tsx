@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useRuns } from "../hooks/useRuns";
+import { useQuery } from "@tanstack/react-query";
 import { useRunsEvents } from "../hooks/useRunsEvents";
+import { fetchRunsPaginated } from "../lib/api";
 import StatusBadge from "./StatusBadge";
 import TokenCounter from "./TokenCounter";
 import OpenOpencodeButton from "./OpenOpencodeButton";
 import type { RunPhase, Run } from "../lib/types";
 import { TERMINAL_PHASES } from "../lib/types";
 import { Button } from "./ui/button";
+
 const ALL_PHASES: RunPhase[] = [
   "Pending",
   "Initializing",
@@ -16,6 +18,7 @@ const ALL_PHASES: RunPhase[] = [
   "Failed",
   "Cancelled",
 ];
+const PAGE_SIZE = 50;
 
 function age(iso: string | undefined): string {
   if (!iso) return "-";
@@ -37,12 +40,21 @@ type SortDir = "asc" | "desc";
 export default function RunList() {
   const { connected: runsSseConnected, eventTick } = useRunsEvents();
   void eventTick;
-  const { data: runs, error, isLoading, isFetching } = useRuns(
-    runsSseConnected ? false : 5_000,
-  );
   const [phaseFilter, setPhaseFilter] = useState<RunPhase | "All">("All");
   const [sortField, setSortField] = useState<SortField>("age");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [page, setPage] = useState(0);
+
+  const offset = page * PAGE_SIZE;
+  const { data, error, isLoading, isFetching } = useQuery({
+    queryKey: ["runs", "list", { limit: PAGE_SIZE, offset }],
+    queryFn: () => fetchRunsPaginated(PAGE_SIZE, offset),
+    refetchInterval: runsSseConnected ? false : 5_000,
+  });
+
+  const items = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   function handleSort(field: SortField) {
     if (sortField === field) {
@@ -59,9 +71,9 @@ export default function RunList() {
   }
 
   const filtered =
-    runs?.filter(
+    items.filter(
       (r) => phaseFilter === "All" || r.status?.phase === phaseFilter,
-    ) ?? [];
+    );
 
   const sorted = [...filtered].sort((a, b) => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -91,6 +103,9 @@ export default function RunList() {
     );
   }
 
+  const from = total > 0 ? offset + 1 : 0;
+  const to = Math.min(offset + PAGE_SIZE, total);
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -98,7 +113,7 @@ export default function RunList() {
         <div>
           <h1 className="text-headline-lg">Runs</h1>
           <p className="text-caption-xs text-text-muted">
-            {runs ? `${runs.length} total` : "Loading..."}
+            {data ? `${total} total` : "Loading..."}
             {isFetching && !isLoading && (
               <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
             )}
@@ -107,9 +122,7 @@ export default function RunList() {
             Updates: {runsSseConnected ? "live stream" : "polling fallback"}
           </p>
         </div>
-        <Link
-          to="/runs/new"
-        >
+        <Link to="/runs/new">
           <Button>+ New Run</Button>
         </Link>
       </div>
@@ -119,23 +132,18 @@ export default function RunList() {
         <FilterButton
           active={phaseFilter === "All"}
           onClick={() => setPhaseFilter("All")}
-          count={runs?.length}
         >
           All
         </FilterButton>
-        {ALL_PHASES.map((p) => {
-          const count = runs?.filter((r) => r.status?.phase === p).length;
-          return (
-            <FilterButton
-              key={p}
-              active={phaseFilter === p}
-              onClick={() => setPhaseFilter(p)}
-              count={count}
-            >
-              {p}
-            </FilterButton>
-          );
-        })}
+        {ALL_PHASES.map((p) => (
+          <FilterButton
+            key={p}
+            active={phaseFilter === p}
+            onClick={() => setPhaseFilter(p)}
+          >
+            {p}
+          </FilterButton>
+        ))}
       </div>
 
       {/* Table */}
@@ -143,9 +151,9 @@ export default function RunList() {
         <TableSkeleton />
       ) : sorted.length === 0 ? (
         <div className="rounded-lg border border-border-muted bg-surface-raised p-8 text-center text-text-muted">
-          {runs?.length === 0
+          {total === 0
             ? "No Runs in this namespace."
-            : `No runs matching phase "${phaseFilter}".`}
+            : `No runs matching phase "${phaseFilter}" on this page.`}
         </div>
       ) : (
         <div className="rounded-lg border border-border overflow-hidden overflow-x-auto">
@@ -176,6 +184,34 @@ export default function RunList() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {total > PAGE_SIZE && (
+        <div className="flex items-center justify-between text-sm text-text-muted">
+          <span>
+            Showing {from}–{to} of {total}
+          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs">
+              Page {page + 1} of {totalPages}
+            </span>
+            <button
+              disabled={page === 0}
+              onClick={() => setPage((p) => p - 1)}
+              className="rounded border border-border-muted px-2.5 py-1 text-xs font-medium text-text-dim hover:text-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              Previous
+            </button>
+            <button
+              disabled={offset + PAGE_SIZE >= total}
+              onClick={() => setPage((p) => p + 1)}
+              className="rounded border border-border-muted px-2.5 py-1 text-xs font-medium text-text-dim hover:text-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              Next
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -228,9 +264,7 @@ function RunRow({ run }: { run: Run }) {
         <div className="flex items-center gap-1.5">
           {isActive && <AttachButton name={run.metadata.name} namespace={run.metadata.namespace} />}
           <OpenOpencodeButton run={run} compact />
-          <Link
-            to={`/runs/new?copyFrom=${encodeURIComponent(run.metadata.name)}`}
-          >
+          <Link to={`/runs/new?copyFrom=${encodeURIComponent(run.metadata.name)}`}>
             <Button variant="outline" size="sm">Copy</Button>
           </Link>
         </div>
@@ -260,12 +294,10 @@ function FilterButton({
   children,
   active,
   onClick,
-  count,
 }: {
   children: React.ReactNode;
   active: boolean;
   onClick: () => void;
-  count?: number;
 }) {
   return (
     <button
@@ -277,9 +309,6 @@ function FilterButton({
       }`}
     >
       {children}
-      {count != null && (
-        <span className="ml-1 text-text-dim">{count}</span>
-      )}
     </button>
   );
 }

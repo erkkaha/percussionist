@@ -416,13 +416,22 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `patch_board` | Merge-patch `Project.status.board` (escalations, pendingQuestions, facilitations, managerMetrics) |
 | `delete_run` | Delete an Run by name |
 | `create_run` | Create a new run for a ready task; resolves feature-branch metadata and updates `Task.status` |
+| `create_task` | Create a new Task CR from the manager |
 | `force_retry` | Restart a stuck task at an incremented retry count via `Task.status` (does not delete old runs) |
 | `set_task_state` | Move a task to a target column, optionally cancel running runs (runs preserved by default) |
+| `exec_in_workspace` | Run commands in the project's data PVC workspace |
+| `read_plan` | Read a plan artifact from the project's plans ConfigMap |
+| `write_plan` | Write a plan artifact to the project's plans ConfigMap |
+| `check_for_updates` | Check the latest Percussionist release version |
+| `apply_upgrade` | Upgrade Percussionist deployments to a target image tag |
 | `list_models` | List available LLM providers and models from the opencode sidecar |
+| `list_task_events` | List task lifecycle audit events (append-only log) |
 | `read_manager_logs` | Read logs from the manager controller pod |
 | `pause_reconciliation` | Pause the manager reconcile loop for a project (auto-resumes after timeout) |
 | `resume_reconciliation` | Resume a paused reconcile loop |
 | `get_reconcile_status` | Check whether the reconcile loop is paused and when it was last paused |
+| `list_available_packages` | List Alpine packages declared for a project's runner |
+| `install_packages` | Install ad-hoc Alpine packages via a maintenance pod |
 | `store_memory` | Store a memory with semantic embedding for future context retrieval |
 | `query_memory` | Semantic search across stored memories, ranked by cosine distance |
 | `get_context` | Retrieve relevant context from past runs and memories, formatted for prompt injection |
@@ -480,6 +489,11 @@ but served within each run pod). These tools are available to agents during run 
 | `complete_plan` | Signal successful PLAN task completion |
 | `fail_run` | Signal task failure with reason, triggering facilitator analysis |
 | `get_status` | Return current run state (phase, session ID, token usage) |
+| `create_task` | Create a new BUILD Task CR (runs in the same project) |
+| `search_code` | Search the workspace with ripgrep/grep |
+| `write_plan` | Persist a plan artifact to the project's plans ConfigMap |
+| `read_plan` | Read a plan artifact from the project's plans ConfigMap |
+| `read_session` | Read session messages from another run's ConfigMap snapshot |
 
 **`complete_plan`** vs **`complete_run`**:
 - PLAN agents should call `complete_plan` after committing their plan document to `.percussionist/plans/{task-id}.md`

@@ -10,7 +10,8 @@ export type MessagesEntry = {
     sessionID?: string;
     role?: "user" | "assistant";
     time?: { created?: number; completed?: number };
-    tokens?: { input?: number; output?: number };
+    tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } };
+    cost?: number;
     model?: { providerID?: string; modelID?: string };
     error?: unknown;
   };
@@ -39,12 +40,22 @@ export type ToolPart = {
     time?: { start?: number; end?: number };
   };
 };
+export type StepFinishPart = {
+  type: "step-finish";
+  id?: string;
+  messageID?: string;
+  reason?: string;
+  tokens?: { input?: number; output?: number; reasoning?: number };
+  cost?: number;
+};
+
 export type Part =
   | TextPart
   | ToolUsePart
   | ToolResultPart
   | FilePart
   | ToolPart
+  | StepFinishPart
   | { type: string };
 export type RawMessage = MessagesEntry;
 
