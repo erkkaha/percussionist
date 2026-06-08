@@ -12,6 +12,7 @@
 import { core } from "@percussionist/kube";
 import type { V1PersistentVolumeClaim } from "@kubernetes/client-node";
 import { API_GROUP_VERSION, KIND_PROJECT } from "@percussionist/api";
+import { DEFAULT_STORAGE_CLASS, DEFAULT_STORAGE_ACCESS_MODE } from "./config.js";
 
 export interface DataPVCOptions {
   projectName: string;
@@ -25,7 +26,7 @@ export interface DataPVCOptions {
 /**
  * Ensures a data PVC exists for the given project. Idempotent — succeeds if
  * PVC already exists. Creates the PVC with:
- *   - RWX (ReadWriteMany) access mode for parallel worker execution
+ *   - Configurable access mode (default ReadWriteOnce for minikube compat)
  *   - Owner reference to the Project CR (auto-cleanup on project deletion)
  *   - 10Gi default size
  *
@@ -88,19 +89,19 @@ export async function ensureDataPVC(
       ],
     },
     spec: {
-      accessModes: ["ReadWriteMany"], // RWX for parallel workers
+      accessModes: [DEFAULT_STORAGE_ACCESS_MODE],
       resources: {
         requests: {
           storage: size,
         },
       },
-      ...(storageClass ? { storageClassName: storageClass } : {}),
+      storageClassName: storageClass ?? DEFAULT_STORAGE_CLASS,
     },
   };
 
   // Create PVC
   console.log(
-    `[pvc-helper] Creating data PVC ${namespace}/${pvcName} (${size}, RWX)`,
+    `[pvc-helper] Creating data PVC ${namespace}/${pvcName} (${size}, ${DEFAULT_STORAGE_ACCESS_MODE})`,
   );
   try {
     const created = await coreApi.createNamespacedPersistentVolumeClaim({

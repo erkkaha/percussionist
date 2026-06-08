@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { BarChart3, List, Table2, Users, Wrench } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import { authHeaders } from "../lib/auth";
@@ -10,38 +10,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLe
 import { cn } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
-// Types matching /api/stats/export response
-
-interface MessageRow {
-  id: string;
-  sessionId: string;
-  idx: number;
-  role: string | null;
-  content: string | null;
-  model: string | null;
-  tokensIn: number | null;
-  tokensOut: number | null;
-  createdAt: string | null;
-  completedAt: string | null;
-}
-
-interface ToolCallRow {
-  id: string;
-  sessionId: string;
-  messageIdx: number;
-  tool: string;
-  args: string | null;
-  success: boolean | null;
-  error: string | null;
-  durationMs: number | null;
-}
-
-interface FileOpRow {
-  sessionId: string;
-  messageIdx: number;
-  filePath: string;
-  operation: string;
-}
+// Types matching /api/stats/sessions response
 
 interface StatSession {
   id: string;
@@ -55,19 +24,53 @@ interface StatSession {
   completedAt: string | null;
   tokensIn: number;
   tokensOut: number;
+  cost?: number;
   error: string | null;
   createdAt: string | null;
-  messages: MessageRow[];
-  toolCalls: ToolCallRow[];
-  fileOps: FileOpRow[];
+  resolvedModel: string;
 }
 
-// Content part types embedded in message content JSON
-interface ContentPart {
-  type: string;
-  tool?: string;
-  text?: string;
-  tokens?: { input?: number; output?: number; cache?: { read?: number; write?: number } };
+interface Summary {
+  total: number;
+  succeeded: number;
+  failed: number;
+  successRate: number | null;
+  totalTokensIn: number;
+  totalTokensOut: number;
+  totalCost: number;
+  avgDurationMs: number | null;
+}
+
+interface AgentSummary {
+  agent: string;
+  runs: number;
+  succeeded: number;
+  failed: number;
+  successRate: number | null;
+  totalTokensIn: number;
+  totalTokensOut: number;
+  totalCost: number;
+  avgTokensPerRun: number;
+  avgDurationMs: number | null;
+  models: string[];
+}
+
+interface ModelRow {
+  model: string;
+  runs: number;
+  tokensIn: number;
+  tokensOut: number;
+  cost: number;
+}
+
+interface SessionsResponse {
+  sessions: StatSession[];
+  total: number;
+  limit: number;
+  offset: number;
+  summary: Summary;
+  agentSummaries: AgentSummary[];
+  modelRows: ModelRow[];
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +85,7 @@ interface TrendPoint {
   avgDurationMs: number | null;
   tokensIn: number;
   tokensOut: number;
+  cost: number;
 }
 
 interface ModelTrendPoint {
@@ -136,144 +140,46 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-// Resolve the model for a session: run row first, fallback to user message.
+function fmtCost(n: number | null | undefined): string {
+  if (n == null || n === 0) return "-";
+  if (n < 1) return `$${n.toFixed(4)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+// Resolve the model for a session: resolvedModel from server, then fallback.
+
 function resolveModel(s: StatSession): string {
-  if (s.model) return s.model;
-  const userMsg = s.messages.find((m) => m.role === "user");
-  if (userMsg?.model) return userMsg.model;
-  return "unknown";
+  return s.resolvedModel ?? s.model ?? "unknown";
 }
 
 // ---------------------------------------------------------------------------
 // Fetch hook
 
-function useStats(days: number) {
-  return useQuery<StatSession[]>({
-    queryKey: ["stats", days],
+const PAGE_SIZE = 50;
+
+function useStats(days: number, page: number) {
+  return useQuery<SessionsResponse>({
+    queryKey: ["stats", days, page],
     queryFn: async () => {
-      const url = days === 0 ? "/api/stats/export?days=0" : `/api/stats/export?days=${days}`;
+      const offset = page * PAGE_SIZE;
+      const url = `/api/stats/sessions?days=${days}&limit=${PAGE_SIZE}&offset=${offset}`;
       const res = await fetch(url, { headers: authHeaders() });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      return res.json() as Promise<StatSession[]>;
+      return res.json() as Promise<SessionsResponse>;
     },
     refetchInterval: 30_000,
   });
 }
 
 // ---------------------------------------------------------------------------
-// Derived analytics
-
-interface Analytics {
-  total: number;
-  succeeded: number;
-  failed: number;
-  successRate: number | null;
-  totalTokensIn: number;
-  totalTokensOut: number;
-  avgDurationMs: number | null;
-  modelRows: { model: string; runs: number; tokensIn: number; tokensOut: number }[];
-}
-
-function computeAnalytics(sessions: StatSession[]): Analytics {
-  const total = sessions.length;
-  const succeeded = sessions.filter((s) => s.phase === "Succeeded").length;
-  const failed = sessions.filter((s) => s.phase === "Failed").length;
-  const totalTokensIn = sessions.reduce((a, s) => a + (s.tokensIn ?? 0), 0);
-  const totalTokensOut = sessions.reduce((a, s) => a + (s.tokensOut ?? 0), 0);
-
-  // Avg duration — only sessions with both timestamps
-  const durations = sessions.map(durationMs).filter((d): d is number => d !== null);
-  const avgDurationMs = durations.length > 0
-    ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
-    : null;
-
-  // Model breakdown
-  const modelMap = new Map<string, { runs: number; tokensIn: number; tokensOut: number }>();
-  for (const s of sessions) {
-    const model = resolveModel(s);
-    const existing = modelMap.get(model) ?? { runs: 0, tokensIn: 0, tokensOut: 0 };
-    modelMap.set(model, {
-      runs: existing.runs + 1,
-      tokensIn: existing.tokensIn + (s.tokensIn ?? 0),
-      tokensOut: existing.tokensOut + (s.tokensOut ?? 0),
-    });
-  }
-  const modelRows = [...modelMap.entries()]
-    .map(([model, v]) => ({ model, ...v }))
-    .sort((a, b) => b.tokensIn - a.tokensIn);
-
-  return {
-    total, succeeded, failed,
-    successRate: total > 0 ? Math.round((succeeded / total) * 100) : null,
-    totalTokensIn, totalTokensOut, avgDurationMs,
-    modelRows,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Agent analytics
-
-interface AgentSummary {
-  agent: string;
-  runs: number;
-  succeeded: number;
-  failed: number;
-  successRate: number | null;
-  totalTokensIn: number;
-  totalTokensOut: number;
-  avgTokensPerRun: number;
-  avgDurationMs: number | null;
-  models: string[];
-}
-
-function computeAgentAnalytics(sessions: StatSession[]): AgentSummary[] {
-  const agentMap = new Map<string, {
-    runs: number; succeeded: number; failed: number;
-    tokensIn: number; tokensOut: number; durationSum: number; durationCount: number;
-    models: Set<string>;
-  }>();
-
-  for (const s of sessions) {
-    const agent = s.agent ?? "unknown";
-    const existing = agentMap.get(agent) ?? {
-      runs: 0, succeeded: 0, failed: 0,
-      tokensIn: 0, tokensOut: 0, durationSum: 0, durationCount: 0,
-      models: new Set<string>(),
-    };
-
-    existing.runs++;
-    if (s.phase === "Succeeded") existing.succeeded++;
-    else if (s.phase === "Failed") existing.failed++;
-    existing.tokensIn += s.tokensIn ?? 0;
-    existing.tokensOut += s.tokensOut ?? 0;
-    const d = durationMs(s);
-    if (d !== null) { existing.durationSum += d; existing.durationCount++; }
-    if (s.model) existing.models.add(s.model);
-    agentMap.set(agent, existing);
-  }
-
-  return [...agentMap.entries()]
-    .map(([agent, v]) => ({
-      agent,
-      runs: v.runs,
-      succeeded: v.succeeded,
-      failed: v.failed,
-      successRate: v.runs > 0 ? Math.round((v.succeeded / v.runs) * 100) : null,
-      totalTokensIn: v.tokensIn,
-      totalTokensOut: v.tokensOut,
-      avgTokensPerRun: v.runs > 0 ? Math.round((v.tokensIn + v.tokensOut) / v.runs) : 0,
-      avgDurationMs: v.durationCount > 0 ? Math.round(v.durationSum / v.durationCount) : null,
-      models: [...v.models],
-    }))
-    .sort((a, b) => b.runs - a.runs);
-}
+// Server-side analytics — computed in /api/stats/sessions
 
 // ---------------------------------------------------------------------------
 // Summary cards
 
-function SummaryCards({ a }: { a: Analytics }) {
+function SummaryCards({ a }: { a: Summary }) {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
       <MetricCard label="Total Runs" value={a.total} />
       <MetricCard label="Succeeded" value={a.succeeded} color="text-phase-succeeded" />
       <MetricCard label="Failed" value={a.failed} color="text-phase-failed" />
@@ -283,6 +189,7 @@ function SummaryCards({ a }: { a: Analytics }) {
         color={a.successRate != null && a.successRate >= 80 ? "text-phase-succeeded" : "text-phase-failed"}
       />
       <MetricCard label="Avg Duration" value={fmtDuration(a.avgDurationMs)} />
+      <MetricCard label="Total Cost" value={fmtCost(a.totalCost)} color="text-phase-running" mono />
       <MetricCard label="Tokens In / Out" value={`${fmtTokens(a.totalTokensIn)} / ${fmtTokens(a.totalTokensOut)}`} mono />
     </div>
   );
@@ -306,7 +213,7 @@ function MetricCard({
 // ---------------------------------------------------------------------------
 // Model breakdown
 
-function ModelBreakdown({ modelRows }: { modelRows: Analytics["modelRows"] }) {
+function ModelBreakdown({ modelRows }: { modelRows: ModelRow[] }) {
   if (modelRows.length === 0) return null;
   const maxTokens = Math.max(...modelRows.map((r) => r.tokensIn + r.tokensOut));
   return (
@@ -320,11 +227,12 @@ function ModelBreakdown({ modelRows }: { modelRows: Analytics["modelRows"] }) {
               <th className="px-4 py-2.5 font-medium">Runs</th>
               <th className="px-4 py-2.5 font-medium">Tokens In</th>
               <th className="px-4 py-2.5 font-medium">Tokens Out</th>
-              <th className="px-4 py-2.5 font-medium w-1/3">Token Share</th>
+              <th className="px-4 py-2.5 font-medium">Cost</th>
+              <th className="px-4 py-2.5 font-medium w-1/4">Token Share</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border-muted">
-            {modelRows.map(({ model, runs, tokensIn, tokensOut }) => {
+            {modelRows.map(({ model, runs, tokensIn, tokensOut, cost }) => {
               const total = tokensIn + tokensOut;
               const inPct = total > 0 ? (tokensIn / total) * 100 : 0;
               const outPct = total > 0 ? (tokensOut / total) * 100 : 0;
@@ -340,6 +248,9 @@ function ModelBreakdown({ modelRows }: { modelRows: Analytics["modelRows"] }) {
                   </td>
                   <td className="px-4 py-2.5 tabular-nums text-text-muted font-mono text-xs">
                     {fmtTokens(tokensOut)}
+                  </td>
+                  <td className="px-4 py-2.5 tabular-nums text-text-muted font-mono text-xs">
+                    {fmtCost(cost)}
                   </td>
                   <td className="px-4 py-2.5">
                     <div
@@ -369,12 +280,6 @@ function ModelBreakdown({ modelRows }: { modelRows: Analytics["modelRows"] }) {
 // Sessions table
 
 function SessionsTable({ sessions }: { sessions: StatSession[] }) {
-  const sorted = [...sessions].sort((a, b) => {
-    const at = a.startedAt ? new Date(a.startedAt).getTime() : 0;
-    const bt = b.startedAt ? new Date(b.startedAt).getTime() : 0;
-    return bt - at;
-  });
-
   return (
     <section>
       <div className="rounded-lg border border-border overflow-x-auto">
@@ -385,12 +290,13 @@ function SessionsTable({ sessions }: { sessions: StatSession[] }) {
               <th className="px-4 py-2.5 font-medium">Phase</th>
               <th className="px-4 py-2.5 font-medium">Model</th>
               <th className="px-4 py-2.5 font-medium">Tokens</th>
+              <th className="px-4 py-2.5 font-medium">Cost</th>
               <th className="px-4 py-2.5 font-medium">Duration</th>
               <th className="px-4 py-2.5 font-medium">Age</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border-muted">
-            {sorted.map((s) => (
+            {sessions.map((s) => (
               <tr key={s.id} className="hover:bg-surface-raised/60 transition-colors">
                 <td className="px-4 py-3">
                   <div className="font-medium text-text">{s.name}</div>
@@ -408,6 +314,9 @@ function SessionsTable({ sessions }: { sessions: StatSession[] }) {
                 </td>
                 <td className="px-4 py-3">
                   <TokenCounter tokensIn={s.tokensIn} tokensOut={s.tokensOut} />
+                </td>
+                <td className="px-4 py-3 text-text-muted tabular-nums font-mono text-xs">
+                  {fmtCost(s.cost)}
                 </td>
                 <td className="px-4 py-3 text-text-muted tabular-nums">
                   {fmtDuration(durationMs(s))}
@@ -458,12 +367,11 @@ interface TrendChartProps {
   data: Array<Record<string, unknown>>;
   config: ChartConfig;
   series: Array<{ dataKey: string; stackId?: string }>;
-  type: "area" | "line";
   yAxisDomain?: [number, number];
   yAxisFormatter?: (v: number) => string;
 }
 
-function TrendChart({ title, description, data, config, series, type, yAxisDomain, yAxisFormatter }: TrendChartProps) {
+function TrendChart({ title, description, data, config, series, yAxisDomain, yAxisFormatter }: TrendChartProps) {
   return (
     <div className="rounded-lg border border-border bg-surface-raised p-4">
       <div className="mb-3">
@@ -476,114 +384,56 @@ function TrendChart({ title, description, data, config, series, type, yAxisDomai
         </div>
       ) : (
         <ChartContainer config={config} className="aspect-auto h-[180px] w-full">
-          {type === "area" ? (
-            <AreaChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis
-                dataKey="time"
-                type="number"
-                domain={["dataMin", "dataMax"]}
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tickFormatter={(t: number) => fmtDate(new Date(t).toISOString())}
-                minTickGap={40}
-              />
-              <YAxis
-                type="number"
-                domain={yAxisDomain}
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tickFormatter={yAxisFormatter ?? ((v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v))}
-                width={55}
-              />
-              <ChartTooltip
-                cursor={false}
-                content={
-                  <ChartTooltipContent
-                    indicator="dot"
-                    labelFormatter={(label, payload) => {
-                      if (!payload.length) return String(label);
-                      const p = payload[0] as Record<string, unknown>;
-                      const time = (p?.payload as Record<string, unknown>)?.time as number | undefined;
-                      return time ? fmtDate(new Date(time).toISOString()) : String(label);
-                    }}
-                  />
-                }
-              />
-              <ChartLegend content={<ChartLegendContent />} />
-              {series.map((s) => {
-                const entry = config[s.dataKey] as { color?: string } | undefined;
-                const color = entry?.color ?? `var(--color-${s.dataKey})`;
-                return (
-                  <Area
-                    key={s.dataKey}
-                    dataKey={s.dataKey}
-                    type="monotone"
-                    fill={color}
-                    fillOpacity={s.stackId ? 0.85 : 0.35}
-                    stroke={color}
-                    strokeWidth={1.5}
-                    dot={false}
-                    connectNulls
-                    stackId={s.stackId}
-                  />
-                );
-              })}
-            </AreaChart>
-          ) : (
-            <LineChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis
-                dataKey="time"
-                type="number"
-                domain={["dataMin", "dataMax"]}
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tickFormatter={(t: number) => fmtDate(new Date(t).toISOString())}
-                minTickGap={40}
-              />
-              <YAxis
-                type="number"
-                domain={yAxisDomain}
-                allowDataOverflow
-                ticks={yAxisDomain ? [0, 20, 40, 60, 80, 100] : undefined}
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tickFormatter={yAxisFormatter ?? ((v: number) => `${v}%`)}
-                width={48}
-              />
-              <ChartTooltip
-                cursor={false}
-                content={
-                  <ChartTooltipContent
-                    indicator="dot"
-                    labelFormatter={(label, payload) => {
-                      if (!payload.length) return String(label);
-                      const p = payload[0] as Record<string, unknown>;
-                      const time = (p?.payload as Record<string, unknown>)?.time as number | undefined;
-                      return time ? fmtDate(new Date(time).toISOString()) : String(label);
-                    }}
-                  />
-                }
-              />
-              <ChartLegend content={<ChartLegendContent />} />
-              {series.map((s) => (
-                <Line
+          <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="20%">
+            <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis
+              dataKey="time"
+              type="number"
+              domain={["dataMin", "dataMax"]}
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={(t: number) => fmtDate(new Date(t).toISOString())}
+              minTickGap={40}
+            />
+            <YAxis
+              type="number"
+              domain={yAxisDomain}
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={yAxisFormatter ?? ((v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v))}
+              width={55}
+            />
+            <ChartTooltip
+              cursor={false}
+              content={
+                <ChartTooltipContent
+                  indicator="dot"
+                  labelFormatter={(label, payload) => {
+                    if (!payload.length) return String(label);
+                    const p = payload[0] as Record<string, unknown>;
+                    const time = (p?.payload as Record<string, unknown>)?.time as number | undefined;
+                    return time ? fmtDate(new Date(time).toISOString()) : String(label);
+                  }}
+                />
+              }
+            />
+            <ChartLegend content={<ChartLegendContent />} />
+            {series.map((s) => {
+              const entry = config[s.dataKey] as { color?: string } | undefined;
+              const color = entry?.color ?? `var(--color-${s.dataKey})`;
+              return (
+                <Bar
                   key={s.dataKey}
                   dataKey={s.dataKey}
-                  type="monotone"
-                  stroke={`var(--color-${s.dataKey})`}
-                  strokeWidth={2}
-                  dot={false}
-                  connectNulls
+                  fill={color}
+                  radius={[4, 4, 0, 0]}
+                  stackId={s.stackId}
                 />
-              ))}
-            </LineChart>
-          )}
+              );
+            })}
+          </BarChart>
         </ChartContainer>
       )}
     </div>
@@ -620,6 +470,14 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
     [trendPoints]
   );
 
+  const costData = useMemo(() =>
+    trendPoints.map((p) => ({
+      time: new Date(p.date).getTime(),
+      cost: p.cost,
+    })),
+    [trendPoints]
+  );
+
   // Build model trend data
   const modelData = useMemo(() => {
     if (modelTrendPoints.length === 0) return [];
@@ -639,6 +497,7 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
     successRate: { label: "Success Rate", color: "var(--chart-1)" },
     tokensIn: { label: "Tokens In", color: "var(--chart-1)" },
     tokensOut: { label: "Tokens Out", color: "var(--chart-2)" },
+    cost: { label: "Cost ($)", color: "var(--chart-4)" },
     ...Object.fromEntries(models.map((m, i) => [m, { label: shortModelLabel(m), color: `var(--chart-${(i % 5) + 1})` }])),
   };
 
@@ -653,7 +512,6 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
           { dataKey: "succeeded" },
           { dataKey: "failed" },
         ]}
-        type="area"
       />
       <TrendChart
         title="Success Rate"
@@ -661,7 +519,6 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
         data={successRateData}
         config={chartConfig}
         series={[{ dataKey: "successRate" }]}
-        type="line"
         yAxisDomain={[0, 100]}
         yAxisFormatter={(v) => `${v}%`}
       />
@@ -674,7 +531,14 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
           { dataKey: "tokensIn" },
           { dataKey: "tokensOut" },
         ]}
-        type="area"
+      />
+      <TrendChart
+        title="Cost Over Time"
+        description="Aggregate LLM cost per day"
+        data={costData}
+        config={chartConfig}
+        series={[{ dataKey: "cost" }]}
+        yAxisFormatter={(v: number) => fmtCost(v)}
       />
       {models.length > 0 ? (
         <TrendChart
@@ -683,7 +547,6 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
           data={modelData}
           config={chartConfig}
           series={models.map((m) => ({ dataKey: m, stackId: "models" }))}
-          type="area"
         />
       ) : (
         <div className="rounded-lg border border-border bg-surface-raised p-4">
@@ -707,6 +570,7 @@ const METRIC_OPTIONS = [
   { value: "successRate", label: "Success Rate" },
   { value: "runs", label: "Runs" },
   { value: "avgTokensPerRun", label: "Avg Tokens / Run" },
+  { value: "totalCost", label: "Total Cost" },
   { value: "avgDurationMs", label: "Avg Duration" },
 ] as const;
 
@@ -743,6 +607,7 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
     if (metric === "successRate") return `${Math.round(v)}%`;
     if (metric === "avgDurationMs") return fmtDuration(Math.round(v * 1000));
     if (metric === "avgTokensPerRun") return fmtTokens(Math.round(v));
+    if (metric === "totalCost") return fmtCost(v);
     return String(Math.round(v));
   };
 
@@ -767,6 +632,7 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
                 {a.successRate != null ? `${a.successRate}%` : "-"} ok
               </span>
               <span>{fmtTokens(a.totalTokensIn + a.totalTokensOut)} tok</span>
+              <span>{fmtCost(a.totalCost)}</span>
               <span>{fmtDuration(a.avgDurationMs)}</span>
             </div>
             {selectedAgent === a.agent && a.models.length > 0 && (
@@ -864,6 +730,7 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
               <th className="px-4 py-2.5 font-medium">Success Rate</th>
               <th className="px-4 py-2.5 font-medium">Avg Tokens</th>
               <th className="px-4 py-2.5 font-medium">Avg Duration</th>
+              <th className="px-4 py-2.5 font-medium">Total Cost</th>
               <th className="px-4 py-2.5 font-medium">Tokens In/Out</th>
             </tr>
           </thead>
@@ -886,6 +753,9 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
                 </td>
                 <td className="px-4 py-2.5 tabular-nums text-text-muted">
                   {fmtDuration(a.avgDurationMs)}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums font-mono text-xs text-text-muted">
+                  {fmtCost(a.totalCost)}
                 </td>
                 <td className="px-4 py-2.5 tabular-nums font-mono text-xs text-text-muted">
                   {fmtTokens(a.totalTokensIn)} / {fmtTokens(a.totalTokensOut)}
@@ -912,6 +782,49 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
+function Pagination({
+  total,
+  limit,
+  offset,
+  onChange,
+}: {
+  total: number;
+  limit: number;
+  offset: number;
+  onChange: (offset: number) => void;
+}) {
+  const currentPage = Math.floor(offset / limit) + 1;
+  const totalPages = Math.ceil(total / limit);
+  if (totalPages <= 1) return null;
+
+  return (
+    <div className="flex items-center justify-between mt-3">
+      <span className="text-xs text-text-dim">
+        {offset + 1}–{Math.min(offset + limit, total)} of {total} sessions
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          disabled={offset === 0}
+          onClick={() => onChange(offset - limit)}
+          className="px-3 py-1 text-xs rounded-md border border-border bg-surface-raised text-text-muted hover:text-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          Previous
+        </button>
+        <span className="text-xs text-text-dim tabular-nums">
+          {currentPage} / {totalPages}
+        </span>
+        <button
+          disabled={offset + limit >= total}
+          onClick={() => onChange(offset + limit)}
+          className="px-3 py-1 text-xs rounded-md border border-border bg-surface-raised text-text-muted hover:text-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main view
 
@@ -925,11 +838,13 @@ const DAY_OPTIONS = [
 export default function StatsView() {
   const [days, setDays] = useState(30);
   const [tab, setTab] = useState<TabId>("overview");
-  const { data: sessions, error, isLoading, isFetching } = useStats(days);
+  const [page, setPage] = useState(0);
+  const { data, error, isLoading, isFetching } = useStats(days, page);
   const { data: trends } = useTrends(days);
 
-  const analytics = sessions ? computeAnalytics(sessions) : null;
-  const agentSummaries = useMemo(() => sessions ? computeAgentAnalytics(sessions) : null, [sessions]);
+  if (page > 0 && data != null && data.offset >= data.total) {
+    setPage(0);
+  }
 
   return (
     <div className="space-y-6">
@@ -938,7 +853,7 @@ export default function StatsView() {
         <div>
           <h1 className="text-headline-lg">Stats</h1>
           <p className="text-caption-xs text-text-muted">
-            {sessions ? `${sessions.length} sessions` : "Loading..."}
+            {data ? `${data.total} sessions` : "Loading..."}
             {isFetching && !isLoading && (
               <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
             )}
@@ -948,7 +863,7 @@ export default function StatsView() {
           {DAY_OPTIONS.map((opt) => (
             <button
               key={opt.value}
-              onClick={() => setDays(opt.value)}
+              onClick={() => { setDays(opt.value); setPage(0); }}
               className={`rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
                 days === opt.value
                   ? "border-accent/60 bg-surface-overlay text-text"
@@ -992,41 +907,49 @@ export default function StatsView() {
 
       {isLoading && (
         <div className="space-y-3">
-          <div className="grid grid-cols-6 gap-3">
-            {Array.from({ length: 6 }).map((_, i) => (
+          <div className="grid grid-cols-7 gap-3">
+            {Array.from({ length: 7 }).map((_, i) => (
               <div key={i} className="rounded-lg border border-border bg-surface-raised p-4 h-20 animate-pulse" />
             ))}
           </div>
         </div>
       )}
 
-      {analytics && sessions && sessions.length === 0 && (
+      {!isLoading && data && data.total === 0 && (
         <div className="rounded-lg border border-border-muted bg-surface-raised p-8 text-center text-text-muted">
           No sessions found in this time window.
         </div>
       )}
 
       {/* Overview tab */}
-      {tab === "overview" && analytics && sessions && sessions.length > 0 && (
+      {tab === "overview" && data && data.total > 0 && (
         <>
-          <SummaryCards a={analytics} />
+          <SummaryCards a={data.summary} />
           {trends && <TrendCharts trends={trends} />}
         </>
       )}
 
       {/* Sessions tab */}
-      {tab === "sessions" && analytics && sessions && sessions.length > 0 && (
-        <SessionsTable sessions={sessions} />
+      {tab === "sessions" && data && data.total > 0 && (
+        <>
+          <SessionsTable sessions={data.sessions} />
+          <Pagination
+            total={data.total}
+            limit={data.limit}
+            offset={data.offset}
+            onChange={(o) => setPage(Math.floor(o / PAGE_SIZE))}
+          />
+        </>
       )}
 
       {/* Agents tab */}
-      {tab === "agents" && agentSummaries && sessions && sessions.length > 0 && (
-        <AgentCharts agents={agentSummaries} />
+      {tab === "agents" && data && data.total > 0 && (
+        <AgentCharts agents={data.agentSummaries} />
       )}
 
       {/* Models tab */}
-      {tab === "models" && analytics && sessions && sessions.length > 0 && (
-        <ModelBreakdown modelRows={analytics.modelRows} />
+      {tab === "models" && data && data.total > 0 && (
+        <ModelBreakdown modelRows={data.modelRows} />
       )}
 
       {/* Tools tab */}

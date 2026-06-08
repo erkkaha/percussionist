@@ -44,6 +44,19 @@ const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "nomic-embed-text";
 
 const WEB_AUTH_TOKEN = process.env.WEB_AUTH_TOKEN ?? "";
 
+// Storage defaults — controls how the operator creates data PVCs.
+// DEFAULT_STORAGE_CLASS:
+//   StorageClass name for data PVCs. Defaults to "standard" (minikube-compatible).
+//   Override to "longhorn-rwx" or similar for RWX-supporting clusters.
+const DEFAULT_STORAGE_CLASS =
+  process.env.DEFAULT_STORAGE_CLASS ?? "standard";
+
+// DEFAULT_STORAGE_ACCESS_MODE:
+//   Access mode for data PVCs. Defaults to "ReadWriteOnce" (safe on minikube).
+//   Override to "ReadWriteMany" on clusters with RWX-capable storage (e.g. Longhorn).
+const DEFAULT_STORAGE_ACCESS_MODE =
+  process.env.DEFAULT_STORAGE_ACCESS_MODE ?? "ReadWriteOnce";
+
 export {
   NAMESPACE,
   SELF_NAMESPACE,
@@ -58,4 +71,6 @@ export {
   EXPOSE_WEB_DEFAULT,
   OLLAMA_BASE_URL,
   EMBEDDING_MODEL,
+  DEFAULT_STORAGE_CLASS,
+  DEFAULT_STORAGE_ACCESS_MODE,
 };

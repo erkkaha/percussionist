@@ -1,6 +1,7 @@
-// mcp-server.ts — minimal MCP (Model Context Protocol) HTTP server.
+// mcp-server.ts — MCP (Model Context Protocol) HTTP server for run-pod agents.
 //
-// Exposes three tools: fail_run(reason), complete_run(summary), get_status()
+// Exposes tools: fail_run, complete_run, complete_plan, get_status, create_task,
+//                search_code, write_plan, read_plan, read_session
 //
 // fail_run — the agent calls this to signal that it cannot complete its task.
 // The dispatcher detects the call and throws a "session error:" which causes
@@ -10,8 +11,19 @@
 // with a human-readable summary. The orchestrator spawns a success-review
 // facilitator that approves or redirects the result before closing the task.
 //
+// complete_plan — like complete_run but for PLAN tasks; signals plan artifact
+// completeness. The orchestrator triggers build-task generation.
+//
 // get_status — returns the current run state (phase, session ID, tokens, etc.)
 // for agent self-awareness without cluster API access.
+//
+// create_task — creates a new BUILD Task CR from within a run pod.
+//
+// search_code — searches the workspace with ripgrep or grep.
+//
+// write_plan / read_plan — persist and retrieve plan artifacts via ConfigMap.
+//
+// read_session — reads session data from another run's ConfigMap snapshot.
 //
 // Transport: MCP Streamable HTTP (POST /mcp), JSON-RPC 2.0.
 // Port: DISPATCHER_MCP_PORT (4097) — adjacent to opencode's 4096, unlikely
@@ -24,7 +36,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { DISPATCHER_MCP_PORT } from "@percussionist/api";
-import { getProject, buildTask, createTask, patchTaskStatus, writePlanToConfigMap, readPlanFromConfigMap } from "@percussionist/kube";
+import { getProject, buildTask, createTask, patchTaskStatus, writePlanToConfigMap, readPlanFromConfigMap, readAllSessionsFromConfigMap } from "@percussionist/kube";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-dispatcher";
@@ -165,6 +177,20 @@ const TOOL_READ_PLAN = {
       task: { type: "string", description: "Plan task ID" },
     },
     required: ["project", "task"],
+  },
+};
+
+const TOOL_READ_SESSION = {
+  name: "read_session",
+  description:
+    "Read session messages from a completed run's ConfigMap snapshot. " +
+    "Returns all session messages for the given run. Does not require a session ID.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      runName: { type: "string", description: "Name of the completed run" },
+    },
+    required: ["runName"],
   },
 };
 
@@ -460,6 +486,27 @@ async function handleReadPlan(id: JsonRpcRequest["id"], args: Record<string, unk
   }
 }
 
+async function handleReadSession(id: JsonRpcRequest["id"], args: Record<string, unknown>): Promise<JsonRpcResponse> {
+  const runName = String(args.runName ?? "");
+  const ns = process.env.RUN_NAMESPACE ?? "percussionist";
+  if (!runName) {
+    return rpcError(id, -32602, "runName is required");
+  }
+  try {
+    const data = await readAllSessionsFromConfigMap(runName, ns);
+    if (!data) {
+      return ok(id, {
+        content: [{ type: "text", text: JSON.stringify({ exists: false, messages: [] }) }],
+      });
+    }
+    return ok(id, {
+      content: [{ type: "text", text: JSON.stringify({ exists: true, sessions: data.sessions.length, messages: data.allMessages }) }],
+    });
+  } catch (e) {
+    return rpcError(id, -32603, `failed to read session: ${(e as Error).message}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // JSON-RPC helpers
 
@@ -590,7 +637,7 @@ function handleMcp(
       return ok(req.id, {});
 
     case "tools/list":
-      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_COMPLETE_PLAN, TOOL_GET_STATUS, TOOL_CREATE_TASK, TOOL_SEARCH_CODE, TOOL_WRITE_PLAN, TOOL_READ_PLAN] });
+      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_COMPLETE_PLAN, TOOL_GET_STATUS, TOOL_CREATE_TASK, TOOL_SEARCH_CODE, TOOL_WRITE_PLAN, TOOL_READ_PLAN, TOOL_READ_SESSION] });
 
     case "tools/call": {
       const toolName = (req.params?.name as string | undefined) ?? "";
@@ -655,6 +702,10 @@ function handleMcp(
 
       if (toolName === "read_plan") {
         return handleReadPlan(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>);
+      }
+
+      if (toolName === "read_session") {
+        return handleReadSession(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>);
       }
 
       return rpcError(req.id, -32602, `unknown tool: ${toolName}`);

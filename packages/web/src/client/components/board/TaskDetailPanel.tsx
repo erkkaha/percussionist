@@ -8,9 +8,10 @@ import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   ExternalLink, Check, X, Trash2, Flag, User,
   Wrench, FileText, RefreshCw, MousePointerClick, ArrowRight,
+  ChevronDown, ChevronRight, GitCommit as GitCommitIcon,
 } from "lucide-react";
 import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan, moveTask } from "../../lib/api";
-import type { Task, Run } from "../../lib/types";
+import type { Task, Run, DiffCommit } from "../../lib/types";
 import { useTaskRuns } from "../../hooks/useTaskRuns";
 import { useTaskDiff } from "../../hooks/useTaskDiff";
 import StatusBadge from "../StatusBadge";
@@ -100,13 +101,90 @@ function PlanContent({ projectName, taskName }: { projectName: string; taskName:
   );
 }
 
+type DiffViewMode = "unified" | "commits";
+
+function CommitDiffList({ commits }: { commits: DiffCommit[] }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggle = (sha: string) => {
+    const next = new Set(expanded);
+    if (next.has(sha)) {
+      next.delete(sha);
+    } else {
+      next.add(sha);
+    }
+    setExpanded(next);
+  };
+
+  return (
+    <div className="space-y-1">
+      {commits.map((commit) => {
+        const isOpen = expanded.has(commit.sha);
+        return (
+          <div key={commit.sha} className="rounded border border-border-muted bg-surface overflow-hidden">
+            <button
+              onClick={() => toggle(commit.sha)}
+              className="flex items-center gap-2 w-full px-3 py-2 hover:bg-surface-overlay/30 transition-colors text-left"
+            >
+              {isOpen ? (
+                <ChevronDown className="h-4 w-4 shrink-0 text-text-dim" />
+              ) : (
+                <ChevronRight className="h-4 w-4 shrink-0 text-text-dim" />
+              )}
+              <GitCommitIcon className="h-4 w-4 shrink-0 text-accent" />
+              <span className="font-mono text-xs text-text-dim shrink-0">{commit.sha.slice(0, 7)}</span>
+              <span className="text-sm text-text flex-1 truncate">{commit.subject}</span>
+              <span className="text-xs text-text-dim shrink-0">
+                {commit.files.length} {commit.files.length === 1 ? "file" : "files"}
+              </span>
+            </button>
+
+            {isOpen && (
+              <div className="border-t border-border-muted">
+                {commit.body && (
+                  <div className="px-3 py-2 text-xs text-text-dim whitespace-pre-wrap border-b border-border-muted bg-surface-overlay/20">
+                    {commit.body}
+                  </div>
+                )}
+                {commit.files.length > 0 ? (
+                  <div className="space-y-1 p-2">
+                    {commit.files.map((file) => (
+                      <FileDiff
+                        key={`${file.path}-${file.diff.length}`}
+                        filename={file.path}
+                        path={file.path}
+                        diff={file.diff}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-3 py-2 text-xs text-text-dim italic">
+                    No file changes in this commit
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function DiffContent({ projectName, taskName }: { projectName: string; taskName: string }) {
   const { data, status, fetchStatus, error } = useTaskDiff(projectName, taskName, true);
+  const [viewMode, setViewMode] = useState<DiffViewMode>("unified");
 
   const isFirstLoad = status === "pending" && fetchStatus === "fetching";
   if (isFirstLoad) return <p className="text-xs text-text-dim p-4">Loading diff...</p>;
   if (error) return <p className="text-xs text-phase-failed p-4">Failed to load diff: {(error as Error).message}</p>;
   if (!data) return <p className="text-xs text-text-dim p-4">No diff data available.</p>;
+
+  const hasCommits = data.commits && data.commits.length > 0;
+  const hasFiles = data.files.length > 0;
+
+  // Auto-switch to commits view when unified is empty but commits exist (merged scenario)
+  const effectiveView = !hasFiles && hasCommits ? "commits" : viewMode;
 
   return (
     <div className="space-y-3 px-4 py-3">
@@ -118,18 +196,53 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
         Default: <span className="font-mono text-text">{data.defaultRef}</span>
       </div>
 
-      {data.empty && (
-        <div className="rounded border border-border-muted bg-surface px-3 py-2 text-xs text-text-dim">
-          {data.reason ?? "No file changes for this task."}
+      {/* View toggle */}
+      {hasCommits && (
+        <div className="flex items-center gap-1 border-b border-border-muted pb-2">
+          <button
+            onClick={() => setViewMode("unified")}
+            className={`px-3 py-1.5 text-xs rounded transition-colors ${
+              effectiveView === "unified"
+                ? "bg-surface-raised text-text font-medium"
+                : "text-text-dim hover:text-text"
+            }`}
+          >
+            Unified
+          </button>
+          <button
+            onClick={() => setViewMode("commits")}
+            className={`px-3 py-1.5 text-xs rounded transition-colors ${
+              effectiveView === "commits"
+                ? "bg-surface-raised text-text font-medium"
+                : "text-text-dim hover:text-text"
+            }`}
+          >
+            Commits ({data.commits!.length})
+          </button>
         </div>
       )}
 
-      {!data.empty && data.files.length > 0 && (
-        <div className="space-y-2">
-          {data.files.map((file) => (
-            <FileDiff key={`${file.path}-${file.diff.length}`} filename={file.path} path={file.path} diff={file.diff} />
-          ))}
-        </div>
+      {/* Unified view */}
+      {effectiveView === "unified" && (
+        <>
+          {!hasFiles && (
+            <div className="rounded border border-border-muted bg-surface px-3 py-2 text-xs text-text-dim">
+              {data.reason ?? "No file changes detected."}
+            </div>
+          )}
+          {hasFiles && (
+            <div className="space-y-2">
+              {data.files.map((file) => (
+                <FileDiff key={`${file.path}-${file.diff.length}`} filename={file.path} path={file.path} diff={file.diff} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Commits view */}
+      {effectiveView === "commits" && hasCommits && (
+        <CommitDiffList commits={data.commits!} />
       )}
     </div>
   );
@@ -296,7 +409,13 @@ function TaskDetailPanelInner({
   const worker = task.status?.worker;
   const isBuild = task.spec.type === "BUILD";
   const isPlan = task.spec.type === "PLAN";
-  const canShowDiff = task.status?.phase === "done" || task.status?.phase === "awaiting-human" || task.status?.phase === "rework-requested";
+  const canShowDiff = task.status?.phase === "done"
+    || task.status?.phase === "awaiting-human"
+    || task.status?.phase === "rework-requested"
+    || task.status?.phase === "succeeded"
+    || task.status?.phase === "reviewing"
+    || task.status?.phase === "awaiting-merge"
+    || task.status?.phase === "failed";
   const approvalState = approvals?.[taskName];
   const alreadyApproved = approvalState?.approved === true;
 

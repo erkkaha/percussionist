@@ -1,6 +1,6 @@
 // TaskRow.tsx — compact clickable task row for the list panel.
 
-import { Wrench, FileText, Flag, User, MessageSquarePlus } from "lucide-react";
+import { Wrench, FileText, Flag, User, MessageSquarePlus, Check, RotateCcw } from "lucide-react";
 import type { Task } from "../../lib/types";
 import { useChat } from "../../lib/chat-context";
 
@@ -33,9 +33,10 @@ interface TaskRowProps {
   isSelected: boolean;
   onClick: () => void;
   projectName: string;
+  approvals?: Record<string, { approved: boolean; requestChanges: boolean }>;
 }
 
-export function TaskRow({ task, col, isSelected, onClick, projectName }: TaskRowProps) {
+export function TaskRow({ task, col, isSelected, onClick, projectName, approvals }: TaskRowProps) {
   const worker = task.status?.worker;
   const isBuild = task.spec.type === "BUILD";
   const colColor = COLUMN_COLORS[col] ?? "bg-surface-overlay text-text-dim";
@@ -111,6 +112,20 @@ export function TaskRow({ task, col, isSelected, onClick, projectName }: TaskRow
               <span className="text-label-md font-mono uppercase text-phase-failed">failed</span>
             )}
 
+            {/* Human approved (review lane) */}
+            {col === "review" && approvals?.[task.metadata.name]?.approved === true && (
+              <span className="text-label-md font-mono uppercase flex items-center gap-0.5 text-phase-succeeded">
+                <Check className="h-2.5 w-2.5" />approved
+              </span>
+            )}
+
+            {/* Human requested changes (review lane) */}
+            {col === "review" && approvals?.[task.metadata.name]?.requestChanges === true && (
+              <span className="text-label-md font-mono uppercase flex items-center gap-0.5 text-amber-400">
+                <RotateCcw className="h-2.5 w-2.5" />changes requested
+              </span>
+            )}
+
             {/* Waiting for prerequisite */}
             {col === "blocked" && task.status?.blockedReason && (
               <span className="text-label-md font-mono uppercase text-phase-failed" title={task.status.blockedReason}>
@@ -164,8 +179,9 @@ export function TaskRow({ task, col, isSelected, onClick, projectName }: TaskRow
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); injectTask(task, projectName); }}
-            className="opacity-0 group-hover:opacity-60 hover:opacity-100 transition-opacity p-0.5 rounded text-text-dim hover:text-accent"
+            className="opacity-70 group-hover:opacity-60 hover:opacity-100 transition-opacity p-0.5 rounded text-text-dim hover:text-accent md:opacity-0 md:group-hover:opacity-60 md:hover:opacity-100"
             title="Inject task into chat"
+            aria-label="Inject task into chat"
           >
             <MessageSquarePlus className="h-3.5 w-3.5" />
           </button>
