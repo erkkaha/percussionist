@@ -16,12 +16,11 @@
     "beatctl": "bun src/index.ts"
   },
   "dependencies": {
-    "@kubernetes/client-node": "^1.4.0",
+    "@kubernetes/client-node": "1.4.0",
     "@percussionist/api": "workspace:*",
     "@percussionist/kube": "workspace:*",
-    "commander": "^12.1.0",
-    "yaml": "^2.6.1"
+    "commander": "12.1.0",
+    "yaml": "2.9.0"
   },
-  "devDependencies": {
-  }
+  "devDependencies": {}
 }

@@ -17,10 +17,10 @@
     "codegen": "pnpm run build && node ../../codegen/gen-crds.mjs"
   },
   "dependencies": {
-    "zod": "^3.23.8"
+    "zod": "3.23.8"
   },
   "devDependencies": {
-    "yaml": "^2.6.1",
-    "zod-to-json-schema": "^3.24.5"
+    "yaml": "2.9.0",
+    "zod-to-json-schema": "3.24.5"
   }
 }

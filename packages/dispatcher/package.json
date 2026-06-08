@@ -10,7 +10,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "@kubernetes/client-node": "^1.4.0",
+    "@kubernetes/client-node": "1.4.0",
     "@percussionist/api": "workspace:*",
     "@percussionist/kube": "workspace:*"
   }

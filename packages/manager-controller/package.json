@@ -11,7 +11,7 @@
     "test": "bun test src/"
   },
   "dependencies": {
-    "@kubernetes/client-node": "^1.4.0",
+    "@kubernetes/client-node": "1.4.0",
     "@percussionist/api": "workspace:*",
     "@percussionist/kube": "workspace:*"
   },
