@@ -342,6 +342,13 @@ export interface TaskDiffFile {
   diff: string;
 }
 
+export interface DiffCommit {
+  sha: string;
+  subject: string;
+  body: string;
+  files: TaskDiffFile[];
+}
+
 export interface TaskDiffResponse {
   project: string;
   task: string;
@@ -349,6 +356,7 @@ export interface TaskDiffResponse {
   baseRef: string;
   headRef: string;
   files: TaskDiffFile[];
+  commits?: DiffCommit[];
   empty: boolean;
   reason?: string;
 }
