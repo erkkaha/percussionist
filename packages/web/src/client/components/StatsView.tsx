@@ -24,6 +24,7 @@ interface StatSession {
   completedAt: string | null;
   tokensIn: number;
   tokensOut: number;
+  cost?: number;
   error: string | null;
   createdAt: string | null;
   resolvedModel: string;
@@ -36,6 +37,7 @@ interface Summary {
   successRate: number | null;
   totalTokensIn: number;
   totalTokensOut: number;
+  totalCost: number;
   avgDurationMs: number | null;
 }
 
@@ -47,6 +49,7 @@ interface AgentSummary {
   successRate: number | null;
   totalTokensIn: number;
   totalTokensOut: number;
+  totalCost: number;
   avgTokensPerRun: number;
   avgDurationMs: number | null;
   models: string[];
@@ -57,6 +60,7 @@ interface ModelRow {
   runs: number;
   tokensIn: number;
   tokensOut: number;
+  cost: number;
 }
 
 interface SessionsResponse {
@@ -81,6 +85,7 @@ interface TrendPoint {
   avgDurationMs: number | null;
   tokensIn: number;
   tokensOut: number;
+  cost: number;
 }
 
 interface ModelTrendPoint {
@@ -134,6 +139,13 @@ function fmtTokens(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
 }
+
+function fmtCost(n: number | null | undefined): string {
+  if (n == null || n === 0) return "-";
+  if (n < 1) return `$${n.toFixed(4)}`;
+  return `$${n.toFixed(2)}`;
+}
+
 // Resolve the model for a session: resolvedModel from server, then fallback.
 
 function resolveModel(s: StatSession): string {
@@ -167,7 +179,7 @@ function useStats(days: number, page: number) {
 
 function SummaryCards({ a }: { a: Summary }) {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
       <MetricCard label="Total Runs" value={a.total} />
       <MetricCard label="Succeeded" value={a.succeeded} color="text-phase-succeeded" />
       <MetricCard label="Failed" value={a.failed} color="text-phase-failed" />
@@ -177,6 +189,7 @@ function SummaryCards({ a }: { a: Summary }) {
         color={a.successRate != null && a.successRate >= 80 ? "text-phase-succeeded" : "text-phase-failed"}
       />
       <MetricCard label="Avg Duration" value={fmtDuration(a.avgDurationMs)} />
+      <MetricCard label="Total Cost" value={fmtCost(a.totalCost)} color="text-phase-running" mono />
       <MetricCard label="Tokens In / Out" value={`${fmtTokens(a.totalTokensIn)} / ${fmtTokens(a.totalTokensOut)}`} mono />
     </div>
   );
@@ -214,11 +227,12 @@ function ModelBreakdown({ modelRows }: { modelRows: ModelRow[] }) {
               <th className="px-4 py-2.5 font-medium">Runs</th>
               <th className="px-4 py-2.5 font-medium">Tokens In</th>
               <th className="px-4 py-2.5 font-medium">Tokens Out</th>
-              <th className="px-4 py-2.5 font-medium w-1/3">Token Share</th>
+              <th className="px-4 py-2.5 font-medium">Cost</th>
+              <th className="px-4 py-2.5 font-medium w-1/4">Token Share</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border-muted">
-            {modelRows.map(({ model, runs, tokensIn, tokensOut }) => {
+            {modelRows.map(({ model, runs, tokensIn, tokensOut, cost }) => {
               const total = tokensIn + tokensOut;
               const inPct = total > 0 ? (tokensIn / total) * 100 : 0;
               const outPct = total > 0 ? (tokensOut / total) * 100 : 0;
@@ -234,6 +248,9 @@ function ModelBreakdown({ modelRows }: { modelRows: ModelRow[] }) {
                   </td>
                   <td className="px-4 py-2.5 tabular-nums text-text-muted font-mono text-xs">
                     {fmtTokens(tokensOut)}
+                  </td>
+                  <td className="px-4 py-2.5 tabular-nums text-text-muted font-mono text-xs">
+                    {fmtCost(cost)}
                   </td>
                   <td className="px-4 py-2.5">
                     <div
@@ -273,6 +290,7 @@ function SessionsTable({ sessions }: { sessions: StatSession[] }) {
               <th className="px-4 py-2.5 font-medium">Phase</th>
               <th className="px-4 py-2.5 font-medium">Model</th>
               <th className="px-4 py-2.5 font-medium">Tokens</th>
+              <th className="px-4 py-2.5 font-medium">Cost</th>
               <th className="px-4 py-2.5 font-medium">Duration</th>
               <th className="px-4 py-2.5 font-medium">Age</th>
             </tr>
@@ -296,6 +314,9 @@ function SessionsTable({ sessions }: { sessions: StatSession[] }) {
                 </td>
                 <td className="px-4 py-3">
                   <TokenCounter tokensIn={s.tokensIn} tokensOut={s.tokensOut} />
+                </td>
+                <td className="px-4 py-3 text-text-muted tabular-nums font-mono text-xs">
+                  {fmtCost(s.cost)}
                 </td>
                 <td className="px-4 py-3 text-text-muted tabular-nums">
                   {fmtDuration(durationMs(s))}
@@ -449,6 +470,14 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
     [trendPoints]
   );
 
+  const costData = useMemo(() =>
+    trendPoints.map((p) => ({
+      time: new Date(p.date).getTime(),
+      cost: p.cost,
+    })),
+    [trendPoints]
+  );
+
   // Build model trend data
   const modelData = useMemo(() => {
     if (modelTrendPoints.length === 0) return [];
@@ -468,6 +497,7 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
     successRate: { label: "Success Rate", color: "var(--chart-1)" },
     tokensIn: { label: "Tokens In", color: "var(--chart-1)" },
     tokensOut: { label: "Tokens Out", color: "var(--chart-2)" },
+    cost: { label: "Cost ($)", color: "var(--chart-4)" },
     ...Object.fromEntries(models.map((m, i) => [m, { label: shortModelLabel(m), color: `var(--chart-${(i % 5) + 1})` }])),
   };
 
@@ -502,6 +532,14 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
           { dataKey: "tokensOut" },
         ]}
       />
+      <TrendChart
+        title="Cost Over Time"
+        description="Aggregate LLM cost per day"
+        data={costData}
+        config={chartConfig}
+        series={[{ dataKey: "cost" }]}
+        yAxisFormatter={(v: number) => fmtCost(v)}
+      />
       {models.length > 0 ? (
         <TrendChart
           title="Tokens per Model"
@@ -532,6 +570,7 @@ const METRIC_OPTIONS = [
   { value: "successRate", label: "Success Rate" },
   { value: "runs", label: "Runs" },
   { value: "avgTokensPerRun", label: "Avg Tokens / Run" },
+  { value: "totalCost", label: "Total Cost" },
   { value: "avgDurationMs", label: "Avg Duration" },
 ] as const;
 
@@ -568,6 +607,7 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
     if (metric === "successRate") return `${Math.round(v)}%`;
     if (metric === "avgDurationMs") return fmtDuration(Math.round(v * 1000));
     if (metric === "avgTokensPerRun") return fmtTokens(Math.round(v));
+    if (metric === "totalCost") return fmtCost(v);
     return String(Math.round(v));
   };
 
@@ -592,6 +632,7 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
                 {a.successRate != null ? `${a.successRate}%` : "-"} ok
               </span>
               <span>{fmtTokens(a.totalTokensIn + a.totalTokensOut)} tok</span>
+              <span>{fmtCost(a.totalCost)}</span>
               <span>{fmtDuration(a.avgDurationMs)}</span>
             </div>
             {selectedAgent === a.agent && a.models.length > 0 && (
@@ -689,6 +730,7 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
               <th className="px-4 py-2.5 font-medium">Success Rate</th>
               <th className="px-4 py-2.5 font-medium">Avg Tokens</th>
               <th className="px-4 py-2.5 font-medium">Avg Duration</th>
+              <th className="px-4 py-2.5 font-medium">Total Cost</th>
               <th className="px-4 py-2.5 font-medium">Tokens In/Out</th>
             </tr>
           </thead>
@@ -711,6 +753,9 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
                 </td>
                 <td className="px-4 py-2.5 tabular-nums text-text-muted">
                   {fmtDuration(a.avgDurationMs)}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums font-mono text-xs text-text-muted">
+                  {fmtCost(a.totalCost)}
                 </td>
                 <td className="px-4 py-2.5 tabular-nums font-mono text-xs text-text-muted">
                   {fmtTokens(a.totalTokensIn)} / {fmtTokens(a.totalTokensOut)}
@@ -862,8 +907,8 @@ export default function StatsView() {
 
       {isLoading && (
         <div className="space-y-3">
-          <div className="grid grid-cols-6 gap-3">
-            {Array.from({ length: 6 }).map((_, i) => (
+          <div className="grid grid-cols-7 gap-3">
+            {Array.from({ length: 7 }).map((_, i) => (
               <div key={i} className="rounded-lg border border-border bg-surface-raised p-4 h-20 animate-pulse" />
             ))}
           </div>
