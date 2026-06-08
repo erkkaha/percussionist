@@ -3,7 +3,6 @@ import { sql } from "drizzle-orm";
 import { getDb, getRawDb } from "./db.js";
 import { memories } from "./schema.js";
 import { getEmbedding } from "./embed.js";
-import { isModelReady, getModelError } from "./model-warmup.js";
 
 // ---------------------------------------------------------------------------
 // Request / Response types
@@ -164,25 +163,31 @@ export async function handleContext(
   return { context };
 }
 
-export async function handleHealth(): Promise<{
-  ok: boolean;
-  db: string;
-  embedding: { ready: boolean; model: string; error?: string };
-}> {
+const OLLAMA_BASE_URL =
+  process.env.OLLAMA_BASE_URL ?? "http://ollama.percussionist.svc.cluster.local:11434";
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "nomic-embed-text";
+
+export async function handleHealth(): Promise<{ ok: boolean }> {
   getDb(); // ensure DB is initialised
 
-  const modelReady = isModelReady();
-  const modelError = getModelError();
+  try {
+    const tagsUrl = `${OLLAMA_BASE_URL}/api/tags`;
+    const res = await fetch(tagsUrl, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      return { ok: false };
+    }
+    const data = (await res.json()) as { models?: Array<{ name: string }> };
+    const modelFound = (data.models ?? []).some((m) => m.name === EMBEDDING_MODEL);
+    if (!modelFound) {
+      return { ok: false };
+    }
+  } catch {
+    return { ok: false };
+  }
 
-  return {
-    ok: modelReady,
-    db: "ready",
-    embedding: {
-      ready: modelReady,
-      model: process.env.EMBEDDING_MODEL ?? "nomic-embed-text",
-      ...(modelError ? { error: modelError } : {}),
-    },
-  };
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

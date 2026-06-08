@@ -127,8 +127,11 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
                   path: "/health",
                   port: MEMORY_SERVICE_PORT,
                 },
-                initialDelaySeconds: 5,
-                periodSeconds: 10,
+                // Health check now verifies Ollama model availability via /api/tags.
+                // Tune for ~60s grace period to allow model pull to complete.
+                initialDelaySeconds: 10,
+                periodSeconds: 5,
+                failureThreshold: 12,
               },
             },
           ],
