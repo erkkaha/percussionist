@@ -442,14 +442,14 @@ export function renderPod(
                                     `  # Note: bare mirrors store branches as refs/heads/<name> — no origin/ prefix needed`,
                                     `  if git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
                                   `    echo "[workspace-init] worktree added with branch ${git.ref}"`,
-                                  ...(git.parentRef
-                                    ? [
-                                        `  else`,
-                                        parentBaselineResolve(git),
-                                        `    # Create new branch from resolved parent baseline`,
-                                        `    git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "$_PARENT_BASE_REF"`,
-                                        `    echo "[workspace-init] created new branch ${git.ref} from $_PARENT_BASE_REF"`,
-                                      ]
+                                    ...(git.parentRef
+                                      ? [
+                                          `  else`,
+                                          parentBaselineResolve(git),
+                                          `    # Create new branch from resolved parent baseline`,
+                                          `    git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "$_PARENT_BASE_REF"`,
+                                          `    echo "[workspace-init] created new branch ${git.ref} from $_PARENT_BASE_REF"`,
+                                        ]
                                     : [
                                         `  else`,
                                         `    echo "[workspace-init] error: failed to add worktree with branch ${git.ref}"`,
@@ -492,13 +492,13 @@ export function renderPod(
                                 `if git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
                                  `  echo "[workspace-init] worktree added with branch ${git.ref}"`,
                                  ...(git.parentRef
-                                    ? [
-                                        `else`,
-                                        parentBaselineResolve(git),
-                                        `  # Create new branch from resolved parent baseline`,
-                                        `  git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "$_PARENT_BASE_REF"`,
-                                        `  echo "[workspace-init] created new branch ${git.ref} from $_PARENT_BASE_REF"`,
-                                      ]
+                                      ? [
+                                          `else`,
+                                          parentBaselineResolve(git),
+                                          `  # Create new branch from resolved parent baseline`,
+                                          `  git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "$_PARENT_BASE_REF"`,
+                                          `  echo "[workspace-init] created new branch ${git.ref} from $_PARENT_BASE_REF"`,
+                                        ]
                                     : [
                                         `else`,
                                         `  echo "[workspace-init] error: failed to add worktree with branch ${git.ref}"`,
