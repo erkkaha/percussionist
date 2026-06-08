@@ -23,9 +23,115 @@ export const OPERATOR_NS = "percussionist";
 /** Known-safe kubectl contexts (local/homelab clusters). */
 const SAFE_CONTEXTS = ["k3s", "kind", "docker-desktop", "homelab", "minikube", "rancher"];
 
+// ---------------------------------------------------------------------------
+// Configuration interfaces
+// ---------------------------------------------------------------------------
+
 export interface ClusterConfig {
   ns: string;
   llmSecret: string;
+}
+
+/** Options controlling setup/teardown behavior. */
+export interface SetupOptions {
+  /** Timeout in seconds for rollout status waits (default: 120). */
+  rolloutTimeoutSec?: number;
+  /** Whether to delete the namespace on teardown (default: true). Set false for debugging. */
+  cleanupNamespace?: boolean;
+  /** Whether to restore PERCUSSIONIST_NAMESPACE after teardown (default: true). */
+  restoreWatchNamespace?: boolean;
+}
+
+const DEFAULT_OPTIONS: SetupOptions = {
+  rolloutTimeoutSec: 120,
+  cleanupNamespace: true,
+  restoreWatchNamespace: true,
+};
+
+// ---------------------------------------------------------------------------
+// Unique namespace generation
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a unique namespace suffix for test isolation.
+ * Format: `<prefix>-<timestamp>-<random>` to avoid collisions across
+ * parallel runs and repeated executions.
+ */
+export function generateUniqueName(prefix: string): string {
+  const ts = Date.now();
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `${prefix}-${ts}-${rand}`;
+}
+
+/**
+ * Generate a unique namespace name. Defaults to `percussionist-e2e-<unique>`.
+ */
+export function generateUniqueNamespace(prefix?: string): string {
+  const base = prefix ?? "percussionist-e2e";
+  return generateUniqueName(base);
+}
+
+// ---------------------------------------------------------------------------
+// Environment restoration helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Restore PERCUSSIONIST_NAMESPACE on both operator and manager deployments.
+ * Called during teardown to ensure the cluster is left in a clean state.
+ */
+export async function restoreWatchNamespace(
+  originalNs: string = OPERATOR_NS,
+): Promise<void> {
+  await kubectlSetEnv("percussionist-operator", OPERATOR_NS, {
+    PERCUSSIONIST_NAMESPACE: originalNs,
+  }).catch(() => undefined);
+  await kubectlSetEnv("percussionist-manager", OPERATOR_NS, {
+    PERCUSSIONIST_NAMESPACE: originalNs,
+  }).catch(() => undefined);
+}
+
+/**
+ * Assert-safe teardown wrapper. Ensures namespace cleanup and env restoration
+ * even when assertion errors occur in test cases.
+ */
+export async function safeTeardown(
+  ns: string,
+  options: SetupOptions = DEFAULT_OPTIONS,
+): Promise<void> {
+  try {
+    if (options.cleanupNamespace) {
+      await deleteNamespace(ns);
+    }
+  } finally {
+    if (options.restoreWatchNamespace) {
+      await restoreWatchNamespace();
+    }
+  }
+}
+
+/**
+ * Register a global error handler that runs teardown on unhandled assertion errors.
+ * Call this once at the top of your test file's `beforeAll` to ensure cleanup
+ * even when assertions fail inside `it()` blocks.
+ *
+ * Returns an unsubscribe function — call it in `afterAll`.
+ */
+export function registerErrorTeardown(
+  ns: string,
+  options?: SetupOptions,
+): () => void {
+  const handler = (_event: ErrorEvent | PromiseRejectionEvent) => {
+    // Best-effort teardown on unhandled errors.
+    safeTeardown(ns, options).catch(() => undefined);
+  };
+
+  process.on("uncaughtException", handler as (...args: unknown[]) => void);
+  process.on("unhandledRejection", handler as (...args: unknown[]) => void);
+
+  return () => {
+    process.off("uncaughtException", handler as (...args: unknown[]) => void);
+    process.off("unhandledRejection", handler as (...args: unknown[]) => void);
+  };
 }
 
 /**
@@ -79,7 +185,11 @@ export async function deployComponents(): Promise<void> {
  * namespace and wait for rollout so they are watching the right namespace
  * before resources are created.
  */
-export async function patchWatchNamespace(ns: string): Promise<void> {
+export async function patchWatchNamespace(
+  ns: string,
+  options: SetupOptions = DEFAULT_OPTIONS,
+): Promise<void> {
+  const timeoutSec = options.rolloutTimeoutSec ?? DEFAULT_OPTIONS.rolloutTimeoutSec;
   console.log(`==> Step 3: Patch PERCUSSIONIST_NAMESPACE=${ns} on operator and manager`);
   await kubectlSetEnv("percussionist-operator", OPERATOR_NS, {
     PERCUSSIONIST_NAMESPACE: ns,
@@ -87,8 +197,8 @@ export async function patchWatchNamespace(ns: string): Promise<void> {
   await kubectlSetEnv("percussionist-manager", OPERATOR_NS, {
     PERCUSSIONIST_NAMESPACE: ns,
   });
-  await kubectlRolloutStatus("percussionist-operator", OPERATOR_NS, 120);
-  await kubectlRolloutStatus("percussionist-manager", OPERATOR_NS, 120);
+  await kubectlRolloutStatus("percussionist-operator", OPERATOR_NS, timeoutSec);
+  await kubectlRolloutStatus("percussionist-manager", OPERATOR_NS, timeoutSec);
   console.log(`    Operator and manager watching ${ns}`);
 }
 
@@ -153,14 +263,29 @@ export async function setupLLMSecret(ns: string, llmSecret: string): Promise<voi
  * Run all shared setup steps (1–6).
  * Intended to be called from `beforeAll` in each test file.
  */
-export async function setupCluster(config: ClusterConfig): Promise<void> {
+export async function setupCluster(
+  config: ClusterConfig,
+  options: SetupOptions = DEFAULT_OPTIONS,
+): Promise<void> {
   await preflight();
   await applyCRDs();
   await deployComponents();
-  await patchWatchNamespace(config.ns);
+  await patchWatchNamespace(config.ns, options);
   await setupNamespace(config.ns);
   await setupDispatcherRBAC(config.ns);
   await setupLLMSecret(config.ns, config.llmSecret);
+}
+
+/**
+ * Convenience: generate a unique namespace and run full cluster setup.
+ * Returns the generated namespace name for use in teardown.
+ */
+export async function setupClusterUnique(
+  opts: { llmSecret?: string; prefix?: string } & Partial<SetupOptions> = {},
+): Promise<string> {
+  const ns = generateUniqueNamespace(opts.prefix);
+  await setupCluster({ ns, llmSecret: opts.llmSecret ?? "llm-keys" }, opts as SetupOptions);
+  return ns;
 }
 
 /**
@@ -210,15 +335,26 @@ ${opts.boardYaml}
  * Teardown: delete the e2e namespace and restore PERCUSSIONIST_NAMESPACE to
  * the default operator namespace on both deployments.
  */
-export async function teardown(ns: string): Promise<void> {
+export async function teardown(
+  ns: string,
+  options: SetupOptions = DEFAULT_OPTIONS,
+): Promise<void> {
   console.log(`==> Teardown: deleting namespace ${ns}`);
-  await deleteNamespace(ns);
-  console.log(`    Restoring PERCUSSIONIST_NAMESPACE to ${OPERATOR_NS}`);
-  await kubectlSetEnv("percussionist-operator", OPERATOR_NS, {
-    PERCUSSIONIST_NAMESPACE: OPERATOR_NS,
-  }).catch(() => undefined);
-  await kubectlSetEnv("percussionist-manager", OPERATOR_NS, {
-    PERCUSSIONIST_NAMESPACE: OPERATOR_NS,
-  }).catch(() => undefined);
+  try {
+    if (options.cleanupNamespace) {
+      await deleteNamespace(ns);
+    }
+  } finally {
+    if (options.restoreWatchNamespace) {
+      const timeoutSec = options.rolloutTimeoutSec ?? DEFAULT_OPTIONS.rolloutTimeoutSec;
+      console.log(`    Restoring PERCUSSIONIST_NAMESPACE to ${OPERATOR_NS}`);
+      await kubectlSetEnv("percussionist-operator", OPERATOR_NS, {
+        PERCUSSIONIST_NAMESPACE: OPERATOR_NS,
+      }).catch(() => undefined);
+      await kubectlSetEnv("percussionist-manager", OPERATOR_NS, {
+        PERCUSSIONIST_NAMESPACE: OPERATOR_NS,
+      }).catch(() => undefined);
+    }
+  }
   console.log("    Teardown complete");
 }

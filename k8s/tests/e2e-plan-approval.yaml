@@ -14,7 +14,7 @@ spec:
     maxParallel: 1
     
     agents:
-      - name: e2e-plan-agent
+      - name: plan-complete
       - name: builder
       - name: buildgen
     
@@ -22,6 +22,6 @@ spec:
       - id: PLAN-1
         type: PLAN
         title: "Minimal plan task"
-        description: "Call complete_run immediately."
-        agent: e2e-plan-agent
+        description: "Call complete_plan immediately."
+        agent: plan-complete
         priority: low

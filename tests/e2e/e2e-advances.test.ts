@@ -3,11 +3,11 @@
  *
  * Scenario:
  *   1. Shared cluster setup.
- *   2. Apply ClusterAgents: e2e-complete-worker, facilitator (reviewer).
+ *   2. Apply ClusterAgents: e2e-complete-worker, reviewer-approve.
  *   3. Apply Project (no source — worker calls complete_run immediately).
  *   4. Assert: worker run reaches Succeeded via complete_run MCP tool.
  *   5. Assert: manager spawns a success-review facilitation run.
- *   6. Assert: review run completes (Succeeded or Failed).
+ *   6. Assert: review run completes with Succeeded (deterministic fixture).
  *   7. Assert: task appears in board columns["done"].
  */
 
@@ -92,8 +92,7 @@ describe("advances", () => {
 
     await applyClusterAgents([
       "clusteragent-complete-worker.yaml",
-      // Reviewer is named "facilitator" in the ClusterAgent manifest.
-      "clusteragent-reviewer.yaml",
+      "clusteragent-reviewer-approve.yaml",
     ]);
 
     console.log(`==> Step 8: Apply Project ${PROJECT}`);
@@ -108,7 +107,7 @@ describe("advances", () => {
     maxParallel: 1
     agents:
       - name: e2e-complete-worker
-      - name: facilitator
+      - name: reviewer-approve
     tasks:
       - id: t1
         title: "Write a greeting"
@@ -154,12 +153,9 @@ describe("advances", () => {
           return phase === "Succeeded" ? phase : null;
         },
       );
+      // Strict: status message must confirm completion via complete_run MCP tool.
       const msg = await kubectlGetField("runs", workerRun, NS, "{.status.message}");
-      if (msg.includes("agent signalled completion")) {
-        console.log("    Confirmed: completion triggered via complete_run MCP tool");
-      } else {
-        console.warn(`    Note: run message: ${msg}`);
-      }
+      expect(msg).toContain("agent signalled completion");
     },
     185_000,
   );
@@ -175,6 +171,37 @@ describe("advances", () => {
       );
       expect(reviewRun).toBeTruthy();
       console.log(`    Success-review run spawned: ${reviewRun}`);
+
+      // Strict: review run must reference the exact worker run.
+      const target = await kubectlGetField(
+        "runs",
+        reviewRun,
+        NS,
+        "{.spec.facilitation.targetRunName}",
+      );
+      expect(target).toBe(workerRun);
+
+      // Strict: review run must reference the correct task ID.
+      const targetTaskId = await kubectlGetField(
+        "runs",
+        reviewRun,
+        NS,
+        "{.spec.facilitation.targetTaskId}",
+      );
+      expect(targetTaskId).toBe(TASK_ID);
+
+      // Strict: successReview flag must be true for a success-review run.
+      const successReview = await kubectlGetField(
+        "runs",
+        reviewRun,
+        NS,
+        "{.spec.facilitation.successReview}",
+      );
+      expect(successReview).toBe("true");
+
+      // Assert worker run status fields are populated before review starts.
+      const workerPhase = await kubectlGetField("runs", workerRun, NS, "{.status.phase}");
+      expect(workerPhase).toBe("Succeeded");
     },
     185_000,
   );
@@ -188,9 +215,8 @@ describe("advances", () => {
         5,
         () => pollTerminal(reviewRun, NS),
       );
-      console.log(`    Review run completed: ${phase}`);
-      // Succeeded is preferred but Failed is also acceptable (manager still parses JSON).
-      expect(["Succeeded", "Failed"]).toContain(phase);
+      // Strict: deterministic reviewer fixture must produce Succeeded.
+      expect(phase).toBe("Succeeded");
     },
     605_000,
   );

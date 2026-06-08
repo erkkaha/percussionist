@@ -3,11 +3,11 @@
  *
  * Scenario:
  *   1. Shared cluster setup.
- *   2. Apply ClusterAgents: e2e-stubborn-worker, e2e-capable-worker, facilitator.
+ *   2. Apply ClusterAgents: e2e-stubborn-worker, e2e-capable-worker, failure-analyst.
  *   3. Apply Project with stubborn-worker as the initial agent.
  *   4. Assert: stubborn-worker calls fail_run → run reaches Failed.
  *   5. Assert: manager spawns a facilitator run.
- *   6. Assert: facilitator completes (LLM outputs retry_alternative JSON).
+ *   6. Assert: facilitator completes with Succeeded (deterministic fixture).
  *   7. Assert: manager dispatches a new run with e2e-capable-worker.
  *   8. Assert: capable-worker run reaches Succeeded.
  */
@@ -87,7 +87,7 @@ describe("achieves", () => {
     await applyClusterAgents([
       "clusteragent-stubborn-worker.yaml",
       "clusteragent-capable-worker.yaml",
-      "clusteragent-facilitator-failure.yaml",
+      "clusteragent-failure-analyst.yaml",
     ]);
 
     console.log(`==> Step 8: Apply Project ${PROJECT}`);
@@ -103,7 +103,7 @@ describe("achieves", () => {
     agents:
       - name: e2e-stubborn-worker
       - name: e2e-capable-worker
-      - name: facilitator-failure
+      - name: failure-analyst
     tasks:
       - id: t1
         title: "Analyze repository structure"
@@ -175,18 +175,59 @@ describe("achieves", () => {
   it(
     "facilitator run completes",
     async () => {
-      // The LLM must analyze the failure and output retry_alternative JSON.
+      // The deterministic failure-analyst fixture must produce Succeeded.
       const phase = await waitFor(
         `facilitator ${facilitatorRun} completes`,
         600,
         10,
         () => pollTerminal(facilitatorRun, NS),
       );
-      console.log(`    Facilitator run completed: ${phase}`);
-      if (phase === "Failed") {
-        console.warn("    Facilitator run Failed — manager may still parse JSON from session.");
-      }
-      expect(["Succeeded", "Failed"]).toContain(phase);
+      // Strict: deterministic facilitator fixture must produce Succeeded.
+      expect(phase).toBe("Succeeded");
+
+      // Assert facilitation fields are populated on the facilitator run.
+      const target = await kubectlGetField(
+        "runs",
+        facilitatorRun,
+        NS,
+        "{.spec.facilitation.targetRunName}",
+      );
+      expect(target).toBe(workerRun);
+
+      const targetTaskId = await kubectlGetField(
+        "runs",
+        facilitatorRun,
+        NS,
+        "{.spec.facilitation.targetTaskId}",
+      );
+      expect(targetTaskId).toBe(TASK_ID);
+
+      // Strict: failure reason must be non-empty.
+      const failureReason = await kubectlGetField(
+        "runs",
+        facilitatorRun,
+        NS,
+        "{.spec.facilitation.failureReason}",
+      );
+      expect(failureReason.length).toBeGreaterThan(0);
+
+      // Strict: successReview must be false (this is a failure analysis, not approval).
+      const successReview = await kubectlGetField(
+        "runs",
+        facilitatorRun,
+        NS,
+        "{.spec.facilitation.successReview}",
+      );
+      expect(successReview).toBe("false");
+
+      // Assert facilitator run status fields are populated.
+      const facPhase = await kubectlGetField(
+        "runs",
+        facilitatorRun,
+        NS,
+        "{.status.phase}",
+      );
+      expect(facPhase).toBe("Succeeded");
     },
     605_000,
   );
@@ -202,6 +243,32 @@ describe("achieves", () => {
       );
       expect(altRun).toBeTruthy();
       console.log(`    Alternative worker spawned: ${altRun}`);
+
+      // Strict: alternative run must use the capable-worker agent.
+      const agent = await kubectlGetField("runs", altRun, NS, "{.spec.agent}");
+      expect(agent).toBe("e2e-capable-worker");
+
+      // Strict: alternative run must reference the correct task ID.
+      const boardTask = await kubectlGetField(
+        "runs",
+        altRun,
+        NS,
+        "{.spec.boardTask}",
+      );
+      expect(boardTask).toBe(TASK_ID);
+
+      // Strict: alternative run must NOT be a facilitation run.
+      const facTarget = await kubectlGetField(
+        "runs",
+        altRun,
+        NS,
+        "{.spec.facilitation.targetRunName}",
+      );
+      expect(facTarget).toBe("");
+
+      // Assert status fields are populated.
+      const altPhase = await kubectlGetField("runs", altRun, NS, "{.status.phase}");
+      expect(altPhase).toBeTruthy();
     },
     185_000,
   );
@@ -224,6 +291,10 @@ describe("achieves", () => {
         },
       );
       expect(phase).toBe("Succeeded");
+
+      // Strict: status message must be present for a Succeeded run.
+      const msg = await kubectlGetField("runs", altRun, NS, "{.status.message}");
+      expect(typeof msg).toBe("string");
 
       const board = await boardJson(PROJECT, OPERATOR_NS);
       console.log("    Board status:", JSON.stringify(board, null, 2));
