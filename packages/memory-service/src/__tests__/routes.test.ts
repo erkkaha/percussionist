@@ -74,9 +74,33 @@ function clear() {
 // ---------------------------------------------------------------------------
 
 describe("handleHealth", () => {
-  it("returns ok", async () => {
+  it("returns ok when Ollama model is available", async () => {
+    mock.global().fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ models: [{ name: "nomic-embed-text" }] }), {
+        status: 200,
+      }),
+    );
+
     const result = await handleHealth();
     expect(result).toEqual({ ok: true });
+  });
+
+  it("returns not-ok when Ollama is unreachable", async () => {
+    mock.global().fetch.mockResolvedValueOnce(new Response(null, { status: 503 }));
+
+    const result = await handleHealth();
+    expect(result).toEqual({ ok: false });
+  });
+
+  it("returns not-ok when model is not listed in tags", async () => {
+    mock.global().fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ models: [{ name: "llama3" }] }), {
+        status: 200,
+      }),
+    );
+
+    const result = await handleHealth();
+    expect(result).toEqual({ ok: false });
   });
 });
 

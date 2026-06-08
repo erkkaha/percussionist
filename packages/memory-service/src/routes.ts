@@ -163,8 +163,35 @@ export async function handleContext(
   return { context };
 }
 
+const OLLAMA_BASE_URL =
+  process.env.OLLAMA_BASE_URL ?? "http://ollama.percussionist.svc.cluster.local:11434";
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "nomic-embed-text";
+
 export async function handleHealth(): Promise<{ ok: boolean }> {
   getDb(); // ensure DB is initialised
+
+  // Verify Ollama embedding model is available before marking Ready.
+  // This prevents the memory service from accepting requests when Ollama
+  // has not yet finished pulling or loading the embedding model, which
+  // would cause transient "model not found" errors.
+  try {
+    const tagsUrl = `${OLLAMA_BASE_URL}/api/tags`;
+    const res = await fetch(tagsUrl, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      return { ok: false };
+    }
+    const data = (await res.json()) as { models?: Array<{ name: string }> };
+    const modelFound = (data.models ?? []).some((m) => m.name === EMBEDDING_MODEL);
+    if (!modelFound) {
+      return { ok: false };
+    }
+  } catch {
+    // Ollama unreachable or timeout — not ready yet
+    return { ok: false };
+  }
+
   return { ok: true };
 }
 
