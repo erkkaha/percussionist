@@ -45,15 +45,43 @@ spec:
        minikube image load percussionist/runner:smoke
        minikube image load percussionist/web:smoke
        ```
-    7. Create a timestamped test namespace:
+    7. Patch operator and manager deployments to use smoke images:
+       ```
+       kubectl -n percussionist get deploy/percussionist-operator -o yaml \
+         | sed 's|image: .*percussionist/operator:.*|image: percussionist/operator:smoke|' \
+         | kubectl apply -f -
+       
+       kubectl -n percussionist get deploy/percussionist-manager -o yaml \
+         | sed 's|image: .*percussionist/manager:.*|image: percussionist/manager:smoke|' \
+         | kubectl apply -f -
+       
+       kubectl -n percussionist wait deploy/percussionist-operator --for=condition=available --timeout=120s
+       kubectl -n percussionist wait deploy/percussionist-manager --for=condition=available --timeout=120s
+       ```
+    8. Create a timestamped test namespace:
        ```
        NS="percussionist-smoke-$(date +%Y%m%d-%H%M%S)"
        kubectl create namespace "$NS"
        ```
-    8. Copy required secrets to the test namespace (opencode-auth, llm-keys if present).
-    9. Apply CRDs: `kubectl apply -f k8s/crds/`
-    10. Apply deployments with the smoke image tag (override via kustomize patch or sed substitution).
-    11. Wait for rollouts: `kubectl -n "$NS" wait deploy --all --for=condition=available --timeout=120s`
+    9. Copy required secrets to the test namespace (opencode-auth, llm-keys if present).
+    10. Apply CRDs: `kubectl apply -f k8s/crds/`
+    11. Deploy operator and manager to test namespace with smoke images:
+        ```
+        kubectl -n percussionist get deploy/percussionist-operator -o yaml \
+          | sed 's|image: .*percussionist/operator:.*|image: percussionist/operator:smoke|' \
+          | sed "s|namespace: percussionist|namespace: $NS|" \
+          | kubectl apply -f -
+        
+        kubectl -n percussionist get deploy/percussionist-manager -o yaml \
+          | sed 's|image: .*percussionist/manager:.*|image: percussionist/manager:smoke|' \
+          | sed "s|namespace: percussionist|namespace: $NS|" \
+          | kubectl apply -f -
+        
+        kubectl -n "$NS" wait deploy/percussionist-operator --for=condition=available --timeout=120s
+        kubectl -n "$NS" wait deploy/percussionist-manager --for=condition=available --timeout=120s
+        ```
+    12. Apply Project manifest for smoke testing (if not already present).
+
     ## Test Execution
 
     Run tests in this order:
@@ -68,45 +96,45 @@ spec:
        pnpm e2e:extended
        ```
 
-     13. Collect results.
-     14. **Always** clean up: `kubectl delete namespace "$NS" --wait=false`
+    13. Collect results.
+    14. **Always** clean up: `kubectl delete namespace "$NS" --wait=false`
 
-     ## Rules
+    ## Rules
 
-     - Do NOT edit any source files.
-     - Always clean up the test namespace, even if tests fail.
-     - If Docker daemon is not ready after 30s, fail with a clear error.
-     - If image builds fail, stop and report — do not proceed to deployment.
-     - Record which tests passed and which failed.
+    - Do NOT edit any source files.
+    - Always clean up the test namespace, even if tests fail.
+    - If Docker daemon is not ready after 30s, fail with a clear error.
+    - If image builds fail, stop and report — do not proceed to deployment.
+    - Record which tests passed and which failed.
 
-     ## Failure Classification
+    ## Failure Classification
 
-     Classify failures as **infra** or **product**:
+    Classify failures as **infra** or **product**:
 
-     - **Infra failures**: Docker build errors, image load failures, cluster setup issues,
-       kubectl errors, namespace creation failures, rollout timeouts. These indicate
-       infrastructure problems that require human investigation.
+    - **Infra failures**: Docker build errors, image load failures, cluster setup issues,
+      kubectl errors, namespace creation failures, rollout timeouts. These indicate
+      infrastructure problems that require human investigation.
 
-     - **Product failures**: E2E test assertions failing (e.g., task phase mismatch,
-       board state incorrect, Run status unexpected). These indicate bugs in the
-       orchestration logic or agent behavior.
+    - **Product failures**: E2E test assertions failing (e.g., task phase mismatch,
+      board state incorrect, Run status unexpected). These indicate bugs in the
+      orchestration logic or agent behavior.
 
-     ## Output Format
+    ## Output Format
 
-     ```json
-     {
-       "passed": true,
-       "failedTests": [],
-       "namespace": "percussionist-smoke-20260518-142305",
-       "imagesBuilt": ["percussionist/operator:smoke", "percussionist/manager:smoke"],
-       "summary": "All 3 e2e test files passed.",
-       "failureClassification": {
-         "infra": false,
-         "product": true,
-         "details": []
-       }
-     }
-     ```
+    ```json
+    {
+      "passed": true,
+      "failedTests": [],
+      "namespace": "percussionist-smoke-20260518-142305",
+      "imagesBuilt": ["percussionist/operator:smoke", "percussionist/manager:smoke"],
+      "summary": "All 3 e2e test files passed.",
+      "failureClassification": {
+        "infra": false,
+        "product": true,
+        "details": []
+      }
+    }
+    ```
 
     ## Completion
 

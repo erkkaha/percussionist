@@ -104,6 +104,11 @@ jobs:
           kubectl get tasks -A -o yaml > /tmp/diagnostics/tasks.yaml 2>&1 || true
           kubectl get projects -A -o yaml > /tmp/diagnostics/projects.yaml 2>&1 || true
           
+          # Board snapshots (if project exists)
+          for proj in $(kubectl get projects -A --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null); do
+            kubectl exec -n percussionist deploy/percussionist-web -- wget -qO- "http://127.0.0.1:8080/api/board/$proj" > "/tmp/diagnostics/board-$proj.json" 2>&1 || true
+          done || true
+          
           # Pod logs (last 500 lines)
           for pod in $(kubectl get pods -n percussionist -o name); do
             kubectl logs "$pod" -n percussionist --tail=500 > "/tmp/diagnostics/$(basename $pod).log" 2>&1 || true
@@ -187,6 +192,11 @@ jobs:
           kubectl get runs -A -o yaml > /tmp/diagnostics/runs.yaml 2>&1 || true
           kubectl get tasks -A -o yaml > /tmp/diagnostics/tasks.yaml 2>&1 || true
           kubectl get projects -A -o yaml > /tmp/diagnostics/projects.yaml 2>&1 || true
+          
+          # Board snapshots (if project exists)
+          for proj in $(kubectl get projects -A --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null); do
+            kubectl exec -n percussionist deploy/percussionist-web -- wget -qO- "http://127.0.0.1:8080/api/board/$proj" > "/tmp/diagnostics/board-$proj.json" 2>&1 || true
+          done || true
           
           # Pod logs (last 500 lines)
           for pod in $(kubectl get pods -n percussionist -o name); do
