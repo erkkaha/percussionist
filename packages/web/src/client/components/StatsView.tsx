@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { BarChart3, List, Table2, Users, Wrench } from "lucide-react";
+import { BarChart3, List, Table2, Users, Wrench, TrendingUp } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import { authHeaders } from "../lib/auth";
 import TokenCounter from "./TokenCounter";
@@ -428,7 +428,7 @@ function TrendChart({ title, description, data, config, series, yAxisDomain, yAx
                   key={s.dataKey}
                   dataKey={s.dataKey}
                   fill={color}
-                  radius={[4, 4, 0, 0]}
+                  radius={0}
                   stackId={s.stackId}
                 />
               );
@@ -711,7 +711,7 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
               <Bar
                 dataKey="value"
                 fill="var(--color-value)"
-                radius={[0, 3, 3, 0]}
+                radius={0}
               />
             </BarChart>
           </ChartContainer>
@@ -851,7 +851,10 @@ export default function StatsView() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-headline-lg">Stats</h1>
+          <h1 className="text-headline-lg flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-text-muted" />
+            Stats
+          </h1>
           <p className="text-caption-xs text-text-muted">
             {data ? `${data.total} sessions` : "Loading..."}
             {isFetching && !isLoading && (

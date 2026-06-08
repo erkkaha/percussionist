@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown, Plus, Filter, X } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Task } from "../../lib/types";
 import { FilterBar } from "./FilterBar";
@@ -149,6 +149,8 @@ export function TaskListPanel({
     priority: "all",
   });
 
+  const [filterVisible, setFilterVisible] = useState(true);
+
   // Collapsed state per column
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({
     ideas: true,
@@ -194,8 +196,26 @@ export function TaskListPanel({
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="px-2 pt-2 pb-2 space-y-2 shrink-0">
-        <FilterBar filters={filters} onChange={setFilters} columnCounts={columnCounts} />
+      <div className="px-2 pt-2 pb-2 shrink-0 space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-text-dim">Filters</span>
+          <button
+            onClick={() => setFilterVisible(!filterVisible)}
+            className="text-text-dim hover:text-text transition-colors p-0.5"
+            title={filterVisible ? "Hide filters" : "Show filters"}
+          >
+            {filterVisible ? <X className="h-3.5 w-3.5" /> : <Filter className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+        {filterVisible && (
+          <FilterBar filters={filters} onChange={setFilters} columnCounts={columnCounts} />
+        )}
+        {!filterVisible && isFiltering && (
+          <div className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-accent" />
+            <span className="text-xs text-text-dim">Active filters</span>
+          </div>
+        )}
       </div>
 
       {showAddTask && (

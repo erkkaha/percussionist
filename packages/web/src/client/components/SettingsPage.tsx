@@ -19,7 +19,7 @@ import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
-import { RefreshCw, Loader2 } from "lucide-react";
+import { RefreshCw, Loader2, FolderKanban, Bot, Key, FileCode, Sliders, Play, Bell, ArrowUpCircle, Settings } from "lucide-react";
 import ModelSelector from "./ModelSelector";
 import ProjectsPage from "./ProjectsPage";
 import AgentsPage from "./AgentsPage";
@@ -87,21 +87,24 @@ export default function SettingsPage() {
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
-  const tabs: { id: Tab; label: string }[] = [
-    { id: "projects", label: "Projects" },
-    { id: "agents", label: "Agents" },
-    { id: "secrets", label: "Provider Secrets" },
-    { id: "opencode", label: "OpenCode Config" },
-    { id: "manager", label: "Manager Agent" },
-    { id: "runner", label: "Runner Defaults" },
-    { id: "notifications", label: "Notifications" },
-    { id: "updates", label: "Updates" },
+  const tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+    { id: "projects", label: "Projects", icon: FolderKanban },
+    { id: "agents", label: "Agents", icon: Bot },
+    { id: "secrets", label: "Provider Secrets", icon: Key },
+    { id: "opencode", label: "OpenCode Config", icon: FileCode },
+    { id: "manager", label: "Manager Agent", icon: Sliders },
+    { id: "runner", label: "Runner Defaults", icon: Play },
+    { id: "notifications", label: "Notifications", icon: Bell },
+    { id: "updates", label: "Updates", icon: ArrowUpCircle },
   ];
 
   return (
     <div className="flex flex-col gap-4 w-full">
       <div className="flex items-center justify-between settings-header-mobile">
-        <h1 className="text-xl font-semibold text-lg sm:text-xl">Settings</h1>
+        <h1 className="text-headline-lg flex items-center gap-2">
+          <Settings className="w-5 h-5 text-text-muted" />
+          Settings
+        </h1>
         {saveMsg && (
           <span className={cn(
             "text-sm",
@@ -111,27 +114,30 @@ export default function SettingsPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b border-border settings-tabs-wrap overflow-x-auto sm:overflow-visible">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setActiveTab(t.id)}
-            className={cn(
-              "px-4 py-2 text-sm font-medium transition-colors",
-              "border-b-2 -mb-px",
-              activeTab === t.id
-                ? "border-accent text-accent"
-                : "border-transparent text-text-dim hover:text-text"
-            )}
-          >
-            <span className="relative">
-              {t.label}
-              {t.id === "updates" && updateStatus?.updateAvailable && (
-                <span className="absolute -top-0.5 -right-2.5 w-2 h-2 rounded-full bg-accent" />
+      <div className="flex gap-1 border-b border-border overflow-x-auto sm:overflow-visible">
+        {tabs.map((t) => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setActiveTab(t.id)}
+              className={cn(
+                "flex items-center gap-1.5 shrink-0 whitespace-nowrap px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px",
+                activeTab === t.id
+                  ? "border-primary text-text"
+                  : "border-transparent text-text-muted hover:text-text",
               )}
-            </span>
-          </button>
-        ))}
+            >
+              <Icon className="w-4 h-4 shrink-0" />
+              <span className="relative">
+                {t.label}
+                {t.id === "updates" && updateStatus?.updateAvailable && (
+                  <span className="absolute -top-0.5 -right-2.5 w-2 h-2 rounded-full bg-primary" />
+                )}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {activeTab === "projects" && <ProjectsPage showHeader={false} />}

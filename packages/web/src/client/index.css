@@ -326,18 +326,6 @@
     width: 100% !important;
   }
 
-  .settings-tabs-wrap {
-    flex-wrap: wrap;
-  }
-
-  .settings-tabs-wrap button {
-    flex: 1 1 auto;
-    min-width: 80px;
-    text-align: center;
-    font-size: 0.75rem;
-    padding: 0.5rem 0.75rem;
-  }
-
   .settings-header-mobile {
     flex-direction: column !important;
     align-items: flex-start !important;
