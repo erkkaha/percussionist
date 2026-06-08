@@ -19,6 +19,21 @@ import { renderPod } from "./pod-builder.js";
 
 // Helper to create a minimal Run CR with all required fields
 function makeRun(overrides: Partial<Run> = {}): Run {
+  const defaults: Run["spec"] = {
+    project: "test-project",
+    task: "test-task",
+    interactive: false,
+    ttlSecondsAfterFinished: 604800, // 7 days
+    image: "ghcr.io/erkkaha/percussionist/runner:latest",
+    timeoutSeconds: 3600,
+    source: {
+      git: {
+        url: "https://github.com/test/repo.git",
+        ref: "main"
+      }
+    }
+  };
+
   return {
     apiVersion: "percussionist.dev/v1alpha1",
     kind: "Run",
@@ -30,21 +45,10 @@ function makeRun(overrides: Partial<Run> = {}): Run {
       creationTimestamp: new Date().toISOString(),
     },
     spec: {
-      project: "test-project",
-      task: "test-task",
-      interactive: false,
-      ttlSecondsAfterFinished: 604800, // 7 days
-      source: { 
-        git: { 
-          url: "https://github.com/test/repo.git", 
-          ref: "main" 
-        } 
-      },
-      image: "ghcr.io/erkkaha/percussionist/runner:latest",
-      timeoutSeconds: 3600,
-    },
+      ...defaults,
+      ...(overrides.spec || {}),
+    } as Run["spec"],
     status: {} as any,
-    ...overrides,
   } as Run;
 }
 
