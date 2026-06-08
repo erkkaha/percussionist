@@ -3,7 +3,7 @@
  *
  * Scenario:
  *   1. Shared cluster setup.
- *   2. Apply ClusterAgents: e2e-complete-worker, facilitator (reviewer).
+ *   2. Apply ClusterAgents: e2e-complete-worker, reviewer-approve.
  *   3. Apply Project (no source — worker calls complete_run immediately).
  *   4. Assert: worker run reaches Succeeded via complete_run MCP tool.
  *   5. Assert: manager spawns a success-review facilitation run.
@@ -92,8 +92,7 @@ describe("advances", () => {
 
     await applyClusterAgents([
       "clusteragent-complete-worker.yaml",
-      // Reviewer is named "facilitator" in the ClusterAgent manifest.
-      "clusteragent-reviewer.yaml",
+      "clusteragent-reviewer-approve.yaml",
     ]);
 
     console.log(`==> Step 8: Apply Project ${PROJECT}`);
@@ -108,7 +107,7 @@ describe("advances", () => {
     maxParallel: 1
     agents:
       - name: e2e-complete-worker
-      - name: facilitator
+      - name: reviewer-approve
     tasks:
       - id: t1
         title: "Write a greeting"
