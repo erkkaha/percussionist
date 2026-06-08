@@ -67,10 +67,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
-  # Read + write secrets (get for auth; create/update/patch/delete for inject-file secrets).
+  # Read + write secrets (list for settings UI; get for auth; create/update/patch/delete for inject-file secrets).
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
   # Read session snapshot ConfigMaps (fallback when live proxy is unavailable).
   # create/update/delete for per-project opencode config configmaps.
   - apiGroups: [""]
@@ -201,6 +201,22 @@ spec:
             # Number of days to retain session stats (0 = keep forever).
             - name: RETENTION_DAYS
               value: "30"
+            # Web UI auth token. If the web-auth Secret does not exist or has
+            # no "token" key, auth is effectively disabled (no token passes
+            # validation). Manage with `beatctl auth web-token`.
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: token
+                  optional: true
+            # Set to "1" to bypass auth entirely (dev mode).
+            - name: AUTH_DISABLED
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: disabled
+                  optional: true
             # Bun's TLS stack does not pick up the in-cluster CA from the
             # @kubernetes/client-node https.Agent. Point it at the service
             # account CA bundle explicitly so Bun trusts the API server cert.

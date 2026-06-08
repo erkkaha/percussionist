@@ -7,8 +7,9 @@
 //      or `beatctl attach`; observe all sessions that appear.
 //   3. Mirror session activity into the Run status subresource.
 //   4. On completion, snapshot all sessions to a ConfigMap and send analytics.
-//   5. Serve an MCP endpoint on 127.0.0.1:4097 so agents can call fail_run()
-//      or get_status() without cluster API access.
+//   5. Serve an MCP endpoint on 127.0.0.1:4097 so agents can call fail_run(),
+//      complete_run(), get_status(), create_task(), search_code(), read_session(),
+//      write_plan(), and read_plan() without cluster API access.
 //
 // Environment (injected by the operator):
 //   RUN_NAME, RUN_NAMESPACE, RUN_UID
@@ -221,8 +222,7 @@ main().catch(async (e) => {
         RunPhase.Running,
         _runStartedAt ?? completedAt,
         completedAt,
-        0,
-        0,
+        { tokensIn: 0, tokensOut: 0, tokensReasoning: 0, tokensCacheRead: 0, tokensCacheWrite: 0, cost: 0 },
         "message aborted",
       ).catch(() => {});
     }
@@ -241,8 +241,7 @@ main().catch(async (e) => {
       RunPhase.Failed,
       _runStartedAt ?? completedAt,
       completedAt,
-      0,
-      0,
+      { tokensIn: 0, tokensOut: 0, tokensReasoning: 0, tokensCacheRead: 0, tokensCacheWrite: 0, cost: 0 },
       msg,
     ).catch(() => { /* best effort */ });
   }

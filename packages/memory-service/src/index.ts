@@ -9,13 +9,30 @@
 //   MEMORY_DB_PATH       — SQLite database path (default /data/memory/vectors.db)
 //   OLLAMA_BASE_URL      — Ollama service URL (default http://ollama:11434)
 //   EMBEDDING_MODEL      — Ollama embedding model (default nomic-embed-text)
+//   WARMUP_ENABLED       — Auto-warm embedding model on startup (default "true")
+//   WARMUP_TIMEOUT_MS    — Max warmup time in ms (default 300000 = 5 min)
+//   WARMUP_MAX_RETRIES   — Retry count for transient failures (default 6)
 
 import { initDb, handleStoreMemory, handleSearch, handleContext, handleHealth } from "./routes.js";
+import { warmupModel, isModelReady } from "./model-warmup.js";
 
 const PORT = parseInt(process.env.MEMORY_SERVICE_PORT ?? "4100", 10);
 
 // Initialise database and vector tables on startup
 initDb();
+
+// ---------------------------------------------------------------------------
+// Model warmup — must complete before the service becomes ready.
+// If warmup fails, the process stays alive so K8s can restart it via probe
+// failures; /health will report not-ready until the model is available.
+
+await warmupModel();
+
+if (!isModelReady()) {
+  console.error(
+    `[memory] warmup failed — service will remain unready`,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // HTTP router

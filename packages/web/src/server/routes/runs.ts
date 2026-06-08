@@ -7,19 +7,67 @@ import {
   API_GROUP_VERSION,
   KIND_RUN,
 } from "@percussionist/api";
+import { auth, adminAuth } from "../auth.js";
 
 const runs = new Hono();
 
-// GET /api/runs — list all Runs in the namespace.
-// Optional query param: ?task=<taskName> to filter by task CR name.
-runs.get("/", async (c) => {
+// GET /api/runs — list Runs in the namespace with optional pagination.
+// Supported query params: ?task=, ?limit=, ?offset=
+// Strips large spec/status fields from the response (UI only needs a subset).
+// When limit is omitted, returns all runs (backward compatible).
+runs.get("/", auth(), async (c) => {
   try {
     const taskFilter = c.req.query("task");
+    const limitStr = c.req.query("limit");
+    const offsetStr = c.req.query("offset");
+
     let items = await listRuns();
     if (taskFilter) {
       items = items.filter((r) => r.spec.boardTask === taskFilter);
     }
-    return c.json({ items });
+
+    items.sort((a, b) => {
+      const aTime = a.metadata.creationTimestamp ?? "";
+      const bTime = b.metadata.creationTimestamp ?? "";
+      return bTime.localeCompare(aTime);
+    });
+
+    const total = items.length;
+    const limit = limitStr ? Math.max(1, Math.min(200, parseInt(limitStr, 10) || 50)) : 0;
+    const offset = offsetStr ? Math.max(0, parseInt(offsetStr, 10) || 0) : 0;
+
+    if (limit > 0) {
+      items = items.slice(offset, offset + limit);
+    }
+
+    // Lightweight response — UI only needs these fields.
+    const stripped = items.map((r) => ({
+      metadata: {
+        name: r.metadata.name,
+        uid: r.metadata.uid,
+        namespace: r.metadata.namespace,
+        creationTimestamp: r.metadata.creationTimestamp,
+      },
+      spec: {
+        agent: r.spec.agent,
+        model: r.spec.model,
+      },
+      status: r.status
+        ? {
+            phase: r.status.phase,
+            message: r.status.message,
+            sessionID: r.status.sessionID,
+            tokensIn: r.status.tokensIn,
+            tokensOut: r.status.tokensOut,
+            startedAt: r.status.startedAt,
+            completedAt: r.status.completedAt,
+            lastEventAt: r.status.lastEventAt,
+            podName: r.status.podName,
+          }
+        : undefined,
+    }));
+
+    return c.json({ items: stripped, total });
   } catch (e: unknown) {
     const msg = (e as { body?: { message?: string } })?.body?.message ?? String(e);
     return c.json({ error: msg }, 500);
@@ -27,7 +75,7 @@ runs.get("/", async (c) => {
 });
 
 // GET /api/runs/events — SSE stream for run list changes.
-runs.get("/events", async (c) => {
+runs.get("/events", auth(), async (c) => {
   return createPollingSseResponse({
     signal: c.req.raw.signal,
     getSignature: async () => JSON.stringify((await listRuns()).map((r) => ({
@@ -51,7 +99,7 @@ runs.get("/events", async (c) => {
 });
 
 // GET /api/runs/:name — get a single Run by name.
-runs.get("/:name", async (c) => {
+runs.get("/:name", auth(), async (c) => {
   const name = c.req.param("name");
   try {
     const run = await getRun(name);
@@ -65,9 +113,7 @@ runs.get("/:name", async (c) => {
 });
 
 // POST /api/runs — create a new Run.
-// Body: RunSpec fields (task, model, agent, interactive, source,
-// timeoutSeconds). Name is optional; auto-generated when absent.
-runs.post("/", async (c) => {
+runs.post("/", adminAuth(), async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -109,7 +155,7 @@ runs.post("/", async (c) => {
 });
 
 // DELETE /api/runs/:name — delete (cancel) a run and all its child resources.
-runs.delete("/:name", async (c) => {
+runs.delete("/:name", adminAuth(), async (c) => {
   const name = c.req.param("name");
   try {
     await deleteRun(name);
@@ -123,7 +169,7 @@ runs.delete("/:name", async (c) => {
 });
 
 // POST /api/runs/:name/reply — human answers a worker's pending question.
-runs.post("/:name/reply", async (c) => {
+runs.post("/:name/reply", adminAuth(), async (c) => {
   const runName = c.req.param("name");
 
   let run: import("@percussionist/api").Run;

@@ -270,6 +270,7 @@ export interface StepFinishPart {
   type: "step-finish";
   reason: string;
   tokens: { input: number; output: number; reasoning: number };
+  cost?: number;
 }
 
 export interface SubtaskPart {
@@ -309,7 +310,8 @@ export interface SessionMessageInfo {
   sessionID: string;
   role: "user" | "assistant";
   time: { created: number; completed?: number };
-  tokens?: { input: number; output: number; reasoning: number };
+  tokens?: { input: number; output: number; reasoning: number; cache?: { read: number; write: number } };
+  cost?: number;
   error?: { name: string; message: string };
   agent?: string;
   modelID?: string;
@@ -342,6 +344,13 @@ export interface TaskDiffFile {
   diff: string;
 }
 
+export interface DiffCommit {
+  sha: string;
+  subject: string;
+  body: string;
+  files: TaskDiffFile[];
+}
+
 export interface TaskDiffResponse {
   project: string;
   task: string;
@@ -349,6 +358,7 @@ export interface TaskDiffResponse {
   baseRef: string;
   headRef: string;
   files: TaskDiffFile[];
+  commits?: DiffCommit[];
   empty: boolean;
   reason?: string;
 }

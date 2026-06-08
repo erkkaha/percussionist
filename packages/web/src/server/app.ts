@@ -5,6 +5,7 @@
 
 import { Hono } from "hono";
 import { logger } from "hono/logger";
+import { compress } from "hono/compress";
 import runs from "./routes/runs.js";
 import logs from "./routes/logs.js";
 import session from "./routes/session.js";
@@ -27,6 +28,7 @@ export function createApp() {
   const app = new Hono();
 
   app.use("*", logger());
+  app.use("*", compress());
 
   app.route("/api/runs", runs);
   app.route("/api/runs", logs);

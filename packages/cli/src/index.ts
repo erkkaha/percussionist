@@ -14,7 +14,13 @@ import { runChat } from "./chat.js";
 import { runCancel } from "./cancel.js";
 import { runWait } from "./wait.js";
 import { runDeploy } from "./deploy.js";
-import { runAuthImport } from "./auth.js";
+import {
+  runAuthImport,
+  runWebTokenShow,
+  runWebTokenSet,
+  runWebTokenRotate,
+  runWebTokenToggle,
+} from "./auth.js";
 import { runSshKeyCreate } from "./ssh-key.js";
 import { runGithubTokenCreate } from "./github-token.js";
 import { runTailscaleAuthCreate } from "./tailscale-auth.js";
@@ -267,6 +273,45 @@ auth
   )
   .option("--dry-run", "print what would be imported; don't touch the cluster")
   .action(runAuthImport);
+
+// auth web-token ------------------------------------------------------------
+const webToken = auth
+  .command("web-token")
+  .description("manage the web UI auth token (stored in web-auth Secret)");
+
+webToken
+  .command("show")
+  .description("print the current auth token (for copying into the login page)")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .action((opts) => runWebTokenShow(opts));
+
+webToken
+  .command("set <token>")
+  .description("set or update the web UI auth token")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("--dry-run", "print what would be created; don't touch the cluster")
+  .action((token: string, opts) => runWebTokenSet({ ...opts, token }));
+
+webToken
+  .command("rotate")
+  .description("generate a random 64-char hex token and store it")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("--dry-run", "print what would be created; don't touch the cluster")
+  .action((opts) => runWebTokenRotate(opts));
+
+webToken
+  .command("disable")
+  .description("set AUTH_DISABLED=1 (bypass auth entirely)")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("--dry-run", "print what would be created; don't touch the cluster")
+  .action((opts) => runWebTokenToggle({ ...opts, disable: true }));
+
+webToken
+  .command("enable")
+  .description("remove AUTH_DISABLED so auth is enforced")
+  .option("-n, --namespace <ns>", "namespace", DEFAULT_NAMESPACE)
+  .option("--dry-run", "print what would be created; don't touch the cluster")
+  .action((opts) => runWebTokenToggle({ ...opts, disable: false }));
 
 // project -------------------------------------------------------------------
 // Subcommand group for managing reusable run templates.

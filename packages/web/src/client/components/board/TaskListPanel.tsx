@@ -129,6 +129,7 @@ interface TaskListPanelProps {
   onSelectTask: (name: string) => void;
   showAddTask: boolean;
   onCloseAddTask: () => void;
+  approvals?: Record<string, { approved: boolean; requestChanges: boolean }>;
 }
 
 export function TaskListPanel({
@@ -139,6 +140,7 @@ export function TaskListPanel({
   onSelectTask,
   showAddTask,
   onCloseAddTask,
+  approvals,
 }: TaskListPanelProps) {
   const [filters, setFilters] = useState<FilterState>({
     column: "all",
@@ -255,7 +257,11 @@ export function TaskListPanel({
                   {tasks.length === 0 && !isFiltering ? (
                     <p className="text-xs text-text-dim italic px-1 py-1">empty</p>
                   ) : (
-                    tasks.map((task) => (
+                    [...tasks].sort((a, b) => {
+                      const aTime = a.status?.worker?.completedAt ?? a.status?.worker?.startedAt ?? a.metadata.creationTimestamp ?? "";
+                      const bTime = b.status?.worker?.completedAt ?? b.status?.worker?.startedAt ?? b.metadata.creationTimestamp ?? "";
+                      return String(bTime).localeCompare(String(aTime));
+                    }).map((task) => (
                       <TaskRow
                         key={task.metadata.name}
                         task={task}
@@ -263,6 +269,7 @@ export function TaskListPanel({
                         isSelected={selectedTaskName === task.metadata.name}
                         onClick={() => onSelectTask(task.metadata.name)}
                         projectName={projectName}
+                        approvals={approvals}
                       />
                     ))
                   )}

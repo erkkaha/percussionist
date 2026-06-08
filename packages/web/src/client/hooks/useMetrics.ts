@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { authHeaders } from "../lib/auth";
 
 interface ContainerUsage {
   name: string;
@@ -48,8 +49,8 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
     queryKey: ["metrics"],
     queryFn: async () => {
       const [nodesRes, podsRes] = await Promise.all([
-        fetch("/api/metrics/nodes"),
-        fetch("/api/metrics/pods"),
+        fetch("/api/metrics/nodes", { headers: authHeaders() }),
+        fetch("/api/metrics/pods", { headers: authHeaders() }),
       ]);
 
       if (!nodesRes.ok && !podsRes.ok) {

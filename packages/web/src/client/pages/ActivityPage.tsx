@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { Activity, RefreshCw } from "lucide-react";
+import { authHeaders } from "../lib/auth";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -200,7 +201,8 @@ export default function ActivityPage() {
       const url = before
         ? `/api/activity?limit=${LIMIT}&before=${before}`
         : `/api/activity?limit=${LIMIT}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: authHeaders() });
+      if (res.status === 401) return;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { events: TaskEvent[]; count: number };
       setEvents((prev) => {

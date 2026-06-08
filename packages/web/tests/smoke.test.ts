@@ -19,6 +19,7 @@ import { createApp } from "../src/server/app.js";
 const TEST_DATA_DIR = join("/tmp", `percussionist-smoke-${Date.now()}`);
 
 process.env.DATA_DIR = TEST_DATA_DIR;
+process.env.AUTH_DISABLED = "1";
 
 // ---------------------------------------------------------------------------
 
@@ -333,6 +334,19 @@ describe("stats API", () => {
     expect(Array.isArray(body)).toBe(true);
     const found = body.find((s) => s.id === SESSION_ID);
     expect(found).toBeDefined();
+  });
+
+  it("GET /api/stats/sessions → paginated result with summary/agents/models", async () => {
+    const res = await req("/api/stats/sessions?days=0");
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(Array.isArray(body.sessions)).toBe(true);
+    expect(typeof body.total).toBe("number");
+    expect(body.total).toBeGreaterThan(0);
+    expect(body.summary).toBeDefined();
+    expect((body.summary as Record<string, unknown>).total).toBeGreaterThan(0);
+    expect(Array.isArray(body.agentSummaries)).toBe(true);
+    expect(Array.isArray(body.modelRows)).toBe(true);
   });
 
   it("POST /api/stats/session missing sessionID → 400", async () => {

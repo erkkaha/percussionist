@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAgent } from "../hooks/useAgent";
 import { submitAgent, updateAgent as apiUpdateAgent } from "../lib/api";
+import { authHeaders } from "../lib/auth";
 import ModelSelector from "./ModelSelector";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -22,7 +23,7 @@ export default function AgentForm() {
   // Load existing agent when editing.
   useEffect(() => {
     if (!isEdit) return;
-    fetch(`/api/agents/${encodeURIComponent(editName!)}`)
+    fetch(`/api/agents/${encodeURIComponent(editName!)}`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((data: { metadata?: { name?: string }; spec?: { content?: string; model?: string } }) => {
         setName(data.metadata?.name ?? "");

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { resolveFlow } from "../flow.js";
 import { makeProject } from "./fixtures.js";
 

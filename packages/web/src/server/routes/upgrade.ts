@@ -6,6 +6,7 @@
 
 import { Hono } from "hono";
 import { NAMESPACE } from "../kube.js";
+import { auth, adminAuth } from "../auth.js";
 
 const router = new Hono();
 
@@ -17,6 +18,7 @@ export interface UpdateStatus {
     operator: string | null;
     manager: string | null;
     web: string | null;
+    dispatcher: string | null;
   };
   latest: string | null;
   updateAvailable: boolean;
@@ -28,7 +30,7 @@ export interface UpdateStatus {
 //
 // Returns the currently running component versions and the latest available
 // version from the container registry. Suitable for polling from the UI.
-router.get("/status", async (c) => {
+router.get("/status", auth(), async (c) => {
   const mcpRequest = {
     jsonrpc: "2.0",
     id: 1,
@@ -64,7 +66,7 @@ router.get("/status", async (c) => {
     if (mcpResponse.error) {
       return c.json(
         {
-          current: { operator: null, manager: null, web: null },
+          current: { operator: null, manager: null, web: null, dispatcher: null },
           latest: null,
           updateAvailable: false,
           error: mcpResponse.error.message,
@@ -78,7 +80,7 @@ router.get("/status", async (c) => {
     if (mcpResponse.result?.isError) {
       return c.json(
         {
-          current: { operator: null, manager: null, web: null },
+          current: { operator: null, manager: null, web: null, dispatcher: null },
           latest: null,
           updateAvailable: false,
           error: rawText ?? "Unknown MCP tool error",
@@ -90,7 +92,7 @@ router.get("/status", async (c) => {
     if (!rawText) {
       return c.json(
         {
-          current: { operator: null, manager: null, web: null },
+          current: { operator: null, manager: null, web: null, dispatcher: null },
           latest: null,
           updateAvailable: false,
           error: "Empty response from manager",
@@ -104,7 +106,7 @@ router.get("/status", async (c) => {
   } catch (e) {
     return c.json(
       {
-        current: { operator: null, manager: null, web: null },
+        current: { operator: null, manager: null, web: null, dispatcher: null },
         latest: null,
         updateAvailable: false,
         error: (e as Error).message,
@@ -122,10 +124,7 @@ export interface UpgradeResult {
 }
 
 // POST /api/upgrade/apply
-//
-// Triggers an upgrade of all Percussionist deployments to the specified target image tag.
-// Proxies to the manager's MCP tool `apply_upgrade`.
-router.post("/apply", async (c) => {
+router.post("/apply", adminAuth(), async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { targetTag?: string };
   const targetTag = body.targetTag;
   if (!targetTag) {

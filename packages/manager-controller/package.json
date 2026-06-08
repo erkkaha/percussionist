@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json",
     "start": "tsx src/index.ts",
-    "test": "vitest run"
+    "test": "bun test src/"
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.4.0",
@@ -16,6 +16,6 @@
     "@percussionist/kube": "workspace:*"
   },
   "devDependencies": {
-    "vitest": "^3.1.1"
+    "@types/bun": "latest"
   }
 }

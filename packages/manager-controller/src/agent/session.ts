@@ -17,7 +17,8 @@ interface SessionMessage {
     sessionID?: string;
     role?: "user" | "assistant";
     time?: { created?: number; completed?: number };
-    tokens?: { input?: number; output?: number };
+    tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } };
+    cost?: number;
     error?: unknown;
   };
   parts?: Array<{ type: string; text?: string }>;

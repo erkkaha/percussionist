@@ -1,23 +1,15 @@
 // routes/board-db.ts — task event history endpoints.
-//
-// The board state is now authoritative in Task CRDs (K8s).
-// This module serves the append-only task_events audit log from SQLite.
-//
-// Mounted at /api/board.
-//
-// GET /api/board/:project/events        — recent task events for a project
-// GET /api/board/:project/tasks/:name/events — events for a specific task CR
 
 import { Hono } from "hono";
 import { eq, and, desc } from "drizzle-orm";
 import { getDb, taskEvents } from "../db.js";
+import { auth } from "../auth.js";
 
 const boardDb = new Hono();
 
 // ---------------------------------------------------------------------------
 // GET /api/board/:project/events?limit=100
-
-boardDb.get("/:project/events", (c) => {
+boardDb.get("/:project/events", auth(), (c) => {
   const project = c.req.param("project");
   const limit = Math.min(parseInt(c.req.query("limit") ?? "100", 10), 500);
   const db = getDb();
@@ -35,8 +27,7 @@ boardDb.get("/:project/events", (c) => {
 
 // ---------------------------------------------------------------------------
 // GET /api/board/:project/tasks/:taskName/events?limit=50
-
-boardDb.get("/:project/tasks/:taskName/events", (c) => {
+boardDb.get("/:project/tasks/:taskName/events", auth(), (c) => {
   const project = c.req.param("project");
   const taskName = c.req.param("taskName");
   const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10), 200);

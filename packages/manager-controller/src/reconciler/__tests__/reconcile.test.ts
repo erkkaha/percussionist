@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, spyOn, beforeEach, afterEach } from "bun:test";
 import * as kube from "@percussionist/kube";
 import type { Task, Project } from "@percussionist/api";
 import { reconcileProject } from "../index.js";
@@ -56,14 +56,16 @@ describe("reconciler auto-heal", () => {
   let getRunSpy: any;
 
   beforeEach(() => {
-    listTasksSpy = vi.spyOn(kube, "listTasks");
-    patchTaskStatusSpy = vi.spyOn(kube, "patchTaskStatus");
+    listTasksSpy = spyOn(kube, "listTasks");
+    patchTaskStatusSpy = spyOn(kube, "patchTaskStatus");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    getRunSpy = vi.spyOn(kube, "getRun").mockResolvedValue(undefined as any);
+    getRunSpy = spyOn(kube, "getRun").mockResolvedValue(undefined as any);
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    listTasksSpy.mockRestore();
+    patchTaskStatusSpy.mockRestore();
+    getRunSpy.mockRestore();
   });
 
   it("patches tasks with missing status.phase to pending", async () => {
@@ -110,7 +112,8 @@ describe("reconciler auto-heal", () => {
     const project = makeProject("test-project");
     await reconcileProject(project, "percussionist");
 
-    expect(patchTaskStatusSpy).toHaveBeenCalledTimes(2);
+    // Reconciler heals twice: first loop (line 27) + second defense-in-depth loop (line 63).
+    expect(patchTaskStatusSpy).toHaveBeenCalledTimes(4);
   });
 
   it("heals idea tasks that are missing phase (malformed)", async () => {

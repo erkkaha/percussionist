@@ -30,12 +30,13 @@ function isAbortedMessageInError(e: Error): boolean {
 function logEvent(evt: { type?: string; properties?: Record<string, unknown> }): void {
   if (!evt.type || evt.type === "server.connected") return;
   const p = evt.properties ?? {};
-  const info = p.info as { sessionID?: string; id?: string; role?: string; tokens?: { input?: number; output?: number } } | undefined;
+  const info = p.info as { sessionID?: string; id?: string; role?: string; tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } }; cost?: number } | undefined;
   const pieces = [
     info?.sessionID ? `session=${info.sessionID}` : undefined,
     info?.id ? `message=${info.id}` : undefined,
     info?.role ? `role=${info.role}` : undefined,
     typeof info?.tokens?.input === "number" ? `tokens=${info.tokens.input}/${info.tokens.output ?? 0}` : undefined,
+    typeof info?.cost === "number" ? `cost=${info.cost}` : undefined,
   ].filter(Boolean);
   log(`[event] ${evt.type}${pieces.length ? ` ${pieces.join(" ")}` : ""}`);
 }
@@ -63,25 +64,37 @@ const IDLE_TIMEOUT_MS = 900_000;
 // Token aggregator
 
 export class TokenAggregator {
-  private bySession = new Map<string, { input: number; output: number }>();
+  private bySession = new Map<string, { input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number; cost: number }>();
   private lastWrite = 0;
 
-  update(sessionID: string, input: number, output: number): void {
-    const prev = this.bySession.get(sessionID) ?? { input: 0, output: 0 };
+  update(sessionID: string, input: number, output: number, reasoning?: number, cacheRead?: number, cacheWrite?: number, cost?: number): void {
+    const prev = this.bySession.get(sessionID) ?? { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
     this.bySession.set(sessionID, {
       input: Math.max(prev.input, input),
       output: Math.max(prev.output, output),
+      reasoning: Math.max(prev.reasoning, reasoning ?? 0),
+      cacheRead: Math.max(prev.cacheRead, cacheRead ?? 0),
+      cacheWrite: Math.max(prev.cacheWrite, cacheWrite ?? 0),
+      cost: Math.max(prev.cost, cost ?? 0),
     });
   }
 
-  totals(): { tokensIn: number; tokensOut: number } {
+  totals(): { tokensIn: number; tokensOut: number; tokensReasoning: number; tokensCacheRead: number; tokensCacheWrite: number; cost: number } {
     let tokensIn = 0;
     let tokensOut = 0;
-    for (const { input, output } of this.bySession.values()) {
+    let tokensReasoning = 0;
+    let tokensCacheRead = 0;
+    let tokensCacheWrite = 0;
+    let cost = 0;
+    for (const { input, output, reasoning, cacheRead, cacheWrite, cost: c } of this.bySession.values()) {
       tokensIn += input;
       tokensOut += output;
+      tokensReasoning += reasoning;
+      tokensCacheRead += cacheRead;
+      tokensCacheWrite += cacheWrite;
+      cost += c;
     }
-    return { tokensIn, tokensOut };
+    return { tokensIn, tokensOut, tokensReasoning, tokensCacheRead, tokensCacheWrite, cost };
   }
 
   async flush(
@@ -236,7 +249,8 @@ export async function runInteractive(
         const msgs = await fetchMessages(sessionID);
         for (const msg of msgs) {
           const t = msg.info?.tokens;
-          if (t?.input || t?.output) tokens.update(sessionID, t.input ?? 0, t.output ?? 0);
+          const cost = (msg.info as { cost?: number })?.cost ?? 0;
+          if (t?.input || t?.output || cost > 0) tokens.update(sessionID, t?.input ?? 0, t?.output ?? 0, t?.reasoning, t?.cache?.read, t?.cache?.write, cost);
         }
       }
       await tokens.flush(patchStatus);
@@ -277,14 +291,14 @@ export async function runInteractive(
               // Incremental DB flush on each completed turn.
               if (p?.busy === false && firstSessionID) {
                 const sid = firstSessionID;
-                const { tokensIn, tokensOut } = tokens.totals();
-                incrementalFlush(sid, interactiveStartedAt, tokensIn, tokensOut, interactiveFlushCursor)
+                const totals = tokens.totals();
+                incrementalFlush(sid, interactiveStartedAt, totals, interactiveFlushCursor)
                   .then((newCursor) => { interactiveFlushCursor = newCursor; })
                   .catch((e) => err("interactive incrementalFlush failed (non-fatal):", (e as Error).message));
               }
             }
             if (evt.type === "message.updated") {
-              const p = (evt.properties ?? {}) as { info?: { sessionID?: string; tokens?: { input?: number; output?: number } } };
+              const p = (evt.properties ?? {}) as { info?: { sessionID?: string; tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } }; cost?: number } };
               const sid = p.info?.sessionID;
               if (sid) {
                 if (!knownSessions.has(sid)) {
@@ -294,8 +308,8 @@ export async function runInteractive(
                     await patchStatus({ sessionID: firstSessionID, message: "session active" });
                   }
                 }
-                if (typeof p.info?.tokens?.input === "number")
-                  tokens.update(sid, p.info.tokens.input, p.info.tokens?.output ?? 0);
+                if (typeof p.info?.tokens?.input === "number" || typeof p.info?.cost === "number")
+                  tokens.update(sid, p.info.tokens?.input ?? 0, p.info.tokens?.output ?? 0, p.info.tokens?.reasoning, p.info.tokens?.cache?.read, p.info.tokens?.cache?.write, p.info.cost);
                 await tokens.flush(patchStatus);
               }
             }
@@ -458,10 +472,15 @@ export async function runPrompt(
           throw new Error(`prompt failed: HTTP ${syncRes.status} ${await syncRes.text()}`);
         }
         const syncData = (await syncRes.json()) as { info?: Record<string, unknown>; parts?: unknown[] };
-        const syncTokensIn = (syncData.info?.tokens as { input?: number })?.input ?? 0;
-        const syncTokensOut = (syncData.info?.tokens as { output?: number })?.output ?? 0;
-        if (syncTokensIn > 0 || syncTokensOut > 0) {
-          tokens.update(sessionID, syncTokensIn, syncTokensOut);
+        const syncTokens = syncData.info?.tokens as { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } } | undefined;
+        const syncTokensIn = syncTokens?.input ?? 0;
+        const syncTokensOut = syncTokens?.output ?? 0;
+        const syncTokensReasoning = syncTokens?.reasoning ?? 0;
+        const syncTokensCacheRead = syncTokens?.cache?.read ?? 0;
+        const syncTokensCacheWrite = syncTokens?.cache?.write ?? 0;
+        const syncCost = (syncData.info?.cost as number | undefined) ?? 0;
+        if (syncTokensIn > 0 || syncTokensOut > 0 || syncCost > 0) {
+          tokens.update(sessionID, syncTokensIn, syncTokensOut, syncTokensReasoning, syncTokensCacheRead, syncTokensCacheWrite, syncCost);
           await tokens.flush(patchStatus);
         }
         log("prompt completed (sync)", JSON.stringify(syncData.info));
@@ -532,7 +551,8 @@ export async function runPrompt(
         if (last?.info?.role === "assistant") {
           sawBusy = true;
           const t = last.info.tokens;
-          if (t?.input || t?.output) tokens.update(sessionID, t.input ?? 0, t.output ?? 0);
+          const cost = (last.info as { cost?: number }).cost ?? 0;
+          if (t?.input || t?.output || cost > 0) tokens.update(sessionID, t?.input ?? 0, t?.output ?? 0, t?.reasoning, t?.cache?.read, t?.cache?.write, cost);
           await tokens.flush(patchStatus);
 
           // Check for errors regardless of time.completed — OpenCode may set
@@ -634,17 +654,17 @@ export async function runPrompt(
               // Incremental DB flush after each completed assistant turn.
               const p = evt.properties as { busy?: boolean } | undefined;
               if (p?.busy === false) {
-                const { tokensIn, tokensOut } = tokens.totals();
-                incrementalFlush(sessionID, runStartedAt, tokensIn, tokensOut, promptFlushCursor)
+                const totals = tokens.totals();
+                incrementalFlush(sessionID, runStartedAt, totals, promptFlushCursor)
                   .then((newCursor) => { promptFlushCursor = newCursor; })
                   .catch((e) => err("prompt incrementalFlush failed (non-fatal):", (e as Error).message));
               }
             }
             if (evt.type === "message.updated") {
-              const p = (evt.properties ?? {}) as { info?: { sessionID?: string; tokens?: { input?: number; output?: number } } };
+              const p = (evt.properties ?? {}) as { info?: { sessionID?: string; tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } }; cost?: number } };
               if (p.info?.sessionID === sessionID) {
-                if (typeof p.info.tokens?.input === "number")
-                  tokens.update(sessionID, p.info.tokens.input, p.info.tokens?.output ?? 0);
+                if (typeof p.info.tokens?.input === "number" || typeof p.info.cost === "number")
+                  tokens.update(sessionID, p.info.tokens?.input ?? 0, p.info.tokens?.output ?? 0, p.info.tokens?.reasoning, p.info.tokens?.cache?.read, p.info.tokens?.cache?.write, p.info.cost);
                 await tokens.flush(patchStatus);
               }
             }
@@ -748,8 +768,8 @@ export async function runPrompt(
   if (aborting) {
     await tokens.flush(patchStatus, true);
     await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
-    const { tokensIn, tokensOut } = tokens.totals();
-    await sendStats(sessionID, RunPhase.Running, runStartedAt, new Date().toISOString(), tokensIn, tokensOut);
+    const totals = tokens.totals();
+    await sendStats(sessionID, RunPhase.Running, runStartedAt, new Date().toISOString(), totals);
     await patchStatus({ phase: RunPhase.Running, message: "waiting for input (message aborted)" });
     log("done (waiting for input after abort)");
     return { sessionID, startedAt: runStartedAt };
@@ -762,7 +782,7 @@ export async function runPrompt(
   await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
 
   const completedAt = new Date().toISOString();
-  const { tokensIn, tokensOut } = tokens.totals();
+  const totals = tokens.totals();
 
   if (raceError) {
     await sendStats(
@@ -770,20 +790,19 @@ export async function runPrompt(
       RunPhase.Failed,
       runStartedAt,
       completedAt,
-      tokensIn,
-      tokensOut,
+      totals,
       raceError.message,
     );
     throw raceError;
   }
 
   if (agentCompletionSummary) {
-    await sendStats(sessionID, RunPhase.Succeeded, runStartedAt, completedAt, tokensIn, tokensOut);
+    await sendStats(sessionID, RunPhase.Succeeded, runStartedAt, completedAt, totals);
     await patchStatus({ phase: RunPhase.Succeeded, message: `agent signalled completion — ${agentCompletionSummary}`, completedAt });
     log("done");
   } else {
     const msg = "session ended without completion signal";
-    await sendStats(sessionID, RunPhase.Failed, runStartedAt, completedAt, tokensIn, tokensOut, msg);
+    await sendStats(sessionID, RunPhase.Failed, runStartedAt, completedAt, totals, msg);
     await patchStatus({ phase: RunPhase.Failed, message: msg, completedAt });
     log("done (failed — no explicit completion signal)");
   }

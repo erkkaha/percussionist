@@ -11,11 +11,17 @@ import {
   KIND_CLUSTER_SETTINGS,
   type ClusterSettingsSpec,
 } from "@percussionist/api";
+import { auth } from "../auth.js";
 
 const settings = new Hono();
 
+// All settings endpoints are sensitive (secrets listing, cluster config).
+settings.use("/*", auth());
+
 const CLUSTER_CONFIG_CM = "opencode-config";
 const CONFIG_CM_KEY = "opencode.json";
+const AGENT_CONFIG_CM = "agent-config";
+const DECISION_AGENT_CM_KEY = "manager-decision.md";
 
 const LLM_KEYS_SECRET = "llm-keys";
 const AUTH_SECRET = "percussionist-auth";
@@ -117,6 +123,23 @@ settings.get("/opencode-config", async (c) => {
     return c.json(cm.data?.[CONFIG_CM_KEY] ?? "");
   } catch {
     return c.json("");
+  }
+});
+
+// GET /api/settings/decision-agent-default — read the resolved decision agent content
+// from the agent-config ConfigMap, which the operator populates with the effective
+// content (user override or hardcoded default).
+
+settings.get("/decision-agent-default", async (c) => {
+  try {
+    const cm = await core().readNamespacedConfigMap({
+      name: AGENT_CONFIG_CM,
+      namespace: NAMESPACE,
+    });
+    const content = cm.data?.[DECISION_AGENT_CM_KEY] ?? "";
+    return c.json({ content });
+  } catch {
+    return c.json({ content: "" });
   }
 });
 

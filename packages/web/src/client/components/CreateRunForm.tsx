@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { submitRun } from "../lib/api";
 import { useProjects } from "../hooks/useProjects";
 import { useRun } from "../hooks/useRun";
+import { authHeaders } from "../lib/auth";
 import ModelSelector from "./ModelSelector";
 import type { CreateRunRequest, Project, Run, AgentDef } from "../lib/types";
 import { Input } from "./ui/input";
@@ -24,7 +25,7 @@ interface ClusterAgent {
 }
 
 async function fetchClusterAgents(): Promise<ClusterAgent[]> {
-  const res = await fetch("/api/agents");
+  const res = await fetch("/api/agents", { headers: authHeaders() });
   if (!res.ok) return [];
   const data = await res.json();
   return (data.agents as ClusterAgent[]) ?? [];

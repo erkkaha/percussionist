@@ -4,6 +4,7 @@ import { useRuns } from "../hooks/useRuns";
 import { useRunsEvents } from "../hooks/useRunsEvents";
 import { useRunNotifications } from "../hooks/useRunNotifications";
 import { TERMINAL_PHASES } from "@percussionist/api";
+import { authHeaders } from "../lib/auth";
 import NotificationBell from "./NotificationBell";
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "./ui/sidebar";
 import { AppSidebar } from "./app-sidebar";
@@ -20,7 +21,7 @@ export default function Layout({ chatOpen, onChatOpenChange, onChatReady }: { ch
   const [managerAvailable, setManagerAvailable] = useState<boolean | null>(null);
   useEffect(() => {
     function check() {
-      fetch("/api/agent/status")
+      fetch("/api/agent/status", { headers: authHeaders() })
         .then((r) => r.json())
         .then((d) => setManagerAvailable(d.available === true))
         .catch(() => setManagerAvailable(false));

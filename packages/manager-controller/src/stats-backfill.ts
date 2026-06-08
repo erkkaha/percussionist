@@ -12,6 +12,8 @@ const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
 const WEB_URL =
   process.env.WEB_SERVICE_URL ??
   `http://percussionist-web.${NAMESPACE}.svc.cluster.local:8080`;
+const WEB_AUTH_TOKEN = process.env.WEB_AUTH_TOKEN ?? "";
+const AUTH_HEADERS: Record<string, string> = WEB_AUTH_TOKEN ? { Authorization: `Bearer ${WEB_AUTH_TOKEN}` } : {};
 
 const log = (...args: unknown[]) =>
   console.log(`[stats-backfill ${new Date().toISOString()}]`, ...args);
@@ -26,7 +28,8 @@ interface RawInfo {
   id?: string;
   role?: string;
   model?: { providerID?: string; modelID?: string };
-  tokens?: { input?: number; output?: number };
+  tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } };
+  cost?: number;
   time?: { created?: number; completed?: number };
 }
 
@@ -123,6 +126,10 @@ function buildPayload(
       model: modelStr,
       tokensIn: info.tokens?.input,
       tokensOut: info.tokens?.output,
+      tokensReasoning: info.tokens?.reasoning,
+      tokensCacheRead: info.tokens?.cache?.read,
+      tokensCacheWrite: info.tokens?.cache?.write,
+      cost: info.cost,
       createdAt: info.time?.created
         ? new Date(info.time.created).toISOString()
         : undefined,
@@ -250,6 +257,7 @@ function buildPayload(
 async function statsExist(sessionID: string): Promise<boolean> {
   try {
     const res = await fetch(`${WEB_URL}/api/stats/exists/${sessionID}`, {
+      headers: { ...AUTH_HEADERS },
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) return false;
@@ -305,7 +313,7 @@ export async function backfillStats(
 
     const res = await fetch(`${WEB_URL}/api/stats/session`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...AUTH_HEADERS },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(30_000),
     });

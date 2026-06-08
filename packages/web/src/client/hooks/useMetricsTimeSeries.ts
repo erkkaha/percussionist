@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { authHeaders } from "../lib/auth";
 
 export interface TimeSeriesPoint {
   recordedAt: string;
@@ -29,7 +30,7 @@ export function useMetricsTimeSeries(
     queryKey: ["metrics-timeseries", hours, node],
     queryFn: async () => {
       const params = new URLSearchParams({ hours: String(hours), node });
-      const res = await fetch(`/api/stats/metrics-timeseries?${params}`);
+      const res = await fetch(`/api/stats/metrics-timeseries?${params}`, { headers: authHeaders() });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: "unavailable" }));
         throw new Error(body.error ?? "metrics timeseries unavailable");

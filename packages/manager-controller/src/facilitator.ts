@@ -200,7 +200,7 @@ export async function buildSuccessReviewRun(
     ...(isPlanTask
       ? [
            `PLAN ARTIFACT PATH: ${planPath}`,
-           `Call the read_plan MCP tool (read_plan(project="<project>", task="<task-id>")) to retrieve plan content.`,
+           `Call the percussionist_dispatcher_read_plan MCP tool (percussionist_dispatcher_read_plan(project="<project>", task="<task-id>")) to retrieve plan content.`,
           "",
         ]
       : []),
@@ -371,7 +371,7 @@ export async function buildBuildTaskGeneratorRun(
 }
 
 // Build a review Run spec without session summary.
-// The reviewer agent uses MCP tools (read_session_live) to fetch session data itself.
+// The reviewer agent uses MCP tools (percussionist_dispatcher_read_session) to fetch session data itself.
 export async function buildReviewRun(
   project: Project,
   task: Task,
@@ -410,8 +410,8 @@ export async function buildReviewRun(
     `BRANCH: ${branch}`,
     `COMPLETION MESSAGE: ${completionMessage}`,
     "",
-    `SESSION DATA: Use the read_session_live MCP tool (runName="${succeededRunName}") to read the full session.`,
-    `Start with since=0 and paginate using nextSince until you have all messages.`,
+    `SESSION DATA: Use the percussionist_dispatcher_read_session MCP tool (runName="${succeededRunName}") to read the full session.`,
+    `The session data is persisted as a ConfigMap snapshot.`,
     "",
     ...(isBuildTask
       ? [
@@ -439,7 +439,7 @@ export async function buildReviewRun(
     ...(isPlanTask
       ? [
            `PLAN ARTIFACT PATH: ${planPath}`,
-           `Call the read_plan MCP tool (read_plan(project="<project>", task="<task-id>")) to retrieve plan content.`,
+           `Call the percussionist_dispatcher_read_plan MCP tool (percussionist_dispatcher_read_plan(project="<project>", task="<task-id>")) to retrieve plan content.`,
           "",
         ]
       : []),
