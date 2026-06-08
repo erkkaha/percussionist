@@ -410,12 +410,12 @@ function TrendChart({ title, description, data, config, series, yAxisDomain, yAx
               content={
                 <ChartTooltipContent
                   indicator="dot"
-                  labelFormatter={(label, payload) => {
-                    if (!payload.length) return String(label);
-                    const p = payload[0] as Record<string, unknown>;
-                    const time = (p?.payload as Record<string, unknown>)?.time as number | undefined;
-                    return time ? fmtDate(new Date(time).toISOString()) : String(label);
-                  }}
+                    labelFormatter={(label, payload) => {
+                      if (!payload.length) return String(label);
+                      const p = payload[0] as unknown as Record<string, unknown>;
+                      const time = (p?.payload as unknown as Record<string, unknown>)?.time as number | undefined;
+                      return time ? fmtDate(new Date(time).toISOString()) : String(label);
+                    }}
                 />
               }
             />
