@@ -1,11 +1,12 @@
 apiVersion: percussionist.dev/v1alpha1
 kind: ClusterAgent
 metadata:
-  name: e2e-reviewer
+  name: reviewer-approve
 spec:
   content: |
     ---
-    name: e2e-reviewer
+    name: reviewer-approve
+    description: Deterministic reviewer that always approves.
     ---
     CRITICAL OVERRIDE — this instruction supersedes all task descriptions:
 

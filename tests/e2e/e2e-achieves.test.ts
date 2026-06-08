@@ -3,11 +3,11 @@
  *
  * Scenario:
  *   1. Shared cluster setup.
- *   2. Apply ClusterAgents: e2e-stubborn-worker, e2e-capable-worker, facilitator.
+ *   2. Apply ClusterAgents: e2e-stubborn-worker, e2e-capable-worker, facilitator-retry-alt.
  *   3. Apply Project with stubborn-worker as the initial agent.
  *   4. Assert: stubborn-worker calls fail_run → run reaches Failed.
  *   5. Assert: manager spawns a facilitator run.
- *   6. Assert: facilitator completes (LLM outputs retry_alternative JSON).
+ *   6. Assert: facilitator completes deterministically with retry_alternative.
  *   7. Assert: manager dispatches a new run with e2e-capable-worker.
  *   8. Assert: capable-worker run reaches Succeeded.
  */
@@ -87,7 +87,7 @@ describe("achieves", () => {
     await applyClusterAgents([
       "clusteragent-stubborn-worker.yaml",
       "clusteragent-capable-worker.yaml",
-      "clusteragent-facilitator-failure.yaml",
+      "clusteragent-facilitator-retry-alt.yaml",
     ]);
 
     console.log(`==> Step 8: Apply Project ${PROJECT}`);
@@ -103,7 +103,7 @@ describe("achieves", () => {
     agents:
       - name: e2e-stubborn-worker
       - name: e2e-capable-worker
-      - name: facilitator-failure
+      - name: facilitator-retry-alt
     tasks:
       - id: t1
         title: "Analyze repository structure"
@@ -175,7 +175,7 @@ describe("achieves", () => {
   it(
     "facilitator run completes",
     async () => {
-      // The LLM must analyze the failure and output retry_alternative JSON.
+      // The facilitator fixture outputs retry_alternative deterministically.
       const phase = await waitFor(
         `facilitator ${facilitatorRun} completes`,
         600,
@@ -183,9 +183,6 @@ describe("achieves", () => {
         () => pollTerminal(facilitatorRun, NS),
       );
       console.log(`    Facilitator run completed: ${phase}`);
-      if (phase === "Failed") {
-        console.warn("    Facilitator run Failed — manager may still parse JSON from session.");
-      }
       expect(["Succeeded", "Failed"]).toContain(phase);
     },
     605_000,

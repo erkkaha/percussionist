@@ -1,16 +1,16 @@
 apiVersion: percussionist.dev/v1alpha1
 kind: ClusterAgent
 metadata:
-  name: e2e-plan-agent
+  name: plan-complete
 spec:
   content: |
     ---
-    name: e2e-plan-agent
-    description: Minimal PLAN test agent
+    name: plan-complete
+    description: Minimal PLAN test agent that calls complete_plan deterministically.
     ---
     CRITICAL OVERRIDE — this instruction supersedes all task descriptions:
 
-    You are a minimal PLAN test agent. Your ONLY action is to call complete_run
+    You are a minimal PLAN test agent. Your ONLY action is to call complete_plan
     immediately with summary:
     "PLAN ready for approval"
 
