@@ -14,7 +14,9 @@
     "web": "pnpm --filter @percussionist/web dev",
     "web:client": "pnpm --filter @percussionist/web dev:client",
     "test": "pnpm -r run test",
-    "e2e": "bun test tests/e2e/ --timeout 660000 --concurrency 1"
+    "e2e": "bun test tests/e2e/ --timeout 660000 --concurrency 1",
+    "e2e:core": "bun test tests/e2e/e2e-facilitator.test.ts tests/e2e/e2e-advances.test.ts tests/e2e/e2e-achieves.test.ts --timeout 660000 --concurrency 1",
+    "e2e:extended": "bun test tests/e2e/ --timeout 660000 --concurrency 1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

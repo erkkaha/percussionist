@@ -33,3 +33,171 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+  e2e-core:
+    name: E2E Core (Deterministic)
+    runs-on: ubuntu-latest
+    needs: typecheck-and-build
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.1.2 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --config.strict-dep-builds=false
+
+      # Setup Kind cluster (lightweight, CI-optimized)
+      - name: Setup Kind
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: percussionist-e2e
+          version: v0.20.0
+          wait: 120s
+
+      # Deploy required components to the Kind cluster
+      - name: Deploy CRDs and Operator
+        run: |
+          kubectl apply -f k8s/crds/
+          kubectl create namespace percussionist || true
+          kubectl apply -f k8s/deploy/operator.yaml
+          kubectl apply -f k8s/deploy/manager-controller.yaml
+          kubectl wait --for=condition=Available --timeout=120s -n percussionist deploy/percussionist-operator
+          kubectl wait --for=condition=Available --timeout=120s -n percussionist deploy/percussionist-manager
+
+      # Run core deterministic E2E tests only
+      - name: Run Core E2E Tests
+        run: |
+          pnpm e2e:core
+        env:
+          KUBECONFIG: "${{ runner.temp }}/kubeconfig"
+          ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}"
+          OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}"
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
+      # Upload diagnostics on failure
+      - name: Collect Diagnostics
+        if: failure()
+        run: |
+          mkdir -p /tmp/diagnostics
+          
+          # Cluster info
+          kubectl cluster-info > /tmp/diagnostics/cluster-info.txt 2>&1 || true
+          kubectl config view > /tmp/diagnostics/kubeconfig.yaml 2>&1 || true
+          
+          # All resources in percussionist namespace
+          kubectl get all -n percussionist -o yaml > /tmp/diagnostics/resources.yaml 2>&1 || true
+          
+          # Events (last hour)
+          kubectl get events -n percussionist --sort-by='.lastTimestamp' > /tmp/diagnostics/events.txt 2>&1 || true
+          
+          # Run and Task statuses
+          kubectl get runs -A -o yaml > /tmp/diagnostics/runs.yaml 2>&1 || true
+          kubectl get tasks -A -o yaml > /tmp/diagnostics/tasks.yaml 2>&1 || true
+          kubectl get projects -A -o yaml > /tmp/diagnostics/projects.yaml 2>&1 || true
+          
+          # Pod logs (last 500 lines)
+          for pod in $(kubectl get pods -n percussionist -o name); do
+            kubectl logs "$pod" -n percussionist --tail=500 > "/tmp/diagnostics/$(basename $pod).log" 2>&1 || true
+          done
+
+      - name: Upload Diagnostics Artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-core-diagnostics-${{ github.sha }}
+          path: /tmp/diagnostics/
+          retention-days: 7
+          compression-level: 6
+
+  e2e-extended:
+    name: E2E Extended (Full Suite)
+    runs-on: ubuntu-latest
+    needs: typecheck-and-build
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.1.2 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --config.strict-dep-builds=false
+
+      # Setup Kind cluster for extended E2E
+      - name: Setup Kind
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: percussionist-e2e-extended
+          version: v0.20.0
+          wait: 120s
+
+      # Deploy required components to the Kind cluster
+      - name: Deploy CRDs and Operator
+        run: |
+          kubectl apply -f k8s/crds/
+          kubectl create namespace percussionist || true
+          kubectl apply -f k8s/deploy/operator.yaml
+          kubectl apply -f k8s/deploy/manager-controller.yaml
+          kubectl wait --for=condition=Available --timeout=120s -n percussionist deploy/percussionist-operator
+          kubectl wait --for=condition=Available --timeout=120s -n percussionist deploy/percussionist-manager
+
+      # Run extended E2E tests (includes feature-branch, dependency scenarios)
+      - name: Run Extended E2E Tests
+        run: |
+          pnpm e2e:extended
+        env:
+          KUBECONFIG: "${{ runner.temp }}/kubeconfig"
+          ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}"
+          OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}"
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
+      # Upload diagnostics on failure
+      - name: Collect Diagnostics
+        if: failure()
+        run: |
+          mkdir -p /tmp/diagnostics
+          
+          # Cluster info
+          kubectl cluster-info > /tmp/diagnostics/cluster-info.txt 2>&1 || true
+          kubectl config view > /tmp/diagnostics/kubeconfig.yaml 2>&1 || true
+          
+          # All resources in percussionist namespace
+          kubectl get all -n percussionist -o yaml > /tmp/diagnostics/resources.yaml 2>&1 || true
+          
+          # Events (last hour)
+          kubectl get events -n percussionist --sort-by='.lastTimestamp' > /tmp/diagnostics/events.txt 2>&1 || true
+          
+          # Run and Task statuses
+          kubectl get runs -A -o yaml > /tmp/diagnostics/runs.yaml 2>&1 || true
+          kubectl get tasks -A -o yaml > /tmp/diagnostics/tasks.yaml 2>&1 || true
+          kubectl get projects -A -o yaml > /tmp/diagnostics/projects.yaml 2>&1 || true
+          
+          # Pod logs (last 500 lines)
+          for pod in $(kubectl get pods -n percussionist -o name); do
+            kubectl logs "$pod" -n percussionist --tail=500 > "/tmp/diagnostics/$(basename $pod).log" 2>&1 || true
+          done
+
+      - name: Upload Diagnostics Artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-extended-diagnostics-${{ github.sha }}
+          path: /tmp/diagnostics/
+          retention-days: 7
+          compression-level: 6
