@@ -17,6 +17,30 @@ of TypeScript packages under `packages/*`.
 - `pnpm web` - Start web dev server
 - `pnpm web:client` - Start Vite dev server for client
 
+## Commits
+
+All commits must follow **Conventional Commits** format:
+
+```
+<type>[(scope)]: <description>
+```
+
+Husky hooks enforce compliance on every commit:
+- **pre-commit** — runs `pnpm typecheck && pnpm test` (fails if either fails)
+- **commit-msg** — runs `commitlint` to validate the message format
+
+Valid types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
+
+Examples:
+```
+feat(cli): add --timeout flag to submit command
+fix(web): handle null session in StatsView
+chore: bump commander 12.1.0 → 15.0.0
+docs: update README with Tailscale setup
+```
+
+Bypass hooks with `--no-verify` (rarely needed).
+
 ## Building
 - All packages build with `tsc` (ESM output, ES2022 target, NodeNext module)
 - Web client is built separately via Vite (run `pnpm build:client` inside `packages/web`, or just use `pnpm build` from the root which handles it)
