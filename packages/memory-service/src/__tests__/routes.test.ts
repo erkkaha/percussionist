@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, beforeAll, afterAll } from "bun:test";
+import { describe, it, expect, mock, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
@@ -75,30 +75,38 @@ function clear() {
 // ---------------------------------------------------------------------------
 
 describe("handleHealth", () => {
+  let origFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+
   it("returns ok when Ollama model is available", async () => {
-    mock.global().fetch.mockResolvedValueOnce(
+    globalThis.fetch = async () =>
       new Response(JSON.stringify({ models: [{ name: "nomic-embed-text" }] }), {
         status: 200,
-      }),
-    );
+      });
 
     const result = await handleHealth();
     expect(result).toEqual({ ok: true });
   });
 
   it("returns not-ok when Ollama is unreachable", async () => {
-    mock.global().fetch.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    globalThis.fetch = async () => new Response(null, { status: 503 });
 
     const result = await handleHealth();
     expect(result).toEqual({ ok: false });
   });
 
   it("returns not-ok when model is not listed in tags", async () => {
-    mock.global().fetch.mockResolvedValueOnce(
+    globalThis.fetch = async () =>
       new Response(JSON.stringify({ models: [{ name: "llama3" }] }), {
         status: 200,
-      }),
-    );
+      });
 
     const result = await handleHealth();
     expect(result).toEqual({ ok: false });
