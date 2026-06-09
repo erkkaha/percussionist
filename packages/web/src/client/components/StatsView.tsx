@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { BarChart3, List, Table2, Users, Wrench, TrendingUp } from "lucide-react";
@@ -287,10 +287,12 @@ interface SessionsTableProps {
 }
 
 function SessionsTable({ sessions, openRunName, onToggleRun }: SessionsTableProps) {
+  const focusedRowRef = useRef<string | null>(null);
+  
   return (
     <section>
       <div className="rounded-lg border border-border overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm" aria-label="Session runs">
           <thead>
             <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
               <th className="px-4 py-2.5 font-medium">Name</th>
@@ -308,8 +310,8 @@ function SessionsTable({ sessions, openRunName, onToggleRun }: SessionsTableProp
               return (
                 <tr
                   key={s.id}
-                  className={`hover:bg-surface-raised/60 transition-colors cursor-pointer ${
-                    isOpen ? "bg-surface-overlay" : ""
+                  className={`hover:bg-surface-raised/60 transition-colors cursor-pointer focus:outline-none ${
+                    isOpen ? "bg-surface-overlay ring-2 ring-inset ring-primary" : focusedRowRef.current === s.name ? "ring-2 ring-inset ring-ring" : ""
                   }`}
                   onClick={() => onToggleRun(s.name)}
                   onKeyDown={(e) => {
@@ -318,9 +320,12 @@ function SessionsTable({ sessions, openRunName, onToggleRun }: SessionsTableProp
                       onToggleRun(s.name);
                     }
                   }}
+                  onFocus={() => { focusedRowRef.current = s.name; }}
+                  onBlur={() => { focusedRowRef.current = null; }}
                   tabIndex={0}
                   role="button"
                   aria-expanded={isOpen}
+                  aria-selected={isOpen}
                   aria-controls={`session-detail-${s.name}`}
                 >
                   <td className="px-4 py-3">
