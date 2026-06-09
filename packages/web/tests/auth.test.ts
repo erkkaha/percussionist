@@ -21,6 +21,8 @@ process.env.DATA_DIR = TEST_DATA_DIR;
 
 // Use a known secret for testing.
 process.env.AUTH_SECRET = "test-secret-token-12345";
+// Ensure auth is not disabled (smoke test may have set it).
+delete process.env.AUTH_DISABLED;
 
 const app = createApp();
 

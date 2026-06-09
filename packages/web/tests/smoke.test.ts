@@ -19,6 +19,9 @@ import { createApp } from "../src/server/app.js";
 const TEST_DATA_DIR = join("/tmp", `percussionist-smoke-${Date.now()}`);
 
 process.env.DATA_DIR = TEST_DATA_DIR;
+
+// Save and restore AUTH_DISABLED so auth.test.ts is not affected by this test.
+const _prevAuthDisabled = process.env.AUTH_DISABLED;
 process.env.AUTH_DISABLED = "1";
 
 // ---------------------------------------------------------------------------
@@ -43,6 +46,12 @@ beforeAll(() => {
 
 afterAll(() => {
   rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  delete process.env.DATA_DIR;
+  if (_prevAuthDisabled !== undefined) {
+    process.env.AUTH_DISABLED = _prevAuthDisabled;
+  } else {
+    delete process.env.AUTH_DISABLED;
+  }
 });
 
 // ===========================================================================
