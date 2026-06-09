@@ -60,6 +60,7 @@ export default function SessionView({ name, hasSession, active, sseConnected, ev
             <div className="h-4 w-full rounded bg-surface-overlay" />
           </div>
         ))}
+        <p className="text-xs text-text-dim">Loading session messages...</p>
       </div>
     );
   }
@@ -68,8 +69,13 @@ export default function SessionView({ name, hasSession, active, sseConnected, ev
 
   if (messages.length === 0) {
     return (
-      <div className="text-sm text-text-dim">
-        No messages in session yet.
+      <div className="rounded-lg border border-border-muted bg-surface-overlay/30 p-4 text-sm">
+        <p className="text-text-dim mb-2">No session messages available.</p>
+        {data?.source && (
+          <p className="text-xs text-text-muted">
+            Loaded from snapshot (pod no longer available)
+          </p>
+        )}
       </div>
     );
   }
