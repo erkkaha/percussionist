@@ -41,9 +41,9 @@ Percussionist uses a **four-layer testing model** to balance speed, confidence, 
 
 | File | Scenario | Key assertions |
 |------|----------|----------------|
-| `e2e-advances.test.ts` | Worker calls `complete_run` → reviewer approves → task done | Run phase transitions, board column membership |
-| `e2e-facilitator.test.ts` | Worker failure triggers facilitator run | Facilitator run spawned, targetRunName linkage |
-| `e2e-achieves.test.ts` | Failed worker + facilitator recommendation → alternative success | Alternative agent dispatch, deterministic path |
+| `e2e-advances.test.ts` | Worker calls `complete_run` → review run spawned → task reaches awaiting-human | Run phase transitions, review run lifecycle, task status phase |
+| `e2e-basic-failure.test.ts` | Worker fails (invalid git URL) → task reaches failed | Run failure, task status phase |
+| `e2e-achieves.test.ts` | Worker calls fail_run → auto-retry scheduled | Run failure via MCP, task retry lifecycle |
 
 **Responsibility:** Validate end-to-end orchestrator behavior with model-independent guarantees. Target: < 10 minutes per suite on a local cluster.
 

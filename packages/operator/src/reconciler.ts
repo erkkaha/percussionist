@@ -36,7 +36,7 @@ import {
   webURLFor,
 } from "./pod-builder.js";
 import { NAMESPACE, SELF_NAMESPACE } from "./config.js";
-import { ensureDataPVC, isPVCBound } from "./pvc-helper.js";
+import { ensureDataPVC } from "./pvc-helper.js";
 import { resolveRunnerSpec } from "./adapters/opencode-config.js";
 import {
   shouldReconcileCodeServer,
@@ -95,19 +95,48 @@ async function patchStatus(
 // ---------------------------------------------------------------------------
 // Main reconcile function
 
-// Ensure the opencode-config ConfigMap exists in the run namespace by copying
-// it from the operator namespace. This makes the MCP stanza (and provider
-// config) available to every run regardless of which namespace it lands in.
+// Inject the percussionist-dispatcher MCP stanza into an opencode.json string.
+// Parses the raw JSON (defaults to {} on parse error), strips local/stdio MCP
+// entries that are unsafe in headless containers, then adds the dispatcher entry.
+// Exported so it can be called from ensureOpencodeConfig for the no-config case.
+function injectDispatcherMcpStanza(raw: string): string {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    parsed = {};
+  }
+  const mcp = (parsed.mcp ?? {}) as Record<string, unknown>;
+  for (const [key, entry] of Object.entries(mcp)) {
+    const e = entry as Record<string, unknown>;
+    if (e.type === "local" || e.type === "stdio") {
+      delete mcp[key];
+    }
+  }
+  mcp["percussionist-dispatcher"] = {
+    type: "remote",
+    url: "http://127.0.0.1:4097/mcp",
+    enabled: true,
+  };
+  parsed.mcp = mcp;
+  return JSON.stringify(parsed);
+}
+
+// Ensure the opencode-config ConfigMap exists in the run namespace.
+// If the operator namespace has an opencode-config, it is copied (once) so
+// the run pod can read it via OPENCODE_CONFIG_CONTENT.
+// If no source exists, a minimal config containing only the dispatcher MCP
+// stanza is created so agents always have access to complete_run / fail_run.
 async function ensureOpencodeConfig(ns: string): Promise<void> {
   const name = "opencode-config";
   // Try to read the source from the operator namespace.
-  let source: { data?: Record<string, string> } | null = null;
+  let sourceData: Record<string, string> | null = null;
   try {
-    source = await core.readNamespacedConfigMap({ name, namespace: SELF_NAMESPACE });
+    const source = await core.readNamespacedConfigMap({ name, namespace: SELF_NAMESPACE });
+    if (source?.data) sourceData = source.data;
   } catch {
-    return; // Not present in operator ns — nothing to sync.
+    // Not present in operator ns — will fall back to minimal config below.
   }
-  if (!source?.data) return;
   // Check if it already exists in the target namespace.
   try {
     await core.readNamespacedConfigMap({ name, namespace: ns });
@@ -115,6 +144,11 @@ async function ensureOpencodeConfig(ns: string): Promise<void> {
   } catch {
     // Does not exist — create it.
   }
+  // Use operator-namespace config if available; otherwise build a minimal one
+  // that contains only the dispatcher MCP stanza so agents always have tools.
+  const data: Record<string, string> = sourceData ?? {
+    "opencode.json": injectDispatcherMcpStanza("{}"),
+  };
   try {
     await core.createNamespacedConfigMap({
       namespace: ns,
@@ -122,10 +156,10 @@ async function ensureOpencodeConfig(ns: string): Promise<void> {
         apiVersion: "v1",
         kind: "ConfigMap",
         metadata: { name, namespace: ns },
-        data: source.data,
+        data,
       },
     });
-    log(`synced opencode-config to ${ns}`);
+    log(`synced opencode-config to ${ns}${sourceData ? "" : " (minimal dispatcher-only config)"}`);
   } catch (e) {
     if (!/already exists/i.test((e as Error).message)) {
       err(`failed to sync opencode-config to ${ns}:`, (e as Error).message);
@@ -152,56 +186,31 @@ export async function reconcileClusterSettings(
   const { spec } = cs;
   if (!spec) return;
 
-  // --- opencode-config ---
-  // Always inject the dispatcher MCP stanza so every run pod can call
-  // complete_run / complete_plan / fail_run / get_status regardless of what
-  // the user provides in ClusterSettings. The stanza is merged last so it
-  // cannot be accidentally overridden by user-supplied config.
-  function injectDispatcherMcp(raw: string): string {
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      parsed = {};
-    }
-    const mcp = (parsed.mcp ?? {}) as Record<string, unknown>;
-    // Strip local MCP servers — they spawn child processes inside run pods,
-    // consuming memory and potentially failing (npx not available, etc.).
-    // Only remote MCP entries are safe in headless agent containers.
-    for (const [key, entry] of Object.entries(mcp)) {
-      const e = entry as Record<string, unknown>;
-      if (e.type === "local" || e.type === "stdio") {
-        delete mcp[key];
-      }
-    }
-    mcp["percussionist-dispatcher"] = {
-      type: "remote",
-      url: "http://127.0.0.1:4097/mcp",
-      enabled: true,
-    };
-    parsed.mcp = mcp;
-    return JSON.stringify(parsed);
-  }
+   // --- opencode-config ---
+   // Always inject the dispatcher MCP stanza so every run pod can call
+   // complete_run / complete_plan / fail_run / get_status regardless of what
+   // the user provides in ClusterSettings. The stanza is merged last so it
+   // cannot be accidentally overridden by user-supplied config.
 
-  // If spec.runnerConfig?.config is set, it becomes the data source.
-  // Otherwise use configMapRef if set. If neither, leave existing CM alone.
-  if (spec.runnerConfig?.config) {
-    await ssaConfigMap(SELF_NAMESPACE, "opencode-config", {
-      "opencode.json": injectDispatcherMcp(spec.runnerConfig.config),
-    });
-    log(`reconciled opencode-config from ClusterSettings (config string)`);
-  } else if (spec.runnerConfig?.configMapRef) {
-    // Mirror the referenced ConfigMap into our namespace as opencode-config.
-    try {
-      const ref = spec.runnerConfig.configMapRef;
-      const source = await core.readNamespacedConfigMap({
-        name: ref.name,
-        namespace: SELF_NAMESPACE,
-      });
+   // If spec.runnerConfig?.config is set, it becomes the data source.
+   // Otherwise use configMapRef if set. If neither, leave existing CM alone.
+   if (spec.runnerConfig?.config) {
+     await ssaConfigMap(SELF_NAMESPACE, "opencode-config", {
+       "opencode.json": injectDispatcherMcpStanza(spec.runnerConfig.config),
+     });
+     log(`reconciled opencode-config from ClusterSettings (config string)`);
+   } else if (spec.runnerConfig?.configMapRef) {
+     // Mirror the referenced ConfigMap into our namespace as opencode-config.
+     try {
+       const ref = spec.runnerConfig.configMapRef;
+       const source = await core.readNamespacedConfigMap({
+         name: ref.name,
+         namespace: SELF_NAMESPACE,
+       });
       const data = source.data ?? {};
       if (data["opencode.json"]) {
         await ssaConfigMap(SELF_NAMESPACE, "opencode-config", {
-          "opencode.json": injectDispatcherMcp(data["opencode.json"]),
+           "opencode.json": injectDispatcherMcpStanza(data["opencode.json"]),
         });
         log(`reconciled opencode-config from ref ${ref.name}/${ref.key}`);
       }
@@ -471,17 +480,9 @@ export async function reconcile(run: Run): Promise<void> {
         pvcName: dataPvcName,
       });
 
-      // Check if PVC is bound and ready.
-      const bound = await isPVCBound(ns, dataPvcName);
-      if (!bound) {
-        // PVC exists but not yet bound — requeue and wait.
-        await patchStatus(run, {
-          phase: RunPhase.Pending,
-          message: `waiting for data PVC ${dataPvcName} to be bound`,
-        });
-        log(`data PVC ${ns}/${dataPvcName} not yet bound, requeuing...`);
-        return; // Exit early, will be requeued by informer.
-      }
+      // PVC exists — proceed to pod creation. WaitForFirstConsumer storage
+      // classes (e.g. local-path) only bind the PVC after a pod references it,
+      // so waiting here would deadlock. Let the pod wait for the PVC natively.
     } catch (e) {
       const msg = (e as Error).message;
       await patchStatus(run, {

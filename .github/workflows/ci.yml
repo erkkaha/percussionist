@@ -101,6 +101,7 @@ jobs:
           kubectl apply -f k8s/crds/
           kubectl create namespace percussionist || true
           kubectl apply -f k8s/deploy/operator.yaml
+          kubectl apply -f k8s/deploy/agent-config.yaml
           kubectl apply -f k8s/deploy/manager-controller.yaml
           kubectl wait --for=condition=Available --timeout=120s -n percussionist deploy/percussionist-operator
           kubectl wait --for=condition=Available --timeout=120s -n percussionist deploy/percussionist-manager
@@ -190,6 +191,7 @@ jobs:
           kubectl apply -f k8s/crds/
           kubectl create namespace percussionist || true
           kubectl apply -f k8s/deploy/operator.yaml
+          kubectl apply -f k8s/deploy/agent-config.yaml
           kubectl apply -f k8s/deploy/manager-controller.yaml
           kubectl wait --for=condition=Available --timeout=120s -n percussionist deploy/percussionist-operator
           kubectl wait --for=condition=Available --timeout=120s -n percussionist deploy/percussionist-manager

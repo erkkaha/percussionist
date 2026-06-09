@@ -283,11 +283,15 @@ function decideInitializing(input: ReconcileInput): ReconcileDecision {
     const effects: ReconcileEffect[] = [];
     const summary = summarizeEffect(input, run);
     if (summary) effects.push(summary);
+    const runStart = run.status?.startedAt;
+    const lastFailureDuration = runStart
+      ? Math.round((new Date(now).getTime() - new Date(runStart).getTime()) / 1000)
+      : 0;
     return {
       taskName,
       fromPhase,
       toPhase: "failed",
-      statusPatch: { worker: { status: "Failed", completedAt: now } },
+      statusPatch: { worker: { status: "Failed", completedAt: now }, lastFailureDuration },
       effects,
       events: [makeEvent(input, fromPhase, "failed", "WorkerRunFailed", "Run failed during initialization")],
     };
@@ -347,11 +351,15 @@ function decideRunning(input: ReconcileInput): ReconcileDecision {
     const effects: ReconcileEffect[] = [];
     const summary = summarizeEffect(input, run);
     if (summary) effects.push(summary);
+    const runStart = run.status?.startedAt;
+    const lastFailureDuration = runStart
+      ? Math.round((new Date(now).getTime() - new Date(runStart).getTime()) / 1000)
+      : 0;
     return {
       taskName,
       fromPhase,
       toPhase: "failed",
-      statusPatch: { worker: { status: "Failed", completedAt: now } },
+      statusPatch: { worker: { status: "Failed", completedAt: now }, lastFailureDuration },
       effects,
       events: [makeEvent(input, fromPhase, "failed", "WorkerRunFailed")],
     };
