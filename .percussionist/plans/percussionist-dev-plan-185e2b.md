@@ -2,162 +2,126 @@
 
 ## Context
 
-- Buildgen prompt assembly lives in `packages/manager-controller/src/facilitator.ts` (`buildBuildTaskGeneratorRun`). It currently injects:
-  - `PLAN DESCRIPTION` from `planTask.spec.description`
-  - `PLAN SESSION CONTEXT` from `actualSummary`
-  - `PLAN ARTIFACT CONTENT` from `readPlanFromConfigMap(...)`
-- `actualSummary` is currently derived as:
-  - explicit function arg `sessionSummary` (currently always passed as `""` from reconciler effects), else
-  - first `summary-*` key from `${succeededRunName}-session` ConfigMap.
-- Session summarization is triggered via reconciler effect `SummarizeSession`:
-  - Created in `packages/manager-controller/src/reconciler/decision.ts` (`summarizeEffect`)
-  - Executed fire-and-forget in `packages/manager-controller/src/reconciler/effects.ts`
-- The summarizer implementation is in `packages/manager-controller/src/session-summarizer.ts`:
-  - Reads snapshot via `readSessionConfigMap(runName, sessionID, ns)`
-  - Generates 2–3 paragraph summary through opencode (`createSession` + `sendPrompt` + `waitForCompletion`)
-  - Writes `summary-{sessionID}` into `${runName}-session` ConfigMap
-  - Stores same summary to memory service via `storeMemory(...)` with metadata `{ type: "session-summary", runName, sessionID }`
-- Snapshot source is dispatcher (`packages/dispatcher/src/polling.ts`), which writes `sessions.json` + `messages-{sessionID}.json` to `${runName}-session` ConfigMap during/at end of run.
-
-## Key findings to address
-
-1. **Summarization is incorrectly gated behind embedding enablement.**
-   - `summarizeEffect` returns undefined unless `project.spec.embedding?.enabled` is true.
-   - This couples buildgen summary generation to vector-memory availability, even though ConfigMap summary injection should work independently.
-
-2. **Summarization can race with snapshot availability and then never retry.**
-   - If `readSessionConfigMap(...)` returns null once, summarizer logs and returns permanently.
-   - No retry/backoff path exists.
-
-3. **Failure visibility is weak (silent/best-effort paths).**
-   - `SummarizeSession` effect import/execute path swallows errors (`catch(() => {})`).
-   - ConfigMap patch failures are swallowed; code still logs `stored summary...` even if patch failed.
-   - `storeMemory(...).catch(() => {})` suppresses diagnostics.
-
-4. **Buildgen has no explicit fallback strategy when summary is missing.**
-   - It currently inserts `(none available — use the task description above)`.
-   - If plan descriptions are verbose, buildgen token usage remains high.
-
-5. **No focused tests cover this pipeline end-to-end at unit level.**
-   - Existing reconciler tests do not validate summary effect scheduling/behavior details.
+- The buildgen prompt is assembled in `packages/manager-controller/src/facilitator.ts` via `buildBuildTaskGeneratorRun(...)`.
+  - It injects `PLAN SESSION CONTEXT` from `actualSummary`.
+  - `actualSummary` is chosen as `sessionSummary arg -> readStoredSessionSummary(...) -> ""`.
+  - `readStoredSessionSummary` reads `summary-*` keys from `${runName}-session` ConfigMap.
+- Summarization is produced in `packages/manager-controller/src/session-summarizer.ts`:
+  - Reads snapshot using `readSessionConfigMap(runName, sessionID, namespace)`.
+  - Summarizes with manager-side LLM session (`createSession/sendPrompt/waitForCompletion`), not Ollama.
+  - Stores `summary-{sessionID}` in `${runName}-session` ConfigMap.
+  - Best-effort stores same content to memory service via `storeMemory(..., { type: "session-summary", runName, sessionID })`.
+- Summarization is scheduled by reconciler decision logic in `packages/manager-controller/src/reconciler/decision.ts` (`summarizeEffect`) and launched fire-and-forget in `packages/manager-controller/src/reconciler/effects.ts`.
+- Dispatcher snapshot writer (`packages/dispatcher/src/polling.ts`) writes `messages-{sessionID}.json` entries to `${runName}-session`; summarizer depends on these entries existing.
+- Critical finding from repo config: `k8s/self-dev/projects/percussionist-dev.yaml` does **not** enable `spec.embedding.enabled`, while current `summarizeEffect` exits early when embedding is disabled. This is the primary reason summaries are often never attempted in self-dev runs.
 
 ## Scope boundaries
 
-- In scope:
-  - Manager-controller summarization trigger/execution/logging paths
-  - Buildgen summary retrieval/injection behavior
-  - Memory storage observability for session summaries
-  - Deterministic tests for summarization-trigger and prompt-injection logic
-- Out of scope:
-  - Reworking general prompt architecture or reducing plan artifact verbosity globally
-  - Redesigning memory-service schema/vector indexing beyond what is needed for observability and summary writes
-  - Cluster deployment/infra fixes (e.g., bringing up Ollama) beyond graceful degradation behavior in code
+### In scope
+- Reconciler trigger conditions for `SummarizeSession`.
+- Summarizer reliability (snapshot timing), persistence behavior, and observability.
+- Buildgen summary-source selection/logging in `buildBuildTaskGeneratorRun`.
+- Memory-service failure handling as non-fatal behavior.
+- Unit/integration-style tests in manager-controller and memory-service where applicable.
+
+### Out of scope
+- Redesigning facilitator/buildgen prompt structure beyond summary-source correctness.
+- Reducing token usage from plan artifact/body duplication globally.
+- Cluster-level remediation (bringing Ollama/memory pods up) beyond graceful degradation in code.
 
 ## Approach
 
-1. **Decouple summary generation from embedding service enablement.**
-   - Trigger ConfigMap summary generation for completed worker runs regardless of `embedding.enabled`.
-   - Keep vector-memory write as optional best-effort side effect.
+1. **Decouple summary generation from embedding.**
+   Generate ConfigMap session summaries for completed worker runs regardless of memory-service enablement.
 
-2. **Make summarization resilient to eventual consistency.**
-   - Add bounded retry/backoff when session snapshot is not yet present.
-   - Ensure manager logs explicitly show retry attempts and final outcome.
+2. **Treat vector memory as optional sink.**
+   Keep memory write best-effort; if memory service or Ollama is unavailable, do not block or fail summarization pipeline.
 
-3. **Make all failure modes visible in manager logs.**
-   - Replace silent catches with structured warn/error logs (run/task/session identifiers included).
-   - Differentiate: snapshot missing, LLM summarize failure, ConfigMap patch failure, memory-store failure.
+3. **Make the pipeline observable end-to-end.**
+   Add explicit, contextual logs for dispatch, retries, success, and each failure class (snapshot unavailable, LLM summarize failure, ConfigMap write failure, memory write failure).
 
-4. **Clarify buildgen context precedence and fallback.**
-   - Keep summary preferred when present.
-   - Add explicit logging/annotation in prompt construction path indicating whether source is: provided summary, stored summary, or none.
-   - Avoid re-introducing raw full session ingestion into buildgen prompt.
+4. **Harden race-prone snapshot read path.**
+   Add bounded retry/backoff when snapshot ConfigMap is not ready yet.
 
-5. **Add deterministic tests and verification hooks.**
-   - Unit tests for summarization effect emission and buildgen summary selection behavior.
-   - Targeted tests around retry and graceful degradation semantics.
+5. **Verify buildgen consumes summary-only context path.**
+   Keep current design (summary string, not raw session fetch), but add source-selection logs/tests so behavior is explicit and regression-proof.
 
 ## Implementation tasks
 
-1. **Audit and update summarize trigger conditions** (`packages/manager-controller/src/reconciler/decision.ts`)
-   1.1. Refactor `summarizeEffect(...)` so summary generation is not blocked by `project.spec.embedding?.enabled`.
-   1.2. Keep sessionID requirement intact; add explicit comment documenting why summary generation is independent of vector memory.
-   1.3. Add/adjust unit tests in `reconciler/__tests__/decision.test.ts` to assert effect presence for completed runs even when embedding is disabled.
+1. **Fix summary trigger gating in decision engine** (`packages/manager-controller/src/reconciler/decision.ts`)
+   1.1 Remove `project.spec.embedding?.enabled` guard from `summarizeEffect`.
+   1.2 Keep guard on missing `run.status.sessionID`.
+   1.3 Add inline comment documenting that ConfigMap summary generation is independent of vector-memory storage.
+   1.4 Extend `reconciler/__tests__/decision.test.ts` with cases proving `SummarizeSession` appears for succeeded/failed worker runs even when embedding is not configured.
 
-2. **Harden SummarizeSession effect execution logging** (`packages/manager-controller/src/reconciler/effects.ts`)
-   2.1. Replace silent `catch(() => {})` on dynamic import/execution with warning logs containing effect payload (`project`, `runName`, `sessionID`).
-   2.2. Log when fire-and-forget summarization is dispatched (debug/info level).
-   2.3. Ensure this remains non-blocking to reconcile loop.
+2. **Improve fire-and-forget effect observability** (`packages/manager-controller/src/reconciler/effects.ts`)
+   2.1 Log `SummarizeSession` dispatch with `project/runName/sessionID`.
+   2.2 Replace silent import/execute catch with warning/error logs that include the same identifiers.
+   2.3 Preserve non-blocking behavior (reconcile must never fail due to summarization sidecar work).
 
-3. **Add snapshot-availability retry/backoff in summarizer** (`packages/manager-controller/src/session-summarizer.ts`)
-   3.1. Introduce bounded retry loop for `readSessionConfigMap(...)` misses (e.g., short exponential backoff, total cap).
-   3.2. Log each retry and terminal skip reason.
-   3.3. Preserve idempotency: if `summary-{sessionID}` already exists, exit quickly.
+3. **Add retry/backoff for missing snapshot ConfigMap data** (`packages/manager-controller/src/session-summarizer.ts`)
+   3.1 Wrap `readSessionConfigMap` in bounded retry loop (e.g., short exponential backoff + max attempts/time budget).
+   3.2 Log each retry attempt and terminal skip cause when snapshot never appears.
+   3.3 Keep idempotency check (`summary-{sessionID}` exists -> exit) before expensive operations.
 
-4. **Fix misleading success logging and expose write failures** (`packages/manager-controller/src/session-summarizer.ts`)
-   4.1. Only log `stored summary` after confirmed ConfigMap write success.
-   4.2. On ConfigMap patch failure, emit explicit warning with error message and return/mark as non-persisted.
-   4.3. Add log fields for summary length and truncation behavior.
+4. **Correct persistence and logging semantics in summarizer** (`packages/manager-controller/src/session-summarizer.ts`)
+   4.1 Only emit “stored summary” log after successful ConfigMap patch.
+   4.2 Log ConfigMap patch failures explicitly (do not silently swallow).
+   4.3 Include summary size/truncation metadata in success logs.
+   4.4 Keep outer try/catch, but ensure caught errors are contextualized (project/run/session).
 
-5. **Graceful degradation for memory service / Ollama outages** (`packages/manager-controller/src/session-summarizer.ts`, `agent/memory-client.ts`)
-   5.1. Keep summary generation via manager LLM path as primary (no Ollama dependency).
-   5.2. Treat `storeMemory(...)` failure as non-fatal, but log warning with project/run/session context and error text.
-   5.3. Do not add alternate summary provider in this pass unless existing provider is unavailable; if provider unavailable, skip with explicit logs rather than silent fail.
+5. **Graceful degradation when memory/Ollama path is unavailable** (`packages/manager-controller/src/session-summarizer.ts`, `packages/manager-controller/src/agent/memory-client.ts`)
+   5.1 Keep summary generation path unchanged (manager LLM via opencode).
+   5.2 Leave memory persistence non-fatal.
+   5.3 Replace `storeMemory(...).catch(() => {})` with logged warning containing run/session/project and error message.
+   5.4 Do **not** add alternate summarization provider in this iteration; explicit skip+log is preferred over hidden fallback complexity.
 
-6. **Strengthen buildgen context-source handling** (`packages/manager-controller/src/facilitator.ts`)
-   6.1. Keep `readStoredSessionSummary(...)` as preferred fallback when explicit summary arg is empty.
-   6.2. Add manager logs indicating selected summary source (`arg`, `configmap`, or `none`) and size.
-   6.3. Confirm prompt text continues to use summary-only context (no raw session fetch fallback).
-   6.4. Add focused unit tests (new facilitator test file) for source selection and prompt inclusion behavior.
+6. **Verify buildgen summary injection behavior and make source explicit** (`packages/manager-controller/src/facilitator.ts`)
+   6.1 Preserve precedence: explicit arg, then stored ConfigMap summary, else none.
+   6.2 Add informational log for selected source (`arg|configmap|none`) and summary length.
+   6.3 Confirm no raw session fetch fallback is introduced in `buildBuildTaskGeneratorRun`.
+   6.4 Add unit tests for source selection and prompt block content (`PLAN SESSION CONTEXT`).
 
-7. **Verification of summary persistence paths**
-   7.1. Add a small debug/inspection helper path (or test fixture) to validate that summary keys are present in `${runName}-session` ConfigMap data under `summary-{sessionID}`.
-   7.2. Add verification step for memory payload metadata `{ type: "session-summary", runName, sessionID }` being passed to `storeMemory`.
-   7.3. Document operational verification commands (manager logs + ConfigMap inspect + memory `/search`/DB check) in PR notes or inline comments.
+7. **Test coverage for failure modes and regressions**
+   7.1 Add summarizer tests for: snapshot initially missing then available; summarize succeeds; summary key persisted.
+   7.2 Add summarizer tests for ConfigMap patch failure: warning emitted, no false success log.
+   7.3 Add summarizer tests for memory write failure: warning emitted, main summarization still considered successful.
+   7.4 Ensure existing memory-service route tests still validate metadata storage behavior, and extend only if needed for `session-summary` metadata assertions.
 
-8. **Regression tests for non-silent failures and retries**
-   8.1. Add tests around summarizer behavior when snapshot initially missing then appears.
-   8.2. Add tests for ConfigMap patch failure path (warns, does not falsely report success).
-   8.3. Add tests for memory service failure path (warns, still succeeds overall if ConfigMap summary write succeeded).
-
-9. **End-to-end acceptance verification (manual/dev cluster runbook)**
-   9.1. Run a PLAN task to completion and confirm manager logs show `SummarizeSession` dispatch and result.
-   9.2. Verify `${run}-session` contains `summary-{sessionID}`.
-   9.3. Trigger PLAN approval/buildgen and confirm buildgen prompt uses summary source with reduced context size.
-   9.4. Simulate memory service failure and confirm: summary still written to ConfigMap; buildgen still receives summary; warnings visible.
+8. **Manual verification runbook (for BUILD validation/PR notes)**
+   8.1 Complete a PLAN run and confirm manager logs show summarize dispatch + result.
+   8.2 Verify `${runName}-session` contains `summary-{sessionID}`.
+   8.3 Approve PLAN and inspect generated buildgen run input to confirm summary is used (and source logged).
+   8.4 Simulate memory-service outage and verify: ConfigMap summary still written; warnings present; no reconcile failure.
 
 ## Acceptance criteria
 
-- For completed worker runs, summarization attempts occur even when `spec.embedding.enabled` is false.
-- Manager logs contain explicit, searchable events for:
-  - summarization dispatch
-  - snapshot retry/timeout
-  - summarization LLM success/failure
-  - ConfigMap summary write success/failure
-  - memory-store success/failure
-- `summary-{sessionID}` appears in `${runName}-session` ConfigMap for successful summarizations.
-- Buildgen (`buildBuildTaskGeneratorRun`) clearly prefers stored summary and does not inject raw full session text.
-- When memory service/Ollama is unavailable, pipeline degrades gracefully (no crash, no silent fail): ConfigMap summary path remains functional and failures are logged.
-- New/updated tests cover trigger conditions, fallback selection, and failure paths.
+- `SummarizeSession` effects are emitted for completed worker runs even when `spec.embedding.enabled` is false/absent.
+- Manager logs clearly expose summarization lifecycle: dispatch, snapshot retries, summarize result, ConfigMap write result, memory-store result.
+- Successful runs persist `summary-{sessionID}` in `${runName}-session` ConfigMap.
+- `buildBuildTaskGeneratorRun` uses summary source precedence (`arg -> configmap -> none`) and does not read/inject raw session dumps.
+- Memory-service/Ollama failures do not break reconcile flow or buildgen scheduling; they produce visible warnings.
+- New tests cover trigger conditions, race retries, persistence behavior, and failure observability.
 
 ## Risks / open questions
 
-- **Timing risk:** snapshot creation timing vs reconciler transition can still be tight; retry windows must be tuned to avoid long reconcile-side background churn.
-- **Prompt-size ambiguity:** large token usage may also come from plan descriptions/artifact content, not only session context; improvements here may not fully solve token spikes.
-- **Runtime observability tradeoff:** adding logs improves debugging but could increase log volume; need concise, structured messages.
-- **Question:** should buildgen enforce a hard max length for `PLAN SESSION CONTEXT` even when summary exists (defense-in-depth cap)?
-- **Question:** should missing summary block buildgen start briefly (wait-for-summary) or continue immediately with current fallback behavior?
+- **Race tuning risk:** retry window too short may still miss late snapshots; too long may create noisy background churn.
+- **Token-cost ambiguity:** even with fixed summary injection, token spikes may persist due to large `PLAN DESCRIPTION` and `PLAN ARTIFACT CONTENT` blocks.
+- **Logging volume:** additional logs must be concise and structured enough for grepability without flooding.
+- **Open question:** should buildgen optionally wait briefly for summary availability before falling back to `(none available)`?
+- **Open question:** should a hard max-length cap be enforced for `PLAN SESSION CONTEXT` as defense-in-depth even after summarization?
 
 ## Proposed BUILD task breakdown
 
-1. **BUILD A (high):** Decouple summary trigger from embedding flag and add reconciler tests.
-2. **BUILD B (high, depends on A):** Implement summarizer retry/backoff + accurate logging for ConfigMap/LLM paths.
-3. **BUILD C (medium, parallel with B):** Improve fire-and-forget effect logging and non-silent error propagation in `effects.ts`.
-4. **BUILD D (high, depends on B):** Add buildgen summary-source logging + facilitator tests for summary selection.
-5. **BUILD E (medium, depends on B):** Add graceful memory-store failure logging and tests.
-6. **BUILD F (medium, depends on D/E):** Manual verification runbook + acceptance validation in dev cluster.
+1. **BUILD 1 (high):** Remove embedding-gated trigger; add reconciler decision tests for summary effect emission.
+2. **BUILD 2 (high, depends on 1):** Add summarizer snapshot retry/backoff + contextual logging + correct ConfigMap write semantics.
+3. **BUILD 3 (medium, parallel to 2):** Improve `SummarizeSession` fire-and-forget dispatch/import error logging in `effects.ts`.
+4. **BUILD 4 (high, depends on 2):** Add buildgen summary-source logging and facilitator unit tests for source precedence/prompt content.
+5. **BUILD 5 (medium, depends on 2):** Add memory-write failure observability and tests ensuring non-fatal degradation.
+6. **BUILD 6 (medium, depends on 2/4/5):** Execute manual verification runbook and document measured outcomes.
 
 ## Assumptions
 
-- The intended product behavior is: buildgen context should use compact summary when available, independent of vector-memory enablement.
-- Existing summarization via `manager-decision` agent remains the canonical summary-generation provider for this fix.
-- This task focuses on reliability/observability and context-selection correctness, not a broader redesign of facilitator prompts.
+- Intended behavior is summary-first buildgen context injection independent of vector-memory feature flags.
+- Existing manager-side summarization model (`manager-decision` via opencode) remains the only summarization provider for now.
+- This plan addresses reliability and observability, not broader prompt/token-budget redesign.
