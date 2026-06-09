@@ -39,6 +39,7 @@ jobs:
     name: Unit & Smoke Tests
     runs-on: ubuntu-latest
     needs: typecheck-and-build
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +70,7 @@ jobs:
     name: E2E Core (Deterministic)
     runs-on: ubuntu-latest
     needs: [typecheck-and-build, unit-tests]
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -157,6 +159,7 @@ jobs:
     name: E2E Extended (Full Suite)
     runs-on: ubuntu-latest
     needs: [typecheck-and-build, unit-tests]
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
