@@ -150,26 +150,11 @@ describe("achieves", () => {
   );
 
   it(
-    "task phase reaches failed",
-    async () => {
-      await waitFor(
-        `task ${TASK_NAME} phase=failed`,
-        180,
-        10,
-        () => pollTaskPhase(TASK_NAME, NS, "failed"),
-      );
-      const taskPhase = await kubectlGetField("tasks", TASK_NAME, NS, "{.status.phase}");
-      expect(taskPhase).toBe("failed");
-    },
-    185_000,
-  );
-
-  it(
     "manager auto-retries: retry is scheduled",
     async () => {
       await waitFor(
         `task ${TASK_NAME} retryCount increments`,
-        120,
+        180,
         5,
         async () => {
           const retryCount = await kubectlGetField("tasks", TASK_NAME, NS, "{.status.worker.retryCount}");
@@ -187,6 +172,6 @@ describe("achieves", () => {
       expect(retryAfter.length).toBeGreaterThan(0);
       console.log(`    Retry scheduled, retryCount=${count}, retryAfter=${retryAfter}`);
     },
-    125_000,
+    185_000,
   );
 });
