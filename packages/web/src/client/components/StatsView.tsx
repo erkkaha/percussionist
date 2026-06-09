@@ -1,8 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { BarChart3, List, Table2, Users, Wrench, TrendingUp } from "lucide-react";
 import StatusBadge from "./StatusBadge";
+import SessionView from "./SessionView";
 import { authHeaders } from "../lib/auth";
 import TokenCounter from "./TokenCounter";
 import ToolMetricsView from "./ToolMetricsView";
@@ -279,7 +280,13 @@ function ModelBreakdown({ modelRows }: { modelRows: ModelRow[] }) {
 // ---------------------------------------------------------------------------
 // Sessions table
 
-function SessionsTable({ sessions }: { sessions: StatSession[] }) {
+interface SessionsTableProps {
+  sessions: StatSession[];
+  openRunName: string | null;
+  onToggleRun: (runName: string) => void;
+}
+
+function SessionsTable({ sessions, openRunName, onToggleRun }: SessionsTableProps) {
   return (
     <section>
       <div className="rounded-lg border border-border overflow-x-auto">
@@ -296,36 +303,60 @@ function SessionsTable({ sessions }: { sessions: StatSession[] }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border-muted">
-            {sessions.map((s) => (
-              <tr key={s.id} className="hover:bg-surface-raised/60 transition-colors">
-                <td className="px-4 py-3">
-                  <div className="font-medium text-text">{s.name}</div>
-                  {s.task && (
-                    <div className="text-xs text-text-dim mt-0.5 truncate max-w-xs" title={s.task}>
-                      {s.task}
+            {sessions.map((s) => {
+              const isOpen = openRunName === s.name;
+              return (
+                <tr
+                  key={s.id}
+                  className={`hover:bg-surface-raised/60 transition-colors cursor-pointer ${
+                    isOpen ? "bg-surface-overlay" : ""
+                  }`}
+                  onClick={() => onToggleRun(s.name)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onToggleRun(s.name);
+                    }
+                  }}
+                  tabIndex={0}
+                  role="button"
+                  aria-expanded={isOpen}
+                  aria-controls={`session-detail-${s.name}`}
+                >
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-text flex items-center gap-2">
+                      {s.name}
+                      {isOpen && (
+                        <span className="text-xs text-phase-running font-mono">▼</span>
+                      )}
                     </div>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <StatusBadge phase={s.phase as string | undefined} />
-                </td>
-                <td className="px-4 py-3 text-text-muted font-mono text-xs max-w-[160px] truncate" title={resolveModel(s)}>
-                  {resolveModel(s)}
-                </td>
-                <td className="px-4 py-3">
-                  <TokenCounter tokensIn={s.tokensIn} tokensOut={s.tokensOut} />
-                </td>
-                <td className="px-4 py-3 text-text-muted tabular-nums font-mono text-xs">
-                  {fmtCost(s.cost)}
-                </td>
-                <td className="px-4 py-3 text-text-muted tabular-nums">
-                  {fmtDuration(durationMs(s))}
-                </td>
-                <td className="px-4 py-3 text-text-muted tabular-nums">
-                  {fmtAge(s.startedAt)}
-                </td>
-              </tr>
-            ))}
+                    {s.task && (
+                      <div className="text-xs text-text-dim mt-0.5 truncate max-w-xs" title={s.task}>
+                        {s.task}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusBadge phase={s.phase as string | undefined} />
+                  </td>
+                  <td className="px-4 py-3 text-text-muted font-mono text-xs max-w-[160px] truncate" title={resolveModel(s)}>
+                    {resolveModel(s)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <TokenCounter tokensIn={s.tokensIn} tokensOut={s.tokensOut} />
+                  </td>
+                  <td className="px-4 py-3 text-text-muted tabular-nums font-mono text-xs">
+                    {fmtCost(s.cost)}
+                  </td>
+                  <td className="px-4 py-3 text-text-muted tabular-nums">
+                    {fmtDuration(durationMs(s))}
+                  </td>
+                  <td className="px-4 py-3 text-text-muted tabular-nums">
+                    {fmtAge(s.startedAt)}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -839,8 +870,14 @@ export default function StatsView() {
   const [days, setDays] = useState(30);
   const [tab, setTab] = useState<TabId>("overview");
   const [page, setPage] = useState(0);
+  const [openRunName, setOpenRunName] = useState<string | null>(null);
   const { data, error, isLoading, isFetching } = useStats(days, page);
   const { data: trends } = useTrends(days);
+
+  // Clear open session when pagination/day changes to avoid stale detail panes
+  useEffect(() => {
+    setOpenRunName(null);
+  }, [days, page]);
 
   if (page > 0 && data != null && data.offset >= data.total) {
     setPage(0);
@@ -935,7 +972,21 @@ export default function StatsView() {
       {/* Sessions tab */}
       {tab === "sessions" && data && data.total > 0 && (
         <>
-          <SessionsTable sessions={data.sessions} />
+          <SessionsTable sessions={data.sessions} openRunName={openRunName} onToggleRun={(name) => {
+            setOpenRunName((prev) => (prev === name ? null : name));
+          }} />
+          {/* Session detail view */}
+          {openRunName != null && (
+            <div id={`session-detail-${openRunName}`} className="mt-4">
+              <SessionView
+                name={openRunName}
+                hasSession={true}
+                active={false}
+                sseConnected={false}
+                eventTick={0}
+              />
+            </div>
+          )}
           <Pagination
             total={data.total}
             limit={data.limit}
