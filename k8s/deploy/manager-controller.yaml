@@ -173,6 +173,7 @@ spec:
                 secretKeyRef:
                   name: opencode-auth
                   key: auth.json
+                  optional: true
           envFrom:
             - secretRef:
                 name: llm-keys
