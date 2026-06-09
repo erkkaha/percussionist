@@ -79,6 +79,10 @@ jobs:
         with:
           node-version: "24"
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.12"
+
       - name: Enable Corepack
         run: |
           corepack enable
@@ -101,6 +105,7 @@ jobs:
           kubectl apply -f k8s/crds/
           kubectl create namespace percussionist || true
           kubectl apply -f k8s/deploy/operator.yaml
+          kubectl apply -f k8s/deploy/agent-config.yaml
           kubectl apply -f k8s/deploy/manager-controller.yaml
           kubectl wait --for=condition=Available --timeout=120s -n percussionist deploy/percussionist-operator
           kubectl wait --for=condition=Available --timeout=120s -n percussionist deploy/percussionist-manager
@@ -110,7 +115,6 @@ jobs:
         run: |
           pnpm e2e:core
         env:
-          KUBECONFIG: "${{ runner.temp }}/kubeconfig"
           ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}"
           OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}"
           GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
@@ -168,6 +172,10 @@ jobs:
         with:
           node-version: "24"
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.12"
+
       - name: Enable Corepack
         run: |
           corepack enable
@@ -190,6 +198,7 @@ jobs:
           kubectl apply -f k8s/crds/
           kubectl create namespace percussionist || true
           kubectl apply -f k8s/deploy/operator.yaml
+          kubectl apply -f k8s/deploy/agent-config.yaml
           kubectl apply -f k8s/deploy/manager-controller.yaml
           kubectl wait --for=condition=Available --timeout=120s -n percussionist deploy/percussionist-operator
           kubectl wait --for=condition=Available --timeout=120s -n percussionist deploy/percussionist-manager
@@ -199,7 +208,6 @@ jobs:
         run: |
           pnpm e2e:extended
         env:
-          KUBECONFIG: "${{ runner.temp }}/kubeconfig"
           ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}"
           OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}"
           GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"

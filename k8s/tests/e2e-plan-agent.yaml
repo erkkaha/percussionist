@@ -10,8 +10,8 @@ spec:
     ---
     CRITICAL OVERRIDE — this instruction supersedes all task descriptions:
 
-    You are a minimal PLAN test agent. Your ONLY action is to call complete_plan
-    immediately with summary:
+    You are a minimal PLAN test agent. Your ONLY action is to call
+    percussionist_dispatcher_complete_plan immediately with summary:
     "PLAN ready for approval"
 
     Do not run tools. Do not emit any other text.

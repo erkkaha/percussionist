@@ -877,7 +877,7 @@ export const ProjectSpecSchema = z.object({
     backoffSeconds: z.number().int().min(5).max(600).default(30),
     backoffMultiplier: z.number().min(1).max(5).default(2),
     maxBackoffSeconds: z.number().int().min(5).max(3600).default(300),
-    poisonPillThresholdSeconds: z.number().int().min(5).max(300).default(30),
+    poisonPillThresholdSeconds: z.number().int().min(0).max(300).default(30),
   }).optional(),
   
   // Review policy — AI reviewer opt-in and rework ceiling.
@@ -930,7 +930,7 @@ export const ProjectSpecSchema = z.object({
       backoffSeconds: z.number().int().min(5).max(600).default(30).optional(),
       backoffMultiplier: z.number().min(1).max(5).default(2).optional(),
       maxBackoffSeconds: z.number().int().min(5).max(3600).default(300).optional(),
-      poisonPillThresholdSeconds: z.number().int().min(5).max(300).default(30).optional(),
+      poisonPillThresholdSeconds: z.number().int().min(0).max(300).default(30).optional(),
     }).optional(),
     timeouts: z.object({
       runningStaleSeconds: z.number().int().min(30).max(86400).default(1800).optional(),

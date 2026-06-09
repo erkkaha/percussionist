@@ -269,7 +269,7 @@ spec:
                       maximum: 3600
                     poisonPillThresholdSeconds:
                       type: integer
-                      minimum: 5
+                      minimum: 0
                       maximum: 300
                 reviewPolicy:
                   type: object
@@ -402,7 +402,7 @@ spec:
                           maximum: 3600
                         poisonPillThresholdSeconds:
                           type: integer
-                          minimum: 5
+                          minimum: 0
                           maximum: 300
                     timeouts:
                       type: object

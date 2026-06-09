@@ -146,9 +146,9 @@ export function resolveFlow(project: Project): ResolvedFlow {
       enabled: flowRetry?.enabled ?? legacyRetry?.enabled ?? preset.retry!.enabled ?? false,
       maxAttempts: flowRetry?.maxAttempts ?? legacyRetry?.maxAttempts ?? preset.retry!.maxAttempts ?? 3,
       backoffSeconds: flowRetry?.backoffSeconds ?? legacyRetry?.backoffSeconds ?? preset.retry!.backoffSeconds ?? 30,
-      backoffMultiplier: legacyRetry?.backoffMultiplier ?? preset.retry!.backoffMultiplier ?? 2,
-      maxBackoffSeconds: legacyRetry?.maxBackoffSeconds ?? preset.retry!.maxBackoffSeconds ?? 300,
-      poisonPillThresholdSeconds: legacyRetry?.poisonPillThresholdSeconds ?? preset.retry!.poisonPillThresholdSeconds ?? 30,
+      backoffMultiplier: flowRetry?.backoffMultiplier ?? legacyRetry?.backoffMultiplier ?? preset.retry!.backoffMultiplier ?? 2,
+      maxBackoffSeconds: flowRetry?.maxBackoffSeconds ?? legacyRetry?.maxBackoffSeconds ?? preset.retry!.maxBackoffSeconds ?? 300,
+      poisonPillThresholdSeconds: flowRetry?.poisonPillThresholdSeconds ?? legacyRetry?.poisonPillThresholdSeconds ?? preset.retry!.poisonPillThresholdSeconds ?? 30,
     },
     timeouts: {
       runningStaleSeconds: flowTimeouts?.runningStaleSeconds ?? DEFAULT_TIMEOUTS.runningStaleSeconds,

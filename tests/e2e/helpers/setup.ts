@@ -172,11 +172,35 @@ export async function applyCRDs(): Promise<void> {
   console.log("    CRDs applied");
 }
 
-/** Step 2: Deploy operator + manager-controller manifests. */
+/** Step 2: Deploy operator + manager-controller manifests.
+ *
+ * Supports local image overrides via env vars so that locally-built images
+ * can be tested in kind without pushing to a registry:
+ *
+ *   E2E_OPERATOR_IMAGE=ghcr.io/erkkaha/percussionist/operator:e2e-local
+ *   E2E_MANAGER_IMAGE=ghcr.io/erkkaha/percussionist/manager:e2e-local
+ *
+ * When set, `kubectl set image` patches the deployments immediately after
+ * applying the standard manifests.
+ */
 export async function deployComponents(): Promise<void> {
   console.log("==> Step 2: Deploy operator and manager");
   await kubectlApplyFile(resolve(REPO_ROOT, "k8s/deploy/operator.yaml"));
   await kubectlApplyFile(resolve(REPO_ROOT, "k8s/deploy/manager-controller.yaml"));
+
+  const operatorImage = process.env["E2E_OPERATOR_IMAGE"];
+  const managerImage = process.env["E2E_MANAGER_IMAGE"];
+  if (operatorImage) {
+    await kubectl(["-n", OPERATOR_NS, "set", "image",
+      "deployment/percussionist-operator", `operator=${operatorImage}`]);
+    console.log(`    Operator image overridden → ${operatorImage}`);
+  }
+  if (managerImage) {
+    await kubectl(["-n", OPERATOR_NS, "set", "image",
+      "deployment/percussionist-manager", `manager=${managerImage}`]);
+    console.log(`    Manager image overridden → ${managerImage}`);
+  }
+
   console.log("    Deployments applied");
 }
 
@@ -300,7 +324,7 @@ export async function applyClusterAgents(fileNames: string[]): Promise<void> {
 }
 
 /**
- * Apply an Project manifest inline.
+ * Apply a Project manifest inline using top-level spec fields (new CRD format).
  * `model` is omitted from the YAML if not provided.
  */
 export async function applyProject(opts: {
@@ -309,11 +333,22 @@ export async function applyProject(opts: {
   displayName: string;
   llmSecret: string;
   model?: string;
-  boardYaml: string; // the `board:` block (indented with 2 spaces)
-  sourceYaml?: string; // optional `source:` block
+  phase?: string;                                // defaults to "Active"
+  maxParallel?: number;                          // defaults to 1
+  agents?: Array<{ name: string; model?: string }>; // list of agent refs
+  timeoutSeconds?: number;                       // run timeout override
+  sourceYaml?: string;                           // optional `source:` block (indented 2 spaces)
+  flowYaml?: string;                             // optional `flow:` block (indented 2 spaces)
 }): Promise<void> {
   const modelLine = opts.model ? `  model: "${opts.model}"\n` : "";
   const sourceLine = opts.sourceYaml ? `${opts.sourceYaml}\n` : "";
+  const flowLine = opts.flowYaml ? `${opts.flowYaml}\n` : "";
+  const phase = opts.phase ?? "Active";
+  const maxParallel = opts.maxParallel ?? 1;
+  const agentsBlock = opts.agents && opts.agents.length > 0
+    ? `  agents:\n${opts.agents.map((a) => a.model ? `    - name: ${a.name}\n      model: "${a.model}"` : `    - name: ${a.name}`).join("\n")}\n`
+    : "";
+  const timeoutLine = opts.timeoutSeconds ? `  timeoutSeconds: ${opts.timeoutSeconds}\n` : "";
   await kubectlApply(`\
 apiVersion: percussionist.dev/v1alpha1
 kind: Project
@@ -323,12 +358,54 @@ metadata:
 spec:
   displayName: "${opts.displayName}"
 ${modelLine}\
+  phase: ${phase}
+  maxParallel: ${maxParallel}
+${agentsBlock}\
+${timeoutLine}\
   secrets:
     llmKeysSecret: "${opts.llmSecret}"
 ${sourceLine}\
-${opts.boardYaml}
+${flowLine}\
 `);
   console.log(`    Project ${opts.name} applied`);
+}
+
+/**
+ * Apply a Task CR inline.
+ * The task metadata.name is used as the canonical task identifier.
+ */
+export async function applyTask(opts: {
+  name: string;        // metadata.name — the canonical task ID
+  ns: string;
+  projectRef: string;
+  type?: "BUILD" | "PLAN"; // defaults to "BUILD"
+  title: string;
+  agent: string;
+  description?: string;
+  priority?: "high" | "medium" | "low";
+}): Promise<void> {
+  const type = opts.type ?? "BUILD";
+  const descLine = opts.description
+    ? `  description: |\n    ${opts.description.replace(/\n/g, "\n    ")}\n`
+    : "";
+  const priorityLine = opts.priority ? `  priority: ${opts.priority}\n` : "";
+  await kubectlApply(`\
+apiVersion: percussionist.dev/v1alpha1
+kind: Task
+metadata:
+  name: ${opts.name}
+  namespace: ${opts.ns}
+  labels:
+    percussionist.dev/project: ${opts.projectRef}
+spec:
+  projectRef: ${opts.projectRef}
+  type: ${type}
+  title: "${opts.title}"
+  agent: ${opts.agent}
+${descLine}\
+${priorityLine}\
+`);
+  console.log(`    Task ${opts.name} applied`);
 }
 
 /**
