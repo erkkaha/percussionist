@@ -8,7 +8,7 @@
  *   4. Apply Task CR (type=BUILD, agent=e2e-complete-worker).
  *   5. Assert: worker run reaches Succeeded via complete_run MCP tool.
  *   6. Assert: review run is spawned with correct metadata (validates manager triggers AI-review flow).
- *   7. Assert: task phase reaches awaiting-human (either after review completes or falls through).
+ *   7. Assert: task phase reaches awaiting-human (manager transitions out of reviewing).
  */
 
 import { describe, beforeAll, afterAll, it, expect } from "bun:test";
@@ -56,12 +56,6 @@ async function findReviewRun(ns: string, taskId: string, workerRun: string): Pro
   return null;
 }
 
-/** Poll until a run reaches Succeeded or Failed. */
-async function pollTerminal(runName: string, ns: string): Promise<string | null> {
-  const phase = await kubectlGetField("runs", runName, ns, "{.status.phase}");
-  return phase === "Succeeded" || phase === "Failed" ? phase : null;
-}
-
 /** Poll until the Task CR phase = "awaiting-human". */
 async function pollTaskAwaitingHuman(taskName: string, ns: string): Promise<true | null> {
   const phase = await kubectlGetField("tasks", taskName, ns, "{.status.phase}");
@@ -99,9 +93,7 @@ describe("advances", () => {
       onSuccess: ai-review
     review:
       aiReviewerEnabled: true
-      agent: reviewer-approve
-    timeouts:
-      reviewStaleSeconds: 60`,
+      agent: reviewer-approve`,
     });
 
     console.log(`==> Step 9: Apply Task ${TASK_NAME}`);
@@ -178,24 +170,6 @@ describe("advances", () => {
       expect(successReview).toBe("true");
     },
     185_000,
-  );
-
-  it(
-    "review run fails without API keys",
-    async () => {
-      // Without LLM API keys, the review agent can't process its prompt and
-      // either fails quickly or the manager's reviewStaleSeconds timeout
-      // (set to 60s in the project flow) triggers a fallback to awaiting-human.
-      const phase = await waitFor(
-        `review run ${reviewRun} reaches terminal phase`,
-        120,
-        5,
-        () => pollTerminal(reviewRun, NS),
-      );
-      // Accept Failed (agent session fails) or Succeeded (deterministic fixture works).
-      expect(["Succeeded", "Failed"]).toContain(phase);
-    },
-    125_000,
   );
 
   it(
