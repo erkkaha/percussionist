@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
@@ -8,6 +8,8 @@ import * as fs from "node:fs";
 // Only mock embed.js to avoid actual Ollama calls.
 // ---------------------------------------------------------------------------
 
+import "./shared-mocks.js";
+
 const FAKE_EMBEDDING = new Float32Array(
   Array.from({ length: 768 }, (_, i) => Math.sin(i)),
 );
@@ -15,10 +17,6 @@ const FAKE_EMBEDDING = new Float32Array(
 // Set env BEFORE module-level imports so db.ts picks up the temp path.
 const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), "memory-test-"));
 process.env.MEMORY_DB_PATH = path.join(dbDir, "vectors.db");
-
-mock.module("../embed.js", () => ({
-  getEmbedding: async (_text: string) => FAKE_EMBEDDING,
-}));
 
 
 const { handleStoreMemory, handleSearch, handleContext, handleHealth, initDb } =
