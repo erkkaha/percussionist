@@ -247,7 +247,7 @@ export default function CreateProjectForm({
 
           {/* Advanced tab */}
           <TabsContent value="advanced" className="space-y-5">
-            <AdvancedTab form={advancedProps.form} />
+            <AdvancedTab form={advancedProps.form} clusterAgents={clusterAgents} />
           </TabsContent>
         </Tabs>
 

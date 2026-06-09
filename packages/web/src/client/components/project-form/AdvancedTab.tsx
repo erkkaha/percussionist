@@ -6,9 +6,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 interface AdvancedTabProps {
   form: Pick<ProjectFormHookReturn, "sidecars" | "injectFiles" | "initScript" | "rosterAgents" | "rosterPickerValue" | "sidecarErrors" | "hasSidecarErrors" | "injectFileErrors" | "hasInjectFileErrors"> &
     Pick<ProjectFormHookReturn, "setSidecars" | "setInjectFiles" | "setInitScript" | "setRosterAgents" | "setRosterPickerValue" | "addSidecar" | "removeSidecar" | "updateSidecar" | "addInjectFile" | "removeInjectFile" | "updateInjectFile">;
+  clusterAgents: Array<{ name: string; content: string }>;
 }
 
-export default function AdvancedTab({ form }: AdvancedTabProps) {
+export default function AdvancedTab({ form, clusterAgents }: AdvancedTabProps) {
 
   return (
     <div className="space-y-5">
@@ -218,11 +219,22 @@ export default function AdvancedTab({ form }: AdvancedTabProps) {
           </ul>
         )}
         <div className="flex items-center gap-2">
-          <Select value={form.rosterPickerValue} onValueChange={(v) => form.setRosterPickerValue(v)}>
+          <Select value={form.rosterPickerValue} onValueChange={(v) => {
+            if (v && !form.rosterAgents.includes(v)) {
+              form.setRosterAgents((prev) => [...prev, v]);
+            }
+            form.setRosterPickerValue("");
+          }}>
             <SelectTrigger className="flex-1">
               <SelectValue placeholder="— add agent —" />
             </SelectTrigger>
-            {/* roster picker is populated by the parent component via useQuery */}
+            <SelectContent>
+              {clusterAgents
+                .filter((a) => !form.rosterAgents.includes(a.name))
+                .map((a) => (
+                  <SelectItem key={a.name} value={a.name}>{a.name}</SelectItem>
+                ))}
+            </SelectContent>
           </Select>
         </div>
       </fieldset>
