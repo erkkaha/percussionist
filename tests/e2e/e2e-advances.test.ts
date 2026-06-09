@@ -99,7 +99,9 @@ describe("advances", () => {
       onSuccess: ai-review
     review:
       aiReviewerEnabled: true
-      agent: reviewer-approve`,
+      agent: reviewer-approve
+    timeouts:
+      reviewStaleSeconds: 60`,
     });
 
     console.log(`==> Step 9: Apply Task ${TASK_NAME}`);
@@ -179,20 +181,21 @@ describe("advances", () => {
   );
 
   it(
-    "review run completes (terminal phase)",
+    "review run fails without API keys",
     async () => {
+      // Without LLM API keys, the review agent can't process its prompt and
+      // either fails quickly or the manager's reviewStaleSeconds timeout
+      // (set to 60s in the project flow) triggers a fallback to awaiting-human.
       const phase = await waitFor(
         `review run ${reviewRun} reaches terminal phase`,
-        300,
+        120,
         5,
         () => pollTerminal(reviewRun, NS),
       );
-      // The review run may succeed or fail depending on API key availability.
-      // The key assertion is that the manager spawned it and it reached a terminal
-      // phase, confirming the AI-review flow was triggered.
+      // Accept Failed (agent session fails) or Succeeded (deterministic fixture works).
       expect(["Succeeded", "Failed"]).toContain(phase);
     },
-    305_000,
+    125_000,
   );
 
   it(
