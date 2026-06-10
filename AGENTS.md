@@ -7,7 +7,7 @@ of TypeScript packages under `packages/*`.
 ## Key Commands
 - `pnpm build` - Build all packages
 - `pnpm typecheck` - Type-check all packages via `tsc -b` (run before committing; respects project references, runs in topological order)
-- `pnpm test` - Run unit + smoke tests across all packages (Vitest + Bun)
+- `pnpm test` - Run unit + smoke tests across all packages (bun:test)
 - `pnpm e2e:core` - Run deterministic E2E suites on a live cluster (PR gate)
 - `pnpm e2e:extended` - Run extended E2E suites for complex paths like feature branching
 - `pnpm e2e` - Aggregate: runs all E2E suites
@@ -421,7 +421,7 @@ Do not add `ALTER TABLE` try/catch blocks to `db.ts`. Do not duplicate DDL as ra
 
 ## Conventions
 - No linter/formatting tool configured -- do not add one without asking
-- Testing: Vitest in `packages/manager-controller`; run `pnpm test` locally
+- Testing: bun:test in all packages; run `pnpm test` locally
 - K8s client: `@kubernetes/client-node` (lazy singleton, typed CRUD helpers)
 - Console-based logging with timestamps (no structured logger)
 - CamelCase for TS, kebab-case for YAML

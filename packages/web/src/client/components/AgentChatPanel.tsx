@@ -4,6 +4,8 @@ import { DrumLogo } from "./app-sidebar";
 import { authHeaders, getToken } from "../lib/auth";
 import type { Task } from "@/lib/types";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { parseOptionBlocks } from "@/lib/chat-utils";
+import ChatOptionCard from "./ChatOptionCard";
 
 interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -325,24 +327,43 @@ function sanitizeForSpeech(text: string): string {
                 Ask the manager agent about board state, task status, or cluster issues.
               </p>
             )}
-            {messages.map((msg, i) => (
-              <div key={`${messageKey(msg)}-${i}`} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-[80%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words ${
-                    msg.role === "user"
-                      ? "bg-accent/15 text-text border border-accent/30"
-                      : msg.role === "system"
-                        ? "bg-phase-failed/10 text-phase-failed border border-phase-failed/30"
-                        : "bg-surface-raised text-text border border-border-muted"
-                  }`}
-                >
-                  <div>{msg.text}</div>
-                  {msg.created && (
-                    <div className="text-caption-xs text-text-dim/60 mt-1 leading-none">{timeAgo(msg.created)}</div>
-                  )}
+            {messages.map((msg, i) => {
+              // Parse option blocks for assistant messages
+              let cleanText = msg.text;
+              let options: Array<{ key: string; label: string; description?: string }> = [];
+              
+              if (msg.role === "assistant") {
+                const result = parseOptionBlocks(msg.text);
+                cleanText = result.cleanText;
+                options = result.options;
+              }
+              
+              return (
+                <div key={`${messageKey(msg)}-${i}`} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div
+                    className={`max-w-[80%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+                      msg.role === "user"
+                        ? "bg-accent/15 text-text border border-accent/30"
+                        : msg.role === "system"
+                          ? "bg-phase-failed/10 text-phase-failed border border-phase-failed/30"
+                          : "bg-surface-raised text-text border border-border-muted"
+                    }`}
+                  >
+                    {cleanText && <div>{cleanText}</div>}
+                    {msg.role === "assistant" && options.length > 0 && (
+                      <ChatOptionCard
+                        options={options}
+                        onSelect={(key) => sendText(`I choose option [${key}]`)}
+                        disabled={sending}
+                      />
+                    )}
+                    {msg.created && (
+                      <div className="text-caption-xs text-text-dim/60 mt-1 leading-none">{timeAgo(msg.created)}</div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {sending && (
               <div className="flex justify-start">
                 <div className="flex items-center gap-2 rounded-lg px-3 py-2 bg-surface-raised border border-border-muted text-sm text-text-dim">

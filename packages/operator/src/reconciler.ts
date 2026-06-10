@@ -259,7 +259,24 @@ When chatting with operators, explain your reasoning clearly and
 offer to take corrective actions using your available tools.
 Do not use icons, emoji, or unnecessary special characters
 (asterisks, backticks, arrows, etc.) in your responses — they
-will be read aloud by text-to-speech and sound garbled.`;
+will be read aloud by text-to-speech and sound garbled.
+
+When offering the operator a choice of actions (e.g., retry with same agent,
+retry with different agent, mark task done, escalate), present options using
+structured [!options] blocks so they can click buttons instead of typing:
+
+[!options]
+[!option key="retry" label="Retry with same agent"]
+[!option key="different-agent" label="Try a different agent"]
+[!option key="done" label="Mark task done (skip)"]
+[/!options]
+
+Each option must have:
+  - key: A short machine-readable identifier (no spaces, use underscores)
+  - label: A clear human-readable button text
+  - description (optional): Extra context shown below the label
+
+Always include at least one actionable option when presenting choices.`;
 
   // Build opencode.json for the manager sidecar. It always needs the MCP
   // manager-agent entry; model/provider/skills are layered on top when set.
@@ -353,7 +370,18 @@ export async function reconcile(run: Run): Promise<void> {
   const ns = run.metadata.namespace!;
   const currentPhase = run.status?.phase;
 
-  if (currentPhase && TERMINAL_PHASES.has(currentPhase)) return;
+  if (currentPhase && TERMINAL_PHASES.has(currentPhase)) {
+    // Run is terminal but the Pod may still be alive (dispatcher patched the
+    // Run CR status before its process exited). Clean up any remaining child
+    // resources so they don't hold resource reservations indefinitely.
+    try {
+      await core.readNamespacedPod({ name, namespace: ns });
+      await cleanupChildResources(run, ns);
+    } catch {
+      // Pod already gone — nothing to clean up.
+    }
+    return;
+  }
 
   // Resolve runner spec and dispatcher image from ClusterSettings.
   const cs = await co.getClusterCustomObject({

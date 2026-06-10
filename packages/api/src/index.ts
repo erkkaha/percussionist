@@ -1157,7 +1157,7 @@ export function resolveRunConfig(
       project.resources ??
       clusterBase?.runner?.resources,
     secrets: runOverrides?.secrets ?? project.secrets ?? clusterBase?.secrets,
-    source: project.source,
+    source: structuredClone(project.source),
     sidecars: project.sidecars,
     injectFiles: project.injectFiles,
     initScript: project.initScript,
