@@ -1558,19 +1558,20 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         registryError = (e as Error).message;
       }
 
-      const currentTag = foundImage.tag;
+      const current = {
+        operator: images["percussionist-operator"]?.tag ?? null,
+        manager: images["percussionist-manager"]?.tag ?? null,
+        web: images["percussionist-web"]?.tag ?? null,
+        dispatcher: dispatcherInfo?.tag ?? null,
+      };
+
       const updateAvailable =
         latestTag !== null &&
-        latestTag !== currentTag &&
-        !registryError;
+        !registryError &&
+        Object.values(current).some((tag) => tag !== null && tag !== latestTag);
 
       return {
-        current: {
-          operator: images["percussionist-operator"]?.tag ?? null,
-          manager: images["percussionist-manager"]?.tag ?? null,
-          web: images["percussionist-web"]?.tag ?? null,
-          dispatcher: dispatcherInfo?.tag ?? null,
-        },
+        current,
         latest: latestTag,
         updateAvailable,
         registryPrefix: foundImage.registryPrefix,
