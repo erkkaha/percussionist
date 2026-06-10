@@ -112,6 +112,7 @@ async function cleanupExpiredRunWorktree(run: Run): Promise<void> {
   const scriptLines: string[] = [
     "set -e",
     `echo "[cleanup-ttl] removing worktree ${worktreeDir}"`,
+    `BRANCH=$(git -C ${worktreeDir} symbolic-ref HEAD 2>/dev/null || true)`,
     `rm -rf ${worktreeDir}`,
   ];
 
@@ -122,6 +123,10 @@ async function cleanupExpiredRunWorktree(run: Run): Promise<void> {
       `if [ -d "${mirrorDir}" ]; then`,
       `  echo "[cleanup-ttl] pruning mirror ${mirrorDir}"`,
       `  git -C "${mirrorDir}" worktree prune --expire=now 2>/dev/null || true`,
+      `  if [ -n "$BRANCH" ]; then`,
+      `    echo "[cleanup-ttl] deleting branch ref \${BRANCH#refs/heads/}"`,
+      `    git -C "${mirrorDir}" branch -D "\${BRANCH#refs/heads/}" 2>/dev/null || true`,
+      `  fi`,
       "fi",
     );
   }

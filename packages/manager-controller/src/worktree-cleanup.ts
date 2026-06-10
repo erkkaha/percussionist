@@ -88,12 +88,17 @@ export async function spawnWorktreeCleanupPod(
   const script = [
     "set -e",
     `echo "[cleanup] removing worktree ${worktreeDir}"`,
+    `BRANCH=$(git -C ${shQuote(worktreeDir)} symbolic-ref HEAD 2>/dev/null || true)`,
     `rm -rf ${shQuote(worktreeDir)}`,
     ...(mirrorDir
       ? [
-          `echo "[cleanup] pruning git worktree metadata in ${mirrorDir}"`,
           `if [ -d "${mirrorDir}" ]; then`,
+          `  echo "[cleanup] pruning mirror ${mirrorDir}"`,
           `  git -C "${mirrorDir}" worktree prune --expire=now 2>/dev/null || true`,
+          `  if [ -n "$BRANCH" ]; then`,
+          `    echo "[cleanup] deleting branch ref \${BRANCH#refs/heads/}"`,
+          `    git -C "${mirrorDir}" branch -D "\${BRANCH#refs/heads/}" 2>/dev/null || true`,
+          `  fi`,
           `fi`,
         ]
       : []),
@@ -198,21 +203,29 @@ export async function spawnTaskWorktreeCleanupPod(
   const script = [
     "set -e",
     `echo "[cleanup] removing all worktrees for task ${taskName}"`,
-    `cd ${shQuote(worktreeDir)} || exit 0`, // Exit gracefully if worktree dir doesn't exist
+    `cd ${shQuote(worktreeDir)} || exit 0`,
+    `BRANCHES=""`,
     `for dir in ${shQuote(runPrefix)}-*; do`,
     `  [ -e "$dir" ] || continue`,
     `  case "$dir" in`,
     `    ${runPrefix}-??????????) ;;`,
     `    *) continue ;;`,
     `  esac`,
+    `    BRANCH=$(git -C "$dir" symbolic-ref HEAD 2>/dev/null || true)`,
+    `    BRANCH="\${BRANCH#refs/heads/}"`,
+    `    [ -n "$BRANCH" ] && BRANCHES="$BRANCHES $BRANCH"`,
     `    echo "[cleanup] removing $dir"`,
     `    rm -rf "$dir"`,
     `done`,
     ...(mirrorDir
       ? [
-          `echo "[cleanup] pruning git worktree metadata in ${mirrorDir}"`,
           `if [ -d "${mirrorDir}" ]; then`,
+          `  echo "[cleanup] pruning mirror ${mirrorDir}"`,
           `  git -C "${mirrorDir}" worktree prune --expire=now 2>/dev/null || true`,
+          `  for b in $BRANCHES; do`,
+          `    echo "[cleanup] deleting branch ref $b"`,
+          `    git -C "${mirrorDir}" branch -D "$b" 2>/dev/null || true`,
+          `  done`,
           `fi`,
         ]
       : []),
