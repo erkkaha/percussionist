@@ -40,20 +40,33 @@ function NodeCard({ node }: { node: NodeMetricRow }) {
   const cpuPct = Math.min((node.cpuMillicores / cpuTotal) * 100, 100);
   const memPct = Math.min((node.memoryBytes / memTotal) * 100, 100);
 
+  const allocCpuTotal = node.allocatableCpuMillicores || cpuTotal;
+  const allocMemTotal = node.allocatableMemoryBytes || memTotal;
+  const cpuReqPct = node.allocatedCpuMillicores ? Math.min((node.allocatedCpuMillicores / allocCpuTotal) * 100, 100) : 0;
+  const memReqPct = node.allocatedMemoryBytes ? Math.min((node.allocatedMemoryBytes / allocMemTotal) * 100, 100) : 0;
+
   return (
     <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="font-mono text-sm text-text truncate" title={node.name}>{node.name}</h3>
         <span className="text-xs text-text-dim">{age(node.timestamp)} ago</span>
       </div>
-      <MetricBar label="CPU" value={`${fmtCpu(node.cpuMillicores)} / ${fmtCpu(cpuTotal)}`} pct={cpuPct} />
-      <MetricBar label="Memory" value={`${fmtMemory(node.memoryBytes)} / ${fmtMemory(memTotal)}`} pct={memPct} />
+      <UsageBar label="CPU" value={`${fmtCpu(node.cpuMillicores)} / ${fmtCpu(cpuTotal)}`} pct={cpuPct} />
+      {node.allocated && (
+        <UsageBar label="Req." value={`${fmtCpu(node.allocatedCpuMillicores)} / ${fmtCpu(allocCpuTotal)}`} pct={cpuReqPct} variant="request" />
+      )}
+      <UsageBar label="Memory" value={`${fmtMemory(node.memoryBytes)} / ${fmtMemory(memTotal)}`} pct={memPct} />
+      {node.allocated && (
+        <UsageBar label="Req." value={`${fmtMemory(node.allocatedMemoryBytes)} / ${fmtMemory(allocMemTotal)}`} pct={memReqPct} variant="request" />
+      )}
     </div>
   );
 }
 
-function MetricBar({ label, value, pct }: { label: string; value: string; pct: number }) {
-  const color = pct > 80 ? "bg-red-500" : pct > 50 ? "bg-amber-500" : "bg-primary-container";
+function UsageBar({ label, value, pct, variant = "usage" }: { label: string; value: string; pct: number; variant?: "usage" | "request" }) {
+  const color = variant === "request"
+    ? pct > 80 ? "bg-violet-500" : pct > 50 ? "bg-violet-400" : "bg-violet-300"
+    : pct > 80 ? "bg-red-500" : pct > 50 ? "bg-amber-500" : "bg-primary-container";
   return (
     <div>
       <div className="flex items-center justify-between text-xs mb-1">
@@ -69,6 +82,20 @@ function MetricBar({ label, value, pct }: { label: string; value: string; pct: n
 
 // ---------------------------------------------------------------------------
 // Pod table
+
+function fmtCpuCompact(usage: number, request: number, limit: number): string {
+  const u = fmtCpu(usage);
+  const r = request > 0 ? fmtCpu(request) : "-";
+  const l = limit > 0 ? fmtCpu(limit) : "-";
+  return `${u} / ${r} / ${l}`;
+}
+
+function fmtMemCompact(usage: number, request: number, limit: number): string {
+  const u = fmtMemory(usage);
+  const r = request > 0 ? fmtMemory(request) : "-";
+  const l = limit > 0 ? fmtMemory(limit) : "-";
+  return `${u} / ${r} / ${l}`;
+}
 
 function PodTable({ pods }: { pods: PodMetricRow[] }) {
   const sorted = [...pods].sort((a, b) => b.totalCpuMillicores - a.totalCpuMillicores);
@@ -87,8 +114,8 @@ function PodTable({ pods }: { pods: PodMetricRow[] }) {
         <thead>
           <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
             <th className="px-4 py-2.5 font-medium">Pod</th>
-            <th className="px-4 py-2.5 font-medium">CPU</th>
-            <th className="px-4 py-2.5 font-medium">Memory</th>
+            <th className="px-4 py-2.5 font-medium">CPU (use / req / limit)</th>
+            <th className="px-4 py-2.5 font-medium">Memory (use / req / limit)</th>
             <th className="px-4 py-2.5 font-medium">Containers</th>
             <th className="px-4 py-2.5 font-medium">Age</th>
           </tr>
@@ -100,10 +127,10 @@ function PodTable({ pods }: { pods: PodMetricRow[] }) {
                 {p.name}
               </td>
               <td className="px-4 py-3 tabular-nums font-mono text-xs text-text-muted">
-                {fmtCpu(p.totalCpuMillicores)}
+                {fmtCpuCompact(p.totalCpuMillicores, p.totalCpuRequest, p.totalCpuLimit)}
               </td>
               <td className="px-4 py-3 tabular-nums font-mono text-xs text-text-muted">
-                {fmtMemory(p.totalMemoryBytes)}
+                {fmtMemCompact(p.totalMemoryBytes, p.totalMemoryRequest, p.totalMemoryLimit)}
               </td>
               <td className="px-4 py-3 text-text-muted">
                 <span className="text-xs">{p.containers.length}</span>

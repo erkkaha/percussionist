@@ -87,6 +87,10 @@ importers:
       '@percussionist/api':
         specifier: workspace:*
         version: link:../api
+    devDependencies:
+      '@types/bun':
+        specifier: latest
+        version: 1.3.14
 
   packages/manager-controller:
     dependencies:
@@ -131,6 +135,10 @@ importers:
       '@percussionist/kube':
         specifier: workspace:*
         version: link:../kube
+    devDependencies:
+      '@types/bun':
+        specifier: latest
+        version: 1.3.14
 
   packages/web:
     dependencies:

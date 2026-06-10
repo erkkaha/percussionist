@@ -16,6 +16,9 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "bun test src/"
   },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
   "dependencies": {
     "@kubernetes/client-node": "1.4.0",
     "@percussionist/api": "workspace:*"

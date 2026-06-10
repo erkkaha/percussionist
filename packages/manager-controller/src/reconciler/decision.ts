@@ -5,6 +5,7 @@ import type { ResolvedFlow } from "./flow.js";
 import type { ReconcileEffect } from "./effects.js";
 import { isValidTransition } from "./transitions.js";
 import { workerRunName, auxiliaryRunName } from "../worker-builder.js";
+import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
 import { getReviewVerdict, getConsumedAnnotationKeys } from "./observations.js";
 import { createHash } from "node:crypto";
 
@@ -221,7 +222,7 @@ function decidePending(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideScheduled(input: ReconcileInput): ReconcileDecision {
-  const { task, project, now } = input;
+  const { task, project, now, allTasks } = input;
   const taskName = task.metadata.name;
   const fromPhase = "scheduled" as TaskPhase;
   const retryCount = task.status?.worker?.retryCount ?? 0;
@@ -229,6 +230,12 @@ function decideScheduled(input: ReconcileInput): ReconcileDecision {
 
   // Compute deterministic run name.
   const runName = workerRunName(project.metadata.name, taskName, retryCount);
+
+  // Resolve feature-branch metadata so the diff view and workspace-init
+  // have correct refs without relying on fallback to the Run spec.
+  const gitBranch = resolveTaskBranch(task, project, allTasks);
+  const parentBranch = resolveParentBranch(task, project, allTasks);
+  const mergeIntoBranch = resolveMergeBranch(task, project, allTasks);
 
   return {
     taskName,
@@ -241,6 +248,9 @@ function decideScheduled(input: ReconcileInput): ReconcileDecision {
         startedAt: now,
         retryCount,
         aiReworkCount: task.status?.worker?.aiReworkCount ?? 0,
+        gitBranch,
+        parentBranch,
+        mergeIntoBranch,
       },
     },
     effects: [

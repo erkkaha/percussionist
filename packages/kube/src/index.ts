@@ -1238,6 +1238,105 @@ export async function listPodMetrics(ns: string = NAMESPACE): Promise<PodMetric[
   }));
 }
 
+export interface ContainerResources {
+  name: string;
+  requests: { cpu: string; memory: string };
+  limits: { cpu: string; memory: string };
+}
+
+export interface PodResourceSpec {
+  name: string;
+  nodeName: string;
+  containers: ContainerResources[];
+  podRequests: { cpu: string; memory: string };
+  podLimits: { cpu: string; memory: string };
+}
+
+/** Fetch pod specs from the core API and extract container resource requests/limits. */
+export async function listPodResources(ns: string = NAMESPACE): Promise<PodResourceSpec[]> {
+  const res = await core().listNamespacedPod({ namespace: ns });
+  return (res.items ?? []).map((pod) => {
+    const containers = (pod.spec?.containers ?? []).map((c) => {
+      const requests = {
+        cpu: c.resources?.requests?.cpu ?? "0",
+        memory: c.resources?.requests?.memory ?? "0",
+      };
+      const limits = {
+        cpu: c.resources?.limits?.cpu ?? "0",
+        memory: c.resources?.limits?.memory ?? "0",
+      };
+      return { name: c.name, requests, limits };
+    });
+    const podRequests = containers.reduce(
+      (acc, c) => ({
+        cpu: addCpu(acc.cpu, c.requests.cpu),
+        memory: addMemory(acc.memory, c.requests.memory),
+      }),
+      { cpu: "0", memory: "0" },
+    );
+    const podLimits = containers.reduce(
+      (acc, c) => ({
+        cpu: addCpu(acc.cpu, c.limits.cpu),
+        memory: addMemory(acc.memory, c.limits.memory),
+      }),
+      { cpu: "0", memory: "0" },
+    );
+    return { name: pod.metadata?.name ?? "", nodeName: pod.spec?.nodeName ?? "", containers, podRequests, podLimits };
+  });
+}
+
+/** Sum pod requests grouped by node — gives the "allocated" view like kubectl describe node. */
+export async function listNodeAllocated(ns: string = NAMESPACE): Promise<Map<string, { cpu: string; memory: string }>> {
+  const pods = await core().listNamespacedPod({ namespace: ns });
+  const nodeMap = new Map<string, { cpuSum: number; memSum: number }>();
+
+  for (const pod of pods.items ?? []) {
+    const nodeName = pod.spec?.nodeName;
+    if (!nodeName) continue;
+    let cpuTotal = 0;
+    let memTotal = 0;
+    for (const c of pod.spec?.containers ?? []) {
+      cpuTotal += parseCpuRaw(c.resources?.requests?.cpu ?? "0");
+      memTotal += parseMemoryRaw(c.resources?.requests?.memory ?? "0");
+    }
+    const cur = nodeMap.get(nodeName) ?? { cpuSum: 0, memSum: 0 };
+    cur.cpuSum += cpuTotal;
+    cur.memSum += memTotal;
+    nodeMap.set(nodeName, cur);
+  }
+
+  const result = new Map<string, { cpu: string; memory: string }>();
+  for (const [node, totals] of nodeMap) {
+    result.set(node, { cpu: `${totals.cpuSum}m`, memory: `${totals.memSum}Mi` });
+  }
+  return result;
+}
+
+function parseCpuRaw(raw: string): number {
+  const n = parseInt(raw, 10);
+  if (raw.endsWith("n")) return Math.round(n / 1_000_000);
+  if (raw.endsWith("u")) return Math.round(n / 1_000);
+  if (raw.endsWith("m")) return n;
+  return n * 1000;
+}
+
+function parseMemoryRaw(raw: string): number {
+  const n = parseInt(raw, 10);
+  if (raw.endsWith("Ki")) return n / 1024;
+  if (raw.endsWith("Mi")) return n;
+  if (raw.endsWith("Gi")) return n * 1024;
+  if (raw.endsWith("Ti")) return n * 1024 * 1024;
+  return Math.round(n / (1024 * 1024));
+}
+
+function addCpu(a: string, b: string): string {
+  return `${parseCpuRaw(a) + parseCpuRaw(b)}m`;
+}
+
+function addMemory(a: string, b: string): string {
+  return `${parseMemoryRaw(a) + parseMemoryRaw(b)}Mi`;
+}
+
 // ---------------------------------------------------------------------------
 // Workspace exec — spawn a one-off maintenance pod to run a command against
 // the project data PVC, collect its output, then delete the pod.

@@ -5,7 +5,12 @@
 // GET /api/metrics/events — SSE stream for metric changes (polling-based).
 
 import { Hono } from "hono";
-import { listNodeMetrics, listPodMetrics, listNodeCapacities, listNodeHostStats, NAMESPACE, type NodeMetric, type NodeCapacityTotal, type NodeHostStats, type PodMetric } from "../kube.js";
+import {
+  listNodeMetrics, listPodMetrics, listNodeCapacities, listNodeHostStats,
+  listPodResources, listNodeAllocated,
+  NAMESPACE,
+  type NodeMetric, type NodeCapacityTotal, type NodeHostStats, type PodMetric, type PodResourceSpec,
+} from "../kube.js";
 import { createPollingSseResponse } from "../lib/sse.js";
 import { auth } from "../auth.js";
 
@@ -13,9 +18,10 @@ const metrics = new Hono();
 
 metrics.get("/nodes", auth(), async (c) => {
   try {
-    const [items, capacities] = await Promise.all([
+    const [items, capacities, nodeAllocated] = await Promise.all([
       listNodeMetrics(),
       listNodeCapacities().catch((): NodeCapacityTotal[] => []),
+      listNodeAllocated(NAMESPACE).catch((): Map<string, { cpu: string; memory: string }> => new Map()),
     ]);
     const capMap = new Map(capacities.map((c) => [c.name, c]));
 
@@ -31,8 +37,11 @@ metrics.get("/nodes", auth(), async (c) => {
     const nodes = items.map((n) => {
       const cap = capMap.get(n.name);
       const hs = hostMap.get(n.name);
+      const allocated = nodeAllocated.get(n.name);
       return {
-        ...n,
+        name: n.name,
+        timestamp: n.timestamp,
+        window: n.window,
         usage: {
           cpu: n.usage.cpu,
           // Use host-level memory when available, fall back to cgroup memory.
@@ -43,6 +52,9 @@ metrics.get("/nodes", auth(), async (c) => {
           : null,
         allocatable: cap
           ? { cpu: cap.allocatableCpu, memory: cap.allocatableMemory }
+          : null,
+        allocated: allocated
+          ? { cpu: allocated.cpu, memory: allocated.memory }
           : null,
       };
     });
@@ -59,7 +71,30 @@ metrics.get("/nodes", auth(), async (c) => {
 
 metrics.get("/pods", auth(), async (c) => {
   try {
-    const items = await listPodMetrics(NAMESPACE);
+    const [metricsItems, resourceSpecs] = await Promise.all([
+      listPodMetrics(NAMESPACE),
+      listPodResources(NAMESPACE).catch((): PodResourceSpec[] => []),
+    ]);
+    const resMap = new Map(resourceSpecs.map((r) => [r.name, r]));
+
+    const items = metricsItems.map((p) => {
+      const res = resMap.get(p.name);
+      return {
+        ...p,
+        containers: res
+          ? p.containers.map((c) => {
+              const r = res.containers.find((rc) => rc.name === c.name);
+              return {
+                ...c,
+                requests: r ? { cpu: r.requests.cpu, memory: r.requests.memory } : null,
+                limits: r ? { cpu: r.limits.cpu, memory: r.limits.memory } : null,
+              };
+            })
+          : p.containers.map((c) => ({ ...c, requests: null, limits: null })),
+        podRequests: res ? res.podRequests : null,
+        podLimits: res ? res.podLimits : null,
+      };
+    });
     return c.json({ items });
   } catch (e: unknown) {
     const statusCode = (e as { statusCode?: number })?.statusCode;
@@ -75,14 +110,15 @@ metrics.get("/events", auth(), async (c) => {
   return createPollingSseResponse({
     signal: c.req.raw.signal,
     getSignature: async () => {
-      const [nodes, pods, capacities] = await Promise.all([
+      const [nodes, pods, capacities, allocated] = await Promise.all([
         listNodeMetrics().catch((): NodeMetric[] => []),
         listPodMetrics(NAMESPACE).catch((): PodMetric[] => []),
         listNodeCapacities().catch((): NodeCapacityTotal[] => []),
+        listNodeAllocated(NAMESPACE).catch((): Map<string, { cpu: string; memory: string }> => new Map()),
       ]);
       const capMap = new Map(capacities.map((c) => [c.name, c]));
       return JSON.stringify({
-        n: nodes.map((n) => `${n.name}:${n.usage.cpu}:${n.usage.memory}:${(capMap.get(n.name)?.capacityCpu) ?? ""}:${(capMap.get(n.name)?.capacityMemory) ?? ""}`),
+        n: nodes.map((n) => `${n.name}:${n.usage.cpu}:${n.usage.memory}:${(capMap.get(n.name)?.capacityCpu) ?? ""}:${(capMap.get(n.name)?.capacityMemory) ?? ""}:${(allocated.get(n.name)?.cpu) ?? "0"}:${(allocated.get(n.name)?.memory) ?? "0"}`),
         p: pods.map((p) => `${p.name}:${p.containers.map((c) => `${c.name}:${c.usage.cpu}:${c.usage.memory}`).join(",")}`),
       });
     },
