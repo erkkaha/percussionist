@@ -14,6 +14,7 @@ import {
   type UpdateStatus,
   type UpgradeResult,
 } from "../lib/api";
+import { authHeaders } from "../lib/auth";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./ui/card";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -385,10 +386,13 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
   // When the user hasn't customized the content, fetch the operator's default.
   useEffect(() => {
     if (!manager.decisionAgentContent) {
-      fetch("/api/settings/decision-agent-default")
-        .then((r) => r.json())
-        .then((data: { content: string }) => {
-          if (data.content) setDecisionAgentContent(data.content);
+      fetch("/api/settings/decision-agent-default", { headers: authHeaders() })
+        .then((r) => {
+          if (!r.ok) return;
+          return r.json() as Promise<{ content: string }>;
+        })
+        .then((data) => {
+          if (data?.content) setDecisionAgentContent(data.content);
         })
         .catch(() => { /* fall through to empty */ });
     }

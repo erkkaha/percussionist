@@ -115,14 +115,19 @@ describe("health", () => {
 
 describe("unauthenticated access → 401", () => {
   // Settings routes — all sensitive (secrets, cluster config)
-  describe("settings", () => {
+  describe("settings (read)", () => {
     it("GET /api/settings → 401", async () => expectUnauthorized("/api/settings"));
-    it("PUT /api/settings → 401", async () =>
-      expectUnauthorized("/api/settings", "PUT", { spec: {} }));
     it("GET /api/settings/opencode-config → 401", async () =>
       expectUnauthorized("/api/settings/opencode-config"));
+    it("GET /api/settings/decision-agent-default → 401", async () =>
+      expectUnauthorized("/api/settings/decision-agent-default"));
     it("GET /api/settings/secrets → 401", async () =>
       expectUnauthorized("/api/settings/secrets"));
+  });
+
+  describe("settings (mutating)", () => {
+    it("PUT /api/settings → 401", async () =>
+      expectUnauthorized("/api/settings", "PUT", { spec: {} }));
     it("POST /api/settings/secrets → 401", async () =>
       expectUnauthorized("/api/settings/secrets", "POST", { name: "test", data: {} }));
     it("PUT /api/settings/secrets/test → 401", async () =>
