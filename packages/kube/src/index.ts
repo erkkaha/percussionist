@@ -14,8 +14,6 @@ import {
   CoreV1Api,
   CustomObjectsApi,
   AppsV1Api,
-  PatchStrategy,
-  setHeaderOptions,
   V1Pod,
 } from "@kubernetes/client-node";
 import fs from "node:fs";
@@ -23,7 +21,6 @@ import {
   API_GROUP,
   API_VERSION,
   API_GROUP_VERSION,
-  KIND_RUN,
   KIND_PROJECT,
   KIND_TASK,
   KIND_CLUSTER_AGENT,
@@ -602,7 +599,6 @@ export async function patchTask(
   name: string,
   patch: Partial<Pick<Task, "metadata" | "spec">>,
   ns: string = NAMESPACE,
-  client = custom(),
 ): Promise<Task> {
   // Use fetch directly for merge-patch since the client doesn't support custom headers well.
   const token = readServiceAccountToken() ?? readKubeconfigToken();

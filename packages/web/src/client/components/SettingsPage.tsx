@@ -312,11 +312,6 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
   const [value, setValue] = useState(config);
   const [jsonError, setJsonError] = useState<string | null>(null);
 
-  // Keep value in sync when config loads from query
-  if (config !== value && value === config) {
-    // already in sync
-  }
-
   function handleChange(raw: string) {
     setValue(raw);
     try {

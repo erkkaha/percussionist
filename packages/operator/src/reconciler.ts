@@ -362,8 +362,6 @@ export async function reconcile(run: Run): Promise<void> {
   }).then((r) => r as ClusterSettings).catch(() => undefined);
   const runnerSpec = resolveRunnerSpec(cs);
 
-  if (currentPhase && TERMINAL_PHASES.has(currentPhase)) return;
-
   // Resolve agents from ClusterAgent CRs + inline escape hatch.
   const agentNames = (run.spec.agents ?? []).map((a) => a.name);
   if (run.spec.agent && !agentNames.includes(run.spec.agent)) {
