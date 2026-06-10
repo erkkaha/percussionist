@@ -311,7 +311,7 @@ const TOOLS = [
         task: { type: "string", description: "Task CR name" },
         targetPhase: {
           type: "string",
-          enum: ["idea", "pending", "scheduled", "running", "failed", "awaiting-human", "rework-requested", "done"],
+          enum: ["idea", "pending", "scheduled", "failed", "awaiting-human", "rework-requested", "done"],
           description: "Target phase for the task. Most common: pending (reset to backlog), awaiting-human (needs review), rework-requested (AI/human requested changes), done (complete).",
         },
         cancelRunning: {
@@ -1237,6 +1237,15 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         );
       }
 
+      // Cannot transition directly to "running" — no Run would exist, so the
+      // next reconcile immediately flips the task to "failed". Use force_retry
+      // or create_run instead.
+      if (targetPhase === "running") {
+        throw new Error(
+          'Cannot transition directly to "running". Use force_retry to retry a task or create_run to start a new run.',
+        );
+      }
+
       const deletedRuns = preserveRuns
         ? []
         : await deleteRunsForTask(projectName, taskName, resourceNs, { includeActive: cancelRunning, includeUnknown: true });
@@ -1245,10 +1254,10 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       let workerCleared = true;
       
       // Phase-specific worker state updates
-      if (targetPhase === "scheduled" || targetPhase === "running") {
+      if (targetPhase === "scheduled") {
         const retryCount = existingWorker?.retryCount ?? 0;
         await patchTaskStatus(taskName, {
-          phase: targetPhase as "scheduled" | "running",
+          phase: "scheduled",
           worker: {
             ...(existingWorker ?? {}),
             runName: undefined,
