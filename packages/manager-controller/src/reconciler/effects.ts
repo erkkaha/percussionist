@@ -6,6 +6,7 @@ import type { ResolvedFlow } from "./flow.js";
 import { validateTransition } from "./transitions.js";
 import { createRun, deleteRun, patchTaskStatus, getTask, patchTask, createTask, getRun, patchProject } from "@percussionist/kube";
 import { buildWorkerRun, buildMergeRun } from "../worker-builder.js";
+import { isKubeNotFoundError } from "../kube-errors.js";
 
 export type ReconcileEffect =
   | { type: "ScheduleRun"; runName: string; retryCount: number; reworkFeedback?: string }
@@ -202,7 +203,7 @@ export async function executeEffects(
           try {
             await deleteRun(effect.name, namespace);
           } catch (e: unknown) {
-            if (!isNotFound(e)) throw e;
+            if (!isKubeNotFoundError(e)) throw e;
           }
           break;
         }
@@ -307,15 +308,6 @@ function isAlreadyExists(e: unknown): boolean {
     e !== null &&
     "statusCode" in e &&
     (e as { statusCode?: number }).statusCode === 409
-  );
-}
-
-function isNotFound(e: unknown): boolean {
-  return (
-    typeof e === "object" &&
-    e !== null &&
-    "statusCode" in e &&
-    (e as { statusCode?: number }).statusCode === 404
   );
 }
 

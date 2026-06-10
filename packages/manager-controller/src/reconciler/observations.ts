@@ -4,6 +4,7 @@ import type { Task, Project, Run } from "@percussionist/api";
 import { getRun } from "@percussionist/kube";
 import type { ReconcileInput, ObservedRuns, ManualActions } from "./decision.js";
 import { resolveFlow } from "./flow.js";
+import { isKubeNotFoundError } from "../kube-errors.js";
 
 const TASK_ANNOTATION_KEYS = {
   approved: "percussionist.dev/action-approved",
@@ -34,7 +35,7 @@ export async function observe(
   // (network blip, API server 503) — the latter should propagate so the
   // reconciler retries instead of incorrectly flipping the task to failed.
   const maybeRun = async (name: string) => getRun(name, namespace).catch((err: unknown) => {
-    if ((err as Record<string, unknown> | undefined)?.statusCode === 404) return undefined;
+    if (isKubeNotFoundError(err)) return undefined;
     throw err;
   });
   const [worker, review, merge, buildgen] = await Promise.all([

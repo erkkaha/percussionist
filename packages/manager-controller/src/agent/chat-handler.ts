@@ -19,6 +19,7 @@ import {
 import { DECISION_AGENT_NAME } from "./config.js";
 import { core } from "@percussionist/kube";
 import { PatchStrategy, setHeaderOptions } from "@kubernetes/client-node";
+import { getErrorStatusCode, isKubeNotFoundError } from "../kube-errors.js";
 
 const CONFIGMAP_NAME = "manager-chat-history";
 const SAVE_DEBOUNCE_MS = 2000;
@@ -51,7 +52,7 @@ async function loadHistoryFromConfigMap(): Promise<void> {
     }
   } catch (e: unknown) {
     // 404 = ConfigMap doesn't exist yet (first run). Other errors are logged.
-    if (((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) !== 404) {
+    if (!isKubeNotFoundError(e)) {
       log(`failed to load chat history from ConfigMap: ${(e as Error).message}`);
     }
   }
@@ -72,7 +73,7 @@ async function saveHistoryToConfigMap(): Promise<void> {
       setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
     );
   } catch (e: unknown) {
-    const status = (e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code;
+    const status = getErrorStatusCode(e);
     if (status === 404) {
       // ConfigMap doesn't exist — create it
       try {

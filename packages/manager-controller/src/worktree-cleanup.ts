@@ -12,6 +12,7 @@
 import { core, gitUrlHash } from "@percussionist/kube";
 import { API_GROUP_VERSION, KIND_TASK, LABELS, MANAGED_BY } from "@percussionist/api";
 import type { Task } from "@percussionist/api";
+import { getErrorStatusCode } from "./kube-errors.js";
 
 const log = (...args: unknown[]) =>
   console.log(`[worktree-cleanup ${new Date().toISOString()}]`, ...args);
@@ -150,9 +151,7 @@ export async function spawnWorktreeCleanupPod(
     await core().createNamespacedPod({ namespace, body: pod });
     log(`cleanup pod ${namespace}/${podName} created for run ${runName}`);
   } catch (e: unknown) {
-    const statusCode =
-      (e as { statusCode?: number }).statusCode ??
-      (e as { code?: number }).code;
+    const statusCode = getErrorStatusCode(e);
     if (statusCode === 409) {
       log(`cleanup pod ${namespace}/${podName} already exists, skipping`);
       return;
@@ -271,9 +270,7 @@ export async function spawnTaskWorktreeCleanupPod(
     await core().createNamespacedPod({ namespace, body: pod });
     log(`task cleanup pod ${namespace}/${podName} created for task ${taskName}`);
   } catch (e: unknown) {
-    const statusCode =
-      (e as { statusCode?: number }).statusCode ??
-      (e as { code?: number }).code;
+    const statusCode = getErrorStatusCode(e);
     if (statusCode === 409) {
       log(`task cleanup pod ${namespace}/${podName} already exists, skipping`);
       return;
