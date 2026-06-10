@@ -40,7 +40,6 @@ const EXPOSE_WEB_DEFAULT =
 const OLLAMA_BASE_URL =
   process.env.OLLAMA_BASE_URL ??
   `http://ollama.${NAMESPACE}.svc.cluster.local:11434`;
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "nomic-embed-text";
 
 const WEB_AUTH_TOKEN = process.env.WEB_AUTH_TOKEN ?? "";
 
@@ -70,7 +69,6 @@ export {
   INGRESS_ANNOTATIONS,
   EXPOSE_WEB_DEFAULT,
   OLLAMA_BASE_URL,
-  EMBEDDING_MODEL,
   DEFAULT_STORAGE_CLASS,
   DEFAULT_STORAGE_ACCESS_MODE,
 };
