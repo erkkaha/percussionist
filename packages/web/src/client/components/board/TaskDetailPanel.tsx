@@ -75,6 +75,44 @@ const planMarkdownComponents: React.ComponentProps<typeof ReactMarkdown>["compon
   td: ({ children }) => <td className="border border-border px-2 py-1">{children}</td>,
 };
 
+// ---------------------------------------------------------------------------
+// Task description markdown components — tuned for compact board detail display
+// ---------------------------------------------------------------------------
+const taskDescriptionMarkdownComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
+  p: ({ children }) => <p className="my-0 text-sm leading-relaxed">{children}</p>,
+  pre: ({ children }) => <div className="mb-2">{children}</div>,
+  code: ({ children, className }) => {
+    const lang = className?.replace("language-", "") ?? "";
+    const code = String(children).replace(/\n$/, "");
+    if (lang || code.includes("\n")) {
+      return <CodeBlock code={code} language={lang} />;
+    }
+    return <span className="bg-surface-sunken rounded px-1 py-0.5 text-xs font-mono">{children}</span>;
+  },
+  h1: ({ children }) => <h1 className="text-headline-md font-semibold mt-3 mb-1 text-text">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-body-lg font-semibold mt-2 mb-1 text-text">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-body-sm font-semibold mt-2 mb-0.5 text-text">{children}</h3>,
+  ul: ({ children }) => <ul className="list-disc pl-5 space-y-1 text-sm">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1 text-sm">{children}</ol>,
+  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  hr: () => <hr className="my-2 border-border-muted" />,
+  table: ({ children }) => (
+    <div className="overflow-x-auto mb-2">
+      <table className="border-collapse text-xs w-full">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="bg-surface-raised">{children}</thead>,
+  tbody: ({ children }) => <tbody className="divide-y divide-border-muted">{children}</tbody>,
+  tr: ({ children }) => <tr className="hover:bg-surface-overlay/30 transition-colors">{children}</tr>,
+  th: ({ children }) => <th className="border border-border px-2 py-1.5 font-semibold text-left">{children}</th>,
+  td: ({ children }) => <td className="border border-border px-2 py-1 text-sm">{children}</td>,
+  a: ({ children, href }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-accent hover:text-accent/80 underline decoration-dotted">
+      {children}
+    </a>
+  ),
+};
+
 function PlanContent({ projectName, taskName }: { projectName: string; taskName: string }) {
   const { data, status, fetchStatus, error } = useQuery({
     queryKey: ["plan", projectName, taskName],
@@ -272,7 +310,9 @@ function OverviewContent({ task, col, projectName }: { task: Task; col: string; 
       {task.spec.description && (
         <div>
           <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">Description</p>
-          <p className="text-sm whitespace-pre-wrap leading-relaxed text-text">{task.spec.description}</p>
+          <ReactMarkdown remarkPlugins={remarkPlugins} components={taskDescriptionMarkdownComponents}>
+            {task.spec.description}
+          </ReactMarkdown>
         </div>
       )}
 
