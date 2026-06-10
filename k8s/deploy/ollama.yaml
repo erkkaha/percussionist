@@ -3,9 +3,9 @@
 # The memory service calls Ollama's /api/embeddings endpoint to generate vector
 # embeddings for semantic search and context retrieval.
 #
-# An init container pre-pulls nomic-embed-text on startup so the model is
-# available before any memory service begins requesting embeddings.  Manual
-# `ollama pull` is no longer required as a prerequisite.
+# Model warmup is handled per-project by the memory service at startup.
+# The memory service pulls the model declared in spec.embedding.model
+# when it starts, so no global init preload is required.
 #
 # Memory services discover Ollama via cluster DNS at http://ollama.percussionist.svc.cluster.local:11434
 # Override per-project via spec.embedding.ollamaUrl.
@@ -32,14 +32,6 @@ spec:
         app.kubernetes.io/name: percussionist
         app.kubernetes.io/component: ollama
     spec:
-      initContainers:
-        - name: pull-embedding-model
-          image: ollama/ollama:latest
-          imagePullPolicy: IfNotPresent
-          command: ["sh", "-c", "ollama pull nomic-embed-text"]
-          resources:
-            requests: { cpu: "100m", memory: "256Mi" }
-            limits:   { memory: "2Gi" }
       containers:
         - name: ollama
           image: ollama/ollama:latest
