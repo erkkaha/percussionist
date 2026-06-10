@@ -7,7 +7,7 @@ import { isValidTransition } from "./transitions.js";
 import { isActivePhase } from "./scheduler.js";
 import { workerRunName, auxiliaryRunName } from "../worker-builder.js";
 import { getReviewVerdict, getConsumedAnnotationKeys } from "./observations.js";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 
 function summarizeEffect(input: ReconcileInput, run: Run): ReconcileEffect | undefined {
   if (!input.project.spec.embedding?.enabled) return undefined;
@@ -739,8 +739,11 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
   let mergeRunName = task.status?.worker?.mergeRunName;
 
   if (!mergeRunName) {
-    const suffix = randomBytes(3).toString("hex");
-    mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, suffix);
+    const retSuffix = createHash("sha256")
+      .update(`${input.project.metadata.name}:${taskName}:merge:${task.status?.worker?.retryCount ?? 0}`)
+      .digest("hex")
+      .slice(0, 10);
+    mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, retSuffix);
     return {
       taskName,
       fromPhase,
@@ -853,7 +856,10 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
         events: [makeEvent(input, fromPhase, "awaiting-human", "NoWorkerRunForBuildGen")],
       };
     }
-    const suffix = randomBytes(3).toString("hex");
+    const suffix = createHash("sha256")
+      .update(`${input.project.metadata.name}:${taskName}:buildgen`)
+      .digest("hex")
+      .slice(0, 10);
     const name = auxiliaryRunName(input.project.metadata.name, "buildgen", taskName, suffix);
     return {
       taskName,
@@ -958,7 +964,10 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
   }
 
   // auto-merge mode — schedule merge run for feature branch → target.
-  const mergeSuffix = randomBytes(3).toString("hex");
+  const mergeSuffix = createHash("sha256")
+    .update(`${input.project.metadata.name}:${taskName}:merge`)
+    .digest("hex")
+    .slice(0, 10);
   const mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSuffix);
 
   return {
@@ -979,7 +988,10 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
 
   if (!mergeRunName) {
     // Create merge run if not yet assigned.
-    const suffix = randomBytes(3).toString("hex");
+    const suffix = createHash("sha256")
+      .update(`${input.project.metadata.name}:${taskName}:merge`)
+      .digest("hex")
+      .slice(0, 10);
     const name = auxiliaryRunName(input.project.metadata.name, "merge", taskName, suffix);
     return {
       taskName, fromPhase,
