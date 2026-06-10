@@ -353,7 +353,18 @@ export async function reconcile(run: Run): Promise<void> {
   const ns = run.metadata.namespace!;
   const currentPhase = run.status?.phase;
 
-  if (currentPhase && TERMINAL_PHASES.has(currentPhase)) return;
+  if (currentPhase && TERMINAL_PHASES.has(currentPhase)) {
+    // Run is terminal but the Pod may still be alive (dispatcher patched the
+    // Run CR status before its process exited). Clean up any remaining child
+    // resources so they don't hold resource reservations indefinitely.
+    try {
+      await core.readNamespacedPod({ name, namespace: ns });
+      await cleanupChildResources(run, ns);
+    } catch {
+      // Pod already gone — nothing to clean up.
+    }
+    return;
+  }
 
   // Resolve runner spec and dispatcher image from ClusterSettings.
   const cs = await co.getClusterCustomObject({
