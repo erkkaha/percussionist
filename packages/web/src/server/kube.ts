@@ -52,11 +52,14 @@ export {
   listPodMetrics,
   listNodeCapacities,
   listNodeHostStats,
+  listPodResources,
+  listNodeAllocated,
   type NodeMetric,
   type NodeCapacity,
   type NodeCapacityTotal,
   type NodeHostStats,
   type PodMetric,
+  type PodResourceSpec,
   gitUrlHash,
 } from "@percussionist/kube";
 

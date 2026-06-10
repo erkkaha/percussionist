@@ -4,6 +4,8 @@ import { authHeaders } from "../lib/auth";
 interface ContainerUsage {
   name: string;
   usage: { cpu: string; memory: string };
+  requests: { cpu: string; memory: string } | null;
+  limits: { cpu: string; memory: string } | null;
 }
 
 export interface PodMetricRow {
@@ -14,6 +16,10 @@ export interface PodMetricRow {
   containers: ContainerUsage[];
   totalCpuMillicores: number;
   totalMemoryBytes: number;
+  totalCpuRequest: number;
+  totalMemoryRequest: number;
+  totalCpuLimit: number;
+  totalMemoryLimit: number;
 }
 
 export interface NodeMetricRow {
@@ -26,6 +32,12 @@ export interface NodeMetricRow {
   capacity: { cpu: string; memory: string } | null;
   capacityCpuMillicores: number;
   capacityMemoryBytes: number;
+  allocatable: { cpu: string; memory: string } | null;
+  allocatableCpuMillicores: number;
+  allocatableMemoryBytes: number;
+  allocated: { cpu: string; memory: string } | null;
+  allocatedCpuMillicores: number;
+  allocatedMemoryBytes: number;
 }
 
 function parseCpu(raw: string): number {
@@ -58,8 +70,8 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
         throw new Error(nodeErr.error ?? "metrics unavailable");
       }
 
-      const nodesData = nodesRes.ok ? (await nodesRes.json() as { items: Array<{ name: string; timestamp: string; window: string; usage: { cpu: string; memory: string }; capacity: { cpu: string; memory: string } | null }> }) : { items: [] };
-      const podsData = podsRes.ok ? (await podsRes.json() as { items: Array<{ name: string; namespace: string; timestamp: string; window: string; containers: ContainerUsage[] }> }) : { items: [] };
+      const nodesData = nodesRes.ok ? (await nodesRes.json() as { items: Array<{ name: string; timestamp: string; window: string; usage: { cpu: string; memory: string }; capacity: { cpu: string; memory: string } | null; allocatable: { cpu: string; memory: string } | null; allocated: { cpu: string; memory: string } | null }> }) : { items: [] };
+      const podsData = podsRes.ok ? (await podsRes.json() as { items: Array<{ name: string; namespace: string; timestamp: string; window: string; containers: ContainerUsage[]; podRequests: { cpu: string; memory: string } | null; podLimits: { cpu: string; memory: string } | null }> }) : { items: [] };
 
       const nodes: NodeMetricRow[] = nodesData.items.map((n) => ({
         name: n.name,
@@ -71,11 +83,21 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
         capacity: n.capacity,
         capacityCpuMillicores: n.capacity ? parseCpu(n.capacity.cpu) : 0,
         capacityMemoryBytes: n.capacity ? parseMemory(n.capacity.memory) : 0,
+        allocatable: n.allocatable,
+        allocatableCpuMillicores: n.allocatable ? parseCpu(n.allocatable.cpu) : 0,
+        allocatableMemoryBytes: n.allocatable ? parseMemory(n.allocatable.memory) : 0,
+        allocated: n.allocated,
+        allocatedCpuMillicores: n.allocated ? parseCpu(n.allocated.cpu) : 0,
+        allocatedMemoryBytes: n.allocated ? parseMemory(n.allocated.memory) : 0,
       }));
 
       const pods: PodMetricRow[] = podsData.items.map((p) => {
         const totalCpuMillicores = p.containers.reduce((sum, c) => sum + parseCpu(c.usage.cpu), 0);
         const totalMemoryBytes = p.containers.reduce((sum, c) => sum + parseMemory(c.usage.memory), 0);
+        const totalCpuRequest = p.podRequests ? parseCpu(p.podRequests.cpu) : 0;
+        const totalMemoryRequest = p.podRequests ? parseMemory(p.podRequests.memory) : 0;
+        const totalCpuLimit = p.podLimits ? parseCpu(p.podLimits.cpu) : 0;
+        const totalMemoryLimit = p.podLimits ? parseMemory(p.podLimits.memory) : 0;
         return {
           name: p.name,
           namespace: p.namespace,
@@ -84,6 +106,10 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
           containers: p.containers,
           totalCpuMillicores,
           totalMemoryBytes,
+          totalCpuRequest,
+          totalMemoryRequest,
+          totalCpuLimit,
+          totalMemoryLimit,
         };
       });
 
