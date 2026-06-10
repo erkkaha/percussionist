@@ -88,7 +88,7 @@ function AddTaskForm({ projectName, roster, defaultColumn = "backlog", onClose }
       />
 
       <Textarea
-        placeholder="Description (optional)"
+        placeholder="Description (optional, supports Markdown)"
         value={taskDesc}
         onChange={(e) => setTaskDesc(e.target.value)}
         rows={3}
