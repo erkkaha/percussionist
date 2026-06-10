@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { sql } from "drizzle-orm";
 import { getDb, getRawDb } from "./db.js";
-import { memories } from "./schema.js";
 import { getEmbedding } from "./embed.js";
 
 // ---------------------------------------------------------------------------
@@ -74,23 +72,26 @@ export async function handleStoreMemory(
 ): Promise<StoreMemoryResponse> {
   const id = randomUUID();
   const embedding = await getEmbedding(body.content);
-  const db = getDb();
-
-  db.insert(memories)
-    .values({
-      id,
-      content: body.content,
-      metadata: JSON.stringify(body.metadata ?? {}),
-      agentRun: body.agentRun,
-    })
-    .run();
-
   const raw = getRawDb();
+
+  // Use a transaction with last_insert_rowid() so the vec_memories rowid
+  // stays aligned with the memories rowid.  Without this, a DELETE (which
+  // resets the memories rowid counter but not the vec_memories counter)
+  // causes the two sequences to desync and search to silently return wrong
+  // content.
+  raw.run("BEGIN TRANSACTION");
   raw
     .prepare(
-      `INSERT INTO vec_memories (rowid, embedding) VALUES (?1, ?2)`,
+      "INSERT INTO memories (id, content, metadata, agent_run) VALUES (?, ?, ?, ?)",
     )
-    .run(null, new Uint8Array(embedding.buffer));
+    .run(id, body.content, JSON.stringify(body.metadata ?? {}), body.agentRun);
+  const rid = (raw
+    .prepare("SELECT last_insert_rowid() AS rid")
+    .get() as { rid: number }).rid;
+  raw
+    .prepare("INSERT INTO vec_memories (rowid, embedding) VALUES (?, ?)")
+    .run(rid, new Uint8Array(embedding.buffer));
+  raw.run("COMMIT");
 
   return { id };
 }
