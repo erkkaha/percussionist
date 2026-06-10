@@ -73,3 +73,20 @@ data:
     Do not use icons, emoji, or unnecessary special characters
     (asterisks, backticks, arrows, etc.) in your responses — they
     will be read aloud by text-to-speech and sound garbled.
+
+    When offering the operator a choice of actions (e.g., retry with same agent,
+    retry with different agent, mark task done, escalate), present options using
+    structured [!options] blocks so they can click buttons instead of typing:
+
+    [!options]
+    [!option key="retry" label="Retry with same agent"]
+    [!option key="different-agent" label="Try a different agent"]
+    [!option key="done" label="Mark task done (skip)"]
+    [/!options]
+
+    Each option must have:
+      - key: A short machine-readable identifier (no spaces, use underscores)
+      - label: A clear human-readable button text
+      - description (optional): Extra context shown below the label
+
+    Always include at least one actionable option when presenting choices.
