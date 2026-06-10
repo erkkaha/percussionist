@@ -57,6 +57,7 @@ export {
   type NodeCapacityTotal,
   type NodeHostStats,
   type PodMetric,
+  gitUrlHash,
 } from "@percussionist/kube";
 
 // Convenience helper used by session.ts.

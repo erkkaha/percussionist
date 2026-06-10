@@ -36,6 +36,7 @@ import {
   buildTask,
   createTask,
   apps,
+  gitUrlHash,
 } from "@percussionist/kube";
 import { LABELS, MEMORY_SERVICE_PORT, type Project, type Task, type TaskPhase, type TaskSpec } from "@percussionist/api";
 import { storeMemory, queryMemory, getContext } from "./memory-client.js";
@@ -666,11 +667,7 @@ async function cleanupRunWorktree(projectName: string, runName: string, resource
   const gitUrl = project.spec.source?.git?.url;
   if (!gitUrl) return;
   const mountPath = project.spec.data?.mountPath ?? "/data";
-  const hash = (() => {
-    let h = 5381;
-    for (let i = 0; i < gitUrl.length; i++) h = ((h << 5) + h + gitUrl.charCodeAt(i)) >>> 0;
-    return h.toString(16).padStart(8, "0");
-  })();
+  const hash = gitUrlHash(gitUrl);
   const quotedRun = runName.replace(/'/g, "'\\''");
   await execInWorkspace(
     projectName,
@@ -1441,11 +1438,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       if (!isLocal && gitUrl) {
         const task = await getTask(taskName, resourceNs);
         const gitBranch = task.status?.worker?.gitBranch || `feature/${taskName}`;
-        let h = 5381;
-        for (let i = 0; i < gitUrl.length; i++) {
-          h = ((h << 5) + h + gitUrl.charCodeAt(i)) >>> 0;
-        }
-        const urlHash = h.toString(16).padStart(8, "0");
+        const urlHash = gitUrlHash(gitUrl);
         const mirrorPath = `${mountPath}/git-mirrors/${urlHash}`;
 
         const gitShowCmd = `apk add --no-cache git > /dev/null 2>&1 && cd '${mirrorPath}' && git show '${gitBranch}:${planPath}' 2>/dev/null`;

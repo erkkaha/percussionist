@@ -1066,6 +1066,23 @@ export function fatal(prefix: string, e: unknown): never {
   process.exit(1);
 }
 
+/**
+ * Deterministic 8-char hex hash of a git URL, used as a directory name for
+ * bare git mirrors.  Uses a djb2-style algorithm — good enough for directory
+ * naming without a dependency on node:crypto.
+ *
+ * IMPORTANT: Changing this function will break worktree cleanup, TTL cleanup,
+ * diff generation, and plan read paths across the entire system.  A unit test
+ * pins the output for a known URL so any future change is explicit.
+ */
+export function gitUrlHash(url: string): string {
+  let h = 5381;
+  for (let i = 0; i < url.length; i++) {
+    h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
 // ---------------------------------------------------------------------------
 // Metrics helpers (metrics.k8s.io/v1beta1 — requires metrics-server addon).
 

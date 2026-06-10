@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { NAMESPACE, getProject, getTask, getRun } from "../kube.js";
+import { NAMESPACE, getProject, getTask, getRun, gitUrlHash } from "../kube.js";
 import { auth } from "../auth.js";
 
 type DiffFile = {
@@ -16,14 +16,6 @@ type DiffCommit = {
 
 function quoteSh(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
-
-function gitUrlHash(url: string): string {
-  let h = 5381;
-  for (let i = 0; i < url.length; i++) {
-    h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
-  }
-  return h.toString(16).padStart(8, "0");
 }
 
 function splitDiffByFile(diffText: string): DiffFile[] {
