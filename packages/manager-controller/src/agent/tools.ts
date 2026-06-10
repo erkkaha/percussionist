@@ -1104,12 +1104,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
           phase: "pending",
           worker: existingWorker
             ? {
-                ...clearWorkerRunRefs(existingWorker),
+                ...existingWorker,
+                ...clearWorkerRunRefs(),
                 status: "Failed",
                 retryCount,
+                aiReworkCount: existingWorker.aiReworkCount ?? 0,
               }
             : {
-                ...clearWorkerRunRefs({}),
+                ...clearWorkerRunRefs(),
                 status: "Failed" as const,
                 retryCount,
                 aiReworkCount: 0,
@@ -1263,7 +1265,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         await patchTaskStatus(taskName, {
           phase: "scheduled",
           worker: {
-            ...(existingWorker ? clearWorkerRunRefs(existingWorker) : clearWorkerRunRefs({})),
+            ...(existingWorker ?? {}),
+            ...clearWorkerRunRefs(),
             status: "Running",
             ...workerBranchPatch(project, task, projectTasks),
             retryCount,
@@ -1275,10 +1278,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         await patchTaskStatus(taskName, {
           phase: "done",
           worker: {
-            ...(existingWorker
-              ? clearWorkerRunRefs(existingWorker)
-              : clearWorkerRunRefs({ retryCount: 0, aiReworkCount: 0, status: "Succeeded" as const })),
+            ...(existingWorker ?? {}),
+            ...clearWorkerRunRefs(),
             status: "Succeeded",
+            retryCount: existingWorker?.retryCount ?? 0,
+            aiReworkCount: existingWorker?.aiReworkCount ?? 0,
             completedAt: new Date().toISOString(),
           },
         }, resourceNs);
@@ -1287,7 +1291,13 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         await patchTaskStatus(taskName, {
           phase: targetPhase as "pending" | "rework-requested",
           worker: existingWorker
-            ? { ...clearWorkerRunRefs(existingWorker), status: "Failed" }
+            ? {
+                ...existingWorker,
+                ...clearWorkerRunRefs(),
+                status: "Failed",
+                retryCount: existingWorker.retryCount ?? 0,
+                aiReworkCount: existingWorker.aiReworkCount ?? 0,
+              }
             : undefined,
         }, resourceNs);
         workerCleared = !existingWorker;
@@ -1295,8 +1305,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         await patchTaskStatus(taskName, {
           phase: "failed",
           worker: existingWorker
-            ? { ...clearWorkerRunRefs(existingWorker), status: "Failed" }
-            : { ...clearWorkerRunRefs({}), status: "Failed" as const, retryCount: 0, aiReworkCount: 0 },
+            ? {
+                ...existingWorker,
+                ...clearWorkerRunRefs(),
+                status: "Failed",
+                retryCount: existingWorker.retryCount ?? 0,
+                aiReworkCount: existingWorker.aiReworkCount ?? 0,
+              }
+            : { ...clearWorkerRunRefs(), status: "Failed" as const, retryCount: 0, aiReworkCount: 0 },
         }, resourceNs);
         workerCleared = false;
       } else {
