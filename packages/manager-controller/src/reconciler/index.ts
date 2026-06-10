@@ -1,12 +1,11 @@
 // Manager reconciler — phase-driven architecture with pure decision engine.
 
-import type { Project, Task, TaskPhase } from "@percussionist/api";
-import { observe, getConsumedAnnotationKeys } from "./observations.js";
+import type { Project, TaskPhase } from "@percussionist/api";
+import { observe } from "./observations.js";
 import { decide } from "./decision.js";
 import { executeEffects } from "./effects.js";
 import { persistEvent } from "./audit.js";
 import { emitEvent } from "../events.js";
-import { resolveFlow } from "./flow.js";
 import { byPriority, isActivePhase } from "./scheduler.js";
 
 // Reconcile a single project's tasks.

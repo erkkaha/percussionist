@@ -19,7 +19,7 @@
 
 import { Hono } from "hono";
 import { getDb, runs, messages, toolCalls, fileOps, metricSnapshots } from "../db.js";
-import { lt, gte, eq, and, like, desc, sql, asc } from "drizzle-orm";
+import { lt, gte, eq, and, desc, sql, asc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { auth, adminAuth } from "../auth.js";
 

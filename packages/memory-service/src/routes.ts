@@ -84,7 +84,7 @@ export async function handleStoreMemory(
     .prepare(
       "INSERT INTO memories (id, content, metadata, agent_run) VALUES (?, ?, ?, ?)",
     )
-    .run(id, body.content, JSON.stringify(body.metadata ?? {}), body.agentRun);
+    .run(id, body.content, JSON.stringify(body.metadata ?? {}), body.agentRun ?? null);
   const rid = (raw
     .prepare("SELECT last_insert_rowid() AS rid")
     .get() as { rid: number }).rid;

@@ -4,9 +4,8 @@ import type { Task, TaskPhase, Run } from "@percussionist/api";
 import type { AuditEvent } from "./decision.js";
 import type { ResolvedFlow } from "./flow.js";
 import { validateTransition } from "./transitions.js";
-import { createRun, deleteRun, patchTaskStatus, getTask, patchTask, createTask, getRun, getProject, patchProject } from "@percussionist/kube";
-import { buildWorkerRun, buildMergeRun, auxiliaryRunName } from "../worker-builder.js";
-import { persistEvent } from "./audit.js";
+import { createRun, deleteRun, patchTaskStatus, getTask, patchTask, createTask, getRun, patchProject } from "@percussionist/kube";
+import { buildWorkerRun, buildMergeRun } from "../worker-builder.js";
 
 export type ReconcileEffect =
   | { type: "ScheduleRun"; runName: string; retryCount: number; reworkFeedback?: string }
@@ -145,8 +144,6 @@ export async function executeEffects(
             throw new Error("Project metadata required for ScheduleBuildGenRun effect");
           }
           const fullProject = project as unknown as import("@percussionist/api").Project;
-          const succeededRun = await getRun(effect.succeededRunName, namespace).catch(() => undefined);
-          const succeededStatus = succeededRun?.status ?? {};
 
           const { buildBuildTaskGeneratorRun } = await import("../facilitator.js");
           const buildgenRun = await buildBuildTaskGeneratorRun(

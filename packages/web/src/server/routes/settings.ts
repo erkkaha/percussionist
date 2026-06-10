@@ -7,9 +7,6 @@ import {
 } from "../kube.js";
 import {
   ClusterSettingsSpecSchema,
-  API_GROUP_VERSION,
-  KIND_CLUSTER_SETTINGS,
-  type ClusterSettingsSpec,
 } from "@percussionist/api";
 import { auth, adminAuth } from "../auth.js";
 
@@ -19,9 +16,6 @@ const CLUSTER_CONFIG_CM = "opencode-config";
 const CONFIG_CM_KEY = "opencode.json";
 const AGENT_CONFIG_CM = "agent-config";
 const DECISION_AGENT_CM_KEY = "manager-decision.md";
-
-const LLM_KEYS_SECRET = "llm-keys";
-const AUTH_SECRET = "percussionist-auth";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,19 +45,6 @@ async function deleteSecret(name: string): Promise<void> {
   } catch {
     // ignore not-found
   }
-}
-
-function buildClusterSettingsCR(
-  name: string,
-  resourceVersion: string | undefined,
-  spec: ClusterSettingsSpec,
-): object {
-  return {
-    apiVersion: API_GROUP_VERSION,
-    kind: KIND_CLUSTER_SETTINGS,
-    metadata: { name, resourceVersion },
-    spec,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +79,6 @@ settings.put("/", adminAuth(), async (c) => {
   }
 
   try {
-    const existing = await getClusterSettings("default").catch(() => null);
     const updated = await updateClusterSettings(
       "default",
       parsed.data,

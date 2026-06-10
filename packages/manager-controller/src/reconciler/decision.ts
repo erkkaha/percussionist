@@ -4,7 +4,6 @@ import type { Task, TaskPhase, Project, Run } from "@percussionist/api";
 import type { ResolvedFlow } from "./flow.js";
 import type { ReconcileEffect } from "./effects.js";
 import { isValidTransition } from "./transitions.js";
-import { isActivePhase } from "./scheduler.js";
 import { workerRunName, auxiliaryRunName } from "../worker-builder.js";
 import { getReviewVerdict, getConsumedAnnotationKeys } from "./observations.js";
 import { createHash } from "node:crypto";
@@ -74,7 +73,7 @@ export interface ReconcileDecision {
 }
 
 export function decide(input: ReconcileInput): ReconcileDecision {
-  const { task, flow, capacity, now } = input;
+  const { task, now } = input;
   const taskName = task.metadata.name;
   const fromPhase = (task.status?.phase ?? "pending") as TaskPhase;
 
@@ -252,7 +251,7 @@ function decideScheduled(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideInitializing(input: ReconcileInput): ReconcileDecision {
-  const { observed, now } = input;
+  const { now } = input;
   const taskName = input.task.metadata.name;
   const fromPhase = "initializing" as TaskPhase;
   const run = input.observed.worker;
@@ -315,7 +314,7 @@ function decideInitializing(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideRunning(input: ReconcileInput): ReconcileDecision {
-  const { observed, task, flow, now } = input;
+  const { task, flow, now } = input;
   const taskName = task.metadata.name;
   const fromPhase = "running" as TaskPhase;
   const run = input.observed.worker;
@@ -407,7 +406,7 @@ function decideRunning(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideWaitingForInput(input: ReconcileInput): ReconcileDecision {
-  const { task, manualActions, observed, now } = input;
+  const { task, manualActions, observed } = input;
   const taskName = task.metadata.name;
   const fromPhase = "waiting-for-input" as TaskPhase;
 
@@ -463,7 +462,6 @@ function decideSucceeded(input: ReconcileInput): ReconcileDecision {
       const aiReworkCount = task.status?.worker?.aiReworkCount ?? 0;
       const reviewSeq = String(retryCount + aiReworkCount);
       const reviewRunName = auxiliaryRunName(input.project.metadata.name, "review", taskName, reviewSeq);
-      const gitBranch = task.status?.worker?.gitBranch;
 
       return {
         taskName,
@@ -840,7 +838,7 @@ function decideReworkRequested(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
-  const { task, project, observed, now } = input;
+  const { task, project, observed } = input;
   const taskName = task.metadata.name;
   const fromPhase = "generating-builds" as TaskPhase;
   const buildgenRunName = task.status?.worker?.buildTasksFacilitatorRun;
@@ -930,7 +928,7 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
-  const { task, project, allTasks, flow, now } = input;
+  const { task, project, allTasks, flow } = input;
   const taskName = task.metadata.name;
   const fromPhase = "awaiting-children" as TaskPhase;
 

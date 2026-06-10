@@ -1,7 +1,7 @@
 // Audit — persist reconciler decisions as Kubernetes Events.
 
 import type { AuditEvent } from "./decision.js";
-import { KIND_TASK, API_GROUP, API_VERSION, PLURAL_TASK } from "@percussionist/api";
+import { KIND_TASK, API_GROUP, API_VERSION } from "@percussionist/api";
 
 export async function persistEvent(
   event: AuditEvent,

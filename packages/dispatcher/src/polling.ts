@@ -5,8 +5,6 @@ import { BASE_URL, listSessions, fetchMessages, checkHealth, compactMessagesForS
 import http from "node:http";
 import { sendStats, incrementalFlush } from "./stats-reporter.js";
 
-import type { RawMessage } from "./session.js";
-
 const log = (...args: unknown[]) =>
   console.log(`[dispatcher ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
@@ -47,7 +45,6 @@ function maybeLogStreamReconnect(mode: "interactive" | "prompt", reconnects: num
   }
 }
 
-const RUN_NAME = process.env.RUN_NAME ?? "";
 const MODEL = process.env.RUN_MODEL ?? "";
 const AGENT = process.env.RUN_AGENT ?? "";
 const TASK = process.env.RUN_TASK ?? "";

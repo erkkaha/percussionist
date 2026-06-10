@@ -18,7 +18,7 @@ import {
   MEMORY_SERVICE_DEFAULT_IMAGE,
   type Project,
 } from "@percussionist/api";
-import { OLLAMA_BASE_URL, EMBEDDING_MODEL } from "./config.js";
+import { OLLAMA_BASE_URL } from "./config.js";
 
 // ---------------------------------------------------------------------------
 // Naming helpers

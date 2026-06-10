@@ -8,8 +8,6 @@ import http from "node:http";
 
 const log = (...args: unknown[]) =>
   console.log(`[agent ${new Date().toISOString()}]`, ...args);
-const err = (...args: unknown[]) =>
-  console.error(`[agent ${new Date().toISOString()}]`, ...args);
 
 interface SessionMessage {
   info?: {

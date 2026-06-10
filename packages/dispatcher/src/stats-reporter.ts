@@ -4,7 +4,7 @@
 // incrementalFlush()  — delta flush after each assistant turn (PATCH /api/stats/session)
 
 import { BASE_URL } from "./session.js";
-import type { RawMessage, TextPart, ToolUsePart, ToolResultPart, FilePart, ToolPart } from "./session.js";
+import type { RawMessage, ToolUsePart, ToolResultPart, FilePart, ToolPart } from "./session.js";
 
 const err = (...args: unknown[]) =>
   console.error(`[dispatcher ${new Date().toISOString()}]`, ...args);

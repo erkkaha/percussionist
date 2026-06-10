@@ -26,7 +26,7 @@ import {
   type CoreV1Api,
   type V1Secret,
 } from "@kubernetes/client-node";
-import { DEFAULT_NAMESPACE, fatal, loadKube } from "./kube.js";
+import { fatal, loadKube } from "./kube.js";
 
 export interface AuthImportOpts {
   namespace: string;

@@ -206,16 +206,9 @@ interface SearchMatch {
   contextAfter: string[];
 }
 
-interface SearchResult {
-  matches: SearchMatch[];
-  totalMatches: number;
-  returnedMatches: number;
-  truncated: boolean;
-}
-
 function execCommand(cmd: string, args: string[], timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = execFile(cmd, args, {
+    execFile(cmd, args, {
       maxBuffer: 5 * 1024 * 1024,
       timeout: timeoutMs,
       cwd: "/workspace",
@@ -368,7 +361,6 @@ function parseRgJson(
       const column = parsed.data.submatches?.[0]?.start ?? 0;
 
       // Collect context lines around this match from surrounding context events.
-      const key = `${file}:${lineNum}`;
       const before = (contextBuffer.get(`${file}:${lineNum - 1}`) ?? []).slice(-_contextLines);
       const after = (contextBuffer.get(`${file}:${lineNum + 1}`) ?? []).slice(0, _contextLines);
 
