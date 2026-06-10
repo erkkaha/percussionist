@@ -12,7 +12,7 @@
 // The command is idempotent: if the Secret already exists it is replaced.
 
 import type { V1Secret } from "@kubernetes/client-node";
-import { DEFAULT_NAMESPACE, fatal, loadKube } from "./kube.js";
+import { fatal, loadKube } from "./kube.js";
 
 export interface TailscaleAuthCreateOpts {
   namespace: string;

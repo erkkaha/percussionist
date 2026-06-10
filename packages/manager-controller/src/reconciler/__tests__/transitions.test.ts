@@ -18,6 +18,8 @@ describe("TRANSITION_TABLE", () => {
       "reviewing",
       "awaiting-human",
       "awaiting-merge",
+      "awaiting-children",
+      "awaiting-feature-merge",
       "rework-requested",
       "generating-builds",
       "done",

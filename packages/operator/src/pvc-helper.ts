@@ -131,29 +131,4 @@ export async function ensureDataPVC(
   }
 }
 
-/**
- * Checks if a PVC is bound and ready to be mounted.
- *
- * @returns true if PVC is in Bound phase, false otherwise
- */
-export async function isPVCBound(
-  namespace: string,
-  pvcName: string,
-): Promise<boolean> {
-  const coreApi = core();
-  try {
-    const pvc = await coreApi.readNamespacedPersistentVolumeClaim({
-      name: pvcName,
-      namespace,
-    });
-    return pvc.status?.phase === "Bound";
-  } catch (err: unknown) {
-    const statusCode =
-      (err as { statusCode?: number }).statusCode ??
-      (err as { code?: number }).code;
-    if (statusCode === 404) {
-      return false; // PVC doesn't exist
-    }
-    throw err;
-  }
-}
+

@@ -14,8 +14,6 @@ import {
   CoreV1Api,
   CustomObjectsApi,
   AppsV1Api,
-  PatchStrategy,
-  setHeaderOptions,
   V1Pod,
 } from "@kubernetes/client-node";
 import fs from "node:fs";
@@ -23,7 +21,6 @@ import {
   API_GROUP,
   API_VERSION,
   API_GROUP_VERSION,
-  KIND_RUN,
   KIND_PROJECT,
   KIND_TASK,
   KIND_CLUSTER_AGENT,
@@ -602,7 +599,6 @@ export async function patchTask(
   name: string,
   patch: Partial<Pick<Task, "metadata" | "spec">>,
   ns: string = NAMESPACE,
-  client = custom(),
 ): Promise<Task> {
   // Use fetch directly for merge-patch since the client doesn't support custom headers well.
   const token = readServiceAccountToken() ?? readKubeconfigToken();
@@ -1064,6 +1060,23 @@ export function fatal(prefix: string, e: unknown): never {
   const msg = anyE?.body?.message ?? anyE?.message ?? String(e);
   console.error(`beatctl: ${prefix}: ${msg}`);
   process.exit(1);
+}
+
+/**
+ * Deterministic 8-char hex hash of a git URL, used as a directory name for
+ * bare git mirrors.  Uses a djb2-style algorithm — good enough for directory
+ * naming without a dependency on node:crypto.
+ *
+ * IMPORTANT: Changing this function will break worktree cleanup, TTL cleanup,
+ * diff generation, and plan read paths across the entire system.  A unit test
+ * pins the output for a known URL so any future change is explicit.
+ */
+export function gitUrlHash(url: string): string {
+  let h = 5381;
+  for (let i = 0; i < url.length; i++) {
+    h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
 }
 
 // ---------------------------------------------------------------------------

@@ -89,7 +89,7 @@ async function upsertInjectFileSecret(
  * Delete inject-file Secrets for filenames that are no longer referenced.
  */
 async function deleteOrphanedInjectFileSecrets(
-  projectName: string,
+  _projectName: string,
   previousRefs: InjectFileRef[],
   currentFilenames: Set<string>,
 ): Promise<void> {

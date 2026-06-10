@@ -4,10 +4,9 @@ import type { Task, TaskPhase, Project, Run } from "@percussionist/api";
 import type { ResolvedFlow } from "./flow.js";
 import type { ReconcileEffect } from "./effects.js";
 import { isValidTransition } from "./transitions.js";
-import { isActivePhase } from "./scheduler.js";
 import { workerRunName, auxiliaryRunName } from "../worker-builder.js";
 import { getReviewVerdict, getConsumedAnnotationKeys } from "./observations.js";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 
 function summarizeEffect(input: ReconcileInput, run: Run): ReconcileEffect | undefined {
   if (!input.project.spec.embedding?.enabled) return undefined;
@@ -74,7 +73,7 @@ export interface ReconcileDecision {
 }
 
 export function decide(input: ReconcileInput): ReconcileDecision {
-  const { task, flow, capacity, now } = input;
+  const { task, now } = input;
   const taskName = task.metadata.name;
   const fromPhase = (task.status?.phase ?? "pending") as TaskPhase;
 
@@ -252,7 +251,7 @@ function decideScheduled(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideInitializing(input: ReconcileInput): ReconcileDecision {
-  const { observed, now } = input;
+  const { now } = input;
   const taskName = input.task.metadata.name;
   const fromPhase = "initializing" as TaskPhase;
   const run = input.observed.worker;
@@ -315,7 +314,7 @@ function decideInitializing(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideRunning(input: ReconcileInput): ReconcileDecision {
-  const { observed, task, flow, now } = input;
+  const { task, flow, now } = input;
   const taskName = task.metadata.name;
   const fromPhase = "running" as TaskPhase;
   const run = input.observed.worker;
@@ -407,7 +406,7 @@ function decideRunning(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideWaitingForInput(input: ReconcileInput): ReconcileDecision {
-  const { task, manualActions, observed, now } = input;
+  const { task, manualActions, observed } = input;
   const taskName = task.metadata.name;
   const fromPhase = "waiting-for-input" as TaskPhase;
 
@@ -463,7 +462,6 @@ function decideSucceeded(input: ReconcileInput): ReconcileDecision {
       const aiReworkCount = task.status?.worker?.aiReworkCount ?? 0;
       const reviewSeq = String(retryCount + aiReworkCount);
       const reviewRunName = auxiliaryRunName(input.project.metadata.name, "review", taskName, reviewSeq);
-      const gitBranch = task.status?.worker?.gitBranch;
 
       return {
         taskName,
@@ -739,8 +737,11 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
   let mergeRunName = task.status?.worker?.mergeRunName;
 
   if (!mergeRunName) {
-    const suffix = randomBytes(3).toString("hex");
-    mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, suffix);
+    const retSuffix = createHash("sha256")
+      .update(`${input.project.metadata.name}:${taskName}:merge:${task.status?.worker?.retryCount ?? 0}`)
+      .digest("hex")
+      .slice(0, 10);
+    mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, retSuffix);
     return {
       taskName,
       fromPhase,
@@ -837,7 +838,7 @@ function decideReworkRequested(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
-  const { task, project, observed, now } = input;
+  const { task, project, observed } = input;
   const taskName = task.metadata.name;
   const fromPhase = "generating-builds" as TaskPhase;
   const buildgenRunName = task.status?.worker?.buildTasksFacilitatorRun;
@@ -853,7 +854,10 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
         events: [makeEvent(input, fromPhase, "awaiting-human", "NoWorkerRunForBuildGen")],
       };
     }
-    const suffix = randomBytes(3).toString("hex");
+    const suffix = createHash("sha256")
+      .update(`${input.project.metadata.name}:${taskName}:buildgen`)
+      .digest("hex")
+      .slice(0, 10);
     const name = auxiliaryRunName(input.project.metadata.name, "buildgen", taskName, suffix);
     return {
       taskName,
@@ -924,7 +928,7 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
-  const { task, project, allTasks, flow, now } = input;
+  const { task, project, allTasks, flow } = input;
   const taskName = task.metadata.name;
   const fromPhase = "awaiting-children" as TaskPhase;
 
@@ -958,7 +962,10 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
   }
 
   // auto-merge mode — schedule merge run for feature branch → target.
-  const mergeSuffix = randomBytes(3).toString("hex");
+  const mergeSuffix = createHash("sha256")
+    .update(`${input.project.metadata.name}:${taskName}:merge`)
+    .digest("hex")
+    .slice(0, 10);
   const mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSuffix);
 
   return {
@@ -979,7 +986,10 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
 
   if (!mergeRunName) {
     // Create merge run if not yet assigned.
-    const suffix = randomBytes(3).toString("hex");
+    const suffix = createHash("sha256")
+      .update(`${input.project.metadata.name}:${taskName}:merge`)
+      .digest("hex")
+      .slice(0, 10);
     const name = auxiliaryRunName(input.project.metadata.name, "merge", taskName, suffix);
     return {
       taskName, fromPhase,

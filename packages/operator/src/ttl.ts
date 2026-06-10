@@ -11,6 +11,7 @@ import {
   type Run,
   type ClusterSettings,
 } from "@percussionist/api";
+import { gitUrlHash } from "@percussionist/kube";
 import { CoreV1Api } from "@kubernetes/client-node";
 import { co, kc, NAMESPACE } from "./reconciler.js";
 const coreV1 = kc.makeApiClient(CoreV1Api);
@@ -97,17 +98,6 @@ export async function runTTLCleanup(): Promise<void> {
 }
 
 /**
- * djb2-style hex hash — must match the hash function in pod-builder.ts.
- */
-function mirrorHash(url: string): string {
-  let h = 5381;
-  for (let i = 0; i < url.length; i++) {
-    h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
-  }
-  return h.toString(16).padStart(8, "0");
-}
-
-/**
  * Spawn a fire-and-forget pod to remove a run's worktree directory from the PVC.
  */
 async function cleanupExpiredRunWorktree(run: Run): Promise<void> {
@@ -126,7 +116,7 @@ async function cleanupExpiredRunWorktree(run: Run): Promise<void> {
   ];
 
   if (gitUrl) {
-    const hash = mirrorHash(gitUrl);
+    const hash = gitUrlHash(gitUrl);
     const mirrorDir = `${dataMountPath}/git-mirrors/${hash}`;
     scriptLines.push(
       `if [ -d "${mirrorDir}" ]; then`,

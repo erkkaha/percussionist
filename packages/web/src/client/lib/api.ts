@@ -285,16 +285,6 @@ export async function deleteBoardTask(
   }
 }
 
-export async function patchBoardStatus(
-  project: string,
-  _patch: Partial<BoardStatus>,
-): Promise<BoardStatus> {
-  // Board status is now authoritative in task CRs. This endpoint is legacy.
-  // Return an empty board status shape.
-  void project;
-  return {} as BoardStatus;
-}
-
 export async function retryEscalatedTask(
   project: string,
   taskName: string,
@@ -351,13 +341,6 @@ export async function patchBoardSpec(
   }
 }
 
-export async function fetchNextTaskId(
-  _project: string,
-  _type: "PLAN" | "BUILD",
-): Promise<string> {
-  // Task IDs are now auto-generated CR names. Return a placeholder.
-  return "(auto)";
-}
 
 export async function approveTask(
   project: string,

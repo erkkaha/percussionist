@@ -10,7 +10,6 @@ import {
   KIND_RUN,
   LABELS,
   MANAGED_BY,
-  DISPATCHER_MCP_PORT,
   RUNNER_CONTAINER,
   DISPATCHER_CONTAINER,
   OPENCODE_RUNNER_DEFAULTS,
@@ -19,6 +18,7 @@ import {
   type SidecarSpec,
   type RunnerImageSpec,
 } from "@percussionist/api";
+import { gitUrlHash } from "@percussionist/kube";
 import {
   RUNNER_IMAGE_DEFAULT,
   DISPATCHER_IMAGE,
@@ -202,6 +202,7 @@ export function renderPod(
   resolvedAgents: AgentDef[],
   sidecars: SidecarSpec[] = [],
   runner: RunnerImageSpec = OPENCODE_RUNNER_DEFAULTS,
+  dispatcherImage?: string,
 ): V1Pod {
   const spec = run.spec;
   const containerPort = runner.port;
@@ -295,16 +296,7 @@ export function renderPod(
   // Stable 8-char hash of the git URL used to name the bare mirror directory.
   // Computed at pod-render time so it is deterministic and embeddable in the
   // shell script without a runtime dependency on external tools.
-  const urlHash = git?.url
-    ? (() => {
-        // Simple djb2-style hex hash — good enough for directory naming.
-        let h = 5381;
-        for (let i = 0; i < git.url.length; i++) {
-          h = ((h << 5) + h + git.url.charCodeAt(i)) >>> 0;
-        }
-        return h.toString(16).padStart(8, "0");
-      })()
-    : "";
+  const urlHash = git?.url ? gitUrlHash(git.url) : "";
 
   const worktreeReuse = spec.gitCache?.worktreeReuse ?? true;
 
@@ -821,7 +813,7 @@ export function renderPod(
         },
         {
           name: DISPATCHER_CONTAINER,
-          image: DISPATCHER_IMAGE,
+          image: dispatcherImage ?? DISPATCHER_IMAGE,
           imagePullPolicy: "IfNotPresent",
           env: [
             { name: "RUN_NAME", value: run.metadata.name },

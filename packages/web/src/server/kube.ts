@@ -57,11 +57,7 @@ export {
   type NodeCapacityTotal,
   type NodeHostStats,
   type PodMetric,
+  gitUrlHash,
 } from "@percussionist/kube";
 
-// Convenience helper used by session.ts.
-import { getRun } from "@percussionist/kube";
-export async function getServiceNameForRun(runName: string): Promise<string | null> {
-  const run = await getRun(runName);
-  return (run as Record<string, unknown> & { status?: { serviceName?: string } }).status?.serviceName ?? null;
-}
+

@@ -9,26 +9,15 @@
 // reference to the Task CR so it is garbage-collected when the task is
 // eventually deleted.
 
-import { core } from "@percussionist/kube";
+import { core, gitUrlHash } from "@percussionist/kube";
 import { API_GROUP_VERSION, KIND_TASK, LABELS, MANAGED_BY } from "@percussionist/api";
 import type { Task } from "@percussionist/api";
+import { getErrorStatusCode } from "./kube-errors.js";
 
 const log = (...args: unknown[]) =>
   console.log(`[worktree-cleanup ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
   console.error(`[worktree-cleanup ${new Date().toISOString()}]`, ...args);
-
-/**
- * Simple djb2-style hash of a string → 8 hex chars.
- * Must match the hash used in pod-builder.ts for mirror directory naming.
- */
-function urlHash(url: string): string {
-  let h = 5381;
-  for (let i = 0; i < url.length; i++) {
-    h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
-  }
-  return h.toString(16).padStart(8, "0");
-}
 
 function cleanupPodName(prefix: string, name: string): string {
   const suffix = Date.now().toString(36).slice(-6);
@@ -92,7 +81,7 @@ export async function spawnWorktreeCleanupPod(
 
   const podName = cleanupPodName("cleanup", runName);
   const mirrorDir = gitUrl
-    ? `${dataMountPath}/git-mirrors/${urlHash(gitUrl)}`
+    ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}`
     : undefined;
   const worktreeDir = `${dataMountPath}/worktrees/${runName}`;
 
@@ -162,9 +151,7 @@ export async function spawnWorktreeCleanupPod(
     await core().createNamespacedPod({ namespace, body: pod });
     log(`cleanup pod ${namespace}/${podName} created for run ${runName}`);
   } catch (e: unknown) {
-    const statusCode =
-      (e as { statusCode?: number }).statusCode ??
-      (e as { code?: number }).code;
+    const statusCode = getErrorStatusCode(e);
     if (statusCode === 409) {
       log(`cleanup pod ${namespace}/${podName} already exists, skipping`);
       return;
@@ -200,7 +187,7 @@ export async function spawnTaskWorktreeCleanupPod(
   const taskName = task.metadata.name;
   const podName = cleanupPodName("cleanup-task", taskName);
   const mirrorDir = gitUrl
-    ? `${dataMountPath}/git-mirrors/${urlHash(gitUrl)}`
+    ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}`
     : undefined;
   const worktreeDir = `${dataMountPath}/worktrees`;
 
@@ -283,9 +270,7 @@ export async function spawnTaskWorktreeCleanupPod(
     await core().createNamespacedPod({ namespace, body: pod });
     log(`task cleanup pod ${namespace}/${podName} created for task ${taskName}`);
   } catch (e: unknown) {
-    const statusCode =
-      (e as { statusCode?: number }).statusCode ??
-      (e as { code?: number }).code;
+    const statusCode = getErrorStatusCode(e);
     if (statusCode === 409) {
       log(`task cleanup pod ${namespace}/${podName} already exists, skipping`);
       return;

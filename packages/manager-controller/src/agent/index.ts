@@ -16,10 +16,6 @@ const err = (...args: unknown[]) =>
 
 let started = false;
 
-export function isAgentReady(): boolean {
-  return started;
-}
-
 export async function startAgent(): Promise<void> {
   if (started) return;
 
@@ -45,9 +41,4 @@ export async function startAgent(): Promise<void> {
 
   started = true;
   log("agent module started");
-}
-
-export function stopAgent(): void {
-  started = false;
-  log("agent module stopped");
 }

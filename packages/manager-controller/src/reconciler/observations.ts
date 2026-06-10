@@ -4,7 +4,7 @@ import type { Task, Project, Run } from "@percussionist/api";
 import { getRun } from "@percussionist/kube";
 import type { ReconcileInput, ObservedRuns, ManualActions } from "./decision.js";
 import { resolveFlow } from "./flow.js";
-import { isActivePhase } from "./scheduler.js";
+import { isKubeNotFoundError } from "../kube-errors.js";
 
 const TASK_ANNOTATION_KEYS = {
   approved: "percussionist.dev/action-approved",
@@ -31,11 +31,18 @@ export async function observe(
   const buildgenRunName = task.status?.worker?.buildTasksFacilitatorRun;
 
   // Fetch observed runs in parallel.
+  // Distinguish 404 (run legitimately gone) from transient errors
+  // (network blip, API server 503) — the latter should propagate so the
+  // reconciler retries instead of incorrectly flipping the task to failed.
+  const maybeRun = async (name: string) => getRun(name, namespace).catch((err: unknown) => {
+    if (isKubeNotFoundError(err)) return undefined;
+    throw err;
+  });
   const [worker, review, merge, buildgen] = await Promise.all([
-    workerRunName ? getRun(workerRunName, namespace).catch(() => undefined) : undefined,
-    reviewRunName ? getRun(reviewRunName, namespace).catch(() => undefined) : undefined,
-    mergeRunName ? getRun(mergeRunName, namespace).catch(() => undefined) : undefined,
-    buildgenRunName ? getRun(buildgenRunName, namespace).catch(() => undefined) : undefined,
+    workerRunName ? maybeRun(workerRunName) : undefined,
+    reviewRunName ? maybeRun(reviewRunName) : undefined,
+    mergeRunName ? maybeRun(mergeRunName) : undefined,
+    buildgenRunName ? maybeRun(buildgenRunName) : undefined,
   ]);
 
   const observed: ObservedRuns = { worker, review, merge, buildgen };

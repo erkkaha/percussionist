@@ -17,7 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { V1Secret } from "@kubernetes/client-node";
-import { DEFAULT_NAMESPACE, fatal, loadKube } from "./kube.js";
+import { fatal, loadKube } from "./kube.js";
 
 export interface SshKeyCreateOpts {
   namespace: string;

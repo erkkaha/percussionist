@@ -32,59 +32,6 @@ export const PLURAL_CLUSTER_SETTINGS = "clustersettings";
 
 // ---------------------------------------------------------------------------
 // Runner adapter interface
-//
-// Abstraction over any agent runtime (opencode, nanocoder, etc.).
-// The dispatcher receives a RunnerAdapter at startup and never calls
-// runner-specific HTTP endpoints directly.
-
-export interface RunnerMessage {
-  id?: string;
-  sessionID?: string;
-  role?: "user" | "assistant";
-  time?: { created?: number; completed?: number };
-  tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } };
-  cost?: number;
-  error?: unknown;
-  textContent?: string; // pre-extracted concatenated text from all text parts
-}
-
-export type RunnerEvent =
-  | {
-      type: "message.updated";
-      sessionId: string;
-      tokens?: { input: number; output: number; reasoning?: number; cache?: { read?: number; write?: number } };
-      cost?: number;
-    }
-  | { type: "idle"; sessionId: string }
-  | { type: "permission.required"; sessionId: string; permissionId: string };
-
-export interface RunnerAdapter {
-  /** Returns true when the runner HTTP server is accepting requests. */
-  healthCheck(): Promise<boolean>;
-  /** Create a new session. Returns the session id. */
-  createSession(title: string, agent?: string): Promise<{ id: string }>;
-  /** Fire-and-forget: dispatch the initial prompt to an existing session. */
-  sendPrompt(
-    sessionId: string,
-    text: string,
-    opts?: { agent?: string; model?: string },
-  ): Promise<void>;
-  /** Fetch all messages for a session. */
-  getMessages(sessionId: string): Promise<RunnerMessage[]>;
-  /** Post a follow-up text message to an existing session. */
-  sendMessage(sessionId: string, text: string): Promise<void>;
-  /** Respond to a pending permission request. */
-  approvePermission(
-    sessionId: string,
-    permissionId: string,
-    response: "once" | "always" | "reject",
-  ): Promise<void>;
-  /** Async-iterable SSE event stream. Yields events until the signal fires. */
-  streamEvents(signal?: AbortSignal): AsyncIterable<RunnerEvent>;
-  /** List all active session ids (used by interactive mode). */
-  listSessions(): Promise<Array<{ id: string; title?: string }>>;
-}
-
 // ---------------------------------------------------------------------------
 // Runner image / runtime spec
 //
@@ -393,6 +340,14 @@ export const ClusterSettingsSpecSchema = z.object({
 
   // How many days to keep completed Run CRs before automatic cleanup.
   runTTLDays: z.number().int().positive().default(7),
+
+  // Optional override for the dispatcher sidecar image injected into run pods.
+  // When absent, the operator's DISPATCHER_IMAGE env var is used as fallback.
+  dispatcher: z
+    .object({
+      image: z.string().optional(),
+    })
+    .optional(),
 
   // Optional override for the runner container image / runtime spec.
   // When absent, the opencode defaults (OPENCODE_RUNNER_DEFAULTS) are used.

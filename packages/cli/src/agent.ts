@@ -7,7 +7,7 @@ import {
   KIND_CLUSTER_AGENT,
   type ClusterAgent,
 } from "@percussionist/api";
-import { DEFAULT_NAMESPACE, fatal, loadKube } from "./kube.js";
+import { fatal, loadKube } from "./kube.js";
 
 export interface AgentListOpts {
   allNamespaces?: boolean;
@@ -30,7 +30,7 @@ export interface AgentDeleteOpts {
 }
 
 // List all ClusterAgents in the cluster.
-export async function runAgentList(opts: AgentListOpts): Promise<void> {
+export async function runAgentList(_opts: AgentListOpts): Promise<void> {
   const { custom } = loadKube();
   try {
     const list = await custom.listClusterCustomObject({

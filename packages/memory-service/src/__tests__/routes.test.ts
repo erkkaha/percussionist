@@ -127,6 +127,29 @@ describe("handleStoreMemory", () => {
     expect(row!.content).toBe("test memory");
   });
 
+  it("survives delete + re-store without rowid desync (regression test for C1)", async () => {
+    const raw = getRawDb();
+
+    // Store via production path
+    const first = await handleStoreMemory({ content: "first memory" });
+    const search1 = await handleSearch({ query: "test", limit: 10 });
+    expect(search1.length).toBeGreaterThanOrEqual(1);
+    expect(search1[0]!.content).toBe("first memory");
+
+    // Delete everything
+    raw.run("DELETE FROM vec_memories");
+    raw.run("DELETE FROM memories");
+
+    // Store again via production path — this is where the rowid desync
+    // would break search if handleStoreMemory doesn't sync rowids.
+    const second = await handleStoreMemory({ content: "second memory" });
+    expect(second.id).not.toBe(first.id);
+
+    const search2 = await handleSearch({ query: "test", limit: 10 });
+    expect(search2.length).toBeGreaterThanOrEqual(1);
+    expect(search2[0]!.content).toBe("second memory");
+  });
+
   it("stores with metadata and agentRun", async () => {
     const result = await handleStoreMemory({
       content: "task-specific memory",

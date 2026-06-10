@@ -98,25 +98,4 @@ export function adminAuth(): MiddlewareHandler {
   };
 }
 
-/**
- * Optional auth middleware — validates token if present but never rejects.
- * Useful for endpoints that work both authenticated and unauthenticated,
- * but want to know the caller's identity when they do authenticate.
- */
-export function optionalAuth(): MiddlewareHandler {
-  return async (c, next) => {
-    const token = getAuthValue(c);
-    if (token && isValidToken(token)) {
-      c.set("auth", { role: "user" });
-    } else {
-      // No auth context — route handlers should check for it.
-      try {
-        c.set("auth", undefined as unknown as AuthContext);
-      } catch {
-        // Hono's set() may throw if the type doesn't match; that's fine,
-        // we just won't have an auth context on unauthenticated requests.
-      }
-    }
-    await next();
-  };
-}
+

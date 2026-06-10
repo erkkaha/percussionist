@@ -8,8 +8,6 @@ import http from "node:http";
 
 const log = (...args: unknown[]) =>
   console.log(`[agent ${new Date().toISOString()}]`, ...args);
-const err = (...args: unknown[]) =>
-  console.error(`[agent ${new Date().toISOString()}]`, ...args);
 
 interface SessionMessage {
   info?: {
@@ -154,38 +152,6 @@ function sawAgentActivity(messages: SessionMessage[]): boolean {
       (msg.parts?.length ?? 0) > 0
     );
   });
-}
-
-export function extractLastAssistantText(messages: SessionMessage[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (!msg || msg.info?.role !== "assistant") continue;
-    let text = "";
-    for (const part of msg.parts ?? []) {
-      if (part.type === "text" && part.text) text += part.text;
-    }
-    return text || "(empty)";
-  }
-  return "(no assistant message)";
-}
-
-export function extractAssistantTextWithTimeout(
-  messages: SessionMessage[],
-  completedSince: number,
-): string | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (!msg || msg.info?.role !== "assistant") continue;
-    const completed = msg.info.time?.completed;
-    if (completed && completed > completedSince) {
-      let text = "";
-      for (const part of msg.parts ?? []) {
-        if (part.type === "text" && part.text) text += part.text;
-      }
-      return text || null;
-    }
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------------

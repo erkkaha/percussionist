@@ -22,7 +22,6 @@ import {
   deleteRun,
   fetchSessionMessages,
   fetchAllSessionMessages,
-  patchProjectStatus,
   listClusterAgents,
   listPodsByLabels,
   listTasks,
@@ -36,14 +35,16 @@ import {
   buildTask,
   createTask,
   apps,
+  gitUrlHash,
 } from "@percussionist/kube";
-import { LABELS, MEMORY_SERVICE_PORT, type Project, type Task, type TaskPhase, type TaskSpec } from "@percussionist/api";
+import { LABELS, type Project, type Task, type TaskPhase } from "@percussionist/api";
 import { storeMemory, queryMemory, getContext } from "./memory-client.js";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
 import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
 import { isValidTransition, TRANSITION_TABLE } from "../reconciler/transitions.js";
 import { resolveFlow } from "../reconciler/flow.js";
+import { clearWorkerRunRefs } from "./worker-status.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-manager-agent";
@@ -311,7 +312,7 @@ const TOOLS = [
         task: { type: "string", description: "Task CR name" },
         targetPhase: {
           type: "string",
-          enum: ["idea", "pending", "scheduled", "running", "failed", "awaiting-human", "rework-requested", "done"],
+          enum: ["idea", "pending", "scheduled", "failed", "awaiting-human", "rework-requested", "done"],
           description: "Target phase for the task. Most common: pending (reset to backlog), awaiting-human (needs review), rework-requested (AI/human requested changes), done (complete).",
         },
         cancelRunning: {
@@ -666,11 +667,7 @@ async function cleanupRunWorktree(projectName: string, runName: string, resource
   const gitUrl = project.spec.source?.git?.url;
   if (!gitUrl) return;
   const mountPath = project.spec.data?.mountPath ?? "/data";
-  const hash = (() => {
-    let h = 5381;
-    for (let i = 0; i < gitUrl.length; i++) h = ((h << 5) + h + gitUrl.charCodeAt(i)) >>> 0;
-    return h.toString(16).padStart(8, "0");
-  })();
+  const hash = gitUrlHash(gitUrl);
   const quotedRun = runName.replace(/'/g, "'\\''");
   await execInWorkspace(
     projectName,
@@ -1102,14 +1099,23 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         createdRunName = runName;
       } else {
         // No run creation — reset to pending.
+        const existingWorker = task.status?.worker;
         await patchTaskStatus(taskName, {
           phase: "pending",
-          worker: {
-            ...(task.status?.worker ?? { status: "Failed" as const, retryCount: 0, aiReworkCount: 0 }),
-            status: "Failed",
-            runName: undefined,
-            retryCount,
-          },
+          worker: existingWorker
+            ? {
+                ...existingWorker,
+                ...clearWorkerRunRefs(),
+                status: "Failed",
+                retryCount,
+                aiReworkCount: existingWorker.aiReworkCount ?? 0,
+              }
+            : {
+                ...clearWorkerRunRefs(),
+                status: "Failed" as const,
+                retryCount,
+                aiReworkCount: 0,
+              },
         }, resourceNs);
       }
 
@@ -1237,6 +1243,15 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         );
       }
 
+      // Cannot transition directly to "running" — no Run would exist, so the
+      // next reconcile immediately flips the task to "failed". Use force_retry
+      // or create_run instead.
+      if (targetPhase === "running") {
+        throw new Error(
+          'Cannot transition directly to "running". Use force_retry to retry a task or create_run to start a new run.',
+        );
+      }
+
       const deletedRuns = preserveRuns
         ? []
         : await deleteRunsForTask(projectName, taskName, resourceNs, { includeActive: cancelRunning, includeUnknown: true });
@@ -1245,13 +1260,13 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       let workerCleared = true;
       
       // Phase-specific worker state updates
-      if (targetPhase === "scheduled" || targetPhase === "running") {
+      if (targetPhase === "scheduled") {
         const retryCount = existingWorker?.retryCount ?? 0;
         await patchTaskStatus(taskName, {
-          phase: targetPhase as "scheduled" | "running",
+          phase: "scheduled",
           worker: {
             ...(existingWorker ?? {}),
-            runName: undefined,
+            ...clearWorkerRunRefs(),
             status: "Running",
             ...workerBranchPatch(project, task, projectTasks),
             retryCount,
@@ -1263,9 +1278,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         await patchTaskStatus(taskName, {
           phase: "done",
           worker: {
-            ...(existingWorker ?? { retryCount: 0, aiReworkCount: 0, status: "Succeeded" as const }),
+            ...(existingWorker ?? {}),
+            ...clearWorkerRunRefs(),
             status: "Succeeded",
-            runName: undefined,
+            retryCount: existingWorker?.retryCount ?? 0,
+            aiReworkCount: existingWorker?.aiReworkCount ?? 0,
             completedAt: new Date().toISOString(),
           },
         }, resourceNs);
@@ -1274,7 +1291,13 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         await patchTaskStatus(taskName, {
           phase: targetPhase as "pending" | "rework-requested",
           worker: existingWorker
-            ? { ...existingWorker, status: "Failed", runName: undefined }
+            ? {
+                ...existingWorker,
+                ...clearWorkerRunRefs(),
+                status: "Failed",
+                retryCount: existingWorker.retryCount ?? 0,
+                aiReworkCount: existingWorker.aiReworkCount ?? 0,
+              }
             : undefined,
         }, resourceNs);
         workerCleared = !existingWorker;
@@ -1282,8 +1305,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         await patchTaskStatus(taskName, {
           phase: "failed",
           worker: existingWorker
-            ? { ...existingWorker, status: "Failed", runName: undefined }
-            : { status: "Failed" as const, retryCount: 0, aiReworkCount: 0 },
+            ? {
+                ...existingWorker,
+                ...clearWorkerRunRefs(),
+                status: "Failed",
+                retryCount: existingWorker.retryCount ?? 0,
+                aiReworkCount: existingWorker.aiReworkCount ?? 0,
+              }
+            : { ...clearWorkerRunRefs(), status: "Failed" as const, retryCount: 0, aiReworkCount: 0 },
         }, resourceNs);
         workerCleared = false;
       } else {
@@ -1432,11 +1461,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       if (!isLocal && gitUrl) {
         const task = await getTask(taskName, resourceNs);
         const gitBranch = task.status?.worker?.gitBranch || `feature/${taskName}`;
-        let h = 5381;
-        for (let i = 0; i < gitUrl.length; i++) {
-          h = ((h << 5) + h + gitUrl.charCodeAt(i)) >>> 0;
-        }
-        const urlHash = h.toString(16).padStart(8, "0");
+        const urlHash = gitUrlHash(gitUrl);
         const mirrorPath = `${mountPath}/git-mirrors/${urlHash}`;
 
         const gitShowCmd = `apk add --no-cache git > /dev/null 2>&1 && cd '${mirrorPath}' && git show '${gitBranch}:${planPath}' 2>/dev/null`;
@@ -1557,19 +1582,20 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         registryError = (e as Error).message;
       }
 
-      const currentTag = foundImage.tag;
+      const current = {
+        operator: images["percussionist-operator"]?.tag ?? null,
+        manager: images["percussionist-manager"]?.tag ?? null,
+        web: images["percussionist-web"]?.tag ?? null,
+        dispatcher: dispatcherInfo?.tag ?? null,
+      };
+
       const updateAvailable =
         latestTag !== null &&
-        latestTag !== currentTag &&
-        !registryError;
+        !registryError &&
+        Object.values(current).some((tag) => tag !== null && tag !== latestTag);
 
       return {
-        current: {
-          operator: images["percussionist-operator"]?.tag ?? null,
-          manager: images["percussionist-manager"]?.tag ?? null,
-          web: images["percussionist-web"]?.tag ?? null,
-          dispatcher: dispatcherInfo?.tag ?? null,
-        },
+        current,
         latest: latestTag,
         updateAvailable,
         registryPrefix: foundImage.registryPrefix,

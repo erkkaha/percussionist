@@ -7,24 +7,15 @@ import {
 } from "../kube.js";
 import {
   ClusterSettingsSpecSchema,
-  API_GROUP_VERSION,
-  KIND_CLUSTER_SETTINGS,
-  type ClusterSettingsSpec,
 } from "@percussionist/api";
-import { auth } from "../auth.js";
+import { auth, adminAuth } from "../auth.js";
 
 const settings = new Hono();
-
-// All settings endpoints are sensitive (secrets listing, cluster config).
-settings.use("/*", auth());
 
 const CLUSTER_CONFIG_CM = "opencode-config";
 const CONFIG_CM_KEY = "opencode.json";
 const AGENT_CONFIG_CM = "agent-config";
 const DECISION_AGENT_CM_KEY = "manager-decision.md";
-
-const LLM_KEYS_SECRET = "llm-keys";
-const AUTH_SECRET = "percussionist-auth";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -56,23 +47,10 @@ async function deleteSecret(name: string): Promise<void> {
   }
 }
 
-function buildClusterSettingsCR(
-  name: string,
-  resourceVersion: string | undefined,
-  spec: ClusterSettingsSpec,
-): object {
-  return {
-    apiVersion: API_GROUP_VERSION,
-    kind: KIND_CLUSTER_SETTINGS,
-    metadata: { name, resourceVersion },
-    spec,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // GET /api/settings — read ClusterSettings/default
 
-settings.get("/", async (c) => {
+settings.get("/", auth(), async (c) => {
   try {
     const cs = await getClusterSettings("default");
     return c.json(cs);
@@ -87,7 +65,7 @@ settings.get("/", async (c) => {
 
 // PUT /api/settings — update ClusterSettings/default
 
-settings.put("/", async (c) => {
+settings.put("/", adminAuth(), async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -101,7 +79,6 @@ settings.put("/", async (c) => {
   }
 
   try {
-    const existing = await getClusterSettings("default").catch(() => null);
     const updated = await updateClusterSettings(
       "default",
       parsed.data,
@@ -114,7 +91,7 @@ settings.put("/", async (c) => {
 
 // GET /api/settings/opencode-config — read the resolved opencode.json
 
-settings.get("/opencode-config", async (c) => {
+settings.get("/opencode-config", auth(), async (c) => {
   try {
     const cm = await core().readNamespacedConfigMap({
       name: CLUSTER_CONFIG_CM,
@@ -130,7 +107,7 @@ settings.get("/opencode-config", async (c) => {
 // from the agent-config ConfigMap, which the operator populates with the effective
 // content (user override or hardcoded default).
 
-settings.get("/decision-agent-default", async (c) => {
+settings.get("/decision-agent-default", auth(), async (c) => {
   try {
     const cm = await core().readNamespacedConfigMap({
       name: AGENT_CONFIG_CM,
@@ -145,7 +122,7 @@ settings.get("/decision-agent-default", async (c) => {
 
 // GET /api/settings/secrets — list Secrets matching our label pattern
 
-settings.get("/secrets", async (c) => {
+settings.get("/secrets", auth(), async (c) => {
   try {
     const res = await core().listNamespacedSecret({ namespace: NAMESPACE });
     const items = (res.items ?? []).map((s) => ({
@@ -161,7 +138,7 @@ settings.get("/secrets", async (c) => {
 
 // POST /api/settings/secrets — create a Secret
 
-settings.post("/secrets", async (c) => {
+settings.post("/secrets", adminAuth(), async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -185,7 +162,7 @@ settings.post("/secrets", async (c) => {
 
 // PUT /api/settings/secrets/:name — update a Secret's data
 
-settings.put("/secrets/:name", async (c) => {
+settings.put("/secrets/:name", adminAuth(), async (c) => {
   const name = c.req.param("name");
   let body: unknown;
   try {
@@ -209,7 +186,7 @@ settings.put("/secrets/:name", async (c) => {
 
 // DELETE /api/settings/secrets/:name
 
-settings.delete("/secrets/:name", async (c) => {
+settings.delete("/secrets/:name", adminAuth(), async (c) => {
   const name = c.req.param("name");
   try {
     await deleteSecret(name);
