@@ -355,12 +355,13 @@ export async function reconcile(run: Run): Promise<void> {
 
   if (currentPhase && TERMINAL_PHASES.has(currentPhase)) return;
 
-  // Resolve runner spec from ClusterSettings (falls back to opencode defaults).
+  // Resolve runner spec and dispatcher image from ClusterSettings.
   const cs = await co.getClusterCustomObject({
     group: API_GROUP, version: API_VERSION,
     plural: PLURAL_CLUSTER_SETTINGS, name: "default",
   }).then((r) => r as ClusterSettings).catch(() => undefined);
   const runnerSpec = resolveRunnerSpec(cs);
+  const dispatcherImage = cs?.spec?.dispatcher?.image;
 
   // Resolve agents from ClusterAgent CRs + inline escape hatch.
   const agentNames = (run.spec.agents ?? []).map((a) => a.name);
@@ -500,7 +501,7 @@ export async function reconcile(run: Run): Promise<void> {
     try {
       pod = await core.createNamespacedPod({
         namespace: ns,
-        body: renderPod(run, resolvedAgents, run.spec.sidecars ?? [], runnerSpec),
+        body: renderPod(run, resolvedAgents, run.spec.sidecars ?? [], runnerSpec, dispatcherImage),
       });
       log(`created pod ${ns}/${podName(run)}`);
       await patchStatus(run, {

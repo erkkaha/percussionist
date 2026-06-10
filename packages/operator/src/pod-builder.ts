@@ -202,6 +202,7 @@ export function renderPod(
   resolvedAgents: AgentDef[],
   sidecars: SidecarSpec[] = [],
   runner: RunnerImageSpec = OPENCODE_RUNNER_DEFAULTS,
+  dispatcherImage?: string,
 ): V1Pod {
   const spec = run.spec;
   const containerPort = runner.port;
@@ -812,7 +813,7 @@ export function renderPod(
         },
         {
           name: DISPATCHER_CONTAINER,
-          image: DISPATCHER_IMAGE,
+          image: dispatcherImage ?? DISPATCHER_IMAGE,
           imagePullPolicy: "IfNotPresent",
           env: [
             { name: "RUN_NAME", value: run.metadata.name },
