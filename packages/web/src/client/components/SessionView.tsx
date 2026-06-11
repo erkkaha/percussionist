@@ -426,6 +426,29 @@ function ToolCall({ part }: { part: ToolPart }) {
     ? state.output 
     : outputLines.slice(0, 50).join("\n") + (isTruncated ? "\n..." : "");
 
+  // ────────────────────────────────────────────────────────────────────────
+  // TRUST BOUNDARY — dangerouslySetInnerHTML usage in ToolCall component
+  //
+  // All HTML rendered via dangerouslySetInnerHTML originates exclusively from
+  // Shiki's highlight() function (via useShiki hook). Shiki produces deterministic,
+  // well-formed HTML with no user-controlled content embedded in the markup.
+  // The only dynamic data flowing into these templates are:
+  //   1. `commandHtml` — Shiki-highlighted bash/sh command strings from tool calls
+  //   2. `outputHtml`  — Shiki-highlighted JSON output from tool calls
+  //
+  // Trust chain:
+  //   SessionMessage.state.output → JSON.parse() validation → highlight() → HTML
+  //   SessionMessage.state.input.command → highlight() → HTML
+  //
+  // No user input is ever interpolated directly into HTML. The only risk surface
+  // would be a Shiki vulnerability in its output generation, which is outside our
+  // control but mitigated by using the official @shikijs packages with no custom
+  // HTML templates or user-controlled class names.
+  //
+  // If a different data source ever needs to be rendered as HTML here, it must pass
+  // through DOMPurify or an equivalent sanitizer before dangerouslySetInnerHTML.
+  // ────────────────────────────────────────────────────────────────────────
+
   return (
     <details className="group rounded border border-border-muted bg-surface overflow-hidden">
       <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-surface-overlay/30 text-sm">
