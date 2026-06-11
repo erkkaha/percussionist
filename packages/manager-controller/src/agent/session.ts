@@ -9,17 +9,37 @@ import http from "node:http";
 const log = (...args: unknown[]) =>
   console.log(`[agent ${new Date().toISOString()}]`, ...args);
 
-interface SessionMessage {
+interface SessionTokenInfo {
+  input?: number;
+  output?: number;
+  reasoning?: number;
+  cache?: { read?: number; write?: number };
+}
+
+interface SessionTimeInfo {
+  created?: number;
+  completed?: number;
+}
+
+export interface SessionMessage {
   info?: {
     id?: string;
     sessionID?: string;
     role?: "user" | "assistant";
-    time?: { created?: number; completed?: number };
-    tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } };
+    model?: { providerID?: string; modelID?: string } | string;
+    time?: SessionTimeInfo;
+    tokens?: SessionTokenInfo;
     cost?: number;
     error?: unknown;
   };
-  parts?: Array<{ type: string; text?: string }>;
+  parts?: Array<
+    | { type: "text"; text?: string }
+    | { type: "tool"; tool: string; callID?: string; state?: Record<string, unknown> }
+    | { type: "tool-use" | "tool_use"; id?: string; name?: string; input?: Record<string, unknown> }
+    | { type: "tool-result" | "tool_result"; toolUseId?: string; tool_use_id?: string; content?: unknown; isError?: boolean }
+    | { type: "file"; path?: string; filename?: string }
+    | { type: string; [key: string]: unknown } // Unknown-safe fallback
+  >;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +225,16 @@ export async function waitForCompletion(
       if (msg.info?.time?.completed) {
         let text = "";
         for (const part of msg.parts ?? []) {
-          if (part.type === "text" && part.text) text += part.text;
+          if (
+            part &&
+            typeof part === "object" &&
+            "type" in part &&
+            (part.type as string) === "text" &&
+            "text" in part &&
+            part.text
+          ) {
+            text += String(part.text);
+          }
         }
         if (text) return text;
         // Tool-call-only intermediate completion — keep polling
