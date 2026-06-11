@@ -226,10 +226,11 @@ function decideScheduled(input: ReconcileInput): ReconcileDecision {
   const taskName = task.metadata.name;
   const fromPhase = "scheduled" as TaskPhase;
   const retryCount = task.status?.worker?.retryCount ?? 0;
+  const aiReworkCount = task.status?.worker?.aiReworkCount ?? 0;
   const reworkFeedback = task.status?.worker?.reviewFeedback;
 
   // Compute deterministic run name.
-  const runName = workerRunName(project.metadata.name, taskName, retryCount);
+  const runName = workerRunName(project.metadata.name, taskName, retryCount, aiReworkCount);
 
   // Resolve feature-branch metadata so the diff view and workspace-init
   // have correct refs without relying on fallback to the Run spec.

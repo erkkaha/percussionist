@@ -941,8 +941,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const retryCount = args.retryCount !== undefined
         ? Number(args.retryCount)
         : (existingWorker?.retryCount ?? 0);
+      const aiReworkCount = existingWorker?.aiReworkCount ?? 0;
 
-      const runName = workerRunName(projectName, taskName, retryCount);
+      const runName = workerRunName(projectName, taskName, retryCount, aiReworkCount);
       const workerRun = await buildWorkerRun(project, task, runName, retryCount, reworkFeedback, projectTasks);
       const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
       if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
@@ -1060,8 +1061,10 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       let createdRunName: string | undefined;
       const existingRetryCount = task.status?.worker?.retryCount ?? 0;
       const retryCount = existingRetryCount + 1;
+      // force_retry bumps retryCount and resets aiReworkCount (human-driven retry semantics).
+      const aiReworkCount = 0;
       if (shouldCreate) {
-        const runName = workerRunName(projectName, taskName, retryCount);
+        const runName = workerRunName(projectName, taskName, retryCount, aiReworkCount);
         const workerRun = await buildWorkerRun(project, task, runName, retryCount, undefined, projectTasks);
         const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
         if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
