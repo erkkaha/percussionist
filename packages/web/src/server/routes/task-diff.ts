@@ -105,6 +105,7 @@ async function execInWorkspaceViaManager(
         mountPath: "/data",
         timeoutSeconds: Math.ceil(timeoutMs / 1000),
         namespace: NAMESPACE,
+        skipSanitization: true,
       },
     },
   };
