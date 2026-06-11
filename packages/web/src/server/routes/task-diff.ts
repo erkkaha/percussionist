@@ -118,13 +118,33 @@ async function execInWorkspaceViaManager(
   });
 
   if (!res.ok) {
-    throw new Error(`Manager MCP service returned ${res.status}`);
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(
+      `Manager MCP service returned ${res.status}: ${bodyText.slice(0, 200)}`,
+    );
   }
 
-  const mcpResponse = (await res.json()) as {
-    result?: { content?: Array<{ type: string; text: string }> };
+  let body: string;
+  try {
+    body = await res.text();
+  } catch {
+    throw new Error("Failed to read response body from manager MCP service");
+  }
+
+  let mcpResponse: {
+    result?: { isError?: boolean; content?: Array<{ type: string; text: string }> };
     error?: { message?: string };
   };
+  try {
+    mcpResponse = JSON.parse(body) as {
+      result?: { isError?: boolean; content?: Array<{ type: string; text: string }> };
+      error?: { message?: string };
+    };
+  } catch {
+    throw new Error(
+      `Manager MCP returned non-JSON response: ${body.slice(0, 500)}`,
+    );
+  }
 
   if (mcpResponse.error) {
     throw new Error(mcpResponse.error.message ?? "Manager MCP error");
