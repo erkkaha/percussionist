@@ -129,11 +129,24 @@ async function execInWorkspaceViaManager(
     throw new Error(mcpResponse.error.message ?? "Manager MCP error");
   }
 
+  if (mcpResponse.result?.isError) {
+    const errText = mcpResponse.result.content?.[0]?.text ?? "Unknown MCP error";
+    throw new Error(errText);
+  }
+
   const rawText = mcpResponse.result?.content?.[0]?.text ?? "{}";
-  const parsed = JSON.parse(rawText) as {
-    stdout?: string;
-    exitCode?: number | null;
-  };
+
+  let parsed: { stdout?: string; exitCode?: number | null };
+  try {
+    parsed = JSON.parse(rawText) as {
+      stdout?: string;
+      exitCode?: number | null;
+    };
+  } catch {
+    throw new Error(
+      `Failed to parse MCP exec response as JSON: ${rawText.slice(0, 500)}`,
+    );
+  }
 
   return {
     stdout: parsed.stdout ?? "",
