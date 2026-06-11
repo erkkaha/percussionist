@@ -68,7 +68,8 @@ const INJECTION_PATTERNS: InjectionPattern[] = [
   { pattern: /<<-?\s*[A-Za-z]/, name: "here-document redirector" },
 
   // Brace expansion (bash-specific but still dangerous)
-  { pattern: /\{[^}]*\}/,      name: "brace expansion group" },
+  // Negative lookbehind avoids matching git ref syntax like ^{commit}
+  { pattern: /(?<!\^)\{[^}]*\}/,   name: "brace expansion group" },
 
   // Globbing that could match unexpected files in sensitive paths
   { pattern: /\*\*\/|\/\*\//,   name: "recursive glob patterns" },
