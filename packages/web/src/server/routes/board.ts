@@ -424,14 +424,15 @@ board.post("/:project/board/tasks/:taskName/retry-review", adminAuth(), async (c
     }
     const ns = task.metadata.namespace ?? NAMESPACE;
     const currentAiReworkCount = task.status?.worker?.aiReworkCount ?? 0;
-    await patchTaskStatus(taskName, {
+    const patch: Record<string, unknown> = {
       phase: "succeeded",
       worker: {
         aiReworkCount: currentAiReworkCount + 1,
         reviewRunName: null,
         reviewFeedback: null,
       },
-    }, ns);
+    };
+    await patchTaskStatus(taskName, patch as never, ns);
     await appendTaskEvent(projectName, taskName, "BUILD", "review-retry", {});
     return c.json({ success: true });
   } catch (e) {

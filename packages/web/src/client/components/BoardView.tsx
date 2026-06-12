@@ -66,7 +66,7 @@ export default function BoardView() {
   useBoardNotifications(projectName, allTasks);
 
   const handleSelectTask = (name: string) => {
-    setSearchParams({ task: name }, { replace: true });
+    setSearchParams({ task: name });
     // Only open the sheet on mobile (below md breakpoint).
     // On desktop the detail panel is rendered inline; opening the Sheet would
     // trigger its backdrop overlay even though SheetContent is hidden via CSS.
