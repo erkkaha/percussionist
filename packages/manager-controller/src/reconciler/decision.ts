@@ -568,6 +568,15 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
+  // Build a review feedback string that includes diagnosis.
+  function buildReviewFeedback(diagnosis?: string, feedback?: string): string {
+    let result = diagnosis ?? "";
+    if (feedback) {
+      result += (result ? "\n\n" : "") + feedback;
+    }
+    return result;
+  }
+
   // Review succeeded — check for structured verdict annotation.
   const verdict = getReviewVerdict(reviewRun);
   if (verdict) {
@@ -585,6 +594,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
         reviewedAt: now,
         attempt,
       };
+      const feedback = buildReviewFeedback(verdict.diagnosis, verdict.feedback);
       
       return {
         taskName,
@@ -593,12 +603,12 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
         statusPatch: {
           worker: {
             reviewApproved: true,
-            reviewFeedback: verdict.feedback,
+            reviewFeedback: feedback,
           },
           reviews: [...existingReviews, newRecord],
         },
         effects: [],
-        events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewApproved", verdict.feedback)],
+        events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewApproved", feedback)],
       };
     }
     if (verdict.action === "request_changes") {
@@ -618,6 +628,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
         reviewedAt: now,
         attempt,
       };
+      const feedback = buildReviewFeedback(verdict.diagnosis, verdict.feedback);
       
       if (aiCount > ceiling) {
         const escalatedRecord = { ...newRecord, action: "escalate" };
@@ -628,12 +639,12 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
           statusPatch: {
             worker: {
               aiReworkCount: aiCount,
-              reviewFeedback: `${verdict.feedback ?? ""}\n\n(AI rework ceiling reached)`,
+              reviewFeedback: `${feedback}\n\n(AI rework ceiling reached)`,
             },
             reviews: [...existingReviews, escalatedRecord],
           },
           effects: [],
-          events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewReworkCeilingReached", verdict.feedback)],
+          events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewReworkCeilingReached", feedback)],
         };
       }
       return {
@@ -643,12 +654,12 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
         statusPatch: {
           worker: {
             aiReworkCount: aiCount,
-            reviewFeedback: verdict.feedback,
+            reviewFeedback: feedback,
           },
           reviews: [...existingReviews, newRecord],
         },
         effects: [],
-        events: [makeEvent(input, fromPhase, "rework-requested", "ReviewRequestedChanges", verdict.feedback)],
+        events: [makeEvent(input, fromPhase, "rework-requested", "ReviewRequestedChanges", feedback)],
       };
     }
   }
