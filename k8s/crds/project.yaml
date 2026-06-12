@@ -85,6 +85,22 @@ spec:
                           required:
                             - name
                             - email
+                        sshHostKeyVerification:
+                          type: string
+                          enum:
+                            - strict
+                            - accept-new
+                            - no
+                        known_hostsSecret:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                              minLength: 1
+                            key:
+                              type: string
+                          required:
+                            - name
                       required:
                         - url
                     local:
