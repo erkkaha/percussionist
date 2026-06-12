@@ -528,6 +528,81 @@ describe("decide — succeeded with AI review", () => {
     expect((result.statusPatch?.worker as any).reviewRunName).toBeDefined();
     expect(result.effects.some((e) => e.type === "ScheduleReviewRun")).toBe(true);
   });
+
+  it("(retryCount=0, aiReworkCount=1) and (retryCount=1, aiReworkCount=0) produce different reviewRunName", () => {
+    const aiProject = makeProject("test-project", {
+      reviewPolicy: { aiReviewerEnabled: true, aiReviewerAgent: "reviewer", maxAutoReworks: 2 },
+    });
+    const taskA = makeTask("t1", "test-project", { phase: "succeeded", type: "BUILD" });
+    (taskA.status!.worker as any) = { runName: "worker-1", retryCount: 0, aiReworkCount: 1 };
+    const resultA = decide({
+      task: taskA,
+      project: aiProject,
+      allTasks: [taskA],
+      observed: { worker: makeRun("worker-1", { phase: "Succeeded" }) },
+      manualActions: {},
+      flow: resolveFlow(aiProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+
+    const taskB = makeTask("t1", "test-project", { phase: "succeeded", type: "BUILD" });
+    (taskB.status!.worker as any) = { runName: "worker-1", retryCount: 1, aiReworkCount: 0 };
+    const resultB = decide({
+      task: taskB,
+      project: aiProject,
+      allTasks: [taskB],
+      observed: { worker: makeRun("worker-1", { phase: "Succeeded" }) },
+      manualActions: {},
+      flow: resolveFlow(aiProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+
+    expect(resultA.toPhase).toBe("reviewing");
+    expect(resultB.toPhase).toBe("reviewing");
+    const reviewRunNameA = (resultA.statusPatch?.worker as any).reviewRunName;
+    const reviewRunNameB = (resultB.statusPatch?.worker as any).reviewRunName;
+    expect(reviewRunNameA).toBeDefined();
+    expect(reviewRunNameB).toBeDefined();
+    expect(reviewRunNameA).not.toBe(reviewRunNameB);
+  });
+
+  it("re-running decide with same counters yields same reviewRunName (deterministic stability)", () => {
+    const aiProject = makeProject("test-project", {
+      reviewPolicy: { aiReviewerEnabled: true, aiReviewerAgent: "reviewer", maxAutoReworks: 2 },
+    });
+    const task = makeTask("t1", "test-project", { phase: "succeeded", type: "BUILD" });
+    (task.status!.worker as any) = { runName: "worker-1", retryCount: 2, aiReworkCount: 3 };
+
+    // First call
+    const result1 = decide({
+      task,
+      project: aiProject,
+      allTasks: [task],
+      observed: { worker: makeRun("worker-1", { phase: "Succeeded" }) },
+      manualActions: {},
+      flow: resolveFlow(aiProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+
+    // Second call with same state
+    const result2 = decide({
+      task,
+      project: aiProject,
+      allTasks: [task],
+      observed: { worker: makeRun("worker-1", { phase: "Succeeded" }) },
+      manualActions: {},
+      flow: resolveFlow(aiProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+
+    expect((result1.statusPatch?.worker as any).reviewRunName).toBe(
+      (result2.statusPatch?.worker as any).reviewRunName
+    );
+  });
 });
 
 describe("decide — invalid transition rejection", () => {
