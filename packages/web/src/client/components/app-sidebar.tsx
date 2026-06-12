@@ -8,6 +8,7 @@ import {
   Settings,
   Activity,
   Plus,
+  MessageSquare,
 } from "lucide-react";
 import { useProjects } from "../hooks/useProjects";
 import { useProjectsEvents } from "../hooks/useProjectsEvents";
@@ -171,6 +172,18 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
               </SidebarMenuButton>
             </SidebarMenuItem>
           ))}
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={location.pathname.startsWith("/sessions")}
+              tooltip="Sessions"
+            >
+                <NavLink to="/sessions" onClick={handleNavClick}>
+                  <MessageSquare />
+                  <span>Sessions</span>
+                </NavLink>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarContent>
       <SidebarFooter>

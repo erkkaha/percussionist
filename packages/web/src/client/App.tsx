@@ -16,6 +16,8 @@ import BoardView from "./components/BoardView";
 import MetricsView from "./components/MetricsView";
 import SettingsPage from "./components/SettingsPage";
 import PlanView from "./components/PlanView";
+import SessionList from "./components/SessionList";
+import SessionDetail from "./components/SessionDetail";
 import ActivityPage from "./pages/ActivityPage";
 import LoginPage from "./pages/LoginPage";
 import { ChatContext } from "./lib/chat-context";
@@ -45,6 +47,8 @@ export default function App() {
               <Route path="/runs/new" element={<CreateRunForm />} />
               <Route path="/runs/:name" element={<RunDetail />} />
               <Route path="/stats" element={<StatsView />} />
+              <Route path="/sessions" element={<SessionList />} />
+              <Route path="/sessions/:name" element={<SessionDetail />} />
               <Route path="/metrics" element={<MetricsView />} />
               <Route path="/projects" element={<ProjectsPage />} />
               <Route path="/projects/new" element={<CreateProjectForm />} />
