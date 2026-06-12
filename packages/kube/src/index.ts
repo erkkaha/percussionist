@@ -202,6 +202,32 @@ export async function patchRunStatus(
   throw lastErr!;
 }
 
+export async function patchRunAnnotations(
+  name: string,
+  annotations: Record<string, string | undefined>,
+  ns: string = NAMESPACE,
+): Promise<Run> {
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error("No service account token available");
+
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_RUN}/${name}`;
+
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/merge-patch+json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ metadata: { annotations } }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (res.ok) return res.json() as Promise<Run>;
+  throw new Error(`Kubernetes API error ${res.status}: ${await res.text()}`);
+}
+
 // ---------------------------------------------------------------------------
 // ClusterAgent helpers (cluster-scoped — no namespace)
 

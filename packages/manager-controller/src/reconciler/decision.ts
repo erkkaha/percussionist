@@ -541,7 +541,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
       taskName,
       fromPhase,
       toPhase: "awaiting-human",
-      effects: [{ type: "DeleteRun", name: reviewRunName, reason: "ReviewRunFailed" }],
+      effects: [],
       events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewRunFailed")],
     };
   }
@@ -556,7 +556,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
           taskName,
           fromPhase,
           toPhase: "awaiting-human",
-          effects: [{ type: "DeleteRun", name: reviewRunName, reason: "ReviewRunStale" }],
+          effects: [],
           events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewRunStale", `Stale after ${flow.timeouts.reviewStaleSeconds}s`)],
         };
       }
