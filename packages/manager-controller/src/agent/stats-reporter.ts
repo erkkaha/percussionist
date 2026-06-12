@@ -11,10 +11,10 @@ const err = (...args: unknown[]) =>
 const log = (...args: unknown[]) =>
   console.log(`[manager stats ${new Date().toISOString()}]`, ...args);
 
-// Config from environment
-const WEB_SERVICE_URL = process.env.WEB_SERVICE_URL ?? "";
-const WEB_AUTH_TOKEN = process.env.WEB_AUTH_TOKEN ?? "";
-export const PERCUSSIONIST_NAMESPACE =
+// Config from environment (read dynamically for testability)
+const getWebUrl = () => process.env.WEB_SERVICE_URL ?? "";
+const getAuthToken = () => process.env.WEB_AUTH_TOKEN ?? "";
+export const getNamespace = () =>
   process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
 
 /**
@@ -216,7 +216,7 @@ export async function incrementalFlushManagerSession(
   fromIdx: number,
 ): Promise<number> {
   // Returns the new cursor (total messages seen)
-  if (!WEB_SERVICE_URL) return fromIdx;
+  if (!getWebUrl()) return fromIdx;
 
   let rawMessages: SessionMessage[] = [];
   try {
@@ -244,7 +244,7 @@ export async function incrementalFlushManagerSession(
     sessionID: sessionId,
     run: {
       name: getManagerRunName(sessionId),
-      namespace: PERCUSSIONIST_NAMESPACE,
+      namespace: getNamespace(),
       agent: MANAGER_RUN_AGENT,
       phase: "Running",
       startedAt,
@@ -258,11 +258,11 @@ export async function incrementalFlushManagerSession(
   };
 
   try {
-    const res = await fetch(`${WEB_SERVICE_URL}/api/stats/session`, {
+    const res = await fetch(`${getWebUrl()}/api/stats/session`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
-        ...(WEB_AUTH_TOKEN ? { Authorization: `Bearer ${WEB_AUTH_TOKEN}` } : {}),
+        ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
       },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15_000),
@@ -295,7 +295,7 @@ export async function sendManagerSessionStats(
   startedAt: string,
   completedAt: string | undefined,
 ): Promise<void> {
-  if (!WEB_SERVICE_URL) return;
+  if (!getWebUrl()) return;
 
   let rawMessages: SessionMessage[] = [];
   try {
@@ -324,7 +324,7 @@ export async function sendManagerSessionStats(
     sessionID: sessionId,
     run: {
       name: getManagerRunName(sessionId),
-      namespace: PERCUSSIONIST_NAMESPACE,
+      namespace: getNamespace(),
       agent: MANAGER_RUN_AGENT,
       phase,
       startedAt,
@@ -341,11 +341,11 @@ export async function sendManagerSessionStats(
   const MAX_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const res = await fetch(`${WEB_SERVICE_URL}/api/stats/session`, {
+      const res = await fetch(`${getWebUrl()}/api/stats/session`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(WEB_AUTH_TOKEN ? { Authorization: `Bearer ${WEB_AUTH_TOKEN}` } : {}),
+          ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(30_000),
