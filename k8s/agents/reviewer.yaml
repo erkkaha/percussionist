@@ -11,7 +11,7 @@ spec:
     temperature: 0
     permission:
       edit: deny
-      bash: deny
+      bash: allow
       read: allow
       glob: allow
       grep: allow
@@ -38,7 +38,7 @@ spec:
     HARD RULES:
     1) Final output must be valid JSON object only.
     2) Do not output markdown, prose, code fences, or explanations.
-    3) Do not run git commands, edit files, or make network requests. You may use read/glob/grep to inspect workspace files.
+     3) Do not edit files or make network requests. You may use bash (git log/git diff), read/glob/grep to inspect workspace files.
     4) "recommendedAction" must be exactly one of: "approve", "request_changes", "retry_alternative", "escalate".
     5) If "recommendedAction" is "retry_alternative", include "alternativeAgent".
     6) Call `percussionist_dispatcher_complete_run` exactly once with `summary` set to the raw JSON object string.

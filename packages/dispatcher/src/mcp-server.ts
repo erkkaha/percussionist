@@ -488,11 +488,11 @@ async function handleReadSession(id: JsonRpcRequest["id"], args: Record<string, 
     const data = await readAllSessionsFromConfigMap(runName, ns);
     if (!data) {
       return ok(id, {
-        content: [{ type: "text", text: JSON.stringify({ exists: false, messages: [] }) }],
+        content: [{ type: "text", text: JSON.stringify({ exists: false, messages: [] }, null, 2) }],
       });
     }
     return ok(id, {
-      content: [{ type: "text", text: JSON.stringify({ exists: true, sessions: data.sessions.length, messages: data.allMessages }) }],
+      content: [{ type: "text", text: JSON.stringify({ exists: true, sessions: data.sessions.length, messages: data.allMessages }, null, 2) }],
     });
   } catch (e) {
     return rpcError(id, -32603, `failed to read session: ${(e as Error).message}`);
