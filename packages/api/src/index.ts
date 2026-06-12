@@ -590,6 +590,16 @@ export const RunStatusSchema = z
         }),
       )
       .optional(),
+    containerExitCodes: z
+      .array(
+        z.object({
+          container: z.string(),
+          exitCode: z.number().int(),
+          reason: z.string().optional(),
+          message: z.string().optional(),
+        }),
+      )
+      .optional(),
   })
   .partial();
 
