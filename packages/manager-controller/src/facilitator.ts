@@ -25,6 +25,24 @@ const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
 
 const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
 
+// Resolve summary source precedence and log the selection.
+// Precedence: explicit arg → stored ConfigMap summary → none.
+export function resolveSummarySource(
+  sessionSummary: string,
+  storedSummary: string | undefined,
+): { source: "arg" | "configmap" | "none"; summary: string } {
+  if (sessionSummary) {
+    console.log(`[facilitator] buildBuildTaskGeneratorRun: using explicit session summary (${sessionSummary.length} chars)`);
+    return { source: "arg", summary: sessionSummary };
+  }
+  if (storedSummary) {
+    console.log(`[facilitator] buildBuildTaskGeneratorRun: using stored ConfigMap summary (${storedSummary.length} chars)`);
+    return { source: "configmap", summary: storedSummary };
+  }
+  console.log("[facilitator] buildBuildTaskGeneratorRun: no session summary available");
+  return { source: "none", summary: "" };
+}
+
 // Read a stored session summary from the run's session ConfigMap, if one exists.
 // Scans for any `summary-*` key since we may not know the sessionID at call time.
 async function readStoredSessionSummary(runName: string): Promise<string | undefined> {
@@ -261,7 +279,10 @@ export async function buildBuildTaskGeneratorRun(
   });
 
   // Prefer explicitly passed summary, then fall back to stored ConfigMap summary.
-  const actualSummary = sessionSummary || (await readStoredSessionSummary(succeededRunName)) || "";
+  const { source: summarySource, summary: actualSummary } = resolveSummarySource(
+    sessionSummary,
+    await readStoredSessionSummary(succeededRunName),
+  );
 
   // Read the full plan artifact from ConfigMap so the buildgen agent can work
   // from the actual plan content without needing workspace file access.
