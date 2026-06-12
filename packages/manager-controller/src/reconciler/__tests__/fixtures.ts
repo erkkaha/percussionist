@@ -93,6 +93,7 @@ export function makeProject(
       aiReviewerAgent?: string;
       maxAutoReworks?: number;
     };
+    embedding?: { enabled: boolean };
   },
 ): Project {
   return {
@@ -106,6 +107,7 @@ export function makeProject(
       ...(overrides?.featureBranchingEnabled !== undefined ? { featureBranchingEnabled: overrides.featureBranchingEnabled } : {}),
       ...(overrides?.retryPolicy ? { retryPolicy: overrides.retryPolicy } : {}),
       ...(overrides?.reviewPolicy ? { reviewPolicy: overrides.reviewPolicy } : {}),
+      ...(overrides?.embedding ? { embedding: overrides.embedding } : {}),
     },
   } as Project;
 }
@@ -118,6 +120,7 @@ export function makeRun(
     startedAt?: string;
     completedAt?: string;
     message?: string;
+    sessionID?: string;
   },
 ): Run {
   return {
@@ -136,6 +139,7 @@ export function makeRun(
       ...(overrides?.startedAt ? { startedAt: overrides.startedAt } : {}),
       ...(overrides?.completedAt ? { completedAt: overrides.completedAt } : {}),
       ...(overrides?.message ? { message: overrides.message } : {}),
+      ...(overrides?.sessionID ? { sessionID: overrides.sessionID } : {}),
     },
   } as Run;
 }

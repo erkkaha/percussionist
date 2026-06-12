@@ -550,3 +550,158 @@ describe("decide — waiting-for-input edge cases", () => {
     expect(result.toPhase).toBeUndefined();
   });
 });
+
+describe("decide — SummarizeSession effect emission", () => {
+  it("succeeded worker run without embedding → SummarizeSession effect present", () => {
+    const noEmbedProject = makeProject("test-project");
+    // No spec.embedding configured at all.
+    const task = makeTask("t1", "test-project", { phase: "running" });
+    const workerRun = makeRun("worker-1", {
+      phase: "Succeeded",
+      sessionID: "sess-abc123",
+    });
+    const result = decide({
+      task,
+      project: noEmbedProject,
+      allTasks: [task],
+      observed: { worker: workerRun },
+      manualActions: {},
+      flow: resolveFlow(noEmbedProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe("succeeded");
+    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(summaryEffect).toBeDefined();
+    expect((summaryEffect as any).sessionID).toBe("sess-abc123");
+  });
+
+  it("failed worker run without embedding → SummarizeSession effect present", () => {
+    const noEmbedProject = makeProject("test-project");
+    const task = makeTask("t1", "test-project", { phase: "running" });
+    const workerRun = makeRun("worker-1", {
+      phase: "Failed",
+      sessionID: "sess-def456",
+    });
+    const result = decide({
+      task,
+      project: noEmbedProject,
+      allTasks: [task],
+      observed: { worker: workerRun },
+      manualActions: {},
+      flow: resolveFlow(noEmbedProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe("failed");
+    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(summaryEffect).toBeDefined();
+    expect((summaryEffect as any).sessionID).toBe("sess-def456");
+  });
+
+  it("succeeded worker run with embedding disabled explicitly → SummarizeSession effect present", () => {
+    const embedDisabledProject = makeProject("test-project", {
+      embedding: { enabled: false },
+    });
+    const task = makeTask("t1", "test-project", { phase: "running" });
+    const workerRun = makeRun("worker-1", {
+      phase: "Succeeded",
+      sessionID: "sess-ghi789",
+    });
+    const result = decide({
+      task,
+      project: embedDisabledProject,
+      allTasks: [task],
+      observed: { worker: workerRun },
+      manualActions: {},
+      flow: resolveFlow(embedDisabledProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe("succeeded");
+    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(summaryEffect).toBeDefined();
+    expect((summaryEffect as any).sessionID).toBe("sess-ghi789");
+  });
+
+  it("succeeded worker run with sessionID missing → no SummarizeSession effect", () => {
+    const task = makeTask("t1", "test-project", { phase: "running" });
+    // Run has Succeeded phase but no sessionID.
+    const workerRun = makeRun("worker-1", { phase: "Succeeded" });
+    const result = decide(makeInput(task, { observed: { worker: workerRun } }));
+    expect(result.toPhase).toBe("succeeded");
+    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(summaryEffect).toBeUndefined();
+  });
+
+  it("initializing + Succeeded run without embedding → SummarizeSession effect present", () => {
+    const noEmbedProject = makeProject("test-project");
+    const task = makeTask("t1", "test-project", { phase: "initializing" });
+    const workerRun = makeRun("worker-1", {
+      phase: "Succeeded",
+      sessionID: "sess-init001",
+    });
+    const result = decide({
+      task,
+      project: noEmbedProject,
+      allTasks: [task],
+      observed: { worker: workerRun },
+      manualActions: {},
+      flow: resolveFlow(noEmbedProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe("succeeded");
+    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(summaryEffect).toBeDefined();
+    expect((summaryEffect as any).sessionID).toBe("sess-init001");
+  });
+
+  it("initializing + Failed run without embedding → SummarizeSession effect present", () => {
+    const noEmbedProject = makeProject("test-project");
+    const task = makeTask("t1", "test-project", { phase: "initializing" });
+    const workerRun = makeRun("worker-1", {
+      phase: "Failed",
+      sessionID: "sess-init002",
+    });
+    const result = decide({
+      task,
+      project: noEmbedProject,
+      allTasks: [task],
+      observed: { worker: workerRun },
+      manualActions: {},
+      flow: resolveFlow(noEmbedProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe("failed");
+    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(summaryEffect).toBeDefined();
+    expect((summaryEffect as any).sessionID).toBe("sess-init002");
+  });
+
+  it("succeeded worker run with embedding enabled → SummarizeSession effect present (regression)", () => {
+    const embedEnabledProject = makeProject("test-project", {
+      embedding: { enabled: true },
+    });
+    const task = makeTask("t1", "test-project", { phase: "running" });
+    const workerRun = makeRun("worker-1", {
+      phase: "Succeeded",
+      sessionID: "sess-jkl012",
+    });
+    const result = decide({
+      task,
+      project: embedEnabledProject,
+      allTasks: [task],
+      observed: { worker: workerRun },
+      manualActions: {},
+      flow: resolveFlow(embedEnabledProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe("succeeded");
+    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(summaryEffect).toBeDefined();
+    expect((summaryEffect as any).sessionID).toBe("sess-jkl012");
+  });
+});
