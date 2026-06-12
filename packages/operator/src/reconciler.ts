@@ -580,6 +580,7 @@ export async function reconcile(run: Run): Promise<void> {
       phase: RunPhase.Failed,
       completedAt: new Date().toISOString(),
       message: summarizePodFailure(pod),
+      containerExitCodes: collectContainerExitCodes(pod),
     });
     await cleanupChildResources(run, ns);
   }
@@ -641,6 +642,23 @@ function summarizePodFailure(pod?: V1Pod): string {
   return reasons.length
     ? reasons.join("; ")
     : (pod?.status?.reason ?? "pod failed");
+}
+
+function collectContainerExitCodes(pod?: V1Pod): Array<{ container: string; exitCode: number; reason?: string; message?: string }> {
+  const entries: Array<{ container: string; exitCode: number; reason?: string; message?: string }> = [];
+  for (const c of pod?.status?.initContainerStatuses ?? []) {
+    const t = c.state?.terminated;
+    if (t && (t.exitCode ?? 0) !== 0) {
+      entries.push({ container: c.name, exitCode: t.exitCode ?? 0, reason: t.reason, message: t.message?.trim() });
+    }
+  }
+  for (const c of pod?.status?.containerStatuses ?? []) {
+    const t = c.state?.terminated;
+    if (t && (t.exitCode ?? 0) !== 0) {
+      entries.push({ container: c.name, exitCode: t.exitCode ?? 0, reason: t.reason, message: t.message?.trim() });
+    }
+  }
+  return entries;
 }
 
 // ---------------------------------------------------------------------------

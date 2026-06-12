@@ -292,6 +292,19 @@ describe("decide — awaiting-human", () => {
     });
     expect(result.toPhase).toBe("done");
   });
+
+  it("awaiting-human + PLAN merge-retry approval → awaiting-feature-merge", () => {
+    const task = makeTask("t1", "test-project", { phase: "awaiting-human", type: "PLAN" });
+    (task.status!.worker as any) = {
+      mergeRunName: "merge-stale",
+      mergeError: "conflict detected",
+    };
+    const result = decide(makeInput(task, { manualActions: { approved: true } }));
+    expect(result.toPhase).toBe("awaiting-feature-merge");
+    expect((result.statusPatch?.worker as any).mergeRunName).toBeNull();
+    expect((result.statusPatch?.worker as any).mergeError).toBeNull();
+    expect(result.effects.some((e) => e.type === "ClearTaskAnnotations")).toBe(true);
+  });
 });
 
 describe("decide — rework-requested", () => {
