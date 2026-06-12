@@ -802,15 +802,6 @@ Never invent a version — read what exists and increment.
 Percussionist dogfoods itself for development using resources in `k8s/self-dev/`.
 This directory is for maintainers only — external users should skip it.
 
-### Meta-Agents (k8s/self-dev/agents/)
-
-| Agent | Role |
-|-------|------|
-| `meta-reviewer` | Runs typecheck/build/tests and reviews code quality before integration |
-| `meta-smoke-tester` | Builds Docker images via DinD and validates changes in an isolated test namespace |
-| `meta-integrator` | Rebases and merges an approved feature branch into main, pushes to remote |
-| `meta-documenter` | Updates README.md and AGENTS.md to reflect changes that landed on main |
-
 ### Project
 
 `percussionist-dev` (in `k8s/self-dev/projects/`) is the self-development Project.
@@ -820,15 +811,13 @@ branches and the integrator merges to main.
 ### Task Workflow
 
 ```
-PLAN → BUILD → REVIEW → (SMOKE) → INTEGRATE → (DOCUMENT)
+PLAN → BUILD → REVIEW → INTEGRATE
 ```
 
 1. **PLAN** (`planner`) — Explores codebase, produces implementation plan, creates child BUILD tasks
 2. **BUILD** (`builder`) — Implements changes on `agent/<task-name>` branch
-3. **REVIEW** (`meta-reviewer`) — Typecheck, build, code quality gate
-4. **SMOKE** (`meta-smoke-tester`) — Optional; build images + e2e in isolated namespace
-5. **INTEGRATE** (`meta-integrator`) — Rebase-merge to main, push to remote
-6. **DOCUMENT** (`meta-documenter`) — Optional; update docs post-merge
+3. **REVIEW** (`reviewer`) — Typecheck, build, code quality gate
+4. **INTEGRATE** (`integrator`) — Rebase-merge to main, push to remote
 
 Setup instructions: `k8s/self-dev/secrets/README.md`
 

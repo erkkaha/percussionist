@@ -231,7 +231,7 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs:
 2. **Core E2E** — required on PRs, runs against a Kind cluster provisioned by the CI job
 3. **Extended E2E + Smoke** — optional; triggered manually or on scheduled runs
 
-The smoke-tester agent (`k8s/self-dev/agents/meta-smoke-tester.yaml`) handles deep validation: building Docker images, loading to minikube, and running full E2E suites in an isolated namespace. This is a release gate, not a PR gate.
+Extended E2E handles deep validation: building Docker images, loading to minikube, and running full E2E suites in an isolated namespace. This is a release gate, not a PR gate.
 
 ## Troubleshooting
 

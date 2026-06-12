@@ -14,11 +14,6 @@ percussionist project. Customize them for your own use case or use them as-is.
 | `failure-analyst` | Diagnoses repeated task failures and recommends a next action |
 | `integrator` | Merges an approved feature branch into the target branch and pushes to remote |
 
-## Self-development agents
-
-Agents used for percussionist's own development live in `k8s/self-dev/agents/`
-and are **not intended for external use**. See `k8s/self-dev/README.md`.
-
 ## Creating your own agents
 
 Define a `ClusterAgent` CR and apply it:
