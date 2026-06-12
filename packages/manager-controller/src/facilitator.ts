@@ -215,7 +215,7 @@ export async function buildSuccessReviewRun(
       ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(", ")}`
       : "RUNNER PACKAGES: (base image only)",
     "",
-    `Call the percussionist_dispatcher_submit_review MCP tool to submit your review verdict:`,
+    `Call the percussionist_dispatcher_complete_review MCP tool to submit your review verdict:`,
     JSON.stringify({
       approved: true,
       diagnosis: "(1-2 sentences: did the worker actually complete the task?)",
@@ -453,7 +453,7 @@ export async function buildReviewRun(
           "",
         ]
       : []),
-    `Call the percussionist_dispatcher_submit_review MCP tool to submit your review verdict:`,
+    `Call the percussionist_dispatcher_complete_review MCP tool to submit your review verdict:`,
     JSON.stringify({
       approved: true,
       diagnosis: "(1-2 sentences: did the worker actually complete the task?)",
