@@ -292,17 +292,22 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
 function OverviewContent({ task, col, projectName }: { task: Task; col: string; projectName: string }) {
   const worker = task.status?.worker;
   const { data: runsData } = useTaskRuns(task.metadata.name);
-  const latestRun = [...(runsData ?? [])]
+  const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
+  const allRuns = [...(runsData ?? [])]
     .sort((a, b) => {
       const aTime = a.status?.completedAt ?? a.status?.startedAt ?? a.metadata.creationTimestamp ?? "";
       const bTime = b.status?.completedAt ?? b.status?.startedAt ?? b.metadata.creationTimestamp ?? "";
       return bTime.localeCompare(aTime);
-    })[0];
-  const runLinks = [
-    worker?.runName ? { label: "Run", name: worker.runName } : null,
-    worker?.reviewRunName ? { label: "Reviewer", name: worker.reviewRunName } : null,
-    worker?.mergeRunName ? { label: "Merge", name: worker.mergeRunName } : null,
-  ].filter(Boolean) as Array<{ label: string; name: string }>;
+    });
+  const toggleRun = (name: string) => {
+    const next = new Set(expandedRuns);
+    if (next.has(name)) {
+      next.delete(name);
+    } else {
+      next.add(name);
+    }
+    setExpandedRuns(next);
+  };
 
   return (
     <div className="space-y-4 px-4 py-3">
@@ -338,42 +343,77 @@ function OverviewContent({ task, col, projectName }: { task: Task; col: string; 
         </div>
       )}
 
-      {/* Latest run output */}
-      {latestRun?.status?.message && (
+      {/* Runs collapsible list */}
+      {allRuns.length > 0 && (
         <div>
-          <div className="flex items-center gap-2 mb-1.5">
-            <p className="text-label-md font-mono uppercase text-text-dim">Latest Run</p>
-            <StatusBadge phase={latestRun.status.phase} />
-          </div>
-          <div className="rounded-md border border-border-muted bg-surface-overlay px-3 py-2 space-y-1">
-            <Link
-              to={`/runs/${encodeURIComponent(latestRun.metadata.name)}`}
-              className="flex items-center gap-1.5 text-xs font-mono text-text-dim hover:text-text transition-colors"
-            >
-              <ExternalLink className="h-3 w-3 shrink-0" />
-              {latestRun.metadata.name}
-            </Link>
-            <p className="text-sm whitespace-pre-wrap leading-relaxed text-text">{latestRun.status.message}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Run links */}
-      {runLinks.length > 0 && (
-        <div>
-          <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">Runs</p>
+          <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">
+            Runs ({allRuns.length})
+          </p>
           <div className="space-y-1">
-            {runLinks.map(({ label, name }) => (
-              <Link
-                key={name}
-                to={`/runs/${encodeURIComponent(name)}`}
-                className="flex items-center gap-1.5 text-sm text-text-dim hover:text-text transition-colors"
-              >
-                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                <span className="font-mono text-xs">{name}</span>
-                <span className="text-text-dim/50 text-xs">({label})</span>
-              </Link>
-            ))}
+            {allRuns.map((run) => {
+              const isOpen = expandedRuns.has(run.metadata.name);
+              const startedAt = run.status?.startedAt ?? run.metadata.creationTimestamp ?? "";
+              const completedAt = run.status?.completedAt;
+              const minutesAgo = Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000);
+              const timeStr = minutesAgo < 1 ? "just now"
+                : minutesAgo < 60 ? `${minutesAgo}m ago`
+                : `${Math.floor(minutesAgo / 60)}h ago`;
+              const duration = startedAt ? (() => {
+                const startMs = new Date(startedAt).getTime();
+                const endMs = completedAt ? new Date(completedAt).getTime() : Date.now();
+                const secs = Math.round((endMs - startMs) / 1000);
+                if (secs < 60) return `${secs}s`;
+                return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+              })() : null;
+              const hasTokens = run.status?.tokensIn !== undefined || run.status?.tokensOut !== undefined;
+
+              return (
+                <div key={run.metadata.name} className="rounded border border-border-muted bg-surface overflow-hidden">
+                  <button
+                    onClick={() => toggleRun(run.metadata.name)}
+                    className="flex items-center gap-2 w-full px-3 py-2 hover:bg-surface-overlay/30 transition-colors text-left"
+                  >
+                    {isOpen ? (
+                      <ChevronDown className="h-4 w-4 shrink-0 text-text-dim" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 shrink-0 text-text-dim" />
+                    )}
+                    <span className="font-mono text-xs text-text-dim shrink-0">
+                      {run.metadata.name}
+                    </span>
+                    <StatusBadge phase={run.status?.phase} />
+                    <span className="text-xs text-text-dim">{run.spec?.agent}</span>
+                    <span className="text-xs text-text-dim ml-auto">{timeStr}</span>
+                  </button>
+
+                  {isOpen && (
+                    <div className="border-t border-border-muted px-3 py-2 space-y-2">
+                      {run.status?.message ? (
+                        <ReactMarkdown remarkPlugins={remarkPlugins} components={taskDescriptionMarkdownComponents}>
+                          {run.status.message}
+                        </ReactMarkdown>
+                      ) : (
+                        <p className="text-xs text-text-dim italic">No output</p>
+                      )}
+                      {(hasTokens || duration) && (
+                        <div className="flex items-center gap-3 text-xs text-text-dim">
+                          {hasTokens && (
+                            <span>Tokens: {run.status?.tokensIn ?? 0} in / {run.status?.tokensOut ?? 0} out</span>
+                          )}
+                          {duration && <span>Duration: {duration}</span>}
+                        </div>
+                      )}
+                      <Link
+                        to={`/runs/${encodeURIComponent(run.metadata.name)}`}
+                        className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent/80 transition-colors"
+                      >
+                        Open run page &rarr;
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
