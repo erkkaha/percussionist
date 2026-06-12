@@ -153,6 +153,58 @@ describe("handleStoreMemory", () => {
     });
     expect(row!.agent_run).toBe("run:test-1");
   });
+
+  it("stores session-summary metadata correctly", async () => {
+    const result = await handleStoreMemory({
+      content: "Session summary of agent work on feature X",
+      metadata: { type: "session-summary", runName: "plan-worker-1", sessionID: "sess-abc123" },
+      agentRun: "run:plan-worker-1",
+    });
+    expect(result).toHaveProperty("id");
+
+    const raw = getRawDb();
+    const row = raw
+      .prepare(
+        "SELECT content, metadata, agent_run FROM memories WHERE id = ?",
+      )
+      .get(result.id) as {
+      content: string;
+      metadata: string;
+      agent_run: string;
+    } | null;
+    expect(row).not.toBeNull();
+    expect(row!.content).toBe("Session summary of agent work on feature X");
+    const parsedMeta = JSON.parse(row!.metadata);
+    expect(parsedMeta.type).toBe("session-summary");
+    expect(parsedMeta.runName).toBe("plan-worker-1");
+    expect(parsedMeta.sessionID).toBe("sess-abc123");
+    expect(row!.agent_run).toBe("run:plan-worker-1");
+  });
+
+  it("stores session-summary with truncated content", async () => {
+    const longContent = "x".repeat(50_000);
+    const result = await handleStoreMemory({
+      content: longContent,
+      metadata: { type: "session-summary", runName: "build-worker-2", sessionID: "sess-def456" },
+      agentRun: "run:build-worker-2",
+    });
+    expect(result).toHaveProperty("id");
+
+    const raw = getRawDb();
+    const row = raw
+      .prepare(
+        "SELECT content, metadata FROM memories WHERE id = ?",
+      )
+      .get(result.id) as {
+      content: string;
+      metadata: string;
+    } | null;
+    expect(row).not.toBeNull();
+    // Content should be stored as-is (truncation happens at summarizer level, not here)
+    expect(row!.content.length).toBe(50_000);
+    const parsedMeta = JSON.parse(row!.metadata);
+    expect(parsedMeta.type).toBe("session-summary");
+  });
 });
 
 describe("handleSearch", () => {
@@ -188,6 +240,22 @@ describe("handleSearch", () => {
   it("respects limit", async () => {
     const results = await handleSearch({ query: "test", limit: 1 });
     expect(results.length).toBe(1);
+  });
+
+  it("searches session-summary memories by type metadata", async () => {
+    // Seed a session-summary memory alongside regular ones
+    const raw = getRawDb();
+    const eBuf = new Uint8Array(FAKE_EMBEDDING.buffer);
+    const id = crypto.randomUUID();
+    raw
+      .prepare("INSERT INTO memories (id, content, metadata) VALUES (?, ?, ?)")
+      .run(id, "session summary of plan task", JSON.stringify({ type: "session-summary" }));
+    const row = raw.prepare("SELECT last_insert_rowid() AS rid").get() as { rid: number };
+    raw.prepare("INSERT INTO vec_memories (rowid, embedding) VALUES (?, ?)").run(row.rid, eBuf);
+
+    // Search should find it among other results
+    const results = await handleSearch({ query: "session", limit: 10 });
+    expect(results.length).toBeGreaterThanOrEqual(4);
   });
 });
 
