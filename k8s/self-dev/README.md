@@ -7,7 +7,6 @@ development (dogfooding). **External users should NOT apply these manifests.**
 
 ## What's Here
 
-- **agents/** - Meta-level agents (reviewer, smoke-tester, integrator, documenter)
 - **projects/** - percussionist-dev project that orchestrates our own development
 - **secrets/** - Instructions for creating required secrets (git keys, tokens)
 
@@ -16,9 +15,8 @@ development (dogfooding). **External users should NOT apply these manifests.**
 ### One-time setup
 
 1. Follow instructions in `secrets/README.md` to create required secrets
-2. Apply agents: `kubectl apply -f k8s/self-dev/agents/`
-3. Apply project: `kubectl apply -f k8s/self-dev/projects/`
-4. Verify: `beatctl project get percussionist-dev`
+2. Apply project: `kubectl apply -f k8s/self-dev/projects/`
+3. Verify: `beatctl project get percussionist-dev`
 
 ### Adding tasks
 
@@ -48,29 +46,24 @@ points for your own agents and projects.
 
 ## Workflow
 
-Tasks flow: `PLAN → BUILD → REVIEW → (SMOKE) → INTEGRATE → (DOCUMENT)`
+Tasks flow: `PLAN → BUILD → REVIEW → INTEGRATE`
 
 | Step | Agent | Purpose |
 |------|-------|---------|
 | PLAN | planner | Explore codebase, produce implementation plan, create BUILD tasks |
 | BUILD | builder | Implement changes on `agent/<task-name>` branch |
-| REVIEW | meta-reviewer | Typecheck, build, code quality review |
-| SMOKE | meta-smoke-tester | Build images, deploy to test namespace, run e2e |
-| INTEGRATE | meta-integrator | Merge approved branch to main, push to remote |
-| DOCUMENT | meta-documenter | Update README/AGENTS.md to reflect changes |
-
-SMOKE and DOCUMENT steps are optional — add them when the task warrants it.
+| REVIEW | reviewer | Typecheck, build, code quality review |
+| INTEGRATE | integrator | Merge approved branch to main, push to remote |
 
 ## Testing Tiers — When to Run What
 
-Percussionist uses a four-layer testing model. See [`docs/testing-strategy.md`](../../docs/testing-strategy.md) for full details.
+Percussionist uses a three-layer testing model. See [`docs/testing-strategy.md`](../../docs/testing-strategy.md) for full details.
 
 | Tier | Command | When to run | Duration target |
 |------|---------|-------------|-----------------|
 | **Unit + Smoke** | `pnpm test` | Every commit; PR gate required | < 1 min |
 | **Core E2E** | `pnpm e2e:core` | Before merging feature branches; CI on every PR | < 10 min |
 | **Extended E2E** | `pnpm e2e:extended` | Before releases; manual trigger for complex paths | < 20 min |
-| **Smoke (agent)** | meta-smoke-tester agent | Release gate; deep validation in isolated namespace | Variable |
 
 ### Contributor Checklist — Adding a New Test
 

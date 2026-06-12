@@ -375,6 +375,20 @@ export async function requestChangesTask(
   }
 }
 
+export async function retryReviewTask(
+  project: string,
+  taskName: string,
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/retry-review`,
+    { method: "POST", headers: authHeaders() },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Settings
 

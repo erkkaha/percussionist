@@ -10,6 +10,12 @@ export const MANAGER_NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percuss
 
 export const DECISION_AGENT_NAME = process.env.DECISION_AGENT_NAME ?? "manager-decision";
 
+// Stats reporter config (same namespace as manager, but separate service URL)
+export const WEB_SERVICE_URL =
+  process.env.WEB_SERVICE_URL ??
+  `http://percussionist-web.${MANAGER_NAMESPACE}.svc.cluster.local:8080`;
+export const WEB_AUTH_TOKEN = process.env.WEB_AUTH_TOKEN ?? "";
+
 export interface AgentDecision {
   action: "retry_same" | "retry_alternative" | "skip" | "escalate";
   agent?: string;

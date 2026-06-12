@@ -5,21 +5,45 @@
 
 import { OPENCODE_URL, AGENT_TIMEOUT_MS, DECISION_AGENT_NAME } from "./config.js";
 import http from "node:http";
+import {
+  incrementalFlushManagerSession,
+  sendManagerSessionStats,
+} from "./stats-reporter.js";
 
 const log = (...args: unknown[]) =>
   console.log(`[agent ${new Date().toISOString()}]`, ...args);
 
-interface SessionMessage {
+interface SessionTokenInfo {
+  input?: number;
+  output?: number;
+  reasoning?: number;
+  cache?: { read?: number; write?: number };
+}
+
+interface SessionTimeInfo {
+  created?: number;
+  completed?: number;
+}
+
+export interface SessionMessage {
   info?: {
     id?: string;
     sessionID?: string;
     role?: "user" | "assistant";
-    time?: { created?: number; completed?: number };
-    tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } };
+    model?: { providerID?: string; modelID?: string } | string;
+    time?: SessionTimeInfo;
+    tokens?: SessionTokenInfo;
     cost?: number;
     error?: unknown;
   };
-  parts?: Array<{ type: string; text?: string }>;
+  parts?: Array<
+    | { type: "text"; text?: string }
+    | { type: "tool"; tool: string; callID?: string; state?: Record<string, unknown> }
+    | { type: "tool-use" | "tool_use"; id?: string; name?: string; input?: Record<string, unknown> }
+    | { type: "tool-result" | "tool_result"; toolUseId?: string; tool_use_id?: string; content?: unknown; isError?: boolean }
+    | { type: "file"; path?: string; filename?: string }
+    | { type: string; [key: string]: unknown } // Unknown-safe fallback
+  >;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,13 +214,22 @@ export async function waitForCompletion(
   signal?: AbortSignal,
 ): Promise<string | null> {
   const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : 0;
-  const startedAt = Date.now();
+  const startedAtIso = new Date().toISOString();
+  const startedAtMs = Date.now();
   let sawActivity = false;
+  let fromIdx = 0; // cursor for incremental flush idempotency
   const activityTimeout = firstResponseTimeoutMs ?? (timeoutMs > 0 ? Math.min(timeoutMs, 60000) : 0);
 
   while (!signal?.aborted && (deadline === 0 || Date.now() < deadline)) {
     const messages = await getMessages(sessionId);
     if (sawAgentActivity(messages)) sawActivity = true;
+
+    // Incremental flush: send delta to web stats after each polling iteration.
+    fromIdx = await incrementalFlushManagerSession(
+      sessionId,
+      startedAtIso,
+      fromIdx,
+    );
 
     // Check if the last assistant message has completed
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -205,8 +238,24 @@ export async function waitForCompletion(
       if (msg.info?.time?.completed) {
         let text = "";
         for (const part of msg.parts ?? []) {
-          if (part.type === "text" && part.text) text += part.text;
+          if (
+            part &&
+            typeof part === "object" &&
+            "type" in part &&
+            (part.type as string) === "text" &&
+            "text" in part &&
+            part.text
+          ) {
+            text += String(part.text);
+          }
         }
+        // Final flush on success path
+        await sendManagerSessionStats(
+          sessionId,
+          "Succeeded",
+          startedAtIso,
+          new Date().toISOString(),
+        );
         if (text) return text;
         // Tool-call-only intermediate completion — keep polling
       }
@@ -215,19 +264,29 @@ export async function waitForCompletion(
     // Activity timeout. We care that the agent started working, not that it
     // produced visible assistant text; tool calls and empty assistant messages
     // count as activity. A value of 0 disables this guard.
-    if (!sawActivity && activityTimeout > 0 && Date.now() - startedAt > activityTimeout) {
+    if (!sawActivity && activityTimeout > 0 && Date.now() - startedAtMs > activityTimeout) {
       log(`agent did not start work within ${activityTimeout}ms`);
+      await sendManagerSessionStats(
+        sessionId,
+        "Failed",
+        startedAtIso,
+        new Date().toISOString(),
+      );
       return null;
     }
 
     await interruptibleSleep(2000, signal);
   }
 
-  if (signal?.aborted) {
-    log(`waitForCompletion cancelled via signal`);
-  } else {
-    log(`agent did not complete within ${timeoutMs}ms`);
-  }
+  // Final flush on terminal paths (timeout or cancelled)
+  const phase = signal?.aborted ? "Failed" : "Failed";
+  log(signal?.aborted ? `waitForCompletion cancelled via signal` : `agent did not complete within ${timeoutMs}ms`);
+  await sendManagerSessionStats(
+    sessionId,
+    phase,
+    startedAtIso,
+    new Date().toISOString(),
+  );
   return null;
 }
 

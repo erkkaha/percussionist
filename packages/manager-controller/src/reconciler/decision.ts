@@ -471,8 +471,12 @@ function decideSucceeded(input: ReconcileInput): ReconcileDecision {
       }
       const retryCount = task.status?.worker?.retryCount ?? 0;
       const aiReworkCount = task.status?.worker?.aiReworkCount ?? 0;
-      const reviewSeq = String(retryCount + aiReworkCount);
-      const reviewRunName = auxiliaryRunName(input.project.metadata.name, "review", taskName, reviewSeq);
+      // Use both counters in suffix to avoid collisions (e.g., 2+1 vs 1+2 both equal "3")
+      const reviewSuffix = createHash("sha256")
+        .update(`${input.project.metadata.name}:${taskName}:review:${retryCount}:${aiReworkCount}`)
+        .digest("hex")
+        .slice(0, 8);
+      const reviewRunName = auxiliaryRunName(input.project.metadata.name, "review", taskName, reviewSuffix);
 
       return {
         taskName,
@@ -537,7 +541,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
       taskName,
       fromPhase,
       toPhase: "awaiting-human",
-      effects: [{ type: "DeleteRun", name: reviewRunName, reason: "ReviewRunFailed" }],
+      effects: [],
       events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewRunFailed")],
     };
   }
@@ -552,7 +556,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
           taskName,
           fromPhase,
           toPhase: "awaiting-human",
-          effects: [{ type: "DeleteRun", name: reviewRunName, reason: "ReviewRunStale" }],
+          effects: [],
           events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewRunStale", `Stale after ${flow.timeouts.reviewStaleSeconds}s`)],
         };
       }
@@ -562,6 +566,15 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
 
   if (reviewRun.status?.phase !== "Succeeded") {
     return { taskName, fromPhase, effects: [], events: [] };
+  }
+
+  // Build a review feedback string that includes diagnosis.
+  function buildReviewFeedback(diagnosis?: string, feedback?: string): string {
+    let result = diagnosis ?? "";
+    if (feedback) {
+      result += (result ? "\n\n" : "") + feedback;
+    }
+    return result;
   }
 
   // Review succeeded — check for structured verdict annotation.
@@ -581,6 +594,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
         reviewedAt: now,
         attempt,
       };
+      const feedback = buildReviewFeedback(verdict.diagnosis, verdict.feedback);
       
       return {
         taskName,
@@ -589,12 +603,12 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
         statusPatch: {
           worker: {
             reviewApproved: true,
-            reviewFeedback: verdict.feedback,
+            reviewFeedback: feedback,
           },
           reviews: [...existingReviews, newRecord],
         },
         effects: [],
-        events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewApproved", verdict.feedback)],
+        events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewApproved", feedback)],
       };
     }
     if (verdict.action === "request_changes") {
@@ -614,6 +628,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
         reviewedAt: now,
         attempt,
       };
+      const feedback = buildReviewFeedback(verdict.diagnosis, verdict.feedback);
       
       if (aiCount > ceiling) {
         const escalatedRecord = { ...newRecord, action: "escalate" };
@@ -624,12 +639,12 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
           statusPatch: {
             worker: {
               aiReworkCount: aiCount,
-              reviewFeedback: `${verdict.feedback ?? ""}\n\n(AI rework ceiling reached)`,
+              reviewFeedback: `${feedback}\n\n(AI rework ceiling reached)`,
             },
             reviews: [...existingReviews, escalatedRecord],
           },
           effects: [],
-          events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewReworkCeilingReached", verdict.feedback)],
+          events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewReworkCeilingReached", feedback)],
         };
       }
       return {
@@ -639,12 +654,12 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
         statusPatch: {
           worker: {
             aiReworkCount: aiCount,
-            reviewFeedback: verdict.feedback,
+            reviewFeedback: feedback,
           },
           reviews: [...existingReviews, newRecord],
         },
         effects: [],
-        events: [makeEvent(input, fromPhase, "rework-requested", "ReviewRequestedChanges", verdict.feedback)],
+        events: [makeEvent(input, fromPhase, "rework-requested", "ReviewRequestedChanges", feedback)],
       };
     }
   }

@@ -403,6 +403,45 @@ board.post("/:project/board/tasks/:taskName/request-changes", adminAuth(), async
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/projects/:project/board/tasks/:taskName/retry-review
+//
+// Moves a BUILD task with a failed review back to succeeded phase so the
+// manager creates a new review run. Increments aiReworkCount for a unique
+// review run name, clears the stale reviewRunName and reviewFeedback.
+
+board.post("/:project/board/tasks/:taskName/retry-review", adminAuth(), async (c) => {
+  const projectName = c.req.param("project");
+  const taskName = c.req.param("taskName");
+  try {
+    const task = await getTask(taskName);
+    const phase = task.status?.phase;
+    const reviewRunName = task.status?.worker?.reviewRunName;
+    if (phase !== "awaiting-human") {
+      return c.json({ error: `Task phase is "${phase}", expected "awaiting-human"` }, 400);
+    }
+    if (!reviewRunName) {
+      return c.json({ error: "Task has no reviewRunName to retry" }, 400);
+    }
+    const ns = task.metadata.namespace ?? NAMESPACE;
+    const currentAiReworkCount = task.status?.worker?.aiReworkCount ?? 0;
+    const patch: Record<string, unknown> = {
+      phase: "succeeded",
+      worker: {
+        aiReworkCount: currentAiReworkCount + 1,
+        reviewRunName: null,
+        reviewFeedback: null,
+      },
+    };
+    await patchTaskStatus(taskName, patch as never, ns);
+    await appendTaskEvent(projectName, taskName, "BUILD", "review-retry", {});
+    return c.json({ success: true });
+  } catch (e) {
+    const ke = e as KubeError;
+    return c.json({ error: errMsg(ke) }, errStatus(ke));
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/projects/:project/board/tasks/:taskName/abandon
 
 board.post("/:project/board/tasks/:taskName/abandon", adminAuth(), async (c) => {

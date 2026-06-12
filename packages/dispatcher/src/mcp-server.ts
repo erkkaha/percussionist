@@ -36,7 +36,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { DISPATCHER_MCP_PORT } from "@percussionist/api";
-import { getProject, buildTask, createTask, patchTaskStatus, writePlanToConfigMap, readPlanFromConfigMap, readAllSessionsFromConfigMap } from "@percussionist/kube";
+import { getProject, buildTask, createTask, patchTaskStatus, writePlanToConfigMap, readPlanFromConfigMap, readAllSessionsFromConfigMap, patchRunAnnotations } from "@percussionist/kube";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-dispatcher";
@@ -96,6 +96,36 @@ const TOOL_COMPLETE_PLAN = {
       },
     },
     required: ["summary"],
+  },
+};
+
+const TOOL_COMPLETE_REVIEW = {
+  name: "complete_review",
+  description:
+    "Submit a structured review verdict for a completed worker run and mark the review run as complete. " +
+    "Call this from a review agent run instead of complete_run. " +
+    "Writes the verdict to the Run annotations so the orchestrator can act on it.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      approved: {
+        type: "boolean",
+        description: "Whether the review approves this work (true=approve, false=request_changes)",
+      },
+      diagnosis: {
+        type: "string",
+        description: "1-2 sentence assessment of whether the worker completed the task",
+      },
+      feedback: {
+        type: "string",
+        description: "Optional detailed feedback for the worker or human reviewer",
+      },
+      suggestion: {
+        type: "string",
+        description: "Optional suggestion for how to improve the work",
+      },
+    },
+    required: ["approved", "diagnosis"],
   },
 };
 
@@ -488,11 +518,11 @@ async function handleReadSession(id: JsonRpcRequest["id"], args: Record<string, 
     const data = await readAllSessionsFromConfigMap(runName, ns);
     if (!data) {
       return ok(id, {
-        content: [{ type: "text", text: JSON.stringify({ exists: false, messages: [] }) }],
+        content: [{ type: "text", text: JSON.stringify({ exists: false, messages: [] }, null, 2) }],
       });
     }
     return ok(id, {
-      content: [{ type: "text", text: JSON.stringify({ exists: true, sessions: data.sessions.length, messages: data.allMessages }) }],
+      content: [{ type: "text", text: JSON.stringify({ exists: true, sessions: data.sessions.length, messages: data.allMessages }, null, 2) }],
     });
   } catch (e) {
     return rpcError(id, -32603, `failed to read session: ${(e as Error).message}`);
@@ -608,13 +638,13 @@ async function handleCreateTask(
   }
 }
 
-function handleMcp(
+async function handleMcp(
   req: JsonRpcRequest,
   onFailRun: (reason: string) => void,
   onCompleteRun: (summary: string) => void,
   onCompletePlan: (summary: string) => void,
   getStatus: () => RunStatus | null,
-): JsonRpcResponse | Promise<JsonRpcResponse> {
+): Promise<JsonRpcResponse> {
   switch (req.method) {
     case "initialize":
       return ok(req.id, {
@@ -629,7 +659,7 @@ function handleMcp(
       return ok(req.id, {});
 
     case "tools/list":
-      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_COMPLETE_PLAN, TOOL_GET_STATUS, TOOL_CREATE_TASK, TOOL_SEARCH_CODE, TOOL_WRITE_PLAN, TOOL_READ_PLAN, TOOL_READ_SESSION] });
+      return ok(req.id, { tools: [TOOL_FAIL_RUN, TOOL_COMPLETE_RUN, TOOL_COMPLETE_PLAN, TOOL_COMPLETE_REVIEW, TOOL_GET_STATUS, TOOL_CREATE_TASK, TOOL_SEARCH_CODE, TOOL_WRITE_PLAN, TOOL_READ_PLAN, TOOL_READ_SESSION] });
 
     case "tools/call": {
       const toolName = (req.params?.name as string | undefined) ?? "";
@@ -664,6 +694,41 @@ function handleMcp(
         onCompletePlan(summary);
         return ok(req.id, {
           content: [{ type: "text", text: "Plan marked as complete. The orchestrator will review the plan artifact." }],
+        });
+      }
+
+      if (toolName === "complete_review") {
+        const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
+        const approved = args["approved"] === true;
+        const diagnosis = typeof args["diagnosis"] === "string" ? args["diagnosis"] : "";
+        if (!diagnosis) {
+          return rpcError(req.id, -32602, "diagnosis is required");
+        }
+        const feedback = typeof args["feedback"] === "string" ? args["feedback"] : undefined;
+        const suggestion = typeof args["suggestion"] === "string" ? args["suggestion"] : undefined;
+
+        const verdict = {
+          action: approved ? "approve" : "request_changes",
+          diagnosis,
+          feedback,
+          suggestion,
+        };
+
+        // Best-effort annotation write — never block completion
+        const runName = process.env.RUN_NAME ?? "";
+        const namespace = process.env.RUN_NAMESPACE ?? "percussionist";
+        try {
+          await patchRunAnnotations(runName, {
+            "percussionist.dev/review-verdict": JSON.stringify(verdict),
+          }, namespace);
+        } catch (e) {
+          console.error("[mcp-server] complete_review: failed to patch annotations:", (e as Error).message);
+        }
+
+        const actionLabel = approved ? "approved" : "requested changes on";
+        onCompleteRun(`reviewer ${actionLabel} ${process.env.RUN_BOARD_TASK ?? "task"} — ${diagnosis}`);
+        return ok(req.id, {
+          content: [{ type: "text", text: `Review submitted: ${actionLabel}. The orchestrator will process the verdict.` }],
         });
       }
 

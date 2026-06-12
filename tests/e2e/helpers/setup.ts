@@ -251,7 +251,7 @@ metadata:
 rules:
   - apiGroups: ["percussionist.dev"]
     resources: ["runs"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "patch"]
   - apiGroups: ["percussionist.dev"]
     resources: ["runs/status"]
     verbs: ["get", "update", "patch"]
