@@ -264,7 +264,7 @@ const TOOLS = [
         },
         agent: {
           type: "string",
-          description: "Override the agent for the new run (e.g. 'meta-reviewer')",
+          description: "Override the agent for the new run (e.g. 'reviewer')",
         },
         model: {
           type: "string",

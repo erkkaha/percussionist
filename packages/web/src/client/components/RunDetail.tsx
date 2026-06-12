@@ -346,6 +346,11 @@ export default function RunDetail() {
         </CardContent></Card>
       )}
 
+      {/* Review verdict */}
+      {reviewVerdict(run) && (
+        <ReviewVerdictCard verdict={reviewVerdict(run)!} runName={run.metadata.name} />
+      )}
+
       {/* Session conversation */}
       <Card><CardHeader className="border-b border-border-muted"><CardTitle className="text-sm font-medium text-text-muted">Session</CardTitle></CardHeader><CardContent>
         <SessionView
@@ -425,5 +430,64 @@ function DetailSkeleton() {
         </div>
       </div>
     </div>
+  );
+}
+
+type ReviewVerdictData = {
+  action: string;
+  diagnosis?: string;
+  feedback?: string;
+  suggestion?: string;
+};
+
+function reviewVerdict(run: { metadata: { annotations?: Record<string, string> } }): ReviewVerdictData | undefined {
+  const raw = run.metadata.annotations?.["percussionist.dev/review-verdict"];
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as ReviewVerdictData;
+  } catch {
+    return undefined;
+  }
+}
+
+function ReviewVerdictCard({ verdict, runName }: { verdict: ReviewVerdictData; runName: string }) {
+  const isApproved = verdict.action === "approve";
+  return (
+    <Card>
+      <CardHeader className="border-b border-border-muted">
+        <CardTitle className="text-sm font-medium text-text-muted">Review Verdict</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
+          isApproved
+            ? "bg-phase-succeeded/10 text-phase-succeeded"
+            : "bg-phase-failed/10 text-phase-failed"
+        }`}>
+          <span>{isApproved ? "✓" : "✕"}</span>
+          <span>{isApproved ? "Approved" : "Changes Requested"}</span>
+        </div>
+
+        {verdict.diagnosis && (
+          <div>
+            <p className="text-label-md font-mono uppercase text-text-dim mb-1">Diagnosis</p>
+            <p className="text-sm whitespace-pre-wrap text-text leading-relaxed">{verdict.diagnosis}</p>
+          </div>
+        )}
+
+        {verdict.feedback && (
+          <div>
+            <p className="text-label-md font-mono uppercase text-text-dim mb-1">Feedback</p>
+            <p className="text-sm whitespace-pre-wrap text-text-muted leading-relaxed">{verdict.feedback}</p>
+          </div>
+        )}
+
+        {verdict.suggestion && (
+          <div>
+            <p className="text-label-md font-mono uppercase text-text-dim mb-1">Suggestion</p>
+            <p className="text-sm whitespace-pre-wrap text-text-muted leading-relaxed">{verdict.suggestion}</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

@@ -15,6 +15,8 @@ import {
   CustomObjectsApi,
   AppsV1Api,
   V1Pod,
+  PatchStrategy,
+  setHeaderOptions,
 } from "@kubernetes/client-node";
 import fs from "node:fs";
 import {
@@ -224,8 +226,10 @@ export async function patchRunAnnotations(
     body: JSON.stringify({ metadata: { annotations } }),
     signal: AbortSignal.timeout(15_000),
   });
+
   if (res.ok) return res.json() as Promise<Run>;
-  throw new Error(`Kubernetes API error ${res.status}: ${await res.text()}`);
+  const body = await res.text();
+  throw new Error(`Kubernetes API error ${res.status}: ${body}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -587,35 +591,31 @@ export async function patchTaskStatus(
   ns: string = NAMESPACE,
   maxRetries = 3,
 ): Promise<Task> {
-  const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
-
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
-  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_TASK}/${name}/status`;
-
+  const client = custom();
   let lastErr: Error | undefined;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
       await new Promise((r) => setTimeout(r, 100 * Math.pow(2, attempt - 1)));
     }
-    const res = await fetch(url, {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/merge-patch+json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({ status: statusPatch }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (res.ok) return res.json() as Promise<Task>;
-    const body = await res.text();
-    if (res.status === 409 && attempt < maxRetries) {
-      lastErr = new Error(`Kubernetes API conflict ${res.status}: ${body}`);
-      continue;
+    try {
+      return (await client.patchNamespacedCustomObjectStatus(
+        {
+          group: API_GROUP,
+          version: API_VERSION,
+          namespace: ns,
+          plural: PLURAL_TASK,
+          name,
+          body: { status: statusPatch },
+        },
+        setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
+      )) as Task;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      if (attempt < maxRetries && (e as { statusCode?: number })?.statusCode === 409) {
+        continue;
+      }
+      throw lastErr;
     }
-    throw new Error(`Kubernetes API error ${res.status}: ${body}`);
   }
   throw lastErr!;
 }

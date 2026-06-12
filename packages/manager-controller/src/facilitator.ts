@@ -215,18 +215,18 @@ export async function buildSuccessReviewRun(
       ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(", ")}`
       : "RUNNER PACKAGES: (base image only)",
     "",
-    `Review the above and output ONLY valid JSON (no markdown, no explanation):`,
+    `Call the percussionist_dispatcher_complete_review MCP tool to submit your review verdict:`,
     JSON.stringify({
+      approved: true,
       diagnosis: "(1-2 sentences: did the worker actually complete the task?)",
-      recommendedAction: "(approve | request_changes | retry_alternative | escalate)",
-      alternativeAgent: "(required if recommendedAction is retry_alternative — must be one of the AVAILABLE ALTERNATIVE AGENTS listed above)",
-      suggestion: "(optional — what to improve or why escalating)",
+      feedback: "(optional — detailed feedback, retry_alternative: <agent>, or escalate reason)",
+      suggestion: "(optional — what to improve)",
     }),
     "",
-    `Use "approve" if the task was completed satisfactorily.`,
-    `Use "request_changes" if implementation changes are needed before human approval.`,
-    `Use "retry_alternative" only if a different agent should redo the task.`,
-    `Use "escalate" if human review is needed.`,
+    `Use approved: true if the task was completed satisfactorily.`,
+    `Use approved: false if implementation changes are needed before human approval.`,
+    `If a different agent should redo the task, include "retry_alternative: <agent>" in the feedback field.`,
+    `If human review is needed, include "escalate" in the diagnosis or feedback.`,
   ].join("\n");
 
   return await buildFacilitatorRun(
@@ -422,7 +422,7 @@ export async function buildReviewRun(
           `If the work is incomplete or incorrect, use request_changes.`,
           "",
           `CODE ACCESS: The worker's committed code is on the same branch this reviewer is running on. Your /workspace contains the worker's committed changes.`,
-          `Use git log, git diff, read, grep, or the search_code MCP tool to inspect files and review the changes.`,
+          `Use git log, git diff, read, grep, or the percussionist_dispatcher_search_code MCP tool to inspect files and review the changes.`,
           "",
         ]
       : isPlanTask
@@ -453,18 +453,18 @@ export async function buildReviewRun(
           "",
         ]
       : []),
-    `Review the above and output ONLY valid JSON (no markdown, no explanation):`,
+    `Call the percussionist_dispatcher_complete_review MCP tool to submit your review verdict:`,
     JSON.stringify({
+      approved: true,
       diagnosis: "(1-2 sentences: did the worker actually complete the task?)",
-      recommendedAction: "(approve | request_changes | retry_alternative | escalate)",
-      alternativeAgent: "(required if recommendedAction is retry_alternative — must be one of the AVAILABLE ALTERNATIVE AGENTS listed above)",
-      suggestion: "(optional — what to improve or why escalating)",
+      feedback: "(optional — detailed feedback, retry_alternative: <agent>, or escalate reason)",
+      suggestion: "(optional — what to improve)",
     }),
     "",
-    `Use "approve" if the task was completed satisfactorily.`,
-    `Use "request_changes" if implementation changes are needed before human approval.`,
-    `Use "retry_alternative" only if a different agent should redo the task.`,
-    `Use "escalate" if human review is needed.`,
+    `Use approved: true if the task was completed satisfactorily.`,
+    `Use approved: false if implementation changes are needed before human approval.`,
+    `If a different agent should redo the task, include "retry_alternative: <agent>" in the feedback field.`,
+    `If human review is needed, include "escalate" in the diagnosis or feedback.`,
   ].join("\n");
 
   const facilitationSpec: FacilitationSpec = {

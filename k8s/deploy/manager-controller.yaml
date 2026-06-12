@@ -136,7 +136,7 @@ spec:
             - name: RUNNER_IMAGE_DEFAULT
               value: ghcr.io/erkkaha/percussionist/runner:latest
             - name: MERGING_AGENT
-              value: meta-integrator
+              value: integrator
             - name: WEB_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:

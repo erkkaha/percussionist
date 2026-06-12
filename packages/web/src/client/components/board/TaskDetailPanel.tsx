@@ -9,6 +9,7 @@ import {
   ExternalLink, Check, X, Trash2, Flag, User,
   Wrench, FileText, RefreshCw, MousePointerClick, ArrowRight,
   ChevronDown, ChevronRight, GitCommit as GitCommitIcon,
+  History,
 } from "lucide-react";
 import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan, moveTask, retryReviewTask } from "../../lib/api";
 import type { Task, Run, DiffCommit } from "../../lib/types";
@@ -293,6 +294,7 @@ function OverviewContent({ task, col, projectName }: { task: Task; col: string; 
   const worker = task.status?.worker;
   const { data: runsData } = useTaskRuns(task.metadata.name);
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
+  const [showReviews, setShowReviews] = useState(false);
   const allRuns = [...(runsData ?? [])]
     .sort((a, b) => {
       const aTime = a.status?.completedAt ?? a.status?.startedAt ?? a.metadata.creationTimestamp ?? "";
@@ -340,6 +342,63 @@ function OverviewContent({ task, col, projectName }: { task: Task; col: string; 
         <div>
           <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">Agent Review Feedback</p>
           <p className="text-sm whitespace-pre-wrap text-phase-failed/80 leading-relaxed">{worker.reviewFeedback}</p>
+        </div>
+      )}
+
+      {/* Review history */}
+      {task.status?.reviews && task.status.reviews.length > 0 && (
+        <div>
+          <button
+            onClick={() => setShowReviews(!showReviews)}
+            className="flex items-center gap-1.5 text-label-md font-mono uppercase text-text-dim mb-1.5 hover:text-text transition-colors"
+          >
+            <History className="h-3.5 w-3.5" />
+            Review History ({task.status.reviews.length})
+            {showReviews ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          </button>
+          {showReviews && (
+            <div className="space-y-2">
+              {task.status.reviews.map((r, i) => {
+                const actionLabel = r.action === "approve" ? "Approved" : r.action === "request_changes" ? "Changes Requested" : "Escalated";
+                const actionColor = r.action === "approve" ? "text-phase-succeeded border-phase-succeeded/30 bg-phase-succeeded/10"
+                  : r.action === "request_changes" ? "text-phase-pending border-phase-pending/30 bg-phase-pending/10"
+                  : "text-phase-failed border-phase-failed/30 bg-phase-failed/10";
+                return (
+                  <div key={i} className="rounded border border-border-muted bg-surface p-3 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${actionColor}`}>
+                          {r.action === "approve" ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                          {actionLabel}
+                        </span>
+                        {r.attempt !== undefined && (
+                          <span className="text-xs text-text-dim">attempt #{r.attempt}</span>
+                        )}
+                      </div>
+                      <span className="text-xs text-text-dim shrink-0">
+                        {formatReviewTime(r.reviewedAt)}
+                      </span>
+                    </div>
+                    {r.diagnosis && (
+                      <p className="text-xs text-text leading-relaxed">{r.diagnosis}</p>
+                    )}
+                    {r.feedback && (
+                      <p className="text-xs text-text-muted leading-relaxed">{r.feedback}</p>
+                    )}
+                    {r.reviewRunName && (
+                      <Link
+                        to={`/runs/${encodeURIComponent(r.reviewRunName)}`}
+                        className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent/80 transition-colors"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        {r.reviewRunName}
+                      </Link>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -467,6 +526,22 @@ function MetaRow({ label, value, mono }: { label: string; value: string; mono?: 
       <p className={`text-xs ${mono ? "font-mono" : ""} truncate text-text`}>{value}</p>
     </div>
   );
+}
+
+function formatReviewTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const now = Date.now();
+    const diffMs = now - d.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return "just now";
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    return d.toLocaleDateString();
+  } catch {
+    return iso;
+  }
 }
 
 // ---------------------------------------------------------------------------
