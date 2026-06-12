@@ -28,23 +28,22 @@ export default function ChatOptionCard({
     <Card className="mt-3 w-full">
       <CardContent className="space-y-2 p-3">
         {options.map((option, idx) => (
-          <Button
-            key={idx}
-            type="button"
-            variant="secondary"
-            className="w-full justify-start text-sm whitespace-normal text-left"
-            disabled={disabled}
-            onClick={() => onSelect(option.key)}
-          >
-            <div className="flex flex-col items-start">
+          <div key={idx} className="flex flex-col gap-0.5">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full justify-start text-sm whitespace-normal text-left h-auto min-h-9 py-2"
+              disabled={disabled}
+              onClick={() => onSelect(option.key)}
+            >
               <span className="font-medium">{option.label}</span>
-              {option.description && (
-                <span className="text-xs text-text-dim mt-0.5">
-                  {option.description}
-                </span>
-              )}
-            </div>
-          </Button>
+            </Button>
+            {option.description && (
+              <p className="text-xs text-text-dim px-1 leading-relaxed">
+                {option.description}
+              </p>
+            )}
+          </div>
         ))}
       </CardContent>
     </Card>
