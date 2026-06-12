@@ -193,5 +193,32 @@ spec:
                       maxLength: 4096
                   required:
                     - status
+                reviews:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      action:
+                        type: string
+                        enum:
+                          - approve
+                          - request_changes
+                          - escalate
+                      diagnosis:
+                        type: string
+                        maxLength: 1024
+                      feedback:
+                        type: string
+                        maxLength: 4096
+                      reviewRunName:
+                        type: string
+                      reviewedAt:
+                        type: string
+                      attempt:
+                        type: integer
+                        minimum: 0
+                    required:
+                      - action
+                      - reviewedAt
           required:
             - spec

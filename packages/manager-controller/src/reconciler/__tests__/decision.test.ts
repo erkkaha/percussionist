@@ -292,6 +292,19 @@ describe("decide — awaiting-human", () => {
     });
     expect(result.toPhase).toBe("done");
   });
+
+  it("awaiting-human + PLAN merge-retry approval → awaiting-feature-merge", () => {
+    const task = makeTask("t1", "test-project", { phase: "awaiting-human", type: "PLAN" });
+    (task.status!.worker as any) = {
+      mergeRunName: "merge-stale",
+      mergeError: "conflict detected",
+    };
+    const result = decide(makeInput(task, { manualActions: { approved: true } }));
+    expect(result.toPhase).toBe("awaiting-feature-merge");
+    expect((result.statusPatch?.worker as any).mergeRunName).toBeNull();
+    expect((result.statusPatch?.worker as any).mergeError).toBeNull();
+    expect(result.effects.some((e) => e.type === "ClearTaskAnnotations")).toBe(true);
+  });
 });
 
 describe("decide — rework-requested", () => {
@@ -419,9 +432,9 @@ describe("decide — awaiting-merge", () => {
 });
 
 describe("decide — reviewing", () => {
-  it("reviewing + verdict approve → awaiting-human", () => {
+  it("reviewing + verdict approve → awaiting-human with review record", () => {
     const task = makeTask("t1", "test-project", { phase: "reviewing" });
-    (task.status!.worker as any) = { reviewRunName: "review-1" };
+    (task.status!.worker as any) = { reviewRunName: "review-1", retryCount: 0, aiReworkCount: 0 };
     const reviewRun = makeRun("review-1", { phase: "Succeeded" });
     (reviewRun.metadata as any).annotations = {
       "percussionist.dev/review-verdict": JSON.stringify({ action: "approve", diagnosis: "looks good" }),
@@ -429,9 +442,22 @@ describe("decide — reviewing", () => {
     const result = decide(makeInput(task, { observed: { review: reviewRun } }));
     expect(result.toPhase).toBe("awaiting-human");
     expect((result.statusPatch?.worker as any).reviewApproved).toBe(true);
+    
+    // Verify review record is appended
+    expect(Array.isArray(result.statusPatch?.reviews)).toBe(true);
+    const reviews = result.statusPatch?.reviews as any[];
+    expect(reviews.length).toBe(1);
+    expect(reviews[0]).toEqual({
+      action: "approve",
+      diagnosis: "looks good",
+      feedback: undefined,
+      reviewRunName: "review-1",
+      reviewedAt: now,
+      attempt: 0,
+    });
   });
 
-  it("reviewing + verdict request_changes under ceiling → rework-requested", () => {
+  it("reviewing + verdict request_changes under ceiling → rework-requested with review record", () => {
     const task = makeTask("t1", "test-project", { phase: "reviewing" });
     (task.status!.worker as any) = { reviewRunName: "review-1", aiReworkCount: 0 };
     const reviewRun = makeRun("review-1", { phase: "Succeeded" });
@@ -441,9 +467,22 @@ describe("decide — reviewing", () => {
     const result = decide(makeInput(task, { observed: { review: reviewRun } }));
     expect(result.toPhase).toBe("rework-requested");
     expect((result.statusPatch?.worker as any).aiReworkCount).toBe(1);
+    
+    // Verify review record is appended
+    expect(Array.isArray(result.statusPatch?.reviews)).toBe(true);
+    const reviews = result.statusPatch?.reviews as any[];
+    expect(reviews.length).toBe(1);
+    expect(reviews[0]).toEqual({
+      action: "request_changes",
+      diagnosis: undefined,
+      feedback: "fix X",
+      reviewRunName: "review-1",
+      reviewedAt: now,
+      attempt: 0,
+    });
   });
 
-  it("reviewing + verdict request_changes over ceiling → awaiting-human", () => {
+  it("reviewing + verdict request_changes over ceiling → awaiting-human with escalate record", () => {
     const task = makeTask("t1", "test-project", { phase: "reviewing" });
     (task.status!.worker as any) = { reviewRunName: "review-1", aiReworkCount: 2 };
     const reviewRun = makeRun("review-1", { phase: "Succeeded" });
@@ -453,6 +492,85 @@ describe("decide — reviewing", () => {
     const result = decide(makeInput(task, { observed: { review: reviewRun } }));
     expect(result.toPhase).toBe("awaiting-human");
     expect((result.statusPatch?.worker as any).reviewFeedback).toMatch(/ceiling reached/);
+    
+    // Verify escalate record is appended (action mapped to "escalate")
+    expect(Array.isArray(result.statusPatch?.reviews)).toBe(true);
+    const reviews = result.statusPatch?.reviews as any[];
+    expect(reviews.length).toBe(1);
+    expect(reviews[0]).toEqual({
+      action: "escalate",
+      diagnosis: undefined,
+      feedback: "fix X",
+      reviewRunName: "review-1",
+      reviewedAt: now,
+      attempt: 2, // retryCount (0) + aiReworkCount (2)
+    });
+  });
+
+  it("reviewing + existing reviews → appends to existing history", () => {
+    const task = makeTask("t1", "test-project", { phase: "reviewing" });
+    (task.status!.worker as any) = { reviewRunName: "review-2", aiReworkCount: 0 };
+    // Pre-existing review record
+    task.status!.reviews = [{
+      action: "approve",
+      diagnosis: "previous approval",
+      feedback: "LGTM",
+      reviewRunName: "review-1",
+      reviewedAt: "2026-05-28T00:00:00.000Z",
+      attempt: 0,
+    }];
+    
+    const reviewRun = makeRun("review-2", { phase: "Succeeded" });
+    (reviewRun.metadata as any).annotations = {
+      "percussionist.dev/review-verdict": JSON.stringify({ action: "request_changes", feedback: "new fix" }),
+    };
+    const result = decide(makeInput(task, { observed: { review: reviewRun } }));
+    
+    // Verify new record is appended to existing history
+    expect(Array.isArray(result.statusPatch?.reviews)).toBe(true);
+    const reviews = result.statusPatch?.reviews as any[];
+    expect(reviews.length).toBe(2);
+    expect(reviews[0]).toEqual({
+      action: "approve",
+      diagnosis: "previous approval",
+      feedback: "LGTM",
+      reviewRunName: "review-1",
+      reviewedAt: "2026-05-28T00:00:00.000Z",
+      attempt: 0,
+    });
+    expect(reviews[1]).toEqual({
+      action: "request_changes",
+      diagnosis: undefined,
+      feedback: "new fix",
+      reviewRunName: "review-2",
+      reviewedAt: now,
+      attempt: 0,
+    });
+  });
+
+  it("reviewing + verdict with diagnosis and feedback → passes both through", () => {
+    const task = makeTask("t1", "test-project", { phase: "reviewing" });
+    (task.status!.worker as any) = { reviewRunName: "review-1", aiReworkCount: 0 };
+    const reviewRun = makeRun("review-1", { phase: "Succeeded" });
+    (reviewRun.metadata as any).annotations = {
+      "percussionist.dev/review-verdict": JSON.stringify({
+        action: "request_changes",
+        diagnosis: "missing test coverage",
+        feedback: "add tests for edge cases",
+      }),
+    };
+    const result = decide(makeInput(task, { observed: { review: reviewRun } }));
+    
+    expect(Array.isArray(result.statusPatch?.reviews)).toBe(true);
+    const reviews = result.statusPatch?.reviews as any[];
+    expect(reviews[0]).toEqual({
+      action: "request_changes",
+      diagnosis: "missing test coverage",
+      feedback: "add tests for edge cases",
+      reviewRunName: "review-1",
+      reviewedAt: now,
+      attempt: 0,
+    });
   });
 
   it("reviewing + no verdict annotation → awaiting-human fallback", () => {
@@ -462,6 +580,9 @@ describe("decide — reviewing", () => {
     const result = decide(makeInput(task, { observed: { review: reviewRun } }));
     expect(result.toPhase).toBe("awaiting-human");
     expect(result.events[0]?.reason).toBe("ReviewSucceeded");
+    
+    // No reviews should be added without verdict annotation
+    expect(result.statusPatch?.reviews).toBeUndefined();
   });
 });
 
