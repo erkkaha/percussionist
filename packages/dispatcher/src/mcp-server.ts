@@ -638,13 +638,13 @@ async function handleCreateTask(
   }
 }
 
-function handleMcp(
+async function handleMcp(
   req: JsonRpcRequest,
   onFailRun: (reason: string) => void,
   onCompleteRun: (summary: string) => void,
   onCompletePlan: (summary: string) => void,
   getStatus: () => RunStatus | null,
-): JsonRpcResponse | Promise<JsonRpcResponse> {
+): Promise<JsonRpcResponse> {
   switch (req.method) {
     case "initialize":
       return ok(req.id, {
