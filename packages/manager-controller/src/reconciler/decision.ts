@@ -10,7 +10,9 @@ import { getReviewVerdict, getConsumedAnnotationKeys } from "./observations.js";
 import { createHash, randomBytes } from "node:crypto";
 
 function summarizeEffect(input: ReconcileInput, run: Run): ReconcileEffect | undefined {
-  if (!input.project.spec.embedding?.enabled) return undefined;
+  // ConfigMap summary generation is independent of vector-memory storage.
+  // The summarizer writes `summary-{sessionID}` to the run's session ConfigMap
+  // regardless of whether spec.embedding.enabled is true or false.
   const sessionID = run.status?.sessionID;
   if (!sessionID) return undefined;
   return {
