@@ -368,16 +368,25 @@ export function truncateK8sName(name: string, max: number = 63): string {
   return name.slice(0, max).replace(/-+$/, "");
 }
 
+/**
+ * workerRunName computes a deterministic run name for worker runs.
+ *
+ * The name is keyed by project, task, retryCount (human rework), and aiReworkCount
+ * (AI auto-rework). Both counters must be included to ensure each attempt gets a
+ * unique name — human rework increments retryCount and resets aiReworkCount,
+ * while AI rework increments only aiReworkCount.
+ */
 export function workerRunName(
   projectName: string,
   taskName: string,
   retryCount: number = 0,
+  aiReworkCount: number = 0,
 ): string {
   const sanitized = taskName.toLowerCase().replace(/[^a-z0-9]/g, "-");
   // Deterministic suffix — same inputs always produce the same run name,
   // preventing duplicate runs across reconcile cycles.
   const suffix = createHash("sha256")
-    .update(`${projectName}:${taskName}:${retryCount}`)
+    .update(`${projectName}:${taskName}:${retryCount}:${aiReworkCount}`)
     .digest("hex")
     .slice(0, 10);
   // suffix + 2 separating hyphens = 12 chars reserved; project prefix = projectName.length + 1

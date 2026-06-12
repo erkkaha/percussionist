@@ -421,6 +421,11 @@ export async function buildReviewRun(
           `If the completion message and session data indicate the task was completed, approve it.`,
           `If the work is incomplete or incorrect, use request_changes.`,
           "",
+          `CODE ACCESS: The worker's committed code is on the same branch this reviewer is running on.`,
+          `Your /workspace directory contains the worker's committed changes.`,
+          `You can also browse the worker's original worktree at /data/worktrees/${succeededRunName}/.`,
+          `Use bash, read, grep, or the search_code MCP tool (defaults to /workspace) to inspect files.`,
+          "",
         ]
       : isPlanTask
         ? [

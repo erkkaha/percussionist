@@ -590,6 +590,16 @@ export const RunStatusSchema = z
         }),
       )
       .optional(),
+    containerExitCodes: z
+      .array(
+        z.object({
+          container: z.string(),
+          exitCode: z.number().int(),
+          reason: z.string().optional(),
+          message: z.string().optional(),
+        }),
+      )
+      .optional(),
   })
   .partial();
 
@@ -726,6 +736,17 @@ export const WorkerStatusSchema = z.object({
 });
 
 export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;
+
+// Review record for append-only review history on Task.status
+export const ReviewRecordSchema = z.object({
+  action: z.enum(["approve", "request_changes", "escalate"]),
+  diagnosis: z.string().max(1024).optional(),
+  feedback: z.string().max(4096).optional(),
+  reviewRunName: z.string().optional(),
+  reviewedAt: z.string(), // ISO datetime string
+  attempt: z.number().int().min(0).optional(),
+});
+export type ReviewRecord = z.infer<typeof ReviewRecordSchema>;
 
 export const PendingQuestionSchema = z.object({
   workerId: z.string(),
@@ -1040,6 +1061,9 @@ export const TaskStatusSchema = z.object({
 
   // Worker execution state — set when phase is scheduled or beyond.
   worker: WorkerStatusSchema.optional(),
+  
+  // Append-only review history records.
+  reviews: ReviewRecordSchema.array().optional(),
 }).partial();
 
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
