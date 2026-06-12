@@ -152,6 +152,20 @@ export const SecretsRefSchema = z
 
 export type SecretsRef = z.infer<typeof SecretsRefSchema>;
 
+// ---------------------------------------------------------------------------
+// SSH host key verification modes (used by GitSource)
+
+export const SshHostKeyVerificationModeSchema = z.enum([
+  "strict",     // Always verify host keys against known_hosts; reject unknown hosts.
+  "accept-new", // Accept and cache unknown host keys on first connect; reject changed keys.
+  "no",         // Never verify host keys (equivalent to StrictHostKeyChecking=no). Default for backward compatibility.
+]);
+
+export type SshHostKeyVerificationMode = z.infer<typeof SshHostKeyVerificationModeSchema>;
+
+// ---------------------------------------------------------------------------
+// Git source configuration
+
 export const GitSourceSchema = z.object({
   url: z.string().min(1),
   ref: z.string().optional(),
@@ -177,6 +191,21 @@ export const GitSourceSchema = z.object({
     .object({
       name: z.string().min(1),
       email: z.string().min(1),
+    })
+    .optional(),
+  // SSH host key verification mode. Controls how the runner validates remote
+  // git server identity over SSH. Default is "no" for backward compatibility;
+  // existing clusters will continue to work without changes. Set to "strict" or
+  // "accept-new" to enable host key verification (requires known_hostsSecret).
+  sshHostKeyVerification: SshHostKeyVerificationModeSchema.default("no"),
+  // Reference to a Secret containing SSH known_hosts entries. When set and
+  // sshHostKeyVerification is "strict" or "accept-new", the operator mounts
+  // this secret as /etc/git-ssh/known_hosts in the runner pod so that SSH
+  // host key verification can succeed against known git servers.
+  known_hostsSecret: z
+    .object({
+      name: z.string().min(1),
+      key: z.string().default("known_hosts"),
     })
     .optional(),
 });
@@ -561,6 +590,16 @@ export const RunStatusSchema = z
         }),
       )
       .optional(),
+    containerExitCodes: z
+      .array(
+        z.object({
+          container: z.string(),
+          exitCode: z.number().int(),
+          reason: z.string().optional(),
+          message: z.string().optional(),
+        }),
+      )
+      .optional(),
   })
   .partial();
 
@@ -697,6 +736,17 @@ export const WorkerStatusSchema = z.object({
 });
 
 export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;
+
+// Review record for append-only review history on Task.status
+export const ReviewRecordSchema = z.object({
+  action: z.enum(["approve", "request_changes", "escalate"]),
+  diagnosis: z.string().max(1024).optional(),
+  feedback: z.string().max(4096).optional(),
+  reviewRunName: z.string().optional(),
+  reviewedAt: z.string(), // ISO datetime string
+  attempt: z.number().int().min(0).optional(),
+});
+export type ReviewRecord = z.infer<typeof ReviewRecordSchema>;
 
 export const PendingQuestionSchema = z.object({
   workerId: z.string(),
@@ -1011,6 +1061,9 @@ export const TaskStatusSchema = z.object({
 
   // Worker execution state — set when phase is scheduled or beyond.
   worker: WorkerStatusSchema.optional(),
+  
+  // Append-only review history records.
+  reviews: ReviewRecordSchema.array().optional(),
 }).partial();
 
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;

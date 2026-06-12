@@ -226,10 +226,11 @@ function decideScheduled(input: ReconcileInput): ReconcileDecision {
   const taskName = task.metadata.name;
   const fromPhase = "scheduled" as TaskPhase;
   const retryCount = task.status?.worker?.retryCount ?? 0;
+  const aiReworkCount = task.status?.worker?.aiReworkCount ?? 0;
   const reworkFeedback = task.status?.worker?.reviewFeedback;
 
   // Compute deterministic run name.
-  const runName = workerRunName(project.metadata.name, taskName, retryCount);
+  const runName = workerRunName(project.metadata.name, taskName, retryCount, aiReworkCount);
 
   // Resolve feature-branch metadata so the diff view and workspace-init
   // have correct refs without relying on fallback to the Run spec.
@@ -470,8 +471,12 @@ function decideSucceeded(input: ReconcileInput): ReconcileDecision {
       }
       const retryCount = task.status?.worker?.retryCount ?? 0;
       const aiReworkCount = task.status?.worker?.aiReworkCount ?? 0;
-      const reviewSeq = String(retryCount + aiReworkCount);
-      const reviewRunName = auxiliaryRunName(input.project.metadata.name, "review", taskName, reviewSeq);
+      // Use both counters in suffix to avoid collisions (e.g., 2+1 vs 1+2 both equal "3")
+      const reviewSuffix = createHash("sha256")
+        .update(`${input.project.metadata.name}:${taskName}:review:${retryCount}:${aiReworkCount}`)
+        .digest("hex")
+        .slice(0, 8);
+      const reviewRunName = auxiliaryRunName(input.project.metadata.name, "review", taskName, reviewSuffix);
 
       return {
         taskName,
@@ -567,6 +572,20 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
   const verdict = getReviewVerdict(reviewRun);
   if (verdict) {
     if (verdict.action === "approve") {
+      // Compute attempt number for review record
+      const attempt = (task.status?.worker?.retryCount ?? 0) + (task.status?.worker?.aiReworkCount ?? 0);
+      
+      // Append review record to statusPatch.reviews
+      const existingReviews = task.status?.reviews ?? [];
+      const newRecord: { action: string; diagnosis?: string; feedback?: string; reviewRunName: string; reviewedAt: string; attempt?: number } = {
+        action: "approve",
+        diagnosis: verdict.diagnosis,
+        feedback: verdict.feedback,
+        reviewRunName: reviewRun.metadata.name,
+        reviewedAt: now,
+        attempt,
+      };
+      
       return {
         taskName,
         fromPhase,
@@ -576,6 +595,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
             reviewApproved: true,
             reviewFeedback: verdict.feedback,
           },
+          reviews: [...existingReviews, newRecord],
         },
         effects: [],
         events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewApproved", verdict.feedback)],
@@ -584,7 +604,23 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
     if (verdict.action === "request_changes") {
       const aiCount = (task.status?.worker?.aiReworkCount ?? 0) + 1;
       const ceiling = flow.review.maxAutoReworks;
+      // Compute attempt number for review record
+      // Attempt is the current retry count plus how many AI reworks have already been done before this one
+      const attempt = (task.status?.worker?.retryCount ?? 0) + aiCount - 1;
+      
+      // Append review record to statusPatch.reviews
+      const existingReviews = task.status?.reviews ?? [];
+      const newRecord: { action: string; diagnosis?: string; feedback?: string; reviewRunName: string; reviewedAt: string; attempt?: number } = {
+        action: "request_changes",
+        diagnosis: verdict.diagnosis,
+        feedback: verdict.feedback,
+        reviewRunName: reviewRun.metadata.name,
+        reviewedAt: now,
+        attempt,
+      };
+      
       if (aiCount > ceiling) {
+        const escalatedRecord = { ...newRecord, action: "escalate" };
         return {
           taskName,
           fromPhase,
@@ -594,6 +630,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
               aiReworkCount: aiCount,
               reviewFeedback: `${verdict.feedback ?? ""}\n\n(AI rework ceiling reached)`,
             },
+            reviews: [...existingReviews, escalatedRecord],
           },
           effects: [],
           events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewReworkCeilingReached", verdict.feedback)],
@@ -608,6 +645,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
             aiReworkCount: aiCount,
             reviewFeedback: verdict.feedback,
           },
+          reviews: [...existingReviews, newRecord],
         },
         effects: [],
         events: [makeEvent(input, fromPhase, "rework-requested", "ReviewRequestedChanges", verdict.feedback)],
@@ -945,7 +983,19 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
   const childTasks = allTasks.filter(
     (t) => t.spec.type === "BUILD" && t.spec.parentTaskRef === taskName,
   );
-  const allDone = childTasks.every((t) => t.status?.phase === "done");
+  const hasChildren = childTasks.length > 0;
+  const allDone = hasChildren && childTasks.every((t) => t.status?.phase === "done");
+
+  if (!hasChildren) {
+    // No child BUILD tasks exist — escalate to awaiting-human with explicit reason.
+    return {
+      taskName, fromPhase,
+      toPhase: "awaiting-human",
+      effects: [],
+      events: [makeEvent(input, fromPhase, "awaiting-human", "ChildTasksMissing",
+        "No child BUILD tasks found while in awaiting-children phase")],
+    };
+  }
 
   if (!allDone) {
     return { taskName, fromPhase, effects: [], events: [] };

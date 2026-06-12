@@ -39,6 +39,7 @@ import {
 } from "@percussionist/kube";
 import { LABELS, type Project, type Task, type TaskPhase } from "@percussionist/api";
 import { storeMemory, queryMemory, getContext } from "./memory-client.js";
+import { isValidPackageName, sanitizeCommand, logSecurityEvent } from "./security.js";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
 import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
@@ -397,7 +398,7 @@ const TOOLS = [
   {
     name: "exec_in_workspace",
     description:
-      "Run a shell command inside a project's data volume by spawning a short-lived maintenance pod. Useful for git mirror cleanup, worktree pruning, disk inspection, or any workspace maintenance. The pod mounts the project's data PVC at the given mountPath (default: /data) and runs the command via /bin/sh -c. Returns stdout and the exit code. The pod is deleted after the command completes.",
+      "Run a shell command inside a project's data volume by spawning a short-lived maintenance pod. Useful for git mirror cleanup, worktree pruning, disk inspection, or any workspace maintenance. The pod mounts the project's data PVC at the given mountPath (default: /data) and runs the command via /bin/sh -c. Returns stdout and the exit code. The pod is deleted after the command completes. Use skipSanitization: true (default false) for trusted backend-generated scripts that need shell constructs like pipes, redirects, or command substitution.",
     inputSchema: {
       type: "object",
       properties: {
@@ -414,6 +415,10 @@ const TOOLS = [
         namespace: {
           type: "string",
           description: "Namespace (optional, defaults to percussionist)",
+        },
+        skipSanitization: {
+          type: "boolean",
+          description: "Skip shell injection sanitization (default: false). Only set to true for trusted backend-generated scripts.",
         },
       },
       required: ["project", "command"],
@@ -940,8 +945,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const retryCount = args.retryCount !== undefined
         ? Number(args.retryCount)
         : (existingWorker?.retryCount ?? 0);
+      const aiReworkCount = existingWorker?.aiReworkCount ?? 0;
 
-      const runName = workerRunName(projectName, taskName, retryCount);
+      const runName = workerRunName(projectName, taskName, retryCount, aiReworkCount);
       const workerRun = await buildWorkerRun(project, task, runName, retryCount, reworkFeedback, projectTasks);
       const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
       if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
@@ -1059,8 +1065,10 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       let createdRunName: string | undefined;
       const existingRetryCount = task.status?.worker?.retryCount ?? 0;
       const retryCount = existingRetryCount + 1;
+      // force_retry bumps retryCount and resets aiReworkCount (human-driven retry semantics).
+      const aiReworkCount = 0;
       if (shouldCreate) {
-        const runName = workerRunName(projectName, taskName, retryCount);
+        const runName = workerRunName(projectName, taskName, retryCount, aiReworkCount);
         const workerRun = await buildWorkerRun(project, task, runName, retryCount, undefined, projectTasks);
         const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
         if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
@@ -1417,8 +1425,21 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const mountPath = args.mountPath ? String(args.mountPath) : "/data";
       const timeoutMs = args.timeoutSeconds ? Number(args.timeoutSeconds) * 1000 : 120_000;
       const resourceNs = String(args.namespace ?? ns);
+      const skipSanitization = args.skipSanitization === true;
 
       if (!command) throw new Error("command is required");
+
+      // Security: sanitize command before execution to prevent shell injection.
+      // skipSanitization bypasses for trusted backend-generated scripts.
+      if (!skipSanitization) {
+        const sanitizationError = sanitizeCommand(command);
+        if (sanitizationError) {
+          logSecurityEvent("exec_in_workspace.rejected", { project: projectName, reason: sanitizationError });
+          throw new Error(sanitizationError);
+        }
+      }
+
+      console.log(`[exec_in_workspace] project=${projectName} command="${command.slice(0, 200)}"`);
 
       const result = await execInWorkspace(projectName, command, mountPath, timeoutMs, resourceNs);
       return {
@@ -1794,7 +1815,21 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const project = String(args.project ?? "");
       const pkgs = (args.packages ?? []) as string[];
       if (!project || !pkgs.length) throw new Error("project and packages are required");
+
+      // Security: validate each package name against Alpine package naming rules.
+      // Rejects shell metacharacters that could enable command injection via execInWorkspace.
+      for (const pkg of pkgs) {
+        if (!isValidPackageName(pkg)) {
+          logSecurityEvent("install_packages.rejected", { project, package: pkg });
+          throw new Error(
+            `Invalid package name "${pkg}": only alphanumeric characters, hyphens, dots, and plus signs are allowed.`,
+          );
+        }
+      }
+
       const cmd = `apk update --quiet && apk add --no-cache ${pkgs.join(" ")}`;
+      console.log(`[install_packages] project=${project} packages=[${pkgs.join(", ")}]`);
+
       const result = await execInWorkspace(project, cmd, undefined, undefined, MANAGER_NAMESPACE);
       return { installed: pkgs, output: result.stdout ?? "", exitCode: result.exitCode };
     }
