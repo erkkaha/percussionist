@@ -261,9 +261,11 @@ export async function executeEffects(
         }
         case "SummarizeSession": {
           // Fire-and-forget — never blocks the reconcile cycle.
+          console.log(`[effects] SummarizeSession dispatch: project=${effect.project} runName=${effect.runName} sessionID=${effect.sessionID}`);
           import("../session-summarizer.js").then(({ summarizeSession }) => {
-            summarizeSession(effect.project, effect.runName, effect.sessionID, namespace);
-          }).catch(() => {});
+            summarizeSession(effect.project, effect.runName, effect.sessionID, namespace)
+              .catch((e: Error) => console.warn(`[effects] SummarizeSession failed: project=${effect.project} runName=${effect.runName} sessionID=${effect.sessionID}:`, e.message));
+          }).catch((e: Error) => console.warn(`[effects] SummarizeSession import failed: project=${effect.project} runName=${effect.runName} sessionID=${effect.sessionID}:`, e.message));
           break;
         }
         case "CreateTask": {
