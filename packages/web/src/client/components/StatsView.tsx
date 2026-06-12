@@ -1,9 +1,8 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { BarChart3, List, Table2, Users, Wrench, TrendingUp } from "lucide-react";
+import { BarChart3, Table2, Users, Wrench, TrendingUp } from "lucide-react";
 import StatusBadge from "./StatusBadge";
-import SessionView from "./SessionView";
 import { authHeaders } from "../lib/auth";
 import TokenCounter from "./TokenCounter";
 import ToolMetricsView from "./ToolMetricsView";
@@ -12,24 +11,6 @@ import { cn } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
 // Types matching /api/stats/sessions response
-
-interface StatSession {
-  id: string;
-  name: string;
-  namespace: string | null;
-  task: string | null;
-  model: string | null;
-  agent: string | null;
-  phase: string | null;
-  startedAt: string | null;
-  completedAt: string | null;
-  tokensIn: number;
-  tokensOut: number;
-  cost?: number;
-  error: string | null;
-  createdAt: string | null;
-  resolvedModel: string;
-}
 
 interface Summary {
   total: number;
@@ -64,11 +45,9 @@ interface ModelRow {
   cost: number;
 }
 
-interface SessionsResponse {
-  sessions: StatSession[];
+// Minimal response shape — sessions list moved to dedicated page.
+interface StatsResponse {
   total: number;
-  limit: number;
-  offset: number;
   summary: Summary;
   agentSummaries: AgentSummary[];
   modelRows: ModelRow[];
@@ -106,12 +85,6 @@ function shortModelLabel(model: string): string {
   return model.includes("/") ? model.split("/").pop()! : model;
 }
 
-function durationMs(s: StatSession): number | null {
-  if (!s.startedAt || !s.completedAt) return null;
-  const ms = new Date(s.completedAt).getTime() - new Date(s.startedAt).getTime();
-  return isNaN(ms) ? null : ms;
-}
-
 function fmtDuration(ms: number | null): string {
   if (ms == null) return "-";
   if (ms < 1000) return `${ms}ms`;
@@ -120,19 +93,6 @@ function fmtDuration(ms: number | null): string {
   const m = Math.floor(s / 60);
   const rem = s % 60;
   return `${m}m ${rem}s`;
-}
-
-function fmtAge(iso: string | null): string {
-  if (!iso) return "-";
-  const ms = Date.now() - new Date(iso).getTime();
-  if (isNaN(ms) || ms < 0) return "-";
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
 }
 
 function fmtTokens(n: number): string {
@@ -145,31 +105,6 @@ function fmtCost(n: number | null | undefined): string {
   if (n == null || n === 0) return "-";
   if (n < 1) return `$${n.toFixed(4)}`;
   return `$${n.toFixed(2)}`;
-}
-
-// Resolve the model for a session: resolvedModel from server, then fallback.
-
-function resolveModel(s: StatSession): string {
-  return s.resolvedModel ?? s.model ?? "unknown";
-}
-
-// ---------------------------------------------------------------------------
-// Fetch hook
-
-const PAGE_SIZE = 50;
-
-function useStats(days: number, page: number) {
-  return useQuery<SessionsResponse>({
-    queryKey: ["stats", days, page],
-    queryFn: async () => {
-      const offset = page * PAGE_SIZE;
-      const url = `/api/stats/sessions?days=${days}&limit=${PAGE_SIZE}&offset=${offset}`;
-      const res = await fetch(url, { headers: authHeaders() });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      return res.json() as Promise<SessionsResponse>;
-    },
-    refetchInterval: 30_000,
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -278,95 +213,21 @@ function ModelBreakdown({ modelRows }: { modelRows: ModelRow[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Sessions table
+// Stats query (non-paginated — sessions moved to dedicated page)
 
-interface SessionsTableProps {
-  sessions: StatSession[];
-  openRunName: string | null;
-  onToggleRun: (runName: string) => void;
-}
+const STATS_LIMIT = 500;
 
-function SessionsTable({ sessions, openRunName, onToggleRun }: SessionsTableProps) {
-  const focusedRowRef = useRef<string | null>(null);
-  
-  return (
-    <section>
-      <div className="rounded-lg border border-border overflow-x-auto">
-        <table className="w-full text-sm" aria-label="Session runs">
-          <thead>
-            <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
-              <th className="px-4 py-2.5 font-medium">Name</th>
-              <th className="px-4 py-2.5 font-medium">Phase</th>
-              <th className="px-4 py-2.5 font-medium">Model</th>
-              <th className="px-4 py-2.5 font-medium">Tokens</th>
-              <th className="px-4 py-2.5 font-medium">Cost</th>
-              <th className="px-4 py-2.5 font-medium">Duration</th>
-              <th className="px-4 py-2.5 font-medium">Age</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border-muted">
-            {sessions.map((s) => {
-              const isOpen = openRunName === s.name;
-              return (
-                <tr
-                  key={s.id}
-                  className={`hover:bg-surface-raised/60 transition-colors cursor-pointer focus:outline-none ${
-                    isOpen ? "bg-surface-overlay ring-2 ring-inset ring-primary" : focusedRowRef.current === s.name ? "ring-2 ring-inset ring-ring" : ""
-                  }`}
-                  onClick={() => onToggleRun(s.name)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onToggleRun(s.name);
-                    }
-                  }}
-                  onFocus={() => { focusedRowRef.current = s.name; }}
-                  onBlur={() => { focusedRowRef.current = null; }}
-                  tabIndex={0}
-                  role="button"
-                  aria-expanded={isOpen}
-                  aria-selected={isOpen}
-                  aria-controls={`session-detail-${s.name}`}
-                >
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-text flex items-center gap-2">
-                      {s.name}
-                      {isOpen && (
-                        <span className="text-xs text-phase-running font-mono">▼</span>
-                      )}
-                    </div>
-                    {s.task && (
-                      <div className="text-xs text-text-dim mt-0.5 truncate max-w-xs" title={s.task}>
-                        {s.task}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge phase={s.phase as string | undefined} />
-                  </td>
-                  <td className="px-4 py-3 text-text-muted font-mono text-xs max-w-[160px] truncate" title={resolveModel(s)}>
-                    {resolveModel(s)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <TokenCounter tokensIn={s.tokensIn} tokensOut={s.tokensOut} />
-                  </td>
-                  <td className="px-4 py-3 text-text-muted tabular-nums font-mono text-xs">
-                    {fmtCost(s.cost)}
-                  </td>
-                  <td className="px-4 py-3 text-text-muted tabular-nums">
-                    {fmtDuration(durationMs(s))}
-                  </td>
-                  <td className="px-4 py-3 text-text-muted tabular-nums">
-                    {fmtAge(s.startedAt)}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
+function useStats(days: number) {
+  return useQuery<StatsResponse>({
+    queryKey: ["stats", days],
+    queryFn: async () => {
+      const url = `/api/stats/sessions?days=${days}&limit=${STATS_LIMIT}&offset=0`;
+      const res = await fetch(url, { headers: authHeaders() });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res.json() as Promise<StatsResponse>;
+    },
+    refetchInterval: 30_000,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -810,56 +671,12 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
 
 const TABS = [
   { id: "overview", label: "Overview", icon: BarChart3 },
-  { id: "sessions", label: "Sessions", icon: List },
   { id: "agents", label: "Agents", icon: Users },
   { id: "models", label: "Models", icon: Table2 },
   { id: "tools", label: "Tools", icon: Wrench },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
-
-function Pagination({
-  total,
-  limit,
-  offset,
-  onChange,
-}: {
-  total: number;
-  limit: number;
-  offset: number;
-  onChange: (offset: number) => void;
-}) {
-  const currentPage = Math.floor(offset / limit) + 1;
-  const totalPages = Math.ceil(total / limit);
-  if (totalPages <= 1) return null;
-
-  return (
-    <div className="flex items-center justify-between mt-3">
-      <span className="text-xs text-text-dim">
-        {offset + 1}–{Math.min(offset + limit, total)} of {total} sessions
-      </span>
-      <div className="flex items-center gap-2">
-        <button
-          disabled={offset === 0}
-          onClick={() => onChange(offset - limit)}
-          className="px-3 py-1 text-xs rounded-md border border-border bg-surface-raised text-text-muted hover:text-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-        >
-          Previous
-        </button>
-        <span className="text-xs text-text-dim tabular-nums">
-          {currentPage} / {totalPages}
-        </span>
-        <button
-          disabled={offset + limit >= total}
-          onClick={() => onChange(offset + limit)}
-          className="px-3 py-1 text-xs rounded-md border border-border bg-surface-raised text-text-muted hover:text-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-        >
-          Next
-        </button>
-      </div>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Main view
@@ -874,19 +691,8 @@ const DAY_OPTIONS = [
 export default function StatsView() {
   const [days, setDays] = useState(30);
   const [tab, setTab] = useState<TabId>("overview");
-  const [page, setPage] = useState(0);
-  const [openRunName, setOpenRunName] = useState<string | null>(null);
-  const { data, error, isLoading, isFetching } = useStats(days, page);
+  const { data, error, isLoading, isFetching } = useStats(days);
   const { data: trends } = useTrends(days);
-
-  // Clear open session when pagination/day changes to avoid stale detail panes
-  useEffect(() => {
-    setOpenRunName(null);
-  }, [days, page]);
-
-  if (page > 0 && data != null && data.offset >= data.total) {
-    setPage(0);
-  }
 
   return (
     <div className="space-y-6">
@@ -908,7 +714,7 @@ export default function StatsView() {
           {DAY_OPTIONS.map((opt) => (
             <button
               key={opt.value}
-              onClick={() => { setDays(opt.value); setPage(0); }}
+              onClick={() => { setDays(opt.value); }}
               className={`rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
                 days === opt.value
                   ? "border-accent/60 bg-surface-overlay text-text"
@@ -971,33 +777,6 @@ export default function StatsView() {
         <>
           <SummaryCards a={data.summary} />
           {trends && <TrendCharts trends={trends} />}
-        </>
-      )}
-
-      {/* Sessions tab */}
-      {tab === "sessions" && data && data.total > 0 && (
-        <>
-          <SessionsTable sessions={data.sessions} openRunName={openRunName} onToggleRun={(name) => {
-            setOpenRunName((prev) => (prev === name ? null : name));
-          }} />
-          {/* Session detail view */}
-          {openRunName != null && (
-            <div id={`session-detail-${openRunName}`} className="mt-4">
-              <SessionView
-                name={openRunName}
-                hasSession={true}
-                active={false}
-                sseConnected={false}
-                eventTick={0}
-              />
-            </div>
-          )}
-          <Pagination
-            total={data.total}
-            limit={data.limit}
-            offset={data.offset}
-            onChange={(o) => setPage(Math.floor(o / PAGE_SIZE))}
-          />
         </>
       )}
 
