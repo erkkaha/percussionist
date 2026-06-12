@@ -47,6 +47,7 @@ describe("isValidTransition", () => {
     expect(isValidTransition("succeeded", "awaiting-human")).toBe(true);
     expect(isValidTransition("awaiting-human", "awaiting-merge")).toBe(true);
     expect(isValidTransition("awaiting-human", "generating-builds")).toBe(true);
+    expect(isValidTransition("awaiting-human", "awaiting-feature-merge")).toBe(true);
     expect(isValidTransition("awaiting-human", "rework-requested")).toBe(true);
     expect(isValidTransition("awaiting-human", "done")).toBe(true);
     expect(isValidTransition("rework-requested", "scheduled")).toBe(true);

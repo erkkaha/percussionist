@@ -25,14 +25,14 @@ export default function ChatOptionCard({
   disabled = false,
 }: ChatOptionCardProps) {
   return (
-    <Card className="mt-3 max-w-[80%]">
+    <Card className="mt-3 w-full">
       <CardContent className="space-y-2 p-3">
         {options.map((option, idx) => (
           <Button
             key={idx}
             type="button"
             variant="secondary"
-            className="w-full justify-start text-sm"
+            className="w-full justify-start text-sm whitespace-normal text-left"
             disabled={disabled}
             onClick={() => onSelect(option.key)}
           >
