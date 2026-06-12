@@ -550,3 +550,180 @@ describe("decide — waiting-for-input edge cases", () => {
     expect(result.toPhase).toBeUndefined();
   });
 });
+
+describe("decide — AI auto-rework run name differentiation", () => {
+  it("scheduled run name differs when aiReworkCount changes but retryCount stays the same", () => {
+    // Simulate: task succeeded with retryCount=0, aiReworkCount=0.
+    // AI review requests changes → aiReworkCount becomes 1.
+    // Next scheduled decision should produce a DIFFERENT run name.
+    const aiProject = makeProject("test-project", {
+      reviewPolicy: { aiReviewerEnabled: true, aiReviewerAgent: "reviewer", maxAutoReworks: 3 },
+    });
+
+    // Step 1: initial worker run (retryCount=0, aiReworkCount=0)
+    const taskStep1 = makeTask("t1", "test-project", { phase: "scheduled", retryCount: 0, aiReworkCount: 0 });
+    (taskStep1.status!.worker as any).runName = "initial-worker-run";
+    const result1 = decide({
+      task: taskStep1,
+      project: aiProject,
+      allTasks: [taskStep1],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(aiProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+
+    // Step 2: after AI rework (retryCount=0 still, aiReworkCount=1)
+    const taskStep2 = makeTask("t1", "test-project", { phase: "scheduled", retryCount: 0, aiReworkCount: 1 });
+    (taskStep2.status!.worker as any).runName = "initial-worker-run";
+    const result2 = decide({
+      task: taskStep2,
+      project: aiProject,
+      allTasks: [taskStep2],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(aiProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+
+    const runName1 = (result1.statusPatch?.worker as any)?.runName;
+    const runName2 = (result2.statusPatch?.worker as any)?.runName;
+    expect(runName1).toBeDefined();
+    expect(runName2).toBeDefined();
+    expect(runName1).not.toBe(runName2);
+  });
+
+  it("scheduled run name is identical when both counters are unchanged (idempotent)", () => {
+    const task = makeTask("t1", "test-project", { phase: "scheduled", retryCount: 0, aiReworkCount: 0 });
+    const resultA = decide(makeInput(task));
+    const resultB = decide(makeInput(task));
+
+    const nameA = (resultA.statusPatch?.worker as any)?.runName;
+    const nameB = (resultB.statusPatch?.worker as any)?.runName;
+    expect(nameA).toBe(nameB);
+  });
+});
+
+describe("decide — AI request_changes end-to-end state machine", () => {
+  it("reviewing(request_changes) → rework-requested → scheduled → initializing with new runName", () => {
+    const aiProject = makeProject("test-project", {
+      reviewPolicy: { aiReviewerEnabled: true, aiReviewerAgent: "reviewer", maxAutoReworks: 3 },
+    });
+
+    // --- Phase 1: succeeded + AI review enabled → reviewing (ScheduleReviewRun) ---
+    const taskSucceeded = makeTask("t1", "test-project", { phase: "succeeded", type: "BUILD" });
+    (taskSucceeded.status!.worker as any) = { runName: "worker-0-0", retryCount: 0, aiReworkCount: 0 };
+    const resultReviewing = decide({
+      task: taskSucceeded,
+      project: aiProject,
+      allTasks: [taskSucceeded],
+      observed: { worker: makeRun("worker-0-0", { phase: "Succeeded" }) },
+      manualActions: {},
+      flow: resolveFlow(aiProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(resultReviewing.toPhase).toBe("reviewing");
+
+    // --- Phase 2: reviewing + verdict request_changes → rework-requested (aiReworkCount=1) ---
+    const taskReviewing = makeTask("t1", "test-project", { phase: "reviewing" });
+    (taskReviewing.status!.worker as any) = { reviewRunName: "review-0", aiReworkCount: 0 };
+    const reviewRun = makeRun("review-0", { phase: "Succeeded" });
+    (reviewRun.metadata as any).annotations = {
+      "percussionist.dev/review-verdict": JSON.stringify({ action: "request_changes", feedback: "fix the bug" }),
+    };
+    const resultRework = decide({
+      task: taskReviewing,
+      project: aiProject,
+      allTasks: [taskReviewing],
+      observed: { review: reviewRun },
+      manualActions: {},
+      flow: resolveFlow(aiProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(resultRework.toPhase).toBe("rework-requested");
+    expect((resultRework.statusPatch?.worker as any).aiReworkCount).toBe(1);
+
+    // --- Phase 3: rework-requested → scheduled (no capacity limit) ---
+    const taskRework = makeTask("t1", "test-project", { phase: "rework-requested" });
+    (taskRework.status!.worker as any) = { runName: "worker-0-0", retryCount: 0, aiReworkCount: 1 };
+    const resultScheduled = decide({
+      task: taskRework,
+      project: aiProject,
+      allTasks: [taskRework],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(aiProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(resultScheduled.toPhase).toBe("scheduled");
+
+    // --- Phase 4: scheduled → initializing (new runName computed) ---
+    const taskScheduled = makeTask("t1", "test-project", { phase: "scheduled" });
+    (taskScheduled.status!.worker as any) = { runName: "worker-0-0", retryCount: 0, aiReworkCount: 1 };
+    const resultInitializing = decide({
+      task: taskScheduled,
+      project: aiProject,
+      allTasks: [taskScheduled],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(aiProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(resultInitializing.toPhase).toBe("initializing");
+
+    // --- ASSERTION: new runName differs from the prior succeeded worker run name ---
+    const priorRunName = "worker-0-0";
+    const newRunName = (resultInitializing.statusPatch?.worker as any)?.runName;
+    expect(newRunName).toBeDefined();
+    expect(newRunName).not.toBe(priorRunName);
+
+    // Also verify the ScheduleRun effect carries the new run name.
+    const scheduleEffect = resultInitializing.effects.find((e) => e.type === "ScheduleRun");
+    expect(scheduleEffect).toBeDefined();
+    expect((scheduleEffect as any)?.runName).toBe(newRunName);
+  });
+
+  it("AI rework loop: second request_changes produces yet another distinct run name", () => {
+    const aiProject = makeProject("test-project", {
+      reviewPolicy: { aiReviewerEnabled: true, aiReviewerAgent: "reviewer", maxAutoReworks: 3 },
+    });
+
+    // First AI rework: aiReworkCount=1 → scheduled with runName for (rc=0, ar=1)
+    const taskAr1 = makeTask("t1", "test-project", { phase: "scheduled" });
+    (taskAr1.status!.worker as any) = { retryCount: 0, aiReworkCount: 1 };
+    const resultAr1 = decide({
+      task: taskAr1,
+      project: aiProject,
+      allTasks: [taskAr1],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(aiProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    const runNameAr1 = (resultAr1.statusPatch?.worker as any)?.runName;
+
+    // Second AI rework: aiReworkCount=2 → scheduled with runName for (rc=0, ar=2)
+    const taskAr2 = makeTask("t1", "test-project", { phase: "scheduled" });
+    (taskAr2.status!.worker as any) = { retryCount: 0, aiReworkCount: 2 };
+    const resultAr2 = decide({
+      task: taskAr2,
+      project: aiProject,
+      allTasks: [taskAr2],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(aiProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    const runNameAr2 = (resultAr2.statusPatch?.worker as any)?.runName;
+
+    expect(runNameAr1).not.toBe(runNameAr2);
+  });
+});
