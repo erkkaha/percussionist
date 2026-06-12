@@ -1,5 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
-import { Activity, BarChart3, Folder, Plus, Settings, Terminal, TrendingUp } from 'lucide-react';
+import {
+  Activity,
+  BarChart3,
+  Folder,
+  MessageSquare,
+  Plus,
+  Settings,
+  Terminal,
+  TrendingUp,
+} from 'lucide-react';
 import React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useProjects } from '../hooks/useProjects';
@@ -182,6 +191,18 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
               </SidebarMenuButton>
             </SidebarMenuItem>
           ))}
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={location.pathname.startsWith('/sessions')}
+              tooltip="Sessions"
+            >
+              <NavLink to="/sessions" onClick={handleNavClick}>
+                <MessageSquare />
+                <span>Sessions</span>
+              </NavLink>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarContent>
       <SidebarFooter>

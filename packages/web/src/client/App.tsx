@@ -13,6 +13,8 @@ import PlanView from './components/PlanView';
 import ProjectsPage from './components/ProjectsPage';
 import RunDetail from './components/RunDetail';
 import RunList from './components/RunList';
+import SessionDetail from './components/SessionDetail';
+import SessionList from './components/SessionList';
 import SettingsPage from './components/SettingsPage';
 import StatsView from './components/StatsView';
 import { AuthProvider } from './lib/auth';
@@ -56,6 +58,8 @@ export default function App() {
               <Route path="/runs/new" element={<CreateRunForm />} />
               <Route path="/runs/:name" element={<RunDetail />} />
               <Route path="/stats" element={<StatsView />} />
+              <Route path="/sessions" element={<SessionList />} />
+              <Route path="/sessions/:name" element={<SessionDetail />} />
               <Route path="/metrics" element={<MetricsView />} />
               <Route path="/projects" element={<ProjectsPage />} />
               <Route path="/projects/new" element={<CreateProjectForm />} />
