@@ -470,8 +470,12 @@ function decideSucceeded(input: ReconcileInput): ReconcileDecision {
       }
       const retryCount = task.status?.worker?.retryCount ?? 0;
       const aiReworkCount = task.status?.worker?.aiReworkCount ?? 0;
-      const reviewSeq = String(retryCount + aiReworkCount);
-      const reviewRunName = auxiliaryRunName(input.project.metadata.name, "review", taskName, reviewSeq);
+      // Use both counters in suffix to avoid collisions (e.g., 2+1 vs 1+2 both equal "3")
+      const reviewSuffix = createHash("sha256")
+        .update(`${input.project.metadata.name}:${taskName}:review:${retryCount}:${aiReworkCount}`)
+        .digest("hex")
+        .slice(0, 8);
+      const reviewRunName = auxiliaryRunName(input.project.metadata.name, "review", taskName, reviewSuffix);
 
       return {
         taskName,
