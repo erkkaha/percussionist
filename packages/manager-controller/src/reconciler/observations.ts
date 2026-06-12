@@ -97,12 +97,12 @@ export function getConsumedAnnotationKeys(actions: ManualActions): string[] {
   return keys;
 }
 
-export function getReviewVerdict(run: Run | undefined): { action: string; feedback?: string } | undefined {
+export function getReviewVerdict(run: Run | undefined): { action: string; diagnosis?: string; feedback?: string } | undefined {
   if (!run) return undefined;
   const verdict = run.metadata.annotations?.[REVIEW_VERDICT_KEY];
   if (!verdict) return undefined;
   try {
-    return JSON.parse(verdict) as { action: string; feedback?: string };
+    return JSON.parse(verdict) as { action: string; diagnosis?: string; feedback?: string };
   } catch {
     return undefined;
   }
