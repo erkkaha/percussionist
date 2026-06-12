@@ -10,7 +10,7 @@ import {
   Wrench, FileText, RefreshCw, MousePointerClick, ArrowRight,
   ChevronDown, ChevronRight, GitCommit as GitCommitIcon,
 } from "lucide-react";
-import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan, moveTask } from "../../lib/api";
+import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan, moveTask, retryReviewTask } from "../../lib/api";
 import type { Task, Run, DiffCommit } from "../../lib/types";
 import { useTaskRuns } from "../../hooks/useTaskRuns";
 import { useTaskDiff } from "../../hooks/useTaskDiff";
@@ -516,6 +516,11 @@ function TaskDetailPanelInner({
     onSuccess: invalidateBoard,
   });
 
+  const retryReviewMutation = useMutation({
+    mutationFn: () => retryReviewTask(projectName, taskName),
+    onSuccess: invalidateBoard,
+  });
+
   const promoteIdeaMutation = useMutation({
     mutationFn: () => moveTask(projectName, taskName, "backlog"),
     onSuccess: invalidateBoard,
@@ -608,6 +613,16 @@ function TaskDetailPanelInner({
               >
                 <X className="h-3.5 w-3.5" /> Request Changes
               </button>
+              {task.status?.phase === "awaiting-human" && worker?.reviewRunName && task.spec.type === "BUILD" && (
+                <button
+                  onClick={() => retryReviewMutation.mutate()}
+                  disabled={retryReviewMutation.isPending}
+                  className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text transition-colors disabled:opacity-40"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  {retryReviewMutation.isPending ? "Retrying…" : "Retry Review"}
+                </button>
+              )}
             </>
           )}
 
