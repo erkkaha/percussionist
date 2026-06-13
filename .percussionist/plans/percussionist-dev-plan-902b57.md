@@ -1,234 +1,247 @@
-# Plan: Diff impact ranking and line-level review comments
+# Plan: Diff impact ranking and line-level review comments (revised)
 
 ## Context
 
-Current diff/review flow already has strong primitives, but no structured per-line review metadata:
+Current code already has the right end-to-end transport for review metadata, but it is text-only today:
 
-- Diff retrieval is implemented in `packages/web/src/server/routes/task-diff.ts` and exposed as `GET /api/projects/:project/tasks/:taskName/diff`.
-  - Response currently contains `baseRef`, `headRef`, `files[]`, optional `commits[]`, and `reason`.
-  - UI renders this in `packages/web/src/client/components/board/TaskDetailPanel.tsx` via `DiffContent` + `FileDiff`.
-- Review feedback exists only as plain text at task level:
-  - Human request-changes writes annotations (`percussionist.dev/action-request-changes`, `percussionist.dev/action-rework-feedback`) in `packages/web/src/server/routes/board.ts`.
-  - AI reviewer verdict is written to review Run annotation (`percussionist.dev/review-verdict`) by `complete_review` in `packages/dispatcher/src/mcp-server.ts`, then consumed by manager reconciler (`packages/manager-controller/src/reconciler/observations.ts` + `decision.ts`) into `Task.status.worker.reviewFeedback` and append-only `Task.status.reviews`.
-- Canonical task state is in Task CRD schema (`packages/api/src/index.ts`), and board UI reads Task objects from `/api/projects/:project/board`.
+- Diff API/UI path:
+  - `GET /api/projects/:project/tasks/:taskName/diff` in `packages/web/src/server/routes/task-diff.ts` returns `defaultRef`, `baseRef`, `headRef`, `files[]`, optional `commits[]`, `reason`.
+  - UI consumes it in `packages/web/src/client/components/board/TaskDetailPanel.tsx` (`DiffContent`) and renders files with `packages/web/src/client/components/FileDiff.tsx`.
+- Review verdict path:
+  - `complete_review` tool in `packages/dispatcher/src/mcp-server.ts` writes JSON to run annotation `percussionist.dev/review-verdict`.
+  - Manager reads it in `packages/manager-controller/src/reconciler/observations.ts:getReviewVerdict()` and applies results in `packages/manager-controller/src/reconciler/decision.ts`.
+  - Task-level persistent review state is `Task.status.worker.reviewFeedback` + append-only `Task.status.reviews` (schema in `packages/api/src/index.ts`).
+- Human request-changes path remains plain text via annotations in `packages/web/src/server/routes/board.ts` and textarea UI in `TaskDetailPanel.tsx`.
 
-Implication: we already have an end-to-end pattern for “structured data emitted by review run → reconciler → Task.status → UI”. We should reuse this instead of introducing a web-only DB as source-of-truth.
+Key implication: v1 should extend the existing **reviewer verdict → run annotation → reconciler → Task.status → UI** pipeline rather than creating a new storage system.
 
 ---
 
 ## Scope boundaries
 
-### In scope
+### In scope (v1)
 
-1. Introduce structured diff-impact metadata model (ranked findings + line/file anchors) in Task status.
-2. Capture ranked findings from review/builder agents in a deterministic structured channel.
-3. Expose findings alongside task diff API so board diff view can sort/filter by impact.
-4. Render ranked findings and inline comment badges in diff UI (read-only comments for now).
-5. Ensure findings can drive rework feedback generation (manual + agent workflows).
+1. Structured reviewer findings with severity rank + file/line anchors persisted in `Task.status`.
+2. Deterministic diff identity context (`baseSha`, `headSha`, `forkSha`, `diffFingerprint`) added to diff API and used for staleness checks.
+3. Diff API returns normalized findings with active/stale mapping against current diff context.
+4. Diff UI supports ranking/filtering + inline line markers/widgets.
+5. Rework helper can seed existing feedback textarea from top findings (client-side only).
 
-### Out of scope (for this iteration)
+### Explicitly out of scope (v1)
 
-1. Full threaded discussion system (replies, mentions, edit history).
-2. Real-time collaborative commenting.
-3. Cross-task/global code review inbox.
-4. Automatic ML-based ranking independent of agent-provided rationale.
+1. Builder-authored findings transport/write path.
+2. Threaded comment system (replies, edits, resolve workflow).
+3. Real-time collaboration/comment syncing.
+4. Fuzzy anchor remapping across rebases (v1 marks stale, does not remap).
 
 ---
 
 ## Approach
 
-### 1) Store canonical rankings/comments in `Task.status` (not web SQLite)
+### 1) Canonical storage in Task status with strict bounded schema
 
-Add a typed field under Task status in `packages/api/src/index.ts` (e.g. `Task.status.diffFindings`).
+Add a new typed field under `TaskStatusSchema` in `packages/api/src/index.ts` (e.g. `diffFindings`) containing reviewer findings. Keep this small and deterministic.
 
-Rationale:
+Proposed hard caps (enforced in Zod and respected before annotation write):
 
-- Task CR is already the authoritative review/workflow state.
-- Data must be available both to UI and agents via manager/dispatcher tooling.
-- Fits existing reconciler pattern (`reviews[]` is already append-only structured history).
-- Avoids dual-write drift between K8s CR state and web SQLite cache tables.
+- `items.max(25)`
+- `anchors.max(3)` per finding
+- `title.max(160)`
+- `comment.max(2000)`
+- `category.max(64)`
+- `hunkHeader.max(256)`
 
-Design constraints:
+Rationale: Task CR status and run annotations are finite; bounded data avoids oversized patches and annotation failures.
 
-- Keep payload bounded (cap number of findings, message lengths).
-- Keep schema line-anchor based with explicit diff context to detect stale anchors.
+### 2) Make resolved SHAs + fingerprint required for reliable anchors
 
-### 2) Reuse review verdict transport path, extend with structured findings
+`baseRef/headRef` are often branch names and can move. Diff identity must be commit-based:
 
-Extend reviewer submission path rather than creating ad-hoc API-only writes:
+- Extend `task-diff` route (`packages/web/src/server/routes/task-diff.ts`) to compute and return:
+  - `baseSha`
+  - `headSha`
+  - `forkSha`
+  - `diffFingerprint` (deterministic hash of fork/head/file patch identity)
+- Findings are anchored to these resolved values, not mutable refs.
 
-- Extend `complete_review` input schema in `packages/dispatcher/src/mcp-server.ts` to optionally accept structured findings payload.
-- Persist this payload inside the review run annotation together with `approved/diagnosis/feedback`.
-- Extend manager reconciler parsing (`getReviewVerdict()` in `observations.ts`) and decision handling (`decision.ts`) to copy normalized findings into Task status.
+### 3) Keep run annotation as transport, but cap before writing
 
-This keeps write authority in orchestrated review flow and preserves auditability by tying findings to the review run.
+Continue using `complete_review` in `packages/dispatcher/src/mcp-server.ts` as the ingress path, extending input with optional `findings`.
 
-### 3) Add optional builder-originated findings path (same data contract)
+Important guardrail: enforce count/length limits **in dispatcher before writing** `percussionist.dev/review-verdict` so annotation size stays safe. If over limit, truncate/drop extra findings and preserve core verdict (`approved/diagnosis/feedback`).
 
-Builders may also provide impact hints. To keep one storage model:
+### 4) Centralize validation/normalization in API package
 
-- Add a dispatcher MCP tool for worker runs (e.g. `publish_diff_findings`) that patches current task status with provisional findings (or writes run annotation to be promoted by reconciler).
-- Mark source on each finding (`source: "builder" | "reviewer" | "human"`) and retain latest reviewer override semantics.
+Today `getReviewVerdict()` blindly parses JSON in `observations.ts`. Replace with shared parse/normalize helpers in `@percussionist/api` used by both dispatcher and manager:
 
-First release can prioritize reviewer findings; builder findings can be additive if present.
+- Parse verdict JSON with Zod.
+- Normalize findings (trim, dedupe IDs, clamp scores, enforce caps).
+- Drop invalid findings while preserving valid diagnosis/feedback/action.
 
-### 4) Anchor comments to diff lines with staleness detection
+This ensures identical behavior at producer and consumer boundaries.
 
-Use explicit anchor object per finding:
+### 5) Reviewer replacement semantics (explicit rule)
 
-- `path`
-- `side` (`old`/`new`)
-- `line` (+ optional `endLine`)
-- optional `hunkHeader`
-- optional `commitSha`
-- `diffBaseRef` + `diffHeadRef` (or fingerprint)
+For v1:
 
-UI should only render inline anchors as “active” when current diff refs/fingerprint match; otherwise show as stale/unmapped rather than silently misplacing comments.
+- Findings from the **latest review run** replace previous reviewer findings for that task.
+- Human-entered request-changes feedback remains separate/plain text and is preserved.
+- Builder findings are not implemented in v1 (no merge-semantics complexity).
 
-### 5) Rank model: explicit severity enum + optional numeric score
+### 6) UI line mapping requires custom diff rendering
 
-Use deterministic buckets for UX sorting/filtering:
+`FileDiff.tsx` currently renders default `<Hunk />` output from `react-diff-view` with no line-level widgets. Implement explicit mapping from finding anchors to `change.oldLineNumber/newLineNumber` and render decorations/widgets for matched lines.
 
-- `critical`, `high`, `medium`, `low`, `info`
-
-Optional `score` (0–100) can refine ordering within bucket. UI default sort: severity desc, score desc, file path, line.
-
-### 6) API/UI integration
-
-Augment `task-diff` response (`TaskDiffResponse`) to include findings relevant to the requested task and current diff context.
-
-- Server: `packages/web/src/server/routes/task-diff.ts`
-- Client types/api: `packages/web/src/client/lib/types.ts`, `packages/web/src/client/lib/api.ts`
-- UI: `TaskDetailPanel.tsx` + `FileDiff.tsx` (add finding sidebar/inline badges + severity chips + filter)
+Stale anchors should be shown in findings panel as stale/unmapped (not silently dropped).
 
 ---
 
-## Proposed data model (initial)
+## Proposed data model (v1)
 
-Add to API package (`packages/api/src/index.ts`):
+Add schemas in `packages/api/src/index.ts`:
 
-- `DiffFindingSeveritySchema`: enum `critical|high|medium|low|info`
-- `DiffLineAnchorSchema`: `{ path, side, line, endLine?, hunkHeader?, commitSha? }`
+- `DiffFindingSeveritySchema = z.enum(["critical", "high", "medium", "low", "info"])`
+- `DiffLineAnchorSchema`:
+  - `path: string`
+  - `side: "old" | "new"`
+  - `line: int >= 1`
+  - `endLine?: int >= line`
+  - `hunkHeader?: string (max 256)`
+- `DiffContextSchema` (**required** on finding set and each finding anchor context):
+  - `baseSha: string`
+  - `headSha: string`
+  - `forkSha: string`
+  - `diffFingerprint: string`
 - `DiffFindingSchema`:
-  - `id` (stable UUID-ish string)
-  - `source` (`builder|reviewer|human`)
+  - `id: string`
+  - `source: "reviewer"` (v1)
   - `severity`
-  - `score?`
-  - `title`
-  - `comment` (main explanatory text)
-  - `category?` (e.g. correctness/perf/security/maintainability/tests)
-  - `anchors: DiffLineAnchor[]` (at least one)
-  - `diffBaseRef?`, `diffHeadRef?`, `diffFingerprint?`
-  - `createdAt`, `authorRunName?`
-- `TaskDiffFindingsSchema` wrapper in `TaskStatusSchema`:
-  - `version`
-  - `items: DiffFinding[]`
-  - `updatedAt`
+  - `score?: number (0..100)`
+  - `title: string (max 160)`
+  - `comment: string (max 2000)`
+  - `category?: string (max 64)`
+  - `anchors: DiffLineAnchor[]` (1..3)
+  - `context: DiffContextSchema`
+  - `createdAt: string`
+  - `authorRunName?: string`
+- `TaskDiffFindingsSchema` in `TaskStatusSchema`:
+  - `version: 1`
+  - `context: DiffContextSchema` (the context for this stored reviewer batch)
+  - `items: DiffFinding[]` (max 25)
+  - `updatedAt: string`
+  - `sourceRunName: string`
 
-Add corresponding frontend TS types in `packages/web/src/client/lib/types.ts` and include in `TaskDiffResponse`.
+Also add frontend types in `packages/web/src/client/lib/types.ts` and extend `TaskDiffResponse` accordingly.
 
 ---
 
-## Tasks (implementation steps)
+## Implementation tasks
 
-1. **Define CRD schema for structured diff findings**
-   - Update `packages/api/src/index.ts` with new Zod schemas and `TaskStatusSchema` field.
-   - Keep strict caps (`max()` on text lengths, findings count) to avoid oversized status payloads.
-   - Regenerate CRD YAML via `pnpm codegen`.
+1. **API schema + shared normalization helpers**
+   - Update `packages/api/src/index.ts` with findings/context schemas and `TaskStatusSchema.diffFindings`.
+   - Add exported parse/normalize helpers for review verdict payloads in `@percussionist/api` (new module or same package file organization).
+   - Enforce the exact caps listed above.
+   - Regenerate CRDs via `pnpm codegen`.
 
-2. **Extend dispatcher review tool contract**
-   - Update `TOOL_COMPLETE_REVIEW` schema in `packages/dispatcher/src/mcp-server.ts` to accept optional structured findings array.
-   - Ensure annotation payload includes findings in JSON.
-   - Keep backward compatibility when findings are omitted.
+2. **Dispatcher `complete_review` contract + pre-write guardrails**
+   - Extend `TOOL_COMPLETE_REVIEW` input schema in `packages/dispatcher/src/mcp-server.ts` with optional `findings`.
+   - Normalize + cap verdict/findings before `patchRunAnnotations()`.
+   - Ensure overflow/invalid findings do not fail the tool; core verdict still writes.
+   - Keep backward compatibility for existing callers that only send approved/diagnosis/feedback.
 
-3. **Parse and persist findings in reconciler**
-   - Extend verdict parsing in `packages/manager-controller/src/reconciler/observations.ts`.
-   - In `decision.ts` review-success branches, append/update `Task.status.diffFindings` while preserving existing `reviews[]` behavior.
-   - Define merge semantics (e.g. latest reviewer run replaces prior reviewer findings; keep human entries).
+3. **Manager verdict parsing and persistence**
+   - Replace ad-hoc JSON parse in `packages/manager-controller/src/reconciler/observations.ts:getReviewVerdict()` with shared API normalizer.
+   - In `packages/manager-controller/src/reconciler/decision.ts`, apply replacement semantics:
+     - append to `reviews[]` as today,
+     - replace reviewer `diffFindings` with latest normalized reviewer batch.
+   - Preserve existing behavior when findings are absent/invalid.
 
-4. **(Optional but planned) Add builder publication path**
-   - Add dispatcher MCP tool for current-run task findings publication (or equivalent manager MCP write path).
-   - Wire tool handler to patch task status safely.
-   - Tag source as `builder` and isolate from reviewer override rules.
+4. **Diff API context upgrade**
+   - In `packages/web/src/server/routes/task-diff.ts`, resolve and return `baseSha/headSha/forkSha/diffFingerprint` alongside existing refs.
+   - Attach task findings to response and compute per-finding `isActive` vs `isStale` by context match.
+   - Return stable sorted order (severity desc, score desc, path, line) or clearly document client-side sort contract.
 
-5. **Expose findings in diff API**
-   - Update `packages/web/src/server/routes/task-diff.ts` to include task findings in response.
-   - Compute/find current diff fingerprint context and flag stale/mismatched anchors.
-   - Return both raw findings and a pre-sorted order for UI convenience (or document client-side sort only).
+5. **Client contracts and fetch layer**
+   - Update `packages/web/src/client/lib/types.ts` for new diff context/findings response shape.
+   - Keep `fetchTaskDiff()` (`packages/web/src/client/lib/api.ts`) and `useTaskDiff()` mostly unchanged except typing.
 
-6. **Update client contracts and fetch layer**
-   - Extend `TaskDiffResponse` and related types in `packages/web/src/client/lib/types.ts`.
-   - Keep `fetchTaskDiff()` in `packages/web/src/client/lib/api.ts` unchanged except typing.
+6. **Diff UI: rankings panel + inline markers/widgets**
+   - In `packages/web/src/client/components/board/TaskDetailPanel.tsx` (`DiffContent`):
+     - add findings summary panel (counts by severity, filters, sort controls, stale toggle).
+   - In `packages/web/src/client/components/FileDiff.tsx`:
+     - map anchors to parsed diff line numbers (`oldLineNumber/newLineNumber`),
+     - render line decorations/widgets and per-file finding badges,
+     - show stale/unmapped findings in a non-inline section.
 
-7. **Render ranked findings in diff view**
-   - `TaskDetailPanel.tsx` (`DiffContent`): add findings panel with severity filters and “top-impact first” default.
-   - `FileDiff.tsx`: show per-file badges/counts and line-level markers where anchors match.
-   - Add UX affordances for stale anchors (e.g. muted badge + tooltip “anchor from older diff”).
+7. **Rework helper (client-side only)**
+   - In `TaskDetailPanel.tsx`, add an action near request-changes textarea to insert top findings into existing feedback text.
+   - No new backend endpoint; continue using `POST .../request-changes` in `packages/web/src/server/routes/board.ts`.
 
-8. **Hook findings into rework UX**
-   - In review/request-changes UI (`TaskDetailPanel.tsx` + board actions), provide “insert top findings into feedback” helper to seed rework comments.
-   - Ensure plain-text feedback path remains intact for compatibility.
+8. **Reviewer prompt updates**
+   - Update `packages/manager-controller/src/facilitator.ts` reviewer prompt to instruct `complete_review` with structured `findings` payload.
+   - Include concise schema expectations and cap guidance in prompt to reduce malformed payloads.
 
-9. **Agent prompt updates**
-   - Update reviewer prompt generation in `packages/manager-controller/src/facilitator.ts` to request structured findings in `complete_review` when changes are requested (and optionally when approving with caveats).
-   - If builder publication is implemented, update worker instructions in `packages/manager-controller/src/worker-builder.ts` for BUILD tasks.
-
-10. **Tests and validation**
-    - API unit tests for verdict parsing with/without findings.
-    - Reconciler decision tests verifying `diffFindings` patch behavior and merge semantics.
-    - Web route tests for `task-diff` response including findings/staleness flags.
-    - UI component tests for severity sorting/filtering and stale-anchor rendering.
-    - E2E deterministic scenario: reviewer emits structured findings; task status and board diff tab show ranked comments.
-
-11. **Migration/backward compatibility**
-    - Ensure old review annotations (without findings) continue to work.
-    - Guard UI for absent findings (no regressions to existing diff view).
+9. **Tests**
+   - Manager reconciler tests:
+     - `packages/manager-controller/src/reconciler/__tests__/observations.test.ts`
+     - `packages/manager-controller/src/reconciler/__tests__/decision.test.ts`
+     - add cases for normalization, invalid finding drop, replacement semantics.
+   - Web route tests:
+     - add/extend tests under `packages/web/tests/` for diff route response including sha/fingerprint + findings active/stale mapping.
+   - Auth tests:
+     - keep/extend `packages/web/tests/auth.test.ts` coverage for diff endpoint as needed.
+   - (Optional if already available in harness) deterministic E2E validating reviewer findings appear in task status and diff UI payload.
 
 ---
 
 ## Acceptance criteria
 
-1. Task CRD has a typed status field for diff findings with file/line anchors and severity ranking.
-2. Reviewer runs can submit structured findings via `complete_review`, and manager persists them to task status.
-3. Diff API returns findings together with diff data.
-4. Diff UI can sort/filter findings by impact and show line/file associations.
-5. Rework flow can reuse findings as feedback seed text.
-6. Existing review/diff flows continue working when no structured findings are provided.
+1. `Task.status` includes typed, bounded structured diff findings schema with required commit-based context.
+2. `complete_review` accepts structured findings and safely writes bounded verdict annotations.
+3. Manager uses shared validation/normalization and persists latest reviewer findings with explicit replacement semantics.
+4. Diff API returns resolved refs (`baseRef/headRef`) plus required SHAs (`baseSha/headSha/forkSha`) and `diffFingerprint`.
+5. Diff API returns findings with active/stale status against current diff context.
+6. Diff UI can rank/filter findings and render line-level markers by anchor mapping.
+7. Request-changes UI can seed feedback from selected/top findings without backend changes.
+8. Existing flows remain functional when no findings are supplied.
 
 ---
 
 ## Proposed BUILD task breakdown
 
-1. **BUILD A — Data model + orchestrator plumbing**
-   - API schema changes, dispatcher `complete_review` extension, reconciler persistence, tests.
+1. **BUILD A — Schema + review plumbing**
+   - API schemas, shared normalizer, dispatcher `complete_review` findings support + hard caps, manager parsing/persistence, unit tests.
 
-2. **BUILD B — Diff API + client contracts**
-   - `task-diff` response enrichment, type updates, staleness/fingerprint handling.
+2. **BUILD B — Diff API context**
+   - Resolved sha/fingerprint fields in `task-diff`, findings projection with active/stale mapping, route tests.
 
-3. **BUILD C — Diff UI ranking and inline comment rendering**
-   - Findings panel, severity sorting/filtering, per-file/line markers.
+3. **BUILD C — Diff UI**
+   - Findings panel, severity sorting/filtering, per-file counts, inline line widgets/markers with stale handling.
 
-4. **BUILD D — Rework integration + prompting + E2E hardening**
-   - Rework comment seeding, reviewer prompt updates, deterministic E2E coverage.
+4. **BUILD D — Rework helper + prompts + E2E**
+   - Client-side feedback seeding, reviewer prompt updates, deterministic end-to-end coverage.
 
 ---
 
 ## Risks / open questions
 
-1. **Anchor stability across rebases/merges**
-   - Line numbers drift; stale detection is mandatory. Need decision on whether to attempt fuzzy remapping or only mark stale.
+1. **Annotation budget risk**
+   - Even bounded findings may approach annotation limits depending on diagnosis/feedback size; we need explicit truncation strategy and telemetry/logging for dropped findings.
 
-2. **Task status payload size limits**
-   - Many findings with long comments can bloat status patches. Must cap finding count/length and possibly keep only latest reviewer set.
+2. **Fingerprint design stability**
+   - Must choose a deterministic, cheap fingerprint formula that is stable for same diff content but changes reliably when patch context changes.
 
-3. **Source precedence rules**
-   - If both builder and reviewer publish findings, clarify precedence in UI and rework helper (likely reviewer-first).
+3. **Line anchor mismatch edge cases**
+   - Renames/binary patches/empty hunks can limit line-level mapping; UI should degrade gracefully to file-level listing.
 
-4. **Human-authored comments model**
-   - This plan supports future human comments but does not yet define edit/delete/thread semantics.
+4. **Prompt adherence variance**
+   - Reviewer agents may still emit malformed findings; parser must harden and preserve core verdict outcome.
 
-5. **Prompt compliance variability**
-   - Review agents may omit anchors or malformed JSON; parser should validate and degrade gracefully to plain-text review feedback.
+5. **Future human comments model**
+   - v1 intentionally avoids human line-comment persistence; follow-up design should decide whether human comments live in Task.status or separate CR/storage.
 
-6. **Permission/tooling surface**
-   - If builder publication is added, confirm least-privilege write path and auditability (status patch vs run annotation promotion).
+## Assumptions
+
+1. v1 only supports reviewer-originated structured findings.
+2. Latest reviewer run is authoritative for reviewer findings on a task.
+3. No additional server API is needed for rework helper; existing request-changes endpoint remains unchanged.
