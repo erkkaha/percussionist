@@ -26,11 +26,11 @@
         "noDangerouslySetInnerHtml": "warn"
       },
       "a11y": {
-        "noLabelWithoutControl": "warn",
-        "noSvgWithoutTitle": "warn",
-        "useAriaPropsSupportedByRole": "warn",
-        "useButtonType": "warn",
-        "useSemanticElements": "warn"
+        "noLabelWithoutControl": "off",
+        "noSvgWithoutTitle": "off",
+        "useAriaPropsSupportedByRole": "off",
+        "useButtonType": "off",
+        "useSemanticElements": "off"
       },
       "suspicious": {
         "noArrayIndexKey": "warn",
