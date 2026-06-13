@@ -82,6 +82,79 @@ Retrieve relevant context formatted for prompt injection.
 }
 ```
 
+### `GET /memories`
+List stored memories with pagination and optional task filter. Returns results ordered by `created_at DESC`.
+
+**Query params:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `task` | string | — | Filter to memories whose `metadata.task` matches this value |
+| `limit` | number | 50 | Max results (capped at 200) |
+| `offset` | number | 0 | Pagination offset |
+
+**Response:**
+```json
+{
+  "memories": [
+    {
+      "id": "uuid",
+      "content": "The user prefers TypeScript...",
+      "metadata": { "task": "BUILD-4" },
+      "distance": 0,
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  ],
+  "total": 42
+}
+```
+
+### `GET /memory/:id`
+Retrieve a single memory by its UUID. Returns a not-found error if the ID does not exist.
+
+**Response:**
+```json
+{
+  "id": "uuid",
+  "content": "The user prefers TypeScript...",
+  "metadata": { "task": "BUILD-4" },
+  "distance": 0,
+  "createdAt": "2025-01-01T00:00:00.000Z"
+}
+```
+
+### `PATCH /memory/:id`
+Update a memory's content and/or metadata. If the content changes, the embedding vector is regenerated automatically to keep semantic search accurate. Metadata-only updates skip re-embedding.
+
+**Body:**
+```json
+{
+  "content": "Updated preference: TypeScript for all new projects",
+  "metadata": { "task": "BUILD-4", "updatedBy": "admin" }
+}
+```
+
+Both `content` and `metadata` are optional — provide only the fields you want to change.
+
+**Response:**
+```json
+{
+  "id": "uuid",
+  "content": "Updated preference: TypeScript for all new projects",
+  "metadata": { "task": "BUILD-4", "updatedBy": "admin" },
+  "agentRun": "run:abc123",
+  "createdAt": "2025-01-01T00:00:00.000Z"
+}
+```
+
+### `DELETE /memory/:id`
+Delete a memory and its associated embedding vector atomically. Returns a not-found error if the ID does not exist.
+
+**Response:**
+```json
+{ "deleted": true }
+```
+
 ## Database
 
 Two tables are created on startup:

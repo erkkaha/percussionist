@@ -1220,7 +1220,7 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
-  const { task, observed, now } = input;
+  const { task, flow, observed, now } = input;
   const taskName = task.metadata.name;
   const fromPhase = 'awaiting-feature-merge' as TaskPhase;
   const mergeRunName = task.status?.worker?.mergeRunName;
@@ -1282,6 +1282,33 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
         ),
       ],
     };
+  }
+
+  // Staleness check for running merge runs.
+  if (mergeRun.status?.phase === 'Running') {
+    const staleThresholdMs = flow.timeouts.mergeStaleSeconds * 1000;
+    const lastEvent = mergeRun.status?.lastEventAt;
+    if (lastEvent) {
+      const elapsed = new Date(now).getTime() - new Date(lastEvent).getTime();
+      if (elapsed > staleThresholdMs) {
+        return {
+          taskName,
+          fromPhase,
+          toPhase: 'failed',
+          statusPatch: {
+            worker: {
+              status: 'Failed',
+              mergeError: `Stale after ${flow.timeouts.mergeStaleSeconds}s`,
+            },
+          },
+          effects: [
+            { type: 'DeleteRun', name: mergeRunName, reason: 'MergeRunStale' },
+            { type: 'CleanupWorktree', runName: mergeRunName },
+          ],
+          events: [makeEvent(input, fromPhase, 'failed', 'FeatureMergeRunStale')],
+        };
+      }
+    }
   }
 
   // Still running or unknown — wait.

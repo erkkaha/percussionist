@@ -239,6 +239,10 @@ these tools for agent use:
 | `store_memory` | Store a memory with semantic embedding for future context retrieval |
 | `query_memory` | Semantic search across stored memories, ranked by cosine distance |
 | `get_context` | Retrieve relevant context from past runs and memories, formatted for prompt injection |
+| `list_memories` | List stored memories with pagination and optional task filter |
+| `get_memory` | Retrieve a single memory by its UUID |
+| `update_memory` | Update a memory's content and/or metadata (regenerates embedding if content changes) |
+| `delete_memory` | Delete a memory and its associated embedding vector atomically |
 
 ### Resources
 
@@ -493,6 +497,10 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `store_memory` | Store a memory with semantic embedding for future context retrieval |
 | `query_memory` | Semantic search across stored memories, ranked by cosine distance |
 | `get_context` | Retrieve relevant context from past runs and memories, formatted for prompt injection |
+| `list_memories` | List stored memories with pagination and optional task filter |
+| `get_memory` | Retrieve a single memory by its UUID |
+| `update_memory` | Update a memory's content and/or metadata (regenerates embedding if content changes) |
+| `delete_memory` | Delete a memory and its associated embedding vector atomically |
 
 **`create_run`** — Direct run creation without waiting for reconcile cycle.
 - Requires: `project`, `task` (Task CR name)
@@ -783,14 +791,15 @@ to a truncated snapshot.
 Release tags follow `v<major>.<minor>.<patch>` semver format (e.g. `v0.15.0`).
 CI triggers on any push matching `v*`.
 
-**Do not guess tags.** Always derive from existing remote tags:
+**Never create a tag without asking the user first.** Tagging is a human decision.
+Always ask what version they want, then derive from existing remote tags:
 
 ```bash
 git fetch --tags origin
 git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1V -k2,2V -k3,3V | tail -1
 ```
 
-Start from that tag, increment the appropriate segment, create, and push:
+Once the user confirms the version, create and push:
 
 ```bash
 git tag v0.15.1

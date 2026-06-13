@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <rect width="64" height="64" rx="12" fill="#fbbf24"/>
+  <!-- drum body -->
+  <ellipse cx="32" cy="38" rx="20" ry="14" fill="#92400e" stroke="#78350f" stroke-width="2"/>
+  <ellipse cx="32" cy="38" rx="16" ry="10" fill="#b45309"/>
+  <!-- drum top -->
+  <ellipse cx="32" cy="28" rx="20" ry="8" fill="#d97706" stroke="#b45309" stroke-width="1.5"/>
+  <ellipse cx="32" cy="28" rx="16" ry="5" fill="#fbbf24"/>
+  <!-- drumsticks -->
+  <line x1="14" y1="48" x2="28" y2="20" stroke="#78350f" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="50" y1="48" x2="36" y2="20" stroke="#78350f" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- stick tips -->
+  <circle cx="29" cy="19" r="3" fill="#d97706"/>
+  <circle cx="35" cy="19" r="3" fill="#d97706"/>
+</svg>
