@@ -1,7 +1,19 @@
 import { PatchStrategy, setHeaderOptions } from '@kubernetes/client-node';
 import { core, readSessionConfigMap } from '@percussionist/kube';
 import { storeMemory } from './agent/memory-client.js';
-import { createSession, sendPrompt, waitForCompletion } from './agent/session.js';
+import {
+  createSession as _createSession,
+  sendPrompt as _sendPrompt,
+  waitForCompletion as _waitForCompletion,
+} from './agent/session.js';
+
+// Overridable function references — allows tests to inject mocks without
+// global module-level mocking that leaks across test files.
+export const __sessionFns = {
+  createSession: _createSession,
+  sendPrompt: _sendPrompt,
+  waitForCompletion: _waitForCompletion,
+};
 
 const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
 
@@ -36,7 +48,9 @@ export async function summarizeSession(
       // ConfigMap not found — will be created fresh.
     }
     if (existingSummary) {
-      log(`idempotent: summary already exists for ${project}/${runName}/${sessionID} (${existingSummary.length} chars)`);
+      log(
+        `idempotent: summary already exists for ${project}/${runName}/${sessionID} (${existingSummary.length} chars)`,
+      );
       return;
     }
 
@@ -44,11 +58,11 @@ export async function summarizeSession(
     // Bounded retry loop for snapshot read — the dispatcher writes the
     // messages ConfigMap asynchronously, so it may not be ready yet.
     // -----------------------------------------------------------------------
-    const snapshot = await readSessionConfigMapWithRetry(
-      runName, sessionID, namespace,
-    );
+    const snapshot = await readSessionConfigMapWithRetry(runName, sessionID, namespace);
     if (!snapshot) {
-      err(`snapshot unavailable after ${SNAPSHOT_RETRY_MAX} retries — skipping summarization for ${project}/${runName}/${sessionID}`);
+      err(
+        `snapshot unavailable after ${SNAPSHOT_RETRY_MAX} retries — skipping summarization for ${project}/${runName}/${sessionID}`,
+      );
       return;
     }
 
@@ -85,13 +99,20 @@ export async function summarizeSession(
       return;
     }
 
-    log(`stored summary for ${project}/${runName}/${sessionID} (${truncated.length} chars, truncated=${summary.length > MAX_SUMMARY_CHARS})`);
+    log(
+      `stored summary for ${project}/${runName}/${sessionID} (${truncated.length} chars, truncated=${summary.length > MAX_SUMMARY_CHARS})`,
+    );
 
-    storeMemory(project, truncated, {
-      type: "session-summary",
-      runName,
-      sessionID,
-    }, `run:${runName}`).catch((e) => {
+    storeMemory(
+      project,
+      truncated,
+      {
+        type: 'session-summary',
+        runName,
+        sessionID,
+      },
+      `run:${runName}`,
+    ).catch((e) => {
       err(`memory-store warning for ${project}/${runName}/${sessionID}: ${(e as Error).message}`);
     });
   } catch (e) {
@@ -118,10 +139,14 @@ async function readSessionConfigMapWithRetry(
 
     if (attempt < SNAPSHOT_RETRY_MAX) {
       const backoffMs = SNAPSHOT_RETRY_BASE_MS * 2 ** (attempt - 1);
-      log(`snapshot not ready for ${runName}/${sessionID}, attempt ${attempt}/${SNAPSHOT_RETRY_MAX}, retrying in ${backoffMs}ms`);
+      log(
+        `snapshot not ready for ${runName}/${sessionID}, attempt ${attempt}/${SNAPSHOT_RETRY_MAX}, retrying in ${backoffMs}ms`,
+      );
       await sleep(backoffMs);
     } else {
-      err(`snapshot still missing after ${SNAPSHOT_RETRY_MAX} attempts for ${runName}/${sessionID}`);
+      err(
+        `snapshot still missing after ${SNAPSHOT_RETRY_MAX} attempts for ${runName}/${sessionID}`,
+      );
     }
   }
   return null;
@@ -175,15 +200,15 @@ async function produceSummary(sessionText: string): Promise<string | null> {
 
   let sessionId: string;
   try {
-    sessionId = await createSession('session-summarizer', 'manager-decision');
+    sessionId = await __sessionFns.createSession('session-summarizer', 'manager-decision');
   } catch {
     err('failed to create summarization session');
     return null;
   }
 
   try {
-    await sendPrompt(sessionId, summarizationPrompt, 'manager-decision');
-    const result = await waitForCompletion(sessionId, 120_000);
+    await __sessionFns.sendPrompt(sessionId, summarizationPrompt, 'manager-decision');
+    const result = await __sessionFns.waitForCompletion(sessionId, 120_000);
     return result;
   } catch (e) {
     err('summarization LLM call failed:', (e as Error).message);
