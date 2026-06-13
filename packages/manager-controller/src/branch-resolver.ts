@@ -138,9 +138,10 @@ export function resolveMergeBranch(
     return task.status.worker.mergeIntoBranch;
   }
 
-  // PLAN task: no auto-merge (manual merge to main later)
+  // PLAN task: merge into project default ref (main) when feature branching is enabled.
+  // The decision engine controls whether this is auto-merge or manual approval.
   if (task.spec.type === 'PLAN') {
-    return undefined;
+    return project.spec.source?.git?.ref || 'main';
   }
 
   // BUILD task with parent PLAN: merge into parent's feature branch

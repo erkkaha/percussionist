@@ -367,3 +367,45 @@ export interface TaskDiffResponse {
   empty: boolean;
   reason?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Project memories (proxy through web server → memory service)
+
+/** A single stored memory record with its embedding distance (0 for non-search results). */
+export interface ProjectMemory {
+  id: string;
+  content: string;
+  metadata: Record<string, unknown> | null;
+  /** Cosine distance from search query; always 0 for list/get operations. */
+  distance: number;
+  createdAt: string | null;
+}
+
+/** GET /api/projects/:name/memories response with pagination metadata. */
+export interface ListMemoriesResponse {
+  memories: ProjectMemory[];
+  total: number;
+}
+
+/** POST /api/projects/:name/memories request body. */
+export interface CreateMemoryRequest {
+  content: string;
+  metadata?: Record<string, unknown>;
+  agentRun?: string;
+}
+
+/** PATCH /api/projects/:name/memories/:id request body (partial update). */
+export interface UpdateMemoryRequest {
+  content?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** POST /api/projects/:name/memories response — returns the created memory ID. */
+export interface CreateMemoryResponse {
+  id: string;
+}
+
+/** DELETE /api/projects/:name/memories/:id response. */
+export interface DeleteMemoryResponse {
+  deleted: true;
+}
