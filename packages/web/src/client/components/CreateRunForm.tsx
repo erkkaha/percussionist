@@ -92,14 +92,7 @@ export default function CreateRunForm() {
   // Fetch the source run when ?copyFrom is set
   const { data: sourceRun } = useRun(copyFromName ?? '', 0);
 
-  // Pre-fill form from the source run once it loads
-  useEffect(() => {
-    if (!sourceRun || seeded) return;
-    applyRun(sourceRun);
-    setSeeded(true);
-  }, [sourceRun, seeded, applyRun]);
-
-  function applyRun(run: Run) {
+  const applyRun = useCallback((run: Run) => {
     if (run.spec.task) setTask(run.spec.task);
     if (run.spec.model) setModel(run.spec.model);
     if (run.spec.agent) setAgent(run.spec.agent);
@@ -120,7 +113,14 @@ export default function CreateRunForm() {
     if (run.spec.secrets?.llmKeysSecret) setLlmKeysSecret(run.spec.secrets.llmKeysSecret);
     if (run.spec.secrets?.authSecret?.name)
       setOpencodeAuthSecretName(run.spec.secrets.authSecret.name);
-  }
+  }, []);
+
+  // Pre-fill form from the source run once it loads
+  useEffect(() => {
+    if (!sourceRun || seeded) return;
+    applyRun(sourceRun);
+    setSeeded(true);
+  }, [sourceRun, seeded, applyRun]);
 
   function applyProject(proj: Project) {
     if (proj.spec.model) setModel(proj.spec.model);
