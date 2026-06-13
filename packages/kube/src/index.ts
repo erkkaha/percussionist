@@ -1132,6 +1132,12 @@ export interface NodeHostStats {
   hostMemoryBytes: number;
   /** Host-level CPU usage in nanocores (node.cpu.usageNanoCores from kubelet). */
   hostCpuNanoCores: number;
+  /** Host-level filesystem used bytes (node.fs.usedBytes from kubelet, nullable). */
+  hostFsUsedBytes?: number | null;
+  /** Host-level filesystem capacity bytes (node.fs.capacityBytes from kubelet, nullable). */
+  hostFsCapacityBytes?: number | null;
+  /** Host-level filesystem available bytes (node.fs.availableBytes from kubelet, nullable). */
+  hostFsAvailableBytes?: number | null;
 }
 
 export interface PodMetric {
@@ -1170,6 +1176,7 @@ export async function listNodeHostStats(nodeName: string): Promise<NodeHostStats
     node: {
       cpu: { usageNanoCores: number };
       memory: { usageBytes: number; availableBytes: number; workingSetBytes: number };
+      fs?: { usedBytes?: number; capacityBytes?: number; availableBytes?: number };
     };
   };
   const body = (await res.json()) as SummaryResponse;
@@ -1177,6 +1184,12 @@ export async function listNodeHostStats(nodeName: string): Promise<NodeHostStats
     name: nodeName,
     hostMemoryBytes: body.node.memory.usageBytes,
     hostCpuNanoCores: body.node.cpu.usageNanoCores,
+    // Populate filesystem fields defensively — kubelet may omit fs data on some runtimes.
+    ...(body.node.fs ? {
+      hostFsUsedBytes: body.node.fs.usedBytes ?? null,
+      hostFsCapacityBytes: body.node.fs.capacityBytes ?? null,
+      hostFsAvailableBytes: body.node.fs.availableBytes ?? null,
+    } : {}),
   };
   kubeletSummaryCache.set(nodeName, { data: result, ts: Date.now() });
   return result;

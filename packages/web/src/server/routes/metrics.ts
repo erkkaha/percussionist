@@ -60,6 +60,14 @@ metrics.get('/nodes', auth(), async (c) => {
         capacity: cap ? { cpu: cap.capacityCpu, memory: cap.capacityMemory } : null,
         allocatable: cap ? { cpu: cap.allocatableCpu, memory: cap.allocatableMemory } : null,
         allocated: allocated ? { cpu: allocated.cpu, memory: allocated.memory } : null,
+        // Volume filesystem data from kubelet (nullable when unavailable).
+        volume: hs
+          ? {
+              usedBytes: hs.hostFsUsedBytes ?? null,
+              capacityBytes: hs.hostFsCapacityBytes ?? null,
+              availableBytes: hs.hostFsAvailableBytes ?? null,
+            }
+          : null,
       };
     });
     return c.json({ items: nodes });
