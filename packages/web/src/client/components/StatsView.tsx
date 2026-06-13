@@ -221,53 +221,55 @@ function ModelBreakdown({ modelRows }: { modelRows: ModelRow[] }) {
     <section>
       <h2 className="text-sm font-semibold text-text-muted mb-3">Models</h2>
       <div className="rounded-lg border border-border bg-surface-raised overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-text-muted text-left">
-              <th className="px-4 py-2.5 font-medium">Model</th>
-              <th className="px-4 py-2.5 font-medium">Runs</th>
-              <th className="px-4 py-2.5 font-medium">Tokens In</th>
-              <th className="px-4 py-2.5 font-medium">Tokens Out</th>
-              <th className="px-4 py-2.5 font-medium">Cost</th>
-              <th className="px-4 py-2.5 font-medium w-1/4">Token Share</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border-muted">
-            {modelRows.map(({ model, runs, tokensIn, tokensOut, cost }) => {
-              const total = tokensIn + tokensOut;
-              const inPct = total > 0 ? (tokensIn / total) * 100 : 0;
-              const outPct = total > 0 ? (tokensOut / total) * 100 : 0;
-              const barWidth = maxTokens > 0 ? (total / maxTokens) * 100 : 0;
-              return (
-                <tr key={model} className="hover:bg-surface-raised/60">
-                  <td className="px-4 py-2.5 font-mono text-xs text-text max-w-[200px] truncate" title={model}>
-                    {model}
-                  </td>
-                  <td className="px-4 py-2.5 tabular-nums text-text-muted">{runs}</td>
-                  <td className="px-4 py-2.5 tabular-nums text-text-muted font-mono text-xs">
-                    {fmtTokens(tokensIn)}
-                  </td>
-                  <td className="px-4 py-2.5 tabular-nums text-text-muted font-mono text-xs">
-                    {fmtTokens(tokensOut)}
-                  </td>
-                  <td className="px-4 py-2.5 tabular-nums text-text-muted font-mono text-xs">
-                    {fmtCost(cost)}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div
-                      className="flex h-2 overflow-hidden bg-surface-overlay"
-                      style={{ width: `${barWidth}%`, minWidth: "20px" }}
-                      title={`In: ${fmtTokens(tokensIn)} (${inPct.toFixed(0)}%) / Out: ${fmtTokens(tokensOut)} (${outPct.toFixed(0)}%)`}
-                    >
-                      <div className="bg-primary-container" style={{ width: `${inPct}%` }} />
-                      <div className="bg-surface-container-high" style={{ width: `${outPct}%` }} />
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="overflow-x-auto touch-pan-x">
+          <table className="w-full min-w-[680px] text-sm">
+            <thead>
+              <tr className="border-b border-border text-text-muted text-left">
+                <th className="px-4 py-2.5 font-medium whitespace-nowrap">Model</th>
+                <th className="px-4 py-2.5 font-medium whitespace-nowrap">Runs</th>
+                <th className="px-4 py-2.5 font-medium whitespace-nowrap">Tokens In</th>
+                <th className="px-4 py-2.5 font-medium whitespace-nowrap">Tokens Out</th>
+                <th className="px-4 py-2.5 font-medium whitespace-nowrap">Cost</th>
+                <th className="px-4 py-2.5 font-medium whitespace-nowrap w-1/4">Token Share</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-muted">
+              {modelRows.map(({ model, runs, tokensIn, tokensOut, cost }) => {
+                const total = tokensIn + tokensOut;
+                const inPct = total > 0 ? (tokensIn / total) * 100 : 0;
+                const outPct = total > 0 ? (tokensOut / total) * 100 : 0;
+                const barWidth = maxTokens > 0 ? (total / maxTokens) * 100 : 0;
+                return (
+                  <tr key={model} className="hover:bg-surface-raised/60">
+                    <td className="px-4 py-2.5 font-mono text-xs text-text whitespace-nowrap max-w-[200px] truncate" title={model}>
+                      {model}
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums text-text-muted whitespace-nowrap">{runs}</td>
+                    <td className="px-4 py-2.5 tabular-nums text-text-muted font-mono text-xs whitespace-nowrap">
+                      {fmtTokens(tokensIn)}
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums text-text-muted font-mono text-xs whitespace-nowrap">
+                      {fmtTokens(tokensOut)}
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums text-text-muted font-mono text-xs whitespace-nowrap">
+                      {fmtCost(cost)}
+                    </td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <div
+                        className="flex h-2 overflow-hidden bg-surface-overlay"
+                        style={{ width: `${barWidth}%`, minWidth: "20px" }}
+                        title={`In: ${fmtTokens(tokensIn)} (${inPct.toFixed(0)}%) / Out: ${fmtTokens(tokensOut)} (${outPct.toFixed(0)}%)`}
+                      >
+                        <div className="bg-primary-container" style={{ width: `${inPct}%` }} />
+                        <div className="bg-surface-container-high" style={{ width: `${outPct}%` }} />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
         <p className="px-4 py-2 text-xs text-text-dim border-t border-border-muted">
           Bar: <span className="text-primary-container">■</span> tokens in &nbsp;
           <span className="text-surface-container-high">■</span> tokens out
