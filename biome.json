@@ -19,8 +19,7 @@
     "rules": {
       "recommended": true,
       "correctness": {
-        "useExhaustiveDependencies": "warn",
-        "useHookAtTopLevel": "warn"
+        "noUnusedVariables": "warn"
       },
       "security": {
         "noDangerouslySetInnerHtml": "warn"
@@ -34,7 +33,8 @@
       },
       "suspicious": {
         "noAssignInExpressions": "warn",
-        "noMisleadingCharacterClass": "warn"
+        "noMisleadingCharacterClass": "warn",
+        "noTemplateCurlyInString": "off"
       }
     }
   },
