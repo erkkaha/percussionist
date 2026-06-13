@@ -122,6 +122,14 @@ export const EmbeddingSpecSchema = z.object({
 });
 export type EmbeddingSpec = z.infer<typeof EmbeddingSpecSchema>;
 
+// Exec/maintenance pod configuration — controls which image is used for workspace
+// exec pods spawned by manager MCP tools (exec_in_workspace, install_packages, etc.).
+export const ExecSpecSchema = z.object({
+  /** Container image for maintenance/exec pods. Defaults to alpine:3.20 when unset. */
+  image: z.string().optional(),
+});
+export type ExecSpec = z.infer<typeof ExecSpecSchema>;
+
 // DEPRECATED — cluster-level secrets are managed via ClusterSettings.
 // This schema is kept for backwards compatibility only.
 export const SecretsRefSchema = z
@@ -964,6 +972,11 @@ export const ProjectSpecSchema = z.object({
   // System packages (apk) installed into every run pod for this project.
   // Declared once on the project, inherited by all runs and board workers.
   runner: RunnerPackagesSchema,
+
+  // Per-project exec/maintenance pod configuration.
+  // Controls the container image used for workspace exec pods spawned by manager MCP tools
+  // (exec_in_workspace, install_packages, etc.). Defaults to alpine:3.20 when unset.
+  exec: ExecSpecSchema.optional(),
 });
 
 export type ProjectSpec = z.infer<typeof ProjectSpecSchema>;
