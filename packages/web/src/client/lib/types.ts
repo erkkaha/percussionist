@@ -13,6 +13,11 @@ export type {
   WorkerStatus,
   TaskColumn,
   TaskType,
+  DiffContext,
+  DiffFinding,
+  DiffFindingSeverity,
+  DiffLineAnchor,
+  TaskDiffFindings,
 } from "@percussionist/api";
 export { RunPhase, TERMINAL_PHASES } from "@percussionist/api";
 
@@ -351,13 +356,31 @@ export interface DiffCommit {
   files: TaskDiffFile[];
 }
 
+/** A stored diff finding projected against the current diff context. */
+export interface TaskDiffFinding extends DiffFinding {
+  isActive: boolean;
+  isStale: boolean;
+}
+
 export interface TaskDiffResponse {
   project: string;
   task: string;
   defaultRef: string;
   baseRef: string;
   headRef: string;
+  /** Resolved commit SHA for the base ref. */
+  baseSha: string;
+  /** Resolved commit SHA for the head ref. */
+  headSha: string;
+  /** Merge-base commit SHA between base and head. */
+  forkSha: string;
+  /** Deterministic SHA-256 fingerprint of fork/head/file patch identity. */
+  diffFingerprint: string;
+  /** Current diff context used for staleness checks. */
+  context: DiffContext;
   files: TaskDiffFile[];
+  /** Stored findings with active/stale status against the current context. */
+  findings: TaskDiffFinding[];
   commits?: DiffCommit[];
   empty: boolean;
   reason?: string;
