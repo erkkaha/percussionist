@@ -239,8 +239,13 @@ export async function buildMergeRun(
       );
     }
 
+    if (!mergeBranch) {
+      throw new Error(
+        `Task ${taskName} has no merge target (feature branching enabled but merge branch not resolved)`,
+      );
+    }
     sourceBranch = gitBranch;
-    targetBranch = mergeBranch ?? 'main'; // Fallback to main if no merge target
+    targetBranch = mergeBranch;
   } else {
     // Legacy: use feat/{taskName} branch
     sourceBranch = `feat/${taskName}`;
@@ -286,28 +291,41 @@ export async function buildMergeRun(
     '',
     '## Pre-flight Check',
     '',
-    'Before merging, verify the worktree is at the latest remote state:',
+    'Ensure the worktree is at the latest remote source branch state:',
     `    git fetch origin ${sourceBranch}`,
-    `    CURRENT=$(git rev-parse HEAD)`,
+    '    CURRENT=$(git rev-parse HEAD)',
     `    LATEST=$(git rev-parse origin/${sourceBranch})`,
     '    if [ "$CURRENT" != "$LATEST" ]; then',
-    `      echo "WARNING: HEAD ($CURRENT) does not match origin/${sourceBranch} ($LATEST)"`,
+    `      echo "WARNING: HEAD stale, resetting to origin/${sourceBranch}"`,
     '      git reset --hard "origin/${sourceBranch}"',
-    '      echo "Reset to origin/${sourceBranch}"',
     '    fi',
     '',
-    '## Requirements',
+    '## Merge Steps',
     '',
-    '- Merge the source branch into the target branch.',
+    '1. Fetch both branches:',
+    `    git fetch origin ${targetBranch}`,
+    `    git fetch origin ${sourceBranch}`,
+    '',
+    '2. Check if fast-forward (source contains target):',
+    `    if git merge-base --is-ancestor origin/${targetBranch} origin/${sourceBranch}; then`,
+    `      echo "Fast-forward: pushing ${sourceBranch} -> ${targetBranch}"`,
+    `      git push origin ${sourceBranch}:refs/heads/${targetBranch}`,
+    '    else',
+    `      echo "Non-fast-forward: merging ${targetBranch} into ${sourceBranch}"`,
+    `      git merge origin/${targetBranch} --no-edit`,
+    `      git push origin HEAD:refs/heads/${targetBranch}`,
+    '    fi',
+    '',
+    '3. Verify the push landed:',
+    `    git fetch origin ${targetBranch}`,
+    `    if ! git merge-base --is-ancestor origin/${sourceBranch} origin/${targetBranch}; then`,
+    '      echo "ERROR: push verification failed — target does not contain source"',
+    '      exit 1',
+    '    fi',
+    `    echo "Verified: ${sourceBranch} is now in ${targetBranch}"`,
+    '',
     '- Do not perform any code changes.',
-    '- If the merge is a fast-forward (source contains target), use:',
-    `    git push origin ${sourceBranch}:refs/heads/${targetBranch}`,
-    '- If the merge is NOT a fast-forward (target has diverged since source was created):',
-    `    1. git fetch origin ${targetBranch}`,
-    `    2. git merge origin/${targetBranch} --no-edit`,
-    `    3. git push origin HEAD:refs/heads/${targetBranch}`,
-    '- If the branches are already merged, report success — do not re-create runs or PRs.',
-    '- Push the merged result to the remote repository.',
+    '- If the branches are already fully merged, the push will be a no-op — do not re-create runs or PRs.',
     '',
     '## Completion',
     '',

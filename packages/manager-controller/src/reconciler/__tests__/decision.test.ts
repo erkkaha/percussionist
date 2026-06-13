@@ -482,6 +482,175 @@ describe('decide — awaiting-merge', () => {
   });
 });
 
+describe('decide — awaiting-children', () => {
+  const featProject = makeProject('test-project', { featureBranchingEnabled: true });
+
+  it('all BUILD children done with mergedAt + feature branching + auto-merge → awaiting-feature-merge', () => {
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-children',
+      type: 'PLAN',
+    });
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      mergedAt: '2026-05-29T00:00:00.000Z',
+    });
+    const buildB = makeTask('build-b', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      mergedAt: '2026-05-29T00:00:00.000Z',
+    });
+    const result = decide({
+      task: planTask,
+      project: featProject,
+      allTasks: [planTask, buildA, buildB],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(featProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe('awaiting-feature-merge');
+    expect(result.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(true);
+    expect((result.statusPatch?.worker as any).mergeRunName).toBeDefined();
+  });
+
+  it('BUILD children done but missing mergedAt → no-op (wait for merge cycle)', () => {
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-children',
+      type: 'PLAN',
+    });
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      // No mergedAt — BUILD was approved via onApprove='done' without merge
+    });
+    const buildB = makeTask('build-b', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      mergedAt: '2026-05-29T00:00:00.000Z',
+    });
+    const result = decide({
+      task: planTask,
+      project: featProject,
+      allTasks: [planTask, buildA, buildB],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(featProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects).toEqual([]);
+  });
+
+  it('all BUILD children done with mergedAt + feature branching disabled → done', () => {
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-children',
+      type: 'PLAN',
+    });
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      mergedAt: '2026-05-29T00:00:00.000Z',
+    });
+    const result = decide({
+      task: planTask,
+      project, // featureBranchingEnabled: false (default)
+      allTasks: [planTask, buildA],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(project),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe('done');
+  });
+});
+
+describe('decide — awaiting-feature-merge', () => {
+  it('stale merge run → failed + DeleteRun', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const staleMerge = makeRun('merge-1', {
+      phase: 'Running',
+      lastEventAt: '2026-05-28T23:00:00.000Z', // 1 hour ago
+    });
+    const result = decide(
+      makeInput(task, {
+        observed: { merge: staleMerge },
+      }),
+    );
+    expect(result.toPhase).toBe('failed');
+    expect((result.statusPatch?.worker as any).mergeError).toContain('Stale');
+    expect(result.effects.some((e) => e.type === 'DeleteRun')).toBe(true);
+    expect(result.effects.some((e) => e.type === 'CleanupWorktree')).toBe(true);
+  });
+
+  it('merge run succeeded → done with mergedAt', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const mergeRun = makeRun('merge-1', { phase: 'Succeeded' });
+    const result = decide(
+      makeInput(task, {
+        observed: { merge: mergeRun },
+      }),
+    );
+    expect(result.toPhase).toBe('done');
+    expect((result.statusPatch?.worker as any).mergedAt).toBe(now);
+    expect(result.effects.some((e) => e.type === 'CleanupWorktree')).toBe(true);
+  });
+
+  it('merge run failed → awaiting-human with mergeError', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const mergeRun = makeRun('merge-1', { phase: 'Failed', message: 'merge conflict' });
+    const result = decide(
+      makeInput(task, {
+        observed: { merge: mergeRun },
+      }),
+    );
+    expect(result.toPhase).toBe('awaiting-human');
+    expect((result.statusPatch?.worker as any).mergeError).toBe('merge conflict');
+  });
+
+  it('no merge run name yet → schedule merge run', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    const result = decide(makeInput(task));
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(true);
+    expect((result.statusPatch?.worker as any).mergeRunName).toBeDefined();
+  });
+
+  it('merge run disappeared → failed', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const result = decide(makeInput(task, { observed: {} }));
+    expect(result.toPhase).toBe('failed');
+    expect((result.statusPatch?.worker as any).mergeError).toBe('Merge run disappeared');
+  });
+});
+
 describe('decide — reviewing', () => {
   it('reviewing + verdict approve → awaiting-human with review record', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
@@ -834,14 +1003,14 @@ describe('decide — waiting-for-input edge cases', () => {
   });
 });
 
-describe("decide — SummarizeSession effect emission", () => {
-  it("succeeded worker run without embedding → SummarizeSession effect present", () => {
-    const noEmbedProject = makeProject("test-project");
+describe('decide — SummarizeSession effect emission', () => {
+  it('succeeded worker run without embedding → SummarizeSession effect present', () => {
+    const noEmbedProject = makeProject('test-project');
     // No spec.embedding configured at all.
-    const task = makeTask("t1", "test-project", { phase: "running" });
-    const workerRun = makeRun("worker-1", {
-      phase: "Succeeded",
-      sessionID: "sess-abc123",
+    const task = makeTask('t1', 'test-project', { phase: 'running' });
+    const workerRun = makeRun('worker-1', {
+      phase: 'Succeeded',
+      sessionID: 'sess-abc123',
     });
     const result = decide({
       task,
@@ -853,18 +1022,18 @@ describe("decide — SummarizeSession effect emission", () => {
       capacity: { activeCount: 0, maxParallel: 2 },
       now,
     });
-    expect(result.toPhase).toBe("succeeded");
-    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(result.toPhase).toBe('succeeded');
+    const summaryEffect = result.effects.find((e) => e.type === 'SummarizeSession');
     expect(summaryEffect).toBeDefined();
-    expect((summaryEffect as any).sessionID).toBe("sess-abc123");
+    expect((summaryEffect as any).sessionID).toBe('sess-abc123');
   });
 
-  it("failed worker run without embedding → SummarizeSession effect present", () => {
-    const noEmbedProject = makeProject("test-project");
-    const task = makeTask("t1", "test-project", { phase: "running" });
-    const workerRun = makeRun("worker-1", {
-      phase: "Failed",
-      sessionID: "sess-def456",
+  it('failed worker run without embedding → SummarizeSession effect present', () => {
+    const noEmbedProject = makeProject('test-project');
+    const task = makeTask('t1', 'test-project', { phase: 'running' });
+    const workerRun = makeRun('worker-1', {
+      phase: 'Failed',
+      sessionID: 'sess-def456',
     });
     const result = decide({
       task,
@@ -876,20 +1045,20 @@ describe("decide — SummarizeSession effect emission", () => {
       capacity: { activeCount: 0, maxParallel: 2 },
       now,
     });
-    expect(result.toPhase).toBe("failed");
-    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(result.toPhase).toBe('failed');
+    const summaryEffect = result.effects.find((e) => e.type === 'SummarizeSession');
     expect(summaryEffect).toBeDefined();
-    expect((summaryEffect as any).sessionID).toBe("sess-def456");
+    expect((summaryEffect as any).sessionID).toBe('sess-def456');
   });
 
-  it("succeeded worker run with embedding disabled explicitly → SummarizeSession effect present", () => {
-    const embedDisabledProject = makeProject("test-project", {
+  it('succeeded worker run with embedding disabled explicitly → SummarizeSession effect present', () => {
+    const embedDisabledProject = makeProject('test-project', {
       embedding: { enabled: false },
     });
-    const task = makeTask("t1", "test-project", { phase: "running" });
-    const workerRun = makeRun("worker-1", {
-      phase: "Succeeded",
-      sessionID: "sess-ghi789",
+    const task = makeTask('t1', 'test-project', { phase: 'running' });
+    const workerRun = makeRun('worker-1', {
+      phase: 'Succeeded',
+      sessionID: 'sess-ghi789',
     });
     const result = decide({
       task,
@@ -901,28 +1070,28 @@ describe("decide — SummarizeSession effect emission", () => {
       capacity: { activeCount: 0, maxParallel: 2 },
       now,
     });
-    expect(result.toPhase).toBe("succeeded");
-    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(result.toPhase).toBe('succeeded');
+    const summaryEffect = result.effects.find((e) => e.type === 'SummarizeSession');
     expect(summaryEffect).toBeDefined();
-    expect((summaryEffect as any).sessionID).toBe("sess-ghi789");
+    expect((summaryEffect as any).sessionID).toBe('sess-ghi789');
   });
 
-  it("succeeded worker run with sessionID missing → no SummarizeSession effect", () => {
-    const task = makeTask("t1", "test-project", { phase: "running" });
+  it('succeeded worker run with sessionID missing → no SummarizeSession effect', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'running' });
     // Run has Succeeded phase but no sessionID.
-    const workerRun = makeRun("worker-1", { phase: "Succeeded" });
+    const workerRun = makeRun('worker-1', { phase: 'Succeeded' });
     const result = decide(makeInput(task, { observed: { worker: workerRun } }));
-    expect(result.toPhase).toBe("succeeded");
-    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(result.toPhase).toBe('succeeded');
+    const summaryEffect = result.effects.find((e) => e.type === 'SummarizeSession');
     expect(summaryEffect).toBeUndefined();
   });
 
-  it("initializing + Succeeded run without embedding → SummarizeSession effect present", () => {
-    const noEmbedProject = makeProject("test-project");
-    const task = makeTask("t1", "test-project", { phase: "initializing" });
-    const workerRun = makeRun("worker-1", {
-      phase: "Succeeded",
-      sessionID: "sess-init001",
+  it('initializing + Succeeded run without embedding → SummarizeSession effect present', () => {
+    const noEmbedProject = makeProject('test-project');
+    const task = makeTask('t1', 'test-project', { phase: 'initializing' });
+    const workerRun = makeRun('worker-1', {
+      phase: 'Succeeded',
+      sessionID: 'sess-init001',
     });
     const result = decide({
       task,
@@ -934,18 +1103,18 @@ describe("decide — SummarizeSession effect emission", () => {
       capacity: { activeCount: 0, maxParallel: 2 },
       now,
     });
-    expect(result.toPhase).toBe("succeeded");
-    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(result.toPhase).toBe('succeeded');
+    const summaryEffect = result.effects.find((e) => e.type === 'SummarizeSession');
     expect(summaryEffect).toBeDefined();
-    expect((summaryEffect as any).sessionID).toBe("sess-init001");
+    expect((summaryEffect as any).sessionID).toBe('sess-init001');
   });
 
-  it("initializing + Failed run without embedding → SummarizeSession effect present", () => {
-    const noEmbedProject = makeProject("test-project");
-    const task = makeTask("t1", "test-project", { phase: "initializing" });
-    const workerRun = makeRun("worker-1", {
-      phase: "Failed",
-      sessionID: "sess-init002",
+  it('initializing + Failed run without embedding → SummarizeSession effect present', () => {
+    const noEmbedProject = makeProject('test-project');
+    const task = makeTask('t1', 'test-project', { phase: 'initializing' });
+    const workerRun = makeRun('worker-1', {
+      phase: 'Failed',
+      sessionID: 'sess-init002',
     });
     const result = decide({
       task,
@@ -957,20 +1126,20 @@ describe("decide — SummarizeSession effect emission", () => {
       capacity: { activeCount: 0, maxParallel: 2 },
       now,
     });
-    expect(result.toPhase).toBe("failed");
-    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(result.toPhase).toBe('failed');
+    const summaryEffect = result.effects.find((e) => e.type === 'SummarizeSession');
     expect(summaryEffect).toBeDefined();
-    expect((summaryEffect as any).sessionID).toBe("sess-init002");
+    expect((summaryEffect as any).sessionID).toBe('sess-init002');
   });
 
-  it("succeeded worker run with embedding enabled → SummarizeSession effect present (regression)", () => {
-    const embedEnabledProject = makeProject("test-project", {
+  it('succeeded worker run with embedding enabled → SummarizeSession effect present (regression)', () => {
+    const embedEnabledProject = makeProject('test-project', {
       embedding: { enabled: true },
     });
-    const task = makeTask("t1", "test-project", { phase: "running" });
-    const workerRun = makeRun("worker-1", {
-      phase: "Succeeded",
-      sessionID: "sess-jkl012",
+    const task = makeTask('t1', 'test-project', { phase: 'running' });
+    const workerRun = makeRun('worker-1', {
+      phase: 'Succeeded',
+      sessionID: 'sess-jkl012',
     });
     const result = decide({
       task,
@@ -982,10 +1151,10 @@ describe("decide — SummarizeSession effect emission", () => {
       capacity: { activeCount: 0, maxParallel: 2 },
       now,
     });
-    expect(result.toPhase).toBe("succeeded");
-    const summaryEffect = result.effects.find((e) => e.type === "SummarizeSession");
+    expect(result.toPhase).toBe('succeeded');
+    const summaryEffect = result.effects.find((e) => e.type === 'SummarizeSession');
     expect(summaryEffect).toBeDefined();
-    expect((summaryEffect as any).sessionID).toBe("sess-jkl012");
+    expect((summaryEffect as any).sessionID).toBe('sess-jkl012');
   });
 });
 
