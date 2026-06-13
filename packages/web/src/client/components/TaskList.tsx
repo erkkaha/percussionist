@@ -1,10 +1,10 @@
-import { useState } from "react";
-import { CheckCircle, Clock, Circle, XCircle, ChevronDown, ChevronRight } from "lucide-react";
+import { CheckCircle, ChevronDown, ChevronRight, Circle, Clock, XCircle } from 'lucide-react';
+import { useState } from 'react';
 
 interface Todo {
   content: string;
-  status: "pending" | "in_progress" | "completed" | "cancelled";
-  priority: "high" | "medium" | "low";
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  priority: 'high' | 'medium' | 'low';
 }
 
 interface TaskListProps {
@@ -13,7 +13,7 @@ interface TaskListProps {
 
 export function TaskList({ todos }: TaskListProps) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    new Set(["in_progress", "pending"])
+    new Set(['in_progress', 'pending']),
   );
 
   const toggleSection = (section: string) => {
@@ -30,53 +30,50 @@ export function TaskList({ todos }: TaskListProps) {
 
   // Group todos by status
   const grouped = {
-    in_progress: todos.filter((t) => t.status === "in_progress"),
-    pending: todos.filter((t) => t.status === "pending"),
-    completed: todos.filter((t) => t.status === "completed"),
-    cancelled: todos.filter((t) => t.status === "cancelled"),
+    in_progress: todos.filter((t) => t.status === 'in_progress'),
+    pending: todos.filter((t) => t.status === 'pending'),
+    completed: todos.filter((t) => t.status === 'completed'),
+    cancelled: todos.filter((t) => t.status === 'cancelled'),
   };
 
   const completed = grouped.completed.length;
   const total = todos.length;
   const progress = total > 0 ? (completed / total) * 100 : 0;
 
-  const getStatusIcon = (status: Todo["status"]) => {
+  const getStatusIcon = (status: Todo['status']) => {
     switch (status) {
-      case "completed":
+      case 'completed':
         return CheckCircle;
-      case "in_progress":
+      case 'in_progress':
         return Clock;
-      case "cancelled":
+      case 'cancelled':
         return XCircle;
-      case "pending":
       default:
         return Circle;
     }
   };
 
-  const getStatusColor = (status: Todo["status"]) => {
+  const getStatusColor = (status: Todo['status']) => {
     switch (status) {
-      case "completed":
-        return "text-green-600 dark:text-green-400";
-      case "in_progress":
-        return "text-blue-600 dark:text-blue-400";
-      case "cancelled":
-        return "text-gray-600 dark:text-gray-400";
-      case "pending":
+      case 'completed':
+        return 'text-green-600 dark:text-green-400';
+      case 'in_progress':
+        return 'text-blue-600 dark:text-blue-400';
+      case 'cancelled':
+        return 'text-gray-600 dark:text-gray-400';
       default:
-        return "text-gray-600 dark:text-gray-400";
+        return 'text-gray-600 dark:text-gray-400';
     }
   };
 
-  const getPriorityColor = (priority: Todo["priority"]) => {
+  const getPriorityColor = (priority: Todo['priority']) => {
     switch (priority) {
-      case "high":
-        return "text-red-600 dark:text-red-400";
-      case "medium":
-        return "text-yellow-600 dark:text-yellow-400";
-      case "low":
+      case 'high':
+        return 'text-red-600 dark:text-red-400';
+      case 'medium':
+        return 'text-yellow-600 dark:text-yellow-400';
       default:
-        return "text-gray-600 dark:text-gray-400";
+        return 'text-gray-600 dark:text-gray-400';
     }
   };
 
@@ -105,10 +102,11 @@ export function TaskList({ todos }: TaskListProps) {
         {grouped.in_progress.length > 0 && (
           <div>
             <button
-              onClick={() => toggleSection("in_progress")}
+              type="button"
+              onClick={() => toggleSection('in_progress')}
               className="flex items-center gap-1.5 w-full px-2 py-1 rounded hover:bg-surface-overlay/30 transition-colors"
             >
-              {expandedSections.has("in_progress") ? (
+              {expandedSections.has('in_progress') ? (
                 <ChevronDown className="h-3 w-3 text-text-dim" />
               ) : (
                 <ChevronRight className="h-3 w-3 text-text-dim" />
@@ -117,16 +115,15 @@ export function TaskList({ todos }: TaskListProps) {
                 In Progress ({grouped.in_progress.length})
               </span>
             </button>
-            {expandedSections.has("in_progress") && (
+            {expandedSections.has('in_progress') && (
               <div className="ml-5 space-y-1 mt-1">
                 {grouped.in_progress.map((todo, i) => {
                   const Icon = getStatusIcon(todo.status);
                   return (
-                    <div
-                      key={i}
-                      className="flex items-start gap-2 px-2 py-1 rounded text-xs"
-                    >
-                      <Icon className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`} />
+                    <div key={i} className="flex items-start gap-2 px-2 py-1 rounded text-xs">
+                      <Icon
+                        className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`}
+                      />
                       <span className={`flex-1 ${getPriorityColor(todo.priority)}`}>
                         {todo.content}
                       </span>
@@ -142,10 +139,11 @@ export function TaskList({ todos }: TaskListProps) {
         {grouped.pending.length > 0 && (
           <div>
             <button
-              onClick={() => toggleSection("pending")}
+              type="button"
+              onClick={() => toggleSection('pending')}
               className="flex items-center gap-1.5 w-full px-2 py-1 rounded hover:bg-surface-overlay/30 transition-colors"
             >
-              {expandedSections.has("pending") ? (
+              {expandedSections.has('pending') ? (
                 <ChevronDown className="h-3 w-3 text-text-dim" />
               ) : (
                 <ChevronRight className="h-3 w-3 text-text-dim" />
@@ -154,16 +152,15 @@ export function TaskList({ todos }: TaskListProps) {
                 Pending ({grouped.pending.length})
               </span>
             </button>
-            {expandedSections.has("pending") && (
+            {expandedSections.has('pending') && (
               <div className="ml-5 space-y-1 mt-1">
                 {grouped.pending.map((todo, i) => {
                   const Icon = getStatusIcon(todo.status);
                   return (
-                    <div
-                      key={i}
-                      className="flex items-start gap-2 px-2 py-1 rounded text-xs"
-                    >
-                      <Icon className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`} />
+                    <div key={i} className="flex items-start gap-2 px-2 py-1 rounded text-xs">
+                      <Icon
+                        className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`}
+                      />
                       <span className={`flex-1 ${getPriorityColor(todo.priority)}`}>
                         {todo.content}
                       </span>
@@ -179,10 +176,11 @@ export function TaskList({ todos }: TaskListProps) {
         {grouped.completed.length > 0 && (
           <div>
             <button
-              onClick={() => toggleSection("completed")}
+              type="button"
+              onClick={() => toggleSection('completed')}
               className="flex items-center gap-1.5 w-full px-2 py-1 rounded hover:bg-surface-overlay/30 transition-colors"
             >
-              {expandedSections.has("completed") ? (
+              {expandedSections.has('completed') ? (
                 <ChevronDown className="h-3 w-3 text-text-dim" />
               ) : (
                 <ChevronRight className="h-3 w-3 text-text-dim" />
@@ -191,7 +189,7 @@ export function TaskList({ todos }: TaskListProps) {
                 Completed ({grouped.completed.length})
               </span>
             </button>
-            {expandedSections.has("completed") && (
+            {expandedSections.has('completed') && (
               <div className="ml-5 space-y-1 mt-1">
                 {grouped.completed.map((todo, i) => {
                   const Icon = getStatusIcon(todo.status);
@@ -200,10 +198,10 @@ export function TaskList({ todos }: TaskListProps) {
                       key={i}
                       className="flex items-start gap-2 px-2 py-1 rounded text-xs opacity-70"
                     >
-                      <Icon className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`} />
-                      <span className="flex-1 line-through text-text-dim">
-                        {todo.content}
-                      </span>
+                      <Icon
+                        className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`}
+                      />
+                      <span className="flex-1 line-through text-text-dim">{todo.content}</span>
                     </div>
                   );
                 })}
@@ -216,10 +214,11 @@ export function TaskList({ todos }: TaskListProps) {
         {grouped.cancelled.length > 0 && (
           <div>
             <button
-              onClick={() => toggleSection("cancelled")}
+              type="button"
+              onClick={() => toggleSection('cancelled')}
               className="flex items-center gap-1.5 w-full px-2 py-1 rounded hover:bg-surface-overlay/30 transition-colors"
             >
-              {expandedSections.has("cancelled") ? (
+              {expandedSections.has('cancelled') ? (
                 <ChevronDown className="h-3 w-3 text-text-dim" />
               ) : (
                 <ChevronRight className="h-3 w-3 text-text-dim" />
@@ -228,7 +227,7 @@ export function TaskList({ todos }: TaskListProps) {
                 Cancelled ({grouped.cancelled.length})
               </span>
             </button>
-            {expandedSections.has("cancelled") && (
+            {expandedSections.has('cancelled') && (
               <div className="ml-5 space-y-1 mt-1">
                 {grouped.cancelled.map((todo, i) => {
                   const Icon = getStatusIcon(todo.status);
@@ -237,10 +236,10 @@ export function TaskList({ todos }: TaskListProps) {
                       key={i}
                       className="flex items-start gap-2 px-2 py-1 rounded text-xs opacity-70"
                     >
-                      <Icon className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`} />
-                      <span className="flex-1 line-through text-text-dim">
-                        {todo.content}
-                      </span>
+                      <Icon
+                        className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`}
+                      />
+                      <span className="flex-1 line-through text-text-dim">{todo.content}</span>
                     </div>
                   );
                 })}

@@ -6,16 +6,16 @@
 // Ingress/exposure is infrastructure-managed (not part of core Percussionist).
 // Access via kubectl port-forward on vanilla K8s, or Tailscale Ingress on homelab.
 
-import type { V1Deployment, V1Service } from "@kubernetes/client-node";
+import type { V1Deployment, V1Service } from '@kubernetes/client-node';
 import {
   API_GROUP_VERSION,
+  CODE_SERVER_DEFAULT_IMAGE,
+  CODE_SERVER_PORT,
   KIND_PROJECT,
   LABELS,
   MANAGED_BY,
-  CODE_SERVER_PORT,
-  CODE_SERVER_DEFAULT_IMAGE,
   type Project,
-} from "@percussionist/api";
+} from '@percussionist/api';
 
 // ---------------------------------------------------------------------------
 // Naming helpers
@@ -56,23 +56,23 @@ export function renderCodeServerDeployment(project: Project): V1Deployment {
 
   const image = spec.codeServer?.image ?? CODE_SERVER_DEFAULT_IMAGE;
   const pvcName = spec.data?.pvcName ?? `${name}-data`;
-  const mountPath = spec.data?.mountPath ?? "/data";
+  const mountPath = spec.data?.mountPath ?? '/data';
 
   // Default resources if not specified
   const resources = spec.codeServer?.resources ?? {
-    requests: { cpu: "100m", memory: "256Mi" },
-    limits: { memory: "512Mi" },
+    requests: { cpu: '100m', memory: '256Mi' },
+    limits: { memory: '512Mi' },
   };
 
   const labels = {
     [LABELS.managedBy]: MANAGED_BY,
     [LABELS.projectName]: name,
-    "percussionist.dev/component": "code-server",
+    'percussionist.dev/component': 'code-server',
   };
 
   return {
-    apiVersion: "apps/v1",
-    kind: "Deployment",
+    apiVersion: 'apps/v1',
+    kind: 'Deployment',
     metadata: {
       name: codeServerDeploymentName(project),
       namespace: ns,
@@ -93,7 +93,7 @@ export function renderCodeServerDeployment(project: Project): V1Deployment {
       selector: {
         matchLabels: {
           [LABELS.projectName]: name,
-          "percussionist.dev/component": "code-server",
+          'percussionist.dev/component': 'code-server',
         },
       },
       template: {
@@ -103,33 +103,27 @@ export function renderCodeServerDeployment(project: Project): V1Deployment {
         spec: {
           containers: [
             {
-              name: "code-server",
+              name: 'code-server',
               image,
-              args: [
-                "--bind-addr",
-                "0.0.0.0:8080",
-                "--auth",
-                "none",
-                mountPath,
-              ],
+              args: ['--bind-addr', '0.0.0.0:8080', '--auth', 'none', mountPath],
               ports: [
                 {
                   containerPort: CODE_SERVER_PORT,
-                  name: "http",
-                  protocol: "TCP",
+                  name: 'http',
+                  protocol: 'TCP',
                 },
               ],
               resources,
               volumeMounts: [
                 {
-                  name: "data",
+                  name: 'data',
                   mountPath,
                 },
               ],
               // Readiness probe to ensure code-server is up before routing traffic
               readinessProbe: {
                 httpGet: {
-                  path: "/healthz",
+                  path: '/healthz',
                   port: CODE_SERVER_PORT,
                 },
                 initialDelaySeconds: 5,
@@ -139,7 +133,7 @@ export function renderCodeServerDeployment(project: Project): V1Deployment {
           ],
           volumes: [
             {
-              name: "data",
+              name: 'data',
               persistentVolumeClaim: {
                 claimName: pvcName,
               },
@@ -162,12 +156,12 @@ export function renderCodeServerService(project: Project): V1Service {
   const labels = {
     [LABELS.managedBy]: MANAGED_BY,
     [LABELS.projectName]: name,
-    "percussionist.dev/component": "code-server",
+    'percussionist.dev/component': 'code-server',
   };
 
   return {
-    apiVersion: "v1",
-    kind: "Service",
+    apiVersion: 'v1',
+    kind: 'Service',
     metadata: {
       name: codeServerServiceName(project),
       namespace: ns,
@@ -184,17 +178,17 @@ export function renderCodeServerService(project: Project): V1Service {
       ],
     },
     spec: {
-      type: "ClusterIP",
+      type: 'ClusterIP',
       selector: {
         [LABELS.projectName]: name,
-        "percussionist.dev/component": "code-server",
+        'percussionist.dev/component': 'code-server',
       },
       ports: [
         {
           port: CODE_SERVER_PORT,
           targetPort: CODE_SERVER_PORT,
-          name: "http",
-          protocol: "TCP",
+          name: 'http',
+          protocol: 'TCP',
         },
       ],
     },

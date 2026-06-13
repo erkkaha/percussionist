@@ -1,16 +1,35 @@
-import type { ProjectFormHookReturn } from "./useProjectForm";
-import { Input } from "../ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { Switch } from "../ui/switch";
+import { Input } from '../ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { Switch } from '../ui/switch';
+import type { ProjectFormHookReturn } from './useProjectForm';
 
 interface GeneralTabProps {
   isEdit: boolean;
-  form: Pick<ProjectFormHookReturn, "name" | "displayName" | "model" | "agent" | "maxParallel" | "timeoutSeconds" | "featureBranchingEnabled" | "phase"> &
-    Pick<ProjectFormHookReturn, "setName" | "setDisplayName" | "setModel" | "setAgent" | "setMaxParallel" | "setTimeoutSeconds" | "setFeatureBranchingEnabled" | "setPhase">;
+  form: Pick<
+    ProjectFormHookReturn,
+    | 'name'
+    | 'displayName'
+    | 'model'
+    | 'agent'
+    | 'maxParallel'
+    | 'timeoutSeconds'
+    | 'featureBranchingEnabled'
+    | 'phase'
+  > &
+    Pick<
+      ProjectFormHookReturn,
+      | 'setName'
+      | 'setDisplayName'
+      | 'setModel'
+      | 'setAgent'
+      | 'setMaxParallel'
+      | 'setTimeoutSeconds'
+      | 'setFeatureBranchingEnabled'
+      | 'setPhase'
+    >;
 }
 
 export default function GeneralTab({ form, isEdit }: GeneralTabProps) {
-
   return (
     <div className="space-y-5">
       {/* Name / Display */}
@@ -18,18 +37,16 @@ export default function GeneralTab({ form, isEdit }: GeneralTabProps) {
         <>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Name</label>
-            <Input
-              type="text"
-              value={form.name}
-              readOnly
-              className="font-mono opacity-70"
-            />
+            <Input type="text" value={form.name} readOnly className="font-mono opacity-70" />
           </div>
 
           {/* Phase selector (edit mode only) */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Board Phase</label>
-            <Select value={form.phase} onValueChange={(v) => form.setPhase(v as "Active" | "Complete" | "Archived")}>
+            <Select
+              value={form.phase}
+              onValueChange={(v) => form.setPhase(v as 'Active' | 'Complete' | 'Archived')}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -68,9 +85,7 @@ export default function GeneralTab({ form, isEdit }: GeneralTabProps) {
               placeholder="my-repo"
               className="font-mono"
             />
-            <p className="text-xs text-text-dim">
-              Kubernetes resource name (lowercase, hyphens)
-            </p>
+            <p className="text-xs text-text-dim">Kubernetes resource name (lowercase, hyphens)</p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Display Name</label>

@@ -12,8 +12,8 @@
 //
 // The command is idempotent: if the Secret already exists it is replaced.
 
-import type { V1Secret } from "@kubernetes/client-node";
-import { fatal, loadKube } from "./kube.js";
+import type { V1Secret } from '@kubernetes/client-node';
+import { fatal, loadKube } from './kube.js';
 
 export interface GithubTokenCreateOpts {
   namespace: string;
@@ -23,14 +23,14 @@ export interface GithubTokenCreateOpts {
 }
 
 function resolveToken(override?: string): string {
-  if (override && override.trim()) return override.trim();
+  if (override?.trim()) return override.trim();
 
-  const fromEnv = process.env["GITHUB_TOKEN"];
-  if (fromEnv && fromEnv.trim()) return fromEnv.trim();
+  const fromEnv = process.env.GITHUB_TOKEN;
+  if (fromEnv?.trim()) return fromEnv.trim();
 
   console.error(
-    "beatctl: no GitHub token provided. " +
-      "Pass it with --token <token> or set the GITHUB_TOKEN environment variable.",
+    'beatctl: no GitHub token provided. ' +
+      'Pass it with --token <token> or set the GITHUB_TOKEN environment variable.',
   );
   process.exit(1);
 }
@@ -44,21 +44,21 @@ async function upsertTokenSecret(
   namespace: string,
   name: string,
   token: string,
-): Promise<"created" | "updated"> {
+): Promise<'created' | 'updated'> {
   const { core } = loadKube();
 
   const body: V1Secret = {
-    apiVersion: "v1",
-    kind: "Secret",
+    apiVersion: 'v1',
+    kind: 'Secret',
     metadata: {
       name,
       namespace,
       labels: {
-        "app.kubernetes.io/managed-by": "percussionist",
-        "percussionist.dev/component": "git-github-token",
+        'app.kubernetes.io/managed-by': 'percussionist',
+        'percussionist.dev/component': 'git-github-token',
       },
     },
-    type: "Opaque",
+    type: 'Opaque',
     stringData: {
       token,
     },
@@ -67,25 +67,23 @@ async function upsertTokenSecret(
   try {
     await core.readNamespacedSecret({ name, namespace });
     await core.replaceNamespacedSecret({ name, namespace, body });
-    return "updated";
+    return 'updated';
   } catch (e) {
     const code = (e as { code?: number }).code;
     if (code !== 404) throw e;
     await core.createNamespacedSecret({ namespace, body });
-    return "created";
+    return 'created';
   }
 }
 
-export async function runGithubTokenCreate(
-  opts: GithubTokenCreateOpts,
-): Promise<void> {
+export async function runGithubTokenCreate(opts: GithubTokenCreateOpts): Promise<void> {
   const token = resolveToken(opts.token);
 
   if (!looksLikeToken(token)) {
     console.error(
       "beatctl: warning: token doesn't look like a GitHub token " +
-        "(expected prefix: ghp_, gho_, ghu_, ghs_, ghr_, or github_pat_). " +
-        "Proceeding anyway.",
+        '(expected prefix: ghp_, gho_, ghu_, ghs_, ghr_, or github_pat_). ' +
+        'Proceeding anyway.',
     );
   }
 
@@ -96,13 +94,13 @@ export async function runGithubTokenCreate(
   console.error(`Key field: token`);
 
   if (opts.dryRun) {
-    console.error("\n--dry-run: no changes made.");
+    console.error('\n--dry-run: no changes made.');
     console.error(
-      "\nWhen applied, reference it in Run specs with:\n" +
-        "  spec:\n" +
-        "    source:\n" +
-        "      git:\n" +
-        "        url: git@github.com:org/repo.git\n" +
+      '\nWhen applied, reference it in Run specs with:\n' +
+        '  spec:\n' +
+        '    source:\n' +
+        '      git:\n' +
+        '        url: git@github.com:org/repo.git\n' +
         `        githubTokenSecret:\n` +
         `          name: ${secretName}\n` +
         `\nOr with beatctl submit --git-url git@... --git-github-token-secret ${secretName}`,
@@ -111,16 +109,16 @@ export async function runGithubTokenCreate(
   }
 
   const action = await upsertTokenSecret(ns, secretName, token).catch((e) =>
-    fatal("upsert secret", e),
+    fatal('upsert secret', e),
   );
 
   console.error(`\nSecret ${action}.`);
   console.error(
-    "\nReference it in Run specs with:\n" +
-      "  spec:\n" +
-      "    source:\n" +
-      "      git:\n" +
-      "        url: git@github.com:org/repo.git\n" +
+    '\nReference it in Run specs with:\n' +
+      '  spec:\n' +
+      '    source:\n' +
+      '      git:\n' +
+      '        url: git@github.com:org/repo.git\n' +
       `        githubTokenSecret:\n` +
       `          name: ${secretName}\n` +
       `\nOr with beatctl submit --git-url git@... --git-github-token-secret ${secretName}`,

@@ -3,8 +3,8 @@
 // sendManagerSessionStats()   — full flush on session completion (POST /api/stats/session)
 // incrementalFlushManagerSession()  — delta flush after each assistant turn (PATCH /api/stats/session)
 
-import type { SessionMessage } from "./session.js";
-import { OPENCODE_URL as AGENT_OPENCODE_URL } from "./config.js";
+import { OPENCODE_URL as AGENT_OPENCODE_URL } from './config.js';
+import type { SessionMessage } from './session.js';
 
 const err = (...args: unknown[]) =>
   console.error(`[manager stats ${new Date().toISOString()}]`, ...args);
@@ -12,16 +12,15 @@ const log = (...args: unknown[]) =>
   console.log(`[manager stats ${new Date().toISOString()}]`, ...args);
 
 // Config from environment (read dynamically for testability)
-const getWebUrl = () => process.env.WEB_SERVICE_URL ?? "";
-const getAuthToken = () => process.env.WEB_AUTH_TOKEN ?? "";
-export const getNamespace = () =>
-  process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
+const getWebUrl = () => process.env.WEB_SERVICE_URL ?? '';
+const getAuthToken = () => process.env.WEB_AUTH_TOKEN ?? '';
+export const getNamespace = () => process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
 
 /**
  * Synthetic agent name used for manager session stats.
  * This appears under Stats → Agents in the web UI.
  */
-export const MANAGER_RUN_AGENT = "manager run";
+export const MANAGER_RUN_AGENT = 'manager run';
 
 /**
  * Generate a stable run name for manager sessions.
@@ -63,21 +62,15 @@ export function buildPayloads(
     const info = msg.info ?? {};
     const parts = msg.parts ?? [];
     const content = JSON.stringify(parts);
-    
+
     // Extract model - handle both string and object formats
-    let model: string | undefined = undefined;
+    let model: string | undefined;
     if (info.model) {
-      if (typeof info.model === "string") {
+      if (typeof info.model === 'string') {
         model = info.model;
-      } else if (
-        typeof info.model === "object" &&
-        !Array.isArray(info.model)
-      ) {
+      } else if (typeof info.model === 'object' && !Array.isArray(info.model)) {
         const m = info.model as any;
-        model = `${m.providerID ?? ""}/${m.modelID ?? ""}`.replace(
-          /^\/|\/$/g,
-          "",
-        );
+        model = `${m.providerID ?? ''}/${m.modelID ?? ''}`.replace(/^\/|\/$/g, '');
       }
     }
 
@@ -89,39 +82,30 @@ export function buildPayloads(
       model,
       tokensIn: (info.tokens as { input?: number } | undefined)?.input,
       tokensOut: (info.tokens as { output?: number } | undefined)?.output,
-      tokensReasoning: (info.tokens as { reasoning?: number } | undefined)
-        ?.reasoning,
-      tokensCacheRead: (
-        info.tokens as { cache?: { read?: number } } | undefined
-      )?.cache?.read,
-      tokensCacheWrite: (
-        info.tokens as { cache?: { write?: number } } | undefined
-      )?.cache?.write,
+      tokensReasoning: (info.tokens as { reasoning?: number } | undefined)?.reasoning,
+      tokensCacheRead: (info.tokens as { cache?: { read?: number } } | undefined)?.cache?.read,
+      tokensCacheWrite: (info.tokens as { cache?: { write?: number } } | undefined)?.cache?.write,
       cost: (info as { cost?: number }).cost,
-      createdAt: info.time?.created
-        ? new Date(info.time.created).toISOString()
-        : undefined,
-      completedAt: info.time?.completed
-        ? new Date(info.time.completed).toISOString()
-        : undefined,
+      createdAt: info.time?.created ? new Date(info.time.created).toISOString() : undefined,
+      completedAt: info.time?.completed ? new Date(info.time.completed).toISOString() : undefined,
     });
 
     for (const part of parts) {
       // Handle tool-related parts (tool, tool-use, tool-result)
       if (
         part &&
-        typeof part === "object" &&
-        "type" in part &&
-        (part.type === "tool" ||
-          part.type === "tool-use" ||
-          part.type === "tool_use" ||
-          part.type === "tool-result" ||
-          part.type === "tool_result")
+        typeof part === 'object' &&
+        'type' in part &&
+        (part.type === 'tool' ||
+          part.type === 'tool-use' ||
+          part.type === 'tool_use' ||
+          part.type === 'tool-result' ||
+          part.type === 'tool_result')
       ) {
         const tp = part as Record<string, unknown>;
 
         // Extract tool name based on type
-        let toolName = "";
+        let toolName = '';
         if (tp.tool) {
           toolName = String(tp.tool);
         } else if (tp.name) {
@@ -131,31 +115,28 @@ export function buildPayloads(
         // Detect file operations from tool args
         // Check both direct input and state.input (like dispatcher does)
         const stateInput =
-          tp.state && typeof tp.state === "object" ? (tp.state as any).input : undefined;
-        const input =
-          (stateInput !== undefined ? stateInput : tp.input) as Record<string, unknown> | undefined;
+          tp.state && typeof tp.state === 'object' ? (tp.state as any).input : undefined;
+        const input = (stateInput !== undefined ? stateInput : tp.input) as
+          | Record<string, unknown>
+          | undefined;
         const fp = input?.filePath ?? input?.path ?? input?.file;
 
-        if (typeof fp === "string") {
+        if (typeof fp === 'string') {
           fileOpsPayload.push({
             messageIdx: idx,
             filePath: String(fp),
             operation: detectFileOp(toolName),
           });
         }
-      } else if (
-        part &&
-        typeof part === "object" &&
-        "type" in part &&
-        part.type === "file"
-      ) {
-        const fp = (part as { path?: string; filename?: string }).path ??
+      } else if (part && typeof part === 'object' && 'type' in part && part.type === 'file') {
+        const fp =
+          (part as { path?: string; filename?: string }).path ??
           (part as { path?: string; filename?: string }).filename;
         if (fp) {
           fileOpsPayload.push({
             messageIdx: idx,
             filePath: String(fp),
-            operation: "read",
+            operation: 'read',
           });
         }
       }
@@ -167,34 +148,24 @@ export function buildPayloads(
 
 function detectFileOp(toolName: string): string {
   const t = toolName.toLowerCase();
-  if (t === "read" || t === "readfile" || t === "read_file") return "read";
-  if (
-    t === "write" ||
-    t === "writefile" ||
-    t === "write_file" ||
-    t === "edit" ||
-    t === "multiedit"
-  )
-    return "write";
-  if (t === "delete" || t === "delete_file") return "delete";
-  return "access";
+  if (t === 'read' || t === 'readfile' || t === 'read_file') return 'read';
+  if (t === 'write' || t === 'writefile' || t === 'write_file' || t === 'edit' || t === 'multiedit')
+    return 'write';
+  if (t === 'delete' || t === 'delete_file') return 'delete';
+  return 'access';
 }
 
 // ---------------------------------------------------------------------------
 // Extract totals from messages
 
-export function extractTokenTotals(
-  rawMessages: SessionMessage[],
-): TokenTotals {
+export function extractTokenTotals(rawMessages: SessionMessage[]): TokenTotals {
   let tokensIn = 0;
   let tokensOut = 0;
   let cost = 0;
 
   for (const msg of rawMessages) {
     const info = msg.info ?? {};
-    const tokens = info.tokens as
-      | { input?: number; output?: number }
-      | undefined;
+    const tokens = info.tokens as { input?: number; output?: number } | undefined;
 
     if (tokens?.input != null) tokensIn += tokens.input;
     if (tokens?.output != null) tokensOut += tokens.output;
@@ -222,9 +193,7 @@ export async function incrementalFlushManagerSession(
   try {
     const res = await fetch(`${AGENT_OPENCODE_URL}/session/${sessionId}/message`);
     if (!res.ok) return fromIdx;
-    const data = (await res.json()) as
-      | SessionMessage[]
-      | { items?: SessionMessage[] };
+    const data = (await res.json()) as SessionMessage[] | { items?: SessionMessage[] };
     rawMessages = Array.isArray(data) ? data : (data.items ?? []);
   } catch {
     return fromIdx; // OpenCode may be busy — skip silently
@@ -246,7 +215,7 @@ export async function incrementalFlushManagerSession(
       name: getManagerRunName(sessionId),
       namespace: getNamespace(),
       agent: MANAGER_RUN_AGENT,
-      phase: "Running",
+      phase: 'Running',
       startedAt,
       tokensIn: totals.tokensIn,
       tokensOut: totals.tokensOut,
@@ -259,9 +228,9 @@ export async function incrementalFlushManagerSession(
 
   try {
     const res = await fetch(`${getWebUrl()}/api/stats/session`, {
-      method: "PATCH",
+      method: 'PATCH',
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
         ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
       },
       body: JSON.stringify(payload),
@@ -272,15 +241,10 @@ export async function incrementalFlushManagerSession(
         `incrementalFlushManagerSession: flushed ${newMessages.length} message(s) from idx ${fromIdx} (session ${sessionId})`,
       );
     } else {
-      err(
-        `incrementalFlushManagerSession: web pod HTTP ${res.status}`,
-      );
+      err(`incrementalFlushManagerSession: web pod HTTP ${res.status}`);
     }
   } catch (e) {
-    err(
-      "incrementalFlushManagerSession: PATCH failed (non-fatal):",
-      (e as Error).message,
-    );
+    err('incrementalFlushManagerSession: PATCH failed (non-fatal):', (e as Error).message);
   }
 
   return rawMessages.length; // advance cursor to total seen
@@ -301,16 +265,11 @@ export async function sendManagerSessionStats(
   try {
     const res = await fetch(`${AGENT_OPENCODE_URL}/session/${sessionId}/message`);
     if (res.ok) {
-      const data = (await res.json()) as
-        | SessionMessage[]
-        | { items?: SessionMessage[] };
+      const data = (await res.json()) as SessionMessage[] | { items?: SessionMessage[] };
       rawMessages = Array.isArray(data) ? data : (data.items ?? []);
     }
   } catch (e) {
-    err(
-      "sendManagerSessionStats: failed to fetch messages:",
-      (e as Error).message,
-    );
+    err('sendManagerSessionStats: failed to fetch messages:', (e as Error).message);
   }
 
   const { messagesPayload, toolCallsPayload, fileOpsPayload } = buildPayloads(
@@ -342,16 +301,16 @@ export async function sendManagerSessionStats(
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const res = await fetch(`${getWebUrl()}/api/stats/session`, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
           ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(30_000),
       });
       if (!res.ok) {
-        const body = await res.text().catch(() => "");
+        const body = await res.text().catch(() => '');
         if (attempt < MAX_ATTEMPTS) {
           err(
             `sendManagerSessionStats: web pod HTTP ${res.status} (attempt ${attempt}/${MAX_ATTEMPTS}), retrying: ${body}`,
@@ -363,9 +322,7 @@ export async function sendManagerSessionStats(
           `sendManagerSessionStats: web pod HTTP ${res.status} (all ${MAX_ATTEMPTS} attempts failed): ${body}`,
         );
       } else {
-        log(
-          `sendManagerSessionStats: persisted ${sessionId} — ${messagesPayload.length} messages`,
-        );
+        log(`sendManagerSessionStats: persisted ${sessionId} — ${messagesPayload.length} messages`);
       }
       return;
     } catch (e) {
@@ -378,7 +335,7 @@ export async function sendManagerSessionStats(
         continue;
       }
       err(
-        "sendManagerSessionStats: POST failed (all attempts exhausted, non-fatal):",
+        'sendManagerSessionStats: POST failed (all attempts exhausted, non-fatal):',
         (e as Error).message,
       );
     }

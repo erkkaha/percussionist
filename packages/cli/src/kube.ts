@@ -8,32 +8,32 @@
 //
 // The wrappers below bridge the gap so no other file needs to change.
 
-import type { CustomObjectsApi } from "@kubernetes/client-node";
-import * as kube from "@percussionist/kube";
-import type { Run, Project } from "@percussionist/api";
+import type { CustomObjectsApi } from '@kubernetes/client-node';
+import type { Project, Run } from '@percussionist/api';
+import * as kube from '@percussionist/kube';
 
 // Re-export everything, then override specific functions below.
 export {
-  NAMESPACE,
-  NAMESPACE as DEFAULT_NAMESPACE,
+  age,
+  createClusterAgent,
+  // run
+  createRun as _createRun,
+  deleteClusterAgent,
+  deleteRun as _deleteRun,
+  fatal,
+  getClusterAgent,
+  // cluster agents
+  listClusterAgents,
+  listRuns as _listRuns,
   loadFromKubeconfig,
   loadFromKubeconfig as loadKube,
+  NAMESPACE,
+  NAMESPACE as DEFAULT_NAMESPACE,
   padCols,
-  age,
-  fatal,
   // project — new-signature (name, ns?, client?); also see old-sig wrappers below
   patchProjectSpec,
   patchProjectStatus,
-  // cluster agents
-  listClusterAgents,
-  getClusterAgent,
-  createClusterAgent,
-  deleteClusterAgent,
-  // run
-  createRun as _createRun,
-  deleteRun as _deleteRun,
-  listRuns as _listRuns,
-} from "@percussionist/kube";
+} from '@percussionist/kube';
 
 // --- Old-signature wrappers ------------------------------------------------
 
@@ -45,10 +45,7 @@ export async function getRun(
   return kube.getRun(name, namespace, client);
 }
 
-export async function listRuns(
-  client: CustomObjectsApi,
-  namespace: string,
-): Promise<Run[]> {
+export async function listRuns(client: CustomObjectsApi, namespace: string): Promise<Run[]> {
   return kube.listRuns(namespace, client);
 }
 
@@ -103,7 +100,7 @@ export async function updateProject(
   client: CustomObjectsApi,
   namespace: string,
   name: string,
-  spec: Project["spec"],
+  spec: Project['spec'],
 ): Promise<Project> {
   return kube.updateProject(name, spec, namespace, client);
 }

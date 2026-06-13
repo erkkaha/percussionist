@@ -1,25 +1,25 @@
-import { useState, useRef, useCallback } from "react";
-import { Routes, Route } from "react-router-dom";
-import { AuthProvider } from "./lib/auth";
-import AuthGuard from "./components/AuthGuard";
-import Layout from "./components/Layout";
-import RunList from "./components/RunList";
-import RunDetail from "./components/RunDetail";
-import CreateRunForm from "./components/CreateRunForm";
-import StatsView from "./components/StatsView";
-import ProjectsPage from "./components/ProjectsPage";
-import CreateProjectForm from "./components/CreateProjectForm";
-import EditProjectPage from "./components/EditProjectPage";
-import AgentsPage from "./components/AgentsPage";
-import AgentForm from "./components/AgentForm";
-import BoardView from "./components/BoardView";
-import MetricsView from "./components/MetricsView";
-import SettingsPage from "./components/SettingsPage";
-import PlanView from "./components/PlanView";
-import ActivityPage from "./pages/ActivityPage";
-import LoginPage from "./pages/LoginPage";
-import { ChatContext } from "./lib/chat-context";
-import type { Task } from "./lib/types";
+import { useCallback, useRef, useState } from 'react';
+import { Route, Routes } from 'react-router-dom';
+import AgentForm from './components/AgentForm';
+import AgentsPage from './components/AgentsPage';
+import AuthGuard from './components/AuthGuard';
+import BoardView from './components/BoardView';
+import CreateProjectForm from './components/CreateProjectForm';
+import CreateRunForm from './components/CreateRunForm';
+import EditProjectPage from './components/EditProjectPage';
+import Layout from './components/Layout';
+import MetricsView from './components/MetricsView';
+import PlanView from './components/PlanView';
+import ProjectsPage from './components/ProjectsPage';
+import RunDetail from './components/RunDetail';
+import RunList from './components/RunList';
+import SettingsPage from './components/SettingsPage';
+import StatsView from './components/StatsView';
+import { AuthProvider } from './lib/auth';
+import { ChatContext } from './lib/chat-context';
+import type { Task } from './lib/types';
+import ActivityPage from './pages/ActivityPage';
+import LoginPage from './pages/LoginPage';
 
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
@@ -29,9 +29,12 @@ export default function App() {
     injectRef.current?.(task, projectName);
   }, []);
 
-  const handleChatReady = useCallback((api: { injectTask: (task: Task, projectName: string) => void }) => {
-    injectRef.current = api.injectTask;
-  }, []);
+  const handleChatReady = useCallback(
+    (api: { injectTask: (task: Task, projectName: string) => void }) => {
+      injectRef.current = api.injectTask;
+    },
+    [],
+  );
 
   return (
     <AuthProvider>
@@ -39,7 +42,15 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route element={<AuthGuard />}>
-            <Route element={<Layout chatOpen={chatOpen} onChatOpenChange={setChatOpen} onChatReady={handleChatReady} />}>
+            <Route
+              element={
+                <Layout
+                  chatOpen={chatOpen}
+                  onChatOpenChange={setChatOpen}
+                  onChatReady={handleChatReady}
+                />
+              }
+            >
               <Route index element={<ActivityPage />} />
               <Route path="/runs" element={<RunList />} />
               <Route path="/runs/new" element={<CreateRunForm />} />

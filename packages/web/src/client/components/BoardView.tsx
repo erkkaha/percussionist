@@ -1,14 +1,20 @@
-import { useState, useEffect, useMemo } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchBoard, deleteBoardTask, retryEscalatedTask, approveTask, requestChangesTask } from "../lib/api";
-import type { Task, ManagerMetrics } from "../lib/types";
-import { useBoardNotifications } from "../hooks/useBoardNotifications";
-import { useBoardEvents } from "../hooks/useBoardEvents";
-import { BoardHeader } from "./board/BoardHeader";
-import { TaskListPanel } from "./board/TaskListPanel";
-import { TaskDetailPanel, TaskDetailEmpty } from "./board/TaskDetailPanel";
-import { Sheet, SheetContent } from "./ui/sheet";
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { useBoardEvents } from '../hooks/useBoardEvents';
+import { useBoardNotifications } from '../hooks/useBoardNotifications';
+import {
+  approveTask,
+  deleteBoardTask,
+  fetchBoard,
+  requestChangesTask,
+  retryEscalatedTask,
+} from '../lib/api';
+import type { ManagerMetrics, Task } from '../lib/types';
+import { BoardHeader } from './board/BoardHeader';
+import { TaskDetailEmpty, TaskDetailPanel } from './board/TaskDetailPanel';
+import { TaskListPanel } from './board/TaskListPanel';
+import { Sheet, SheetContent } from './ui/sheet';
 
 export default function BoardView() {
   const { name } = useParams<{ name: string }>();
@@ -17,7 +23,7 @@ export default function BoardView() {
   const { connected: boardSseConnected, eventTick } = useBoardEvents(projectName, true);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["board", projectName],
+    queryKey: ['board', projectName],
     queryFn: () => fetchBoard(projectName),
     refetchInterval: boardSseConnected ? false : 10_000,
     staleTime: 5_000,
@@ -25,20 +31,20 @@ export default function BoardView() {
 
   useEffect(() => {
     if (eventTick > 0) {
-      void queryClient.invalidateQueries({ queryKey: ["board", projectName] });
+      void queryClient.invalidateQueries({ queryKey: ['board', projectName] });
     }
   }, [eventTick, projectName, queryClient]);
 
   const [showAddTask, setShowAddTask] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
-  const selectedTaskName = searchParams.get("task") ?? null;
+  const selectedTaskName = searchParams.get('task') ?? null;
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const allTasks: Task[] = data ? Object.values(data.columns).flat() : [];
 
-  const invalidateBoard = () => queryClient.invalidateQueries({ queryKey: ["board", projectName] });
+  const invalidateBoard = () => queryClient.invalidateQueries({ queryKey: ['board', projectName] });
 
-  const deleteMutation = useMutation({
+  const _deleteMutation = useMutation({
     mutationFn: (taskName: string) => deleteBoardTask(projectName, taskName),
     onSuccess: () => {
       invalidateBoard();
@@ -47,17 +53,17 @@ export default function BoardView() {
     },
   });
 
-  const retryMutation = useMutation({
+  const _retryMutation = useMutation({
     mutationFn: (taskName: string) => retryEscalatedTask(projectName, taskName),
     onSuccess: invalidateBoard,
   });
 
-  const approveMutation = useMutation({
+  const _approveMutation = useMutation({
     mutationFn: (taskName: string) => approveTask(projectName, taskName),
     onSuccess: invalidateBoard,
   });
 
-  const requestChangesMutation = useMutation({
+  const _requestChangesMutation = useMutation({
     mutationFn: ({ taskId, comment }: { taskId: string; comment: string }) =>
       requestChangesTask(projectName, taskId, comment),
     onSuccess: invalidateBoard,
@@ -84,7 +90,7 @@ export default function BoardView() {
   // invalidated on every board refetch when approvals haven't actually changed.
   // Must be before early returns to satisfy Rules of Hooks.
   const rawApprovals = data?.approvals;
-  const approvals = useMemo(() => rawApprovals, [JSON.stringify(rawApprovals)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const approvals = useMemo(() => rawApprovals, [rawApprovals]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isLoading && !data) return <p className="text-sm text-text-dim p-4">Loading board…</p>;
   if (error && !data) return <p className="text-sm text-phase-failed p-4">Failed to load board.</p>;
@@ -98,22 +104,28 @@ export default function BoardView() {
     : undefined;
 
   const selectedCol: string | undefined = selectedTaskName
-    ? Object.entries(columns).find(([, tasks]) => tasks.some((t) => t.metadata.name === selectedTaskName))?.[0]
+    ? Object.entries(columns).find(([, tasks]) =>
+        tasks.some((t) => t.metadata.name === selectedTaskName),
+      )?.[0]
     : undefined;
 
-  const detailPanel = selectedTask && selectedCol ? (
-    <TaskDetailPanel
-      task={selectedTask}
-      col={selectedCol}
-      projectName={projectName}
-      approvals={approvals}
-      onDeleted={() => { setSearchParams({}, { replace: true }); setSheetOpen(false); }}
-    />
-  ) : null;
+  const detailPanel =
+    selectedTask && selectedCol ? (
+      <TaskDetailPanel
+        task={selectedTask}
+        col={selectedCol}
+        projectName={projectName}
+        approvals={approvals}
+        onDeleted={() => {
+          setSearchParams({}, { replace: true });
+          setSheetOpen(false);
+        }}
+      />
+    ) : null;
 
   return (
     // Pull out of the parent p-6 padding so the board can fill the viewport correctly.
-    <div className="-m-6 flex flex-col" style={{ height: "calc(100svh - 3.5rem)" }}>
+    <div className="-m-6 flex flex-col" style={{ height: 'calc(100svh - 3.5rem)' }}>
       {/* Header */}
       <div className="shrink-0 px-4 pt-4 pb-3 border-b border-border">
         <BoardHeader
@@ -131,7 +143,9 @@ export default function BoardView() {
       {/* Body */}
       <div className="flex flex-1 min-h-0">
         {/* Task list — full width on mobile, constrained on desktop when detail is open */}
-        <div className={`flex flex-col min-h-0 w-full ${selectedTask ? "md:w-2/5 md:border-r md:border-border" : ""}`}>
+        <div
+          className={`flex flex-col min-h-0 w-full ${selectedTask ? 'md:w-2/5 md:border-r md:border-border' : ''}`}
+        >
           <TaskListPanel
             projectName={projectName}
             columns={columns}

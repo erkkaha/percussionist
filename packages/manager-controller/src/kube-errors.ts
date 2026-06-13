@@ -1,12 +1,12 @@
 type AnyRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): AnyRecord | undefined {
-  return typeof value === "object" && value !== null ? (value as AnyRecord) : undefined;
+  return typeof value === 'object' && value !== null ? (value as AnyRecord) : undefined;
 }
 
 function parseCode(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
     const parsed = Number.parseInt(value, 10);
     if (Number.isFinite(parsed)) return parsed;
   }
@@ -22,7 +22,7 @@ export function getErrorStatusCode(err: unknown): number | undefined {
 
   const response = asRecord(root.response);
   const responseCode = response
-    ? parseCode(response.statusCode) ?? parseCode(response.code) ?? parseCode(response.status)
+    ? (parseCode(response.statusCode) ?? parseCode(response.code) ?? parseCode(response.status))
     : undefined;
   if (responseCode !== undefined) return responseCode;
 
@@ -48,11 +48,11 @@ export function isKubeNotFoundError(err: unknown): boolean {
   if (!root) return false;
 
   const reason = root.reason;
-  if (typeof reason === "string" && reason.toLowerCase() === "notfound") return true;
+  if (typeof reason === 'string' && reason.toLowerCase() === 'notfound') return true;
 
   const body = asRecord(root.body);
   const bodyReason = body?.reason;
-  if (typeof bodyReason === "string" && bodyReason.toLowerCase() === "notfound") return true;
+  if (typeof bodyReason === 'string' && bodyReason.toLowerCase() === 'notfound') return true;
 
   return false;
 }

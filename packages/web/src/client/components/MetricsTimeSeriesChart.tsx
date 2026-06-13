@@ -1,58 +1,45 @@
-"use client"
+'use client';
 
-import { useMemo } from "react"
-import { Area, AreaChart, CartesianGrid, ReferenceArea, XAxis, YAxis } from "recharts"
-
+import { useMemo } from 'react';
+import { Area, AreaChart, CartesianGrid, ReferenceArea, XAxis, YAxis } from 'recharts';
+import type { RunWindow } from '../hooks/useMetricsTimeSeries';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "./ui/card"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select"
-import {
+  type ChartConfig,
   ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
   ChartLegend,
   ChartLegendContent,
-  type ChartConfig,
-} from "./ui/chart"
-import type { RunWindow } from "../hooks/useMetricsTimeSeries"
+  ChartTooltip,
+  ChartTooltipContent,
+} from './ui/chart';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 const TIME_RANGES = [
-  { label: "30m", hours: 0.5 },
-  { label: "1h", hours: 1 },
-  { label: "6h", hours: 6 },
-  { label: "24h", hours: 24 },
-] as const
+  { label: '30m', hours: 0.5 },
+  { label: '1h', hours: 1 },
+  { label: '6h', hours: 6 },
+  { label: '24h', hours: 24 },
+] as const;
 
 const chartConfig = {
   cpu: {
-    label: "CPU",
-    color: "var(--chart-1)",
+    label: 'CPU',
+    color: 'var(--chart-1)',
   },
   memory: {
-    label: "Memory",
-    color: "var(--chart-2)",
+    label: 'Memory',
+    color: 'var(--chart-2)',
   },
-} satisfies ChartConfig
+} satisfies ChartConfig;
 
 function fmtTime(iso: string): string {
-  const d = new Date(iso)
-  return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
 function RunBanner({ run, y }: { run: RunWindow; y: number }) {
-  const x1 = new Date(run.startedAt).getTime()
-  const x2 = new Date(run.completedAt).getTime()
+  const x1 = new Date(run.startedAt).getTime();
+  const x2 = new Date(run.completedAt).getTime();
   return (
     <ReferenceArea
       x1={x1}
@@ -66,27 +53,27 @@ function RunBanner({ run, y }: { run: RunWindow; y: number }) {
         y === 0
           ? {
               value: run.agent ? `${run.name} (${run.agent})` : run.name,
-              position: "insideTopLeft",
+              position: 'insideTopLeft',
               fontSize: 9,
-              fill: "var(--chart-5)",
+              fill: 'var(--chart-5)',
               offset: 4,
             }
           : undefined
       }
     />
-  )
+  );
 }
 
 interface Props {
-  dataPoints: Array<{ recordedAt: string; cpuPct: number; memPct: number }>
-  runWindows: RunWindow[]
-  nodeNames: string[]
-  hours: number
-  selectedNode: string
-  onHoursChange: (h: number) => void
-  onNodeChange: (n: string) => void
-  loading?: boolean
-  error?: Error | null
+  dataPoints: Array<{ recordedAt: string; cpuPct: number; memPct: number }>;
+  runWindows: RunWindow[];
+  nodeNames: string[];
+  hours: number;
+  selectedNode: string;
+  onHoursChange: (h: number) => void;
+  onNodeChange: (n: string) => void;
+  loading?: boolean;
+  error?: Error | null;
 }
 
 export default function MetricsTimeSeriesChart({
@@ -105,10 +92,10 @@ export default function MetricsTimeSeriesChart({
       time: new Date(p.recordedAt).getTime(),
       cpu: p.cpuPct,
       memory: p.memPct,
-    }))
-  }, [dataPoints])
+    }));
+  }, [dataPoints]);
 
-  const timeRangeLabel = TIME_RANGES.find((t) => t.hours === hours)?.label ?? `${hours}h`
+  const timeRangeLabel = TIME_RANGES.find((t) => t.hours === hours)?.label ?? `${hours}h`;
 
   if (error) {
     return (
@@ -120,7 +107,7 @@ export default function MetricsTimeSeriesChart({
           <p className="text-sm text-red-500">Failed to load metrics history: {error.message}</p>
         </CardContent>
       </Card>
-    )
+    );
   }
 
   return (
@@ -140,20 +127,21 @@ export default function MetricsTimeSeriesChart({
             <SelectContent>
               <SelectItem value="all">All nodes</SelectItem>
               {nodeNames.map((n) => (
-                <SelectItem key={n} value={n}>{n}</SelectItem>
+                <SelectItem key={n} value={n}>
+                  {n}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <Select
-            value={String(hours)}
-            onValueChange={(v) => onHoursChange(parseFloat(v))}
-          >
+          <Select value={String(hours)} onValueChange={(v) => onHoursChange(parseFloat(v))}>
             <SelectTrigger className="w-[80px]">
               <SelectValue placeholder="1h" />
             </SelectTrigger>
             <SelectContent>
               {TIME_RANGES.map((t) => (
-                <SelectItem key={t.hours} value={String(t.hours)}>{t.label}</SelectItem>
+                <SelectItem key={t.hours} value={String(t.hours)}>
+                  {t.label}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -169,10 +157,7 @@ export default function MetricsTimeSeriesChart({
             No data yet — metrics collector is gathering snapshots every 30s.
           </div>
         ) : (
-          <ChartContainer
-            config={chartConfig}
-            className="aspect-auto h-[250px] w-full"
-          >
+          <ChartContainer config={chartConfig} className="aspect-auto h-[250px] w-full">
             <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="fillCpu" x1="0" y1="0" x2="0" y2="1">
@@ -188,13 +173,13 @@ export default function MetricsTimeSeriesChart({
               <XAxis
                 dataKey="time"
                 type="number"
-                domain={["dataMin", "dataMax"]}
+                domain={['dataMin', 'dataMax']}
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
                 tickFormatter={(t: number) => {
-                  const d = new Date(t)
-                  return Number.isFinite(d.getTime()) ? fmtTime(d.toISOString()) : ""
+                  const d = new Date(t);
+                  return Number.isFinite(d.getTime()) ? fmtTime(d.toISOString()) : '';
                 }}
                 minTickGap={48}
               />
@@ -213,10 +198,12 @@ export default function MetricsTimeSeriesChart({
                   <ChartTooltipContent
                     indicator="dot"
                     labelFormatter={(label, payload) => {
-                      if (!payload.length) return String(label)
-                      const p = payload[0] as unknown as Record<string, unknown>
-                      const time = (p?.payload as unknown as Record<string, unknown>)?.time as number | undefined
-                      return time ? fmtTime(new Date(time).toISOString()) : String(label)
+                      if (!payload.length) return String(label);
+                      const p = payload[0] as unknown as Record<string, unknown>;
+                      const time = (p?.payload as unknown as Record<string, unknown>)?.time as
+                        | number
+                        | undefined;
+                      return time ? fmtTime(new Date(time).toISOString()) : String(label);
                     }}
                   />
                 }
@@ -248,5 +235,5 @@ export default function MetricsTimeSeriesChart({
         )}
       </CardContent>
     </Card>
-  )
+  );
 }

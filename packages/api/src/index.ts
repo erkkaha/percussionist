@@ -11,24 +11,24 @@
 //   Task               — namespace-scoped task (PLAN or BUILD), references a project
 //   Run                — namespace-scoped task execution
 
-import { z } from "zod";
+import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
 // API constants
 
-export const API_GROUP = "percussionist.dev";
-export const API_VERSION = "v1alpha1";
+export const API_GROUP = 'percussionist.dev';
+export const API_VERSION = 'v1alpha1';
 export const API_GROUP_VERSION = `${API_GROUP}/${API_VERSION}`;
-export const KIND_RUN = "Run";
-export const PLURAL_RUN = "runs";
-export const KIND_PROJECT = "Project";
-export const PLURAL_PROJECT = "projects";
-export const KIND_TASK = "Task";
-export const PLURAL_TASK = "tasks";
-export const KIND_CLUSTER_AGENT = "ClusterAgent";
-export const PLURAL_CLUSTER_AGENT = "clusteragents";
-export const KIND_CLUSTER_SETTINGS = "ClusterSettings";
-export const PLURAL_CLUSTER_SETTINGS = "clustersettings";
+export const KIND_RUN = 'Run';
+export const PLURAL_RUN = 'runs';
+export const KIND_PROJECT = 'Project';
+export const PLURAL_PROJECT = 'projects';
+export const KIND_TASK = 'Task';
+export const PLURAL_TASK = 'tasks';
+export const KIND_CLUSTER_AGENT = 'ClusterAgent';
+export const PLURAL_CLUSTER_AGENT = 'clusteragents';
+export const KIND_CLUSTER_SETTINGS = 'ClusterSettings';
+export const PLURAL_CLUSTER_SETTINGS = 'clustersettings';
 
 // ---------------------------------------------------------------------------
 // Runner adapter interface
@@ -65,21 +65,23 @@ export interface RunnerImageSpec {
 // System packages (apk) installed into every run pod for this project.
 // Declared at the project level, inherited by all runs.
 
-export const RunnerPackagesSchema = z.object({
-  packages: z.array(z.string()).max(50).optional(),
-}).optional();
+export const RunnerPackagesSchema = z
+  .object({
+    packages: z.array(z.string()).max(50).optional(),
+  })
+  .optional();
 export type RunnerPackages = z.infer<typeof RunnerPackagesSchema>;
 
 /** Default RunnerImageSpec — points at the opencode runtime. */
 export const OPENCODE_RUNNER_DEFAULTS: RunnerImageSpec = {
-  image: "ghcr.io/anomalyco/opencode:latest",
+  image: 'ghcr.io/anomalyco/opencode:latest',
   port: 4096,
-  authEnvVar: "OPENCODE_AUTH_CONTENT",
-  configEnvVar: "OPENCODE_CONFIG_CONTENT",
-  baseUrlEnvVar: "OPENCODE_BASE_URL",
-  configMountPath: "/root/.config/opencode",
-  agentsDirRelative: "agents",
-  configMapKey: "opencode.json",
+  authEnvVar: 'OPENCODE_AUTH_CONTENT',
+  configEnvVar: 'OPENCODE_CONFIG_CONTENT',
+  baseUrlEnvVar: 'OPENCODE_BASE_URL',
+  configMountPath: '/root/.config/opencode',
+  agentsDirRelative: 'agents',
+  configMapKey: 'opencode.json',
 };
 
 // ---------------------------------------------------------------------------
@@ -103,19 +105,19 @@ export const CodeServerSpecSchema = z.object({
   /** Enable per-project code-server for interactive workspace access. */
   enabled: z.boolean().default(false),
   /** code-server container image. */
-  image: z.string().default("codercom/code-server:4.96.4"),
+  image: z.string().default('codercom/code-server:4.96.4'),
   /** Pod resource requirements for code-server container. */
   resources: ResourceRequirementsSchema.optional(),
 });
 export type CodeServerSpec = z.infer<typeof CodeServerSpecSchema>;
 
 export const MEMORY_SERVICE_PORT = 4100;
-export const MEMORY_SERVICE_DEFAULT_IMAGE = "ghcr.io/erkkaha/percussionist/memory:latest";
+export const MEMORY_SERVICE_DEFAULT_IMAGE = 'ghcr.io/erkkaha/percussionist/memory:latest';
 
 // Embedding / vector memory configuration for per-project memory service.
 export const EmbeddingSpecSchema = z.object({
   enabled: z.boolean().default(false),
-  model: z.string().default("nomic-embed-text"),
+  model: z.string().default('nomic-embed-text'),
   dimensions: z.number().int().default(768),
   ollamaUrl: z.string().optional(),
   resources: ResourceRequirementsSchema.optional(),
@@ -135,7 +137,7 @@ export const SecretsRefSchema = z
     authSecret: z
       .object({
         name: z.string().min(1),
-        key: z.string().default("auth.json"),
+        key: z.string().default('auth.json'),
       })
       .optional(),
 
@@ -144,7 +146,7 @@ export const SecretsRefSchema = z
     configMap: z
       .object({
         name: z.string().min(1),
-        key: z.string().default("opencode.json"),
+        key: z.string().default('opencode.json'),
       })
       .optional(),
   })
@@ -156,9 +158,9 @@ export type SecretsRef = z.infer<typeof SecretsRefSchema>;
 // SSH host key verification modes (used by GitSource)
 
 export const SshHostKeyVerificationModeSchema = z.enum([
-  "strict",     // Always verify host keys against known_hosts; reject unknown hosts.
-  "accept-new", // Accept and cache unknown host keys on first connect; reject changed keys.
-  "no",         // Never verify host keys (equivalent to StrictHostKeyChecking=no). Default for backward compatibility.
+  'strict', // Always verify host keys against known_hosts; reject unknown hosts.
+  'accept-new', // Accept and cache unknown host keys on first connect; reject changed keys.
+  'no', // Never verify host keys (equivalent to StrictHostKeyChecking=no). Default for backward compatibility.
 ]);
 
 export type SshHostKeyVerificationMode = z.infer<typeof SshHostKeyVerificationModeSchema>;
@@ -175,7 +177,7 @@ export const GitSourceSchema = z.object({
   sshSecret: z
     .object({
       name: z.string().min(1),
-      key: z.string().default("ssh-privatekey"),
+      key: z.string().default('ssh-privatekey'),
     })
     .optional(),
   // Reference to a Secret whose `key` holds a GitHub personal access token
@@ -184,7 +186,7 @@ export const GitSourceSchema = z.object({
   githubTokenSecret: z
     .object({
       name: z.string().min(1),
-      key: z.string().default("token"),
+      key: z.string().default('token'),
     })
     .optional(),
   author: z
@@ -197,7 +199,7 @@ export const GitSourceSchema = z.object({
   // git server identity over SSH. Default is "no" for backward compatibility;
   // existing clusters will continue to work without changes. Set to "strict" or
   // "accept-new" to enable host key verification (requires known_hostsSecret).
-  sshHostKeyVerification: SshHostKeyVerificationModeSchema.default("no"),
+  sshHostKeyVerification: SshHostKeyVerificationModeSchema.default('no'),
   // Reference to a Secret containing SSH known_hosts entries. When set and
   // sshHostKeyVerification is "strict" or "accept-new", the operator mounts
   // this secret as /etc/git-ssh/known_hosts in the runner pod so that SSH
@@ -205,7 +207,7 @@ export const GitSourceSchema = z.object({
   known_hostsSecret: z
     .object({
       name: z.string().min(1),
-      key: z.string().default("known_hosts"),
+      key: z.string().default('known_hosts'),
     })
     .optional(),
 });
@@ -221,7 +223,7 @@ export const SourceSchema = z
     local: z.boolean().optional(),
   })
   .refine((s) => !(s.git && s.local), {
-    message: "source.git and source.local are mutually exclusive",
+    message: 'source.git and source.local are mutually exclusive',
   });
 
 export const ExposeSchema = z
@@ -238,13 +240,17 @@ export const ExposeSchema = z
 export const InjectFileRefSchema = z.object({
   // Filename only (no path separators). The file will be mounted at
   // /workspace/<filename> inside the runner container.
-  filename: z.string().min(1).max(255).regex(/^[^/]+$/, "filename must not contain path separators"),
+  filename: z
+    .string()
+    .min(1)
+    .max(255)
+    .regex(/^[^/]+$/, 'filename must not contain path separators'),
 
   // Reference to a K8s Secret holding the file content.
   secretRef: z.object({
     name: z.string().min(1),
     // Key within the Secret whose value is the raw file content.
-    key: z.string().default("content"),
+    key: z.string().default('content'),
   }),
 });
 
@@ -343,7 +349,7 @@ export const ClusterSettingsSpecSchema = z.object({
       configMapRef: z
         .object({
           name: z.string().min(1),
-          key: z.string().default("opencode.json"),
+          key: z.string().default('opencode.json'),
         })
         .optional(),
     })
@@ -351,7 +357,7 @@ export const ClusterSettingsSpecSchema = z.object({
 
   manager: z
     .object({
-      agentName: z.string().default("manager-agent"),
+      agentName: z.string().default('manager-agent'),
       model: z.string().optional(),
       decisionAgentContent: z.string().max(102400).optional(),
       timeoutMs: z.number().int().positive().default(30000),
@@ -361,7 +367,7 @@ export const ClusterSettingsSpecSchema = z.object({
 
   runner: z
     .object({
-      image: z.string().default("ghcr.io/erkkaha/percussionist/runner:latest"),
+      image: z.string().default('ghcr.io/erkkaha/percussionist/runner:latest'),
       timeoutSeconds: z.number().int().positive().default(3600),
       resources: ResourceRequirementsSchema.optional(),
     })
@@ -420,15 +426,14 @@ export type ClusterSettings = z.infer<typeof ClusterSettingsSchema>;
 // Facilitation types — must come before OpenCodeRunSpec which references them.
 
 export const FacilitationAction = {
-  RetrySame: "retry_same",
-  RetryAlternative: "retry_alternative",
-  Skip: "skip",
-  Approve: "approve",
-  RequestChanges: "request_changes",
-  Escalate: "escalate",
+  RetrySame: 'retry_same',
+  RetryAlternative: 'retry_alternative',
+  Skip: 'skip',
+  Approve: 'approve',
+  RequestChanges: 'request_changes',
+  Escalate: 'escalate',
 } as const;
-export type FacilitationAction =
-  (typeof FacilitationAction)[keyof typeof FacilitationAction];
+export type FacilitationAction = (typeof FacilitationAction)[keyof typeof FacilitationAction];
 
 export const FacilitationSpecSchema = z.object({
   targetRunName: z.string().min(1),
@@ -488,7 +493,7 @@ export const RunSpecSchema = z
     inlineAgents: AgentDefSchema.array().max(5).optional(),
 
     model: z.string().optional(),
-    image: z.string().default("ghcr.io/erkkaha/percussionist/runner:latest"),
+    image: z.string().default('ghcr.io/erkkaha/percussionist/runner:latest'),
     dispatcher: z
       .object({
         image: z.string().optional(),
@@ -503,23 +508,27 @@ export const RunSpecSchema = z
     sidecars: SidecarSpecSchema.array().max(5).optional(),
 
     // Files to inject into /workspace/<filename> inside the runner container.
-  // Content is stored in K8s Secrets and mounted via subPath volumes.
-  injectFiles: InjectFileRefSchema.array().max(20).optional(),
+    // Content is stored in K8s Secrets and mounted via subPath volumes.
+    injectFiles: InjectFileRefSchema.array().max(20).optional(),
 
-  // Shell script to run after git clone completes, before opencode starts.
-  // Inherited from the parent OpenCodeProject at creation time.
-  initScript: z.string().optional(),
+    // Shell script to run after git clone completes, before opencode starts.
+    // Inherited from the parent OpenCodeProject at creation time.
+    initScript: z.string().optional(),
 
     timeoutSeconds: z.number().int().positive().default(3600),
-    ttlSecondsAfterFinished: z.number().int().nonnegative().default(7 * 86400),
+    ttlSecondsAfterFinished: z
+      .number()
+      .int()
+      .nonnegative()
+      .default(7 * 86400),
     expose: ExposeSchema.optional(),
 
     // Data PVC configuration — backs package manager caches, git mirrors,
     // worktrees, and local workspaces for the project.
     data: z
       .object({
-        pvcName: z.string().optional(),    // defaults to `{project}-data`
-        mountPath: z.string().default("/data"),
+        pvcName: z.string().optional(), // defaults to `{project}-data`
+        mountPath: z.string().default('/data'),
         storageClass: z.string().optional(), // defaults to cluster default
       })
       .optional(),
@@ -539,20 +548,20 @@ export const RunSpecSchema = z
     runner: RunnerPackagesSchema,
   })
   .refine((s) => s.interactive || !!s.task, {
-    message: "spec.task is required unless spec.interactive is true",
-    path: ["task"],
+    message: 'spec.task is required unless spec.interactive is true',
+    path: ['task'],
   });
 
 export type RunSpec = z.infer<typeof RunSpecSchema>;
 
 export const RunPhase = {
-  Pending: "Pending",
-  Initializing: "Initializing",
-  Running: "Running",
-  WaitingForInput: "WaitingForInput",
-  Succeeded: "Succeeded",
-  Failed: "Failed",
-  Cancelled: "Cancelled",
+  Pending: 'Pending',
+  Initializing: 'Initializing',
+  Running: 'Running',
+  WaitingForInput: 'WaitingForInput',
+  Succeeded: 'Succeeded',
+  Failed: 'Failed',
+  Cancelled: 'Cancelled',
 } as const;
 export type RunPhase = (typeof RunPhase)[keyof typeof RunPhase];
 
@@ -588,7 +597,7 @@ export const RunStatusSchema = z
       .array(
         z.object({
           type: z.string(),
-          status: z.enum(["True", "False", "Unknown"]),
+          status: z.enum(['True', 'False', 'Unknown']),
           reason: z.string().optional(),
           message: z.string().optional(),
           lastTransitionTime: z.string().optional(),
@@ -653,68 +662,68 @@ export type Run = z.infer<typeof RunSchema>;
 
 // Task type enum
 export const TaskType = {
-  Plan: "PLAN",
-  Build: "BUILD",
+  Plan: 'PLAN',
+  Build: 'BUILD',
 } as const;
 export type TaskType = (typeof TaskType)[keyof typeof TaskType];
 
 // New task phase enum — authoritative internal state
 export const TaskPhase = z.enum([
   // Pre-work
-  "idea",              // Parking lot, not actionable
-  "pending",           // Well-defined, waiting for scheduling
+  'idea', // Parking lot, not actionable
+  'pending', // Well-defined, waiting for scheduling
   // Active work
-  "scheduled",         // Scheduler picked it, run being created
-  "initializing",      // Pod starting, git checkout in progress
-  "running",           // Agent actively working
-  "waiting-for-input", // PLAN-only: agent asked a question
+  'scheduled', // Scheduler picked it, run being created
+  'initializing', // Pod starting, git checkout in progress
+  'running', // Agent actively working
+  'waiting-for-input', // PLAN-only: agent asked a question
   // Post-work
-  "succeeded",         // Run completed successfully
-  "reviewing",         // AI reviewer evaluating (optional)
-  "awaiting-human",    // Needs human decision (approve/reject/answer question)
-  "awaiting-merge",    // Merge run in progress
-  "rework-requested",  // Human gave feedback, waiting for scheduling slot
-  "generating-builds", // PLAN-only: buildgen facilitator splitting into tasks
-  "awaiting-children",     // Waiting for all child tasks to complete
-  "awaiting-feature-merge", // Feature branch merge run in progress
+  'succeeded', // Run completed successfully
+  'reviewing', // AI reviewer evaluating (optional)
+  'awaiting-human', // Needs human decision (approve/reject/answer question)
+  'awaiting-merge', // Merge run in progress
+  'rework-requested', // Human gave feedback, waiting for scheduling slot
+  'generating-builds', // PLAN-only: buildgen facilitator splitting into tasks
+  'awaiting-children', // Waiting for all child tasks to complete
+  'awaiting-feature-merge', // Feature branch merge run in progress
   // Terminal
-  "done",              // Complete
+  'done', // Complete
   // Failure
-  "failed",            // Run failed, needs human decision
+  'failed', // Run failed, needs human decision
 ]);
 export type TaskPhase = z.infer<typeof TaskPhase>;
 
 // Board column enum — computed client-side from phase, never stored
-export const BoardColumn = z.enum(["ideas", "backlog", "in-progress", "review", "done", "blocked"]);
+export const BoardColumn = z.enum(['ideas', 'backlog', 'in-progress', 'review', 'done', 'blocked']);
 export type BoardColumn = z.infer<typeof BoardColumn>;
 
 // Compute board column from task phase
 export function computeBoardColumn(phase: TaskPhase): BoardColumn {
-  if (phase === "idea") return "ideas";
-  if (phase === "pending") return "backlog";
-  if (phase === "done") return "done";
-  if (phase === "awaiting-children") return "blocked";
-  if (["waiting-for-input", "succeeded", "reviewing", "awaiting-human", "failed"].includes(phase))
-    return "review";
-  return "in-progress";
+  if (phase === 'idea') return 'ideas';
+  if (phase === 'pending') return 'backlog';
+  if (phase === 'done') return 'done';
+  if (phase === 'awaiting-children') return 'blocked';
+  if (['waiting-for-input', 'succeeded', 'reviewing', 'awaiting-human', 'failed'].includes(phase))
+    return 'review';
+  return 'in-progress';
 }
 
 // Legacy task column enum — kept for backwards compatibility during migration
 export const TaskColumn = {
-  Backlog: "backlog",
-  Ready: "ready",
-  InProgress: "in-progress",
-  Review: "review",
-  Rework: "rework",
-  Done: "done",
-  Blocked: "blocked",
+  Backlog: 'backlog',
+  Ready: 'ready',
+  InProgress: 'in-progress',
+  Review: 'review',
+  Rework: 'rework',
+  Done: 'done',
+  Blocked: 'blocked',
 } as const;
 export type TaskColumn = (typeof TaskColumn)[keyof typeof TaskColumn];
 
 // Per-worker execution tracking — now lives in Task.status.worker.
 export const WorkerStatusSchema = z.object({
   runName: z.string().optional(),
-  status: z.enum(["Running", "Succeeded", "Failed", "Escalated"]),
+  status: z.enum(['Running', 'Succeeded', 'Failed', 'Escalated']),
   branch: z.string().optional(),
   // Feature branching metadata (when featureBranchingEnabled: true).
   gitBranch: z.string().optional(),
@@ -744,7 +753,7 @@ export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;
 
 // Review record for append-only review history on Task.status
 export const ReviewRecordSchema = z.object({
-  action: z.enum(["approve", "request_changes", "escalate"]),
+  action: z.enum(['approve', 'request_changes', 'escalate']),
   diagnosis: z.string().max(1024).optional(),
   feedback: z.string().max(4096).optional(),
   reviewRunName: z.string().optional(),
@@ -768,7 +777,7 @@ export const ManagerMetricsSchema = z.object({
   /** Duration of the last reconcile in milliseconds. */
   lastReconcileDurationMs: z.number().int().nonnegative().optional(),
   /** Result of the last reconcile: "success", "error", or undefined if never reconciled. */
-  lastReconcileResult: z.enum(["success", "error"]).optional(),
+  lastReconcileResult: z.enum(['success', 'error']).optional(),
   /** Error message from the last failed reconcile (if any). */
   lastError: z.string().optional(),
   /** Number of tasks pulled from ready this cycle. */
@@ -784,8 +793,8 @@ export type ManagerMetrics = z.infer<typeof ManagerMetricsSchema>;
 // Project-level board status summary — only lightweight metrics remain here.
 // Full task state lives in Task CRs.
 export const SuggestionSchema = z.object({
-  type: z.enum(["missing_tool", "performance", "reliability"]),
-  severity: z.enum(["info", "suggestion", "warning"]),
+  type: z.enum(['missing_tool', 'performance', 'reliability']),
+  severity: z.enum(['info', 'suggestion', 'warning']),
   source: z.string(),
   message: z.string(),
   recommendation: z.string(),
@@ -857,13 +866,13 @@ export const ProjectSpecSchema = z.object({
   agents: AgentRefSchema.array().optional(),
 
   // Board lifecycle phase.
-  phase: z.enum(["Active", "Complete", "Archived"]).default("Active"),
+  phase: z.enum(['Active', 'Complete', 'Archived']).default('Active'),
 
   // Data PVC configuration — shared cache, git mirrors and worktrees.
   data: z
     .object({
-      pvcName: z.string().optional(),    // defaults to `{project}-data`
-      mountPath: z.string().default("/data"),
+      pvcName: z.string().optional(), // defaults to `{project}-data`
+      mountPath: z.string().default('/data'),
       storageClass: z.string().optional(),
     })
     .optional(),
@@ -879,76 +888,98 @@ export const ProjectSpecSchema = z.object({
   // PLAN tasks use feature/{plan-id}, BUILD tasks use feature/{plan-id}/{build-id}.
   // Default: false (all tasks work on main branch).
   featureBranchingEnabled: z.boolean().default(false),
-  
+
   // Retry policy — auto-retry behavior on task failure.
-  retryPolicy: z.object({
-    enabled: z.boolean().default(false),
-    maxAttempts: z.number().int().min(1).max(10).default(3),
-    backoffSeconds: z.number().int().min(5).max(600).default(30),
-    backoffMultiplier: z.number().min(1).max(5).default(2),
-    maxBackoffSeconds: z.number().int().min(5).max(3600).default(300),
-    poisonPillThresholdSeconds: z.number().int().min(0).max(300).default(30),
-  }).optional(),
-  
+  retryPolicy: z
+    .object({
+      enabled: z.boolean().default(false),
+      maxAttempts: z.number().int().min(1).max(10).default(3),
+      backoffSeconds: z.number().int().min(5).max(600).default(30),
+      backoffMultiplier: z.number().min(1).max(5).default(2),
+      maxBackoffSeconds: z.number().int().min(5).max(3600).default(300),
+      poisonPillThresholdSeconds: z.number().int().min(0).max(300).default(30),
+    })
+    .optional(),
+
   // Review policy — AI reviewer opt-in and rework ceiling.
-  reviewPolicy: z.object({
-    aiReviewerEnabled: z.boolean().default(false),
-    aiReviewerAgent: z.string().max(63).default("reviewer"),
-    maxAutoReworks: z.number().int().min(1).max(10).default(2),
-  }).optional(),
+  reviewPolicy: z
+    .object({
+      aiReviewerEnabled: z.boolean().default(false),
+      aiReviewerAgent: z.string().max(63).default('reviewer'),
+      maxAutoReworks: z.number().int().min(1).max(10).default(2),
+    })
+    .optional(),
 
   // Flow configuration — user-configurable task lifecycle.
   // Presets provide sensible defaults; individual fields override preset behavior.
-  flow: z.object({
-    preset: z.enum([
-      "simple",
-      "review",
-      "plan-build",
-      "plan-build-review-merge",
-    ]).default("plan-build-review-merge"),
-    humanApproval: z.object({
-      plan: z.enum(["required", "disabled"]).default("required").optional(),
-      build: z.enum(["required", "disabled"]).default("required").optional(),
-    }).optional(),
-    plan: z.object({
-      onApprove: z.enum(["generate-builds", "done"]).default("generate-builds").optional(),
-      buildGeneration: z.enum(["ai", "manual", "disabled"]).default("ai").optional(),
-      buildGenerationAgent: z.string().max(63).default("buildgen").optional(),
-      defaultAgent: z.string().max(63).default("planner").optional(),
-    }).optional(),
-    build: z.object({
-      onSuccess: z.enum(["human-review", "ai-review", "done"]).default("human-review").optional(),
-      onApprove: z.enum(["merge", "done"]).default("merge").optional(),
-      defaultAgent: z.string().max(63).default("builder").optional(),
-    }).optional(),
-    merge: z.object({
-      mode: z.enum(["auto", "manual", "disabled"]).default("auto").optional(),
-      agent: z.string().max(63).default("integrator").optional(),
-    }).optional(),
-    integration: z.object({
-      mode: z.enum(["auto-merge", "manual", "disabled"]).default("auto-merge").optional(),
-      agent: z.string().max(63).default("integrator").optional(),
-    }).optional(),
-    review: z.object({
-      aiReviewerEnabled: z.boolean().default(false).optional(),
-      agent: z.string().max(63).default("reviewer").optional(),
-      maxAutoReworks: z.number().int().min(1).max(10).default(2).optional(),
-    }).optional(),
-    retry: z.object({
-      enabled: z.boolean().default(false).optional(),
-      maxAttempts: z.number().int().min(1).max(10).default(3).optional(),
-      backoffSeconds: z.number().int().min(5).max(600).default(30).optional(),
-      backoffMultiplier: z.number().min(1).max(5).default(2).optional(),
-      maxBackoffSeconds: z.number().int().min(5).max(3600).default(300).optional(),
-      poisonPillThresholdSeconds: z.number().int().min(0).max(300).default(30).optional(),
-    }).optional(),
-    timeouts: z.object({
-      runningStaleSeconds: z.number().int().min(30).max(86400).default(1800).optional(),
-      reviewStaleSeconds: z.number().int().min(30).max(86400).default(600).optional(),
-      mergeStaleSeconds: z.number().int().min(30).max(86400).default(600).optional(),
-      buildgenStaleSeconds: z.number().int().min(30).max(86400).default(600).optional(),
-    }).optional(),
-  }).optional(),
+  flow: z
+    .object({
+      preset: z
+        .enum(['simple', 'review', 'plan-build', 'plan-build-review-merge'])
+        .default('plan-build-review-merge'),
+      humanApproval: z
+        .object({
+          plan: z.enum(['required', 'disabled']).default('required').optional(),
+          build: z.enum(['required', 'disabled']).default('required').optional(),
+        })
+        .optional(),
+      plan: z
+        .object({
+          onApprove: z.enum(['generate-builds', 'done']).default('generate-builds').optional(),
+          buildGeneration: z.enum(['ai', 'manual', 'disabled']).default('ai').optional(),
+          buildGenerationAgent: z.string().max(63).default('buildgen').optional(),
+          defaultAgent: z.string().max(63).default('planner').optional(),
+        })
+        .optional(),
+      build: z
+        .object({
+          onSuccess: z
+            .enum(['human-review', 'ai-review', 'done'])
+            .default('human-review')
+            .optional(),
+          onApprove: z.enum(['merge', 'done']).default('merge').optional(),
+          defaultAgent: z.string().max(63).default('builder').optional(),
+        })
+        .optional(),
+      merge: z
+        .object({
+          mode: z.enum(['auto', 'manual', 'disabled']).default('auto').optional(),
+          agent: z.string().max(63).default('integrator').optional(),
+        })
+        .optional(),
+      integration: z
+        .object({
+          mode: z.enum(['auto-merge', 'manual', 'disabled']).default('auto-merge').optional(),
+          agent: z.string().max(63).default('integrator').optional(),
+        })
+        .optional(),
+      review: z
+        .object({
+          aiReviewerEnabled: z.boolean().default(false).optional(),
+          agent: z.string().max(63).default('reviewer').optional(),
+          maxAutoReworks: z.number().int().min(1).max(10).default(2).optional(),
+        })
+        .optional(),
+      retry: z
+        .object({
+          enabled: z.boolean().default(false).optional(),
+          maxAttempts: z.number().int().min(1).max(10).default(3).optional(),
+          backoffSeconds: z.number().int().min(5).max(600).default(30).optional(),
+          backoffMultiplier: z.number().min(1).max(5).default(2).optional(),
+          maxBackoffSeconds: z.number().int().min(5).max(3600).default(300).optional(),
+          poisonPillThresholdSeconds: z.number().int().min(0).max(300).default(30).optional(),
+        })
+        .optional(),
+      timeouts: z
+        .object({
+          runningStaleSeconds: z.number().int().min(30).max(86400).default(1800).optional(),
+          reviewStaleSeconds: z.number().int().min(30).max(86400).default(600).optional(),
+          mergeStaleSeconds: z.number().int().min(30).max(86400).default(600).optional(),
+          buildgenStaleSeconds: z.number().int().min(30).max(86400).default(600).optional(),
+        })
+        .optional(),
+    })
+    .optional(),
 
   // Per-project code-server for interactive workspace access.
   // Requires source.git or source.local (needs a data PVC to mount).
@@ -1012,7 +1043,7 @@ export const TaskSpecSchema = z.object({
   projectRef: z.string().min(1),
 
   // Task type.
-  type: z.enum(["PLAN", "BUILD"]),
+  type: z.enum(['PLAN', 'BUILD']),
 
   // Short human-readable title shown on the task card.
   title: z.string().min(1).max(256),
@@ -1021,7 +1052,7 @@ export const TaskSpecSchema = z.object({
   description: z.string().max(8192).optional(),
 
   // Priority for ordering within a column.
-  priority: z.enum(["high", "medium", "low"]).default("medium"),
+  priority: z.enum(['high', 'medium', 'low']).default('medium'),
 
   // Which ClusterAgent from the project's agents list handles this task.
   agent: z.string().min(1),
@@ -1035,41 +1066,45 @@ export const TaskSpecSchema = z.object({
 
   // BUILD only: CR name of the following BUILD task in the serial chain.
   successorRef: z.string().optional(),
-  
+
   // Task-level retry policy override (merges with project-level policy).
-  retryPolicy: z.object({
-    enabled: z.boolean().optional(),
-    maxAttempts: z.number().int().min(1).max(10).optional(),
-    backoffSeconds: z.number().int().min(5).max(600).optional(),
-  }).optional(),
+  retryPolicy: z
+    .object({
+      enabled: z.boolean().optional(),
+      maxAttempts: z.number().int().min(1).max(10).optional(),
+      backoffSeconds: z.number().int().min(5).max(600).optional(),
+    })
+    .optional(),
 });
 
 export type TaskSpec = z.infer<typeof TaskSpecSchema>;
 
-export const TaskStatusSchema = z.object({
-  // Internal phase — authoritative state for reconciler logic.
-  phase: TaskPhase.default("pending"),
-  
-  // Blocked flag — when true, task is excluded from scheduling regardless of phase.
-  blocked: z.boolean().default(false),
-  blockedReason: z.string().max(1024).optional(),
-  
-  // Retry backoff — when set, scheduler skips this task until retryAfter time passes.
-  retryAfter: z.string().optional(),
-  lastFailureReason: z.string().max(4096).optional(),
-  lastFailureDuration: z.number().optional(),
-  
-  // Legacy column field — kept for backwards compatibility, never written by new code.
-  column: z
-    .enum(["backlog", "ready", "in-progress", "review", "rework", "done", "blocked"])
-    .optional(),
+export const TaskStatusSchema = z
+  .object({
+    // Internal phase — authoritative state for reconciler logic.
+    phase: TaskPhase.default('pending'),
 
-  // Worker execution state — set when phase is scheduled or beyond.
-  worker: WorkerStatusSchema.optional(),
-  
-  // Append-only review history records.
-  reviews: ReviewRecordSchema.array().optional(),
-}).partial();
+    // Blocked flag — when true, task is excluded from scheduling regardless of phase.
+    blocked: z.boolean().default(false),
+    blockedReason: z.string().max(1024).optional(),
+
+    // Retry backoff — when set, scheduler skips this task until retryAfter time passes.
+    retryAfter: z.string().optional(),
+    lastFailureReason: z.string().max(4096).optional(),
+    lastFailureDuration: z.number().optional(),
+
+    // Legacy column field — kept for backwards compatibility, never written by new code.
+    column: z
+      .enum(['backlog', 'ready', 'in-progress', 'review', 'rework', 'done', 'blocked'])
+      .optional(),
+
+    // Worker execution state — set when phase is scheduled or beyond.
+    worker: WorkerStatusSchema.optional(),
+
+    // Append-only review history records.
+    reviews: ReviewRecordSchema.array().optional(),
+  })
+  .partial();
 
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
@@ -1111,20 +1146,20 @@ export type Task = z.infer<typeof TaskSchema>;
 // Well-known label/annotation keys and container naming.
 
 export const LABELS = {
-  managedBy: "app.kubernetes.io/managed-by",
-  component: "percussionist.dev/component",
-  runName: "percussionist.dev/run",
-  projectName: "percussionist.dev/project",
-  taskId: "percussionist.dev/task-id",
+  managedBy: 'app.kubernetes.io/managed-by',
+  component: 'percussionist.dev/component',
+  runName: 'percussionist.dev/run',
+  projectName: 'percussionist.dev/project',
+  taskId: 'percussionist.dev/task-id',
 } as const;
 
 /** Annotation key prefixes used for board actions. */
 export const ANNOTATION_PREFIXES = [
-  "approved",
-  "request-changes",
-  "rework",
-  "abandon",
-  "answer",
+  'approved',
+  'request-changes',
+  'rework',
+  'abandon',
+  'answer',
 ] as const;
 
 /**
@@ -1137,26 +1172,26 @@ export function annotationKey(prefix: string, taskName: string): string {
   if (key.length <= 63) return key;
   let hash = 0;
   for (let i = 0; i < taskName.length; i++) {
-    hash = ((hash << 5) - hash) + taskName.charCodeAt(i);
+    hash = (hash << 5) - hash + taskName.charCodeAt(i);
     hash |= 0;
   }
   const hashStr = Math.abs(hash).toString(36).slice(0, 6);
   const maxPrefix = 63 - hashStr.length - 1;
-  return `${key.slice(0, maxPrefix).replace(/-+$/, "")}-${hashStr}`;
+  return `${key.slice(0, maxPrefix).replace(/-+$/, '')}-${hashStr}`;
 }
 
-export const MANAGED_BY = "percussionist";
+export const MANAGED_BY = 'percussionist';
 
 export const CONTAINER_PORT = 4096;
 // MCP server port served by the dispatcher sidecar. Chosen to be adjacent to
 // CONTAINER_PORT and unlikely to clash with common development tooling.
 export const DISPATCHER_MCP_PORT = 4097;
-export const RUNNER_CONTAINER = "opencode";
-export const DISPATCHER_CONTAINER = "dispatcher";
-export const GIT_CLONE_CONTAINER = "workspace-init";
-export const CODE_SERVER_CONTAINER = "code-server";
+export const RUNNER_CONTAINER = 'opencode';
+export const DISPATCHER_CONTAINER = 'dispatcher';
+export const GIT_CLONE_CONTAINER = 'workspace-init';
+export const CODE_SERVER_CONTAINER = 'code-server';
 export const CODE_SERVER_PORT = 8080;
-export const CODE_SERVER_DEFAULT_IMAGE = "codercom/code-server:4.96.4";
+export const CODE_SERVER_DEFAULT_IMAGE = 'codercom/code-server:4.96.4';
 
 // ---------------------------------------------------------------------------
 // Config resolution helpers.
@@ -1185,7 +1220,12 @@ export interface ResolvedRunConfig {
 //   runOverrides  >  project  >  clusterBase
 export function resolveRunConfig(
   project: ProjectSpec,
-  boardOverrides?: { model?: string; image?: string; timeoutSeconds?: number; resources?: ResourceRequirements },
+  boardOverrides?: {
+    model?: string;
+    image?: string;
+    timeoutSeconds?: number;
+    resources?: ResourceRequirements;
+  },
   runOverrides?: Partial<ResolvedRunConfig>,
   clusterBase?: {
     runner?: { image?: string; timeoutSeconds?: number; resources?: ResourceRequirements };
@@ -1193,16 +1233,13 @@ export function resolveRunConfig(
   },
 ): ResolvedRunConfig {
   return {
-    model:
-      runOverrides?.model ??
-      boardOverrides?.model ??
-      project.model,
+    model: runOverrides?.model ?? boardOverrides?.model ?? project.model,
     image:
       runOverrides?.image ??
       boardOverrides?.image ??
       project.image ??
       clusterBase?.runner?.image ??
-      "ghcr.io/erkkaha/percussionist/runner:latest",
+      'ghcr.io/erkkaha/percussionist/runner:latest',
     timeoutSeconds:
       runOverrides?.timeoutSeconds ??
       boardOverrides?.timeoutSeconds ??
@@ -1224,4 +1261,3 @@ export function resolveRunConfig(
     packages: runOverrides?.packages ?? project.runner?.packages,
   };
 }
-

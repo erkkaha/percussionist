@@ -9,15 +9,15 @@ export class KubectlError extends Error {
     public readonly exitCode: number,
     public readonly stderr: string,
   ) {
-    super(`kubectl ${args.join(" ")} exited ${exitCode}: ${stderr.trim()}`);
+    super(`kubectl ${args.join(' ')} exited ${exitCode}: ${stderr.trim()}`);
   }
 }
 
 /** Run kubectl with the given args. Returns trimmed stdout. Throws on non-zero exit. */
 export async function kubectl(args: string[]): Promise<string> {
-  const proc = Bun.spawn(["kubectl", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
+  const proc = Bun.spawn(['kubectl', ...args], {
+    stdout: 'pipe',
+    stderr: 'pipe',
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -47,24 +47,21 @@ export async function kubectlSilent(args: string[]): Promise<string | null> {
  * Pipes the YAML to stdin.
  */
 export async function kubectlApply(yaml: string): Promise<void> {
-  const proc = Bun.spawn(["kubectl", "apply", "-f", "-"], {
+  const proc = Bun.spawn(['kubectl', 'apply', '-f', '-'], {
     stdin: new TextEncoder().encode(yaml),
-    stdout: "pipe",
-    stderr: "pipe",
+    stdout: 'pipe',
+    stderr: 'pipe',
   });
-  const [stderr, exitCode] = await Promise.all([
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
   if (exitCode !== 0) {
-    throw new KubectlError(["apply", "-f", "-"], exitCode, stderr);
+    throw new KubectlError(['apply', '-f', '-'], exitCode, stderr);
   }
 }
 
 /** Apply one or more YAML files by path. */
 export async function kubectlApplyFile(path: string, serverSide = false): Promise<void> {
-  const args = ["apply", "-f", path];
-  if (serverSide) args.push("--server-side");
+  const args = ['apply', '-f', path];
+  if (serverSide) args.push('--server-side');
   await kubectlSilent(args); // warnings about unchanged resources are fine
 }
 
@@ -75,17 +72,7 @@ export async function kubectlGetField(
   ns: string,
   jsonpath: string,
 ): Promise<string> {
-  return (
-    (await kubectlSilent([
-      "get",
-      kind,
-      name,
-      "-n",
-      ns,
-      `-o`,
-      `jsonpath=${jsonpath}`,
-    ])) ?? ""
-  );
+  return (await kubectlSilent(['get', kind, name, '-n', ns, `-o`, `jsonpath=${jsonpath}`])) ?? '';
 }
 
 /** List resource names matching an optional label selector. */
@@ -94,20 +81,12 @@ export async function kubectlGetNames(
   ns: string,
   labelSelector?: string,
 ): Promise<string[]> {
-  const args = [
-    "get",
-    kind,
-    "-n",
-    ns,
-    "--no-headers",
-    "-o",
-    "custom-columns=NAME:.metadata.name",
-  ];
-  if (labelSelector) args.push("-l", labelSelector);
+  const args = ['get', kind, '-n', ns, '--no-headers', '-o', 'custom-columns=NAME:.metadata.name'];
+  if (labelSelector) args.push('-l', labelSelector);
   const out = await kubectlSilent(args);
   if (!out) return [];
   return out
-    .split("\n")
+    .split('\n')
     .map((l) => l.trim())
     .filter(Boolean);
 }
@@ -119,7 +98,7 @@ export async function kubectlSetEnv(
   envPairs: Record<string, string>,
 ): Promise<void> {
   const pairs = Object.entries(envPairs).map(([k, v]) => `${k}=${v}`);
-  await kubectl(["set", "env", `deployment/${deployment}`, "-n", ns, ...pairs]);
+  await kubectl(['set', 'env', `deployment/${deployment}`, '-n', ns, ...pairs]);
 }
 
 /** `kubectl rollout status deployment/<name> -n <ns> --timeout=<s>s` */
@@ -129,10 +108,10 @@ export async function kubectlRolloutStatus(
   timeoutSec: number,
 ): Promise<void> {
   await kubectl([
-    "rollout",
-    "status",
+    'rollout',
+    'status',
     `deployment/${deployment}`,
-    "-n",
+    '-n',
     ns,
     `--timeout=${timeoutSec}s`,
   ]);
@@ -140,30 +119,26 @@ export async function kubectlRolloutStatus(
 
 /** `kubectl get namespace <ns>` — returns true if it exists. */
 export async function namespaceExists(ns: string): Promise<boolean> {
-  const out = await kubectlSilent(["get", "namespace", ns]);
+  const out = await kubectlSilent(['get', 'namespace', ns]);
   return out !== null;
 }
 
 /** `kubectl create namespace <ns>` if it doesn't already exist. */
 export async function ensureNamespace(ns: string): Promise<void> {
   if (!(await namespaceExists(ns))) {
-    await kubectl(["create", "namespace", ns]);
+    await kubectl(['create', 'namespace', ns]);
   }
 }
 
 /** `kubectl delete namespace <ns> --ignore-not-found --wait=false` */
 export async function deleteNamespace(ns: string): Promise<void> {
-  await kubectlSilent(["delete", "namespace", ns, "--ignore-not-found", "--wait=false"]);
+  await kubectlSilent(['delete', 'namespace', ns, '--ignore-not-found', '--wait=false']);
 }
 
 /** `kubectl delete <kind> <name> --ignore-not-found` */
-export async function deleteResource(
-  kind: string,
-  name: string,
-  ns?: string,
-): Promise<void> {
-  const args = ["delete", kind, name, "--ignore-not-found"];
-  if (ns) args.push("-n", ns);
+export async function deleteResource(kind: string, name: string, ns?: string): Promise<void> {
+  const args = ['delete', kind, name, '--ignore-not-found'];
+  if (ns) args.push('-n', ns);
   await kubectlSilent(args);
 }
 
@@ -176,15 +151,15 @@ export async function boardJson(
   operatorNs: string,
 ): Promise<Record<string, unknown>> {
   const out = await kubectlSilent([
-    "exec",
-    "-n",
+    'exec',
+    '-n',
     operatorNs,
-    "deployment/percussionist-web",
-    "-c",
-    "web",
-    "--",
-    "wget",
-    "-qO-",
+    'deployment/percussionist-web',
+    '-c',
+    'web',
+    '--',
+    'wget',
+    '-qO-',
     `http://127.0.0.1:8080/api/board/${project}`,
   ]);
   if (!out) return {};
@@ -201,37 +176,37 @@ export async function boardJson(
  */
 export async function createLLMSecret(ns: string, secretName: string): Promise<void> {
   const literals: string[] = [];
-  if (process.env["ANTHROPIC_API_KEY"])
-    literals.push(`--from-literal=ANTHROPIC_API_KEY=${process.env["ANTHROPIC_API_KEY"]}`);
-  if (process.env["OPENAI_API_KEY"])
-    literals.push(`--from-literal=OPENAI_API_KEY=${process.env["OPENAI_API_KEY"]}`);
-  if (process.env["GITHUB_TOKEN"])
-    literals.push(`--from-literal=GITHUB_TOKEN=${process.env["GITHUB_TOKEN"]}`);
-  if (literals.length === 0) literals.push("--from-literal=PLACEHOLDER=unused");
+  if (process.env.ANTHROPIC_API_KEY)
+    literals.push(`--from-literal=ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
+  if (process.env.OPENAI_API_KEY)
+    literals.push(`--from-literal=OPENAI_API_KEY=${process.env.OPENAI_API_KEY}`);
+  if (process.env.GITHUB_TOKEN)
+    literals.push(`--from-literal=GITHUB_TOKEN=${process.env.GITHUB_TOKEN}`);
+  if (literals.length === 0) literals.push('--from-literal=PLACEHOLDER=unused');
 
   // dry-run + pipe to apply so it's idempotent
   const dryRun = Bun.spawn(
     [
-      "kubectl",
-      "-n",
+      'kubectl',
+      '-n',
       ns,
-      "create",
-      "secret",
-      "generic",
+      'create',
+      'secret',
+      'generic',
       secretName,
       ...literals,
-      "--dry-run=client",
-      "-o",
-      "yaml",
+      '--dry-run=client',
+      '-o',
+      'yaml',
     ],
-    { stdout: "pipe", stderr: "pipe" },
+    { stdout: 'pipe', stderr: 'pipe' },
   );
   const [yaml, drStderr, drExit] = await Promise.all([
     new Response(dryRun.stdout).text(),
     new Response(dryRun.stderr).text(),
     dryRun.exited,
   ]);
-  if (drExit !== 0) throw new KubectlError(["create", "secret", "..."], drExit, drStderr);
+  if (drExit !== 0) throw new KubectlError(['create', 'secret', '...'], drExit, drStderr);
   await kubectlApply(yaml);
 }
 
@@ -254,14 +229,14 @@ export async function kubectlExec(
   container: string | undefined,
   command: string[],
 ): Promise<string> {
-  const args = ["exec", "-n", namespace, target, "--"];
-  if (container) args.splice(3, 0, "-c", container);
+  const args = ['exec', '-n', namespace, target, '--'];
+  if (container) args.splice(3, 0, '-c', container);
   // Insert -- before the user command so kubectl doesn't interpret flags as its own.
   const fullArgs = [...args, ...command];
 
-  const proc = Bun.spawn(["kubectl", ...fullArgs], {
-    stdout: "pipe",
-    stderr: "pipe",
+  const proc = Bun.spawn(['kubectl', ...fullArgs], {
+    stdout: 'pipe',
+    stderr: 'pipe',
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -303,12 +278,12 @@ export async function kubectlGetJSON<T = unknown>(
   name: string,
   ns: string,
 ): Promise<T> {
-  const raw = await kubectl(["get", kind, name, "-n", ns, "-o", "json"]);
+  const raw = await kubectl(['get', kind, name, '-n', ns, '-o', 'json']);
   try {
     return JSON.parse(raw) as T;
   } catch {
     throw new KubectlError(
-      ["get", kind, name, "-n", ns, "-o", "json"],
+      ['get', kind, name, '-n', ns, '-o', 'json'],
       -1,
       `Invalid JSON response: ${raw.slice(0, 256)}`,
     );
@@ -336,13 +311,9 @@ export async function kubectlGetJSONSilent<T = unknown>(
 export function parseKubectlJSON<T = unknown>(raw: string, label?: string): T {
   try {
     return JSON.parse(raw) as T;
-  } catch (cause) {
-    const snippet = raw.slice(0, 256).replace(/\n/g, "\\n");
-    throw new KubectlError(
-      ["parse"],
-      -1,
-      `${label ? label + ": " : ""}Invalid JSON: ${snippet}`,
-    );
+  } catch (_cause) {
+    const snippet = raw.slice(0, 256).replace(/\n/g, '\\n');
+    throw new KubectlError(['parse'], -1, `${label ? `${label}: ` : ''}Invalid JSON: ${snippet}`);
   }
 }
 
@@ -353,12 +324,8 @@ export function parseKubectlJSON<T = unknown>(raw: string, label?: string): T {
 /**
  * Describe a resource by name/kind/namespace — returns the full JSON representation.
  */
-export async function describeResource(
-  kind: string,
-  name: string,
-  ns: string,
-): Promise<string> {
-  return await kubectl(["describe", kind, name, "-n", ns]);
+export async function describeResource(kind: string, name: string, ns: string): Promise<string> {
+  return await kubectl(['describe', kind, name, '-n', ns]);
 }
 
 /**
@@ -369,8 +336,8 @@ export async function describeResourceSilent(
   name: string,
   ns: string,
 ): Promise<string> {
-  const out = await kubectlSilent(["describe", kind, name, "-n", ns]);
-  return out ?? "(not found)";
+  const out = await kubectlSilent(['describe', kind, name, '-n', ns]);
+  return out ?? '(not found)';
 }
 
 /**
@@ -384,40 +351,49 @@ export async function logsForRun(
   const result: Record<string, string> = {};
 
   // Get the pod name for this run (runs are typically pods with matching names)
-  const podName = await kubectlGetField("pods", runName, ns, "{.metadata.name}");
+  const podName = await kubectlGetField('pods', runName, ns, '{.metadata.name}');
   if (!podName) {
     return result;
   }
 
   // List containers in the pod
   const containerNamesRaw = await kubectlSilent([
-    "get",
-    "pod",
+    'get',
+    'pod',
     runName,
-    "-n",
+    '-n',
     ns,
-    "-o",
+    '-o',
     "jsonpath={range .spec.containers[*]}{.name}{'\\n'}{end}",
   ]);
 
-  const containers = containerNamesRaw
-    ?.split("\n")
-    .map((c) => c.trim())
-    .filter(Boolean) ?? [];
+  const containers =
+    containerNamesRaw
+      ?.split('\n')
+      .map((c) => c.trim())
+      .filter(Boolean) ?? [];
 
   for (const container of containers) {
     if (options?.container && options.container !== container) continue;
     try {
-      const tailFlag = options?.tailLines ? `--tail=${options.tailLines}` : "";
-      const logs = await kubectlExec(ns, runName, container, ["sh", "-c", `cat /tmp/opencode/session.log 2>/dev/null || echo "no session log"`]);
+      const _tailFlag = options?.tailLines ? `--tail=${options.tailLines}` : '';
+      const logs = await kubectlExec(ns, runName, container, [
+        'sh',
+        '-c',
+        `cat /tmp/opencode/session.log 2>/dev/null || echo "no session log"`,
+      ]);
       result[container] = logs;
     } catch {
       // Some containers may not have the expected log path — skip gracefully.
       try {
-        const logs = await kubectlExec(ns, runName, container, ["sh", "-c", `cat /tmp/opencode/session.log 2>/dev/null || echo "no session log"`]);
+        const logs = await kubectlExec(ns, runName, container, [
+          'sh',
+          '-c',
+          `cat /tmp/opencode/session.log 2>/dev/null || echo "no session log"`,
+        ]);
         result[container] = logs;
       } catch {
-        result[container] = "(unable to read logs)";
+        result[container] = '(unable to read logs)';
       }
     }
   }
@@ -432,7 +408,7 @@ export async function listEvents(
   ns: string,
   options?: { sinceSeconds?: number; fieldSelector?: string },
 ): Promise<Record<string, unknown>[]> {
-  const args = ["get", "events", "-n", ns, "-o", "json"];
+  const args = ['get', 'events', '-n', ns, '-o', 'json'];
   if (options?.sinceSeconds) {
     // kubectl doesn't support --since-seconds with -o json directly; filter client-side.
   }
@@ -441,23 +417,20 @@ export async function listEvents(
   }
 
   const raw = await kubectl(args);
-  const parsed = parseKubectlJSON<{ items: Record<string, unknown>[] }>(raw, "events");
+  const parsed = parseKubectlJSON<{ items: Record<string, unknown>[] }>(raw, 'events');
   return parsed.items;
 }
 
 /**
  * List recent events in a namespace (last N seconds), formatted as summary strings.
  */
-export async function listEventsSummary(
-  ns: string,
-  sinceSeconds = 3600,
-): Promise<string[]> {
+export async function listEventsSummary(ns: string, _sinceSeconds = 3600): Promise<string[]> {
   const args = [
-    "get",
-    "events",
-    "-n",
+    'get',
+    'events',
+    '-n',
     ns,
-    "--sort-by=.lastTimestamp",
+    '--sort-by=.lastTimestamp',
     `-o`,
     `custom-columns=TIMESTAMP:.lastTimestamp,REASON:.reason,NAMESPACE:.involvedObject.namespace,KIND:.involvedObject.kind,NAME:.involvedObject.name,MESSAGE:.message`,
   ];
@@ -466,7 +439,7 @@ export async function listEventsSummary(
   if (!out) return [];
 
   // Skip the header line
-  const lines = out.split("\n").slice(1).filter(Boolean);
+  const lines = out.split('\n').slice(1).filter(Boolean);
   return lines.map((l) => l.trim());
 }
 
@@ -482,18 +455,18 @@ export async function gatherFailureSnapshot(opts: {
   const snapshot: Record<string, string> = {};
 
   // Events
-  snapshot["events"] = await listEventsSummary(opts.ns);
+  snapshot.events = await listEventsSummary(opts.ns);
 
   // Project status
   if (opts.project) {
     try {
       snapshot[`project/${opts.project}`] = await describeResource(
-        "projects",
+        'projects',
         opts.project,
         opts.ns,
       );
     } catch {
-      snapshot[`project/${opts.project}`] = "(not found)";
+      snapshot[`project/${opts.project}`] = '(not found)';
     }
   }
 
@@ -501,26 +474,26 @@ export async function gatherFailureSnapshot(opts: {
   if (opts.taskIds?.length) {
     for (const tid of opts.taskIds) {
       try {
-        snapshot[`task/${tid}`] = await describeResource("tasks", tid, opts.ns);
+        snapshot[`task/${tid}`] = await describeResource('tasks', tid, opts.ns);
       } catch {
-        snapshot[`task/${tid}`] = "(not found)";
+        snapshot[`task/${tid}`] = '(not found)';
       }
     }
   }
 
   // Run statuses (all runs in namespace)
   try {
-    const runNames = await kubectlGetNames("runs", opts.ns);
+    const runNames = await kubectlGetNames('runs', opts.ns);
     for (const rn of runNames.slice(-10)) {
       // Last 10 runs to avoid bloating the snapshot
       try {
-        snapshot[`run/${rn}`] = await describeResource("runs", rn, opts.ns);
+        snapshot[`run/${rn}`] = await describeResource('runs', rn, opts.ns);
       } catch {
-        snapshot[`run/${rn}`] = "(describe failed)";
+        snapshot[`run/${rn}`] = '(describe failed)';
       }
     }
   } catch {
-    snapshot["runs"] = "(unable to list runs)";
+    snapshot.runs = '(unable to list runs)';
   }
 
   return snapshot;

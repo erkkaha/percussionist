@@ -1,16 +1,40 @@
-import { Link } from "react-router-dom";
-import { Input } from "../ui/input";
-import { Textarea } from "../ui/textarea";
-import type { ProjectFormHookReturn } from "./useProjectForm";
-import { Switch } from "../ui/switch";
+import { Link } from 'react-router-dom';
+import { Input } from '../ui/input';
+import { Switch } from '../ui/switch';
+import { Textarea } from '../ui/textarea';
+import type { ProjectFormHookReturn } from './useProjectForm';
 
 interface SourceAuthTabProps {
-  form: Pick<ProjectFormHookReturn, "gitUrl" | "gitRef" | "gitSshSecret" | "gitGithubTokenSecret" | "gitAuthorName" | "gitAuthorEmail" | "sourceLocal" | "llmKeysSecret" | "authSecret" | "opencodeConfig" | "configJsonError"> &
-    Pick<ProjectFormHookReturn, "setGitUrl" | "setGitRef" | "setGitSshSecret" | "setGitGithubTokenSecret" | "setGitAuthorName" | "setGitAuthorEmail" | "setSourceLocal" | "setLlmKeysSecret" | "setAuthSecret" | "setOpencodeConfig">;
+  form: Pick<
+    ProjectFormHookReturn,
+    | 'gitUrl'
+    | 'gitRef'
+    | 'gitSshSecret'
+    | 'gitGithubTokenSecret'
+    | 'gitAuthorName'
+    | 'gitAuthorEmail'
+    | 'sourceLocal'
+    | 'llmKeysSecret'
+    | 'authSecret'
+    | 'opencodeConfig'
+    | 'configJsonError'
+  > &
+    Pick<
+      ProjectFormHookReturn,
+      | 'setGitUrl'
+      | 'setGitRef'
+      | 'setGitSshSecret'
+      | 'setGitGithubTokenSecret'
+      | 'setGitAuthorName'
+      | 'setGitAuthorEmail'
+      | 'setSourceLocal'
+      | 'setLlmKeysSecret'
+      | 'setAuthSecret'
+      | 'setOpencodeConfig'
+    >;
 }
 
 export default function SourceAuthTab({ form }: SourceAuthTabProps) {
-
   return (
     <div className="space-y-5">
       {/* Git source */}
@@ -18,13 +42,11 @@ export default function SourceAuthTab({ form }: SourceAuthTabProps) {
         <legend className="px-1 text-sm font-medium text-text-muted">Git source</legend>
 
         {/* Local workspace toggle */}
-        <Switch
-          checked={form.sourceLocal}
-          onCheckedChange={(v) => form.setSourceLocal(v)}
-        />
+        <Switch checked={form.sourceLocal} onCheckedChange={(v) => form.setSourceLocal(v)} />
         {form.sourceLocal && (
           <p className="text-xs text-text-dim">
-            Local workspace — no remote repository will be cloned. Changes persist across runs at /data/workspace/.
+            Local workspace — no remote repository will be cloned. Changes persist across runs at
+            /data/workspace/.
           </p>
         )}
 
@@ -63,8 +85,7 @@ export default function SourceAuthTab({ form }: SourceAuthTabProps) {
                   className="font-mono"
                 />
                 <p className="text-xs text-text-dim">
-                  Secret name from{" "}
-                  <code className="font-mono">beatctl ssh-key create</code>
+                  Secret name from <code className="font-mono">beatctl ssh-key create</code>
                 </p>
               </div>
             </div>
@@ -78,9 +99,8 @@ export default function SourceAuthTab({ form }: SourceAuthTabProps) {
                 className="font-mono"
               />
               <p className="text-xs text-text-dim">
-                Secret name from{" "}
-                <code className="font-mono">beatctl github-token create</code>
-                {" "}— authenticates <code className="font-mono">gh</code> CLI in the runner
+                Secret name from <code className="font-mono">beatctl github-token create</code> —
+                authenticates <code className="font-mono">gh</code> CLI in the runner
               </p>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -139,11 +159,14 @@ export default function SourceAuthTab({ form }: SourceAuthTabProps) {
       <fieldset className="rounded-md border border-border p-4">
         <legend className="px-1 text-sm font-medium text-text-muted">OpenCode config</legend>
         <p className="text-xs text-text-dim mb-2">
-          Configure OpenCode at the project level. To set cluster-wide OpenCode config, use{" "}
-          <Link to="/settings" className="underline hover:text-text">Settings</Link>.
+          Configure OpenCode at the project level. To set cluster-wide OpenCode config, use{' '}
+          <Link to="/settings" className="underline hover:text-text">
+            Settings
+          </Link>
+          .
         </p>
         <Textarea
-          value={form.opencodeConfig ?? ""}
+          value={form.opencodeConfig ?? ''}
           onChange={(e) => form.setOpencodeConfig(e.target.value)}
           rows={10}
           spellCheck={false}

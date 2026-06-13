@@ -8,17 +8,17 @@
 // Lifecycle: Tied to Project CR via spec.embedding.enabled. Created and
 // destroyed by the operator's project reconciler (same pattern as code-server).
 
-import type { V1Deployment, V1Service } from "@kubernetes/client-node";
+import type { V1Deployment, V1Service } from '@kubernetes/client-node';
 import {
   API_GROUP_VERSION,
   KIND_PROJECT,
   LABELS,
   MANAGED_BY,
-  MEMORY_SERVICE_PORT,
   MEMORY_SERVICE_DEFAULT_IMAGE,
+  MEMORY_SERVICE_PORT,
   type Project,
-} from "@percussionist/api";
-import { OLLAMA_BASE_URL } from "./config.js";
+} from '@percussionist/api';
+import { OLLAMA_BASE_URL } from './config.js';
 
 // ---------------------------------------------------------------------------
 // Naming helpers
@@ -53,30 +53,30 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
 
   const image = MEMORY_SERVICE_DEFAULT_IMAGE;
   const pvcName = spec.data?.pvcName ?? `${name}-data`;
-  const mountPath = spec.data?.mountPath ?? "/data";
+  const mountPath = spec.data?.mountPath ?? '/data';
 
   const resources = embedding.resources ?? {
-    requests: { cpu: "100m", memory: "256Mi" },
-    limits: { memory: "512Mi" },
+    requests: { cpu: '100m', memory: '256Mi' },
+    limits: { memory: '512Mi' },
   };
 
   const env = [
-    { name: "MEMORY_SERVICE_PORT", value: String(MEMORY_SERVICE_PORT) },
-    { name: "MEMORY_DB_PATH", value: `${mountPath}/memory/vectors.db` },
-    { name: "OLLAMA_BASE_URL", value: embedding.ollamaUrl ?? OLLAMA_BASE_URL },
-    { name: "EMBEDDING_MODEL", value: embedding.model },
-    { name: "EMBEDDING_DIMENSIONS", value: String(embedding.dimensions ?? 768) },
+    { name: 'MEMORY_SERVICE_PORT', value: String(MEMORY_SERVICE_PORT) },
+    { name: 'MEMORY_DB_PATH', value: `${mountPath}/memory/vectors.db` },
+    { name: 'OLLAMA_BASE_URL', value: embedding.ollamaUrl ?? OLLAMA_BASE_URL },
+    { name: 'EMBEDDING_MODEL', value: embedding.model },
+    { name: 'EMBEDDING_DIMENSIONS', value: String(embedding.dimensions ?? 768) },
   ];
 
   const labels = {
     [LABELS.managedBy]: MANAGED_BY,
     [LABELS.projectName]: name,
-    "percussionist.dev/component": "memory-service",
+    'percussionist.dev/component': 'memory-service',
   };
 
   return {
-    apiVersion: "apps/v1",
-    kind: "Deployment",
+    apiVersion: 'apps/v1',
+    kind: 'Deployment',
     metadata: {
       name: memoryServiceDeploymentName(project),
       namespace: ns,
@@ -97,7 +97,7 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
       selector: {
         matchLabels: {
           [LABELS.projectName]: name,
-          "percussionist.dev/component": "memory-service",
+          'percussionist.dev/component': 'memory-service',
         },
       },
       template: {
@@ -105,26 +105,26 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
         spec: {
           containers: [
             {
-              name: "memory",
+              name: 'memory',
               image,
               env,
               ports: [
                 {
                   containerPort: MEMORY_SERVICE_PORT,
-                  name: "http",
-                  protocol: "TCP",
+                  name: 'http',
+                  protocol: 'TCP',
                 },
               ],
               resources,
               volumeMounts: [
                 {
-                  name: "data",
+                  name: 'data',
                   mountPath,
                 },
               ],
               readinessProbe: {
                 httpGet: {
-                  path: "/health",
+                  path: '/health',
                   port: MEMORY_SERVICE_PORT,
                 },
                 // Health check now verifies Ollama model availability via /api/tags.
@@ -137,7 +137,7 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
           ],
           volumes: [
             {
-              name: "data",
+              name: 'data',
               persistentVolumeClaim: {
                 claimName: pvcName,
               },
@@ -157,12 +157,12 @@ export function renderMemoryServiceService(project: Project): V1Service {
   const labels = {
     [LABELS.managedBy]: MANAGED_BY,
     [LABELS.projectName]: name,
-    "percussionist.dev/component": "memory-service",
+    'percussionist.dev/component': 'memory-service',
   };
 
   return {
-    apiVersion: "v1",
-    kind: "Service",
+    apiVersion: 'v1',
+    kind: 'Service',
     metadata: {
       name: memoryServiceServiceName(project),
       namespace: ns,
@@ -179,17 +179,17 @@ export function renderMemoryServiceService(project: Project): V1Service {
       ],
     },
     spec: {
-      type: "ClusterIP",
+      type: 'ClusterIP',
       selector: {
         [LABELS.projectName]: name,
-        "percussionist.dev/component": "memory-service",
+        'percussionist.dev/component': 'memory-service',
       },
       ports: [
         {
           port: MEMORY_SERVICE_PORT,
           targetPort: MEMORY_SERVICE_PORT,
-          name: "http",
-          protocol: "TCP",
+          name: 'http',
+          protocol: 'TCP',
         },
       ],
     },

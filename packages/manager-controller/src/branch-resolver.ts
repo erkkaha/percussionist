@@ -5,7 +5,7 @@
 //   - BUILD tasks (with parent): feature/{plan-task-id}--{build-task-id}
 //   - Standalone BUILD tasks: feature/{build-task-id}
 
-import type { Task, Project } from "@percussionist/api";
+import type { Project, Task } from '@percussionist/api';
 
 /**
  * Resolve the git branch a task should work on.
@@ -14,7 +14,7 @@ import type { Task, Project } from "@percussionist/api";
 export function resolveTaskBranch(
   task: Task,
   project: Project,
-  allTasks: Task[]
+  allTasks: Task[],
 ): string | undefined {
   if (!project.spec.featureBranchingEnabled) {
     return undefined; // Feature branching disabled
@@ -22,7 +22,7 @@ export function resolveTaskBranch(
 
   const taskName = task.metadata.name;
   if (!taskName) {
-    throw new Error("Task has no metadata.name");
+    throw new Error('Task has no metadata.name');
   }
 
   // If task already has a branch assigned, reuse it (idempotent).
@@ -31,33 +31,31 @@ export function resolveTaskBranch(
   }
 
   // PLAN task: feature/{plan-task-id}
-  if (task.spec.type === "PLAN") {
+  if (task.spec.type === 'PLAN') {
     return `feature/${taskName}`;
   }
 
   // BUILD task with parent PLAN. Do not use `${parentBranch}/${taskName}`:
   // Git refs are path-like, so refs/heads/feature/plan and
   // refs/heads/feature/plan/build cannot coexist.
-  if (task.spec.type === "BUILD" && task.spec.parentTaskRef) {
-    const parentPlan = allTasks.find(
-      (t) => t.metadata.name === task.spec.parentTaskRef
-    );
+  if (task.spec.type === 'BUILD' && task.spec.parentTaskRef) {
+    const parentPlan = allTasks.find((t) => t.metadata.name === task.spec.parentTaskRef);
     if (!parentPlan) {
       throw new Error(
-        `BUILD task ${taskName} references non-existent parent PLAN: ${task.spec.parentTaskRef}`
+        `BUILD task ${taskName} references non-existent parent PLAN: ${task.spec.parentTaskRef}`,
       );
     }
     const parentBranch = resolveTaskBranch(parentPlan, project, allTasks);
     if (!parentBranch) {
       throw new Error(
-        `Parent PLAN ${task.spec.parentTaskRef} has no branch (feature branching disabled?)`
+        `Parent PLAN ${task.spec.parentTaskRef} has no branch (feature branching disabled?)`,
       );
     }
     return `${parentBranch}--${taskName}`;
   }
 
   // Standalone BUILD task: feature/{build-task-id}
-  if (task.spec.type === "BUILD") {
+  if (task.spec.type === 'BUILD') {
     return `feature/${taskName}`;
   }
 
@@ -71,7 +69,7 @@ export function resolveTaskBranch(
 export function resolveParentBranch(
   task: Task,
   project: Project,
-  allTasks: Task[]
+  allTasks: Task[],
 ): string | undefined {
   if (!project.spec.featureBranchingEnabled) {
     return undefined; // Feature branching disabled
@@ -79,7 +77,7 @@ export function resolveParentBranch(
 
   const taskName = task.metadata.name;
   if (!taskName) {
-    throw new Error("Task has no metadata.name");
+    throw new Error('Task has no metadata.name');
   }
 
   // If task already has a parent branch assigned, reuse it (idempotent).
@@ -88,32 +86,30 @@ export function resolveParentBranch(
   }
 
   // PLAN task: create from main
-  if (task.spec.type === "PLAN") {
-    return project.spec.source?.git?.ref || "main";
+  if (task.spec.type === 'PLAN') {
+    return project.spec.source?.git?.ref || 'main';
   }
 
   // BUILD task with parent PLAN: create from parent's feature branch
-  if (task.spec.type === "BUILD" && task.spec.parentTaskRef) {
-    const parentPlan = allTasks.find(
-      (t) => t.metadata.name === task.spec.parentTaskRef
-    );
+  if (task.spec.type === 'BUILD' && task.spec.parentTaskRef) {
+    const parentPlan = allTasks.find((t) => t.metadata.name === task.spec.parentTaskRef);
     if (!parentPlan) {
       throw new Error(
-        `BUILD task ${taskName} references non-existent parent PLAN: ${task.spec.parentTaskRef}`
+        `BUILD task ${taskName} references non-existent parent PLAN: ${task.spec.parentTaskRef}`,
       );
     }
     const parentBranch = resolveTaskBranch(parentPlan, project, allTasks);
     if (!parentBranch) {
       throw new Error(
-        `Parent PLAN ${task.spec.parentTaskRef} has no branch (feature branching disabled?)`
+        `Parent PLAN ${task.spec.parentTaskRef} has no branch (feature branching disabled?)`,
       );
     }
     return parentBranch;
   }
 
   // Standalone BUILD task: create from main
-  if (task.spec.type === "BUILD") {
-    return project.spec.source?.git?.ref || "main";
+  if (task.spec.type === 'BUILD') {
+    return project.spec.source?.git?.ref || 'main';
   }
 
   throw new Error(`Unknown task type: ${task.spec.type}`);
@@ -126,7 +122,7 @@ export function resolveParentBranch(
 export function resolveMergeBranch(
   task: Task,
   project: Project,
-  allTasks: Task[]
+  allTasks: Task[],
 ): string | undefined {
   if (!project.spec.featureBranchingEnabled) {
     return undefined; // Feature branching disabled
@@ -134,7 +130,7 @@ export function resolveMergeBranch(
 
   const taskName = task.metadata.name;
   if (!taskName) {
-    throw new Error("Task has no metadata.name");
+    throw new Error('Task has no metadata.name');
   }
 
   // If task already has a merge target assigned, reuse it (idempotent).
@@ -143,32 +139,30 @@ export function resolveMergeBranch(
   }
 
   // PLAN task: no auto-merge (manual merge to main later)
-  if (task.spec.type === "PLAN") {
+  if (task.spec.type === 'PLAN') {
     return undefined;
   }
 
   // BUILD task with parent PLAN: merge into parent's feature branch
-  if (task.spec.type === "BUILD" && task.spec.parentTaskRef) {
-    const parentPlan = allTasks.find(
-      (t) => t.metadata.name === task.spec.parentTaskRef
-    );
+  if (task.spec.type === 'BUILD' && task.spec.parentTaskRef) {
+    const parentPlan = allTasks.find((t) => t.metadata.name === task.spec.parentTaskRef);
     if (!parentPlan) {
       throw new Error(
-        `BUILD task ${taskName} references non-existent parent PLAN: ${task.spec.parentTaskRef}`
+        `BUILD task ${taskName} references non-existent parent PLAN: ${task.spec.parentTaskRef}`,
       );
     }
     const parentBranch = resolveTaskBranch(parentPlan, project, allTasks);
     if (!parentBranch) {
       throw new Error(
-        `Parent PLAN ${task.spec.parentTaskRef} has no branch (feature branching disabled?)`
+        `Parent PLAN ${task.spec.parentTaskRef} has no branch (feature branching disabled?)`,
       );
     }
     return parentBranch;
   }
 
   // Standalone BUILD task: merge into main
-  if (task.spec.type === "BUILD") {
-    return project.spec.source?.git?.ref || "main";
+  if (task.spec.type === 'BUILD') {
+    return project.spec.source?.git?.ref || 'main';
   }
 
   throw new Error(`Unknown task type: ${task.spec.type}`);

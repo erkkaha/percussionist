@@ -1,6 +1,6 @@
-import { Hono } from "hono";
-import { NAMESPACE, getProject, getTask, getRun, gitUrlHash } from "../kube.js";
-import { auth } from "../auth.js";
+import { Hono } from 'hono';
+import { auth } from '../auth.js';
+import { getProject, getRun, getTask, gitUrlHash, NAMESPACE } from '../kube.js';
 
 type DiffFile = {
   path: string;
@@ -19,23 +19,23 @@ function quoteSh(value: string): string {
 }
 
 function splitDiffByFile(diffText: string): DiffFile[] {
-  const lines = diffText.split("\n");
+  const lines = diffText.split('\n');
   const files: DiffFile[] = [];
   let current: string[] = [];
-  let currentPath = "";
+  let currentPath = '';
 
   const pushCurrent = () => {
     if (current.length === 0) return;
-    files.push({ path: currentPath || "(unknown)", diff: current.join("\n") });
+    files.push({ path: currentPath || '(unknown)', diff: current.join('\n') });
     current = [];
-    currentPath = "";
+    currentPath = '';
   };
 
   for (const line of lines) {
-    if (line.startsWith("diff --git ")) {
+    if (line.startsWith('diff --git ')) {
       pushCurrent();
       const m = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
-      currentPath = m?.[2] ?? m?.[1] ?? "(unknown)";
+      currentPath = m?.[2] ?? m?.[1] ?? '(unknown)';
       current.push(line);
       continue;
     }
@@ -50,32 +50,32 @@ function splitDiffByFile(diffText: string): DiffFile[] {
 }
 
 function hexToString(hex: string): string {
-  if (!hex) return "";
+  if (!hex) return '';
   const bytes: number[] = [];
   for (let i = 0; i < hex.length; i += 2) {
     bytes.push(Number.parseInt(hex.slice(i, i + 2), 16));
   }
-  return Buffer.from(bytes).toString("utf-8");
+  return Buffer.from(bytes).toString('utf-8');
 }
 
 function parseCommitsSection(text: string): DiffCommit[] {
   const commits: DiffCommit[] = [];
-  const blocks = text.split(">>>SHA=").slice(1);
+  const blocks = text.split('>>>SHA=').slice(1);
 
   for (const block of blocks) {
-    const lines = block.split("\n");
+    const lines = block.split('\n');
     const sha = lines[0]?.trim();
     if (!sha) continue;
 
-    const rest = lines.slice(1).join("\n");
+    const rest = lines.slice(1).join('\n');
 
     const subjectMatch = rest.match(/>>>SUBJECT=([a-f0-9]*)/);
     const bodyMatch = rest.match(/>>>BODY=([a-f0-9]*)/);
     const filesMatch = rest.match(/>>>FILES\n([\s\S]*?)>>>ENDFILES/);
 
-    const subject = subjectMatch ? hexToString(subjectMatch[1] ?? "") : "";
-    const body = bodyMatch ? hexToString(bodyMatch[1] ?? "") : "";
-    const filesText = filesMatch?.[1]?.trim() ?? "";
+    const subject = subjectMatch ? hexToString(subjectMatch[1] ?? '') : '';
+    const body = bodyMatch ? hexToString(bodyMatch[1] ?? '') : '';
+    const filesText = filesMatch?.[1]?.trim() ?? '';
     const files = filesText ? splitDiffByFile(filesText) : [];
 
     commits.push({ sha, subject, body, files });
@@ -94,15 +94,15 @@ async function execInWorkspaceViaManager(
   timeoutMs: number,
 ): Promise<{ stdout: string; exitCode: number | null }> {
   const mcpRequest = {
-    jsonrpc: "2.0",
+    jsonrpc: '2.0',
     id: 1,
-    method: "tools/call",
+    method: 'tools/call',
     params: {
-      name: "exec_in_workspace",
+      name: 'exec_in_workspace',
       arguments: {
         project,
         command,
-        mountPath: "/data",
+        mountPath: '/data',
         timeoutSeconds: Math.ceil(timeoutMs / 1000),
         namespace: NAMESPACE,
         skipSanitization: true,
@@ -111,24 +111,22 @@ async function execInWorkspaceViaManager(
   };
 
   const res = await fetch(MCP_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(mcpRequest),
     signal: AbortSignal.timeout(timeoutMs + 5_000),
   });
 
   if (!res.ok) {
-    const bodyText = await res.text().catch(() => "");
-    throw new Error(
-      `Manager MCP service returned ${res.status}: ${bodyText.slice(0, 200)}`,
-    );
+    const bodyText = await res.text().catch(() => '');
+    throw new Error(`Manager MCP service returned ${res.status}: ${bodyText.slice(0, 200)}`);
   }
 
   let body: string;
   try {
     body = await res.text();
   } catch {
-    throw new Error("Failed to read response body from manager MCP service");
+    throw new Error('Failed to read response body from manager MCP service');
   }
 
   let mcpResponse: {
@@ -141,21 +139,19 @@ async function execInWorkspaceViaManager(
       error?: { message?: string };
     };
   } catch {
-    throw new Error(
-      `Manager MCP returned non-JSON response: ${body.slice(0, 500)}`,
-    );
+    throw new Error(`Manager MCP returned non-JSON response: ${body.slice(0, 500)}`);
   }
 
   if (mcpResponse.error) {
-    throw new Error(mcpResponse.error.message ?? "Manager MCP error");
+    throw new Error(mcpResponse.error.message ?? 'Manager MCP error');
   }
 
   if (mcpResponse.result?.isError) {
-    const errText = mcpResponse.result.content?.[0]?.text ?? "Unknown MCP error";
+    const errText = mcpResponse.result.content?.[0]?.text ?? 'Unknown MCP error';
     throw new Error(errText);
   }
 
-  const rawText = mcpResponse.result?.content?.[0]?.text ?? "{}";
+  const rawText = mcpResponse.result?.content?.[0]?.text ?? '{}';
 
   let parsed: { stdout?: string; exitCode?: number | null };
   try {
@@ -164,23 +160,21 @@ async function execInWorkspaceViaManager(
       exitCode?: number | null;
     };
   } catch {
-    throw new Error(
-      `Failed to parse MCP exec response as JSON: ${rawText.slice(0, 500)}`,
-    );
+    throw new Error(`Failed to parse MCP exec response as JSON: ${rawText.slice(0, 500)}`);
   }
 
   return {
-    stdout: parsed.stdout ?? "",
+    stdout: parsed.stdout ?? '',
     exitCode: parsed.exitCode ?? null,
   };
 }
 
-router.get("/:project/tasks/:taskName/diff", auth(), async (c) => {
-  const projectName = c.req.param("project");
-  const taskName = c.req.param("taskName");
+router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
+  const projectName = c.req.param('project');
+  const taskName = c.req.param('taskName');
 
   if (!projectName || !taskName) {
-    return c.json({ error: "Missing required parameters: project, taskName" }, 400);
+    return c.json({ error: 'Missing required parameters: project, taskName' }, 400);
   }
 
   try {
@@ -190,7 +184,7 @@ router.get("/:project/tasks/:taskName/diff", auth(), async (c) => {
     ]);
 
     const worker = task.status?.worker;
-    const defaultRef = project.spec.source?.git?.ref ?? "main";
+    const defaultRef = project.spec.source?.git?.ref ?? 'main';
 
     let baseRef = worker?.mergeIntoBranch ?? worker?.parentBranch;
     let headRef = worker?.gitBranch;
@@ -219,7 +213,7 @@ router.get("/:project/tasks/:taskName/diff", auth(), async (c) => {
         headRef,
         files: [],
         empty: true,
-        reason: "No changes: base and head refs are identical",
+        reason: 'No changes: base and head refs are identical',
       });
     }
 
@@ -227,7 +221,7 @@ router.get("/:project/tasks/:taskName/diff", auth(), async (c) => {
     let repoPath: string;
 
     if (source?.local) {
-      repoPath = "/data/workspace";
+      repoPath = '/data/workspace';
     } else if (source?.git?.url) {
       const urlHash = gitUrlHash(source.git.url);
       repoPath = `/data/git-mirrors/${urlHash}`;
@@ -241,14 +235,14 @@ router.get("/:project/tasks/:taskName/diff", auth(), async (c) => {
           headRef,
           files: [],
           empty: true,
-          reason: "Project has no git source configured",
+          reason: 'Project has no git source configured',
         },
         400,
       );
     }
 
     const cmd = [
-      "apk add --no-cache git >/dev/null 2>&1",
+      'apk add --no-cache git >/dev/null 2>&1',
       `REPO=${quoteSh(repoPath)}`,
       `BASE=${quoteSh(baseRef)}`,
       `HEAD=${quoteSh(headRef)}`,
@@ -280,13 +274,13 @@ router.get("/:project/tasks/:taskName/diff", auth(), async (c) => {
       '  git -C "$REPO" diff-tree --no-color --find-renames --binary -r "$SHA" 2>/dev/null || true',
       "  echo '>>>ENDFILES'",
       'done',
-    ].join("\n");
+    ].join('\n');
 
     const result = await execInWorkspaceViaManager(projectName, cmd, 120_000);
     const output = result.stdout.trim();
 
-    if (output.startsWith("__PERCUSSIONIST_ERROR__")) {
-      const reason = output.replace("__PERCUSSIONIST_ERROR__", "").trim();
+    if (output.startsWith('__PERCUSSIONIST_ERROR__')) {
+      const reason = output.replace('__PERCUSSIONIST_ERROR__', '').trim();
       return c.json(
         {
           project: projectName,
@@ -302,11 +296,11 @@ router.get("/:project/tasks/:taskName/diff", auth(), async (c) => {
       );
     }
 
-    let unifiedDiff = "";
-    let commitsText = "";
+    let unifiedDiff = '';
+    let commitsText = '';
 
-    const unifiedMarker = "___UNIFIED___\n";
-    const commitsMarker = "\n___COMMITS___\n";
+    const unifiedMarker = '___UNIFIED___\n';
+    const commitsMarker = '\n___COMMITS___\n';
 
     const unifiedIdx = output.indexOf(unifiedMarker);
     const commitsIdx = output.indexOf(commitsMarker);

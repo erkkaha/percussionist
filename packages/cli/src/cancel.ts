@@ -5,7 +5,7 @@
 // acked the children are gone and the status subresource is moot. (A future
 // milestone with durable history will want a richer lifecycle.)
 
-import { DEFAULT_NAMESPACE, deleteRun, fatal, loadKube } from "./kube.js";
+import { DEFAULT_NAMESPACE, deleteRun, fatal, loadKube } from './kube.js';
 
 export interface CancelOpts {
   namespace?: string;

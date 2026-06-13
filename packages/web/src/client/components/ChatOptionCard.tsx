@@ -1,5 +1,5 @@
-import { Card, CardContent } from "./ui/card";
-import { Button } from "./ui/button";
+import { Button } from './ui/button';
+import { Card, CardContent } from './ui/card';
 
 export interface OptionDef {
   key: string;
@@ -39,9 +39,7 @@ export default function ChatOptionCard({
               <span className="font-medium">{option.label}</span>
             </Button>
             {option.description && (
-              <p className="text-xs text-text-dim px-1 leading-relaxed">
-                {option.description}
-              </p>
+              <p className="text-xs text-text-dim px-1 leading-relaxed">{option.description}</p>
             )}
           </div>
         ))}

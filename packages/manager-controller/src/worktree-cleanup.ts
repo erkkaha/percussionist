@@ -9,10 +9,10 @@
 // reference to the Task CR so it is garbage-collected when the task is
 // eventually deleted.
 
-import { core, gitUrlHash } from "@percussionist/kube";
-import { API_GROUP_VERSION, KIND_TASK, LABELS, MANAGED_BY } from "@percussionist/api";
-import type { Task } from "@percussionist/api";
-import { getErrorStatusCode } from "./kube-errors.js";
+import type { Task } from '@percussionist/api';
+import { API_GROUP_VERSION, KIND_TASK, LABELS, MANAGED_BY } from '@percussionist/api';
+import { core, gitUrlHash } from '@percussionist/kube';
+import { getErrorStatusCode } from './kube-errors.js';
 
 const log = (...args: unknown[]) =>
   console.log(`[worktree-cleanup ${new Date().toISOString()}]`, ...args);
@@ -21,7 +21,11 @@ const err = (...args: unknown[]) =>
 
 function cleanupPodName(prefix: string, name: string): string {
   const suffix = Date.now().toString(36).slice(-6);
-  return `${prefix}-${name}-${suffix}`.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 63).replace(/-+$/, "");
+  return `${prefix}-${name}-${suffix}`
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .slice(0, 63)
+    .replace(/-+$/, '');
 }
 
 function shQuote(s: string): string {
@@ -65,28 +69,24 @@ export interface TaskWorktreeCleanupOptions {
  * The pod is fire-and-forget — errors are logged but not surfaced to the
  * caller to avoid blocking task state transitions.
  */
-export async function spawnWorktreeCleanupPod(
-  opts: WorktreeCleanupOptions,
-): Promise<void> {
+export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Promise<void> {
   const {
     task,
     runName,
     projectName,
     namespace,
     image,
-    dataMountPath = "/data",
+    dataMountPath = '/data',
     dataPvcName = `${projectName}-data`,
     gitUrl,
   } = opts;
 
-  const podName = cleanupPodName("cleanup", runName);
-  const mirrorDir = gitUrl
-    ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}`
-    : undefined;
+  const podName = cleanupPodName('cleanup', runName);
+  const mirrorDir = gitUrl ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}` : undefined;
   const worktreeDir = `${dataMountPath}/worktrees/${runName}`;
 
   const script = [
-    "set -e",
+    'set -e',
     `echo "[cleanup] removing worktree ${worktreeDir}"`,
     `BRANCH=$(git -C ${shQuote(worktreeDir)} symbolic-ref HEAD 2>/dev/null || true)`,
     `rm -rf ${shQuote(worktreeDir)}`,
@@ -103,19 +103,19 @@ export async function spawnWorktreeCleanupPod(
         ]
       : []),
     `echo "[cleanup] done"`,
-  ].join("\n");
+  ].join('\n');
 
   const pod = {
-    apiVersion: "v1",
-    kind: "Pod",
+    apiVersion: 'v1',
+    kind: 'Pod',
     metadata: {
       name: podName,
       namespace,
       labels: {
         [LABELS.managedBy]: MANAGED_BY,
         [LABELS.projectName]: projectName,
-        "percussionist.dev/component": "worktree-cleanup",
-        "percussionist.dev/run": runName,
+        'percussionist.dev/component': 'worktree-cleanup',
+        'percussionist.dev/run': runName,
       },
       ownerReferences: [
         {
@@ -129,26 +129,22 @@ export async function spawnWorktreeCleanupPod(
       ],
     },
     spec: {
-      restartPolicy: "Never",
+      restartPolicy: 'Never',
       containers: [
         {
-          name: "cleanup",
+          name: 'cleanup',
           image,
-          imagePullPolicy: "IfNotPresent",
-          command: ["/bin/sh", "-c"],
+          imagePullPolicy: 'IfNotPresent',
+          command: ['/bin/sh', '-c'],
           args: [script],
           resources: {
-            requests: { cpu: "50m", memory: "64Mi" },
-            limits: { cpu: "200m", memory: "256Mi" },
+            requests: { cpu: '50m', memory: '64Mi' },
+            limits: { cpu: '200m', memory: '256Mi' },
           },
-          volumeMounts: [
-            { name: "data", mountPath: dataMountPath },
-          ],
+          volumeMounts: [{ name: 'data', mountPath: dataMountPath }],
         },
       ],
-      volumes: [
-        { name: "data", persistentVolumeClaim: { claimName: dataPvcName } },
-      ],
+      volumes: [{ name: 'data', persistentVolumeClaim: { claimName: dataPvcName } }],
     },
   };
 
@@ -176,32 +172,28 @@ export async function spawnWorktreeCleanupPod(
  *
  * Fire-and-forget — errors are logged but not surfaced to avoid blocking task transitions.
  */
-export async function spawnTaskWorktreeCleanupPod(
-  opts: TaskWorktreeCleanupOptions,
-): Promise<void> {
+export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptions): Promise<void> {
   const {
     task,
     projectName,
     namespace,
     image,
-    dataMountPath = "/data",
+    dataMountPath = '/data',
     dataPvcName = `${projectName}-data`,
     gitUrl,
   } = opts;
 
   const taskName = task.metadata.name;
-  const podName = cleanupPodName("cleanup-task", taskName);
-  const mirrorDir = gitUrl
-    ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}`
-    : undefined;
+  const podName = cleanupPodName('cleanup-task', taskName);
+  const mirrorDir = gitUrl ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}` : undefined;
   const worktreeDir = `${dataMountPath}/worktrees`;
 
-  const sanitizedTaskName = taskName.toLowerCase().replace(/[^a-z0-9]/g, "-");
+  const sanitizedTaskName = taskName.toLowerCase().replace(/[^a-z0-9]/g, '-');
   const runPrefix = `${projectName}-${sanitizedTaskName}`;
 
   // Remove all deterministic worker worktrees for this task.
   const script = [
-    "set -e",
+    'set -e',
     `echo "[cleanup] removing all worktrees for task ${taskName}"`,
     `cd ${shQuote(worktreeDir)} || exit 0`,
     `BRANCHES=""`,
@@ -230,19 +222,19 @@ export async function spawnTaskWorktreeCleanupPod(
         ]
       : []),
     `echo "[cleanup] done"`,
-  ].join("\n");
+  ].join('\n');
 
   const pod = {
-    apiVersion: "v1",
-    kind: "Pod",
+    apiVersion: 'v1',
+    kind: 'Pod',
     metadata: {
       name: podName,
       namespace,
       labels: {
         [LABELS.managedBy]: MANAGED_BY,
         [LABELS.projectName]: projectName,
-        "percussionist.dev/component": "worktree-cleanup",
-        "percussionist.dev/task": taskName,
+        'percussionist.dev/component': 'worktree-cleanup',
+        'percussionist.dev/task': taskName,
       },
       ownerReferences: [
         {
@@ -256,26 +248,22 @@ export async function spawnTaskWorktreeCleanupPod(
       ],
     },
     spec: {
-      restartPolicy: "Never",
+      restartPolicy: 'Never',
       containers: [
         {
-          name: "cleanup",
+          name: 'cleanup',
           image,
-          imagePullPolicy: "IfNotPresent",
-          command: ["/bin/sh", "-c"],
+          imagePullPolicy: 'IfNotPresent',
+          command: ['/bin/sh', '-c'],
           args: [script],
           resources: {
-            requests: { cpu: "50m", memory: "64Mi" },
-            limits: { cpu: "200m", memory: "256Mi" },
+            requests: { cpu: '50m', memory: '64Mi' },
+            limits: { cpu: '200m', memory: '256Mi' },
           },
-          volumeMounts: [
-            { name: "data", mountPath: dataMountPath },
-          ],
+          volumeMounts: [{ name: 'data', mountPath: dataMountPath }],
         },
       ],
-      volumes: [
-        { name: "data", persistentVolumeClaim: { claimName: dataPvcName } },
-      ],
+      volumes: [{ name: 'data', persistentVolumeClaim: { claimName: dataPvcName } }],
     },
   };
 

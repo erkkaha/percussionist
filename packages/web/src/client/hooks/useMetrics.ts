@@ -1,5 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
-import { authHeaders } from "../lib/auth";
+import { useQuery } from '@tanstack/react-query';
+import { authHeaders } from '../lib/auth';
 
 interface ContainerUsage {
   name: string;
@@ -42,36 +42,60 @@ export interface NodeMetricRow {
 
 function parseCpu(raw: string): number {
   const n = parseInt(raw, 10);
-  if (raw.endsWith("n")) return Math.round(n / 1_000_000);
-  if (raw.endsWith("u")) return Math.round(n / 1_000);
-  if (raw.endsWith("m")) return n;
+  if (raw.endsWith('n')) return Math.round(n / 1_000_000);
+  if (raw.endsWith('u')) return Math.round(n / 1_000);
+  if (raw.endsWith('m')) return n;
   return n * 1000;
 }
 
 function parseMemory(raw: string): number {
   const n = parseInt(raw, 10);
-  if (raw.endsWith("Ki")) return n * 1024;
-  if (raw.endsWith("Mi")) return n * 1024 * 1024;
-  if (raw.endsWith("Gi")) return n * 1024 * 1024 * 1024;
+  if (raw.endsWith('Ki')) return n * 1024;
+  if (raw.endsWith('Mi')) return n * 1024 * 1024;
+  if (raw.endsWith('Gi')) return n * 1024 * 1024 * 1024;
   return n;
 }
 
 export function useMetrics(refetchInterval: number | false = 15_000) {
   return useQuery<{ nodes: NodeMetricRow[]; pods: PodMetricRow[] }>({
-    queryKey: ["metrics"],
+    queryKey: ['metrics'],
     queryFn: async () => {
       const [nodesRes, podsRes] = await Promise.all([
-        fetch("/api/metrics/nodes", { headers: authHeaders() }),
-        fetch("/api/metrics/pods", { headers: authHeaders() }),
+        fetch('/api/metrics/nodes', { headers: authHeaders() }),
+        fetch('/api/metrics/pods', { headers: authHeaders() }),
       ]);
 
       if (!nodesRes.ok && !podsRes.ok) {
-        const nodeErr = await nodesRes.json().catch(() => ({ error: "unavailable" }));
-        throw new Error(nodeErr.error ?? "metrics unavailable");
+        const nodeErr = await nodesRes.json().catch(() => ({ error: 'unavailable' }));
+        throw new Error(nodeErr.error ?? 'metrics unavailable');
       }
 
-      const nodesData = nodesRes.ok ? (await nodesRes.json() as { items: Array<{ name: string; timestamp: string; window: string; usage: { cpu: string; memory: string }; capacity: { cpu: string; memory: string } | null; allocatable: { cpu: string; memory: string } | null; allocated: { cpu: string; memory: string } | null }> }) : { items: [] };
-      const podsData = podsRes.ok ? (await podsRes.json() as { items: Array<{ name: string; namespace: string; timestamp: string; window: string; containers: ContainerUsage[]; podRequests: { cpu: string; memory: string } | null; podLimits: { cpu: string; memory: string } | null }> }) : { items: [] };
+      const nodesData = nodesRes.ok
+        ? ((await nodesRes.json()) as {
+            items: Array<{
+              name: string;
+              timestamp: string;
+              window: string;
+              usage: { cpu: string; memory: string };
+              capacity: { cpu: string; memory: string } | null;
+              allocatable: { cpu: string; memory: string } | null;
+              allocated: { cpu: string; memory: string } | null;
+            }>;
+          })
+        : { items: [] };
+      const podsData = podsRes.ok
+        ? ((await podsRes.json()) as {
+            items: Array<{
+              name: string;
+              namespace: string;
+              timestamp: string;
+              window: string;
+              containers: ContainerUsage[];
+              podRequests: { cpu: string; memory: string } | null;
+              podLimits: { cpu: string; memory: string } | null;
+            }>;
+          })
+        : { items: [] };
 
       const nodes: NodeMetricRow[] = nodesData.items.map((n) => ({
         name: n.name,
@@ -93,7 +117,10 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
 
       const pods: PodMetricRow[] = podsData.items.map((p) => {
         const totalCpuMillicores = p.containers.reduce((sum, c) => sum + parseCpu(c.usage.cpu), 0);
-        const totalMemoryBytes = p.containers.reduce((sum, c) => sum + parseMemory(c.usage.memory), 0);
+        const totalMemoryBytes = p.containers.reduce(
+          (sum, c) => sum + parseMemory(c.usage.memory),
+          0,
+        );
         const totalCpuRequest = p.podRequests ? parseCpu(p.podRequests.cpu) : 0;
         const totalMemoryRequest = p.podRequests ? parseMemory(p.podRequests.memory) : 0;
         const totalCpuLimit = p.podLimits ? parseCpu(p.podLimits.cpu) : 0;

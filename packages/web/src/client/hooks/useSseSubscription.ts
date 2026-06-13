@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { getToken } from "../lib/auth";
+import { useEffect, useRef, useState } from 'react';
+import { getToken } from '../lib/auth';
 
 interface UseSseSubscriptionOptions {
   url: string;
@@ -23,7 +23,7 @@ export function useSseSubscription({
   const sourceRef = useRef<EventSource | null>(null);
   const eventNamesRef = useRef(eventNames);
   eventNamesRef.current = eventNames;
-  const eventNamesKey = eventNames.join("\u0000");
+  const _eventNamesKey = eventNames.join('\u0000');
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
 
@@ -64,7 +64,9 @@ export function useSseSubscription({
       closeSource();
 
       const token = getToken();
-      const srcUrl = token ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : url;
+      const srcUrl = token
+        ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+        : url;
       const src = new EventSource(srcUrl);
       sourceRef.current = src;
 
@@ -99,7 +101,7 @@ export function useSseSubscription({
       clearReconnect();
       closeSource();
     };
-  }, [enabled, eventNamesKey, url]);
+  }, [enabled, url]);
 
   return connected;
 }

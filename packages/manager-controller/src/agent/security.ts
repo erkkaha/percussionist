@@ -9,7 +9,7 @@
 //
 // Valid Alpine package names match: [a-zA-Z0-9._+-]+
 // See: https://wiki.alpinelinux.org/wiki/Apk_specification
-const ALPINE_PACKAGE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._+\-]*$/;
+const ALPINE_PACKAGE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._+-]*$/;
 
 /**
  * Validate an Alpine package name against the allowed character set.
@@ -38,44 +38,44 @@ interface InjectionPattern {
 
 const INJECTION_PATTERNS: InjectionPattern[] = [
   // Command substitution: $(...) or `...`
-  { pattern: /\$\(/,           name: "$() command substitution" },
-  { pattern: /`[^`]*`/,        name: "backtick command substitution" },
+  { pattern: /\$\(/, name: '$() command substitution' },
+  { pattern: /`[^`]*`/, name: 'backtick command substitution' },
 
   // Pipeline injection: ; || && |
-  { pattern: /;/,              name: "semicolon (command separator)" },
-  { pattern: /\|\|/,           name: "OR list" },
-  { pattern: /&&/,             name: "AND list" },
-  { pattern: /\|/,             name: "pipe" },
+  { pattern: /;/, name: 'semicolon (command separator)' },
+  { pattern: /\|\|/, name: 'OR list' },
+  { pattern: /&&/, name: 'AND list' },
+  { pattern: /\|/, name: 'pipe' },
 
   // Backgrounding
-  { pattern: /&\s*$/,          name: "background execution" },
+  { pattern: /&\s*$/, name: 'background execution' },
 
   // Redirection
-  { pattern: />/,             name: "output redirection (>)" },
-  { pattern: /<[>& ]/,        name: "input redirection (<, <<, < file)" },
+  { pattern: />/, name: 'output redirection (>)' },
+  { pattern: /<[>& ]/, name: 'input redirection (<, <<, < file)' },
 
   // Process substitution: <(...) or >(...) — must check before bare parens
-  { pattern: /[<>]\(/,         name: "process substitution" },
+  { pattern: /[<>]\(/, name: 'process substitution' },
 
   // Subshell grouping
-  { pattern: /\(/,            name: "subshell/paren" },
-  { pattern: /\)/,            name: "subshell/paren" },
+  { pattern: /\(/, name: 'subshell/paren' },
+  { pattern: /\)/, name: 'subshell/paren' },
 
   // Variable assignment as command prefix: FOO=bar cmd
-  { pattern: /^[A-Za-z_][A-Za-z0-9_]*=/m, name: "env var assignment before command" },
+  { pattern: /^[A-Za-z_][A-Za-z0-9_]*=/m, name: 'env var assignment before command' },
 
   // Here-documents
-  { pattern: /<<-?\s*[A-Za-z]/, name: "here-document redirector" },
+  { pattern: /<<-?\s*[A-Za-z]/, name: 'here-document redirector' },
 
   // Brace expansion (bash-specific but still dangerous)
   // Negative lookbehind avoids matching git ref syntax like ^{commit}
-  { pattern: /(?<!\^)\{[^}]*\}/,   name: "brace expansion group" },
+  { pattern: /(?<!\^)\{[^}]*\}/, name: 'brace expansion group' },
 
   // Globbing that could match unexpected files in sensitive paths
-  { pattern: /\*\*\/|\/\*\//,   name: "recursive glob patterns" },
+  { pattern: /\*\*\/|\/\*\//, name: 'recursive glob patterns' },
 
   // Path traversal attempts
-  { pattern: /\.\.[\/]/,       name: "path traversal attempt" },
+  { pattern: /\.\.[/]/, name: 'path traversal attempt' },
 ];
 
 /**
@@ -92,12 +92,12 @@ export function sanitizeCommand(command: string): string | null {
 
   // Additional check: reject commands that are empty or whitespace-only
   if (!command.trim()) {
-    return "Command rejected: empty command";
+    return 'Command rejected: empty command';
   }
 
   // Reject commands that start with a comment (potential obfuscation)
   if (/^\s*#/.test(command)) {
-    return "Command rejected: starts with comment character";
+    return 'Command rejected: starts with comment character';
   }
 
   return null;
@@ -109,13 +109,10 @@ export function sanitizeCommand(command: string): string | null {
 // Logs security-relevant events to the manager's stdout for operational
 // visibility. Format follows the existing console.log convention in tools.ts.
 
-export function logSecurityEvent(
-  event: string,
-  details: Record<string, unknown>,
-): void {
+export function logSecurityEvent(event: string, details: Record<string, unknown>): void {
   const timestamp = new Date().toISOString();
   const detailStr = Object.entries(details)
     .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-    .join(" ");
+    .join(' ');
   console.log(`[security] ${timestamp} ${event} ${detailStr}`);
 }

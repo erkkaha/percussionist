@@ -1,6 +1,6 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 
-const STORAGE_KEY = "percussionist-auth-token";
+const STORAGE_KEY = 'percussionist-auth-token';
 
 export function getToken(): string | null {
   try {
@@ -13,13 +13,17 @@ export function getToken(): string | null {
 export function setToken(token: string): void {
   try {
     localStorage.setItem(STORAGE_KEY, token);
-  } catch { /* quota exceeded */ }
+  } catch {
+    /* quota exceeded */
+  }
 }
 
 export function clearToken(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 export function isAuthenticated(): boolean {

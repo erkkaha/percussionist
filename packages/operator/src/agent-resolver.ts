@@ -4,11 +4,10 @@
 // the pod-builder can mount them as a ConfigMap. This removes inline agent
 // content from the run spec — agents are always referenced by name.
 
-import { getClusterAgent } from "@percussionist/kube";
-import type { AgentDef } from "@percussionist/api";
+import type { AgentDef } from '@percussionist/api';
+import { getClusterAgent } from '@percussionist/kube';
 
-const log = (...args: unknown[]) =>
-  console.log(`[operator ${new Date().toISOString()}]`, ...args);
+const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
   console.error(`[operator ${new Date().toISOString()}]`, ...args);
 

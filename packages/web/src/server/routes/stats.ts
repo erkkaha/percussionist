@@ -17,11 +17,11 @@
 //   Query params:
 //     days=N   — look-back window in days (default: 30; 0 = all time)
 
-import { Hono } from "hono";
-import { getDb, runs, messages, toolCalls, fileOps, metricSnapshots } from "../db.js";
-import { lt, gte, eq, and, desc, sql, asc } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
-import { auth, adminAuth } from "../auth.js";
+import { randomUUID } from 'node:crypto';
+import { and, asc, desc, eq, gte, lt, sql } from 'drizzle-orm';
+import { Hono } from 'hono';
+import { adminAuth, auth } from '../auth.js';
+import { fileOps, getDb, messages, metricSnapshots, runs, toolCalls } from '../db.js';
 
 // ---------------------------------------------------------------------------
 // Payload types (sent by the dispatcher)
@@ -88,17 +88,17 @@ interface SessionPayload {
 const stats = new Hono();
 
 // POST /api/stats/session — ingest a completed session from the dispatcher.
-stats.post("/session", adminAuth(), async (c) => {
+stats.post('/session', adminAuth(), async (c) => {
   let body: SessionPayload;
   try {
     body = (await c.req.json()) as SessionPayload;
   } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
+    return c.json({ error: 'invalid JSON body' }, 400);
   }
 
   const { sessionID, run: runPayload } = body;
   if (!sessionID || !runPayload?.name) {
-    return c.json({ error: "sessionID and run.name are required" }, 400);
+    return c.json({ error: 'sessionID and run.name are required' }, 400);
   }
 
   const db = getDb();
@@ -196,8 +196,8 @@ stats.post("/session", adminAuth(), async (c) => {
       }
     });
   } catch (e) {
-    console.error("[stats] failed to persist session:", (e as Error).message);
-    return c.json({ error: "failed to persist session" }, 500);
+    console.error('[stats] failed to persist session:', (e as Error).message);
+    return c.json({ error: 'failed to persist session' }, 500);
   }
 
   return c.json({ ok: true });
@@ -207,17 +207,17 @@ stats.post("/session", adminAuth(), async (c) => {
 // Uses insert-or-ignore so concurrent/repeated calls are idempotent and never
 // overwrite a later full POST flush. The run row is created on first call so
 // in-progress sessions show up in the UI immediately.
-stats.patch("/session", adminAuth(), async (c) => {
+stats.patch('/session', adminAuth(), async (c) => {
   let body: SessionPayload;
   try {
     body = (await c.req.json()) as SessionPayload;
   } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
+    return c.json({ error: 'invalid JSON body' }, 400);
   }
 
   const { sessionID, run: runPayload } = body;
   if (!sessionID || !runPayload?.name) {
-    return c.json({ error: "sessionID and run.name are required" }, 400);
+    return c.json({ error: 'sessionID and run.name are required' }, 400);
   }
 
   const db = getDb();
@@ -233,7 +233,7 @@ stats.patch("/session", adminAuth(), async (c) => {
           task: runPayload.task,
           model: runPayload.model,
           agent: runPayload.agent,
-          phase: runPayload.phase ?? "Running",
+          phase: runPayload.phase ?? 'Running',
           startedAt: runPayload.startedAt,
           completedAt: runPayload.completedAt,
           tokensIn: runPayload.tokensIn ?? 0,
@@ -317,15 +317,15 @@ stats.patch("/session", adminAuth(), async (c) => {
       }
     });
   } catch (e) {
-    console.error("[stats] incremental flush failed:", (e as Error).message);
-    return c.json({ error: "failed to persist incremental flush" }, 500);
+    console.error('[stats] incremental flush failed:', (e as Error).message);
+    return c.json({ error: 'failed to persist incremental flush' }, 500);
   }
 
   return c.json({ ok: true });
 });
 
 // GET /api/stats/exists/:sessionID — check if a session row exists (for backfill guard).
-stats.get("/exists/:sessionID", auth(), (c) => {
+stats.get('/exists/:sessionID', auth(), (c) => {
   const { sessionID } = c.req.param();
   const db = getDb();
   const row = db.select({ id: runs.id }).from(runs).where(eq(runs.id, sessionID)).get();
@@ -337,23 +337,16 @@ stats.get("/exists/:sessionID", auth(), (c) => {
 // Returns a JSON array where each element is a session with nested messages,
 // tool calls, and file operations. Intended to be saved to disk and fed to
 // an LLM wholesale: jq . sessions.json | llm "find patterns in agent usage".
-stats.get("/export", auth(), (c) => {
-  const daysParam = c.req.query("days") ?? "30";
+stats.get('/export', auth(), (c) => {
+  const daysParam = c.req.query('days') ?? '30';
   const days = parseInt(daysParam, 10);
 
   const db = getDb();
 
-  const cutoff =
-    days > 0
-      ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
-      : null;
+  const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
 
   const runRows = cutoff
-    ? db
-        .select()
-        .from(runs)
-        .where(gte(runs.startedAt, cutoff))
-        .all()
+    ? db.select().from(runs).where(gte(runs.startedAt, cutoff)).all()
     : db.select().from(runs).all();
 
   const sessionIds = runRows.map((r) => r.id);
@@ -377,18 +370,15 @@ stats.get("/export", auth(), (c) => {
 // Returns flat run rows (no nested messages/toolCalls/fileOps) plus server-side
 // aggregated summary, agent breakdown, and model breakdown. Pagination via
 // limit/offset.
-stats.get("/sessions", auth(), (c) => {
-  const daysParam = c.req.query("days") ?? "30";
+stats.get('/sessions', auth(), (c) => {
+  const daysParam = c.req.query('days') ?? '30';
   const days = parseInt(daysParam, 10);
-  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10), 200);
-  const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10), 0);
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
+  const offset = Math.max(parseInt(c.req.query('offset') ?? '0', 10), 0);
 
   const db = getDb();
 
-  const cutoff =
-    days > 0
-      ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
-      : null;
+  const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
 
   // Resolve model: runs.model first, fallback to first user message's model.
   const resolvedModel = sql<string>`
@@ -422,15 +412,13 @@ stats.get("/sessions", auth(), (c) => {
     .from(runs)
     .orderBy(desc(runs.startedAt));
 
-  const allRows = cutoff
-    ? baseQuery.where(gte(runs.startedAt, cutoff)).all()
-    : baseQuery.all();
+  const allRows = cutoff ? baseQuery.where(gte(runs.startedAt, cutoff)).all() : baseQuery.all();
 
   const total = allRows.length;
 
   // Summary
-  const succeeded = allRows.filter((r) => r.phase === "Succeeded").length;
-  const failed = allRows.filter((r) => r.phase === "Failed").length;
+  const succeeded = allRows.filter((r) => r.phase === 'Succeeded').length;
+  const failed = allRows.filter((r) => r.phase === 'Failed').length;
   const totalTokensIn = allRows.reduce((a, r) => a + (r.tokensIn ?? 0), 0);
   const totalTokensOut = allRows.reduce((a, r) => a + (r.tokensOut ?? 0), 0);
   const totalCost = allRows.reduce((a, r) => a + (r.cost ?? 0), 0);
@@ -439,7 +427,7 @@ stats.get("/sessions", auth(), (c) => {
   for (const r of allRows) {
     if (r.startedAt && r.completedAt) {
       const ms = new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime();
-      if (!isNaN(ms)) durations.push(ms);
+      if (!Number.isNaN(ms)) durations.push(ms);
     }
   }
   const avgDurationMs =
@@ -448,9 +436,12 @@ stats.get("/sessions", auth(), (c) => {
       : null;
 
   // Per-model breakdown
-  const modelMap = new Map<string, { runs: number; tokensIn: number; tokensOut: number; cost: number }>();
+  const modelMap = new Map<
+    string,
+    { runs: number; tokensIn: number; tokensOut: number; cost: number }
+  >();
   for (const r of allRows) {
-    const model = r.resolvedModel ?? r.model ?? "unknown";
+    const model = r.resolvedModel ?? r.model ?? 'unknown';
     const existing = modelMap.get(model) ?? { runs: 0, tokensIn: 0, tokensOut: 0, cost: 0 };
     modelMap.set(model, {
       runs: existing.runs + 1,
@@ -479,21 +470,27 @@ stats.get("/sessions", auth(), (c) => {
     }
   >();
   for (const r of allRows) {
-    const agent = r.agent ?? "unknown";
+    const agent = r.agent ?? 'unknown';
     const existing = agentMap.get(agent) ?? {
-      runs: 0, succeeded: 0, failed: 0,
-      tokensIn: 0, tokensOut: 0, cost: 0, durationSum: 0, durationCount: 0,
+      runs: 0,
+      succeeded: 0,
+      failed: 0,
+      tokensIn: 0,
+      tokensOut: 0,
+      cost: 0,
+      durationSum: 0,
+      durationCount: 0,
       models: new Set<string>(),
     };
     existing.runs++;
-    if (r.phase === "Succeeded") existing.succeeded++;
-    else if (r.phase === "Failed") existing.failed++;
+    if (r.phase === 'Succeeded') existing.succeeded++;
+    else if (r.phase === 'Failed') existing.failed++;
     existing.tokensIn += r.tokensIn ?? 0;
     existing.tokensOut += r.tokensOut ?? 0;
     existing.cost += r.cost ?? 0;
     if (r.startedAt && r.completedAt) {
       const ms = new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime();
-      if (!isNaN(ms)) {
+      if (!Number.isNaN(ms)) {
         existing.durationSum += ms;
         existing.durationCount++;
       }
@@ -543,24 +540,18 @@ stats.get("/sessions", auth(), (c) => {
 // ---------------------------------------------------------------------------
 // Retention cleanup — exported so the server can schedule it.
 
-export const RETENTION_DAYS = parseInt(
-  process.env.RETENTION_DAYS ?? "30",
-  10,
-);
+export const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS ?? '30', 10);
 
 export function runRetentionCleanup(): void {
   if (RETENTION_DAYS <= 0) return; // 0 = keep forever
   const db = getDb();
-  const cutoff = new Date(
-    Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000,
-  ).toISOString();
+  const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   // Cascade deletes handle messages / tool_calls / file_ops via FK ON DELETE
   // CASCADE. Deleting from runs is sufficient.
-  const result = db
-    .delete(runs)
-    .where(lt(runs.startedAt, cutoff))
-    .run() as unknown as { changes: number };
+  const result = db.delete(runs).where(lt(runs.startedAt, cutoff)).run() as unknown as {
+    changes: number;
+  };
 
   if (result.changes > 0) {
     console.log(
@@ -571,16 +562,13 @@ export function runRetentionCleanup(): void {
 
 // GET /api/stats/tool-metrics?days=30&agent=X — aggregated tool usage stats.
 // Sources data from tool_calls (message-part extraction) instead of tool_events (SSE/MCP events).
-stats.get("/tool-metrics", auth(), (c) => {
-  const daysParam = c.req.query("days") ?? "30";
+stats.get('/tool-metrics', auth(), (c) => {
+  const daysParam = c.req.query('days') ?? '30';
   const days = parseInt(daysParam, 10);
-  const agent = c.req.query("agent");
+  const agent = c.req.query('agent');
 
   const db = getDb();
-  const cutoff =
-    days > 0
-      ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
-      : null;
+  const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
 
   const conditions: ReturnType<typeof gte | typeof eq>[] = [];
   if (cutoff) conditions.push(gte(runs.createdAt, cutoff));
@@ -591,12 +579,17 @@ stats.get("/tool-metrics", auth(), (c) => {
   const rows = db
     .select({
       toolName: toolCalls.tool,
-      calls: sql<number>`COUNT(*)`.as("calls"),
-      avgDurationMs: sql<number>`AVG(${toolCalls.durationMs})`.as("avg_duration_ms"),
-      successRate: sql<number>`CAST(SUM(CASE WHEN ${toolCalls.success} = 1 THEN 1 ELSE 0 END) AS REAL) / CAST(COUNT(*) AS REAL)`.as("success_rate"),
-      avgResultSize: sql<null>`NULL`.as("avg_result_size"),
-      totalErrors: sql<number>`SUM(CASE WHEN ${toolCalls.success} = 0 THEN 1 ELSE 0 END)`.as("total_errors"),
-      sessionsUsing: sql<number>`COUNT(DISTINCT ${toolCalls.sessionId})`.as("sessions_using"),
+      calls: sql<number>`COUNT(*)`.as('calls'),
+      avgDurationMs: sql<number>`AVG(${toolCalls.durationMs})`.as('avg_duration_ms'),
+      successRate:
+        sql<number>`CAST(SUM(CASE WHEN ${toolCalls.success} = 1 THEN 1 ELSE 0 END) AS REAL) / CAST(COUNT(*) AS REAL)`.as(
+          'success_rate',
+        ),
+      avgResultSize: sql<null>`NULL`.as('avg_result_size'),
+      totalErrors: sql<number>`SUM(CASE WHEN ${toolCalls.success} = 0 THEN 1 ELSE 0 END)`.as(
+        'total_errors',
+      ),
+      sessionsUsing: sql<number>`COUNT(DISTINCT ${toolCalls.sessionId})`.as('sessions_using'),
     })
     .from(toolCalls)
     .innerJoin(runs, eq(toolCalls.sessionId, runs.id))
@@ -604,14 +597,14 @@ stats.get("/tool-metrics", auth(), (c) => {
     .groupBy(toolCalls.tool)
     .orderBy(desc(sql`COUNT(*)`))
     .all() as Array<{
-      toolName: string;
-      calls: number;
-      avgDurationMs: number | null;
-      successRate: number | null;
-      avgResultSize: null;
-      totalErrors: number;
-      sessionsUsing: number;
-    }>;
+    toolName: string;
+    calls: number;
+    avgDurationMs: number | null;
+    successRate: number | null;
+    avgResultSize: null;
+    totalErrors: number;
+    sessionsUsing: number;
+  }>;
 
   // 2. Token attribution: distribute message-level tokensOut across tool calls.
   // For each tool call, find its assistant message's tokensOut and how many
@@ -624,21 +617,24 @@ stats.get("/tool-metrics", auth(), (c) => {
         SELECT CAST(COUNT(*) AS REAL) FROM tool_calls tc2
         WHERE tc2.session_id = ${toolCalls.sessionId}
           AND tc2.message_idx = ${toolCalls.messageIdx}
-      )`.as("msg_tool_count"),
+      )`.as('msg_tool_count'),
     })
     .from(toolCalls)
     .innerJoin(runs, eq(toolCalls.sessionId, runs.id))
-    .leftJoin(messages, and(
-      eq(toolCalls.sessionId, messages.sessionId),
-      eq(toolCalls.messageIdx, messages.idx),
-      eq(messages.role, "assistant"),
-    ))
+    .leftJoin(
+      messages,
+      and(
+        eq(toolCalls.sessionId, messages.sessionId),
+        eq(toolCalls.messageIdx, messages.idx),
+        eq(messages.role, 'assistant'),
+      ),
+    )
     .where(whereClause)
     .all() as Array<{
-      tool: string;
-      tokensOut: number | null;
-      msgToolCount: number;
-    }>;
+    tool: string;
+    tokensOut: number | null;
+    msgToolCount: number;
+  }>;
 
   const tokenMap = new Map<string, { total: number; count: number }>();
   for (const d of tokenData) {
@@ -654,7 +650,8 @@ stats.get("/tool-metrics", auth(), (c) => {
   for (const row of rows) {
     const tok = tokenMap.get(row.toolName);
     (row as Record<string, unknown>).estTokensOut = tok ? Math.round(tok.total) : 0;
-    (row as Record<string, unknown>).avgTokensOutPerCall = tok && tok.count > 0 ? Math.round(tok.total / tok.count) : 0;
+    (row as Record<string, unknown>).avgTokensOutPerCall =
+      tok && tok.count > 0 ? Math.round(tok.total / tok.count) : 0;
   }
 
   // 3. Agent summary — one row per agent.
@@ -665,29 +662,29 @@ stats.get("/tool-metrics", auth(), (c) => {
   const agentSummary = db
     .select({
       agent: runs.agent,
-      calls: sql<number>`COUNT(*)`.as("calls"),
-      totalTokensOut: sql<number>`COALESCE(SUM(${messages.tokensOut}), 0)`.as("total_tokens_out"),
-      totalSessions: sql<number>`COUNT(DISTINCT ${runs.id})`.as("total_sessions"),
+      calls: sql<number>`COUNT(*)`.as('calls'),
+      totalTokensOut: sql<number>`COALESCE(SUM(${messages.tokensOut}), 0)`.as('total_tokens_out'),
+      totalSessions: sql<number>`COUNT(DISTINCT ${runs.id})`.as('total_sessions'),
     })
     .from(toolCalls)
     .innerJoin(runs, eq(toolCalls.sessionId, runs.id))
-    .leftJoin(messages, and(
-      eq(toolCalls.sessionId, messages.sessionId),
-      eq(toolCalls.messageIdx, messages.idx),
-      eq(messages.role, "assistant"),
-    ))
-    .where(and(
-      agentWhereClause,
-      sql`${runs.agent} IS NOT NULL`,
-    ))
+    .leftJoin(
+      messages,
+      and(
+        eq(toolCalls.sessionId, messages.sessionId),
+        eq(toolCalls.messageIdx, messages.idx),
+        eq(messages.role, 'assistant'),
+      ),
+    )
+    .where(and(agentWhereClause, sql`${runs.agent} IS NOT NULL`))
     .groupBy(runs.agent)
     .orderBy(desc(sql`COUNT(*)`))
     .all() as Array<{
-      agent: string;
-      calls: number;
-      totalTokensOut: number;
-      totalSessions: number;
-    }>;
+    agent: string;
+    calls: number;
+    totalTokensOut: number;
+    totalSessions: number;
+  }>;
 
   const totalCalls = rows.reduce((s, r) => s + r.calls, 0);
 
@@ -716,16 +713,16 @@ stats.get("/tool-metrics", auth(), (c) => {
 // GET /api/stats/metrics-timeseries — time-series metrics data.
 // Query params: hours=N (default 1), node=X (default "all")
 
-stats.get("/metrics-timeseries", auth(), async (c) => {
-  const hours = Math.min(Math.max(parseInt(c.req.query("hours") ?? "1", 10) || 1, 1), 168);
-  const nodeFilter = c.req.query("node") ?? "all";
+stats.get('/metrics-timeseries', auth(), async (c) => {
+  const hours = Math.min(Math.max(parseInt(c.req.query('hours') ?? '1', 10) || 1, 1), 168);
+  const nodeFilter = c.req.query('node') ?? 'all';
 
   const db = getDb();
   const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
   const where = and(
     gte(metricSnapshots.recordedAt, cutoff),
-    nodeFilter !== "all" ? eq(metricSnapshots.node, nodeFilter) : undefined,
+    nodeFilter !== 'all' ? eq(metricSnapshots.node, nodeFilter) : undefined,
   );
 
   const rows = db
@@ -753,10 +750,17 @@ stats.get("/metrics-timeseries", auth(), async (c) => {
   }
 
   // Build per-node-per-minute averages.
-  const nodeBuckets = new Map<string, Array<{ recordedAt: string; cpuPct: number; memPct: number }>>();
+  const nodeBuckets = new Map<
+    string,
+    Array<{ recordedAt: string; cpuPct: number; memPct: number }>
+  >();
   for (const [key, b] of buckets) {
-    const [node, minute] = key.split("|") as [string, string];
-    const pt = { recordedAt: minute + ":00", cpuPct: Math.round((b.cpuSum / b.count) * 10) / 10, memPct: Math.round((b.memSum / b.count) * 10) / 10 };
+    const [node, minute] = key.split('|') as [string, string];
+    const pt = {
+      recordedAt: `${minute}:00`,
+      cpuPct: Math.round((b.cpuSum / b.count) * 10) / 10,
+      memPct: Math.round((b.memSum / b.count) * 10) / 10,
+    };
     const nb = nodeBuckets.get(node) ?? [];
     nb.push(pt);
     nodeBuckets.set(node, nb);
@@ -765,7 +769,7 @@ stats.get("/metrics-timeseries", auth(), async (c) => {
   // Average across all nodes per minute for the "all nodes" view.
   const minuteBuckets = new Map<string, { cpuSum: number; memSum: number; count: number }>();
   for (const [key, b] of buckets) {
-    const [, minute] = key.split("|") as [string, string];
+    const [, minute] = key.split('|') as [string, string];
     const avgCpu = b.cpuSum / b.count;
     const avgMem = b.memSum / b.count;
     const mb = minuteBuckets.get(minute) ?? { cpuSum: 0, memSum: 0, count: 0 };
@@ -778,7 +782,7 @@ stats.get("/metrics-timeseries", auth(), async (c) => {
   const dataPoints: Array<{ recordedAt: string; cpuPct: number; memPct: number }> = [];
   for (const [minute, mb] of minuteBuckets) {
     dataPoints.push({
-      recordedAt: minute + ":00",
+      recordedAt: `${minute}:00`,
       cpuPct: Math.round((mb.cpuSum / mb.count) * 10) / 10,
       memPct: Math.round((mb.memSum / mb.count) * 10) / 10,
     });
@@ -795,18 +799,14 @@ stats.get("/metrics-timeseries", auth(), async (c) => {
       completedAt: runs.completedAt,
     })
     .from(runs)
-    .where(
-      and(
-        gte(runs.startedAt, cutoff),
-      ),
-    )
+    .where(and(gte(runs.startedAt, cutoff)))
     .orderBy(asc(runs.startedAt))
     .all()
     .filter((r) => r.startedAt && r.completedAt)
     .map((r) => ({
       name: r.name,
-      agent: r.agent ?? "",
-      task: r.task ?? "",
+      agent: r.agent ?? '',
+      task: r.task ?? '',
       startedAt: r.startedAt!,
       completedAt: r.completedAt!,
     }));
@@ -835,45 +835,47 @@ interface ModelTrendPoint {
   [key: string]: string | number;
 }
 
-stats.get("/trends", auth(), (c) => {
-  const daysParam = c.req.query("days") ?? "30";
+stats.get('/trends', auth(), (c) => {
+  const daysParam = c.req.query('days') ?? '30';
   const days = parseInt(daysParam, 10);
 
   const db = getDb();
-  const cutoff =
-    days > 0
-      ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
-      : null;
+  const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
 
   const whereClause = cutoff ? gte(runs.startedAt, cutoff) : undefined;
 
   // Daily run aggregates
   const dailyRows = db
     .select({
-      date: sql<string>`DATE(${runs.startedAt})`.as("date"),
-      runs: sql<number>`COUNT(*)`.as("runs"),
-      succeeded: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Succeeded' THEN 1 ELSE 0 END)`.as("succeeded"),
-      failed: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Failed' THEN 1 ELSE 0 END)`.as("failed"),
-      avgDurationMs: sql<number>`AVG(CASE WHEN ${runs.startedAt} IS NOT NULL AND ${runs.completedAt} IS NOT NULL
-        THEN (julianday(${runs.completedAt}) - julianday(${runs.startedAt})) * 86400000 ELSE NULL END)`.as("avg_duration_ms"),
-      tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as("tokens_in"),
-      tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as("tokens_out"),
-      cost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as("cost"),
+      date: sql<string>`DATE(${runs.startedAt})`.as('date'),
+      runs: sql<number>`COUNT(*)`.as('runs'),
+      succeeded: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Succeeded' THEN 1 ELSE 0 END)`.as(
+        'succeeded',
+      ),
+      failed: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Failed' THEN 1 ELSE 0 END)`.as('failed'),
+      avgDurationMs:
+        sql<number>`AVG(CASE WHEN ${runs.startedAt} IS NOT NULL AND ${runs.completedAt} IS NOT NULL
+        THEN (julianday(${runs.completedAt}) - julianday(${runs.startedAt})) * 86400000 ELSE NULL END)`.as(
+          'avg_duration_ms',
+        ),
+      tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('tokens_in'),
+      tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('tokens_out'),
+      cost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as('cost'),
     })
     .from(runs)
     .where(whereClause)
     .groupBy(sql`DATE(${runs.startedAt})`)
     .orderBy(asc(sql`DATE(${runs.startedAt})`))
     .all() as Array<{
-      date: string;
-      runs: number;
-      succeeded: number;
-      failed: number;
-      avgDurationMs: number | null;
-      tokensIn: number;
-      tokensOut: number;
-      cost: number;
-    }>;
+    date: string;
+    runs: number;
+    succeeded: number;
+    failed: number;
+    avgDurationMs: number | null;
+    tokensIn: number;
+    tokensOut: number;
+    cost: number;
+  }>;
 
   const trendPoints: TrendPoint[] = dailyRows.map((r) => ({
     date: r.date,
@@ -890,24 +892,21 @@ stats.get("/trends", auth(), (c) => {
   // Tokens per model per day
   const modelRows = db
     .select({
-      date: sql<string>`DATE(${runs.startedAt})`.as("date"),
+      date: sql<string>`DATE(${runs.startedAt})`.as('date'),
       model: runs.model,
-      tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as("tokens_in"),
-      tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as("tokens_out"),
+      tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('tokens_in'),
+      tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('tokens_out'),
     })
     .from(runs)
-    .where(and(
-      whereClause,
-      sql`${runs.model} IS NOT NULL`,
-    ))
+    .where(and(whereClause, sql`${runs.model} IS NOT NULL`))
     .groupBy(sql`DATE(${runs.startedAt})`, runs.model)
     .orderBy(asc(sql`DATE(${runs.startedAt})`))
     .all() as Array<{
-      date: string;
-      model: string | null;
-      tokensIn: number;
-      tokensOut: number;
-    }>;
+    date: string;
+    model: string | null;
+    tokensIn: number;
+    tokensOut: number;
+  }>;
 
   // Pivot into per-date, per-model total tokens (in + out)
   const pivotMap = new Map<string, Map<string, number>>();

@@ -3,9 +3,9 @@
 // This endpoint proxies to the manager's MCP tool `read_plan` which reads
 // .percussionist/plans/{plan-task-id}.md from a completed run's workspace.
 
-import { Hono } from "hono";
-import { NAMESPACE } from "../kube.js";
-import { auth } from "../auth.js";
+import { Hono } from 'hono';
+import { auth } from '../auth.js';
+import { NAMESPACE } from '../kube.js';
 
 const router = new Hono();
 
@@ -17,12 +17,12 @@ const MCP_URL = `${MANAGER_SERVICE}:4097/mcp`;
 // Fetches the plan artifact for a given task. For BUILD tasks, this resolves
 // the parent PLAN task automatically. The plan content is read from the task's
 // most recent run workspace or ConfigMap snapshot.
-router.get("/:project/plans/:taskId", auth(), async (c) => {
-  const project = c.req.param("project");
-  const taskId = c.req.param("taskId");
+router.get('/:project/plans/:taskId', auth(), async (c) => {
+  const project = c.req.param('project');
+  const taskId = c.req.param('taskId');
 
   if (!project || !taskId) {
-    return c.json({ error: "Missing required parameters: project, taskId" }, 400);
+    return c.json({ error: 'Missing required parameters: project, taskId' }, 400);
   }
 
   // Call the manager's MCP tool read_plan.
@@ -30,11 +30,11 @@ router.get("/:project/plans/:taskId", auth(), async (c) => {
   // resolve the plan task ID (for BUILD tasks, it reads the parent PLAN).
   try {
     const mcpRequest = {
-      jsonrpc: "2.0",
+      jsonrpc: '2.0',
       id: 1,
-      method: "tools/call",
+      method: 'tools/call',
       params: {
-        name: "read_plan",
+        name: 'read_plan',
         arguments: {
           project,
           task: taskId,
@@ -44,17 +44,14 @@ router.get("/:project/plans/:taskId", auth(), async (c) => {
     };
 
     const res = await fetch(MCP_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(mcpRequest),
       signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) {
-      return c.json(
-        { error: `Manager MCP service returned ${res.status}` },
-        502,
-      );
+      return c.json({ error: `Manager MCP service returned ${res.status}` }, 502);
     }
 
     const mcpResponse = (await res.json()) as {
@@ -67,10 +64,7 @@ router.get("/:project/plans/:taskId", auth(), async (c) => {
     };
 
     if (mcpResponse.error) {
-      return c.json(
-        { error: mcpResponse.error.message, taskId, project },
-        500,
-      );
+      return c.json({ error: mcpResponse.error.message, taskId, project }, 500);
     }
 
     // Extract the plan content from the MCP response.
@@ -82,7 +76,7 @@ router.get("/:project/plans/:taskId", auth(), async (c) => {
     if (rawText) {
       try {
         const parsed = JSON.parse(rawText) as Record<string, unknown>;
-        content = typeof parsed.content === "string" ? parsed.content : null;
+        content = typeof parsed.content === 'string' ? parsed.content : null;
       } catch {
         // Not JSON — treat as raw markdown (fallback)
         content = rawText;
@@ -91,7 +85,7 @@ router.get("/:project/plans/:taskId", auth(), async (c) => {
     if (!content) {
       return c.json(
         {
-          error: "Plan content not found. The task may not have created a plan artifact yet.",
+          error: 'Plan content not found. The task may not have created a plan artifact yet.',
           taskId,
           project,
         },

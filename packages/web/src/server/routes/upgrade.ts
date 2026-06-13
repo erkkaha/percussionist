@@ -4,9 +4,9 @@
 // current running image tags from live deployments and queries GHCR for the
 // latest available semver release.
 
-import { Hono } from "hono";
-import { NAMESPACE } from "../kube.js";
-import { auth, adminAuth } from "../auth.js";
+import { Hono } from 'hono';
+import { adminAuth, auth } from '../auth.js';
+import { NAMESPACE } from '../kube.js';
 
 const router = new Hono();
 
@@ -30,30 +30,27 @@ export interface UpdateStatus {
 //
 // Returns the currently running component versions and the latest available
 // version from the container registry. Suitable for polling from the UI.
-router.get("/status", auth(), async (c) => {
+router.get('/status', auth(), async (c) => {
   const mcpRequest = {
-    jsonrpc: "2.0",
+    jsonrpc: '2.0',
     id: 1,
-    method: "tools/call",
+    method: 'tools/call',
     params: {
-      name: "check_for_updates",
+      name: 'check_for_updates',
       arguments: {},
     },
   };
 
   try {
     const res = await fetch(MCP_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(mcpRequest),
       signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) {
-      return c.json(
-        { error: `Manager MCP service returned ${res.status}` } as UpdateStatus,
-        502,
-      );
+      return c.json({ error: `Manager MCP service returned ${res.status}` } as UpdateStatus, 502);
     }
 
     const mcpResponse = (await res.json()) as {
@@ -83,7 +80,7 @@ router.get("/status", auth(), async (c) => {
           current: { operator: null, manager: null, web: null, dispatcher: null },
           latest: null,
           updateAvailable: false,
-          error: rawText ?? "Unknown MCP tool error",
+          error: rawText ?? 'Unknown MCP tool error',
         } satisfies UpdateStatus,
         500,
       );
@@ -95,7 +92,7 @@ router.get("/status", auth(), async (c) => {
           current: { operator: null, manager: null, web: null, dispatcher: null },
           latest: null,
           updateAvailable: false,
-          error: "Empty response from manager",
+          error: 'Empty response from manager',
         } satisfies UpdateStatus,
         500,
       );
@@ -124,33 +121,36 @@ export interface UpgradeResult {
 }
 
 // POST /api/upgrade/apply
-router.post("/apply", adminAuth(), async (c) => {
+router.post('/apply', adminAuth(), async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { targetTag?: string };
   const targetTag = body.targetTag;
   if (!targetTag) {
-    return c.json({ error: "targetTag is required" } satisfies Partial<UpgradeResult>, 400);
+    return c.json({ error: 'targetTag is required' } satisfies Partial<UpgradeResult>, 400);
   }
 
   const mcpRequest = {
-    jsonrpc: "2.0",
+    jsonrpc: '2.0',
     id: 1,
-    method: "tools/call",
+    method: 'tools/call',
     params: {
-      name: "apply_upgrade",
+      name: 'apply_upgrade',
       arguments: { targetTag },
     },
   };
 
   try {
     const res = await fetch(MCP_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(mcpRequest),
       signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) {
-      return c.json({ error: `Manager MCP service returned ${res.status}` } satisfies Partial<UpgradeResult>, 502);
+      return c.json(
+        { error: `Manager MCP service returned ${res.status}` } satisfies Partial<UpgradeResult>,
+        502,
+      );
     }
 
     const mcpResponse = (await res.json()) as {
@@ -167,11 +167,14 @@ router.post("/apply", adminAuth(), async (c) => {
     const rawText = mcpResponse.result?.content?.[0]?.text;
 
     if (mcpResponse.result?.isError) {
-      return c.json({ error: rawText ?? "Unknown MCP tool error" } satisfies Partial<UpgradeResult>, 500);
+      return c.json(
+        { error: rawText ?? 'Unknown MCP tool error' } satisfies Partial<UpgradeResult>,
+        500,
+      );
     }
 
     if (!rawText) {
-      return c.json({ error: "Empty response from manager" } satisfies Partial<UpgradeResult>, 500);
+      return c.json({ error: 'Empty response from manager' } satisfies Partial<UpgradeResult>, 500);
     }
 
     const result = JSON.parse(rawText) as UpgradeResult;

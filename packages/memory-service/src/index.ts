@@ -13,10 +13,10 @@
 //   WARMUP_TIMEOUT_MS    — Max warmup time in ms (default 300000 = 5 min)
 //   WARMUP_MAX_RETRIES   — Retry count for transient failures (default 6)
 
-import { initDb, handleStoreMemory, handleSearch, handleContext, handleHealth } from "./routes.js";
-import { warmupModel, isModelReady } from "./model-warmup.js";
+import { isModelReady, warmupModel } from './model-warmup.js';
+import { handleContext, handleHealth, handleSearch, handleStoreMemory, initDb } from './routes.js';
 
-const PORT = parseInt(process.env.MEMORY_SERVICE_PORT ?? "4100", 10);
+const PORT = parseInt(process.env.MEMORY_SERVICE_PORT ?? '4100', 10);
 
 // Initialise database and vector tables on startup
 initDb();
@@ -29,9 +29,7 @@ initDb();
 await warmupModel();
 
 if (!isModelReady()) {
-  console.error(
-    `[memory] warmup failed — service will remain unready`,
-  );
+  console.error(`[memory] warmup failed — service will remain unready`);
 }
 
 // ---------------------------------------------------------------------------
@@ -39,7 +37,7 @@ if (!isModelReady()) {
 
 function parseBody(req: Request): Promise<Record<string, unknown>> {
   return req.json().catch(() => {
-    throw new Error("invalid JSON body");
+    throw new Error('invalid JSON body');
   });
 }
 
@@ -49,42 +47,42 @@ async function handler(req: Request): Promise<Response> {
   const method = req.method;
 
   try {
-    if (method === "GET" && path === "/health") {
+    if (method === 'GET' && path === '/health') {
       const result = await handleHealth();
       return json(result);
     }
 
-    if (method === "POST") {
-      if (path === "/memory") {
+    if (method === 'POST') {
+      if (path === '/memory') {
         const body = await parseBody(req);
         const result = await handleStoreMemory({
-          content: String(body.content ?? ""),
+          content: String(body.content ?? ''),
           metadata: body.metadata as Record<string, unknown> | undefined,
           agentRun: body.agentRun as string | undefined,
         });
         return json(result, 201);
       }
 
-      if (path === "/search") {
+      if (path === '/search') {
         const body = await parseBody(req);
         const result = await handleSearch({
-          query: String(body.query ?? ""),
+          query: String(body.query ?? ''),
           limit: body.limit ? Number(body.limit) : undefined,
         });
         return json(result);
       }
 
-      if (path === "/context") {
+      if (path === '/context') {
         const body = await parseBody(req);
         const result = await handleContext({
-          query: String(body.query ?? ""),
+          query: String(body.query ?? ''),
           task: body.task as string | undefined,
         });
         return json(result);
       }
     }
 
-    return new Response("Not Found", { status: 404 });
+    return new Response('Not Found', { status: 404 });
   } catch (e) {
     const msg = (e as Error).message;
     console.error(`[memory] ${method} ${path}:`, msg);
@@ -95,7 +93,7 @@ async function handler(req: Request): Promise<Response> {
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { 'Content-Type': 'application/json' },
   });
 }
 

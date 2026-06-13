@@ -1,6 +1,6 @@
-import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { authHeaders } from "../lib/auth";
+import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { authHeaders } from '../lib/auth';
 
 interface Props {
   days: number;
@@ -40,19 +40,19 @@ interface ToolMetricsResponse {
 // Helpers
 
 function pct(value: number | null): string {
-  if (value == null) return "-";
+  if (value == null) return '-';
   return `${(value * 100).toFixed(1)}%`;
 }
 
 function fmtMs(ms: number | null): string {
-  if (ms == null) return "-";
+  if (ms == null) return '-';
   if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   return `${(ms / 60_000).toFixed(1)}m`;
 }
 
 function fmtTokens(n: number): string {
-  if (n === 0) return "-";
+  if (n === 0) return '-';
   if (n < 1000) return String(n);
   return `${(n / 1000).toFixed(1)}K`;
 }
@@ -90,13 +90,13 @@ function AgentCard({ agent, calls, totalTokensOut, totalSessions }: AgentSummary
 // Main component
 
 export default function ToolMetricsView({ days }: Props) {
-  const [agentFilter, setAgentFilter] = useState("");
+  const [agentFilter, setAgentFilter] = useState('');
 
   const { data, isLoading, error } = useQuery<ToolMetricsResponse>({
-    queryKey: ["tool-metrics", days, agentFilter],
+    queryKey: ['tool-metrics', days, agentFilter],
     queryFn: async () => {
       const params = new URLSearchParams({ days: String(days) });
-      if (agentFilter) params.set("agent", agentFilter);
+      if (agentFilter) params.set('agent', agentFilter);
       const res = await fetch(`/api/stats/tool-metrics?${params}`, { headers: authHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json() as Promise<ToolMetricsResponse>;
@@ -121,7 +121,11 @@ export default function ToolMetricsView({ days }: Props) {
   // Error
 
   if (error || !data) {
-    return <p className="text-text-danger">Failed to load tool metrics: {(error as Error)?.message ?? "unknown"}</p>;
+    return (
+      <p className="text-text-danger">
+        Failed to load tool metrics: {(error as Error)?.message ?? 'unknown'}
+      </p>
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -132,10 +136,7 @@ export default function ToolMetricsView({ days }: Props) {
   // -----------------------------------------------------------------------
   // Derived summaries
 
-  const totalCallDuration = data.tools.reduce(
-    (s, t) => s + (t.avgDurationMs ?? 0) * t.calls,
-    0,
-  );
+  const totalCallDuration = data.tools.reduce((s, t) => s + (t.avgDurationMs ?? 0) * t.calls, 0);
   const avgCallDuration = data.totalCalls > 0 ? totalCallDuration / data.totalCalls : null;
   const successRateTotal =
     data.totalCalls > 0
@@ -163,7 +164,9 @@ export default function ToolMetricsView({ days }: Props) {
             >
               <option value="">All agents</option>
               {agents.map((a) => (
-                <option key={a} value={a}>{a}</option>
+                <option key={a} value={a}>
+                  {a}
+                </option>
               ))}
             </select>
           )}
@@ -198,7 +201,9 @@ export default function ToolMetricsView({ days }: Props) {
       {noData ? (
         <div className="rounded-lg border border-border bg-surface-raised p-8 text-center text-text-dim">
           <p>No tool usage data yet.</p>
-          <p className="text-xs mt-1">Data appears after agents complete runs and the dispatcher sends session stats.</p>
+          <p className="text-xs mt-1">
+            Data appears after agents complete runs and the dispatcher sends session stats.
+          </p>
         </div>
       ) : (
         <div className="rounded-lg border border-border bg-surface-raised overflow-hidden">
@@ -219,13 +224,27 @@ export default function ToolMetricsView({ days }: Props) {
               <tbody className="divide-y divide-border-muted">
                 {data.tools.map((t) => (
                   <tr key={t.toolName} className="hover:bg-surface-raised/60">
-                    <td className="px-4 py-2.5 font-mono text-xs text-text whitespace-nowrap">{t.toolName}</td>
-                    <td className="px-4 py-2.5 tabular-nums text-text-muted">{t.calls.toLocaleString()}</td>
-                    <td className="px-4 py-2.5 tabular-nums text-text-muted">{fmtMs(t.avgDurationMs)}</td>
-                    <td className="px-4 py-2.5 tabular-nums text-text-muted">{pct(t.successRate)}</td>
-                    <td className="px-4 py-2.5 tabular-nums text-text-muted">{t.totalErrors.toLocaleString()}</td>
-                    <td className="px-4 py-2.5 tabular-nums text-text-muted">{fmtTokens(t.estTokensOut)}</td>
-                    <td className="px-4 py-2.5 tabular-nums text-text-muted">{fmtTokens(t.avgTokensOutPerCall)}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-text whitespace-nowrap">
+                      {t.toolName}
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums text-text-muted">
+                      {t.calls.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums text-text-muted">
+                      {fmtMs(t.avgDurationMs)}
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums text-text-muted">
+                      {pct(t.successRate)}
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums text-text-muted">
+                      {t.totalErrors.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums text-text-muted">
+                      {fmtTokens(t.estTokensOut)}
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums text-text-muted">
+                      {fmtTokens(t.avgTokensOutPerCall)}
+                    </td>
                     <td className="px-4 py-2.5 tabular-nums text-text-muted">{t.sessionsUsing}</td>
                   </tr>
                 ))}

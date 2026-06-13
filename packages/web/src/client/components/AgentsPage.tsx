@@ -1,9 +1,9 @@
-import { Link, useNavigate } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAgents } from "../hooks/useAgents";
-import { useAgentsEvents } from "../hooks/useAgentsEvents";
-import { deleteAgent } from "../lib/api";
-import { Button } from "./ui/button";
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAgents } from '../hooks/useAgents';
+import { useAgentsEvents } from '../hooks/useAgentsEvents';
+import { deleteAgent } from '../lib/api';
+import { Button } from './ui/button';
 
 interface AgentListItem {
   name: string;
@@ -12,9 +12,9 @@ interface AgentListItem {
 }
 
 function age(iso: string | undefined): string {
-  if (!iso) return "-";
+  if (!iso) return '-';
   const ms = Date.now() - new Date(iso).getTime();
-  if (Number.isNaN(ms) || ms < 0) return "-";
+  if (Number.isNaN(ms) || ms < 0) return '-';
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
@@ -26,7 +26,7 @@ function age(iso: string | undefined): string {
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
-  return s.slice(0, max) + "\u2026";
+  return `${s.slice(0, max)}\u2026`;
 }
 
 function AgentRow({ agent }: { agent: AgentListItem }) {
@@ -35,24 +35,21 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
   const del = useMutation({
     mutationFn: () => deleteAgent(agent.name),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
     },
   });
 
   return (
     <tr className="hover:bg-surface-raised/60 transition-colors">
-      <td className="px-4 py-3 font-medium text-text font-mono text-sm">
-        {agent.name}
-      </td>
-      <td className="px-4 py-3 text-text-muted font-mono text-xs">
-        {agent.model ?? "-"}
-      </td>
-      <td className="px-4 py-3 text-text-muted font-mono text-xs max-w-md truncate" title={agent.content}>
+      <td className="px-4 py-3 font-medium text-text font-mono text-sm">{agent.name}</td>
+      <td className="px-4 py-3 text-text-muted font-mono text-xs">{agent.model ?? '-'}</td>
+      <td
+        className="px-4 py-3 text-text-muted font-mono text-xs max-w-md truncate"
+        title={agent.content}
+      >
         {truncate(agent.content, 120)}
       </td>
-      <td className="px-4 py-3 text-text-muted tabular-nums text-xs">
-        {age(undefined)}
-      </td>
+      <td className="px-4 py-3 text-text-muted tabular-nums text-xs">{age(undefined)}</td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
           <Button
@@ -72,7 +69,7 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
             }}
             disabled={del.isPending}
           >
-            {del.isPending ? "Deleting\u2026" : "Delete"}
+            {del.isPending ? 'Deleting\u2026' : 'Delete'}
           </Button>
         </div>
       </td>
@@ -83,9 +80,12 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
 export default function AgentsPage({ showHeader = true }: { showHeader?: boolean }) {
   const { connected: agentsSseConnected, eventTick } = useAgentsEvents();
   void eventTick;
-  const { data: agents, error, isLoading, isFetching } = useAgents(
-    agentsSseConnected ? false : 10_000,
-  );
+  const {
+    data: agents,
+    error,
+    isLoading,
+    isFetching,
+  } = useAgents(agentsSseConnected ? false : 10_000);
 
   if (error) {
     return (
@@ -109,7 +109,7 @@ export default function AgentsPage({ showHeader = true }: { showHeader?: boolean
               )}
             </p>
             <p className="text-caption-xs text-text-dim mt-0.5">
-              Updates: {agentsSseConnected ? "live stream" : "polling fallback"}
+              Updates: {agentsSseConnected ? 'live stream' : 'polling fallback'}
             </p>
           </div>
           <Link to="/agents/new">
@@ -134,10 +134,10 @@ export default function AgentsPage({ showHeader = true }: { showHeader?: boolean
         </div>
       ) : !agents || agents.length === 0 ? (
         <div className="rounded-lg border border-border-muted bg-surface-raised p-8 text-center text-text-muted">
-          No cluster agents yet.{" "}
+          No cluster agents yet.{' '}
           <Link to="/agents/new" className="underline hover:text-text transition-colors">
             Create one
-          </Link>{" "}
+          </Link>{' '}
           to define reusable agent prompts available across all runs.
         </div>
       ) : (

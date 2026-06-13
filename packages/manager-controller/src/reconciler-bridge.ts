@@ -1,9 +1,9 @@
 // Reconciler bridge — maintains old API for index.ts while using new phase-driven reconciler.
 
-import { KubeConfig, CustomObjectsApi } from "@kubernetes/client-node";
-import { API_GROUP, API_VERSION, PLURAL_PROJECT, type Project } from "@percussionist/api";
-import { NAMESPACE, getProject } from "@percussionist/kube";
-import { reconcileProject } from "./reconciler/index.js";
+import { CustomObjectsApi, KubeConfig } from '@kubernetes/client-node';
+import { API_GROUP, API_VERSION, PLURAL_PROJECT, type Project } from '@percussionist/api';
+import { getProject, NAMESPACE } from '@percussionist/kube';
+import { reconcileProject } from './reconciler/index.js';
 
 export { NAMESPACE };
 
@@ -75,7 +75,7 @@ export async function runWorker(): Promise<void> {
     queue.delete(key);
 
     try {
-      const parts = key.split("/");
+      const parts = key.split('/');
       let namespace = NAMESPACE;
       let name = key;
       if (parts.length === 2) {
@@ -101,7 +101,7 @@ export async function runWorker(): Promise<void> {
 // Periodic resync: re-enqueue all projects every 60 seconds.
 export function startPeriodicResync(): void {
   setInterval(async () => {
-    console.log("[periodicResync] triggering resync");
+    console.log('[periodicResync] triggering resync');
     try {
       const res = await k8s.listNamespacedCustomObject({
         group: API_GROUP,
@@ -115,7 +115,7 @@ export function startPeriodicResync(): void {
       }
       console.log(`[periodicResync] re-enqueued ${items.length} project(s)`);
     } catch (e) {
-      console.error("[periodicResync] failed to list projects:", e);
+      console.error('[periodicResync] failed to list projects:', e);
     }
   }, 60000);
 }
