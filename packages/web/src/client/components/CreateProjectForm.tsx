@@ -174,12 +174,14 @@ export default function CreateProjectForm({
       pvcName: form.pvcName, mountPath: form.mountPath, storageClass: form.storageClass,
       embeddingEnabled: form.embeddingEnabled, embeddingModel: form.embeddingModel,
       embeddingDimensions: form.embeddingDimensions, embeddingOllamaUrl: form.embeddingOllamaUrl,
+      execImage: form.execImage,
       setCodeServerEnabled: form.setCodeServerEnabled, setCodeServerImage: form.setCodeServerImage,
       setCSCpuRequest: form.setCSCpuRequest, setCSMemRequest: form.setCSMemRequest,
       setCSCpuLimit: form.setCSCpuLimit, setCSMemLimit: form.setCSMemLimit,
       setPvcName: form.setPvcName, setMountPath: form.setMountPath, setStorageClass: form.setStorageClass,
       setEmbeddingEnabled: form.setEmbeddingEnabled, setEmbeddingModel: form.setEmbeddingModel,
       setEmbeddingDimensions: form.setEmbeddingDimensions, setEmbeddingOllamaUrl: form.setEmbeddingOllamaUrl,
+      setExecImage: form.setExecImage,
     },
   };
 

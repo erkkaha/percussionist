@@ -207,6 +207,11 @@ export interface CreateProjectRequest {
     dimensions?: number;
     ollamaUrl?: string;
   };
+
+  /** Exec/maintenance pod configuration — controls the container image used for workspace exec pods. */
+  exec?: {
+    image?: string;
+  };
 }
 
 export interface CreateAgentRequest {

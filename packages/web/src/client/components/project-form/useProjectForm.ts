@@ -119,6 +119,9 @@ export interface ProjectFormState {
   embeddingDimensions: string;
   embeddingOllamaUrl: string;
 
+  /** Exec/maintenance pod configuration — controls the container image used for workspace exec pods. */
+  execImage: string;
+
   // Advanced
   sidecars: SidecarRow[];
   injectFiles: InjectFileRow[];
@@ -359,6 +362,11 @@ export function buildProjectRequest(
     };
   }
 
+  // Exec / Maintenance pod image
+  if (state.execImage.trim()) {
+    req.exec = { image: state.execImage.trim() };
+  }
+
   return req;
 }
 
@@ -432,6 +440,9 @@ export function createInitialState(initialSpec: ProjectDetail["spec"] | undefine
     embeddingDimensions: String(spec.embedding?.dimensions ?? 768),
     embeddingOllamaUrl: spec.embedding?.ollamaUrl ?? "",
 
+    // Exec / Maintenance pod image
+    execImage: spec.exec?.image ?? "",
+
     // Advanced
     sidecars: initialSidecarRows(initialSpec),
     injectFiles: [], // will be set by caller with project data
@@ -503,6 +514,7 @@ export interface ProjectFormHookReturn extends ProjectFormState {
   setEmbeddingModel: React.Dispatch<React.SetStateAction<string>>;
   setEmbeddingDimensions: React.Dispatch<React.SetStateAction<string>>;
   setEmbeddingOllamaUrl: React.Dispatch<React.SetStateAction<string>>;
+  setExecImage: React.Dispatch<React.SetStateAction<string>>;
 
   setSidecars: React.Dispatch<React.SetStateAction<SidecarRow[]>>;
   setInjectFiles: React.Dispatch<React.SetStateAction<InjectFileRow[]>>;
@@ -597,6 +609,7 @@ export function useProjectForm(
   const [embeddingModel, setEmbeddingModel] = useState(initialState.embeddingModel);
   const [embeddingDimensions, setEmbeddingDimensions] = useState(initialState.embeddingDimensions);
   const [embeddingOllamaUrl, setEmbeddingOllamaUrl] = useState(initialState.embeddingOllamaUrl);
+  const [execImage, setExecImage] = useState(initialState.execImage);
 
   // Advanced
   const [sidecars, setSidecars] = useState<SidecarRow[]>(initialState.sidecars);
@@ -657,8 +670,8 @@ export function useProjectForm(
     setFlowPreset, setFlowHumanApprovalPlan, setFlowHumanApprovalBuild, setFlowPlanOnApprove, setFlowBuildOnSuccess, setFlowBuildOnApprove, setFlowMergeMode,
 
     // Workspace & Services
-    codeServerEnabled, codeServerImage, csCpuRequest, csMemRequest, csCpuLimit, csMemLimit, pvcName, mountPath, storageClass, embeddingEnabled, embeddingModel, embeddingDimensions, embeddingOllamaUrl,
-    setCodeServerEnabled, setCodeServerImage, setCSCpuRequest, setCSMemRequest, setCSCpuLimit, setCSMemLimit, setPvcName, setMountPath, setStorageClass, setEmbeddingEnabled, setEmbeddingModel, setEmbeddingDimensions, setEmbeddingOllamaUrl,
+    codeServerEnabled, codeServerImage, csCpuRequest, csMemRequest, csCpuLimit, csMemLimit, pvcName, mountPath, storageClass, embeddingEnabled, embeddingModel, embeddingDimensions, embeddingOllamaUrl, execImage,
+    setCodeServerEnabled, setCodeServerImage, setCSCpuRequest, setCSMemRequest, setCSCpuLimit, setCSMemLimit, setPvcName, setMountPath, setStorageClass, setEmbeddingEnabled, setEmbeddingModel, setEmbeddingDimensions, setEmbeddingOllamaUrl, setExecImage,
 
     // Advanced
     sidecars, injectFiles, initScript, rosterAgents, rosterPickerValue,

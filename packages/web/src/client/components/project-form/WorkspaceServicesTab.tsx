@@ -3,8 +3,8 @@ import type { ProjectFormHookReturn } from "./useProjectForm";
 import { Switch } from "../ui/switch";
 
 interface WorkspaceServicesTabProps {
-  form: Pick<ProjectFormHookReturn, "codeServerEnabled" | "codeServerImage" | "csCpuRequest" | "csMemRequest" | "csCpuLimit" | "csMemLimit" | "pvcName" | "mountPath" | "storageClass" | "embeddingEnabled" | "embeddingModel" | "embeddingDimensions" | "embeddingOllamaUrl"> &
-    Pick<ProjectFormHookReturn, "setCodeServerEnabled" | "setCodeServerImage" | "setCSCpuRequest" | "setCSMemRequest" | "setCSCpuLimit" | "setCSMemLimit" | "setPvcName" | "setMountPath" | "setStorageClass" | "setEmbeddingEnabled" | "setEmbeddingModel" | "setEmbeddingDimensions" | "setEmbeddingOllamaUrl">;
+  form: Pick<ProjectFormHookReturn, "codeServerEnabled" | "codeServerImage" | "csCpuRequest" | "csMemRequest" | "csCpuLimit" | "csMemLimit" | "pvcName" | "mountPath" | "storageClass" | "embeddingEnabled" | "embeddingModel" | "embeddingDimensions" | "embeddingOllamaUrl" | "execImage"> &
+    Pick<ProjectFormHookReturn, "setCodeServerEnabled" | "setCodeServerImage" | "setCSCpuRequest" | "setCSMemRequest" | "setCSCpuLimit" | "setCSMemLimit" | "setPvcName" | "setMountPath" | "setStorageClass" | "setEmbeddingEnabled" | "setEmbeddingModel" | "setEmbeddingDimensions" | "setEmbeddingOllamaUrl" | "setExecImage">;
 }
 
 export default function WorkspaceServicesTab({ form }: WorkspaceServicesTabProps) {
@@ -178,6 +178,25 @@ export default function WorkspaceServicesTab({ form }: WorkspaceServicesTabProps
             </div>
           </div>
         )}
+      </fieldset>
+
+      {/* Exec / Maintenance Pod Image */}
+      <fieldset className="space-y-3 rounded-md border border-border p-4">
+        <legend className="px-1 text-sm font-medium text-text-muted">Exec / Maintenance Pod</legend>
+        <p className="text-xs text-text-dim">
+          Container image used for workspace exec pods (e.g. by the <code>exec_in_workspace</code> MCP tool).
+          Leave blank to use the default fallback: <code>alpine:3.20</code>.
+        </p>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-text-muted">Container Image</label>
+          <Input
+            type="text"
+            value={form.execImage}
+            onChange={(e) => form.setExecImage(e.target.value)}
+            placeholder="(use default: alpine:3.20)"
+            className="font-mono"
+          />
+        </div>
       </fieldset>
     </div>
   );
