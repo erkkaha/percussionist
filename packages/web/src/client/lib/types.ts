@@ -21,7 +21,13 @@ export type {
 } from "@percussionist/api";
 export { RunPhase, TERMINAL_PHASES } from "@percussionist/api";
 
-import type { Project as _Project, Task as _Task } from "@percussionist/api";
+import type {
+  Project as _Project,
+  Task as _Task,
+  DiffContext,
+  DiffFinding,
+  DiffFindingSeverity,
+} from "@percussionist/api";
 
 /** GET /api/projects/:name augments the CR with inject file contents for UI pre-population. */
 export interface ProjectDetail extends _Project {
