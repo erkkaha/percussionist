@@ -7,6 +7,7 @@ import AdvancedTab from './project-form/AdvancedTab';
 import ExecutionTab from './project-form/ExecutionTab';
 // Tab components
 import GeneralTab from './project-form/GeneralTab';
+import MemoriesTab from './project-form/MemoriesTab';
 import SourceAuthTab from './project-form/SourceAuthTab';
 // Hook + helpers
 import { buildProjectRequest, useProjectForm } from './project-form/useProjectForm';
@@ -19,13 +20,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 // Tab definitions (ordered list)
 // ---------------------------------------------------------------------------
 
-type ProjectTabId = 'general' | 'source-auth' | 'execution' | 'workspace-services' | 'advanced';
+type ProjectTabId =
+  | 'general'
+  | 'source-auth'
+  | 'execution'
+  | 'workspace-services'
+  | 'memories'
+  | 'advanced';
 
 const TABS: Array<{ id: ProjectTabId; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'source-auth', label: 'Source & Auth' },
   { id: 'execution', label: 'Execution' },
   { id: 'workspace-services', label: 'Workspace & Services' },
+  { id: 'memories', label: 'Memories' },
   { id: 'advanced', label: 'Advanced' },
 ];
 
@@ -315,6 +323,11 @@ export default function CreateProjectForm({
           {/* Workspace & Services tab */}
           <TabsContent value="workspace-services" className="space-y-5">
             <WorkspaceServicesTab form={workspaceServicesProps.form} />
+          </TabsContent>
+
+          {/* Memories tab */}
+          <TabsContent value="memories" className="space-y-5">
+            <MemoriesTab isEdit={isEdit} projectName={initialProject?.metadata.name} />
           </TabsContent>
 
           {/* Advanced tab */}

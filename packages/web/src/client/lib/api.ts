@@ -5,16 +5,22 @@ import { authHeaders, clearToken } from './auth';
 import type {
   BoardStatus,
   CreateAgentRequest,
+  CreateMemoryRequest,
+  CreateMemoryResponse,
   CreateProjectRequest,
   CreateRunRequest,
+  DeleteMemoryResponse,
+  ListMemoriesResponse,
   LogsResponse,
   PlanResponse,
   Project,
   ProjectDetail,
+  ProjectMemory,
   Run,
   SessionResponse,
   Task,
   TaskDiffResponse,
+  UpdateMemoryRequest,
 } from './types';
 
 const BASE = '/api';
@@ -498,4 +504,77 @@ export interface ProvidersResponse {
 
 export async function fetchProviders(): Promise<ProvidersResponse> {
   return fetchJSON<ProvidersResponse>('/providers');
+}
+
+// ---------------------------------------------------------------------------
+// Project memories
+
+export async function fetchProjectMemories(
+  project: string,
+  options?: { limit?: number; offset?: number; task?: string },
+): Promise<ListMemoriesResponse> {
+  const params = new URLSearchParams();
+  if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.offset) params.set('offset', String(options.offset));
+  if (options?.task) params.set('task', options.task);
+  return fetchJSON<ListMemoriesResponse>(
+    `/projects/${encodeURIComponent(project)}/memories?${params}`,
+  );
+}
+
+export async function fetchProjectMemory(project: string, id: string): Promise<ProjectMemory> {
+  return fetchJSON<ProjectMemory>(
+    `/projects/${encodeURIComponent(project)}/memories/${encodeURIComponent(id)}`,
+  );
+}
+
+export async function createProjectMemory(
+  project: string,
+  req: CreateMemoryRequest,
+): Promise<CreateMemoryResponse> {
+  const res = await fetch(`${BASE}/projects/${encodeURIComponent(project)}/memories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(req),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return body as CreateMemoryResponse;
+}
+
+export async function updateProjectMemory(
+  project: string,
+  id: string,
+  req: UpdateMemoryRequest,
+): Promise<ProjectMemory> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(project)}/memories/${encodeURIComponent(id)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(req),
+    },
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return body as ProjectMemory;
+}
+
+export async function deleteProjectMemory(
+  project: string,
+  id: string,
+): Promise<DeleteMemoryResponse> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(project)}/memories/${encodeURIComponent(id)}`,
+    { method: 'DELETE', headers: authHeaders() },
+  );
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return { deleted: true };
 }

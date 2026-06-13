@@ -15,6 +15,7 @@ import boardDb from './routes/board-db.js';
 import logs from './routes/logs.js';
 import metrics from './routes/metrics.js';
 import plans from './routes/plans.js';
+import projectMemories from './routes/project-memories.js';
 import projects from './routes/projects.js';
 import providers from './routes/providers.js';
 import runs from './routes/runs.js';
@@ -44,6 +45,7 @@ export function createApp() {
   app.route('/api/activity', activity);
   app.route('/api/projects', plans);
   app.route('/api/projects', taskDiff);
+  app.route('/api/projects', projectMemories);
   app.route('/api/upgrade', upgrade);
   app.route('/api/providers', providers);
 
