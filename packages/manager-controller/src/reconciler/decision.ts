@@ -1131,7 +1131,9 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
     (t) => t.spec.type === 'BUILD' && t.spec.parentTaskRef === taskName,
   );
   const hasChildren = childTasks.length > 0;
-  const allDone = hasChildren && childTasks.every((t) => t.status?.phase === 'done');
+  const allDone =
+    hasChildren &&
+    childTasks.every((t) => t.status?.phase === 'done' && t.status?.worker?.mergedAt);
 
   if (!hasChildren) {
     // No child BUILD tasks exist — escalate to awaiting-human with explicit reason.

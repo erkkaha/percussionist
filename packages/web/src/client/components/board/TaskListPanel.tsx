@@ -63,7 +63,11 @@ function AddTaskForm({
       <RadioGroup value={taskType} onValueChange={(v) => setTaskType(v as 'PLAN' | 'BUILD')}>
         <div className="flex gap-4">
           {(['PLAN', 'BUILD'] as const).map((t) => (
-            <label key={t} htmlFor={`task-type-${t}`} className="flex items-center gap-2 cursor-pointer">
+            <label
+              key={t}
+              htmlFor={`task-type-${t}`}
+              className="flex items-center gap-2 cursor-pointer"
+            >
               <RadioGroupItem value={t} id={`task-type-${t}`} />
               <span className="text-sm">{t}</span>
             </label>
