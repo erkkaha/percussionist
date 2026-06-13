@@ -403,9 +403,32 @@ function OverviewContent({
           <MetaRow label="Retries" value={String(worker.retryCount)} />
         )}
         {worker?.status && <MetaRow label="Worker" value={worker.status} />}
-        {worker?.gitBranch && <MetaRow label="Branch" value={worker.gitBranch} mono />}
+        {worker?.gitBranch && (
+          <div>
+            <p className="text-label-md font-mono uppercase text-text-dim">Branch</p>
+            <span className="inline-flex items-center rounded border border-border-muted bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text truncate max-w-full" title={worker.gitBranch}>
+              {worker.gitBranch}
+            </span>
+          </div>
+        )}
         {worker?.reviewApproved !== undefined && (
-          <MetaRow label="Agent review" value={worker.reviewApproved ? 'approved' : 'rejected'} />
+          <div>
+            <p className="text-label-md font-mono uppercase text-text-dim">Agent review</p>
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+                worker.reviewApproved
+                  ? 'text-phase-succeeded border-phase-succeeded/30 bg-phase-succeeded/10'
+                  : 'text-phase-failed border-phase-failed/30 bg-phase-failed/10'
+              }`}
+            >
+              {worker.reviewApproved ? (
+                <Check className="h-3 w-3" />
+              ) : (
+                <X className="h-3 w-3" />
+              )}
+              {worker.reviewApproved ? 'approved' : 'rejected'}
+            </span>
+          </div>
         )}
       </div>
 
@@ -415,7 +438,15 @@ function OverviewContent({
           <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">
             Agent Review Feedback
           </p>
-          <p className="text-sm whitespace-pre-wrap text-phase-failed/80 leading-relaxed">
+          <p
+            className={`text-sm whitespace-pre-wrap leading-relaxed ${
+              worker.reviewApproved === true
+                ? 'text-phase-succeeded/80'
+                : worker.reviewApproved === false
+                  ? 'text-phase-failed/80'
+                  : 'text-text-muted'
+            }`}
+          >
             {worker.reviewFeedback}
           </p>
         </div>
