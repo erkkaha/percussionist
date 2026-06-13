@@ -418,18 +418,14 @@ function DetailSkeleton() {
       <div className="h-8 w-64 rounded bg-surface-overlay animate-pulse" />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-3">
-          {
-            [0, 1, 2, 3, 4, 5].map((k) => (
-              <div key={k} className="h-4 rounded bg-surface-overlay animate-pulse" />
-            ))
-          }
+          {[0, 1, 2, 3, 4, 5].map((k) => (
+            <div key={k} className="h-4 rounded bg-surface-overlay animate-pulse" />
+          ))}
         </div>
         <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-3">
-          {
-            [0, 1, 2, 3, 4, 5].map((k) => (
-              <div key={k} className="h-4 rounded bg-surface-overlay animate-pulse" />
-            ))
-          }
+          {[0, 1, 2, 3, 4, 5].map((k) => (
+            <div key={k} className="h-4 rounded bg-surface-overlay animate-pulse" />
+          ))}
         </div>
       </div>
     </div>

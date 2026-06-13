@@ -88,8 +88,7 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
   const speakEnabledRef = useRef(false);
   const speakAfterCreatedRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<object | null>(null);
   const sttSupported = !!SpeechRecognitionAPI;
 
   function sanitizeForSpeech(text: string): string {

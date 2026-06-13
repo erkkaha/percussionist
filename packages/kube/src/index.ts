@@ -1019,7 +1019,7 @@ export async function writePlanToConfigMap(
       body: {
         apiVersion: 'v1',
         kind: 'ConfigMap',
-        metadata: existing.metadata as any,
+        metadata: existing.metadata as Record<string, unknown>,
         data: newData,
       },
     });
@@ -1033,7 +1033,7 @@ export async function writePlanToConfigMap(
         kind: 'ConfigMap',
         metadata: {
           ...existing.metadata,
-        } as any,
+        } as Record<string, unknown>,
         data: newData,
       },
     });

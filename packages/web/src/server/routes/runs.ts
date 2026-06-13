@@ -176,8 +176,8 @@ runs.post('/:name/reply', adminAuth(), async (c) => {
     return c.json({ error: 'Run not found' }, 404);
   }
 
-  const serviceName = (run as any).status?.serviceName;
-  if (!serviceName || !(run as any).status?.sessionID) {
+  const serviceName = run.status?.serviceName;
+  if (!serviceName || !run.status?.sessionID) {
     return c.json({ error: 'No active session for this run' }, 400);
   }
 
@@ -194,7 +194,7 @@ runs.post('/:name/reply', adminAuth(), async (c) => {
   }
 
   try {
-    await postSessionMessage(serviceName, (run as any).status.sessionID, textBody.message);
+    await postSessionMessage(serviceName, run.status.sessionID, textBody.message);
     return c.json({ ok: true });
   } catch (e) {
     const msg = (e as Error).message;

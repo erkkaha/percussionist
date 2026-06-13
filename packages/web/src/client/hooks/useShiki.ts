@@ -77,10 +77,10 @@ export function useShiki() {
 
       // Check if language is loaded
       const loadedLangs = h.getLoadedLanguages();
-      if (!loadedLangs.includes(lang as any)) {
+      if (!loadedLangs.includes(lang as string)) {
         // Try to load the language
         try {
-          await h.loadLanguage(lang as any);
+          await h.loadLanguage(lang as string);
         } catch {
           // Language not available, fall back to plain text
           return `<pre><code>${escapeHtml(code)}</code></pre>`;

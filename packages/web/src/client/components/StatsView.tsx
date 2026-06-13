@@ -1044,14 +1044,12 @@ export default function StatsView() {
       {isLoading && (
         <div className="space-y-3">
           <div className="grid grid-cols-7 gap-3">
-            {
-              [0, 1, 2, 3, 4, 5, 6].map((k) => (
-                <div
-                  key={k}
-                  className="rounded-lg border border-border bg-surface-raised p-4 h-20 animate-pulse"
-                />
-              ))
-            }
+            {[0, 1, 2, 3, 4, 5, 6].map((k) => (
+              <div
+                key={k}
+                className="rounded-lg border border-border bg-surface-raised p-4 h-20 animate-pulse"
+              />
+            ))}
           </div>
         </div>
       )}

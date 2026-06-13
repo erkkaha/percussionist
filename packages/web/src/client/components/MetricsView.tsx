@@ -283,14 +283,12 @@ export default function MetricsView() {
           {isLoading && (
             <div className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {
-                  [0, 1, 2].map((k) => (
-                    <div
-                      key={k}
-                      className="rounded-lg border border-border bg-surface-raised p-4 h-28 animate-pulse"
-                    />
-                  ))
-                }
+                {[0, 1, 2].map((k) => (
+                  <div
+                    key={k}
+                    className="rounded-lg border border-border bg-surface-raised p-4 h-28 animate-pulse"
+                  />
+                ))}
               </div>
               <div className="rounded-lg border border-border bg-surface-raised h-48 animate-pulse" />
             </div>

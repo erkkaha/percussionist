@@ -69,7 +69,7 @@ export function buildPayloads(
       if (typeof info.model === 'string') {
         model = info.model;
       } else if (typeof info.model === 'object' && !Array.isArray(info.model)) {
-        const m = info.model as any;
+        const m = info.model as Record<string, unknown>;
         model = `${m.providerID ?? ''}/${m.modelID ?? ''}`.replace(/^\/|\/$/g, '');
       }
     }
@@ -115,7 +115,9 @@ export function buildPayloads(
         // Detect file operations from tool args
         // Check both direct input and state.input (like dispatcher does)
         const stateInput =
-          tp.state && typeof tp.state === 'object' ? (tp.state as any).input : undefined;
+          tp.state && typeof tp.state === 'object'
+            ? (tp.state as { input?: unknown }).input
+            : undefined;
         const input = (stateInput !== undefined ? stateInput : tp.input) as
           | Record<string, unknown>
           | undefined;
