@@ -1,14 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, Mic, MicOff, Volume2, VolumeX, X } from "lucide-react";
-import { DrumLogo } from "./app-sidebar";
-import { authHeaders, getToken } from "../lib/auth";
-import type { Task } from "@/lib/types";
-import { useIsMobile } from "@/hooks/use-mobile";
-import { parseOptionBlocks } from "@/lib/chat-utils";
-import ChatOptionCard from "./ChatOptionCard";
+import { Mic, MicOff, Send, Volume2, VolumeX, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { parseOptionBlocks } from '@/lib/chat-utils';
+import type { Task } from '@/lib/types';
+import { authHeaders, getToken } from '../lib/auth';
+import { DrumLogo } from './app-sidebar';
+import ChatOptionCard from './ChatOptionCard';
 
 interface ChatMessage {
-  role: "user" | "assistant" | "system";
+  role: 'user' | 'assistant' | 'system';
   text: string;
   id?: string;
   created?: number;
@@ -20,11 +20,11 @@ function formatTaskContext(task: Task, projectName: string): string {
   lines.push(`Title: ${task.spec.title}`);
   if (task.spec.description) lines.push(`Description: ${task.spec.description}`);
   lines.push(`Type: ${task.spec.type}`);
-  lines.push(`Priority: ${task.spec.priority ?? "medium"}`);
-  lines.push(`Status: ${task.status?.phase ?? "unknown"}`);
+  lines.push(`Priority: ${task.spec.priority ?? 'medium'}`);
+  lines.push(`Status: ${task.status?.phase ?? 'unknown'}`);
   if (task.spec.agent) lines.push(`Agent: ${task.spec.agent}`);
   if (task.spec.parentTaskRef) lines.push(`Parent: ${task.spec.parentTaskRef}`);
-  return lines.join("\n");
+  return lines.join('\n');
 }
 
 type SpeechRecognitionType = new () => {
@@ -40,14 +40,20 @@ type SpeechRecognitionType = new () => {
 };
 
 const SpeechRecognitionAPI =
-  typeof window !== "undefined"
-    ? ((window as unknown as { SpeechRecognition?: SpeechRecognitionType; webkitSpeechRecognition?: SpeechRecognitionType }).SpeechRecognition ||
-       (window as unknown as { webkitSpeechRecognition?: SpeechRecognitionType }).webkitSpeechRecognition)
+  typeof window !== 'undefined'
+    ? (
+        window as unknown as {
+          SpeechRecognition?: SpeechRecognitionType;
+          webkitSpeechRecognition?: SpeechRecognitionType;
+        }
+      ).SpeechRecognition ||
+      (window as unknown as { webkitSpeechRecognition?: SpeechRecognitionType })
+        .webkitSpeechRecognition
     : null;
 
 function timeAgo(ts: number): string {
   const seconds = Math.floor((Date.now() - ts) / 1000);
-  if (seconds < 60) return "just now";
+  if (seconds < 60) return 'just now';
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
@@ -67,11 +73,34 @@ interface AgentChatPanelProps {
   onChatReady?: (api: { injectTask: (task: Task, projectName: string) => void }) => void;
 }
 
+function sanitizeForSpeech(text: string): string {
+  return text
+    .replace(
+      // biome-ignore lint/suspicious/noMisleadingCharacterClass: emoji range regex
+      /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{23CF}\u{23E9}-\u{23F3}\u{23F8}-\u{23FA}\u{231A}-\u{231B}\u{2328}\u{2934}\u{2935}\u{25AA}\u{25AB}\u{25FB}-\u{25FE}\u{2B05}-\u{2B07}\u{2B1B}\u{2B1C}\u{2B50}\u{2B55}\u{3030}\u{303D}\u{3297}\u{3299}]/gu,
+      '',
+    )
+    .replace(/\[!options\][\s\S]*?\[\/!options\]/g, (match) => {
+      const labels: string[] = [];
+      const optRe = /label="([^"]*)"/g;
+      let m: RegExpExecArray | null;
+      // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex exec loop
+      while ((m = optRe.exec(match)) !== null) {
+        if (m[1]) labels.push(m[1]);
+      }
+      return labels.length > 0 ? `Options: ${labels.join(', ')}` : '';
+    })
+    .replace(/[*_~`#>\-|]/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\s{3,}/g, ' ')
+    .trim();
+}
+
 export default function AgentChatPanel({ open, onOpenChange, onChatReady }: AgentChatPanelProps) {
   const isMobile = useIsMobile();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [recording, setRecording] = useState(false);
@@ -82,48 +111,35 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
   const speakEnabledRef = useRef(false);
   const speakAfterCreatedRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<object | null>(null);
   const sttSupported = !!SpeechRecognitionAPI;
 
-function sanitizeForSpeech(text: string): string {
-  return text
-    .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{23CF}\u{23E9}-\u{23F3}\u{23F8}-\u{23FA}\u{231A}-\u{231B}\u{2328}\u{2934}\u{2935}\u{25AA}\u{25AB}\u{25FB}-\u{25FE}\u{2B05}-\u{2B07}\u{2B1B}\u{2B1C}\u{2B50}\u{2B55}\u{3030}\u{303D}\u{3297}\u{3299}]/gu, "")
-    .replace(/\[!options\][\s\S]*?\[\/!options\]/g, (match) => {
-      const labels: string[] = [];
-      const optRe = /label="([^"]*)"/g;
-      let m: RegExpExecArray | null;
-      while ((m = optRe.exec(match)) !== null) {
-        if (m[1]) labels.push(m[1]);
+  const speak = useCallback(
+    (text: string) => {
+      if (!ttsEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+      const utterance = new SpeechSynthesisUtterance(sanitizeForSpeech(text));
+      utterance.lang = 'en-US';
+      utterance.rate = 1.1;
+      utterance.pitch = 1;
+      window.speechSynthesis.speak(utterance);
+    },
+    [ttsEnabled],
+  );
+
+  const addMessageIfNew = useCallback(
+    (msg: ChatMessage) => {
+      const key = messageKey(msg);
+      if (seenKeysRef.current.has(key)) return;
+      seenKeysRef.current.add(key);
+      setMessages((prev) => [...prev, msg]);
+      if (msg.role !== 'assistant') return;
+      const isNew = msg.created != null && msg.created > speakAfterCreatedRef.current;
+      if (isNew || speakEnabledRef.current) {
+        setTimeout(() => speak(msg.text), 300);
       }
-      return labels.length > 0 ? `Options: ${labels.join(", ")}` : "";
-    })
-    .replace(/[*_~`#>\-|]/g, "")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/\s{3,}/g, " ")
-    .trim();
-}
-
-  const speak = useCallback((text: string) => {
-    if (!ttsEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    const utterance = new SpeechSynthesisUtterance(sanitizeForSpeech(text));
-    utterance.lang = "en-US";
-    utterance.rate = 1.1;
-    utterance.pitch = 1;
-    window.speechSynthesis.speak(utterance);
-  }, [ttsEnabled]);
-
-  const addMessageIfNew = useCallback((msg: ChatMessage) => {
-    const key = messageKey(msg);
-    if (seenKeysRef.current.has(key)) return;
-    seenKeysRef.current.add(key);
-    setMessages((prev) => [...prev, msg]);
-    if (msg.role !== "assistant") return;
-    const isNew = msg.created != null && msg.created > speakAfterCreatedRef.current;
-    if (isNew || speakEnabledRef.current) {
-      setTimeout(() => speak(msg.text), 300);
-    }
-  }, [speak]);
+    },
+    [speak],
+  );
 
   const resetSeen = useCallback(() => {
     seenKeysRef.current = new Set();
@@ -137,14 +153,19 @@ function sanitizeForSpeech(text: string): string {
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = true;
-    recognition.lang = "en-US";
+    recognition.lang = 'en-US';
 
     recognition.onstart = () => setRecording(true);
     recognition.onend = () => setRecording(false);
     recognition.onerror = () => setRecording(false);
 
     recognition.onresult = (event: unknown) => {
-      const e = event as { results: { length: number; [i: number]: { isFinal: boolean; [i: number]: { transcript: string } } } };
+      const e = event as {
+        results: {
+          length: number;
+          [i: number]: { isFinal: boolean; [i: number]: { transcript: string } };
+        };
+      };
       const results = e.results;
       if (!results || results.length === 0) return;
       const result = results[results.length - 1];
@@ -169,7 +190,7 @@ function sanitizeForSpeech(text: string): string {
   // Check agent availability on mount with polling
   useEffect(() => {
     function check() {
-      fetch("/api/agent/status", { headers: authHeaders() })
+      fetch('/api/agent/status', { headers: authHeaders() })
         .then((r) => r.json())
         .then((d) => setAvailable(d.available === true))
         .catch(() => setAvailable(false));
@@ -186,7 +207,7 @@ function sanitizeForSpeech(text: string): string {
     resetSeen();
     setMessages([]);
     speakAfterCreatedRef.current = 0;
-    fetch("/api/agent/chat/history", { headers: authHeaders() })
+    fetch('/api/agent/chat/history', { headers: authHeaders() })
       .then((r) => r.json())
       .then((d) => {
         const history = d.history as ChatMessage[] | undefined;
@@ -206,7 +227,9 @@ function sanitizeForSpeech(text: string): string {
   useEffect(() => {
     if (!open || !historyLoaded) return;
     const token = getToken();
-    const streamUrl = token ? `/api/agent/chat/stream?token=${encodeURIComponent(token)}` : "/api/agent/chat/stream";
+    const streamUrl = token
+      ? `/api/agent/chat/stream?token=${encodeURIComponent(token)}`
+      : '/api/agent/chat/stream';
     const es = new EventSource(streamUrl);
     eventSourceRef.current = es;
 
@@ -214,10 +237,14 @@ function sanitizeForSpeech(text: string): string {
       try {
         const msg = JSON.parse(e.data) as ChatMessage;
         addMessageIfNew(msg);
-      } catch { /* ignore parse errors */ }
+      } catch {
+        /* ignore parse errors */
+      }
     };
 
-    es.onerror = () => { /* SSE will retry automatically */ };
+    es.onerror = () => {
+      /* SSE will retry automatically */
+    };
 
     return () => {
       es.close();
@@ -227,13 +254,13 @@ function sanitizeForSpeech(text: string): string {
 
   // Auto-scroll to bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
 
   // Cleanup speech and recognition on close/unmount
   useEffect(() => {
     return () => {
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
       recognitionRef.current?.stop();
@@ -246,42 +273,45 @@ function sanitizeForSpeech(text: string): string {
     setSending(false);
   }
 
-  const sendText = useCallback(async (text: string) => {
-    if (!text || sending) return;
-    speakEnabledRef.current = true;
-    setSending(true);
-    addMessageIfNew({ role: "user", text });
+  const sendText = useCallback(
+    async (text: string) => {
+      if (!text || sending) return;
+      speakEnabledRef.current = true;
+      setSending(true);
+      addMessageIfNew({ role: 'user', text });
 
-    const ac = new AbortController();
-    abortRef.current = ac;
+      const ac = new AbortController();
+      abortRef.current = ac;
 
-    try {
-      const res = await fetch("/api/agent/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ message: text }),
-        signal: ac.signal,
-      });
-      const data = await res.json();
-      if (data.cancelled) {
-        addMessageIfNew({ role: "system", text: "Request cancelled." });
-      } else if (data.response) {
-        addMessageIfNew({ role: "assistant", text: data.response });
-      } else if (data.error) {
-        addMessageIfNew({ role: "system", text: `Error: ${data.error}` });
+      try {
+        const res = await fetch('/api/agent/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ message: text }),
+          signal: ac.signal,
+        });
+        const data = await res.json();
+        if (data.cancelled) {
+          addMessageIfNew({ role: 'system', text: 'Request cancelled.' });
+        } else if (data.response) {
+          addMessageIfNew({ role: 'assistant', text: data.response });
+        } else if (data.error) {
+          addMessageIfNew({ role: 'system', text: `Error: ${data.error}` });
+        }
+      } catch (e) {
+        const err = e as Error;
+        if (err.name === 'AbortError') {
+          addMessageIfNew({ role: 'system', text: 'Request cancelled.' });
+        } else {
+          addMessageIfNew({ role: 'system', text: `Error: ${err.message}` });
+        }
+      } finally {
+        if (abortRef.current === ac) abortRef.current = null;
+        setSending(false);
       }
-    } catch (e) {
-      const err = e as Error;
-      if (err.name === "AbortError") {
-        addMessageIfNew({ role: "system", text: "Request cancelled." });
-      } else {
-        addMessageIfNew({ role: "system", text: `Error: ${err.message}` });
-      }
-    } finally {
-      if (abortRef.current === ac) abortRef.current = null;
-      setSending(false);
-    }
-  }, [sending, addMessageIfNew]);
+    },
+    [sending, addMessageIfNew],
+  );
 
   // Register chat API for external injection (called from board)
   useEffect(() => {
@@ -299,7 +329,7 @@ function sanitizeForSpeech(text: string): string {
   async function handleSend() {
     const text = input.trim();
     if (!text || sending) return;
-    setInput("");
+    setInput('');
     await sendText(text);
   }
 
@@ -307,6 +337,7 @@ function sanitizeForSpeech(text: string): string {
     <>
       {available !== false && !open && (
         <button
+          type="button"
           onClick={() => onOpenChange?.(true)}
           className="fixed bottom-4 right-4 z-50 w-12 h-12 rounded-md bg-accent text-surface shadow-lg hover:bg-accent/80 flex items-center justify-center"
           title="Chat with manager agent"
@@ -316,12 +347,17 @@ function sanitizeForSpeech(text: string): string {
       )}
 
       {open && (
-        <div className={`${isMobile ? "fixed inset-0 z-[60] flex flex-col bg-background" : "w-96 flex-shrink-0 border-l border-border flex flex-col bg-background max-h-screen sticky top-0"}`}>
+        <div
+          className={`${isMobile ? 'fixed inset-0 z-[60] flex flex-col bg-background' : 'w-96 flex-shrink-0 border-l border-border flex flex-col bg-background max-h-screen sticky top-0'}`}
+        >
           {/* Header */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-surface-raised">
-            <div className={`w-2 h-2 rounded-full ${available === null ? "bg-phase-pending" : available ? "bg-phase-succeeded" : "bg-phase-failed"}`} />
+            <div
+              className={`w-2 h-2 rounded-full ${available === null ? 'bg-phase-pending' : available ? 'bg-phase-succeeded' : 'bg-phase-failed'}`}
+            />
             <span className="font-medium text-sm text-text">Manager Agent</span>
             <button
+              type="button"
               onClick={() => onOpenChange?.(false)}
               className="ml-auto rounded-sm opacity-70 hover:opacity-100 transition-opacity text-text-dim hover:text-text"
             >
@@ -336,30 +372,33 @@ function sanitizeForSpeech(text: string): string {
                 Ask the manager agent about board state, task status, or cluster issues.
               </p>
             )}
-            {messages.map((msg, i) => {
+            {messages.map((msg) => {
               // Parse option blocks for assistant messages
               let cleanText = msg.text;
               let options: Array<{ key: string; label: string; description?: string }> = [];
-              
-              if (msg.role === "assistant") {
+
+              if (msg.role === 'assistant') {
                 const result = parseOptionBlocks(msg.text);
                 cleanText = result.cleanText;
                 options = result.options;
               }
-              
+
               return (
-                <div key={`${messageKey(msg)}-${i}`} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div
+                  key={messageKey(msg)}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
                   <div
                     className={`max-w-[80%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words ${
-                      msg.role === "user"
-                        ? "bg-accent/15 text-text border border-accent/30"
-                        : msg.role === "system"
-                          ? "bg-phase-failed/10 text-phase-failed border border-phase-failed/30"
-                          : "bg-surface-raised text-text border border-border-muted"
+                      msg.role === 'user'
+                        ? 'bg-accent/15 text-text border border-accent/30'
+                        : msg.role === 'system'
+                          ? 'bg-phase-failed/10 text-phase-failed border border-phase-failed/30'
+                          : 'bg-surface-raised text-text border border-border-muted'
                     }`}
                   >
                     {cleanText && <div>{cleanText}</div>}
-                    {msg.role === "assistant" && options.length > 0 && (
+                    {msg.role === 'assistant' && options.length > 0 && (
                       <ChatOptionCard
                         options={options}
                         onSelect={(key) => sendText(`I choose option [${key}]`)}
@@ -367,7 +406,9 @@ function sanitizeForSpeech(text: string): string {
                       />
                     )}
                     {msg.created && (
-                      <div className="text-caption-xs text-text-dim/60 mt-1 leading-none">{timeAgo(msg.created)}</div>
+                      <div className="text-caption-xs text-text-dim/60 mt-1 leading-none">
+                        {timeAgo(msg.created)}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -394,22 +435,25 @@ function sanitizeForSpeech(text: string): string {
           {/* Input */}
           <div className="border-t border-border px-4 py-3">
             <form
-              onSubmit={(e) => { e.preventDefault(); handleSend(); }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSend();
+              }}
               className="flex gap-2 items-end"
             >
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
+                  if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     handleSend();
                   }
                 }}
                 onInput={(e) => {
                   const el = e.currentTarget;
-                  el.style.height = "auto";
-                  el.style.height = Math.min(el.scrollHeight, 160) + "px";
+                  el.style.height = 'auto';
+                  el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
                 }}
                 placeholder="Ask the agent..."
                 rows={1}
@@ -422,10 +466,10 @@ function sanitizeForSpeech(text: string): string {
                   onClick={recording ? stopRecording : startRecording}
                   className={`p-2 rounded-md transition-colors ${
                     recording
-                      ? "bg-phase-failed/20 text-phase-failed animate-pulse"
-                      : "hover:bg-surface-raised text-text-dim hover:text-text"
+                      ? 'bg-phase-failed/20 text-phase-failed animate-pulse'
+                      : 'hover:bg-surface-raised text-text-dim hover:text-text'
                   }`}
-                  title={recording ? "Stop recording" : "Voice input"}
+                  title={recording ? 'Stop recording' : 'Voice input'}
                 >
                   {recording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 </button>
@@ -434,16 +478,16 @@ function sanitizeForSpeech(text: string): string {
                 type="button"
                 onClick={() => {
                   setTtsEnabled((v) => {
-                    if (v && typeof window !== "undefined" && "speechSynthesis" in window) {
+                    if (v && typeof window !== 'undefined' && 'speechSynthesis' in window) {
                       window.speechSynthesis.cancel();
                     }
                     return !v;
                   });
                 }}
                 className={`p-2 rounded-md transition-colors hover:bg-surface-raised ${
-                  ttsEnabled ? "text-accent" : "text-text-dim"
+                  ttsEnabled ? 'text-accent' : 'text-text-dim'
                 }`}
-                title={ttsEnabled ? "Disable voice" : "Enable voice"}
+                title={ttsEnabled ? 'Disable voice' : 'Enable voice'}
               >
                 {ttsEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
               </button>
@@ -461,8 +505,8 @@ function sanitizeForSpeech(text: string): string {
                 </button>
               )}
             </form>
+          </div>
         </div>
-      </div>
       )}
     </>
   );

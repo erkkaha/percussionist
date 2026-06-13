@@ -20,10 +20,10 @@ export interface OptionDef {
  */
 export function parseOptionBlocks(text: string): { options: OptionDef[]; cleanText: string } {
   const options: OptionDef[] = [];
-  
+
   // Pattern to match [!options]...[/!options] blocks
   const blockRegex = /\[!options\]([\s\S]*?)\[\/!options\]/g;
-  
+
   let cleanText = text;
   let match: RegExpExecArray | null;
 
@@ -32,19 +32,19 @@ export function parseOptionBlocks(text: string): { options: OptionDef[]; cleanTe
     if (!blockContent) continue;
 
     // Parse individual [!option ...] lines within the block
-    const optionLines = blockContent.split("\n").map((line) => line.trim());
-    
+    const optionLines = blockContent.split('\n').map((line) => line.trim());
+
     for (const line of optionLines) {
-      if (!line.startsWith("[!option ")) continue;
-      
+      if (!line.startsWith('[!option ')) continue;
+
       const parsed = parseOptionLine(line);
       if (parsed) {
         options.push(parsed);
       }
     }
-    
+
     // Remove this successfully parsed block from cleanText
-    cleanText = cleanText.replace(match[0], "");
+    cleanText = cleanText.replace(match[0], '');
   }
 
   return { options, cleanText };
@@ -58,16 +58,16 @@ export function parseOptionBlocks(text: string): { options: OptionDef[]; cleanTe
  */
 function parseOptionLine(line: string): OptionDef | null {
   // Expected format: [!option key="value" label="value" description="value"]
-  
+
   const result: Partial<OptionDef> = {};
-  
+
   // Match quoted attribute patterns: key="value"
   const attrRegex = /(\w+)="([^"]*)"/g;
   let attrMatch: RegExpExecArray | null;
 
   while ((attrMatch = attrRegex.exec(line)) !== null) {
     const [, key, value] = attrMatch;
-    if (key === "key" || key === "label" || key === "description") {
+    if (key === 'key' || key === 'label' || key === 'description') {
       result[key as keyof OptionDef] = value;
     }
   }

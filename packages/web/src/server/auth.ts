@@ -16,11 +16,11 @@
 //   router.get("/protected", auth(), handler);
 //   router.delete("/:name", adminAuth(), deleteHandler);
 
-import type { Context, MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from 'hono';
 
-type AuthContext = { role: "user" | "admin" };
+type AuthContext = { role: 'user' | 'admin' };
 
-declare module "hono" {
+declare module 'hono' {
   interface ContextVariableMap extends AuthContext {}
 }
 
@@ -28,13 +28,13 @@ declare module "hono" {
 // Helpers
 
 function getAuthValue(c: Context): string | null {
-  const authHeader = c.req.header("Authorization");
-  if (authHeader?.startsWith("Bearer ")) {
+  const authHeader = c.req.header('Authorization');
+  if (authHeader?.startsWith('Bearer ')) {
     return authHeader.slice(7);
   }
-  const token = c.req.header("x-auth-token");
+  const token = c.req.header('x-auth-token');
   if (token) return token;
-  const queryToken = c.req.query("token");
+  const queryToken = c.req.query('token');
   if (queryToken) return queryToken;
   return null;
 }
@@ -60,18 +60,18 @@ function isValidToken(token: string): boolean {
  */
 export function auth(): MiddlewareHandler {
   return async (c, next) => {
-    if (process.env.AUTH_DISABLED === "1") {
-      c.set("auth", { role: "user" });
+    if (process.env.AUTH_DISABLED === '1') {
+      c.set('auth', { role: 'user' });
       await next();
       return;
     }
 
     const token = getAuthValue(c);
     if (!token || !isValidToken(token)) {
-      return c.json({ error: "Unauthorized" }, 401);
+      return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    c.set("auth", { role: "user" });
+    c.set('auth', { role: 'user' });
     await next();
   };
 }
@@ -82,20 +82,18 @@ export function auth(): MiddlewareHandler {
  */
 export function adminAuth(): MiddlewareHandler {
   return async (c, next) => {
-    if (process.env.AUTH_DISABLED === "1") {
-      c.set("auth", { role: "admin" });
+    if (process.env.AUTH_DISABLED === '1') {
+      c.set('auth', { role: 'admin' });
       await next();
       return;
     }
 
     const token = getAuthValue(c);
     if (!token || !isValidToken(token)) {
-      return c.json({ error: "Unauthorized" }, 401);
+      return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    c.set("auth", { role: "admin" });
+    c.set('auth', { role: 'admin' });
     await next();
   };
 }
-
-

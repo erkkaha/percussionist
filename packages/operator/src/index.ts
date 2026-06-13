@@ -1,43 +1,44 @@
 // Operator entrypoint — watches Run CRs, Project CRs, and ClusterSettings.
 
-import { makeInformer } from "@kubernetes/client-node";
+import { makeInformer } from '@kubernetes/client-node';
 import {
   API_GROUP,
   API_VERSION,
-  PLURAL_RUN,
-  PLURAL_PROJECT,
-  PLURAL_CLUSTER_SETTINGS,
-  type Run,
-  type Project,
   type ClusterSettings,
-} from "@percussionist/api";
+  PLURAL_CLUSTER_SETTINGS,
+  PLURAL_PROJECT,
+  PLURAL_RUN,
+  type Project,
+  type Run,
+} from '@percussionist/api';
+import { INGRESS_BASE_URL, INGRESS_CLASS } from './config.js';
 import {
-  enqueue,
-  dequeue,
-  runWorker,
-  startPeriodicResync,
-  kc,
+  cleanupCodeServer,
+  cleanupMemoryService,
   co,
+  dequeue,
+  enqueue,
+  kc,
   NAMESPACE,
   reconcileClusterSettings,
   reconcileProject,
-  cleanupCodeServer,
-  cleanupMemoryService,
-} from "./reconciler.js";
-import { INGRESS_BASE_URL, INGRESS_CLASS } from "./config.js";
-import { startTTLCleanup } from "./ttl.js";
+  runWorker,
+  startPeriodicResync,
+} from './reconciler.js';
+import { startTTLCleanup } from './ttl.js';
 
-const log = (...args: unknown[]) =>
-  console.log(`[operator ${new Date().toISOString()}]`, ...args);
+const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
   console.error(`[operator ${new Date().toISOString()}]`, ...args);
 
 async function main(): Promise<void> {
   log(`watching ${API_GROUP}/${API_VERSION}/${PLURAL_RUN} in namespace=${NAMESPACE}`);
   if (INGRESS_BASE_URL) {
-    log(`ingress base URL: ${INGRESS_BASE_URL}${INGRESS_CLASS ? ` (class: ${INGRESS_CLASS})` : ""}`);
+    log(
+      `ingress base URL: ${INGRESS_BASE_URL}${INGRESS_CLASS ? ` (class: ${INGRESS_CLASS})` : ''}`,
+    );
   } else {
-    log("no PERCUSSIONIST_INGRESS_BASE_URL set — per-run ingress disabled");
+    log('no PERCUSSIONIST_INGRESS_BASE_URL set — per-run ingress disabled');
   }
 
   // Watch Run CRs.
@@ -53,15 +54,14 @@ async function main(): Promise<void> {
   };
 
   const runInformer = makeInformer(kc, runPath, listRunsFn as never);
-  runInformer.on("add", (obj) => enqueue(obj as unknown as Run));
-  runInformer.on("update", (obj) => enqueue(obj as unknown as Run));
-  runInformer.on("delete", (obj) => {
-    const md = (obj as { metadata?: { namespace?: string; name?: string } })
-      .metadata;
+  runInformer.on('add', (obj) => enqueue(obj as unknown as Run));
+  runInformer.on('update', (obj) => enqueue(obj as unknown as Run));
+  runInformer.on('delete', (obj) => {
+    const md = (obj as { metadata?: { namespace?: string; name?: string } }).metadata;
     dequeue(`${md?.namespace}/${md?.name}`);
   });
-  runInformer.on("error", (e) => {
-    err("run informer error:", (e as Error).message);
+  runInformer.on('error', (e) => {
+    err('run informer error:', (e as Error).message);
     setTimeout(() => runInformer.start().catch(console.error), 2000);
   });
   await runInformer.start();
@@ -78,14 +78,14 @@ async function main(): Promise<void> {
   };
 
   const csInformer = makeInformer(kc, csPath, listCsFn as never);
-  csInformer.on("add", (obj) => {
+  csInformer.on('add', (obj) => {
     void reconcileClusterSettings(obj as unknown as ClusterSettings);
   });
-  csInformer.on("update", (obj) => {
+  csInformer.on('update', (obj) => {
     void reconcileClusterSettings(obj as unknown as ClusterSettings);
   });
-  csInformer.on("error", (e) => {
-    err("cluster-settings informer error:", (e as Error).message);
+  csInformer.on('error', (e) => {
+    err('cluster-settings informer error:', (e as Error).message);
     setTimeout(() => csInformer.start().catch(console.error), 2000);
   });
   await csInformer.start();
@@ -103,22 +103,22 @@ async function main(): Promise<void> {
   };
 
   const projectInformer = makeInformer(kc, projectPath, listProjectsFn as never);
-  projectInformer.on("add", (obj) => {
+  projectInformer.on('add', (obj) => {
     void reconcileProject(obj as unknown as Project);
   });
-  projectInformer.on("update", (obj) => {
+  projectInformer.on('update', (obj) => {
     void reconcileProject(obj as unknown as Project);
   });
-  projectInformer.on("delete", (obj) => {
+  projectInformer.on('delete', (obj) => {
     void cleanupCodeServer(obj as unknown as Project);
     void cleanupMemoryService(obj as unknown as Project);
   });
-  projectInformer.on("error", (e) => {
-    err("project informer error:", (e as Error).message);
+  projectInformer.on('error', (e) => {
+    err('project informer error:', (e as Error).message);
     setTimeout(() => projectInformer.start().catch(console.error), 2000);
   });
   await projectInformer.start();
-  log("project informer started");
+  log('project informer started');
 
   startPeriodicResync();
   startTTLCleanup();
@@ -126,6 +126,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  err("fatal:", e);
+  err('fatal:', e);
   process.exit(1);
 });

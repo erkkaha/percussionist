@@ -5,18 +5,18 @@
 
 // Re-export server types so components import from a single place.
 export type {
-  Run,
-  Project,
-  ClusterAgent,
   BoardStatus,
+  ClusterAgent,
   ManagerMetrics,
-  WorkerStatus,
+  Project,
+  Run,
   TaskColumn,
   TaskType,
-} from "@percussionist/api";
-export { RunPhase, TERMINAL_PHASES } from "@percussionist/api";
+  WorkerStatus,
+} from '@percussionist/api';
+export { RunPhase, TERMINAL_PHASES } from '@percussionist/api';
 
-import type { Project as _Project, Task as _Task } from "@percussionist/api";
+import type { Project as _Project, Task as _Task } from '@percussionist/api';
 
 /** GET /api/projects/:name augments the CR with inject file contents for UI pre-population. */
 export interface ProjectDetail extends _Project {
@@ -137,7 +137,7 @@ export interface CreateProjectRequest {
   };
 
   /** Board lifecycle phase: Active / Complete / Archived. */
-  phase?: "Active" | "Complete" | "Archived";
+  phase?: 'Active' | 'Complete' | 'Archived';
 
   /** Git workspace caching and persistence options. */
   gitCache?: {
@@ -146,21 +146,21 @@ export interface CreateProjectRequest {
 
   /** Task lifecycle presets and overrides. */
   flow?: {
-    preset?: "simple" | "review" | "plan-build" | "plan-build-review-merge";
+    preset?: 'simple' | 'review' | 'plan-build' | 'plan-build-review-merge';
     humanApproval?: {
-      plan?: "required" | "disabled";
-      build?: "required" | "disabled";
+      plan?: 'required' | 'disabled';
+      build?: 'required' | 'disabled';
     };
     plan?: {
-      onApprove?: "generate-builds" | "done";
-      buildGeneration?: "ai" | "manual" | "disabled";
+      onApprove?: 'generate-builds' | 'done';
+      buildGeneration?: 'ai' | 'manual' | 'disabled';
     };
     build?: {
-      onSuccess?: "human-review" | "ai-review" | "done";
-      onApprove?: "merge" | "done";
+      onSuccess?: 'human-review' | 'ai-review' | 'done';
+      onApprove?: 'merge' | 'done';
     };
     merge?: {
-      mode?: "auto" | "manual" | "disabled";
+      mode?: 'auto' | 'manual' | 'disabled';
     };
     review?: {
       aiReviewerEnabled?: boolean;
@@ -230,18 +230,18 @@ export interface LogsResponse {
 export interface TextPart {
   id: string;
   messageID: string;
-  type: "text";
+  type: 'text';
   text: string;
 }
 
 export interface ToolPart {
   id: string;
   messageID: string;
-  type: "tool";
+  type: 'tool';
   callID: string;
   tool: string;
   state: {
-    status: "pending" | "running" | "completed" | "error";
+    status: 'pending' | 'running' | 'completed' | 'error';
     input: Record<string, unknown>;
     output?: string;
     title?: string;
@@ -254,20 +254,20 @@ export interface ToolPart {
 export interface ReasoningPart {
   id: string;
   messageID: string;
-  type: "reasoning";
+  type: 'reasoning';
   text: string;
 }
 
 export interface StepStartPart {
   id: string;
   messageID: string;
-  type: "step-start";
+  type: 'step-start';
 }
 
 export interface StepFinishPart {
   id: string;
   messageID: string;
-  type: "step-finish";
+  type: 'step-finish';
   reason: string;
   tokens: { input: number; output: number; reasoning: number };
   cost?: number;
@@ -276,18 +276,18 @@ export interface StepFinishPart {
 export interface SubtaskPart {
   id: string;
   messageID: string;
-  type: "subtask";
+  type: 'subtask';
   todos: Array<{
     content: string;
-    status: "pending" | "in_progress" | "completed" | "cancelled";
-    priority: "high" | "medium" | "low";
+    status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+    priority: 'high' | 'medium' | 'low';
   }>;
 }
 
 export interface FilePart {
   id: string;
   messageID: string;
-  type: "file";
+  type: 'file';
   filename: string;
   path?: string;
   diff?: string;
@@ -308,9 +308,14 @@ export type SessionPart =
 export interface SessionMessageInfo {
   id: string;
   sessionID: string;
-  role: "user" | "assistant";
+  role: 'user' | 'assistant';
   time: { created: number; completed?: number };
-  tokens?: { input: number; output: number; reasoning: number; cache?: { read: number; write: number } };
+  tokens?: {
+    input: number;
+    output: number;
+    reasoning: number;
+    cache?: { read: number; write: number };
+  };
   cost?: number;
   error?: { name: string; message: string };
   agent?: string;
@@ -326,7 +331,7 @@ export interface SessionMessage {
 export interface SessionResponse {
   sessionID: string;
   messages: SessionMessage[];
-  source?: "live" | "snapshot";
+  source?: 'live' | 'snapshot';
   truncated?: boolean;
 }
 
@@ -361,4 +366,46 @@ export interface TaskDiffResponse {
   commits?: DiffCommit[];
   empty: boolean;
   reason?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Project memories (proxy through web server → memory service)
+
+/** A single stored memory record with its embedding distance (0 for non-search results). */
+export interface ProjectMemory {
+  id: string;
+  content: string;
+  metadata: Record<string, unknown> | null;
+  /** Cosine distance from search query; always 0 for list/get operations. */
+  distance: number;
+  createdAt: string | null;
+}
+
+/** GET /api/projects/:name/memories response with pagination metadata. */
+export interface ListMemoriesResponse {
+  memories: ProjectMemory[];
+  total: number;
+}
+
+/** POST /api/projects/:name/memories request body. */
+export interface CreateMemoryRequest {
+  content: string;
+  metadata?: Record<string, unknown>;
+  agentRun?: string;
+}
+
+/** PATCH /api/projects/:name/memories/:id request body (partial update). */
+export interface UpdateMemoryRequest {
+  content?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** POST /api/projects/:name/memories response — returns the created memory ID. */
+export interface CreateMemoryResponse {
+  id: string;
+}
+
+/** DELETE /api/projects/:name/memories/:id response. */
+export interface DeleteMemoryResponse {
+  deleted: true;
 }

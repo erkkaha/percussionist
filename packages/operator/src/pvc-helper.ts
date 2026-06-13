@@ -9,10 +9,14 @@
 // The PVC is owned by the Project CR and is automatically garbage-collected
 // when the project is deleted.
 
-import { core } from "@percussionist/kube";
-import type { V1PersistentVolumeClaim } from "@kubernetes/client-node";
-import { API_GROUP_VERSION, KIND_PROJECT } from "@percussionist/api";
-import { DEFAULT_STORAGE_CLASS, DEFAULT_STORAGE_ACCESS_MODE } from "./config.js";
+import type { V1PersistentVolumeClaim } from '@kubernetes/client-node';
+import { API_GROUP_VERSION, KIND_PROJECT } from '@percussionist/api';
+import { core } from '@percussionist/kube';
+import {
+  DEFAULT_STORAGE_ACCESS_MODE,
+  DEFAULT_STORAGE_CLASS,
+  DEFAULT_STORAGE_SIZE,
+} from './config.js';
 
 export interface DataPVCOptions {
   projectName: string;
@@ -32,15 +36,13 @@ export interface DataPVCOptions {
  *
  * @throws If PVC creation fails or project UID is invalid
  */
-export async function ensureDataPVC(
-  opts: DataPVCOptions,
-): Promise<V1PersistentVolumeClaim> {
+export async function ensureDataPVC(opts: DataPVCOptions): Promise<V1PersistentVolumeClaim> {
   const {
     projectName,
     namespace,
     projectUid,
     storageClass,
-    size = "10Gi",
+    size = DEFAULT_STORAGE_SIZE,
     pvcName = `${projectName}-data`,
   } = opts;
 
@@ -58,8 +60,7 @@ export async function ensureDataPVC(
     return existing;
   } catch (err: unknown) {
     const statusCode =
-      (err as { statusCode?: number }).statusCode ??
-      (err as { code?: number }).code;
+      (err as { statusCode?: number }).statusCode ?? (err as { code?: number }).code;
     if (statusCode !== 404) {
       throw err; // Unexpected error
     }
@@ -68,14 +69,14 @@ export async function ensureDataPVC(
 
   // Build PVC manifest
   const pvc: V1PersistentVolumeClaim = {
-    apiVersion: "v1",
-    kind: "PersistentVolumeClaim",
+    apiVersion: 'v1',
+    kind: 'PersistentVolumeClaim',
     metadata: {
       name: pvcName,
       namespace,
       labels: {
-        "percussionist.dev/project": projectName,
-        "percussionist.dev/component": "data",
+        'percussionist.dev/project': projectName,
+        'percussionist.dev/component': 'data',
       },
       ownerReferences: [
         {
@@ -108,19 +109,14 @@ export async function ensureDataPVC(
       namespace,
       body: pvc,
     });
-    console.log(
-      `[pvc-helper] Data PVC ${namespace}/${pvcName} created successfully`,
-    );
+    console.log(`[pvc-helper] Data PVC ${namespace}/${pvcName} created successfully`);
     return created;
   } catch (err: unknown) {
     const statusCode =
-      (err as { statusCode?: number }).statusCode ??
-      (err as { code?: number }).code;
+      (err as { statusCode?: number }).statusCode ?? (err as { code?: number }).code;
     // If PVC was created by another reconcile loop concurrently, treat as success
     if (statusCode === 409) {
-      console.log(
-        `[pvc-helper] PVC ${namespace}/${pvcName} already exists (created concurrently)`,
-      );
+      console.log(`[pvc-helper] PVC ${namespace}/${pvcName} already exists (created concurrently)`);
       const existing = await coreApi.readNamespacedPersistentVolumeClaim({
         name: pvcName,
         namespace,
@@ -130,5 +126,3 @@ export async function ensureDataPVC(
     throw err;
   }
 }
-
-

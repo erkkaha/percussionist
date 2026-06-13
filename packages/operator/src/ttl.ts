@@ -2,39 +2,41 @@
 // Reads runTTLDays from ClusterSettings and deletes terminal-phase Runs
 // whose completedAt + runTTLDays is in the past.
 
+import { CoreV1Api } from '@kubernetes/client-node';
 import {
   API_GROUP,
   API_VERSION,
-  PLURAL_RUN,
-  PLURAL_CLUSTER_SETTINGS,
-  TERMINAL_PHASES,
-  type Run,
   type ClusterSettings,
-} from "@percussionist/api";
-import { gitUrlHash } from "@percussionist/kube";
-import { CoreV1Api } from "@kubernetes/client-node";
-import { co, kc, NAMESPACE } from "./reconciler.js";
+  PLURAL_CLUSTER_SETTINGS,
+  PLURAL_RUN,
+  type Run,
+  TERMINAL_PHASES,
+} from '@percussionist/api';
+import { gitUrlHash } from '@percussionist/kube';
+import { co, kc, NAMESPACE } from './reconciler.js';
+
 const coreV1 = kc.makeApiClient(CoreV1Api);
 
-const log = (...args: unknown[]) =>
-  console.log(`[ttl ${new Date().toISOString()}]`, ...args);
-const err = (...args: unknown[]) =>
-  console.error(`[ttl ${new Date().toISOString()}]`, ...args);
+const log = (...args: unknown[]) => console.log(`[ttl ${new Date().toISOString()}]`, ...args);
+const err = (...args: unknown[]) => console.error(`[ttl ${new Date().toISOString()}]`, ...args);
 
 const RUN_TTL_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 function isNotFound(e: unknown): boolean {
-  return ((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) === 404;
+  return (
+    ((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) ===
+    404
+  );
 }
 
 async function fetchRunTTLDays(): Promise<number> {
   try {
-    const cs = await co.getClusterCustomObject({
+    const cs = (await co.getClusterCustomObject({
       group: API_GROUP,
       version: API_VERSION,
       plural: PLURAL_CLUSTER_SETTINGS,
-      name: "default",
-    }) as ClusterSettings;
+      name: 'default',
+    })) as ClusterSettings;
     return cs.spec?.runTTLDays ?? 7;
   } catch {
     return 7; // Default if ClusterSettings not found.
@@ -43,12 +45,12 @@ async function fetchRunTTLDays(): Promise<number> {
 
 async function listTerminalRuns(): Promise<Run[]> {
   try {
-    const res = await co.listNamespacedCustomObject({
+    const res = (await co.listNamespacedCustomObject({
       group: API_GROUP,
       version: API_VERSION,
       namespace: NAMESPACE,
       plural: PLURAL_RUN,
-    }) as { items: Run[] };
+    })) as { items: Run[] };
     return (res.items ?? []).filter((r) => {
       const phase = r.status?.phase;
       return phase && TERMINAL_PHASES.has(phase);
@@ -102,15 +104,16 @@ export async function runTTLCleanup(): Promise<void> {
  */
 async function cleanupExpiredRunWorktree(run: Run): Promise<void> {
   const runName = run.metadata.name;
-  const projectName = run.metadata.labels?.["percussionist.dev/project"];
+  const projectName = run.metadata.labels?.['percussionist.dev/project'];
   if (!projectName) return;
 
-  const dataMountPath = "/data";
+  const dataMountPath = '/data';
   const worktreeDir = `${dataMountPath}/worktrees/${runName}`;
-  const gitUrl = (run.spec as { source?: { git?: { url?: string } } } | undefined)?.source?.git?.url;
+  const gitUrl = (run.spec as { source?: { git?: { url?: string } } } | undefined)?.source?.git
+    ?.url;
 
   const scriptLines: string[] = [
-    "set -e",
+    'set -e',
     `echo "[cleanup-ttl] removing worktree ${worktreeDir}"`,
     `BRANCH=$(git -C ${worktreeDir} symbolic-ref HEAD 2>/dev/null || true)`,
     `rm -rf ${worktreeDir}`,
@@ -127,7 +130,9 @@ async function cleanupExpiredRunWorktree(run: Run): Promise<void> {
       `    echo "[cleanup-ttl] deleting branch ref \${BRANCH#refs/heads/}"`,
       `    git -C "${mirrorDir}" branch -D "\${BRANCH#refs/heads/}" 2>/dev/null || true`,
       `  fi`,
-      "fi",
+      `  echo "[cleanup-ttl] repacking mirror objects"`,
+      `  git -C "${mirrorDir}" gc --auto 2>/dev/null || true`,
+      'fi',
     );
   }
 
@@ -135,33 +140,33 @@ async function cleanupExpiredRunWorktree(run: Run): Promise<void> {
 
   const podName = `cleanup-ttl-${runName}`
     .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/[^a-z0-9-]/g, '-')
     .slice(0, 63)
-    .replace(/-+$/, "");
+    .replace(/-+$/, '');
 
   const pod = {
-    apiVersion: "v1",
-    kind: "Pod",
+    apiVersion: 'v1',
+    kind: 'Pod',
     metadata: { name: podName, namespace: NAMESPACE },
     spec: {
-      restartPolicy: "Never",
+      restartPolicy: 'Never',
       containers: [
         {
-          name: "cleanup",
-          image: "alpine/git",
-          imagePullPolicy: "IfNotPresent",
-          command: ["/bin/sh", "-c"],
-          args: [scriptLines.join("\n")],
+          name: 'cleanup',
+          image: 'alpine/git',
+          imagePullPolicy: 'IfNotPresent',
+          command: ['/bin/sh', '-c'],
+          args: [scriptLines.join('\n')],
           resources: {
-            requests: { cpu: "50m", memory: "64Mi" },
-            limits: { cpu: "200m", memory: "256Mi" },
+            requests: { cpu: '50m', memory: '64Mi' },
+            limits: { cpu: '200m', memory: '256Mi' },
           },
-          volumeMounts: [{ name: "data", mountPath: dataMountPath }],
+          volumeMounts: [{ name: 'data', mountPath: dataMountPath }],
         },
       ],
       volumes: [
         {
-          name: "data",
+          name: 'data',
           persistentVolumeClaim: { claimName: `${projectName}-data` },
         },
       ],

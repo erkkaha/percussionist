@@ -8,7 +8,8 @@
     "build": "pnpm -r run build",
     "bundle": "pnpm --filter @percussionist/cli bundle",
     "typecheck": "pnpm --filter @percussionist/api build && pnpm --filter @percussionist/kube build && pnpm -r --workspace-concurrency 2 --if-present run typecheck",
-    "lint": "pnpm -r run lint",
+    "lint": "biome check .",
+    "format": "biome check --write .",
     "codegen": "pnpm --filter @percussionist/api codegen",
     "beatctl": "pnpm --filter @percussionist/cli exec tsx src/index.ts",
     "web": "pnpm --filter @percussionist/web dev",
@@ -20,14 +21,21 @@
     "prepare": "husky"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
     "@commitlint/cli": "21.0.2",
     "@commitlint/config-conventional": "21.0.2",
     "@types/node": "24.0.0",
     "husky": "9.1.7",
+    "lint-staged": "^17.0.7",
     "tsx": "4.22.4",
     "typescript": "5.6.3",
     "yaml": "2.9.0",
     "zod-to-json-schema": "3.25.2"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,json,md,css}": [
+      "biome check --write --no-errors-on-unmatched"
+    ]
   },
   "engines": {
     "node": ">=24"

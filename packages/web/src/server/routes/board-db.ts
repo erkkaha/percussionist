@@ -1,17 +1,17 @@
 // routes/board-db.ts — task event history endpoints.
 
-import { Hono } from "hono";
-import { eq, and, desc } from "drizzle-orm";
-import { getDb, taskEvents } from "../db.js";
-import { auth } from "../auth.js";
+import { and, desc, eq } from 'drizzle-orm';
+import { Hono } from 'hono';
+import { auth } from '../auth.js';
+import { getDb, taskEvents } from '../db.js';
 
 const boardDb = new Hono();
 
 // ---------------------------------------------------------------------------
 // GET /api/board/:project/events?limit=100
-boardDb.get("/:project/events", auth(), (c) => {
-  const project = c.req.param("project");
-  const limit = Math.min(parseInt(c.req.query("limit") ?? "100", 10), 500);
+boardDb.get('/:project/events', auth(), (c) => {
+  const project = c.req.param('project');
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '100', 10), 500);
   const db = getDb();
 
   const rows = db
@@ -27,10 +27,10 @@ boardDb.get("/:project/events", auth(), (c) => {
 
 // ---------------------------------------------------------------------------
 // GET /api/board/:project/tasks/:taskName/events?limit=50
-boardDb.get("/:project/tasks/:taskName/events", auth(), (c) => {
-  const project = c.req.param("project");
-  const taskName = c.req.param("taskName");
-  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10), 200);
+boardDb.get('/:project/tasks/:taskName/events', auth(), (c) => {
+  const project = c.req.param('project');
+  const taskName = c.req.param('taskName');
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
   const db = getDb();
 
   const rows = db

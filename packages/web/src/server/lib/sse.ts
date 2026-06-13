@@ -18,10 +18,10 @@ const DEFAULT_KEEPALIVE_MS = 15_000;
 
 export function sseHeaders(): Headers {
   const headers = new Headers();
-  headers.set("Content-Type", "text/event-stream");
-  headers.set("Cache-Control", "no-cache, no-transform");
-  headers.set("Connection", "keep-alive");
-  headers.set("X-Accel-Buffering", "off");
+  headers.set('Content-Type', 'text/event-stream');
+  headers.set('Cache-Control', 'no-cache, no-transform');
+  headers.set('Connection', 'keep-alive');
+  headers.set('X-Accel-Buffering', 'off');
   return headers;
 }
 
@@ -45,7 +45,7 @@ export function createPollingSseResponse(opts: PollingSseOptions): Response {
     start(controller) {
       let closed = false;
       let polling = false;
-      let lastSignature = "";
+      let lastSignature = '';
       let pollTimer: ReturnType<typeof setInterval> | undefined;
       let keepAliveTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -54,7 +54,7 @@ export function createPollingSseResponse(opts: PollingSseOptions): Response {
         closed = true;
         if (pollTimer) clearInterval(pollTimer);
         if (keepAliveTimer) clearInterval(keepAliveTimer);
-        signal.removeEventListener("abort", onAbort);
+        signal.removeEventListener('abort', onAbort);
         try {
           controller.close();
         } catch {
@@ -63,7 +63,7 @@ export function createPollingSseResponse(opts: PollingSseOptions): Response {
       };
 
       const onAbort = () => cleanup();
-      signal.addEventListener("abort", onAbort, { once: true });
+      signal.addEventListener('abort', onAbort, { once: true });
 
       const enqueue = (chunk: string) => {
         if (closed) return;

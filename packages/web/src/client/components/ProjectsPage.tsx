@@ -1,15 +1,15 @@
-import { Link, useNavigate } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useProjects } from "../hooks/useProjects";
-import { useProjectsEvents } from "../hooks/useProjectsEvents";
-import { deleteProject } from "../lib/api";
-import type { Project } from "../lib/types";
-import { Button } from "./ui/button";
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router-dom';
+import { useProjects } from '../hooks/useProjects';
+import { useProjectsEvents } from '../hooks/useProjectsEvents';
+import { deleteProject } from '../lib/api';
+import type { Project } from '../lib/types';
+import { Button } from './ui/button';
 
 function age(iso: string | undefined): string {
-  if (!iso) return "-";
+  if (!iso) return '-';
   const ms = Date.now() - new Date(iso).getTime();
-  if (Number.isNaN(ms) || ms < 0) return "-";
+  if (Number.isNaN(ms) || ms < 0) return '-';
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
@@ -25,30 +25,23 @@ function ProjectRow({ project }: { project: Project }) {
   const del = useMutation({
     mutationFn: () => deleteProject(project.metadata.name),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
     },
   });
 
   return (
     <tr className="hover:bg-surface-raised/60 transition-colors">
-      <td className="px-4 py-3 font-medium text-text font-mono text-sm">
-        {project.metadata.name}
+      <td className="px-4 py-3 font-medium text-text font-mono text-sm">{project.metadata.name}</td>
+      <td className="px-4 py-3 text-text-muted text-sm">{project.spec.displayName ?? '-'}</td>
+      <td
+        className="px-4 py-3 text-text-muted font-mono text-xs truncate max-w-xs"
+        title={project.spec.source?.git?.url}
+      >
+        {project.spec.source?.git?.url ?? '-'}
       </td>
-      <td className="px-4 py-3 text-text-muted text-sm">
-        {project.spec.displayName ?? "-"}
-      </td>
-      <td className="px-4 py-3 text-text-muted font-mono text-xs truncate max-w-xs" title={project.spec.source?.git?.url}>
-        {project.spec.source?.git?.url ?? "-"}
-      </td>
-      <td className="px-4 py-3 text-text-muted text-xs">
-        {project.spec.source?.git?.ref ?? "-"}
-      </td>
-      <td className="px-4 py-3 text-text-muted font-mono text-xs">
-        {project.spec.model ?? "-"}
-      </td>
-      <td className="px-4 py-3 text-text-muted font-mono text-xs">
-        {project.spec.agent ?? "-"}
-      </td>
+      <td className="px-4 py-3 text-text-muted text-xs">{project.spec.source?.git?.ref ?? '-'}</td>
+      <td className="px-4 py-3 text-text-muted font-mono text-xs">{project.spec.model ?? '-'}</td>
+      <td className="px-4 py-3 text-text-muted font-mono text-xs">{project.spec.agent ?? '-'}</td>
       <td className="px-4 py-3 text-text-muted tabular-nums text-xs">
         {age(project.metadata.creationTimestamp)}
       </td>
@@ -61,10 +54,10 @@ function ProjectRow({ project }: { project: Project }) {
           >
             Edit
           </Button>
-          <Link
-            to={`/projects/${encodeURIComponent(project.metadata.name)}/board`}
-          >
-            <Button variant="outline" size="sm">Board</Button>
+          <Link to={`/projects/${encodeURIComponent(project.metadata.name)}/board`}>
+            <Button variant="outline" size="sm">
+              Board
+            </Button>
           </Link>
           <Button
             variant="destructive"
@@ -76,7 +69,7 @@ function ProjectRow({ project }: { project: Project }) {
             }}
             disabled={del.isPending}
           >
-            {del.isPending ? "Deleting…" : "Delete"}
+            {del.isPending ? 'Deleting…' : 'Delete'}
           </Button>
         </div>
       </td>
@@ -87,9 +80,12 @@ function ProjectRow({ project }: { project: Project }) {
 export default function ProjectsPage({ showHeader = true }: { showHeader?: boolean }) {
   const { connected: projectsSseConnected, eventTick } = useProjectsEvents();
   void eventTick;
-  const { data: projects, error, isLoading, isFetching } = useProjects(
-    projectsSseConnected ? false : 10_000,
-  );
+  const {
+    data: projects,
+    error,
+    isLoading,
+    isFetching,
+  } = useProjects(projectsSseConnected ? false : 10_000);
 
   if (error) {
     return (
@@ -113,7 +109,7 @@ export default function ProjectsPage({ showHeader = true }: { showHeader?: boole
               )}
             </p>
             <p className="text-caption-xs text-text-dim mt-0.5">
-              Updates: {projectsSseConnected ? "live stream" : "polling fallback"}
+              Updates: {projectsSseConnected ? 'live stream' : 'polling fallback'}
             </p>
           </div>
           <Link to="/projects/new">
@@ -125,8 +121,8 @@ export default function ProjectsPage({ showHeader = true }: { showHeader?: boole
       {isLoading ? (
         <div className="rounded-lg border border-border overflow-hidden">
           <div className="divide-y divide-border-muted">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="px-4 py-4 flex gap-6">
+            {[0, 1, 2].map((k) => (
+              <div key={k} className="px-4 py-4 flex gap-6">
                 <div className="h-4 w-32 rounded bg-surface-overlay animate-pulse" />
                 <div className="h-4 w-24 rounded bg-surface-overlay animate-pulse" />
                 <div className="h-4 w-48 rounded bg-surface-overlay animate-pulse" />
@@ -137,10 +133,10 @@ export default function ProjectsPage({ showHeader = true }: { showHeader?: boole
         </div>
       ) : !projects || projects.length === 0 ? (
         <div className="rounded-lg border border-border-muted bg-surface-raised p-8 text-center text-text-muted">
-          No projects yet.{" "}
+          No projects yet.{' '}
           <Link to="/projects/new" className="underline hover:text-text transition-colors">
             Create one
-          </Link>{" "}
+          </Link>{' '}
           to save git URLs, secrets, and model defaults for reuse.
         </div>
       ) : (

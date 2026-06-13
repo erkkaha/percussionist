@@ -7,9 +7,9 @@
 // The web dashboard talks to this proxy instead of reaching into the cluster
 // directly, keeping the client simple.
 
-import { Hono } from "hono";
-import { NAMESPACE } from "../kube.js";
-import { auth, adminAuth } from "../auth.js";
+import { Hono } from 'hono';
+import { adminAuth, auth } from '../auth.js';
+import { NAMESPACE } from '../kube.js';
 
 const router = new Hono();
 
@@ -17,15 +17,15 @@ const MANAGER_SERVICE = `http://percussionist-manager.${NAMESPACE}.svc.cluster.l
 const CHAT_URL = `${MANAGER_SERVICE}:4098`;
 
 // POST /api/agent/chat — send a message to the manager agent, get response.
-router.post("/chat", adminAuth(), async (c) => {
+router.post('/chat', adminAuth(), async (c) => {
   const abortController = new AbortController();
-  c.req.raw.signal.addEventListener("abort", () => abortController.abort());
+  c.req.raw.signal.addEventListener('abort', () => abortController.abort());
 
   try {
     const body = await c.req.json();
     const res = await fetch(`${CHAT_URL}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal: abortController.signal,
     });
@@ -33,7 +33,7 @@ router.post("/chat", adminAuth(), async (c) => {
     return c.json(data, res.status as Parameters<typeof c.json>[1]);
   } catch (e) {
     const msg = (e as Error).message;
-    if (msg.includes("aborted")) {
+    if (msg.includes('aborted')) {
       return c.json({ cancelled: true }, 502);
     }
     return c.json({ error: msg }, 502);
@@ -41,16 +41,16 @@ router.post("/chat", adminAuth(), async (c) => {
 });
 
 // GET /api/agent/chat/stream — SSE stream of the agent conversation.
-router.get("/chat/stream", auth(), async (c) => {
+router.get('/chat/stream', auth(), async (c) => {
   const abortController = new AbortController();
-  c.req.raw.signal.addEventListener("abort", () => abortController.abort());
+  c.req.raw.signal.addEventListener('abort', () => abortController.abort());
 
   try {
     const upstream = await fetch(`${CHAT_URL}/chat/stream`, {
       signal: abortController.signal,
     });
     if (!upstream.ok || !upstream.body) {
-      return c.text("agent stream unavailable", 502);
+      return c.text('agent stream unavailable', 502);
     }
 
     // Relay the SSE stream to the client.
@@ -75,18 +75,18 @@ router.get("/chat/stream", auth(), async (c) => {
 
     return new Response(stream, {
       headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
       },
     });
-  } catch (e) {
-    return c.text("agent stream error", 502);
+  } catch (_e) {
+    return c.text('agent stream error', 502);
   }
 });
 
 // GET /api/agent/chat/history — get conversation history.
-router.get("/chat/history", auth(), async (c) => {
+router.get('/chat/history', auth(), async (c) => {
   try {
     const res = await fetch(`${CHAT_URL}/chat/history`, {
       signal: AbortSignal.timeout(5_000),
@@ -102,7 +102,7 @@ router.get("/chat/history", auth(), async (c) => {
 });
 
 // GET /api/agent/status — check if the agent is reachable.
-router.get("/status", auth(), async (c) => {
+router.get('/status', auth(), async (c) => {
   try {
     const res = await fetch(`${CHAT_URL}/chat/history`, {
       signal: AbortSignal.timeout(3_000),

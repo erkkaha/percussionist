@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from 'react';
 
 interface UseInViewportOptions {
   threshold?: number;
@@ -6,10 +6,8 @@ interface UseInViewportOptions {
   onInView?: () => void;
 }
 
-export function useInViewport<T extends HTMLElement>(
-  options: UseInViewportOptions = {}
-) {
-  const { threshold = 0.5, rootMargin = "0px", onInView } = options;
+export function useInViewport<T extends HTMLElement>(options: UseInViewportOptions = {}) {
+  const { threshold = 0.5, rootMargin = '0px', onInView } = options;
   const [isInView, setIsInView] = useState(false);
   const elementRef = useRef<T | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -23,7 +21,7 @@ export function useInViewport<T extends HTMLElement>(
     const handleIntersection = (entries: IntersectionObserverEntry[]) => {
       const entry = entries[0];
       if (!entry) return;
-      
+
       const inView = entry.isIntersecting;
 
       setIsInView(inView);

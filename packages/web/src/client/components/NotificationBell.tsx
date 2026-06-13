@@ -5,16 +5,16 @@
 // - Unread count resets to 0 as soon as the panel opens (auto-read).
 // - History is in-memory per page load (up to 50 entries, newest first).
 
-import { useRef, useState, useEffect, useCallback } from "react";
-import { useNotificationHistory } from "../hooks/useNotificationHistory";
-import type { DrumSound, NotificationEntry } from "../lib/notifications";
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNotificationHistory } from '../hooks/useNotificationHistory';
+import type { DrumSound, NotificationEntry } from '../lib/notifications';
 
 // ---------------------------------------------------------------------------
 // Helpers
 
 function formatRelative(ts: number): string {
   const diff = Date.now() - ts;
-  if (diff < 10_000) return "just now";
+  if (diff < 10_000) return 'just now';
   const s = Math.floor(diff / 1000);
   if (s < 60) return `${s}s ago`;
   const m = Math.floor(s / 60);
@@ -25,11 +25,11 @@ function formatRelative(ts: number): string {
 }
 
 const DOT_COLOR: Record<DrumSound, string> = {
-  success:   "bg-phase-succeeded",
-  failure:   "bg-phase-failed",
-  cancelled: "bg-phase-cancelled",
-  escalated: "bg-phase-running",
-  running:   "bg-phase-initializing",
+  success: 'bg-phase-succeeded',
+  failure: 'bg-phase-failed',
+  cancelled: 'bg-phase-cancelled',
+  escalated: 'bg-phase-running',
+  running: 'bg-phase-initializing',
 };
 
 // ---------------------------------------------------------------------------
@@ -37,6 +37,7 @@ const DOT_COLOR: Record<DrumSound, string> = {
 
 function BellIcon({ className }: { className?: string }) {
   return (
+    // biome-ignore lint/a11y/noSvgWithoutTitle: decorative bell icon
     <svg
       className={className}
       viewBox="0 0 24 24"
@@ -63,18 +64,12 @@ function NotificationItem({ entry }: { entry: NotificationEntry }) {
 
   return (
     <div className="flex items-start gap-2.5 px-3 py-2.5 border-b border-border-muted last:border-0 hover:bg-surface-overlay transition-colors">
-      <span
-        className={`mt-1 w-2 h-2 rounded-full shrink-0 ${DOT_COLOR[entry.sound]}`}
-      />
+      <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${DOT_COLOR[entry.sound]}`} />
       <div className="flex-1 min-w-0">
         <p className="text-xs font-medium text-text leading-tight">{entry.title}</p>
-        {entry.body && (
-          <p className="text-xs text-text-dim mt-0.5 truncate">{entry.body}</p>
-        )}
+        {entry.body && <p className="text-xs text-text-dim mt-0.5 truncate">{entry.body}</p>}
       </div>
-      <span className="text-xs text-text-dim shrink-0 mt-0.5">
-        {formatRelative(entry.at)}
-      </span>
+      <span className="text-xs text-text-dim shrink-0 mt-0.5">{formatRelative(entry.at)}</span>
     </div>
   );
 }
@@ -103,31 +98,32 @@ export default function NotificationBell() {
         setOpen(false);
       }
     }
-    document.addEventListener("mousedown", onMouseDown);
-    return () => document.removeEventListener("mousedown", onMouseDown);
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
   }, [open]);
 
   // Close on Escape.
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === 'Escape') setOpen(false);
     }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
   }, [open]);
 
   return (
     <div ref={containerRef} className="relative">
       {/* Bell button */}
       <button
+        type="button"
         onClick={toggleOpen}
         aria-label="Notifications"
         aria-expanded={open}
         className={`relative flex items-center justify-center w-8 h-8 rounded-md transition-colors ${
           open
-            ? "bg-surface-overlay text-text"
-            : "text-text-dim hover:bg-surface-overlay hover:text-text-muted"
+            ? 'bg-surface-overlay text-text'
+            : 'text-text-dim hover:bg-surface-overlay hover:text-text-muted'
         }`}
       >
         <BellIcon className="w-4 h-4" />
@@ -135,7 +131,7 @@ export default function NotificationBell() {
         {/* Unread badge */}
         {unreadCount > 0 && (
           <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[14px] h-[14px] px-0.5 rounded-full bg-accent text-surface text-caption-xs font-bold leading-none animate-pulse">
-            {unreadCount > 9 ? "9+" : unreadCount}
+            {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
       </button>
@@ -150,7 +146,11 @@ export default function NotificationBell() {
             </span>
             {entries.length > 0 && (
               <button
-                onClick={() => { clearAll(); setOpen(false); }}
+                type="button"
+                onClick={() => {
+                  clearAll();
+                  setOpen(false);
+                }}
                 className="text-xs text-text-dim hover:text-text-muted transition-colors"
               >
                 Clear all
@@ -161,13 +161,9 @@ export default function NotificationBell() {
           {/* List */}
           <div className="overflow-y-auto max-h-96">
             {entries.length === 0 ? (
-              <p className="text-xs text-text-dim text-center py-6">
-                No notifications yet
-              </p>
+              <p className="text-xs text-text-dim text-center py-6">No notifications yet</p>
             ) : (
-              entries.map((entry) => (
-                <NotificationItem key={entry.key} entry={entry} />
-              ))
+              entries.map((entry) => <NotificationItem key={entry.key} entry={entry} />)
             )}
           </div>
         </div>

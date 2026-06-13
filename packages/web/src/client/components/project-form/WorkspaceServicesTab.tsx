@@ -1,21 +1,51 @@
-import { Input } from "../ui/input";
-import type { ProjectFormHookReturn } from "./useProjectForm";
-import { Switch } from "../ui/switch";
+import { Input } from '../ui/input';
+import { Switch } from '../ui/switch';
+import type { ProjectFormHookReturn } from './useProjectForm';
 
 interface WorkspaceServicesTabProps {
-  form: Pick<ProjectFormHookReturn, "codeServerEnabled" | "codeServerImage" | "csCpuRequest" | "csMemRequest" | "csCpuLimit" | "csMemLimit" | "pvcName" | "mountPath" | "storageClass" | "embeddingEnabled" | "embeddingModel" | "embeddingDimensions" | "embeddingOllamaUrl"> &
-    Pick<ProjectFormHookReturn, "setCodeServerEnabled" | "setCodeServerImage" | "setCSCpuRequest" | "setCSMemRequest" | "setCSCpuLimit" | "setCSMemLimit" | "setPvcName" | "setMountPath" | "setStorageClass" | "setEmbeddingEnabled" | "setEmbeddingModel" | "setEmbeddingDimensions" | "setEmbeddingOllamaUrl">;
+  form: Pick<
+    ProjectFormHookReturn,
+    | 'codeServerEnabled'
+    | 'codeServerImage'
+    | 'csCpuRequest'
+    | 'csMemRequest'
+    | 'csCpuLimit'
+    | 'csMemLimit'
+    | 'pvcName'
+    | 'mountPath'
+    | 'storageClass'
+    | 'embeddingEnabled'
+    | 'embeddingModel'
+    | 'embeddingDimensions'
+    | 'embeddingOllamaUrl'
+  > &
+    Pick<
+      ProjectFormHookReturn,
+      | 'setCodeServerEnabled'
+      | 'setCodeServerImage'
+      | 'setCSCpuRequest'
+      | 'setCSMemRequest'
+      | 'setCSCpuLimit'
+      | 'setCSMemLimit'
+      | 'setPvcName'
+      | 'setMountPath'
+      | 'setStorageClass'
+      | 'setEmbeddingEnabled'
+      | 'setEmbeddingModel'
+      | 'setEmbeddingDimensions'
+      | 'setEmbeddingOllamaUrl'
+    >;
 }
 
 export default function WorkspaceServicesTab({ form }: WorkspaceServicesTabProps) {
-
   return (
     <div className="space-y-5">
       {/* Code Server */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
         <legend className="px-1 text-sm font-medium text-text-muted">Code Server</legend>
         <p className="text-xs text-text-dim">
-          Enable interactive VS Code access to the workspace. Requires a data PVC (git or local source).
+          Enable interactive VS Code access to the workspace. Requires a data PVC (git or local
+          source).
         </p>
         <Switch
           checked={form.codeServerEnabled}
@@ -92,7 +122,8 @@ export default function WorkspaceServicesTab({ form }: WorkspaceServicesTabProps
       <fieldset className="space-y-3 rounded-md border border-border p-4">
         <legend className="px-1 text-sm font-medium text-text-muted">Data PVC</legend>
         <p className="text-xs text-text-dim">
-          Customize the persistent volume for workspace data. Leave blank to use defaults (&#123;project&#125;-data, mount path /data).
+          Customize the persistent volume for workspace data. Leave blank to use defaults
+          (&#123;project&#125;-data, mount path /data).
         </p>
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
@@ -132,8 +163,8 @@ export default function WorkspaceServicesTab({ form }: WorkspaceServicesTabProps
       <fieldset className="space-y-3 rounded-md border border-border p-4">
         <legend className="px-1 text-sm font-medium text-text-muted">Memory / Embeddings</legend>
         <p className="text-xs text-text-dim">
-          Enable the per-project vector memory service for agent context retrieval
-          and semantic search across runs. Requires a data PVC and a running Ollama instance.
+          Enable the per-project vector memory service for agent context retrieval and semantic
+          search across runs. Requires a data PVC and a running Ollama instance.
         </p>
         <Switch
           checked={form.embeddingEnabled}
@@ -150,18 +181,23 @@ export default function WorkspaceServicesTab({ form }: WorkspaceServicesTabProps
                 placeholder="nomic-embed-text"
                 className="font-mono"
               />
-              <p className="text-xs text-text-dim">Ollama model name used for generating embeddings.</p>
+              <p className="text-xs text-text-dim">
+                Ollama model name used for generating embeddings.
+              </p>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-text-muted">Vector dimensions</label>
               <Input
                 type="number"
-                min={64} max={4096}
+                min={64}
+                max={4096}
                 value={form.embeddingDimensions}
                 onChange={(e) => form.setEmbeddingDimensions(e.target.value)}
                 className="font-mono"
               />
-              <p className="text-xs text-text-dim">Dimensionality of the embedding vectors (must match the model).</p>
+              <p className="text-xs text-text-dim">
+                Dimensionality of the embedding vectors (must match the model).
+              </p>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-text-muted">Ollama URL</label>
@@ -173,7 +209,8 @@ export default function WorkspaceServicesTab({ form }: WorkspaceServicesTabProps
                 className="font-mono"
               />
               <p className="text-xs text-text-dim">
-                Overrides the cluster default Ollama service URL. Leave empty to use the built-in Ollama service.
+                Overrides the cluster default Ollama service URL. Leave empty to use the built-in
+                Ollama service.
               </p>
             </div>
           </div>

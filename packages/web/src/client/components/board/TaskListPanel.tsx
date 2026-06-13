@@ -10,7 +10,9 @@ import { TaskRow } from "./TaskRow";
 import { AddTaskForm } from "./AddTaskForm";
 import { useIsMobile } from "../../hooks/use-mobile";
 
-const DEFAULT_COLUMNS = ["ideas", "backlog", "blocked", "in-progress", "review", "done"] as const;
+const DEFAULT_COLUMNS = ['ideas', 'backlog', 'blocked', 'in-progress', 'review', 'done'] as const;
+
+
 
 interface TaskListPanelProps {
   projectName: string;
@@ -46,10 +48,10 @@ export function TaskListPanel({
   const isMobile = useIsMobile();
 
   const [filters, setFilters] = useState<FilterState>({
-    column: "all",
-    search: "",
-    type: "all",
-    priority: "all",
+    column: 'all',
+    search: '',
+    type: 'all',
+    priority: 'all',
   });
 
   const [filterVisible, setFilterVisible] = useState(true);
@@ -67,23 +69,28 @@ export function TaskListPanel({
 
   // Column counts for filter bar
   const columnCounts = Object.fromEntries(
-    DEFAULT_COLUMNS.map((col) => [col, (columns[col] ?? []).length])
+    DEFAULT_COLUMNS.map((col) => [col, (columns[col] ?? []).length]),
   );
 
   // Filter tasks
   const searchLower = filters.search.toLowerCase();
   function matchesFilters(task: Task, col: string): boolean {
-    if (filters.column !== "all" && col !== filters.column) return false;
-    if (filters.type !== "all" && task.spec.type !== filters.type) return false;
-    if (filters.priority !== "all" && task.spec.priority !== filters.priority) return false;
+    if (filters.column !== 'all' && col !== filters.column) return false;
+    if (filters.type !== 'all' && task.spec.type !== filters.type) return false;
+    if (filters.priority !== 'all' && task.spec.priority !== filters.priority) return false;
     if (filters.search) {
-      const haystack = `${task.spec.title} ${task.metadata.name} ${task.spec.description ?? ""} ${task.spec.agent ?? ""}`.toLowerCase();
+      const haystack =
+        `${task.spec.title} ${task.metadata.name} ${task.spec.description ?? ''} ${task.spec.agent ?? ''}`.toLowerCase();
       if (!haystack.includes(searchLower)) return false;
     }
     return true;
   }
 
-  const isFiltering = filters.column !== "all" || filters.search || filters.type !== "all" || filters.priority !== "all";
+  const isFiltering =
+    filters.column !== 'all' ||
+    filters.search ||
+    filters.type !== 'all' ||
+    filters.priority !== 'all';
 
   // Build filtered column map
   const filteredColumns = DEFAULT_COLUMNS.map((col) => ({
@@ -91,7 +98,7 @@ export function TaskListPanel({
     tasks: (columns[col] ?? []).filter((t) => matchesFilters(t, col)),
   })).filter(({ tasks, col }) => {
     // Always show ideas when the ideas tab is active so the + button is reachable.
-    if (col === "ideas" && filters.column === "ideas") return true;
+    if (col === 'ideas' && filters.column === 'ideas') return true;
     if (isFiltering && tasks.length === 0) return false;
     if (!isFiltering && tasks.length === 0 && collapsed[col] !== false) return false;
     return true;
@@ -107,7 +114,7 @@ export function TaskListPanel({
           <button
             onClick={() => setFilterVisible(!filterVisible)}
             className="text-text-dim hover:text-text transition-colors p-0.5"
-            title={filterVisible ? "Hide filters" : "Show filters"}
+            title={filterVisible ? 'Hide filters' : 'Show filters'}
           >
             {filterVisible ? <X className="h-3.5 w-3.5" /> : <Filter className="h-3.5 w-3.5" />}
           </button>
@@ -132,7 +139,9 @@ export function TaskListPanel({
       {/* Scrollable task list */}
       <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-3">
         {filteredColumns.length === 0 && (
-          <p className="text-xs text-text-dim px-1 py-4 text-center italic">No tasks match filters.</p>
+          <p className="text-xs text-text-dim px-1 py-4 text-center italic">
+            No tasks match filters.
+          </p>
         )}
         {filteredColumns.map(({ col, tasks }) => {
           const isCollapsed = collapsed[col] ?? false;
@@ -151,11 +160,11 @@ export function TaskListPanel({
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-text-dim tabular-nums">{allColTasks.length}</span>
                     <ChevronDown
-                      className={`h-3.5 w-3.5 text-text-dim transition-transform duration-200 ${isCollapsed ? "-rotate-90" : ""}`}
+                      className={`h-3.5 w-3.5 text-text-dim transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`}
                     />
                   </div>
                 </button>
-                {col === "ideas" && (
+                {col === 'ideas' && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -191,21 +200,31 @@ export function TaskListPanel({
                   {tasks.length === 0 && !isFiltering ? (
                     <p className="text-xs text-text-dim italic px-1 py-1">empty</p>
                   ) : (
-                    [...tasks].sort((a, b) => {
-                      const aTime = a.status?.worker?.completedAt ?? a.status?.worker?.startedAt ?? a.metadata.creationTimestamp ?? "";
-                      const bTime = b.status?.worker?.completedAt ?? b.status?.worker?.startedAt ?? b.metadata.creationTimestamp ?? "";
-                      return String(bTime).localeCompare(String(aTime));
-                    }).map((task) => (
-                      <TaskRow
-                        key={task.metadata.name}
-                        task={task}
-                        col={col}
-                        isSelected={selectedTaskName === task.metadata.name}
-                        onClick={() => onSelectTask(task.metadata.name)}
-                        projectName={projectName}
-                        approvals={approvals}
-                      />
-                    ))
+                    [...tasks]
+                      .sort((a, b) => {
+                        const aTime =
+                          a.status?.worker?.completedAt ??
+                          a.status?.worker?.startedAt ??
+                          a.metadata.creationTimestamp ??
+                          '';
+                        const bTime =
+                          b.status?.worker?.completedAt ??
+                          b.status?.worker?.startedAt ??
+                          b.metadata.creationTimestamp ??
+                          '';
+                        return String(bTime).localeCompare(String(aTime));
+                      })
+                      .map((task) => (
+                        <TaskRow
+                          key={task.metadata.name}
+                          task={task}
+                          col={col}
+                          isSelected={selectedTaskName === task.metadata.name}
+                          onClick={() => onSelectTask(task.metadata.name)}
+                          projectName={projectName}
+                          approvals={approvals}
+                        />
+                      ))
                   )}
                 </div>
               )}

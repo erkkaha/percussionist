@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
-import { Copy, Check } from "lucide-react";
-import { useShiki } from "../hooks/useShiki";
+import { Check, Copy } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useShiki } from '../hooks/useShiki';
 
 // ────────────────────────────────────────────────────────────────────────
 // TRUST BOUNDARY — dangerouslySetInnerHTML usage in CodeBlock component
@@ -30,17 +30,17 @@ interface CodeBlockProps {
   code: string;
   language?: string;
   showLineNumbers?: boolean;
-  theme?: "light" | "dark";
+  theme?: 'light' | 'dark';
 }
 
 export function CodeBlock({
   code,
-  language = "text",
+  language = 'text',
   showLineNumbers = false,
-  theme = "dark",
+  theme = 'dark',
 }: CodeBlockProps) {
   const { highlight, isLoading } = useShiki();
-  const [html, setHtml] = useState<string>("");
+  const [html, setHtml] = useState<string>('');
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -51,7 +51,7 @@ export function CodeBlock({
         setHtml(highlighted);
       })
       .catch((err) => {
-        console.error("Failed to highlight code:", err);
+        console.error('Failed to highlight code:', err);
         setHtml(`<pre><code>${escapeHtml(code)}</code></pre>`);
       });
   }, [code, language, theme, highlight, isLoading]);
@@ -62,11 +62,11 @@ export function CodeBlock({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      console.error("Failed to copy code:", err);
+      console.error('Failed to copy code:', err);
     }
   };
 
-  const lineCount = code.split("\n").length;
+  const lineCount = code.split('\n').length;
   const shouldShowLineNumbers = showLineNumbers || lineCount > 10;
 
   if (isLoading) {
@@ -83,10 +83,9 @@ export function CodeBlock({
     <div className="relative group rounded-lg overflow-hidden my-2">
       {/* Header with language badge and copy button */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-surface-sunken border-b border-border-muted">
-        <span className="text-xs font-mono text-text-dim uppercase tracking-wide">
-          {language}
-        </span>
+        <span className="text-xs font-mono text-text-dim uppercase tracking-wide">{language}</span>
         <button
+          type="button"
           onClick={handleCopy}
           className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-text-dim hover:text-text hover:bg-surface-overlay/50 transition-colors"
           title="Copy code"
@@ -99,18 +98,17 @@ export function CodeBlock({
           ) : (
             <>
               <Copy className="h-3 w-3" />
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity">
-                Copy
-              </span>
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity">Copy</span>
             </>
           )}
         </button>
       </div>
 
       {/* Code content */}
+      {/* biome-ignore lint/security/noDangerouslySetInnerHtml: shiki output is safe */}
       <div
         className={`overflow-x-auto text-xs ${
-          shouldShowLineNumbers ? "code-with-line-numbers" : ""
+          shouldShowLineNumbers ? 'code-with-line-numbers' : ''
         }`}
         dangerouslySetInnerHTML={{ __html: html }}
       />
@@ -120,11 +118,11 @@ export function CodeBlock({
 
 function escapeHtml(text: string): string {
   const map: Record<string, string> = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#039;",
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
   };
-  return text.replace(/[&<>"']/g, (m) => map[m]!);
+  return text.replace(/[&<>"']/g, (m) => map[m] ?? m);
 }

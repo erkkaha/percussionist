@@ -6,9 +6,9 @@
 //
 // Gracefully degrades to a plain text input when the sidecar is unreachable.
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { useProviders } from "../hooks/useProviders";
-import { cn } from "../lib/utils";
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useProviders } from '../hooks/useProviders';
+import { cn } from '../lib/utils';
 
 interface ModelSelectorProps {
   value: string;
@@ -21,12 +21,12 @@ interface ModelSelectorProps {
 export default function ModelSelector({
   value,
   onChange,
-  placeholder = "e.g. anthropic/claude-sonnet-4-20250514",
+  placeholder = 'e.g. anthropic/claude-sonnet-4-20250514',
   className,
   inputClassName,
 }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -38,37 +38,37 @@ export default function ModelSelector({
     function handleClick(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
-        setFilter("");
+        setFilter('');
       }
     }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
 
   // Close on Escape
   useEffect(() => {
     if (!open) return;
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
+      if (e.key === 'Escape') {
         setOpen(false);
-        setFilter("");
+        setFilter('');
         inputRef.current?.focus();
       }
     }
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
   }, [open]);
 
   function handleSelect(modelId: string) {
     onChange(modelId);
     setOpen(false);
-    setFilter("");
+    setFilter('');
     inputRef.current?.focus();
   }
 
   const toggleOpen = useCallback(() => {
     setOpen((v) => {
-      if (!v) setFilter("");
+      if (!v) setFilter('');
       return !v;
     });
   }, []);
@@ -87,9 +87,9 @@ export default function ModelSelector({
         (m) =>
           !q ||
           m.id.toLowerCase().includes(q) ||
-          (m.name ?? "").toLowerCase().includes(q) ||
+          (m.name ?? '').toLowerCase().includes(q) ||
           p.id.toLowerCase().includes(q) ||
-          (p.name ?? "").toLowerCase().includes(q),
+          (p.name ?? '').toLowerCase().includes(q),
       );
       return { ...p, models };
     })
@@ -103,7 +103,7 @@ export default function ModelSelector({
   const hasProviders = allProviders.length > 0;
 
   return (
-    <div ref={containerRef} className={cn("relative", className)}>
+    <div ref={containerRef} className={cn('relative', className)}>
       <div className="flex gap-1">
         <input
           ref={inputRef}
@@ -112,7 +112,7 @@ export default function ModelSelector({
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           className={cn(
-            "flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none font-mono",
+            'flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none font-mono',
             inputClassName,
           )}
         />
@@ -121,18 +121,19 @@ export default function ModelSelector({
           <button
             type="button"
             onClick={toggleOpen}
-            title={isLoading ? "Loading models..." : "Browse available models"}
+            title={isLoading ? 'Loading models...' : 'Browse available models'}
             className={cn(
-              "flex items-center justify-center w-8 shrink-0 rounded-md border border-border bg-surface text-text-dim hover:text-text hover:border-accent/60 transition-colors focus:outline-none",
-              open && "border-accent/60 text-text",
-              isLoading && "opacity-50 cursor-wait",
+              'flex items-center justify-center w-8 shrink-0 rounded-md border border-border bg-surface text-text-dim hover:text-text hover:border-accent/60 transition-colors focus:outline-none',
+              open && 'border-accent/60 text-text',
+              isLoading && 'opacity-50 cursor-wait',
             )}
             disabled={isLoading}
             aria-haspopup="listbox"
             aria-expanded={open}
           >
+            {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative chevron icon */}
             <svg
-              className={cn("w-3.5 h-3.5 transition-transform", open && "rotate-180")}
+              className={cn('w-3.5 h-3.5 transition-transform', open && 'rotate-180')}
               viewBox="0 0 12 12"
               fill="none"
               stroke="currentColor"
@@ -155,7 +156,6 @@ export default function ModelSelector({
           {/* Search filter */}
           <div className="p-2 border-b border-border">
             <input
-              autoFocus
               type="text"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
@@ -179,7 +179,9 @@ export default function ModelSelector({
                         {provider.name ?? provider.id}
                       </span>
                       {isConnected ? (
-                        <span className="text-caption-xs text-phase-running font-medium">connected</span>
+                        <span className="text-caption-xs text-phase-running font-medium">
+                          connected
+                        </span>
                       ) : (
                         <span className="text-caption-xs text-text-dim">not connected</span>
                       )}
@@ -196,15 +198,13 @@ export default function ModelSelector({
                           aria-selected={isSelected}
                           onClick={() => handleSelect(modelId)}
                           className={cn(
-                            "w-full text-left px-3 py-2 flex items-center justify-between gap-3 hover:bg-surface-container-low transition-colors",
-                            isSelected && "bg-accent/10 text-accent",
-                            !isConnected && "opacity-50",
+                            'w-full text-left px-3 py-2 flex items-center justify-between gap-3 hover:bg-surface-container-low transition-colors',
+                            isSelected && 'bg-accent/10 text-accent',
+                            !isConnected && 'opacity-50',
                           )}
                         >
-                          <span className="font-mono text-xs text-text truncate">
-                            {model.id}
-                          </span>
-                          {(model.name && model.name !== model.id) && (
+                          <span className="font-mono text-xs text-text truncate">{model.id}</span>
+                          {model.name && model.name !== model.id && (
                             <span className="text-xs text-text-dim shrink-0 truncate max-w-[120px]">
                               {model.name}
                             </span>

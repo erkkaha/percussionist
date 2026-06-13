@@ -1,19 +1,27 @@
-import { Hono } from "hono";
-import { listProjects, getProject, createProject, updateProject, deleteProject, core, NAMESPACE } from "../kube.js";
-import { createPollingSseResponse } from "../lib/sse.js";
 import {
-  ProjectSpecSchema,
   API_GROUP_VERSION,
-  KIND_PROJECT,
   type InjectFileRef,
-} from "@percussionist/api";
-import { auth, adminAuth } from "../auth.js";
+  KIND_PROJECT,
+  ProjectSpecSchema,
+} from '@percussionist/api';
+import { Hono } from 'hono';
+import { adminAuth, auth } from '../auth.js';
+import {
+  core,
+  createProject,
+  deleteProject,
+  getProject,
+  listProjects,
+  NAMESPACE,
+  updateProject,
+} from '../kube.js';
+import { createPollingSseResponse } from '../lib/sse.js';
 
 const projects = new Hono();
 
-const CONFIG_CM_KEY = "opencode.json";
-const CLUSTER_CONFIG_CM = "opencode-config";
-const INJECT_FILE_SECRET_KEY = "content";
+const CONFIG_CM_KEY = 'opencode.json';
+const CLUSTER_CONFIG_CM = 'opencode-config';
+const INJECT_FILE_SECRET_KEY = 'content';
 
 /** Name of the per-project opencode config configmap. */
 function projectConfigCmName(projectName: string): string {
@@ -23,7 +31,11 @@ function projectConfigCmName(projectName: string): string {
 /** Name of the per-project inject-file Secret for a given filename. */
 function injectFileSecretName(projectName: string, filename: string): string {
   // Sanitise the filename into a valid K8s name segment (replace dots/underscores, lowercase).
-  const slug = filename.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  const slug = filename
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
   return `${projectName}-inject-${slug}`;
 }
 
@@ -35,9 +47,9 @@ async function upsertProjectConfigCm(projectName: string, content: string): Prom
   const name = projectConfigCmName(projectName);
   const ns = NAMESPACE;
   const body = {
-    apiVersion: "v1",
-    kind: "ConfigMap",
-    metadata: { name, namespace: ns, labels: { "percussionist.dev/project": projectName } },
+    apiVersion: 'v1',
+    kind: 'ConfigMap',
+    metadata: { name, namespace: ns, labels: { 'percussionist.dev/project': projectName } },
     data: { [CONFIG_CM_KEY]: content },
   };
   try {
@@ -71,9 +83,9 @@ async function upsertInjectFileSecret(
   const name = injectFileSecretName(projectName, filename);
   const ns = NAMESPACE;
   const body = {
-    apiVersion: "v1",
-    kind: "Secret",
-    metadata: { name, namespace: ns, labels: { "percussionist.dev/project": projectName } },
+    apiVersion: 'v1',
+    kind: 'Secret',
+    metadata: { name, namespace: ns, labels: { 'percussionist.dev/project': projectName } },
     stringData: { [INJECT_FILE_SECRET_KEY]: content },
   };
   try {
@@ -111,20 +123,23 @@ async function readInjectFileContents(
   return Promise.all(
     injectFiles.map(async (f) => {
       try {
-        const secret = await core().readNamespacedSecret({ name: f.secretRef.name, namespace: NAMESPACE });
+        const secret = await core().readNamespacedSecret({
+          name: f.secretRef.name,
+          namespace: NAMESPACE,
+        });
         // K8s returns Secret data base64-encoded.
-        const raw = secret.data?.[f.secretRef.key] ?? "";
-        const content = typeof raw === "string" ? Buffer.from(raw, "base64").toString("utf8") : "";
+        const raw = secret.data?.[f.secretRef.key] ?? '';
+        const content = typeof raw === 'string' ? Buffer.from(raw, 'base64').toString('utf8') : '';
         return { filename: f.filename, content };
       } catch {
-        return { filename: f.filename, content: "" };
+        return { filename: f.filename, content: '' };
       }
     }),
   );
 }
 
 // GET /api/projects
-projects.get("/", auth(), async (c) => {
+projects.get('/', auth(), async (c) => {
   try {
     const items = await listProjects();
     return c.json({ items });
@@ -135,59 +150,68 @@ projects.get("/", auth(), async (c) => {
 });
 
 // GET /api/projects/events — SSE stream for project list changes.
-projects.get("/events", auth(), async (c) => {
+projects.get('/events', auth(), async (c) => {
   return createPollingSseResponse({
     signal: c.req.raw.signal,
-    getSignature: async () => JSON.stringify((await listProjects()).map((p) => ({
-      resourceVersion: p.metadata.resourceVersion,
-      generation: p.metadata.generation,
-      name: p.metadata.name,
-      namespace: p.metadata.namespace,
-      displayName: p.spec.displayName,
-      model: p.spec.model,
-      agent: p.spec.agent,
-      gitUrl: p.spec.source?.git?.url,
-      gitRef: p.spec.source?.git?.ref,
-    }))),
-    updatedEvent: "projects.updated",
-    errorEvent: "projects.error",
-    readyEvent: { event: "ready", data: { collection: "projects" } },
+    getSignature: async () =>
+      JSON.stringify(
+        (await listProjects()).map((p) => ({
+          resourceVersion: p.metadata.resourceVersion,
+          generation: p.metadata.generation,
+          name: p.metadata.name,
+          namespace: p.metadata.namespace,
+          displayName: p.spec.displayName,
+          model: p.spec.model,
+          agent: p.spec.agent,
+          gitUrl: p.spec.source?.git?.url,
+          gitRef: p.spec.source?.git?.ref,
+        })),
+      ),
+    updatedEvent: 'projects.updated',
+    errorEvent: 'projects.error',
+    readyEvent: { event: 'ready', data: { collection: 'projects' } },
   });
 });
 
 // GET /api/projects/config/default — returns cluster-wide opencode-config content
-projects.get("/config/default", auth(), async (c) => {
+projects.get('/config/default', auth(), async (c) => {
   try {
-    const cm = await core().readNamespacedConfigMap({ name: CLUSTER_CONFIG_CM, namespace: NAMESPACE });
-    return c.json(cm.data?.[CONFIG_CM_KEY] ?? "");
+    const cm = await core().readNamespacedConfigMap({
+      name: CLUSTER_CONFIG_CM,
+      namespace: NAMESPACE,
+    });
+    return c.json(cm.data?.[CONFIG_CM_KEY] ?? '');
   } catch {
-    return c.json("");
+    return c.json('');
   }
 });
 
 // GET /api/projects/:name/config — returns per-project opencode.json, falls back to cluster-wide
-projects.get("/:name/config", auth(), async (c) => {
-  const name = c.req.param("name");
+projects.get('/:name/config', auth(), async (c) => {
+  const name = c.req.param('name');
   const ns = NAMESPACE;
   // Try per-project configmap first.
   try {
-    const cm = await core().readNamespacedConfigMap({ name: projectConfigCmName(name), namespace: ns });
-    return c.json(cm.data?.[CONFIG_CM_KEY] ?? "");
+    const cm = await core().readNamespacedConfigMap({
+      name: projectConfigCmName(name),
+      namespace: ns,
+    });
+    return c.json(cm.data?.[CONFIG_CM_KEY] ?? '');
   } catch {
     // fall through to cluster-wide
   }
   // Fall back to cluster-wide opencode-config.
   try {
     const cm = await core().readNamespacedConfigMap({ name: CLUSTER_CONFIG_CM, namespace: ns });
-    return c.json(cm.data?.[CONFIG_CM_KEY] ?? "");
+    return c.json(cm.data?.[CONFIG_CM_KEY] ?? '');
   } catch {
-    return c.json("");
+    return c.json('');
   }
 });
 
 // GET /api/projects/:name
-projects.get("/:name", auth(), async (c) => {
-  const name = c.req.param("name");
+projects.get('/:name', auth(), async (c) => {
+  const name = c.req.param('name');
   try {
     const project = await getProject(name);
     // Augment response with inject file contents so the UI can pre-populate.
@@ -204,31 +228,37 @@ projects.get("/:name", auth(), async (c) => {
 });
 
 // POST /api/projects
-projects.post("/", adminAuth(), async (c) => {
+projects.post('/', adminAuth(), async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ error: "Invalid JSON body" }, 400);
+    return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const opencodeConfig = (body as { opencodeConfig?: string }).opencodeConfig ?? "";
+  const opencodeConfig = (body as { opencodeConfig?: string }).opencodeConfig ?? '';
   // Out-of-band inject files: [{ filename, content }]
-  const rawInjectFiles = (body as { injectFiles?: Array<{ filename: string; content: string }> }).injectFiles ?? [];
+  const rawInjectFiles =
+    (body as { injectFiles?: Array<{ filename: string; content: string }> }).injectFiles ?? [];
 
   // Strip out-of-band fields before schema validation.
-  const { opencodeConfig: _oc, injectFiles: _if, name: _n, ...specBody } = body as Record<string, unknown>;
-  void _oc; void _if; void _n;
+  const {
+    opencodeConfig: _oc,
+    injectFiles: _if,
+    name: _n,
+    ...specBody
+  } = body as Record<string, unknown>;
+  void _oc;
+  void _if;
+  void _n;
 
   const parsed = ProjectSpecSchema.safeParse(specBody);
   if (!parsed.success) {
-    return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
+    return c.json({ error: parsed.error.issues.map((i) => i.message).join('; ') }, 400);
   }
   const spec = parsed.data;
 
-  const name =
-    (body as { name?: string }).name ??
-    `project-${Date.now().toString(16)}`;
+  const name = (body as { name?: string }).name ?? `project-${Date.now().toString(16)}`;
 
   // If opencode config content provided, create the configmap and wire it up.
   if (opencodeConfig.trim()) {
@@ -268,22 +298,30 @@ projects.post("/", adminAuth(), async (c) => {
 });
 
 // PUT /api/projects/:name
-projects.put("/:name", adminAuth(), async (c) => {
-  const name = c.req.param("name");
+projects.put('/:name', adminAuth(), async (c) => {
+  const name = c.req.param('name');
   let body: unknown;
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ error: "Invalid JSON body" }, 400);
+    return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const opencodeConfig = (body as { opencodeConfig?: string }).opencodeConfig ?? "";
+  const opencodeConfig = (body as { opencodeConfig?: string }).opencodeConfig ?? '';
   // Out-of-band inject files: [{ filename, content }]
-  const rawInjectFiles = (body as { injectFiles?: Array<{ filename: string; content: string }> }).injectFiles ?? [];
+  const rawInjectFiles =
+    (body as { injectFiles?: Array<{ filename: string; content: string }> }).injectFiles ?? [];
 
   // Strip out-of-band fields before schema validation.
-  const { opencodeConfig: _oc2, injectFiles: _if2, name: _n2, ...specBody2 } = body as Record<string, unknown>;
-  void _oc2; void _if2; void _n2;
+  const {
+    opencodeConfig: _oc2,
+    injectFiles: _if2,
+    name: _n2,
+    ...specBody2
+  } = body as Record<string, unknown>;
+  void _oc2;
+  void _if2;
+  void _n2;
 
   // Fetch existing project to preserve fields not sent by the UI (like featureBranchingEnabled)
   let existingSpec: Partial<typeof specBody2> = {};
@@ -299,9 +337,16 @@ projects.put("/:name", adminAuth(), async (c) => {
   // (e.g. securityContext.privileged, resources) are preserved from the existing
   // spec when a matching sidecar name is found.
   const mergedSpec = { ...existingSpec, ...specBody2 };
-  if (Array.isArray((specBody2 as Record<string, unknown>).sidecars) && Array.isArray((existingSpec as Record<string, unknown>).sidecars)) {
-    const existingSidecars = (existingSpec as Record<string, unknown>).sidecars as Array<Record<string, unknown>>;
-    const incomingSidecars = (specBody2 as Record<string, unknown>).sidecars as Array<Record<string, unknown>>;
+  if (
+    Array.isArray((specBody2 as Record<string, unknown>).sidecars) &&
+    Array.isArray((existingSpec as Record<string, unknown>).sidecars)
+  ) {
+    const existingSidecars = (existingSpec as Record<string, unknown>).sidecars as Array<
+      Record<string, unknown>
+    >;
+    const incomingSidecars = (specBody2 as Record<string, unknown>).sidecars as Array<
+      Record<string, unknown>
+    >;
     mergedSpec.sidecars = incomingSidecars.map((incoming) => {
       const existing = existingSidecars.find((e) => e.name === incoming.name);
       return existing ? { ...existing, ...incoming } : incoming;
@@ -310,7 +355,7 @@ projects.put("/:name", adminAuth(), async (c) => {
 
   const parsed = ProjectSpecSchema.safeParse(mergedSpec);
   if (!parsed.success) {
-    return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
+    return c.json({ error: parsed.error.issues.map((i) => i.message).join('; ') }, 400);
   }
   const spec = parsed.data;
 
@@ -357,8 +402,8 @@ projects.put("/:name", adminAuth(), async (c) => {
 });
 
 // DELETE /api/projects/:name
-projects.delete("/:name", adminAuth(), async (c) => {
-  const name = c.req.param("name");
+projects.delete('/:name', adminAuth(), async (c) => {
+  const name = c.req.param('name');
   try {
     // Fetch project first so we know which inject-file Secrets to clean up.
     let injectFileRefs: InjectFileRef[] = [];

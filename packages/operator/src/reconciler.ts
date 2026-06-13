@@ -1,60 +1,59 @@
 // reconciler.ts — core reconcile loop for Run CRs.
 
 import {
-  KubeConfig,
-  CoreV1Api,
   AppsV1Api,
+  CoreV1Api,
   CustomObjectsApi,
+  KubeConfig,
   NetworkingV1Api,
   PatchStrategy,
   setHeaderOptions,
   type V1Pod,
-} from "@kubernetes/client-node";
+} from '@kubernetes/client-node';
 import {
   API_GROUP,
   API_VERSION,
-  PLURAL_RUN,
-  PLURAL_PROJECT,
-  PLURAL_CLUSTER_SETTINGS,
-  RunPhase,
-  TERMINAL_PHASES,
-  type Run,
-  type RunStatus,
-  type Project,
   type ClusterSettings,
-} from "@percussionist/api";
-import { resolveAgents } from "./agent-resolver.js";
+  PLURAL_CLUSTER_SETTINGS,
+  PLURAL_PROJECT,
+  PLURAL_RUN,
+  type Project,
+  type Run,
+  RunPhase,
+  type RunStatus,
+  TERMINAL_PHASES,
+} from '@percussionist/api';
+import { resolveRunnerSpec } from './adapters/opencode-config.js';
+import { resolveAgents } from './agent-resolver.js';
 import {
-  renderService,
-  renderIngress,
-  renderAgentsConfigMap,
-  renderPod,
-  serviceName,
-  podName,
-  ingressName,
-  shouldCreateIngress,
-  webURLFor,
-} from "./pod-builder.js";
-import { NAMESPACE, SELF_NAMESPACE } from "./config.js";
-import { ensureDataPVC } from "./pvc-helper.js";
-import { resolveRunnerSpec } from "./adapters/opencode-config.js";
-import {
-  shouldReconcileCodeServer,
-  renderCodeServerDeployment,
-  renderCodeServerService,
   codeServerDeploymentName,
   codeServerServiceName,
-} from "./code-server.js";
+  renderCodeServerDeployment,
+  renderCodeServerService,
+  shouldReconcileCodeServer,
+} from './code-server.js';
+import { NAMESPACE, SELF_NAMESPACE } from './config.js';
 import {
-  shouldReconcileMemoryService,
-  renderMemoryServiceDeployment,
-  renderMemoryServiceService,
   memoryServiceDeploymentName,
   memoryServiceServiceName,
-} from "./memory-service.js";
+  renderMemoryServiceDeployment,
+  renderMemoryServiceService,
+  shouldReconcileMemoryService,
+} from './memory-service.js';
+import {
+  ingressName,
+  podName,
+  renderAgentsConfigMap,
+  renderIngress,
+  renderPod,
+  renderService,
+  serviceName,
+  shouldCreateIngress,
+  webURLFor,
+} from './pod-builder.js';
+import { ensureDataPVC } from './pvc-helper.js';
 
-const log = (...args: unknown[]) =>
-  console.log(`[operator ${new Date().toISOString()}]`, ...args);
+const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
   console.error(`[operator ${new Date().toISOString()}]`, ...args);
 
@@ -71,21 +70,18 @@ const networking = kc.makeApiClient(NetworkingV1Api);
 // ---------------------------------------------------------------------------
 // Status writer
 
-async function patchStatus(
-  run: Run,
-  patch: RunStatus,
-): Promise<void> {
+async function patchStatus(run: Run, patch: RunStatus): Promise<void> {
   try {
     await co.patchNamespacedCustomObjectStatus(
       {
         group: API_GROUP,
         version: API_VERSION,
-        namespace: run.metadata.namespace!,
+        namespace: run.metadata.namespace ?? '',
         plural: PLURAL_RUN,
         name: run.metadata.name,
         body: { status: patch },
       },
-      setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
+      setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
     );
   } catch (e) {
     err(`patchStatus(${run.metadata.name}):`, (e as Error).message);
@@ -109,13 +105,13 @@ function injectDispatcherMcpStanza(raw: string): string {
   const mcp = (parsed.mcp ?? {}) as Record<string, unknown>;
   for (const [key, entry] of Object.entries(mcp)) {
     const e = entry as Record<string, unknown>;
-    if (e.type === "local" || e.type === "stdio") {
+    if (e.type === 'local' || e.type === 'stdio') {
       delete mcp[key];
     }
   }
-  mcp["percussionist-dispatcher"] = {
-    type: "remote",
-    url: "http://127.0.0.1:4097/mcp",
+  mcp['percussionist-dispatcher'] = {
+    type: 'remote',
+    url: 'http://127.0.0.1:4097/mcp',
     enabled: true,
   };
   parsed.mcp = mcp;
@@ -128,7 +124,7 @@ function injectDispatcherMcpStanza(raw: string): string {
 // If no source exists, a minimal config containing only the dispatcher MCP
 // stanza is created so agents always have access to complete_run / fail_run.
 async function ensureOpencodeConfig(ns: string): Promise<void> {
-  const name = "opencode-config";
+  const name = 'opencode-config';
   // Try to read the source from the operator namespace.
   let sourceData: Record<string, string> | null = null;
   try {
@@ -147,19 +143,19 @@ async function ensureOpencodeConfig(ns: string): Promise<void> {
   // Use operator-namespace config if available; otherwise build a minimal one
   // that contains only the dispatcher MCP stanza so agents always have tools.
   const data: Record<string, string> = sourceData ?? {
-    "opencode.json": injectDispatcherMcpStanza("{}"),
+    'opencode.json': injectDispatcherMcpStanza('{}'),
   };
   try {
     await core.createNamespacedConfigMap({
       namespace: ns,
       body: {
-        apiVersion: "v1",
-        kind: "ConfigMap",
+        apiVersion: 'v1',
+        kind: 'ConfigMap',
         metadata: { name, namespace: ns },
         data,
       },
     });
-    log(`synced opencode-config to ${ns}${sourceData ? "" : " (minimal dispatcher-only config)"}`);
+    log(`synced opencode-config to ${ns}${sourceData ? '' : ' (minimal dispatcher-only config)'}`);
   } catch (e) {
     if (!/already exists/i.test((e as Error).message)) {
       err(`failed to sync opencode-config to ${ns}:`, (e as Error).message);
@@ -180,37 +176,35 @@ async function ensureOpencodeConfig(ns: string): Promise<void> {
 // ConfigMap sources of truth (in priority order):
 //   opencode.config  >  opencode.configMapRef  >  existing opencode-config CM
 //   manager.*        >  static defaults
-export async function reconcileClusterSettings(
-  cs: ClusterSettings,
-): Promise<void> {
+export async function reconcileClusterSettings(cs: ClusterSettings): Promise<void> {
   const { spec } = cs;
   if (!spec) return;
 
-   // --- opencode-config ---
-   // Always inject the dispatcher MCP stanza so every run pod can call
-   // complete_run / complete_plan / fail_run / get_status regardless of what
-   // the user provides in ClusterSettings. The stanza is merged last so it
-   // cannot be accidentally overridden by user-supplied config.
+  // --- opencode-config ---
+  // Always inject the dispatcher MCP stanza so every run pod can call
+  // complete_run / complete_plan / fail_run / get_status regardless of what
+  // the user provides in ClusterSettings. The stanza is merged last so it
+  // cannot be accidentally overridden by user-supplied config.
 
-   // If spec.runnerConfig?.config is set, it becomes the data source.
-   // Otherwise use configMapRef if set. If neither, leave existing CM alone.
-   if (spec.runnerConfig?.config) {
-     await ssaConfigMap(SELF_NAMESPACE, "opencode-config", {
-       "opencode.json": injectDispatcherMcpStanza(spec.runnerConfig.config),
-     });
-     log(`reconciled opencode-config from ClusterSettings (config string)`);
-   } else if (spec.runnerConfig?.configMapRef) {
-     // Mirror the referenced ConfigMap into our namespace as opencode-config.
-     try {
-       const ref = spec.runnerConfig.configMapRef;
-       const source = await core.readNamespacedConfigMap({
-         name: ref.name,
-         namespace: SELF_NAMESPACE,
-       });
+  // If spec.runnerConfig?.config is set, it becomes the data source.
+  // Otherwise use configMapRef if set. If neither, leave existing CM alone.
+  if (spec.runnerConfig?.config) {
+    await ssaConfigMap(SELF_NAMESPACE, 'opencode-config', {
+      'opencode.json': injectDispatcherMcpStanza(spec.runnerConfig.config),
+    });
+    log(`reconciled opencode-config from ClusterSettings (config string)`);
+  } else if (spec.runnerConfig?.configMapRef) {
+    // Mirror the referenced ConfigMap into our namespace as opencode-config.
+    try {
+      const ref = spec.runnerConfig.configMapRef;
+      const source = await core.readNamespacedConfigMap({
+        name: ref.name,
+        namespace: SELF_NAMESPACE,
+      });
       const data = source.data ?? {};
-      if (data["opencode.json"]) {
-        await ssaConfigMap(SELF_NAMESPACE, "opencode-config", {
-           "opencode.json": injectDispatcherMcpStanza(data["opencode.json"]),
+      if (data['opencode.json']) {
+        await ssaConfigMap(SELF_NAMESPACE, 'opencode-config', {
+          'opencode.json': injectDispatcherMcpStanza(data['opencode.json']),
         });
         log(`reconciled opencode-config from ref ${ref.name}/${ref.key}`);
       }
@@ -224,8 +218,8 @@ export async function reconcileClusterSettings(
   // Always write agent-config so the operator owns it via SSA, even when
   // spec.manager is not set (use static defaults). This prevents field-manager
   // conflicts when other tools (kubectl, tofu) bootstrapped the ConfigMap.
-  const agentName = spec.manager?.agentName ?? "manager-agent";
-  const decisionAgentName = "manager-decision";
+  const agentName = spec.manager?.agentName ?? 'manager-agent';
+  const decisionAgentName = 'manager-decision';
   const decisionContent =
     spec.manager?.decisionAgentContent ??
     `---
@@ -281,16 +275,16 @@ Always include at least one actionable option when presenting choices.`;
   // Build opencode.json for the manager sidecar. It always needs the MCP
   // manager-agent entry; model/provider/skills are layered on top when set.
   const runnerConfig: Record<string, unknown> = {
-    "$schema": "https://opencode.ai/config.json",
+    $schema: 'https://opencode.ai/config.json',
     mcp: {
-      "manager-agent": {
-        type: "remote",
-        url: "http://127.0.0.1:4097/mcp",
+      'manager-agent': {
+        type: 'remote',
+        url: 'http://127.0.0.1:4097/mcp',
         enabled: true,
       },
     },
     skills: {
-      directories: ["/root/.config/opencode/agents/"],
+      directories: ['/root/.config/opencode/agents/'],
     },
   };
   if (spec.manager?.model) {
@@ -308,10 +302,10 @@ Always include at least one actionable option when presenting choices.`;
     // Fall back to reading provider/skills from the existing opencode-config CM.
     try {
       const cm = await core.readNamespacedConfigMap({
-        name: "opencode-config",
+        name: 'opencode-config',
         namespace: SELF_NAMESPACE,
       });
-      const raw = cm.data?.["opencode.json"];
+      const raw = cm.data?.['opencode.json'];
       if (raw) {
         const parsed = JSON.parse(raw) as Record<string, unknown>;
         if (parsed.provider) runnerConfig.provider = parsed.provider;
@@ -323,13 +317,11 @@ Always include at least one actionable option when presenting choices.`;
   }
   const runnerConfigJson = JSON.stringify(runnerConfig, null, 2);
 
-  await ssaConfigMap(SELF_NAMESPACE, "agent-config", {
-    "opencode.json": runnerConfigJson,
+  await ssaConfigMap(SELF_NAMESPACE, 'agent-config', {
+    'opencode.json': runnerConfigJson,
     [`${decisionAgentName}.md`]: decisionContent,
   });
-  log(
-    `reconciled agent-config via SSA (agentName=${agentName})`,
-  );
+  log(`reconciled agent-config via SSA (agentName=${agentName})`);
 }
 
 // ssaConfigMap writes a ConfigMap using server-side apply with
@@ -339,26 +331,22 @@ Always include at least one actionable option when presenting choices.`;
 // from any prior field manager (kubectl, tofu, node-fetch, etc.). This is safe
 // because the operator is the authoritative source of truth for these ConfigMaps
 // and rebuilds them from ClusterSettings on every reconcile cycle.
-async function ssaConfigMap(
-  ns: string,
-  name: string,
-  data: Record<string, string>,
-): Promise<void> {
+async function ssaConfigMap(ns: string, name: string, data: Record<string, string>): Promise<void> {
   try {
     await core.patchNamespacedConfigMap(
       {
         name,
         namespace: ns,
         body: {
-          apiVersion: "v1",
-          kind: "ConfigMap",
+          apiVersion: 'v1',
+          kind: 'ConfigMap',
           metadata: { name, namespace: ns },
           data,
         },
-        fieldManager: "percussionist-operator",
+        fieldManager: 'percussionist-operator',
         force: true,
       },
-      setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply),
+      setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
     );
   } catch (e) {
     err(`ssaConfigMap(${ns}/${name}):`, (e as Error).message);
@@ -367,7 +355,8 @@ async function ssaConfigMap(
 
 export async function reconcile(run: Run): Promise<void> {
   const name = run.metadata.name;
-  const ns = run.metadata.namespace!;
+  const ns = run.metadata.namespace;
+  if (!ns) throw new Error(`Run ${name} missing namespace`);
   const currentPhase = run.status?.phase;
 
   if (currentPhase && TERMINAL_PHASES.has(currentPhase)) {
@@ -384,10 +373,15 @@ export async function reconcile(run: Run): Promise<void> {
   }
 
   // Resolve runner spec and dispatcher image from ClusterSettings.
-  const cs = await co.getClusterCustomObject({
-    group: API_GROUP, version: API_VERSION,
-    plural: PLURAL_CLUSTER_SETTINGS, name: "default",
-  }).then((r) => r as ClusterSettings).catch(() => undefined);
+  const cs = await co
+    .getClusterCustomObject({
+      group: API_GROUP,
+      version: API_VERSION,
+      plural: PLURAL_CLUSTER_SETTINGS,
+      name: 'default',
+    })
+    .then((r) => r as ClusterSettings)
+    .catch(() => undefined);
   const runnerSpec = resolveRunnerSpec(cs);
   const dispatcherImage = run.spec.dispatcher?.image ?? cs?.spec?.dispatcher?.image;
 
@@ -407,7 +401,7 @@ export async function reconcile(run: Run): Promise<void> {
   if (missingAgents.length > 0 && !currentPhase) {
     await patchStatus(run, {
       phase: RunPhase.Initializing,
-      message: `Warning: ClusterAgent(s) not found and will be skipped: ${missingAgents.join(", ")}. Run will proceed with available agents.`,
+      message: `Warning: ClusterAgent(s) not found and will be skipped: ${missingAgents.join(', ')}. Run will proceed with available agents.`,
     });
   }
 
@@ -439,9 +433,7 @@ export async function reconcile(run: Run): Promise<void> {
           namespace: ns,
           body: renderIngress(run, runnerSpec),
         });
-        log(
-          `created ingress ${ns}/${ingressName(run)} → ${webURLFor(run)}`,
-        );
+        log(`created ingress ${ns}/${ingressName(run)} → ${webURLFor(run)}`);
       } catch (e) {
         if (!/already exists/i.test((e as Error).message)) throw e;
       }
@@ -466,9 +458,7 @@ export async function reconcile(run: Run): Promise<void> {
           namespace: ns,
           body: renderAgentsConfigMap(run, resolvedAgents) as object,
         });
-        log(
-          `created configmap ${ns}/${cmName} (${resolvedAgents.length} agents)`,
-        );
+        log(`created configmap ${ns}/${cmName} (${resolvedAgents.length} agents)`);
       } catch (e) {
         if (!/already exists/i.test((e as Error).message)) throw e;
       }
@@ -476,7 +466,7 @@ export async function reconcile(run: Run): Promise<void> {
   }
 
   // Ensure data PVC exists for the project.
-  const projectName = run.metadata.labels?.["percussionist.dev/project"];
+  const projectName = run.metadata.labels?.['percussionist.dev/project'];
   if (projectName) {
     try {
       // Fetch the Project CR to get its UID for owner reference.
@@ -490,9 +480,7 @@ export async function reconcile(run: Run): Promise<void> {
 
       const projectUid = project.metadata?.uid;
       if (!projectUid) {
-        throw new Error(
-          `Project ${ns}/${projectName} missing UID (newly created?)`,
-        );
+        throw new Error(`Project ${ns}/${projectName} missing UID (newly created?)`);
       }
 
       const dataPvcName = run.spec.data?.pvcName ?? `${projectName}-data`;
@@ -539,7 +527,7 @@ export async function reconcile(run: Run): Promise<void> {
         ...(shouldCreateIngress(run)
           ? { ingressName: ingressName(run), webURL: webURLFor(run) }
           : {}),
-        message: "pod created",
+        message: 'pod created',
       });
     } catch (e) {
       const msg = (e as Error).message;
@@ -564,18 +552,18 @@ export async function reconcile(run: Run): Promise<void> {
       ...(shouldCreateIngress(run)
         ? { ingressName: ingressName(run), webURL: webURLFor(run) }
         : {}),
-      message: `pod phase: ${podPhase ?? "Unknown"}`,
+      message: `pod phase: ${podPhase ?? 'Unknown'}`,
     });
   }
 
-  if (podPhase === "Succeeded" && currentPhase !== RunPhase.Succeeded) {
+  if (podPhase === 'Succeeded' && currentPhase !== RunPhase.Succeeded) {
     await patchStatus(run, {
       phase: RunPhase.Succeeded,
       completedAt: new Date().toISOString(),
-      message: "pod succeeded",
+      message: 'pod succeeded',
     });
     await cleanupChildResources(run, ns);
-  } else if (podPhase === "Failed" && currentPhase !== RunPhase.Failed) {
+  } else if (podPhase === 'Failed' && currentPhase !== RunPhase.Failed) {
     await patchStatus(run, {
       phase: RunPhase.Failed,
       completedAt: new Date().toISOString(),
@@ -587,7 +575,10 @@ export async function reconcile(run: Run): Promise<void> {
 }
 
 function isNotFound(e: unknown): boolean {
-  return ((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) === 404;
+  return (
+    ((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) ===
+    404
+  );
 }
 
 async function cleanupChildResources(run: Run, ns: string): Promise<void> {
@@ -626,7 +617,7 @@ function summarizePodFailure(pod?: V1Pod): string {
     const t = c.state?.terminated;
     if (t && (t.exitCode ?? 0) !== 0) {
       const detail = t.message?.trim();
-      const base = `init container ${c.name} failed (exit ${t.exitCode ?? "?"})`;
+      const base = `init container ${c.name} failed (exit ${t.exitCode ?? '?'})`;
       return detail ? `${base}: ${detail}` : base;
     }
   }
@@ -635,27 +626,38 @@ function summarizePodFailure(pod?: V1Pod): string {
       const t = c.state?.terminated;
       if (!t) return null;
       const detail = t.message?.trim();
-      const base = `${c.name}: ${t.reason ?? "Error"} (exit ${t.exitCode ?? "?"})`;
+      const base = `${c.name}: ${t.reason ?? 'Error'} (exit ${t.exitCode ?? '?'})`;
       return detail ? `${base}: ${detail}` : base;
     })
     .filter(Boolean);
-  return reasons.length
-    ? reasons.join("; ")
-    : (pod?.status?.reason ?? "pod failed");
+  return reasons.length ? reasons.join('; ') : (pod?.status?.reason ?? 'pod failed');
 }
 
-function collectContainerExitCodes(pod?: V1Pod): Array<{ container: string; exitCode: number; reason?: string; message?: string }> {
-  const entries: Array<{ container: string; exitCode: number; reason?: string; message?: string }> = [];
+function collectContainerExitCodes(
+  pod?: V1Pod,
+): Array<{ container: string; exitCode: number; reason?: string; message?: string }> {
+  const entries: Array<{ container: string; exitCode: number; reason?: string; message?: string }> =
+    [];
   for (const c of pod?.status?.initContainerStatuses ?? []) {
     const t = c.state?.terminated;
     if (t && (t.exitCode ?? 0) !== 0) {
-      entries.push({ container: c.name, exitCode: t.exitCode ?? 0, reason: t.reason, message: t.message?.trim() });
+      entries.push({
+        container: c.name,
+        exitCode: t.exitCode ?? 0,
+        reason: t.reason,
+        message: t.message?.trim(),
+      });
     }
   }
   for (const c of pod?.status?.containerStatuses ?? []) {
     const t = c.state?.terminated;
     if (t && (t.exitCode ?? 0) !== 0) {
-      entries.push({ container: c.name, exitCode: t.exitCode ?? 0, reason: t.reason, message: t.message?.trim() });
+      entries.push({
+        container: c.name,
+        exitCode: t.exitCode ?? 0,
+        reason: t.reason,
+        message: t.message?.trim(),
+      });
     }
   }
   return entries;
@@ -704,16 +706,17 @@ export async function runWorker(): Promise<void> {
     if (!run) continue;
     processing.add(key);
     try {
-      const [namespace, name] = key.split("/");
-      const fresh = namespace && name
-        ? await co.getNamespacedCustomObject({
-            group: API_GROUP,
-            version: API_VERSION,
-            namespace,
-            plural: PLURAL_RUN,
-            name,
-          }) as Run
-        : run;
+      const [namespace, name] = key.split('/');
+      const fresh =
+        namespace && name
+          ? ((await co.getNamespacedCustomObject({
+              group: API_GROUP,
+              version: API_VERSION,
+              namespace,
+              plural: PLURAL_RUN,
+              name,
+            })) as Run)
+          : run;
       seen.set(key, fresh);
       await reconcile(fresh);
     } catch (e) {
@@ -750,15 +753,17 @@ export function startPeriodicResync(): void {
 // resources when spec.codeServer.enabled is true and a source is configured.
 
 export async function reconcileProject(project: Project): Promise<void> {
-  const name = project.metadata.name!;
-  const ns = project.metadata.namespace!;
+  const name = project.metadata.name;
+  if (!name) throw new Error('Project missing name');
+  const ns = project.metadata.namespace;
+  if (!ns) throw new Error('Project missing namespace');
   const logPrefix = `[project/${ns}/${name}]`;
 
   if (shouldReconcileCodeServer(project)) {
     log(`${logPrefix} reconciling code-server resources`);
 
     // Ensure data PVC exists first (code-server needs it).
-    const projectUid = project.metadata.uid!;
+    const projectUid = project.metadata.uid ?? '';
     const pvcName = project.spec.data?.pvcName ?? `${name}-data`;
     try {
       await ensureDataPVC({
@@ -783,10 +788,10 @@ export async function reconcileProject(project: Project): Promise<void> {
           name: deployName,
           namespace: ns,
           body: renderCodeServerDeployment(project),
-          fieldManager: "percussionist-operator",
+          fieldManager: 'percussionist-operator',
           force: true,
         },
-        setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply),
+        setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
       );
       log(`${logPrefix} patched deployment ${deployName}`);
     } catch (e) {
@@ -812,10 +817,10 @@ export async function reconcileProject(project: Project): Promise<void> {
           name: svcName,
           namespace: ns,
           body: renderCodeServerService(project),
-          fieldManager: "percussionist-operator",
+          fieldManager: 'percussionist-operator',
           force: true,
         },
-        setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply),
+        setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
       );
       log(`${logPrefix} patched service ${svcName}`);
     } catch (e) {
@@ -842,7 +847,7 @@ export async function reconcileProject(project: Project): Promise<void> {
     log(`${logPrefix} reconciling memory-service resources`);
 
     // Ensure data PVC exists first (memory-service needs it).
-    const projectUid = project.metadata.uid!;
+    const projectUid = project.metadata.uid ?? '';
     const pvcName = project.spec.data?.pvcName ?? `${name}-data`;
     try {
       await ensureDataPVC({
@@ -867,10 +872,10 @@ export async function reconcileProject(project: Project): Promise<void> {
           name: memDeployName,
           namespace: ns,
           body: renderMemoryServiceDeployment(project),
-          fieldManager: "percussionist-operator",
+          fieldManager: 'percussionist-operator',
           force: true,
         },
-        setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply),
+        setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
       );
       log(`${logPrefix} patched deployment ${memDeployName}`);
     } catch (e) {
@@ -896,10 +901,10 @@ export async function reconcileProject(project: Project): Promise<void> {
           name: memSvcName,
           namespace: ns,
           body: renderMemoryServiceService(project),
-          fieldManager: "percussionist-operator",
+          fieldManager: 'percussionist-operator',
           force: true,
         },
-        setHeaderOptions("Content-Type", PatchStrategy.ServerSideApply),
+        setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
       );
       log(`${logPrefix} patched service ${memSvcName}`);
     } catch (e) {
@@ -926,8 +931,8 @@ export async function reconcileProject(project: Project): Promise<void> {
  * Cleans up code-server resources when codeServer is disabled or project is deleted.
  */
 export async function cleanupCodeServer(project: Project): Promise<void> {
-  const name = project.metadata.name!;
-  const ns = project.metadata.namespace!;
+  const name = project.metadata.name ?? '';
+  const ns = project.metadata.namespace ?? '';
   const logPrefix = `[project/${ns}/${name}]`;
 
   // Delete Service (ignore 404)
@@ -957,8 +962,8 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
  * Cleans up memory-service resources when embedding is disabled or project is deleted.
  */
 export async function cleanupMemoryService(project: Project): Promise<void> {
-  const name = project.metadata.name!;
-  const ns = project.metadata.namespace!;
+  const name = project.metadata.name ?? '';
+  const ns = project.metadata.namespace ?? '';
   const logPrefix = `[project/${ns}/${name}]`;
 
   // Delete Service (ignore 404)
@@ -985,4 +990,4 @@ export async function cleanupMemoryService(project: Project): Promise<void> {
 }
 
 // Export kc for informer setup in index.ts
-export { kc, co, NAMESPACE };
+export { co, kc, NAMESPACE };

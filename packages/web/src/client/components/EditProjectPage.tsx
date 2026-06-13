@@ -1,15 +1,19 @@
-import { Link, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { fetchProject } from "../lib/api";
-import type { ProjectDetail } from "../lib/types";
-import CreateProjectForm from "./CreateProjectForm";
+import { useQuery } from '@tanstack/react-query';
+import { Link, useParams } from 'react-router-dom';
+import { fetchProject } from '../lib/api';
+import type { ProjectDetail } from '../lib/types';
+import CreateProjectForm from './CreateProjectForm';
 
 export default function EditProjectPage() {
   const { name } = useParams<{ name: string }>();
 
-  const { data: project, error, isLoading } = useQuery({
-    queryKey: ["projects", name],
-    queryFn: () => fetchProject(name ?? ""),
+  const {
+    data: project,
+    error,
+    isLoading,
+  } = useQuery({
+    queryKey: ['projects', name],
+    queryFn: () => fetchProject(name ?? ''),
     enabled: Boolean(name),
   }) as { data: ProjectDetail | undefined; error: Error | null; isLoading: boolean };
 
@@ -43,7 +47,7 @@ export default function EditProjectPage() {
     return (
       <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
         <h2 className="text-headline-md mb-1">Failed to load project</h2>
-        <p className="text-caption-xs">{error?.message ?? "Project not found"}</p>
+        <p className="text-caption-xs">{error?.message ?? 'Project not found'}</p>
       </div>
     );
   }

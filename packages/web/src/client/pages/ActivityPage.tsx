@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { Link } from "react-router-dom";
-import { Activity, RefreshCw } from "lucide-react";
-import { authHeaders } from "../lib/auth";
+import { Activity, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { authHeaders } from '../lib/auth';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -20,22 +20,39 @@ interface TaskEvent {
 // Event display config
 
 const EVENT_CONFIG: Record<string, { label: string; color: string }> = {
-  "run.created":        { label: "Run started",        color: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
-  "run.succeeded":      { label: "Run succeeded",      color: "bg-green-500/15 text-green-400 border-green-500/30" },
-  "run.failed":         { label: "Run failed",         color: "bg-red-500/15 text-red-400 border-red-500/30" },
-  "column.changed":     { label: "Moved",              color: "bg-slate-500/15 text-slate-400 border-slate-500/30" },
-  "facilitator.spawned":{ label: "Facilitator",        color: "bg-amber-500/15 text-amber-400 border-amber-500/30" },
-  "reviewer.spawned":   { label: "Reviewer",           color: "bg-purple-500/15 text-purple-400 border-purple-500/30" },
-  "merged":             { label: "Merged",             color: "bg-green-500/15 text-green-400 border-green-500/30" },
-  "escalated":          { label: "Escalated",          color: "bg-red-500/15 text-red-400 border-red-500/30" },
-  "blocked":            { label: "Blocked",            color: "bg-orange-500/15 text-orange-400 border-orange-500/30" },
-  "decision":           { label: "Decision",           color: "bg-amber-500/15 text-amber-400 border-amber-500/30" },
-  "approved":           { label: "Approved",           color: "bg-green-500/15 text-green-400 border-green-500/30" },
-  "request-changes":    { label: "Changes requested",  color: "bg-orange-500/15 text-orange-400 border-orange-500/30" },
+  'run.created': { label: 'Run started', color: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
+  'run.succeeded': {
+    label: 'Run succeeded',
+    color: 'bg-green-500/15 text-green-400 border-green-500/30',
+  },
+  'run.failed': { label: 'Run failed', color: 'bg-red-500/15 text-red-400 border-red-500/30' },
+  'column.changed': { label: 'Moved', color: 'bg-slate-500/15 text-slate-400 border-slate-500/30' },
+  'facilitator.spawned': {
+    label: 'Facilitator',
+    color: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+  },
+  'reviewer.spawned': {
+    label: 'Reviewer',
+    color: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
+  },
+  merged: { label: 'Merged', color: 'bg-green-500/15 text-green-400 border-green-500/30' },
+  escalated: { label: 'Escalated', color: 'bg-red-500/15 text-red-400 border-red-500/30' },
+  blocked: { label: 'Blocked', color: 'bg-orange-500/15 text-orange-400 border-orange-500/30' },
+  decision: { label: 'Decision', color: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+  approved: { label: 'Approved', color: 'bg-green-500/15 text-green-400 border-green-500/30' },
+  'request-changes': {
+    label: 'Changes requested',
+    color: 'bg-orange-500/15 text-orange-400 border-orange-500/30',
+  },
 };
 
 function getEventConfig(eventType: string) {
-  return EVENT_CONFIG[eventType] ?? { label: eventType, color: "bg-slate-500/15 text-slate-400 border-slate-500/30" };
+  return (
+    EVENT_CONFIG[eventType] ?? {
+      label: eventType,
+      color: 'bg-slate-500/15 text-slate-400 border-slate-500/30',
+    }
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -43,61 +60,70 @@ function getEventConfig(eventType: string) {
 
 function describeEvent(eventType: string, payload: Record<string, unknown>): string {
   switch (eventType) {
-    case "run.created": {
-      const parts = [`Run ${String(payload.runName ?? "").split("-").slice(-1)[0] ?? "created"}`];
+    case 'run.created': {
+      const parts = [
+        `Run ${
+          String(payload.runName ?? '')
+            .split('-')
+            .slice(-1)[0] ?? 'created'
+        }`,
+      ];
       if (payload.agent) parts.push(`via ${String(payload.agent)}`);
       if (payload.retryCount) parts.push(`(retry ${String(payload.retryCount)})`);
       if (payload.reason) parts.push(`— ${String(payload.reason)}`);
-      return parts.join(" ");
+      return parts.join(' ');
     }
-    case "run.succeeded":
+    case 'run.succeeded':
       return `Run completed successfully`;
-    case "run.failed": {
-      const parts = ["Run failed"];
+    case 'run.failed': {
+      const parts = ['Run failed'];
       if (payload.retryCount) parts.push(`— retrying (${String(payload.retryCount)})`);
       else if (payload.reason) parts.push(`— ${String(payload.reason)}`);
       else if (payload.error) parts.push(`— ${String(payload.error).slice(0, 80)}`);
-      return parts.join(" ");
+      return parts.join(' ');
     }
-    case "column.changed": {
+    case 'column.changed': {
       const from = payload.from ? String(payload.from) : null;
       const to = payload.to ? String(payload.to) : null;
-      const reason = payload.reason ? String(payload.reason).replace(/-/g, " ") : null;
+      const reason = payload.reason ? String(payload.reason).replace(/-/g, ' ') : null;
       const parts = from && to ? [`${from} → ${to}`] : [];
       if (reason) parts.push(`(${reason})`);
-      return parts.join(" ") || "Column changed";
+      return parts.join(' ') || 'Column changed';
     }
-    case "facilitator.spawned": {
-      const agent = payload.agent ? String(payload.agent) : "facilitator";
-      return `Spawned ${agent}${payload.reason ? ` for ${String(payload.reason).replace(/-/g, " ")}` : ""}`;
+    case 'facilitator.spawned': {
+      const agent = payload.agent ? String(payload.agent) : 'facilitator';
+      return `Spawned ${agent}${payload.reason ? ` for ${String(payload.reason).replace(/-/g, ' ')}` : ''}`;
     }
-    case "reviewer.spawned": {
-      const agent = payload.agent ? String(payload.agent) : "reviewer";
+    case 'reviewer.spawned': {
+      const agent = payload.agent ? String(payload.agent) : 'reviewer';
       return `Spawned ${agent}`;
     }
-    case "merged": {
+    case 'merged': {
       if (payload.buildTaskCount) return `Generated ${String(payload.buildTaskCount)} BUILD tasks`;
-      return "Merged";
+      return 'Merged';
     }
-    case "escalated":
-      return payload.reason ? `Escalated — ${String(payload.reason).slice(0, 100)}` : "Escalated";
-    case "decision": {
-      const action = payload.action ? String(payload.action).replace(/_/g, " ") : "decided";
+    case 'escalated':
+      return payload.reason ? `Escalated — ${String(payload.reason).slice(0, 100)}` : 'Escalated';
+    case 'decision': {
+      const action = payload.action ? String(payload.action).replace(/_/g, ' ') : 'decided';
       const parts = [action];
       if (payload.agent) parts.push(`→ ${String(payload.agent)}`);
       if (payload.reason) parts.push(`(${String(payload.reason).slice(0, 80)})`);
-      return parts.join(" ");
+      return parts.join(' ');
     }
-    case "approved":
-      return "Human approved";
-    case "request-changes":
+    case 'approved':
+      return 'Human approved';
+    case 'request-changes':
       return payload.feedback
         ? `Changes requested — ${String(payload.feedback).slice(0, 80)}`
-        : "Changes requested";
+        : 'Changes requested';
     default:
       return Object.keys(payload).length > 0
-        ? Object.entries(payload).slice(0, 2).map(([k, v]) => `${k}: ${String(v)}`).join(", ")
-        : "";
+        ? Object.entries(payload)
+            .slice(0, 2)
+            .map(([k, v]) => `${k}: ${String(v)}`)
+            .join(', ')
+        : '';
   }
 }
 
@@ -106,7 +132,12 @@ function describeEvent(eventType: string, payload: Record<string, unknown>): str
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  return d.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
 }
 
 function fmtDateGroup(iso: string): string {
@@ -114,9 +145,9 @@ function fmtDateGroup(iso: string): string {
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
-  if (d.toDateString() === today.toDateString()) return "Today";
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +169,11 @@ function groupByDate(events: TaskEvent[]): Array<{ label: string; events: TaskEv
 
 function EventRow({ event }: { event: TaskEvent }) {
   let payload: Record<string, unknown> = {};
-  try { payload = JSON.parse(event.payload); } catch { /* ignore */ }
+  try {
+    payload = JSON.parse(event.payload);
+  } catch {
+    /* ignore */
+  }
 
   const cfg = getEventConfig(event.eventType);
   const description = describeEvent(event.eventType, payload);
@@ -166,11 +201,13 @@ function EventRow({ event }: { event: TaskEvent }) {
         className="font-mono text-xs text-text-muted hover:text-text shrink-0 truncate max-w-[140px]"
         title={event.taskName}
       >
-        {event.taskName.split("-").slice(-3).join("-")}
+        {event.taskName.split('-').slice(-3).join('-')}
       </Link>
 
       {/* Event badge */}
-      <span className={`text-label-md font-mono uppercase px-1.5 py-0.5 rounded border shrink-0 ${cfg.color}`}>
+      <span
+        className={`text-label-md font-mono uppercase px-1.5 py-0.5 rounded border shrink-0 ${cfg.color}`}
+      >
         {cfg.label}
       </span>
 
@@ -204,7 +241,7 @@ export default function ActivityPage() {
       const res = await fetch(url, { headers: authHeaders() });
       if (res.status === 401) return;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { events: TaskEvent[]; count: number };
+      const data = (await res.json()) as { events: TaskEvent[]; count: number };
       setEvents((prev) => {
         if (replace) return data.events;
         // Merge: prepend new events by id, deduplicate
@@ -249,20 +286,23 @@ export default function ActivityPage() {
 
   return (
     // Pull out of the parent p-6 padding so the activity feed fills the viewport height correctly.
-    <div className="-m-6 flex flex-col" style={{ height: "calc(100svh - 3.5rem)" }}>
+    <div className="-m-6 flex flex-col" style={{ height: 'calc(100svh - 3.5rem)' }}>
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
         <div className="flex items-center gap-2.5">
           <Activity className="w-4 h-4 text-text-muted" />
           <h1 className="text-sm font-semibold text-text">Activity</h1>
-            {events.length > 0 && (
+          {events.length > 0 && (
             <span className="text-label-md font-mono uppercase text-text-muted">
-              {events.length} event{events.length !== 1 ? "s" : ""}
+              {events.length} event{events.length !== 1 ? 's' : ''}
             </span>
           )}
         </div>
         <button
-          onClick={() => { setLoading(true); void fetchActivity(true); }}
+          onClick={() => {
+            setLoading(true);
+            void fetchActivity(true);
+          }}
           className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors"
         >
           <RefreshCw className="w-3 h-3" />
@@ -278,17 +318,15 @@ export default function ActivityPage() {
           </div>
         )}
 
-        {error && (
-          <div className="px-6 py-4 text-sm text-red-400">
-            Error: {error}
-          </div>
-        )}
+        {error && <div className="px-6 py-4 text-sm text-red-400">Error: {error}</div>}
 
         {!loading && events.length === 0 && !error && (
           <div className="flex flex-col items-center justify-center h-48 gap-2 text-text-muted">
             <Activity className="w-8 h-8 opacity-30" />
             <p className="text-sm">No activity yet</p>
-            <p className="text-xs text-text-dim">Events appear here as the manager orchestrates tasks.</p>
+            <p className="text-xs text-text-dim">
+              Events appear here as the manager orchestrates tasks.
+            </p>
           </div>
         )}
 

@@ -1,8 +1,8 @@
 // BoardHeader.tsx — project info, metrics badge, and Add Task button.
 
-import { Link } from "react-router-dom";
-import type { ManagerMetrics } from "../../lib/types";
-import { Button } from "../ui/button";
+import { Link } from 'react-router-dom';
+import type { ManagerMetrics } from '../../lib/types';
+import { Button } from '../ui/button';
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -14,7 +14,7 @@ function formatDuration(ms: number): string {
 
 function formatRelative(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 10_000) return "just now";
+  if (diff < 10_000) return 'just now';
   const s = Math.floor(diff / 1000);
   if (s < 60) return `${s}s ago`;
   const m = Math.floor(s / 60);
@@ -48,9 +48,14 @@ export function BoardHeader({
     <div className="flex items-start justify-between gap-4 shrink-0">
       <div className="min-w-0">
         <div className="flex items-center gap-2 text-sm text-text-dim flex-wrap">
-          <Link to="/projects" className="hover:text-text transition-colors shrink-0">Projects</Link>
+          <Link to="/projects" className="hover:text-text transition-colors shrink-0">
+            Projects
+          </Link>
           <span>/</span>
-          <Link to={`/projects/${encodeURIComponent(projectName)}/edit`} className="hover:text-text transition-colors truncate max-w-[12rem]">
+          <Link
+            to={`/projects/${encodeURIComponent(projectName)}/edit`}
+            className="hover:text-text transition-colors truncate max-w-[12rem]"
+          >
             {projectName}
           </Link>
           <span>/</span>
@@ -60,41 +65,39 @@ export function BoardHeader({
         <p className="text-caption-xs text-text-dim mt-0.5 flex flex-wrap items-center gap-x-1">
           <span>Team:</span>
           {roster.length > 0 ? (
-            <span className="truncate">{roster.join(", ")}</span>
+            <span className="truncate">{roster.join(', ')}</span>
           ) : (
-            <Link to={`/projects/${encodeURIComponent(projectName)}/edit`} className="underline hover:text-text transition-colors">
+            <Link
+              to={`/projects/${encodeURIComponent(projectName)}/edit`}
+              className="underline hover:text-text transition-colors"
+            >
               add agents to roster
             </Link>
           )}
           <span className="text-text-dim/50">·</span>
           <span>Parallel: {maxParallel ?? 2}</span>
           <span className="text-text-dim/50">·</span>
-          <span>Phase: {phase ?? "Active"}</span>
+          <span>Phase: {phase ?? 'Active'}</span>
         </p>
-        <p className="text-xs text-text-dim mt-0.5">
-          {sseConnected ? "● live" : "○ polling"}
-        </p>
+        <p className="text-xs text-text-dim mt-0.5">{sseConnected ? '● live' : '○ polling'}</p>
         {metrics && (
           <div className="flex items-center gap-3 text-xs mt-1 flex-wrap text-text-dim">
             {metrics.lastReconcileAt && (
               <span title={new Date(metrics.lastReconcileAt).toISOString()}>
-                Reconciled {formatRelative(metrics.lastReconcileAt)} ({formatDuration(metrics.lastReconcileDurationMs ?? 0)})
+                Reconciled {formatRelative(metrics.lastReconcileAt)} (
+                {formatDuration(metrics.lastReconcileDurationMs ?? 0)})
               </span>
             )}
             <span>Pulled: {metrics.tasksPulled}</span>
             <span>Monitored: {metrics.workersMonitored}</span>
-            {metrics.lastReconcileResult === "error" && (
-              <span className="text-phase-failed">{metrics.lastError ?? "error"}</span>
+            {metrics.lastReconcileResult === 'error' && (
+              <span className="text-phase-failed">{metrics.lastError ?? 'error'}</span>
             )}
           </div>
         )}
       </div>
-      <Button
-        onClick={onAddTask}
-        variant="secondary"
-        size="sm"
-      >
-        {showAddTask ? "Cancel" : "+ Add Task"}
+      <Button onClick={onAddTask} variant="secondary" size="sm">
+        {showAddTask ? 'Cancel' : '+ Add Task'}
       </Button>
     </div>
   );

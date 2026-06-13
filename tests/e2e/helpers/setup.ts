@@ -2,26 +2,26 @@
  * Shared cluster setup steps common to all three e2e test suites.
  */
 
-import { resolve } from "node:path";
+import { resolve } from 'node:path';
 import {
+  createLLMSecret,
+  deleteNamespace,
+  ensureNamespace,
   kubectl,
   kubectlApply,
   kubectlApplyFile,
-  kubectlSetEnv,
   kubectlRolloutStatus,
-  ensureNamespace,
-  deleteNamespace,
+  kubectlSetEnv,
   kubectlSilent,
-  createLLMSecret,
-} from "./kubectl.ts";
+} from './kubectl.ts';
 
 // Repo root resolved relative to this file: tests/e2e/helpers/ → ../../..
-export const REPO_ROOT = resolve(import.meta.dirname, "../../..");
-export const MANIFESTS = resolve(REPO_ROOT, "k8s/tests");
-export const OPERATOR_NS = "percussionist";
+export const REPO_ROOT = resolve(import.meta.dirname, '../../..');
+export const MANIFESTS = resolve(REPO_ROOT, 'k8s/tests');
+export const OPERATOR_NS = 'percussionist';
 
 /** Known-safe kubectl contexts (local/homelab clusters). */
-const SAFE_CONTEXTS = ["k3s", "kind", "docker-desktop", "homelab", "minikube", "rancher"];
+const SAFE_CONTEXTS = ['k3s', 'kind', 'docker-desktop', 'homelab', 'minikube', 'rancher'];
 
 // ---------------------------------------------------------------------------
 // Configuration interfaces
@@ -67,7 +67,7 @@ export function generateUniqueName(prefix: string): string {
  * Generate a unique namespace name. Defaults to `percussionist-e2e-<unique>`.
  */
 export function generateUniqueNamespace(prefix?: string): string {
-  const base = prefix ?? "percussionist-e2e";
+  const base = prefix ?? 'percussionist-e2e';
   return generateUniqueName(base);
 }
 
@@ -79,13 +79,11 @@ export function generateUniqueNamespace(prefix?: string): string {
  * Restore PERCUSSIONIST_NAMESPACE on both operator and manager deployments.
  * Called during teardown to ensure the cluster is left in a clean state.
  */
-export async function restoreWatchNamespace(
-  originalNs: string = OPERATOR_NS,
-): Promise<void> {
-  await kubectlSetEnv("percussionist-operator", OPERATOR_NS, {
+export async function restoreWatchNamespace(originalNs: string = OPERATOR_NS): Promise<void> {
+  await kubectlSetEnv('percussionist-operator', OPERATOR_NS, {
     PERCUSSIONIST_NAMESPACE: originalNs,
   }).catch(() => undefined);
-  await kubectlSetEnv("percussionist-manager", OPERATOR_NS, {
+  await kubectlSetEnv('percussionist-manager', OPERATOR_NS, {
     PERCUSSIONIST_NAMESPACE: originalNs,
   }).catch(() => undefined);
 }
@@ -116,21 +114,18 @@ export async function safeTeardown(
  *
  * Returns an unsubscribe function — call it in `afterAll`.
  */
-export function registerErrorTeardown(
-  ns: string,
-  options?: SetupOptions,
-): () => void {
+export function registerErrorTeardown(ns: string, options?: SetupOptions): () => void {
   const handler = (_event: ErrorEvent | PromiseRejectionEvent) => {
     // Best-effort teardown on unhandled errors.
     safeTeardown(ns, options).catch(() => undefined);
   };
 
-  process.on("uncaughtException", handler as (...args: unknown[]) => void);
-  process.on("unhandledRejection", handler as (...args: unknown[]) => void);
+  process.on('uncaughtException', handler as (...args: unknown[]) => void);
+  process.on('unhandledRejection', handler as (...args: unknown[]) => void);
 
   return () => {
-    process.off("uncaughtException", handler as (...args: unknown[]) => void);
-    process.off("unhandledRejection", handler as (...args: unknown[]) => void);
+    process.off('uncaughtException', handler as (...args: unknown[]) => void);
+    process.off('unhandledRejection', handler as (...args: unknown[]) => void);
   };
 }
 
@@ -139,37 +134,28 @@ export function registerErrorTeardown(
  * In CI (non-interactive) we skip the 5-second pause.
  */
 export async function preflight(): Promise<void> {
-  const ctx =
-    (await kubectlSilent(["config", "current-context"])) ?? "none";
+  const ctx = (await kubectlSilent(['config', 'current-context'])) ?? 'none';
   console.log(`    kubectl context: ${ctx}`);
   const isSafe = SAFE_CONTEXTS.some((c) => ctx.includes(c));
   if (!isSafe) {
-    console.warn(
-      `WARNING: context does not look like a local/homelab cluster (${ctx}).`,
-    );
+    console.warn(`WARNING: context does not look like a local/homelab cluster (${ctx}).`);
     if (process.stdout.isTTY) {
-      console.warn("Resources will be created there. Ctrl-C within 5s to abort.");
+      console.warn('Resources will be created there. Ctrl-C within 5s to abort.');
       await Bun.sleep(5000);
     }
   }
 
-  if (
-    !process.env["ANTHROPIC_API_KEY"] &&
-    !process.env["OPENAI_API_KEY"] &&
-    !process.env["GITHUB_TOKEN"]
-  ) {
-    console.warn(
-      "WARNING: no ANTHROPIC_API_KEY, OPENAI_API_KEY, or GITHUB_TOKEN found.",
-    );
-    console.warn("LLM calls will fail; some tests may still pass.");
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY && !process.env.GITHUB_TOKEN) {
+    console.warn('WARNING: no ANTHROPIC_API_KEY, OPENAI_API_KEY, or GITHUB_TOKEN found.');
+    console.warn('LLM calls will fail; some tests may still pass.');
   }
 }
 
 /** Step 1: Apply CRDs. */
 export async function applyCRDs(): Promise<void> {
-  console.log("==> Step 1: Apply CRDs");
-  await kubectlApplyFile(resolve(REPO_ROOT, "k8s/crds/"), /* serverSide */ true);
-  console.log("    CRDs applied");
+  console.log('==> Step 1: Apply CRDs');
+  await kubectlApplyFile(resolve(REPO_ROOT, 'k8s/crds/'), /* serverSide */ true);
+  console.log('    CRDs applied');
 }
 
 /** Step 2: Deploy operator + manager-controller manifests.
@@ -184,24 +170,36 @@ export async function applyCRDs(): Promise<void> {
  * applying the standard manifests.
  */
 export async function deployComponents(): Promise<void> {
-  console.log("==> Step 2: Deploy operator and manager");
-  await kubectlApplyFile(resolve(REPO_ROOT, "k8s/deploy/operator.yaml"));
-  await kubectlApplyFile(resolve(REPO_ROOT, "k8s/deploy/manager-controller.yaml"));
+  console.log('==> Step 2: Deploy operator and manager');
+  await kubectlApplyFile(resolve(REPO_ROOT, 'k8s/deploy/operator.yaml'));
+  await kubectlApplyFile(resolve(REPO_ROOT, 'k8s/deploy/manager-controller.yaml'));
 
-  const operatorImage = process.env["E2E_OPERATOR_IMAGE"];
-  const managerImage = process.env["E2E_MANAGER_IMAGE"];
+  const operatorImage = process.env.E2E_OPERATOR_IMAGE;
+  const managerImage = process.env.E2E_MANAGER_IMAGE;
   if (operatorImage) {
-    await kubectl(["-n", OPERATOR_NS, "set", "image",
-      "deployment/percussionist-operator", `operator=${operatorImage}`]);
+    await kubectl([
+      '-n',
+      OPERATOR_NS,
+      'set',
+      'image',
+      'deployment/percussionist-operator',
+      `operator=${operatorImage}`,
+    ]);
     console.log(`    Operator image overridden → ${operatorImage}`);
   }
   if (managerImage) {
-    await kubectl(["-n", OPERATOR_NS, "set", "image",
-      "deployment/percussionist-manager", `manager=${managerImage}`]);
+    await kubectl([
+      '-n',
+      OPERATOR_NS,
+      'set',
+      'image',
+      'deployment/percussionist-manager',
+      `manager=${managerImage}`,
+    ]);
     console.log(`    Manager image overridden → ${managerImage}`);
   }
 
-  console.log("    Deployments applied");
+  console.log('    Deployments applied');
 }
 
 /**
@@ -215,14 +213,14 @@ export async function patchWatchNamespace(
 ): Promise<void> {
   const timeoutSec = options.rolloutTimeoutSec ?? DEFAULT_OPTIONS.rolloutTimeoutSec;
   console.log(`==> Step 3: Patch PERCUSSIONIST_NAMESPACE=${ns} on operator and manager`);
-  await kubectlSetEnv("percussionist-operator", OPERATOR_NS, {
+  await kubectlSetEnv('percussionist-operator', OPERATOR_NS, {
     PERCUSSIONIST_NAMESPACE: ns,
   });
-  await kubectlSetEnv("percussionist-manager", OPERATOR_NS, {
+  await kubectlSetEnv('percussionist-manager', OPERATOR_NS, {
     PERCUSSIONIST_NAMESPACE: ns,
   });
-  await kubectlRolloutStatus("percussionist-operator", OPERATOR_NS, timeoutSec);
-  await kubectlRolloutStatus("percussionist-manager", OPERATOR_NS, timeoutSec);
+  await kubectlRolloutStatus('percussionist-operator', OPERATOR_NS, timeoutSec);
+  await kubectlRolloutStatus('percussionist-manager', OPERATOR_NS, timeoutSec);
   console.log(`    Operator and manager watching ${ns}`);
 }
 
@@ -308,7 +306,7 @@ export async function setupClusterUnique(
   opts: { llmSecret?: string; prefix?: string } & Partial<SetupOptions> = {},
 ): Promise<string> {
   const ns = generateUniqueNamespace(opts.prefix);
-  await setupCluster({ ns, llmSecret: opts.llmSecret ?? "llm-keys" }, opts as SetupOptions);
+  await setupCluster({ ns, llmSecret: opts.llmSecret ?? 'llm-keys' }, opts as SetupOptions);
   return ns;
 }
 
@@ -316,11 +314,11 @@ export async function setupClusterUnique(
  * Apply one or more ClusterAgent manifests from `k8s/tests/`.
  */
 export async function applyClusterAgents(fileNames: string[]): Promise<void> {
-  console.log(`==> Apply ClusterAgents: ${fileNames.join(", ")}`);
+  console.log(`==> Apply ClusterAgents: ${fileNames.join(', ')}`);
   for (const f of fileNames) {
     await kubectlApplyFile(resolve(MANIFESTS, f));
   }
-  console.log("    ClusterAgents applied");
+  console.log('    ClusterAgents applied');
 }
 
 /**
@@ -333,22 +331,23 @@ export async function applyProject(opts: {
   displayName: string;
   llmSecret: string;
   model?: string;
-  phase?: string;                                // defaults to "Active"
-  maxParallel?: number;                          // defaults to 1
+  phase?: string; // defaults to "Active"
+  maxParallel?: number; // defaults to 1
   agents?: Array<{ name: string; model?: string }>; // list of agent refs
-  timeoutSeconds?: number;                       // run timeout override
-  sourceYaml?: string;                           // optional `source:` block (indented 2 spaces)
-  flowYaml?: string;                             // optional `flow:` block (indented 2 spaces)
+  timeoutSeconds?: number; // run timeout override
+  sourceYaml?: string; // optional `source:` block (indented 2 spaces)
+  flowYaml?: string; // optional `flow:` block (indented 2 spaces)
 }): Promise<void> {
-  const modelLine = opts.model ? `  model: "${opts.model}"\n` : "";
-  const sourceLine = opts.sourceYaml ? `${opts.sourceYaml}\n` : "";
-  const flowLine = opts.flowYaml ? `${opts.flowYaml}\n` : "";
-  const phase = opts.phase ?? "Active";
+  const modelLine = opts.model ? `  model: "${opts.model}"\n` : '';
+  const sourceLine = opts.sourceYaml ? `${opts.sourceYaml}\n` : '';
+  const flowLine = opts.flowYaml ? `${opts.flowYaml}\n` : '';
+  const phase = opts.phase ?? 'Active';
   const maxParallel = opts.maxParallel ?? 1;
-  const agentsBlock = opts.agents && opts.agents.length > 0
-    ? `  agents:\n${opts.agents.map((a) => a.model ? `    - name: ${a.name}\n      model: "${a.model}"` : `    - name: ${a.name}`).join("\n")}\n`
-    : "";
-  const timeoutLine = opts.timeoutSeconds ? `  timeoutSeconds: ${opts.timeoutSeconds}\n` : "";
+  const agentsBlock =
+    opts.agents && opts.agents.length > 0
+      ? `  agents:\n${opts.agents.map((a) => (a.model ? `    - name: ${a.name}\n      model: "${a.model}"` : `    - name: ${a.name}`)).join('\n')}\n`
+      : '';
+  const timeoutLine = opts.timeoutSeconds ? `  timeoutSeconds: ${opts.timeoutSeconds}\n` : '';
   await kubectlApply(`\
 apiVersion: percussionist.dev/v1alpha1
 kind: Project
@@ -375,20 +374,20 @@ ${flowLine}\
  * The task metadata.name is used as the canonical task identifier.
  */
 export async function applyTask(opts: {
-  name: string;        // metadata.name — the canonical task ID
+  name: string; // metadata.name — the canonical task ID
   ns: string;
   projectRef: string;
-  type?: "BUILD" | "PLAN"; // defaults to "BUILD"
+  type?: 'BUILD' | 'PLAN'; // defaults to "BUILD"
   title: string;
   agent: string;
   description?: string;
-  priority?: "high" | "medium" | "low";
+  priority?: 'high' | 'medium' | 'low';
 }): Promise<void> {
-  const type = opts.type ?? "BUILD";
+  const type = opts.type ?? 'BUILD';
   const descLine = opts.description
-    ? `  description: |\n    ${opts.description.replace(/\n/g, "\n    ")}\n`
-    : "";
-  const priorityLine = opts.priority ? `  priority: ${opts.priority}\n` : "";
+    ? `  description: |\n    ${opts.description.replace(/\n/g, '\n    ')}\n`
+    : '';
+  const priorityLine = opts.priority ? `  priority: ${opts.priority}\n` : '';
   await kubectlApply(`\
 apiVersion: percussionist.dev/v1alpha1
 kind: Task
@@ -412,10 +411,7 @@ ${priorityLine}\
  * Teardown: delete the e2e namespace and restore PERCUSSIONIST_NAMESPACE to
  * the default operator namespace on both deployments.
  */
-export async function teardown(
-  ns: string,
-  options: SetupOptions = DEFAULT_OPTIONS,
-): Promise<void> {
+export async function teardown(ns: string, options: SetupOptions = DEFAULT_OPTIONS): Promise<void> {
   console.log(`==> Teardown: deleting namespace ${ns}`);
   try {
     if (options.cleanupNamespace) {
@@ -423,15 +419,15 @@ export async function teardown(
     }
   } finally {
     if (options.restoreWatchNamespace) {
-      const timeoutSec = options.rolloutTimeoutSec ?? DEFAULT_OPTIONS.rolloutTimeoutSec;
+      const _timeoutSec = options.rolloutTimeoutSec ?? DEFAULT_OPTIONS.rolloutTimeoutSec;
       console.log(`    Restoring PERCUSSIONIST_NAMESPACE to ${OPERATOR_NS}`);
-      await kubectlSetEnv("percussionist-operator", OPERATOR_NS, {
+      await kubectlSetEnv('percussionist-operator', OPERATOR_NS, {
         PERCUSSIONIST_NAMESPACE: OPERATOR_NS,
       }).catch(() => undefined);
-      await kubectlSetEnv("percussionist-manager", OPERATOR_NS, {
+      await kubectlSetEnv('percussionist-manager', OPERATOR_NS, {
         PERCUSSIONIST_NAMESPACE: OPERATOR_NS,
       }).catch(() => undefined);
     }
   }
-  console.log("    Teardown complete");
+  console.log('    Teardown complete');
 }

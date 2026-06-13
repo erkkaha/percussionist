@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useSseSubscription } from "./useSseSubscription";
+import { useQueryClient } from '@tanstack/react-query';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { useSseSubscription } from './useSseSubscription';
 
 interface UseCollectionEventsOptions {
   url: string;
@@ -41,12 +41,12 @@ export function useCollectionEvents({
     if (!shouldInvalidate) return;
 
     if (queryKeyRef.current) {
-      queryClient.refetchQueries({ queryKey: queryKeyRef.current, type: "active" });
+      queryClient.refetchQueries({ queryKey: queryKeyRef.current, type: 'active' });
     }
 
     if (queryKeysRef.current) {
       for (const key of queryKeysRef.current) {
-        queryClient.refetchQueries({ queryKey: key, type: "active" });
+        queryClient.refetchQueries({ queryKey: key, type: 'active' });
       }
     }
   }, [queryClient, shouldInvalidate]);

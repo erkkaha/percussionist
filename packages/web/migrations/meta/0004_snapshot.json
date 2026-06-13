@@ -39,9 +39,7 @@
       "indexes": {
         "idx_file_ops_session_id": {
           "name": "idx_file_ops_session_id",
-          "columns": [
-            "session_id"
-          ],
+          "columns": ["session_id"],
           "isUnique": false
         }
       },
@@ -50,23 +48,15 @@
           "name": "file_ops_session_id_runs_id_fk",
           "tableFrom": "file_ops",
           "tableTo": "runs",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
         "file_ops_session_id_message_idx_file_path_pk": {
-          "columns": [
-            "session_id",
-            "message_idx",
-            "file_path"
-          ],
+          "columns": ["session_id", "message_idx", "file_path"],
           "name": "file_ops_session_id_message_idx_file_path_pk"
         }
       },
@@ -150,9 +140,7 @@
       "indexes": {
         "idx_messages_session_id": {
           "name": "idx_messages_session_id",
-          "columns": [
-            "session_id"
-          ],
+          "columns": ["session_id"],
           "isUnique": false
         }
       },
@@ -161,12 +149,8 @@
           "name": "messages_session_id_runs_id_fk",
           "tableFrom": "messages",
           "tableTo": "runs",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -232,17 +216,12 @@
       "indexes": {
         "idx_metric_snapshots_node_recorded": {
           "name": "idx_metric_snapshots_node_recorded",
-          "columns": [
-            "node",
-            "recorded_at"
-          ],
+          "columns": ["node", "recorded_at"],
           "isUnique": false
         },
         "idx_metric_snapshots_recorded": {
           "name": "idx_metric_snapshots_recorded",
-          "columns": [
-            "recorded_at"
-          ],
+          "columns": ["recorded_at"],
           "isUnique": false
         }
       },
@@ -352,9 +331,7 @@
       "indexes": {
         "idx_runs_started_at": {
           "name": "idx_runs_started_at",
-          "columns": [
-            "started_at"
-          ],
+          "columns": ["started_at"],
           "isUnique": false
         }
       },
@@ -421,18 +398,12 @@
       "indexes": {
         "idx_task_events_project_task": {
           "name": "idx_task_events_project_task",
-          "columns": [
-            "project",
-            "task_name"
-          ],
+          "columns": ["project", "task_name"],
           "isUnique": false
         },
         "idx_task_events_project_created": {
           "name": "idx_task_events_project_created",
-          "columns": [
-            "project",
-            "created_at"
-          ],
+          "columns": ["project", "created_at"],
           "isUnique": false
         }
       },
@@ -504,9 +475,7 @@
       "indexes": {
         "idx_tool_calls_session_id": {
           "name": "idx_tool_calls_session_id",
-          "columns": [
-            "session_id"
-          ],
+          "columns": ["session_id"],
           "isUnique": false
         }
       },
@@ -515,12 +484,8 @@
           "name": "tool_calls_session_id_runs_id_fk",
           "tableFrom": "tool_calls",
           "tableTo": "runs",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
