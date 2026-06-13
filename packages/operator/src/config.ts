@@ -47,9 +47,15 @@ const DEFAULT_STORAGE_CLASS = process.env.DEFAULT_STORAGE_CLASS ?? 'standard';
 //   Override to "ReadWriteMany" on clusters with RWX-capable storage (e.g. Longhorn).
 const DEFAULT_STORAGE_ACCESS_MODE = process.env.DEFAULT_STORAGE_ACCESS_MODE ?? 'ReadWriteOnce';
 
+// DEFAULT_STORAGE_SIZE:
+//   Size for data PVCs. Defaults to "50Gi" — bumped from 10Gi after inode/capacity
+//   exhaustion on self-dev cluster. Override for smaller or larger PVCs.
+const DEFAULT_STORAGE_SIZE = process.env.DEFAULT_STORAGE_SIZE ?? '50Gi';
+
 export {
   DEFAULT_STORAGE_ACCESS_MODE,
   DEFAULT_STORAGE_CLASS,
+  DEFAULT_STORAGE_SIZE,
   DISPATCHER_IMAGE,
   DISPATCHER_SERVICE_ACCOUNT,
   EXPOSE_WEB_DEFAULT,

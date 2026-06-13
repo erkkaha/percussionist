@@ -152,11 +152,11 @@ export default function TaskRunsPanel({ projectName, taskName }: TaskRunsPanelPr
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            {subTab === 'session' ? (
-              <RunSubPanel runName={selectedRunName!} />
-            ) : (
-              <LogSubPanel runName={selectedRunName!} />
-            )}
+            {selectedRunName && subTab === 'session' ? (
+              <RunSubPanel runName={selectedRunName} />
+            ) : selectedRunName ? (
+              <LogSubPanel runName={selectedRunName} />
+            ) : null}
           </div>
         </>
       )}

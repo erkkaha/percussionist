@@ -23,5 +23,6 @@ export function getRawDb(): Database {
   if (!_raw) {
     getDb();
   }
-  return _raw!;
+  if (!_raw) throw new Error('Database not initialized');
+  return _raw;
 }

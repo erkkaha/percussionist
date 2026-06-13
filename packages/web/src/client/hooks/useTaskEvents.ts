@@ -14,7 +14,7 @@ export interface TaskEvent {
 export function useTaskEvents(projectName: string | null, taskName: string | null) {
   return useQuery<TaskEvent[], Error>({
     queryKey: ['taskEvents', projectName, taskName],
-    queryFn: () => fetchTaskEvents(projectName!, taskName!),
+    queryFn: () => fetchTaskEvents(projectName ?? '', taskName ?? ''),
     enabled: !!projectName && !!taskName,
     refetchInterval: 10_000,
   });

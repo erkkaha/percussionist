@@ -76,7 +76,7 @@ async function patchStatus(run: Run, patch: RunStatus): Promise<void> {
       {
         group: API_GROUP,
         version: API_VERSION,
-        namespace: run.metadata.namespace!,
+        namespace: run.metadata.namespace ?? '',
         plural: PLURAL_RUN,
         name: run.metadata.name,
         body: { status: patch },
@@ -355,7 +355,8 @@ async function ssaConfigMap(ns: string, name: string, data: Record<string, strin
 
 export async function reconcile(run: Run): Promise<void> {
   const name = run.metadata.name;
-  const ns = run.metadata.namespace!;
+  const ns = run.metadata.namespace;
+  if (!ns) throw new Error(`Run ${name} missing namespace`);
   const currentPhase = run.status?.phase;
 
   if (currentPhase && TERMINAL_PHASES.has(currentPhase)) {
@@ -752,15 +753,17 @@ export function startPeriodicResync(): void {
 // resources when spec.codeServer.enabled is true and a source is configured.
 
 export async function reconcileProject(project: Project): Promise<void> {
-  const name = project.metadata.name!;
-  const ns = project.metadata.namespace!;
+  const name = project.metadata.name;
+  if (!name) throw new Error('Project missing name');
+  const ns = project.metadata.namespace;
+  if (!ns) throw new Error('Project missing namespace');
   const logPrefix = `[project/${ns}/${name}]`;
 
   if (shouldReconcileCodeServer(project)) {
     log(`${logPrefix} reconciling code-server resources`);
 
     // Ensure data PVC exists first (code-server needs it).
-    const projectUid = project.metadata.uid!;
+    const projectUid = project.metadata.uid ?? '';
     const pvcName = project.spec.data?.pvcName ?? `${name}-data`;
     try {
       await ensureDataPVC({
@@ -844,7 +847,7 @@ export async function reconcileProject(project: Project): Promise<void> {
     log(`${logPrefix} reconciling memory-service resources`);
 
     // Ensure data PVC exists first (memory-service needs it).
-    const projectUid = project.metadata.uid!;
+    const projectUid = project.metadata.uid ?? '';
     const pvcName = project.spec.data?.pvcName ?? `${name}-data`;
     try {
       await ensureDataPVC({
@@ -928,8 +931,8 @@ export async function reconcileProject(project: Project): Promise<void> {
  * Cleans up code-server resources when codeServer is disabled or project is deleted.
  */
 export async function cleanupCodeServer(project: Project): Promise<void> {
-  const name = project.metadata.name!;
-  const ns = project.metadata.namespace!;
+  const name = project.metadata.name ?? '';
+  const ns = project.metadata.namespace ?? '';
   const logPrefix = `[project/${ns}/${name}]`;
 
   // Delete Service (ignore 404)
@@ -959,8 +962,8 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
  * Cleans up memory-service resources when embedding is disabled or project is deleted.
  */
 export async function cleanupMemoryService(project: Project): Promise<void> {
-  const name = project.metadata.name!;
-  const ns = project.metadata.namespace!;
+  const name = project.metadata.name ?? '';
+  const ns = project.metadata.namespace ?? '';
   const logPrefix = `[project/${ns}/${name}]`;
 
   // Delete Service (ignore 404)

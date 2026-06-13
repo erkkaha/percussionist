@@ -343,7 +343,8 @@ board.post('/:project/board/tasks/:taskName/move', adminAuth(), async (c) => {
   try {
     const project = await getProject(projectName);
     const ns = project.metadata.namespace ?? NAMESPACE;
-    const targetPhase = columnPhaseMap[column]!;
+    const targetPhase = columnPhaseMap[column];
+    if (!targetPhase) return c.json({ error: `Unknown column: ${column}` }, 400);
     const patch: Record<string, unknown> = { phase: targetPhase, blocked: false };
 
     // When resetting to backlog/pending, increment retryCount so the

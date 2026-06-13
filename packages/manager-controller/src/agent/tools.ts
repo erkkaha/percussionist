@@ -745,7 +745,8 @@ async function deleteRunsForTask(
   });
   const deletedNames: string[] = [];
   for (const run of taskRuns) {
-    const name = run.metadata.name!;
+    const name = run.metadata.name;
+    if (!name) continue;
     const phase = run.status?.phase;
     const terminal = phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled';
     const active =
@@ -1485,7 +1486,10 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const pods = await listPodsByLabels({ 'app.kubernetes.io/component': 'manager' }, resourceNs);
       if (pods.length === 0) throw new Error('No manager pods found');
 
-      const podName = pods[0]!.metadata!.name!;
+      const pod = pods[0];
+      if (!pod) throw new Error('No manager pods found');
+      const podName = pod.metadata?.name;
+      if (!podName) throw new Error('Manager pod has no name');
       const logs = await readPodLog(podName, 'manager', tailLines, resourceNs);
       return { podName, container: 'manager', tailLines, logs };
     }
@@ -1870,7 +1874,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
         if (depName === 'percussionist-operator') {
           const dispatcherNewImage = `${registryPrefix}/dispatcher:${targetTag}`;
-          containers[0]!.env = [{ name: 'DISPATCHER_IMAGE', value: dispatcherNewImage }];
+          const container = containers[0];
+          if (container) container.env = [{ name: 'DISPATCHER_IMAGE', value: dispatcherNewImage }];
         }
 
         const patchBody = {

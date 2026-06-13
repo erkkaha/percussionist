@@ -118,7 +118,7 @@ describe('decide — scheduled', () => {
     expect((result.statusPatch?.worker as any).runName).toBeDefined();
     expect(result.effects.length).toBe(1);
     expect(result.effects[0]?.type).toBe('ScheduleRun');
-    expect((result.effects[0]! as any).retryCount).toBe(0);
+    expect((result.effects[0] as any).retryCount).toBe(0);
   });
 });
 
@@ -335,7 +335,7 @@ describe('decide — awaiting-human', () => {
 
   it('awaiting-human + PLAN merge-retry approval → awaiting-feature-merge', () => {
     const task = makeTask('t1', 'test-project', { phase: 'awaiting-human', type: 'PLAN' });
-    (task.status!.worker as any) = {
+    (task.status as any).worker = {
       mergeRunName: 'merge-stale',
       mergeError: 'conflict detected',
     };
@@ -373,7 +373,7 @@ describe('decide — failed', () => {
       retryPolicy: { enabled: true, maxAttempts: 3, backoffSeconds: 30 },
     });
     const task = makeTask('t1', 'test-project', { phase: 'failed', retryCount: 0 });
-    task.status!.lastFailureDuration = 60;
+    (task.status as any).lastFailureDuration = 60;
     const result = decide({
       task,
       project: projectWithRetry,
@@ -394,7 +394,7 @@ describe('decide — failed', () => {
       retryPolicy: { enabled: true, maxAttempts: 2, backoffSeconds: 30 },
     });
     const task = makeTask('t1', 'test-project', { phase: 'failed', retryCount: 1 });
-    task.status!.lastFailureDuration = 60;
+    (task.status as any).lastFailureDuration = 60;
     const result = decide({
       task,
       project: projectWithRetry,
@@ -418,7 +418,7 @@ describe('decide — failed', () => {
       },
     });
     const task = makeTask('t1', 'test-project', { phase: 'failed', retryCount: 0 });
-    task.status!.lastFailureDuration = 5; // too short
+    (task.status as any).lastFailureDuration = 5; // too short
     const result = decide({
       task,
       project: projectWithRetry,
@@ -436,7 +436,7 @@ describe('decide — failed', () => {
 describe('decide — awaiting-merge', () => {
   it('awaiting-merge + Succeeded merge → done', () => {
     const task = makeTask('t1', 'test-project', { phase: 'awaiting-merge' });
-    (task.status!.worker as any) = { mergeRunName: 'merge-1' };
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
     const result = decide(
       makeInput(task, {
         observed: { merge: makeRun('merge-1', { phase: 'Succeeded' }) },
@@ -448,7 +448,7 @@ describe('decide — awaiting-merge', () => {
 
   it('awaiting-merge + Failed merge → failed', () => {
     const task = makeTask('t1', 'test-project', { phase: 'awaiting-merge' });
-    (task.status!.worker as any) = { mergeRunName: 'merge-1' };
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
     const result = decide(
       makeInput(task, {
         observed: { merge: makeRun('merge-1', { phase: 'Failed', message: 'conflict' }) },
@@ -460,14 +460,14 @@ describe('decide — awaiting-merge', () => {
 
   it('awaiting-merge + missing merge run → failed', () => {
     const task = makeTask('t1', 'test-project', { phase: 'awaiting-merge' });
-    (task.status!.worker as any) = { mergeRunName: 'merge-1' };
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
     const result = decide(makeInput(task, { observed: {} }));
     expect(result.toPhase).toBe('failed');
   });
 
   it('awaiting-merge + stale merge run → failed + DeleteRun', () => {
     const task = makeTask('t1', 'test-project', { phase: 'awaiting-merge' });
-    (task.status!.worker as any) = { mergeRunName: 'merge-1' };
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
     const staleMerge = makeRun('merge-1', {
       phase: 'Running',
       lastEventAt: '2026-05-28T23:00:00.000Z', // 1 hour ago
@@ -485,7 +485,7 @@ describe('decide — awaiting-merge', () => {
 describe('decide — reviewing', () => {
   it('reviewing + verdict approve → awaiting-human with review record', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 };
+    (task.status as any).worker = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 };
     const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
       'percussionist.dev/review-verdict': JSON.stringify({
@@ -513,7 +513,7 @@ describe('decide — reviewing', () => {
 
   it('reviewing + verdict request_changes under ceiling → rework-requested with review record', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1', aiReworkCount: 0 };
+    (task.status as any).worker = { reviewRunName: 'review-1', aiReworkCount: 0 };
     const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
       'percussionist.dev/review-verdict': JSON.stringify({
@@ -541,7 +541,7 @@ describe('decide — reviewing', () => {
 
   it('reviewing + verdict request_changes over ceiling → awaiting-human with escalate record', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1', aiReworkCount: 2 };
+    (task.status as any).worker = { reviewRunName: 'review-1', aiReworkCount: 2 };
     const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
       'percussionist.dev/review-verdict': JSON.stringify({
@@ -569,9 +569,9 @@ describe('decide — reviewing', () => {
 
   it('reviewing + existing reviews → appends to existing history', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-2', aiReworkCount: 0 };
+    (task.status as any).worker = { reviewRunName: 'review-2', aiReworkCount: 0 };
     // Pre-existing review record
-    task.status!.reviews = [
+    (task.status as any).reviews = [
       {
         action: 'approve',
         diagnosis: 'previous approval',
@@ -615,7 +615,7 @@ describe('decide — reviewing', () => {
 
   it('reviewing + verdict with diagnosis and feedback → passes both through', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1', aiReworkCount: 0 };
+    (task.status as any).worker = { reviewRunName: 'review-1', aiReworkCount: 0 };
     const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
       'percussionist.dev/review-verdict': JSON.stringify({
@@ -640,7 +640,7 @@ describe('decide — reviewing', () => {
 
   it('reviewing + no verdict annotation → awaiting-human fallback', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1' };
+    (task.status as any).worker = { reviewRunName: 'review-1' };
     const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     const result = decide(makeInput(task, { observed: { review: reviewRun } }));
     expect(result.toPhase).toBe('awaiting-human');
@@ -657,7 +657,7 @@ describe('decide — generating-builds', () => {
       phase: 'generating-builds',
       type: 'PLAN',
     });
-    (planTask.status!.worker as any) = { buildTasksFacilitatorRun: 'buildgen-1' };
+    (planTask.status as any).worker = { buildTasksFacilitatorRun: 'buildgen-1' };
     const buildgenRun = makeRun('buildgen-1', { phase: 'Succeeded' });
     const childTask = makeTask('build-01', 'test-project', {
       type: 'BUILD',
@@ -678,7 +678,7 @@ describe('decide — generating-builds', () => {
       phase: 'generating-builds',
       type: 'PLAN',
     });
-    (planTask.status!.worker as any) = { buildTasksFacilitatorRun: 'buildgen-1' };
+    (planTask.status as any).worker = { buildTasksFacilitatorRun: 'buildgen-1' };
     const buildgenRun = makeRun('buildgen-1', { phase: 'Succeeded' });
     const result = decide(
       makeInput(planTask, {
@@ -718,7 +718,7 @@ describe('decide — succeeded with AI review', () => {
       reviewPolicy: { aiReviewerEnabled: true, aiReviewerAgent: 'reviewer', maxAutoReworks: 2 },
     });
     const task = makeTask('t1', 'test-project', { phase: 'succeeded', type: 'BUILD' });
-    (task.status!.worker as any) = { runName: 'worker-1', retryCount: 0, aiReworkCount: 0 };
+    (task.status as any).worker = { runName: 'worker-1', retryCount: 0, aiReworkCount: 0 };
     const result = decide({
       task,
       project: aiProject,
@@ -740,7 +740,7 @@ describe('decide — succeeded with AI review', () => {
       reviewPolicy: { aiReviewerEnabled: true, aiReviewerAgent: 'reviewer', maxAutoReworks: 2 },
     });
     const taskA = makeTask('t1', 'test-project', { phase: 'succeeded', type: 'BUILD' });
-    (taskA.status!.worker as any) = { runName: 'worker-1', retryCount: 0, aiReworkCount: 1 };
+    (taskA.status as any).worker = { runName: 'worker-1', retryCount: 0, aiReworkCount: 1 };
     const resultA = decide({
       task: taskA,
       project: aiProject,
@@ -753,7 +753,7 @@ describe('decide — succeeded with AI review', () => {
     });
 
     const taskB = makeTask('t1', 'test-project', { phase: 'succeeded', type: 'BUILD' });
-    (taskB.status!.worker as any) = { runName: 'worker-1', retryCount: 1, aiReworkCount: 0 };
+    (taskB.status as any).worker = { runName: 'worker-1', retryCount: 1, aiReworkCount: 0 };
     const resultB = decide({
       task: taskB,
       project: aiProject,
@@ -779,7 +779,7 @@ describe('decide — succeeded with AI review', () => {
       reviewPolicy: { aiReviewerEnabled: true, aiReviewerAgent: 'reviewer', maxAutoReworks: 2 },
     });
     const task = makeTask('t1', 'test-project', { phase: 'succeeded', type: 'BUILD' });
-    (task.status!.worker as any) = { runName: 'worker-1', retryCount: 2, aiReworkCount: 3 };
+    (task.status as any).worker = { runName: 'worker-1', retryCount: 2, aiReworkCount: 3 };
 
     // First call
     const result1 = decide({
@@ -909,7 +909,7 @@ describe('decide — AI request_changes end-to-end state machine', () => {
 
     // --- Phase 1: succeeded + AI review enabled → reviewing (ScheduleReviewRun) ---
     const taskSucceeded = makeTask('t1', 'test-project', { phase: 'succeeded', type: 'BUILD' });
-    (taskSucceeded.status!.worker as any) = {
+    (taskSucceeded.status as any).worker = {
       runName: 'worker-0-0',
       retryCount: 0,
       aiReworkCount: 0,
@@ -928,7 +928,7 @@ describe('decide — AI request_changes end-to-end state machine', () => {
 
     // --- Phase 2: reviewing + verdict request_changes → rework-requested (aiReworkCount=1) ---
     const taskReviewing = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (taskReviewing.status!.worker as any) = { reviewRunName: 'review-0', aiReworkCount: 0 };
+    (taskReviewing.status as any).worker = { reviewRunName: 'review-0', aiReworkCount: 0 };
     const reviewRun = makeRun('review-0', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
       'percussionist.dev/review-verdict': JSON.stringify({
@@ -951,7 +951,7 @@ describe('decide — AI request_changes end-to-end state machine', () => {
 
     // --- Phase 3: rework-requested → scheduled (no capacity limit) ---
     const taskRework = makeTask('t1', 'test-project', { phase: 'rework-requested' });
-    (taskRework.status!.worker as any) = { runName: 'worker-0-0', retryCount: 0, aiReworkCount: 1 };
+    (taskRework.status as any).worker = { runName: 'worker-0-0', retryCount: 0, aiReworkCount: 1 };
     const resultScheduled = decide({
       task: taskRework,
       project: aiProject,
@@ -966,7 +966,7 @@ describe('decide — AI request_changes end-to-end state machine', () => {
 
     // --- Phase 4: scheduled → initializing (new runName computed) ---
     const taskScheduled = makeTask('t1', 'test-project', { phase: 'scheduled' });
-    (taskScheduled.status!.worker as any) = {
+    (taskScheduled.status as any).worker = {
       runName: 'worker-0-0',
       retryCount: 0,
       aiReworkCount: 1,
@@ -1002,7 +1002,7 @@ describe('decide — AI request_changes end-to-end state machine', () => {
 
     // First AI rework: aiReworkCount=1 → scheduled with runName for (rc=0, ar=1)
     const taskAr1 = makeTask('t1', 'test-project', { phase: 'scheduled' });
-    (taskAr1.status!.worker as any) = { retryCount: 0, aiReworkCount: 1 };
+    (taskAr1.status as any).worker = { retryCount: 0, aiReworkCount: 1 };
     const resultAr1 = decide({
       task: taskAr1,
       project: aiProject,
@@ -1017,7 +1017,7 @@ describe('decide — AI request_changes end-to-end state machine', () => {
 
     // Second AI rework: aiReworkCount=2 → scheduled with runName for (rc=0, ar=2)
     const taskAr2 = makeTask('t1', 'test-project', { phase: 'scheduled' });
-    (taskAr2.status!.worker as any) = { retryCount: 0, aiReworkCount: 2 };
+    (taskAr2.status as any).worker = { retryCount: 0, aiReworkCount: 2 };
     const resultAr2 = decide({
       task: taskAr2,
       project: aiProject,

@@ -95,14 +95,15 @@ export default function RunDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: run, error, isLoading, isFetching } = useRun(name!);
+  if (!name) return null;
+  const { data: run, error, isLoading, isFetching } = useRun(name);
   const runPhase = run?.status?.phase;
   const runIsActive = !!run && (!runPhase || !TERMINAL_PHASES.has(runPhase));
   const { connected: sseConnected, eventTick } = useRunEvents(name ?? '', runIsActive);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const deleteMutation = useMutation({
-    mutationFn: () => deleteRun(name!),
+    mutationFn: () => deleteRun(name ?? ''),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['runs'] });
       navigate('/runs');
@@ -159,9 +160,9 @@ export default function RunDetail() {
         </div>
         <div className="flex items-center gap-3">
           <TokenCounter tokensIn={run.status?.tokensIn} tokensOut={run.status?.tokensOut} />
-          {isActive && <AttachButton name={name!} namespace={run.metadata.namespace} />}
+          {isActive && name && <AttachButton name={name} namespace={run.metadata.namespace} />}
           {run && <OpenOpencodeButton run={run} />}
-          <Link to={`/runs/new?copyFrom=${encodeURIComponent(name!)}`}>
+          <Link to={`/runs/new?copyFrom=${encodeURIComponent(name ?? '')}`}>
             <Button variant="outline" size="sm">
               Copy
             </Button>
@@ -350,7 +351,11 @@ export default function RunDetail() {
       )}
 
       {/* Review verdict */}
-      {reviewVerdict(run) && <ReviewVerdictCard verdict={reviewVerdict(run)!} />}
+      {reviewVerdict(run) && (
+        <ReviewVerdictCard
+          verdict={reviewVerdict(run) as NonNullable<ReturnType<typeof reviewVerdict>>}
+        />
+      )}
 
       {/* Session conversation */}
       <Card>
@@ -359,7 +364,7 @@ export default function RunDetail() {
         </CardHeader>
         <CardContent>
           <SessionView
-            name={name!}
+            name={name}
             hasSession={!!run.status?.sessionID}
             active={isActive}
             sseConnected={sseConnected}
@@ -375,7 +380,7 @@ export default function RunDetail() {
         </CardHeader>
         <CardContent>
           <LogViewer
-            name={name!}
+            name={name}
             active={isActive}
             defaultContainer={defaultLogContainer}
             sseConnected={sseConnected}

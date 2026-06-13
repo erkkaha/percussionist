@@ -49,7 +49,7 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
             className={`${pillBase} ${filters.column === col ? pillActive : pillInactive}`}
           >
             {col}
-            {columnCounts[col] != null && columnCounts[col]! > 0 && (
+            {columnCounts[col] != null && columnCounts[col] > 0 && (
               <span className="ml-1 text-text-dim">{columnCounts[col]}</span>
             )}
           </Button>

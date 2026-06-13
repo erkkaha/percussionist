@@ -43,8 +43,10 @@ import {
  * branches that have active worktree checkouts.
  */
 function parentBaselineResolve(git: { ref?: string; parentRef?: string }): string {
-  const ref = git.ref!;
-  const parentRef = git.parentRef!;
+  const ref = git.ref;
+  if (!ref) throw new Error('git.ref is required');
+  const parentRef = git.parentRef;
+  if (!parentRef) throw new Error('git.parentRef is required');
   return `  # Resolve parent branch baseline: prefer remote-tracking ref for freshness,
   # fall back to local ref if remote-tracking doesn't exist yet (first BUILD).
   _PARENT_REMOTE_REF="refs/remotes/origin/${parentRef}"
@@ -68,12 +70,18 @@ export const agentsConfigMapName = (run: Run) => `${run.metadata.name}-agents`;
 // ---------------------------------------------------------------------------
 // Shared metadata helpers
 
+const requireRunUid = (run: Run): string => {
+  const uid = run.metadata.uid;
+  if (!uid) throw new Error(`Run ${run.metadata.name} missing uid`);
+  return uid;
+};
+
 const ownerRefsFor = (run: Run) => [
   {
     apiVersion: API_GROUP_VERSION,
     kind: KIND_RUN,
     name: run.metadata.name,
-    uid: run.metadata.uid!,
+    uid: requireRunUid(run),
     controller: true,
     blockOwnerDeletion: true,
   },
@@ -114,7 +122,7 @@ export function renderService(
     kind: 'Service',
     metadata: {
       name: serviceName(run),
-      namespace: run.metadata.namespace!,
+      namespace: run.metadata.namespace ?? '',
       labels: { ...commonLabels(run), [LABELS.component]: 'runner' },
       ownerReferences: ownerRefsFor(run),
     },
@@ -145,7 +153,7 @@ export function renderIngress(
     kind: 'Ingress',
     metadata: {
       name: ingressName(run),
-      namespace: run.metadata.namespace!,
+      namespace: run.metadata.namespace ?? '',
       labels: { ...commonLabels(run), [LABELS.component]: 'opencode-web' },
       annotations: { ...INGRESS_ANNOTATIONS },
       ownerReferences: ownerRefsFor(run),
@@ -172,7 +180,7 @@ export function renderIngress(
       ],
     },
   };
-  if (INGRESS_CLASS) ingress.spec!.ingressClassName = INGRESS_CLASS;
+  if (INGRESS_CLASS && ingress.spec) ingress.spec.ingressClassName = INGRESS_CLASS;
   return ingress;
 }
 
@@ -186,7 +194,7 @@ export function renderAgentsConfigMap(run: Run, agents: AgentDef[]): object {
     kind: 'ConfigMap',
     metadata: {
       name: agentsConfigMapName(run),
-      namespace: run.metadata.namespace!,
+      namespace: run.metadata.namespace ?? '',
       labels: { ...commonLabels(run), [LABELS.component]: 'agents' },
       ownerReferences: ownerRefsFor(run),
     },
@@ -240,9 +248,9 @@ export function renderPod(
   function heapMbFromLimit(limit: string | undefined): number {
     if (!limit) return 2560;
     const giMatch = limit.match(/^(\d+(?:\.\d+)?)Gi$/);
-    if (giMatch) return Math.floor(parseFloat(giMatch[1]!) * 1024 * 0.75);
+    if (giMatch) return Math.floor(parseFloat(giMatch[1]) * 1024 * 0.75);
     const miMatch = limit.match(/^(\d+(?:\.\d+)?)Mi$/);
-    if (miMatch) return Math.floor(parseFloat(miMatch[1]!) * 0.75);
+    if (miMatch) return Math.floor(parseFloat(miMatch[1]) * 0.75);
     return 2560;
   }
   const nodeHeapMb = heapMbFromLimit(initContainerResources.limits?.memory);
@@ -378,6 +386,8 @@ export function renderPod(
                     '  git -C "$MIRROR_DIR" symbolic-ref HEAD refs/heads/.mirror-placeholder 2>/dev/null || true',
                     '  # Prune worktree metadata for directories that no longer exist',
                     '  git -C "$MIRROR_DIR" worktree prune --expire=now 2>/dev/null || true',
+                  '  # Repack loose objects to reduce inode pressure on the data PVC.',
+                  '  git -C "$MIRROR_DIR" gc --auto 2>/dev/null || true',
                     ') 200>"$LOCK_FILE"',
                     '',
                     '# Set up worktree',
@@ -678,7 +688,7 @@ export function renderPod(
     kind: 'Pod',
     metadata: {
       name: podName(run),
-      namespace: run.metadata.namespace!,
+      namespace: run.metadata.namespace ?? '',
       labels: { ...commonLabels(run), [LABELS.component]: 'runner' },
       ownerReferences: ownerRefsFor(run),
     },
@@ -853,8 +863,8 @@ export function renderPod(
           imagePullPolicy: 'IfNotPresent',
           env: [
             { name: 'RUN_NAME', value: run.metadata.name },
-            { name: 'RUN_NAMESPACE', value: run.metadata.namespace! },
-            { name: 'RUN_UID', value: run.metadata.uid! },
+            { name: 'RUN_NAMESPACE', value: run.metadata.namespace ?? '' },
+            { name: 'RUN_UID', value: run.metadata.uid ?? '' },
             {
               name: runner.baseUrlEnvVar,
               value: `http://127.0.0.1:${containerPort}`,

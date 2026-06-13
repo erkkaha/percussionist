@@ -216,7 +216,8 @@ function buildPayloads(
 
   for (let i = 0; i < rawMessages.length; i++) {
     const idx = baseIdx + i;
-    const msg = rawMessages[i]!;
+    const msg = rawMessages[i];
+    if (!msg) continue;
     const info = msg.info ?? {};
     const parts = msg.parts ?? [];
     const content = JSON.stringify(parts);

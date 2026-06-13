@@ -123,7 +123,8 @@ export async function handleSearch(body: SearchRequest): Promise<SearchResult[]>
   return rows
     .filter((r) => memMap.has(r.rowid))
     .map((r) => {
-      const mem = memMap.get(r.rowid)!;
+      const mem = memMap.get(r.rowid);
+      if (!mem) return null;
       return {
         id: mem.id,
         content: mem.content,
@@ -131,7 +132,8 @@ export async function handleSearch(body: SearchRequest): Promise<SearchResult[]>
         distance: r.distance,
         createdAt: mem.created_at,
       };
-    });
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
 }
 
 export async function handleContext(body: ContextRequest): Promise<ContextResponse> {

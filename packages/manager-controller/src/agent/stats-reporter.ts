@@ -58,7 +58,8 @@ export function buildPayloads(
 
   for (let i = 0; i < rawMessages.length; i++) {
     const idx = baseIdx + i;
-    const msg = rawMessages[i]!;
+    const msg = rawMessages[i];
+    if (!msg) continue;
     const info = msg.info ?? {};
     const parts = msg.parts ?? [];
     const content = JSON.stringify(parts);
@@ -173,7 +174,7 @@ export function extractTokenTotals(rawMessages: SessionMessage[]): TokenTotals {
     if (tokens?.output != null) tokensOut += tokens.output;
 
     if ((info as { cost?: number }).cost != null) {
-      cost += (info as { cost?: number }).cost!;
+      cost += (info as { cost?: number }).cost ?? 0;
     }
   }
 

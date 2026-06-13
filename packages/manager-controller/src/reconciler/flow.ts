@@ -145,7 +145,9 @@ const DEFAULT_TIMEOUTS = {
 export function resolveFlow(project: Project): ResolvedFlow {
   const flowConfig = project.spec.flow;
   const presetName = flowConfig?.preset ?? 'plan-build-review-merge';
-  const preset = PRESETS[presetName] ?? PRESETS['plan-build-review-merge']!;
+  const defaultPreset = PRESETS['plan-build-review-merge'];
+  if (!defaultPreset) throw new Error('Default preset "plan-build-review-merge" not found');
+  const preset = PRESETS[presetName] ?? defaultPreset;
 
   // Legacy policy compatibility.
   const legacyRetry = project.spec.retryPolicy;

@@ -807,8 +807,8 @@ stats.get('/metrics-timeseries', auth(), async (c) => {
       name: r.name,
       agent: r.agent ?? '',
       task: r.task ?? '',
-      startedAt: r.startedAt!,
-      completedAt: r.completedAt!,
+      startedAt: r.startedAt ?? '',
+      completedAt: r.completedAt ?? '',
     }));
 
   return c.json({ dataPoints, runWindows, nodeBuckets: Object.fromEntries(nodeBuckets) });
@@ -926,7 +926,12 @@ stats.get('/trends', auth(), (c) => {
   const sortedDates = [...pivotMap.keys()].sort();
   const modelTrendPoints: ModelTrendPoint[] = sortedDates.map((date) => {
     const entry: ModelTrendPoint = { date };
-    const dateMap = pivotMap.get(date)!;
+    const dateMap = pivotMap.get(date);
+    if (!dateMap) {
+      const emptyMap = new Map<string, number>();
+      pivotMap.set(date, emptyMap);
+      return { date };
+    }
     for (const model of allModels) {
       entry[model] = dateMap.get(model) ?? 0;
     }

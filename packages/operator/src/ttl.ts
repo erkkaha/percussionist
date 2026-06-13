@@ -130,6 +130,8 @@ async function cleanupExpiredRunWorktree(run: Run): Promise<void> {
       `    echo "[cleanup-ttl] deleting branch ref \${BRANCH#refs/heads/}"`,
       `    git -C "${mirrorDir}" branch -D "\${BRANCH#refs/heads/}" 2>/dev/null || true`,
       `  fi`,
+      `  echo "[cleanup-ttl] repacking mirror objects"`,
+      `  git -C "${mirrorDir}" gc --auto 2>/dev/null || true`,
       'fi',
     );
   }

@@ -49,9 +49,9 @@ export function shouldReconcileCodeServer(project: Project): boolean {
  * Renders a Deployment for code-server.
  */
 export function renderCodeServerDeployment(project: Project): V1Deployment {
-  const name = project.metadata.name!;
-  const ns = project.metadata.namespace!;
-  const uid = project.metadata.uid!;
+  const name = project.metadata.name ?? '';
+  const ns = project.metadata.namespace ?? '';
+  const uid = project.metadata.uid ?? '';
   const spec = project.spec;
 
   const image = spec.codeServer?.image ?? CODE_SERVER_DEFAULT_IMAGE;
@@ -149,9 +149,9 @@ export function renderCodeServerDeployment(project: Project): V1Deployment {
  * Renders a ClusterIP Service for code-server.
  */
 export function renderCodeServerService(project: Project): V1Service {
-  const name = project.metadata.name!;
-  const ns = project.metadata.namespace!;
-  const uid = project.metadata.uid!;
+  const name = project.metadata.name ?? '';
+  const ns = project.metadata.namespace ?? '';
+  const uid = project.metadata.uid ?? '';
 
   const labels = {
     [LABELS.managedBy]: MANAGED_BY,

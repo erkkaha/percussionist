@@ -110,7 +110,7 @@ interface TrendsResponse {
 // Helpers
 
 function shortModelLabel(model: string): string {
-  return model.includes('/') ? model.split('/').pop()! : model;
+  return model.includes('/') ? (model.split('/').pop() ?? model) : model;
 }
 
 function durationMs(s: StatSession): number | null {
@@ -579,9 +579,7 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
   }, [modelTrendPoints]);
 
   const models =
-    modelTrendPoints.length > 0
-      ? Object.keys(modelTrendPoints[0]!).filter((k) => k !== 'date')
-      : [];
+    modelTrendPoints.length > 0 ? Object.keys(modelTrendPoints[0]).filter((k) => k !== 'date') : [];
 
   const chartConfig: ChartConfig = {
     succeeded: { label: 'Succeeded', color: 'var(--chart-1)' },

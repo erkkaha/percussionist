@@ -161,14 +161,26 @@ export async function runAuthImport(opts: AuthImportOpts): Promise<void> {
   }
 
   const subset: AuthFile = {};
-  for (const id of pick) subset[id] = auth[id]!;
+  for (const id of pick) {
+    const entry = auth[id];
+    if (!entry) {
+      console.error(`Provider "${id}" not found in auth file`);
+      process.exit(1);
+    }
+    subset[id] = entry;
+  }
 
   // Human-readable preamble. Always printed, including under --dry-run.
   console.error(`Source: ${file}`);
   console.error(`Target: Secret "${opts.name}" (key "${opts.key}") in ns "${opts.namespace}"`);
   console.error('Providers:');
   for (const id of pick) {
-    console.error(`  - ${id}  [${summarise(auth[id]!)}]`);
+    const entry = auth[id];
+    if (!entry) {
+      console.error(`Provider "${id}" not found in auth file`);
+      process.exit(1);
+    }
+    console.error(`  - ${id}  [${summarise(entry)}]`);
   }
 
   const blob = JSON.stringify(subset);

@@ -23,7 +23,9 @@ export async function reconcileProject(project: Project, namespace: string): Pro
   for (const task of tasks) {
     if (!task.status?.phase) {
       console.log(`[reconcile] ${task.metadata.name}: missing status.phase — healing to "pending"`);
-      await patchTaskStatus(task.metadata.name!, { phase: 'pending' }, namespace).catch(() => {
+      const taskName = task.metadata.name;
+      if (!taskName) continue;
+      await patchTaskStatus(taskName, { phase: 'pending' }, namespace).catch(() => {
         // Best-effort heal; reconciler will retry on next cycle.
       });
     }

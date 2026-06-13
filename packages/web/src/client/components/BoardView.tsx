@@ -18,7 +18,8 @@ import { Sheet, SheetContent } from './ui/sheet';
 
 export default function BoardView() {
   const { name } = useParams<{ name: string }>();
-  const projectName = name!;
+  if (!name) return null;
+  const projectName = name;
   const queryClient = useQueryClient();
   const { connected: boardSseConnected, eventTick } = useBoardEvents(projectName, true);
 

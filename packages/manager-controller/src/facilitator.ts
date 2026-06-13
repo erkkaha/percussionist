@@ -545,7 +545,7 @@ async function buildFacilitatorRun(
           apiVersion: API_GROUP_VERSION,
           kind: 'Project',
           name: project.metadata.name,
-          uid: project.metadata.uid!,
+          uid: project.metadata.uid ?? '',
           controller: true,
           blockOwnerDeletion: true,
         },

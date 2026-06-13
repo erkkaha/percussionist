@@ -6,7 +6,7 @@ import { TERMINAL_PHASES } from '../lib/types';
 export function useTaskRuns(taskName: string | null, refetchInterval: number | false = 5_000) {
   return useQuery<Run[], Error>({
     queryKey: ['taskRuns', taskName],
-    queryFn: () => fetchTaskRuns(taskName!),
+    queryFn: () => fetchTaskRuns(taskName ?? ''),
     enabled: !!taskName,
     refetchInterval: (query) => {
       const runs = query.state.data;

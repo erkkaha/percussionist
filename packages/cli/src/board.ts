@@ -84,12 +84,14 @@ export async function runBoardGet(projectName: string, opts: BoardGetOpts): Prom
     console.log('Active workers:');
     const workerRows: string[][] = [['TASK', 'AGENT', 'RUN', 'RETRIES']];
     for (const t of running) {
-      const w = t.status!.worker!;
+      const w = t.status?.worker;
+      if (!w) continue;
+      const workerStatus = w;
       workerRows.push([
         t.metadata.name,
         t.spec.agent ?? '-',
-        w.runName ?? '-',
-        String(w.retryCount ?? 0),
+        workerStatus.runName ?? '-',
+        String(workerStatus.retryCount ?? 0),
       ]);
     }
     console.log(padCols(workerRows));
@@ -147,7 +149,7 @@ export async function runBoardTaskAdd(projectName: string, opts: BoardTaskAddOpt
   const task = buildTask({
     name: taskName,
     projectName,
-    projectUid: project.metadata.uid!,
+    projectUid: project.metadata.uid ?? '',
     ns,
     spec: {
       projectRef: projectName,

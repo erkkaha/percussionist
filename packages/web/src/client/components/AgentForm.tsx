@@ -22,7 +22,8 @@ export default function AgentForm() {
   // Load existing agent when editing.
   useEffect(() => {
     if (!isEdit) return;
-    fetch(`/api/agents/${encodeURIComponent(editName!)}`, { headers: authHeaders() })
+    if (!editName) return;
+    fetch(`/api/agents/${encodeURIComponent(editName)}`, { headers: authHeaders() })
       .then((r) => r.json())
       .then(
         (data: { metadata?: { name?: string }; spec?: { content?: string; model?: string } }) => {

@@ -601,7 +601,7 @@ function formatToolInput(input: Record<string, unknown>): string {
   // Show common tool fields nicely.
   const entries = Object.entries(input);
   if (entries.length === 1) {
-    const [key, val] = entries[0]!;
+    const [key, val] = entries[0];
     if (typeof val === 'string') {
       // Single string input — show directly.
       if (val.length > 2000) return `${key}: ${val.slice(0, 2000)}... (truncated)`;

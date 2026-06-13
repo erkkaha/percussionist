@@ -45,11 +45,12 @@ export function shouldReconcileMemoryService(project: Project): boolean {
 // Resource renderers
 
 export function renderMemoryServiceDeployment(project: Project): V1Deployment {
-  const name = project.metadata.name!;
-  const ns = project.metadata.namespace!;
-  const uid = project.metadata.uid!;
+  const name = project.metadata.name ?? '';
+  const ns = project.metadata.namespace ?? '';
+  const uid = project.metadata.uid ?? '';
   const spec = project.spec;
-  const embedding = spec.embedding!;
+  const embedding = spec.embedding;
+  if (!embedding) throw new Error('embedding config is required');
 
   const image = MEMORY_SERVICE_DEFAULT_IMAGE;
   const pvcName = spec.data?.pvcName ?? `${name}-data`;
@@ -150,9 +151,9 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
 }
 
 export function renderMemoryServiceService(project: Project): V1Service {
-  const name = project.metadata.name!;
-  const ns = project.metadata.namespace!;
-  const uid = project.metadata.uid!;
+  const name = project.metadata.name ?? '';
+  const ns = project.metadata.namespace ?? '';
+  const uid = project.metadata.uid ?? '';
 
   const labels = {
     [LABELS.managedBy]: MANAGED_BY,

@@ -14,10 +14,46 @@ import { API_GROUP_VERSION, KIND_TASK, LABELS, MANAGED_BY } from '@percussionist
 import { core, gitUrlHash } from '@percussionist/kube';
 import { getErrorStatusCode } from './kube-errors.js';
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 const log = (...args: unknown[]) =>
   console.log(`[worktree-cleanup ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
   console.error(`[worktree-cleanup ${new Date().toISOString()}]`, ...args);
+
+async function retryCreatePod(
+  namespace: string,
+  pod: object,
+  runName: string,
+  podName: string,
+  maxRetries = 3,
+): Promise<void> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await core().createNamespacedPod({ namespace, body: pod });
+      log(`cleanup pod ${namespace}/${podName} created for run ${runName}`);
+      return;
+    } catch (e: unknown) {
+      const statusCode = getErrorStatusCode(e);
+      if (statusCode === 409) {
+        log(`cleanup pod ${namespace}/${podName} already exists, skipping`);
+        return;
+      }
+      if (attempt < maxRetries) {
+        err(
+          `failed to create cleanup pod for run ${runName} (attempt ${attempt}/${maxRetries}):`,
+          (e as Error).message,
+        );
+        await sleep(2000 * attempt);
+      } else {
+        err(
+          `failed to create cleanup pod for run ${runName} after ${maxRetries} attempts:`,
+          (e as Error).message,
+        );
+      }
+    }
+  }
+}
 
 function cleanupPodName(prefix: string, name: string): string {
   const suffix = Date.now().toString(36).slice(-6);
@@ -99,6 +135,8 @@ export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Pro
           `    echo "[cleanup] deleting branch ref \${BRANCH#refs/heads/}"`,
           `    git -C "${mirrorDir}" branch -D "\${BRANCH#refs/heads/}" 2>/dev/null || true`,
           `  fi`,
+          `  echo "[cleanup] repacking mirror objects"`,
+          `  git -C "${mirrorDir}" gc --auto 2>/dev/null || true`,
           `fi`,
         ]
       : []),
@@ -122,7 +160,7 @@ export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Pro
           apiVersion: API_GROUP_VERSION,
           kind: KIND_TASK,
           name: task.metadata.name,
-          uid: task.metadata.uid!,
+          uid: task.metadata.uid ?? '',
           controller: false,
           blockOwnerDeletion: false,
         },
@@ -148,18 +186,7 @@ export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Pro
     },
   };
 
-  try {
-    await core().createNamespacedPod({ namespace, body: pod });
-    log(`cleanup pod ${namespace}/${podName} created for run ${runName}`);
-  } catch (e: unknown) {
-    const statusCode = getErrorStatusCode(e);
-    if (statusCode === 409) {
-      log(`cleanup pod ${namespace}/${podName} already exists, skipping`);
-      return;
-    }
-    // Log but don't re-throw — cleanup failure must not block task transition.
-    err(`failed to create cleanup pod for run ${runName}:`, (e as Error).message);
-  }
+  await retryCreatePod(namespace, pod, runName, podName);
 }
 
 /**
@@ -218,6 +245,8 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
           `    echo "[cleanup] deleting branch ref $b"`,
           `    git -C "${mirrorDir}" branch -D "$b" 2>/dev/null || true`,
           `  done`,
+          `  echo "[cleanup] repacking mirror objects"`,
+          `  git -C "${mirrorDir}" gc --auto 2>/dev/null || true`,
           `fi`,
         ]
       : []),
@@ -241,7 +270,7 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
           apiVersion: API_GROUP_VERSION,
           kind: KIND_TASK,
           name: taskName,
-          uid: task.metadata.uid!,
+          uid: task.metadata.uid ?? '',
           controller: false,
           blockOwnerDeletion: false,
         },
@@ -267,16 +296,5 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
     },
   };
 
-  try {
-    await core().createNamespacedPod({ namespace, body: pod });
-    log(`task cleanup pod ${namespace}/${podName} created for task ${taskName}`);
-  } catch (e: unknown) {
-    const statusCode = getErrorStatusCode(e);
-    if (statusCode === 409) {
-      log(`task cleanup pod ${namespace}/${podName} already exists, skipping`);
-      return;
-    }
-    // Log but don't re-throw — cleanup failure must not block task transition.
-    err(`failed to create task cleanup pod for task ${taskName}:`, (e as Error).message);
-  }
+  await retryCreatePod(namespace, pod, taskName, podName);
 }

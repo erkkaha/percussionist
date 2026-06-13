@@ -18,7 +18,7 @@ agents.get('/', auth(), async (c) => {
     const items = await listClusterAgents();
     return c.json({
       agents: items.map((a) => ({
-        name: a.metadata.name!,
+        name: a.metadata.name ?? '',
         content: a.spec.content,
         model: a.spec.model,
       })),

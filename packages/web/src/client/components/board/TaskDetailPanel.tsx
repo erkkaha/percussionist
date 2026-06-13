@@ -338,7 +338,9 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
       )}
 
       {/* Commits view */}
-      {effectiveView === 'commits' && hasCommits && <CommitDiffList commits={data.commits!} />}
+      {effectiveView === 'commits' && hasCommits && data.commits && (
+        <CommitDiffList commits={data.commits} />
+      )}
     </div>
   );
 }

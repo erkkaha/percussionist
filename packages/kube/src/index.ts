@@ -74,22 +74,26 @@ function init() {
 
 export function kubeConfig(): KubeConfig {
   init();
-  return _kc!;
+  if (!_kc) throw new Error('KubeConfig not initialized');
+  return _kc;
 }
 
 export function core(): CoreV1Api {
   init();
-  return _core!;
+  if (!_core) throw new Error('CoreV1Api not initialized');
+  return _core;
 }
 
 export function custom(): CustomObjectsApi {
   init();
-  return _custom!;
+  if (!_custom) throw new Error('CustomObjectsApi not initialized');
+  return _custom;
 }
 
 export function apps(): AppsV1Api {
   init();
-  return _apps!;
+  if (!_apps) throw new Error('AppsV1Api not initialized');
+  return _apps;
 }
 
 // For CLI use — loads from kubeconfig only (no in-cluster fallback).
@@ -194,7 +198,7 @@ export async function patchRunStatus(
     }
     throw new Error(`Kubernetes API error ${res.status}: ${body}`);
   }
-  throw lastErr!;
+  throw lastErr ?? new Error('Max retries exceeded (no last error available)');
 }
 
 export async function patchRunAnnotations(
@@ -481,7 +485,7 @@ export async function patchProjectStatus(
     }
     throw new Error(`Kubernetes API error ${res.status}: ${body}`);
   }
-  throw lastErr!;
+  throw lastErr ?? new Error('Max retries exceeded (no last error available)');
 }
 
 export async function deleteProject(
@@ -590,7 +594,7 @@ export async function patchTaskStatus(
       throw lastErr;
     }
   }
-  throw lastErr!;
+  throw lastErr ?? new Error('Max retries exceeded (no last error available)');
 }
 
 // Patch a Task (metadata + spec, not status).

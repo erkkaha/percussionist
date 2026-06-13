@@ -831,7 +831,7 @@ function UpdatesPanel() {
                     <Button
                       variant="default"
                       size="sm"
-                      onClick={() => upgradeMutation.mutate(data.latest!)}
+                      onClick={() => data.latest && upgradeMutation.mutate(data.latest)}
                       disabled={upgradeMutation.isPending}
                     >
                       {upgradeMutation.isPending ? 'Upgrading...' : 'Upgrade'}

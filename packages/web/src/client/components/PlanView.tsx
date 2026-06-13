@@ -12,7 +12,7 @@ export default function PlanView() {
 
   const { data, error, isLoading } = useQuery({
     queryKey: ['plan', projectName, taskId],
-    queryFn: () => fetchPlan(projectName!, taskId!),
+    queryFn: () => fetchPlan(projectName ?? '', taskId ?? ''),
     enabled: !!projectName && !!taskId,
   });
 
@@ -20,7 +20,7 @@ export default function PlanView() {
     return (
       <div className="space-y-4">
         <Link
-          to={`/projects/${encodeURIComponent(projectName!)}/board`}
+          to={`/projects/${encodeURIComponent(projectName ?? '')}/board`}
           className="inline-flex items-center gap-2 text-sm text-text-dim hover:text-text transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -42,7 +42,7 @@ export default function PlanView() {
     return (
       <div className="space-y-4">
         <Link
-          to={`/projects/${encodeURIComponent(projectName!)}/board`}
+          to={`/projects/${encodeURIComponent(projectName ?? '')}/board`}
           className="inline-flex items-center gap-2 text-sm text-text-dim hover:text-text transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -64,7 +64,7 @@ export default function PlanView() {
     <div className="space-y-4">
       {/* Back navigation */}
       <Link
-        to={`/projects/${encodeURIComponent(projectName!)}/board`}
+        to={`/projects/${encodeURIComponent(projectName ?? '')}/board`}
         className="inline-flex items-center gap-2 text-sm text-text-dim hover:text-text transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
