@@ -1,18 +1,18 @@
-import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { fetchPlan } from "../lib/api";
-import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
-import { ArrowLeft } from "lucide-react";
-import { CodeBlock } from "./CodeBlock";
+import { useQuery } from '@tanstack/react-query';
+import { ArrowLeft } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import { Link, useParams } from 'react-router-dom';
+import remarkGfm from 'remark-gfm';
+import { fetchPlan } from '../lib/api';
+import { CodeBlock } from './CodeBlock';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 
 export default function PlanView() {
   const { name: projectName, taskId } = useParams<{ name: string; taskId: string }>();
 
   const { data, error, isLoading } = useQuery({
-    queryKey: ["plan", projectName, taskId],
-    queryFn: () => fetchPlan(projectName!, taskId!),
+    queryKey: ['plan', projectName, taskId],
+    queryFn: () => fetchPlan(projectName ?? '', taskId ?? ''),
     enabled: !!projectName && !!taskId,
   });
 
@@ -20,7 +20,7 @@ export default function PlanView() {
     return (
       <div className="space-y-4">
         <Link
-          to={`/projects/${encodeURIComponent(projectName!)}/board`}
+          to={`/projects/${encodeURIComponent(projectName ?? '')}/board`}
           className="inline-flex items-center gap-2 text-sm text-text-dim hover:text-text transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -42,7 +42,7 @@ export default function PlanView() {
     return (
       <div className="space-y-4">
         <Link
-          to={`/projects/${encodeURIComponent(projectName!)}/board`}
+          to={`/projects/${encodeURIComponent(projectName ?? '')}/board`}
           className="inline-flex items-center gap-2 text-sm text-text-dim hover:text-text transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -64,7 +64,7 @@ export default function PlanView() {
     <div className="space-y-4">
       {/* Back navigation */}
       <Link
-        to={`/projects/${encodeURIComponent(projectName!)}/board`}
+        to={`/projects/${encodeURIComponent(projectName ?? '')}/board`}
         className="inline-flex items-center gap-2 text-sm text-text-dim hover:text-text transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -82,27 +82,43 @@ export default function PlanView() {
       {/* Plan content */}
       <Card>
         <CardHeader className="border-b border-border-muted">
-          <CardTitle className="text-label-md font-mono uppercase text-text-dim">Plan Content</CardTitle>
+          <CardTitle className="text-label-md font-mono uppercase text-text-dim">
+            Plan Content
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-6">
-          <div style={{ fontSize: "12px", lineHeight: "1.5" }} className="max-w-none">
+          <div style={{ fontSize: '12px', lineHeight: '1.5' }} className="max-w-none">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
                 p: ({ children }) => <p className="my-0">{children}</p>,
                 pre: ({ children }) => <div className="mb-2">{children}</div>,
                 code: ({ children, className }) => {
-                  const lang = className?.replace("language-", "") ?? "";
-                  const code = String(children).replace(/\n$/, "");
-                  if (lang || code.includes("\n")) {
-                    return <div className="mb-2"><CodeBlock code={code} language={lang} /></div>;
+                  const lang = className?.replace('language-', '') ?? '';
+                  const code = String(children).replace(/\n$/, '');
+                  if (lang || code.includes('\n')) {
+                    return (
+                      <div className="mb-2">
+                        <CodeBlock code={code} language={lang} />
+                      </div>
+                    );
                   }
-                  return <span className="bg-surface-sunken rounded px-1 py-0.5 text-xs font-mono">{children}</span>;
+                  return (
+                    <span className="bg-surface-sunken rounded px-1 py-0.5 text-xs font-mono">
+                      {children}
+                    </span>
+                  );
                 },
                 h1: ({ children }) => <h1 className="text-2xl font-bold mt-4 mb-1">{children}</h1>,
-                h2: ({ children }) => <h2 className="text-xl font-semibold mt-3 mb-1">{children}</h2>,
-                h3: ({ children }) => <h3 className="text-lg font-semibold mt-2 mb-1">{children}</h3>,
-                h4: ({ children }) => <h4 className="text-base font-semibold mt-2 mb-0.5">{children}</h4>,
+                h2: ({ children }) => (
+                  <h2 className="text-xl font-semibold mt-3 mb-1">{children}</h2>
+                ),
+                h3: ({ children }) => (
+                  <h3 className="text-lg font-semibold mt-2 mb-1">{children}</h3>
+                ),
+                h4: ({ children }) => (
+                  <h4 className="text-base font-semibold mt-2 mb-0.5">{children}</h4>
+                ),
                 ul: ({ children }) => <ul className="list-disc pl-5 space-y-1">{children}</ul>,
                 ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1">{children}</ol>,
                 li: ({ children }) => <li className="leading-relaxed">{children}</li>,

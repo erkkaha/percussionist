@@ -1,9 +1,9 @@
-import { readSessionConfigMap, core } from "@percussionist/kube";
-import { createSession, sendPrompt, waitForCompletion } from "./agent/session.js";
-import { storeMemory } from "./agent/memory-client.js";
-import { PatchStrategy, setHeaderOptions } from "@kubernetes/client-node";
+import { PatchStrategy, setHeaderOptions } from '@kubernetes/client-node';
+import { core, readSessionConfigMap } from '@percussionist/kube';
+import { storeMemory } from './agent/memory-client.js';
+import { createSession, sendPrompt, waitForCompletion } from './agent/session.js';
 
-const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
+const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
 
 const MAX_SUMMARY_CHARS = 16_000;
 const MAX_INPUT_CHARS = 60_000;
@@ -78,7 +78,7 @@ export async function summarizeSession(
             data: { [`summary-${sessionID}`]: truncated },
           },
         },
-        setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
+        setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
       );
     } catch (e) {
       err(`ConfigMap patch failed for ${project}/${runName}/${sessionID}: ${(e as Error).message}`);
@@ -139,11 +139,11 @@ function compactSessionForSummary(rawMessages: unknown[]): string | null {
       info?: { role?: string };
       parts?: Array<{ type: string; text?: string }>;
     };
-    const role = m.info?.role ?? "unknown";
+    const role = m.info?.role ?? 'unknown';
     const textParts: string[] = [];
 
     for (const part of m.parts ?? []) {
-      if (part.type === "text" && part.text) {
+      if (part.type === 'text' && part.text) {
         const trimmed = part.text.slice(0, 2000);
         textParts.push(trimmed);
       }
@@ -151,42 +151,42 @@ function compactSessionForSummary(rawMessages: unknown[]): string | null {
 
     if (textParts.length === 0) continue;
 
-    const line = `[${role.toUpperCase()}]\n${textParts.join("\n")}`;
+    const line = `[${role.toUpperCase()}]\n${textParts.join('\n')}`;
     if (total + line.length > MAX_INPUT_CHARS) {
-      parts.push("[...remaining messages truncated...]");
+      parts.push('[...remaining messages truncated...]');
       break;
     }
     parts.push(line);
     total += line.length;
   }
 
-  return parts.length > 0 ? parts.join("\n\n") : null;
+  return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
 async function produceSummary(sessionText: string): Promise<string | null> {
   const summarizationPrompt = [
-    "You are a summarization assistant. Summarize the following agent session in 2-3 paragraphs.",
-    "Focus on: what was accomplished, what decisions were made, what obstacles were encountered, and any unfinished work.",
-    "Be concise and factual. This summary will be used as context for future runs.",
-    "",
-    "SESSION:",
+    'You are a summarization assistant. Summarize the following agent session in 2-3 paragraphs.',
+    'Focus on: what was accomplished, what decisions were made, what obstacles were encountered, and any unfinished work.',
+    'Be concise and factual. This summary will be used as context for future runs.',
+    '',
+    'SESSION:',
     sessionText,
-  ].join("\n");
+  ].join('\n');
 
   let sessionId: string;
   try {
-    sessionId = await createSession("session-summarizer", "manager-decision");
+    sessionId = await createSession('session-summarizer', 'manager-decision');
   } catch {
-    err("failed to create summarization session");
+    err('failed to create summarization session');
     return null;
   }
 
   try {
-    await sendPrompt(sessionId, summarizationPrompt, "manager-decision");
+    await sendPrompt(sessionId, summarizationPrompt, 'manager-decision');
     const result = await waitForCompletion(sessionId, 120_000);
     return result;
   } catch (e) {
-    err("summarization LLM call failed:", (e as Error).message);
+    err('summarization LLM call failed:', (e as Error).message);
     return null;
   }
 }

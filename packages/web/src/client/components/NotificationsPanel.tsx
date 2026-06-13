@@ -1,10 +1,10 @@
-import { playDrum, type DrumSound } from "../lib/notifications";
-import { useNotificationStore, NOTIFICATION_SOUNDS } from "../stores/settingsStore";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "./ui/card";
-import { Switch } from "./ui/switch";
-import { Button } from "./ui/button";
-import { Separator } from "./ui/separator";
-import { Volume2, VolumeX, Play } from "lucide-react";
+import { Play, Volume2, VolumeX } from 'lucide-react';
+import { type DrumSound, playDrum } from '../lib/notifications';
+import { NOTIFICATION_SOUNDS, useNotificationStore } from '../stores/settingsStore';
+import { Button } from './ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Separator } from './ui/separator';
+import { Switch } from './ui/switch';
 
 export default function NotificationsPanel() {
   const soundEnabled = useNotificationStore((s) => s.soundEnabled);
@@ -24,7 +24,8 @@ export default function NotificationsPanel() {
           <CardTitle>Notifications</CardTitle>
         </div>
         <CardDescription>
-          Control notification sound playback. Preferences are stored locally in your browser and persist across page reloads.
+          Control notification sound playback. Preferences are stored locally in your browser and
+          persist across page reloads.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -33,7 +34,9 @@ export default function NotificationsPanel() {
           <div className="flex flex-col gap-0.5">
             <span className="text-sm font-medium">Play notification sounds</span>
             <span className="text-xs text-text-dim">
-              {soundEnabled ? "Sounds will play on run events" : "All notification sounds are muted"}
+              {soundEnabled
+                ? 'Sounds will play on run events'
+                : 'All notification sounds are muted'}
             </span>
           </div>
           <Switch

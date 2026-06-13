@@ -113,35 +113,28 @@
   --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
-  --text-headline-lg:
-    24px;
+  --text-headline-lg: 24px;
   --text-headline-lg--line-height: 32px;
   --text-headline-lg--letter-spacing: -0.02em;
 
-  --text-headline-md:
-    20px;
+  --text-headline-md: 20px;
   --text-headline-md--line-height: 28px;
 
-  --text-body-lg:
-    16px;
+  --text-body-lg: 16px;
   --text-body-lg--line-height: 24px;
 
-  --text-body-sm:
-    14px;
+  --text-body-sm: 14px;
   --text-body-sm--line-height: 20px;
 
-  --text-label-md:
-    12px;
+  --text-label-md: 12px;
   --text-label-md--line-height: 16px;
   --text-label-md--letter-spacing: 0.05em;
 
-  --text-code-block:
-    13px;
+  --text-code-block: 13px;
   --text-code-block--line-height: 20px;
 
   /* ── Caption / meta text (for descriptions, timestamps, tiny labels) ── */
-  --text-caption-xs:
-    11px;
+  --text-caption-xs: 11px;
   --text-caption-xs--line-height: 16px;
 
   /* ── Rounded ── */
@@ -323,17 +316,17 @@
 @media (max-width: 480px) {
   .settings-mobile-full-width input,
   .settings-mobile-full-width textarea {
-    width: 100% !important;
+    width: 100%;
   }
 
   .settings-header-mobile {
-    flex-direction: column !important;
-    align-items: flex-start !important;
+    flex-direction: column;
+    align-items: flex-start;
     gap: 0.5rem;
   }
 
   .settings-header-mobile h1 {
-    font-size: 1.25rem !important;
+    font-size: 1.25rem;
   }
 }
 
@@ -350,7 +343,13 @@
 }
 
 @keyframes progress-indeterminate {
-  0% { transform: translateX(-100%); }
-  50% { transform: translateX(150%); }
-  100% { transform: translateX(400%); }
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(150%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
 }

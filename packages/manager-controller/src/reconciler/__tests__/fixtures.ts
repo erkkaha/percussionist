@@ -1,12 +1,12 @@
-import type { Task, Project, TaskPhase, Run } from "@percussionist/api";
+import type { Project, Run, Task, TaskPhase } from '@percussionist/api';
 
 export function makeTask(
   name: string,
   projectRef: string,
   overrides?: {
-    type?: "PLAN" | "BUILD";
+    type?: 'PLAN' | 'BUILD';
     phase?: TaskPhase;
-    priority?: "high" | "medium" | "low";
+    priority?: 'high' | 'medium' | 'low';
     predecessorRef?: string;
     parentTaskRef?: string;
     blocked?: boolean;
@@ -21,20 +21,20 @@ export function makeTask(
     noStatus?: boolean;
   },
 ): Task {
-  const now = "2026-05-29T00:00:00.000Z";
+  const _now = '2026-05-29T00:00:00.000Z';
 
   if (overrides?.noStatus) {
     return {
-      apiVersion: "percussionist.dev/v1alpha1",
-      kind: "Task",
-      metadata: { name, namespace: "percussionist", uid: `uid-${name}` },
+      apiVersion: 'percussionist.dev/v1alpha1',
+      kind: 'Task',
+      metadata: { name, namespace: 'percussionist', uid: `uid-${name}` },
       spec: {
         projectRef,
-        type: overrides?.type ?? "BUILD",
+        type: overrides?.type ?? 'BUILD',
         title: name,
-        description: "",
-        agent: "builder",
-        priority: overrides?.priority ?? "medium",
+        description: '',
+        agent: 'builder',
+        priority: overrides?.priority ?? 'medium',
         ...(overrides?.predecessorRef ? { predecessorRef: overrides.predecessorRef } : {}),
         ...(overrides?.parentTaskRef ? { parentTaskRef: overrides.parentTaskRef } : {}),
       },
@@ -42,30 +42,38 @@ export function makeTask(
   }
 
   return {
-    apiVersion: "percussionist.dev/v1alpha1",
-    kind: "Task",
-    metadata: { name, namespace: "percussionist", uid: `uid-${name}` },
+    apiVersion: 'percussionist.dev/v1alpha1',
+    kind: 'Task',
+    metadata: { name, namespace: 'percussionist', uid: `uid-${name}` },
     spec: {
       projectRef,
-      type: overrides?.type ?? "BUILD",
+      type: overrides?.type ?? 'BUILD',
       title: name,
-      description: "",
-      agent: "builder",
-      priority: overrides?.priority ?? "medium",
+      description: '',
+      agent: 'builder',
+      priority: overrides?.priority ?? 'medium',
       ...(overrides?.predecessorRef ? { predecessorRef: overrides.predecessorRef } : {}),
       ...(overrides?.parentTaskRef ? { parentTaskRef: overrides.parentTaskRef } : {}),
     },
     status: {
-      phase: overrides?.phase ?? "pending",
+      phase: overrides?.phase ?? 'pending',
       blocked: overrides?.blocked ?? false,
       ...(overrides?.retryAfter ? { retryAfter: overrides.retryAfter } : {}),
-      ...(overrides?.retryCount !== undefined ? { worker: { retryCount: overrides.retryCount } } : {}),
-      ...(overrides?.aiReworkCount !== undefined ? { worker: { aiReworkCount: overrides.aiReworkCount } } : {}),
+      ...(overrides?.retryCount !== undefined
+        ? { worker: { retryCount: overrides.retryCount } }
+        : {}),
+      ...(overrides?.aiReworkCount !== undefined
+        ? { worker: { aiReworkCount: overrides.aiReworkCount } }
+        : {}),
       worker: {
         ...(overrides?.retryCount !== undefined ? { retryCount: overrides.retryCount } : {}),
-        ...(overrides?.aiReworkCount !== undefined ? { aiReworkCount: overrides.aiReworkCount } : {}),
+        ...(overrides?.aiReworkCount !== undefined
+          ? { aiReworkCount: overrides.aiReworkCount }
+          : {}),
         ...(overrides?.runName ? { runName: overrides.runName } : {}),
-        ...(overrides?.status ? { status: overrides.status as "Running" | "Succeeded" | "Failed" } : {}),
+        ...(overrides?.status
+          ? { status: overrides.status as 'Running' | 'Succeeded' | 'Failed' }
+          : {}),
         ...(overrides?.mergedAt ? { mergedAt: overrides.mergedAt } : {}),
         ...(overrides?.gitBranch ? { gitBranch: overrides.gitBranch } : {}),
       },
@@ -97,14 +105,16 @@ export function makeProject(
   },
 ): Project {
   return {
-    apiVersion: "percussionist.dev/v1alpha1",
-    kind: "Project",
-    metadata: { name, namespace: "percussionist", uid: `uid-${name}` },
+    apiVersion: 'percussionist.dev/v1alpha1',
+    kind: 'Project',
+    metadata: { name, namespace: 'percussionist', uid: `uid-${name}` },
     spec: {
       maxParallel: overrides?.maxParallel ?? 2,
       agents: overrides?.agents,
       ...(overrides?.source ? { source: overrides.source } : {}),
-      ...(overrides?.featureBranchingEnabled !== undefined ? { featureBranchingEnabled: overrides.featureBranchingEnabled } : {}),
+      ...(overrides?.featureBranchingEnabled !== undefined
+        ? { featureBranchingEnabled: overrides.featureBranchingEnabled }
+        : {}),
       ...(overrides?.retryPolicy ? { retryPolicy: overrides.retryPolicy } : {}),
       ...(overrides?.reviewPolicy ? { reviewPolicy: overrides.reviewPolicy } : {}),
       ...(overrides?.embedding ? { embedding: overrides.embedding } : {}),
@@ -115,7 +125,14 @@ export function makeProject(
 export function makeRun(
   name: string,
   overrides?: {
-    phase?: "Pending" | "Initializing" | "Running" | "WaitingForInput" | "Succeeded" | "Failed" | "Cancelled";
+    phase?:
+      | 'Pending'
+      | 'Initializing'
+      | 'Running'
+      | 'WaitingForInput'
+      | 'Succeeded'
+      | 'Failed'
+      | 'Cancelled';
     lastEventAt?: string;
     startedAt?: string;
     completedAt?: string;
@@ -124,14 +141,14 @@ export function makeRun(
   },
 ): Run {
   return {
-    apiVersion: "percussionist.dev/v1alpha1",
-    kind: "Run",
-    metadata: { name, namespace: "percussionist" },
+    apiVersion: 'percussionist.dev/v1alpha1',
+    kind: 'Run',
+    metadata: { name, namespace: 'percussionist' },
     spec: {
-      project: "test-project",
-      task: "test task",
+      project: 'test-project',
+      task: 'test task',
       interactive: false,
-      agent: "builder",
+      agent: 'builder',
     },
     status: {
       phase: overrides?.phase,

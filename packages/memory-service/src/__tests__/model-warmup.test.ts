@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from 'bun:test';
 
 // ---------------------------------------------------------------------------
 // Helpers — override globalThis.fetch to intercept Ollama API calls.
@@ -25,17 +25,18 @@ function withFetchMock(handler: FetchHandler): () => void {
 // ---------------------------------------------------------------------------
 // Test: model already present — no pull needed
 
-describe("warmupModel — model already present", () => {
-  it("skips pull when model exists in tags", async () => {
-    const restore = withFetchMock(() =>
-      new Response(JSON.stringify({ models: [{ name: "nomic-embed-text" }] }), {
-        headers: { "Content-Type": "application/json" },
-      }),
+describe('warmupModel — model already present', () => {
+  it('skips pull when model exists in tags', async () => {
+    const restore = withFetchMock(
+      () =>
+        new Response(JSON.stringify({ models: [{ name: 'nomic-embed-text' }] }), {
+          headers: { 'Content-Type': 'application/json' },
+        }),
     );
 
     // Reset state so previous tests don't leak.
-    const mod = await import("../model-warmup.js");
-    if ("resetState" in mod) (mod as any).resetState();
+    const mod = await import('../model-warmup.js');
+    if ('resetState' in mod) (mod as any).resetState();
 
     try {
       await mod.warmupModel();
@@ -49,36 +50,35 @@ describe("warmupModel — model already present", () => {
 // ---------------------------------------------------------------------------
 // Test: model missing then pull succeeds
 
-describe("warmupModel — pull succeeds", () => {
-  it("pulls the model when absent and reports ready", async () => {
+describe('warmupModel — pull succeeds', () => {
+  it('pulls the model when absent and reports ready', async () => {
     let callCount = 0;
     const restore = withFetchMock((req) => {
       const url = req.url;
-      if (url.includes("/api/tags")) {
+      if (url.includes('/api/tags')) {
         callCount++;
         if (callCount === 1) {
           return new Response(JSON.stringify({ models: [] }), {
-            headers: { "Content-Type": "application/json" },
+            headers: { 'Content-Type': 'application/json' },
           });
         }
-        return new Response(
-          JSON.stringify({ models: [{ name: "nomic-embed-text" }] }),
-          { headers: { "Content-Type": "application/json" } },
-        );
+        return new Response(JSON.stringify({ models: [{ name: 'nomic-embed-text' }] }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
-      if (url.includes("/api/pull")) {
+      if (url.includes('/api/pull')) {
         const stream = new Blob([
           '{"status":"pulling manifest"}\n',
           '{"status":"downloading"}\n',
           '{"status":"success"}\n',
         ]).stream() as unknown as ReadableStream<Uint8Array>;
-        return new Response(stream, { headers: { "Content-Type": "application/json" } });
+        return new Response(stream, { headers: { 'Content-Type': 'application/json' } });
       }
-      return new Response("not found", { status: 404 });
+      return new Response('not found', { status: 404 });
     });
 
-    const mod = await import("../model-warmup.js");
-    if ("resetState" in mod) (mod as any).resetState();
+    const mod = await import('../model-warmup.js');
+    if ('resetState' in mod) (mod as any).resetState();
 
     try {
       await mod.warmupModel();
@@ -92,34 +92,34 @@ describe("warmupModel — pull succeeds", () => {
 // ---------------------------------------------------------------------------
 // Test: pull failure / timeout
 
-describe("warmupModel — pull fails", () => {
-  it("reports not-ready when model cannot be pulled", async () => {
+describe('warmupModel — pull fails', () => {
+  it('reports not-ready when model cannot be pulled', async () => {
     const restore = withFetchMock((req) => {
-      if (req.url.includes("/api/tags")) {
+      if (req.url.includes('/api/tags')) {
         return new Response(JSON.stringify({ models: [] }), {
-          headers: { "Content-Type": "application/json" },
+          headers: { 'Content-Type': 'application/json' },
         });
       }
-      if (req.url.includes("/api/pull")) {
-        return new Response(
-          JSON.stringify({ error: "model not found on registry" }),
-          { status: 404, headers: { "Content-Type": "application/json" } },
-        );
+      if (req.url.includes('/api/pull')) {
+        return new Response(JSON.stringify({ error: 'model not found on registry' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
-      return new Response("not found", { status: 404 });
+      return new Response('not found', { status: 404 });
     });
 
-    process.env.WARMUP_MAX_RETRIES = "1";
-    const mod = await import("../model-warmup.js");
-    if ("resetState" in mod) (mod as any).resetState();
+    process.env.WARMUP_MAX_RETRIES = '1';
+    const mod = await import('../model-warmup.js');
+    if ('resetState' in mod) (mod as any).resetState();
 
     try {
       await mod.warmupModel();
       expect(mod.isModelReady()).toBe(false);
       const err = mod.getModelError();
       expect(err).toBeDefined();
-      expect(typeof err).toBe("string");
-      expect(err!.length).toBeGreaterThan(0);
+      expect(typeof err).toBe('string');
+      expect(err?.length).toBeGreaterThan(0);
     } finally {
       delete process.env.WARMUP_MAX_RETRIES;
       restore();
@@ -130,31 +130,30 @@ describe("warmupModel — pull fails", () => {
 // ---------------------------------------------------------------------------
 // Test: transient Ollama unavailable then retry success
 
-describe("warmupModel — transient failure then success", () => {
-  it("retries when Ollama is temporarily unreachable", async () => {
+describe('warmupModel — transient failure then success', () => {
+  it('retries when Ollama is temporarily unreachable', async () => {
     let tagCallCount = 0;
     const restore = withFetchMock((req) => {
-      if (req.url.includes("/api/tags")) {
+      if (req.url.includes('/api/tags')) {
         tagCallCount++;
         // First call fails, second succeeds.
         if (tagCallCount === 1) {
-          return new Response("Service Unavailable", { status: 503 });
+          return new Response('Service Unavailable', { status: 503 });
         }
-        return new Response(
-          JSON.stringify({ models: [{ name: "nomic-embed-text" }] }),
-          { headers: { "Content-Type": "application/json" } },
-        );
+        return new Response(JSON.stringify({ models: [{ name: 'nomic-embed-text' }] }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
-      if (req.url.includes("/api/pull")) {
+      if (req.url.includes('/api/pull')) {
         // Should not reach pull — model appears after retries.
-        return new Response("unexpected", { status: 500 });
+        return new Response('unexpected', { status: 500 });
       }
-      return new Response("not found", { status: 404 });
+      return new Response('not found', { status: 404 });
     });
 
-    process.env.WARMUP_MAX_RETRIES = "1";
-    const mod = await import("../model-warmup.js");
-    if ("resetState" in mod) (mod as any).resetState();
+    process.env.WARMUP_MAX_RETRIES = '1';
+    const mod = await import('../model-warmup.js');
+    if ('resetState' in mod) (mod as any).resetState();
 
     try {
       await mod.warmupModel();
@@ -169,17 +168,17 @@ describe("warmupModel — transient failure then success", () => {
 // ---------------------------------------------------------------------------
 // Test: WARMUP_ENABLED=false skips warmup
 
-describe("warmupModel — disabled", () => {
-  it("skips all checks when WARMUP_ENABLED=false", async () => {
+describe('warmupModel — disabled', () => {
+  it('skips all checks when WARMUP_ENABLED=false', async () => {
     let fetchCalled = false;
     const restore = withFetchMock(() => {
       fetchCalled = true;
-      return new Response("unexpected");
+      return new Response('unexpected');
     });
 
-    process.env.WARMUP_ENABLED = "false";
-    const mod = await import("../model-warmup.js");
-    if ("resetState" in mod) (mod as any).resetState();
+    process.env.WARMUP_ENABLED = 'false';
+    const mod = await import('../model-warmup.js');
+    if ('resetState' in mod) (mod as any).resetState();
 
     try {
       await mod.warmupModel();
@@ -195,10 +194,10 @@ describe("warmupModel — disabled", () => {
 // ---------------------------------------------------------------------------
 // Test: isModelReady / getModelError state accessors
 
-describe("state accessors", () => {
-  it("returns correct initial state before warmup runs", async () => {
-    const mod = await import("../model-warmup.js");
-    if ("resetState" in mod) (mod as any).resetState();
+describe('state accessors', () => {
+  it('returns correct initial state before warmup runs', async () => {
+    const mod = await import('../model-warmup.js');
+    if ('resetState' in mod) (mod as any).resetState();
     expect(mod.isModelReady()).toBe(false); // null coerces to false
     expect(mod.getModelError()).toBeNull();
   });

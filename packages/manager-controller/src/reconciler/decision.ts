@@ -1,13 +1,13 @@
 // Pure decision engine — no side effects, no Kubernetes calls, no clock reads.
 
-import type { Task, TaskPhase, Project, Run } from "@percussionist/api";
-import type { ResolvedFlow } from "./flow.js";
-import type { ReconcileEffect } from "./effects.js";
-import { isValidTransition } from "./transitions.js";
-import { isActivePhase } from "./scheduler.js";
-import { workerRunName, auxiliaryRunName } from "../worker-builder.js";
-import { getReviewVerdict, getConsumedAnnotationKeys } from "./observations.js";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from 'node:crypto';
+import type { Project, Run, Task, TaskPhase } from '@percussionist/api';
+import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../branch-resolver.js';
+import { auxiliaryRunName, workerRunName } from '../worker-builder.js';
+import type { ReconcileEffect } from './effects.js';
+import type { ResolvedFlow } from './flow.js';
+import { getConsumedAnnotationKeys, getReviewVerdict } from './observations.js';
+import { isValidTransition } from './transitions.js';
 
 function summarizeEffect(input: ReconcileInput, run: Run): ReconcileEffect | undefined {
   // ConfigMap summary generation is independent of vector-memory storage.
@@ -16,7 +16,7 @@ function summarizeEffect(input: ReconcileInput, run: Run): ReconcileEffect | und
   const sessionID = run.status?.sessionID;
   if (!sessionID) return undefined;
   return {
-    type: "SummarizeSession",
+    type: 'SummarizeSession',
     project: input.project.metadata.name,
     runName: run.metadata.name,
     sessionID,
@@ -76,12 +76,12 @@ export interface ReconcileDecision {
 }
 
 export function decide(input: ReconcileInput): ReconcileDecision {
-  const { task, flow, capacity, now } = input;
+  const { task, now } = input;
   const taskName = task.metadata.name;
-  const fromPhase = (task.status?.phase ?? "pending") as TaskPhase;
+  const fromPhase = (task.status?.phase ?? 'pending') as TaskPhase;
 
   // Terminal phases: no decision.
-  if (fromPhase === "done" || fromPhase === "idea") {
+  if (fromPhase === 'done' || fromPhase === 'idea') {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
@@ -93,46 +93,46 @@ export function decide(input: ReconcileInput): ReconcileDecision {
   let decision: ReconcileDecision;
 
   switch (fromPhase) {
-    case "pending":
+    case 'pending':
       decision = decidePending(input);
       break;
-    case "scheduled":
+    case 'scheduled':
       decision = decideScheduled(input);
       break;
-    case "initializing":
+    case 'initializing':
       decision = decideInitializing(input);
       break;
-    case "running":
+    case 'running':
       decision = decideRunning(input);
       break;
-    case "waiting-for-input":
+    case 'waiting-for-input':
       decision = decideWaitingForInput(input);
       break;
-    case "succeeded":
+    case 'succeeded':
       decision = decideSucceeded(input);
       break;
-    case "reviewing":
+    case 'reviewing':
       decision = decideReviewing(input);
       break;
-    case "awaiting-human":
+    case 'awaiting-human':
       decision = decideAwaitingHuman(input);
       break;
-    case "awaiting-merge":
+    case 'awaiting-merge':
       decision = decideAwaitingMerge(input);
       break;
-    case "rework-requested":
+    case 'rework-requested':
       decision = decideReworkRequested(input);
       break;
-    case "generating-builds":
+    case 'generating-builds':
       decision = decideGeneratingBuilds(input);
       break;
-    case "awaiting-children":
+    case 'awaiting-children':
       decision = decideAwaitingChildren(input);
       break;
-    case "awaiting-feature-merge":
+    case 'awaiting-feature-merge':
       decision = decideAwaitingFeatureMerge(input);
       break;
-    case "failed":
+    case 'failed':
       decision = decideFailed(input);
       break;
     default:
@@ -147,7 +147,7 @@ export function decide(input: ReconcileInput): ReconcileDecision {
       task: taskName,
       fromPhase,
       toPhase: decision.toPhase,
-      reason: "InvalidTransitionBlocked",
+      reason: 'InvalidTransitionBlocked',
       message: `Decision engine proposed illegal transition: ${fromPhase} → ${decision.toPhase}`,
       effects: decision.effects.map((e) => e.type),
       at: now,
@@ -188,7 +188,7 @@ function makeEvent(
 function decidePending(input: ReconcileInput): ReconcileDecision {
   const { task, project, allTasks, capacity, now } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "pending" as TaskPhase;
+  const fromPhase = 'pending' as TaskPhase;
 
   if (capacity.activeCount >= capacity.maxParallel) {
     return { taskName, fromPhase, effects: [], events: [] };
@@ -197,7 +197,7 @@ function decidePending(input: ReconcileInput): ReconcileDecision {
   // Predecessor check.
   if (task.spec.predecessorRef) {
     const pred = allTasks.find((t) => t.metadata.name === task.spec.predecessorRef);
-    if (!pred || pred.status?.phase !== "done") {
+    if (pred?.status?.phase !== 'done') {
       return { taskName, fromPhase, effects: [], events: [] };
     }
     if (project.spec.featureBranchingEnabled && !pred.status?.worker?.mergedAt) {
@@ -217,71 +217,87 @@ function decidePending(input: ReconcileInput): ReconcileDecision {
   return {
     taskName,
     fromPhase,
-    toPhase: "scheduled",
+    toPhase: 'scheduled',
     effects: [],
-    events: [makeEvent(input, fromPhase, "scheduled", "TaskScheduled")],
+    events: [makeEvent(input, fromPhase, 'scheduled', 'TaskScheduled')],
   };
 }
 
 function decideScheduled(input: ReconcileInput): ReconcileDecision {
-  const { task, project, now } = input;
+  const { task, project, now, allTasks } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "scheduled" as TaskPhase;
+  const fromPhase = 'scheduled' as TaskPhase;
   const retryCount = task.status?.worker?.retryCount ?? 0;
+  const aiReworkCount = task.status?.worker?.aiReworkCount ?? 0;
   const reworkFeedback = task.status?.worker?.reviewFeedback;
 
   // Compute deterministic run name.
-  const runName = workerRunName(project.metadata.name, taskName, retryCount);
+  const runName = workerRunName(project.metadata.name, taskName, retryCount, aiReworkCount);
+
+  // Resolve feature-branch metadata so the diff view and workspace-init
+  // have correct refs without relying on fallback to the Run spec.
+  const gitBranch = resolveTaskBranch(task, project, allTasks);
+  const parentBranch = resolveParentBranch(task, project, allTasks);
+  const mergeIntoBranch = resolveMergeBranch(task, project, allTasks);
 
   return {
     taskName,
     fromPhase,
-    toPhase: "initializing",
+    toPhase: 'initializing',
     statusPatch: {
       worker: {
         runName,
-        status: "Running",
+        status: 'Running',
         startedAt: now,
         retryCount,
         aiReworkCount: task.status?.worker?.aiReworkCount ?? 0,
+        gitBranch,
+        parentBranch,
+        mergeIntoBranch,
       },
     },
-    effects: [
-      { type: "ScheduleRun", runName, retryCount, reworkFeedback },
-    ],
-    events: [makeEvent(input, fromPhase, "initializing", "WorkerRunCreating")],
+    effects: [{ type: 'ScheduleRun', runName, retryCount, reworkFeedback }],
+    events: [makeEvent(input, fromPhase, 'initializing', 'WorkerRunCreating')],
   };
 }
 
 function decideInitializing(input: ReconcileInput): ReconcileDecision {
-  const { observed, now } = input;
+  const { now } = input;
   const taskName = input.task.metadata.name;
-  const fromPhase = "initializing" as TaskPhase;
+  const fromPhase = 'initializing' as TaskPhase;
   const run = input.observed.worker;
 
   if (!run) {
     return {
       taskName,
       fromPhase,
-      toPhase: "failed",
-      statusPatch: { worker: { status: "Failed" } },
+      toPhase: 'failed',
+      statusPatch: { worker: { status: 'Failed' } },
       effects: [],
-      events: [makeEvent(input, fromPhase, "failed", "WorkerRunMissing", "Run disappeared during initialization")],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'failed',
+          'WorkerRunMissing',
+          'Run disappeared during initialization',
+        ),
+      ],
     };
   }
 
   const runPhase = run.status?.phase;
-  if (runPhase === "Running" || runPhase === "WaitingForInput") {
+  if (runPhase === 'Running' || runPhase === 'WaitingForInput') {
     return {
       taskName,
       fromPhase,
-      toPhase: "running",
+      toPhase: 'running',
       effects: [],
-      events: [makeEvent(input, fromPhase, "running", "WorkerRunRunning")],
+      events: [makeEvent(input, fromPhase, 'running', 'WorkerRunRunning')],
     };
   }
 
-  if (runPhase === "Failed") {
+  if (runPhase === 'Failed') {
     const effects: ReconcileEffect[] = [];
     const summary = summarizeEffect(input, run);
     if (summary) effects.push(summary);
@@ -292,24 +308,40 @@ function decideInitializing(input: ReconcileInput): ReconcileDecision {
     return {
       taskName,
       fromPhase,
-      toPhase: "failed",
-      statusPatch: { worker: { status: "Failed", completedAt: now }, lastFailureDuration },
+      toPhase: 'failed',
+      statusPatch: { worker: { status: 'Failed', completedAt: now }, lastFailureDuration },
       effects,
-      events: [makeEvent(input, fromPhase, "failed", "WorkerRunFailed", "Run failed during initialization")],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'failed',
+          'WorkerRunFailed',
+          'Run failed during initialization',
+        ),
+      ],
     };
   }
 
-  if (runPhase === "Succeeded") {
+  if (runPhase === 'Succeeded') {
     const effects: ReconcileEffect[] = [];
     const summary = summarizeEffect(input, run);
     if (summary) effects.push(summary);
     return {
       taskName,
       fromPhase,
-      toPhase: "succeeded",
-      statusPatch: { worker: { status: "Succeeded", completedAt: now } },
+      toPhase: 'succeeded',
+      statusPatch: { worker: { status: 'Succeeded', completedAt: now } },
       effects,
-      events: [makeEvent(input, fromPhase, "succeeded", "WorkerRunSucceeded", "Run completed before running transition")],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'succeeded',
+          'WorkerRunSucceeded',
+          'Run completed before running transition',
+        ),
+      ],
     };
   }
 
@@ -317,39 +349,39 @@ function decideInitializing(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideRunning(input: ReconcileInput): ReconcileDecision {
-  const { observed, task, flow, now } = input;
+  const { task, flow, now } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "running" as TaskPhase;
+  const fromPhase = 'running' as TaskPhase;
   const run = input.observed.worker;
 
   if (!run) {
     return {
       taskName,
       fromPhase,
-      toPhase: "failed",
-      statusPatch: { worker: { status: "Failed" } },
+      toPhase: 'failed',
+      statusPatch: { worker: { status: 'Failed' } },
       effects: [],
-      events: [makeEvent(input, fromPhase, "failed", "WorkerRunMissing", "Run pod disappeared")],
+      events: [makeEvent(input, fromPhase, 'failed', 'WorkerRunMissing', 'Run pod disappeared')],
     };
   }
 
   const runPhase = run.status?.phase;
 
-  if (runPhase === "Succeeded") {
+  if (runPhase === 'Succeeded') {
     const effects: ReconcileEffect[] = [];
     const summary = summarizeEffect(input, run);
     if (summary) effects.push(summary);
     return {
       taskName,
       fromPhase,
-      toPhase: "succeeded",
-      statusPatch: { worker: { status: "Succeeded", completedAt: now } },
+      toPhase: 'succeeded',
+      statusPatch: { worker: { status: 'Succeeded', completedAt: now } },
       effects,
-      events: [makeEvent(input, fromPhase, "succeeded", "WorkerRunSucceeded")],
+      events: [makeEvent(input, fromPhase, 'succeeded', 'WorkerRunSucceeded')],
     };
   }
 
-  if (runPhase === "Failed") {
+  if (runPhase === 'Failed') {
     const effects: ReconcileEffect[] = [];
     const summary = summarizeEffect(input, run);
     if (summary) effects.push(summary);
@@ -360,34 +392,42 @@ function decideRunning(input: ReconcileInput): ReconcileDecision {
     return {
       taskName,
       fromPhase,
-      toPhase: "failed",
-      statusPatch: { worker: { status: "Failed", completedAt: now }, lastFailureDuration },
+      toPhase: 'failed',
+      statusPatch: { worker: { status: 'Failed', completedAt: now }, lastFailureDuration },
       effects,
-      events: [makeEvent(input, fromPhase, "failed", "WorkerRunFailed")],
+      events: [makeEvent(input, fromPhase, 'failed', 'WorkerRunFailed')],
     };
   }
 
-  if (runPhase === "WaitingForInput") {
-    if (task.spec.type !== "PLAN") {
+  if (runPhase === 'WaitingForInput') {
+    if (task.spec.type !== 'PLAN') {
       return {
         taskName,
         fromPhase,
-        toPhase: "failed",
-        statusPatch: { worker: { status: "Failed" } },
+        toPhase: 'failed',
+        statusPatch: { worker: { status: 'Failed' } },
         effects: [],
-        events: [makeEvent(input, fromPhase, "failed", "BuildCannotWait", "BUILD tasks cannot wait for input")],
+        events: [
+          makeEvent(
+            input,
+            fromPhase,
+            'failed',
+            'BuildCannotWait',
+            'BUILD tasks cannot wait for input',
+          ),
+        ],
       };
     }
     return {
       taskName,
       fromPhase,
-      toPhase: "waiting-for-input",
+      toPhase: 'waiting-for-input',
       effects: [],
-      events: [makeEvent(input, fromPhase, "waiting-for-input", "WaitingForInput")],
+      events: [makeEvent(input, fromPhase, 'waiting-for-input', 'WaitingForInput')],
     };
   }
 
-  if (runPhase === "Running") {
+  if (runPhase === 'Running') {
     const staleThresholdMs = flow.timeouts.runningStaleSeconds * 1000;
     const lastEvent = run.status?.lastEventAt;
     if (lastEvent) {
@@ -396,10 +436,18 @@ function decideRunning(input: ReconcileInput): ReconcileDecision {
         return {
           taskName,
           fromPhase,
-          toPhase: "failed",
-          statusPatch: { worker: { status: "Failed" } },
+          toPhase: 'failed',
+          statusPatch: { worker: { status: 'Failed' } },
           effects: [],
-          events: [makeEvent(input, fromPhase, "failed", "WorkerRunStale", `No activity for ${flow.timeouts.runningStaleSeconds}s`)],
+          events: [
+            makeEvent(
+              input,
+              fromPhase,
+              'failed',
+              'WorkerRunStale',
+              `No activity for ${flow.timeouts.runningStaleSeconds}s`,
+            ),
+          ],
         };
       }
     }
@@ -409,21 +457,21 @@ function decideRunning(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideWaitingForInput(input: ReconcileInput): ReconcileDecision {
-  const { task, manualActions, observed, now } = input;
+  const { task, manualActions, observed } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "waiting-for-input" as TaskPhase;
+  const fromPhase = 'waiting-for-input' as TaskPhase;
 
   if (!manualActions.answer) {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
-  if (observed.worker?.status?.phase === "Running") {
+  if (observed.worker?.status?.phase === 'Running') {
     return {
       taskName,
       fromPhase,
-      toPhase: "running",
-      effects: [{ type: "ClearTaskAnnotations", keys: ["percussionist.dev/action-answer"] }],
-      events: [makeEvent(input, fromPhase, "running", "InputAnswered")],
+      toPhase: 'running',
+      effects: [{ type: 'ClearTaskAnnotations', keys: ['percussionist.dev/action-answer'] }],
+      events: [makeEvent(input, fromPhase, 'running', 'InputAnswered')],
     };
   }
 
@@ -433,19 +481,19 @@ function decideWaitingForInput(input: ReconcileInput): ReconcileDecision {
 function decideSucceeded(input: ReconcileInput): ReconcileDecision {
   const { task, flow, now } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "succeeded" as TaskPhase;
+  const fromPhase = 'succeeded' as TaskPhase;
 
   // For BUILD tasks, check flow.build.onSuccess.
-  if (task.spec.type === "BUILD") {
-    if (flow.build.onSuccess === "done") {
+  if (task.spec.type === 'BUILD') {
+    if (flow.build.onSuccess === 'done') {
       const buildRunName = task.status?.worker?.runName;
       return {
         taskName,
         fromPhase,
-        toPhase: "done",
-        statusPatch: { worker: { status: "Succeeded", completedAt: now } },
-        effects: buildRunName ? [{ type: "CleanupWorktree", runName: buildRunName }] : [],
-        events: [makeEvent(input, fromPhase, "done", "BuildSucceededAutoDone")],
+        toPhase: 'done',
+        statusPatch: { worker: { status: 'Succeeded', completedAt: now } },
+        effects: buildRunName ? [{ type: 'CleanupWorktree', runName: buildRunName }] : [],
+        events: [makeEvent(input, fromPhase, 'done', 'BuildSucceededAutoDone')],
       };
     }
     // human-review or ai-review: go to reviewing with a review run.
@@ -456,39 +504,52 @@ function decideSucceeded(input: ReconcileInput): ReconcileDecision {
         return {
           taskName,
           fromPhase,
-          toPhase: "awaiting-human",
+          toPhase: 'awaiting-human',
           effects: [],
-          events: [makeEvent(input, fromPhase, "awaiting-human", "NoWorkerRunToReview")],
+          events: [makeEvent(input, fromPhase, 'awaiting-human', 'NoWorkerRunToReview')],
         };
       }
       const retryCount = task.status?.worker?.retryCount ?? 0;
       const aiReworkCount = task.status?.worker?.aiReworkCount ?? 0;
-      const reviewSeq = String(retryCount + aiReworkCount);
-      const reviewRunName = auxiliaryRunName(input.project.metadata.name, "review", taskName, reviewSeq);
-      const gitBranch = task.status?.worker?.gitBranch;
+      // Use both counters in suffix to avoid collisions (e.g., 2+1 vs 1+2 both equal "3")
+      const reviewSuffix = createHash('sha256')
+        .update(`${input.project.metadata.name}:${taskName}:review:${retryCount}:${aiReworkCount}`)
+        .digest('hex')
+        .slice(0, 8);
+      const reviewRunName = auxiliaryRunName(
+        input.project.metadata.name,
+        'review',
+        taskName,
+        reviewSuffix,
+      );
 
       return {
         taskName,
         fromPhase,
-        toPhase: "reviewing",
+        toPhase: 'reviewing',
         statusPatch: {
           worker: {
             reviewRunName,
-            status: "Running",
+            status: 'Running',
           },
         },
         effects: [
-          { type: "ScheduleReviewRun", reviewRunName, succeededRunName: workerRunName, reviewAgent: flow.review.agent },
+          {
+            type: 'ScheduleReviewRun',
+            reviewRunName,
+            succeededRunName: workerRunName,
+            reviewAgent: flow.review.agent,
+          },
         ],
-        events: [makeEvent(input, fromPhase, "reviewing", "ReviewRunCreating")],
+        events: [makeEvent(input, fromPhase, 'reviewing', 'ReviewRunCreating')],
       };
     }
     return {
       taskName,
       fromPhase,
-      toPhase: "awaiting-human",
+      toPhase: 'awaiting-human',
       effects: [],
-      events: [makeEvent(input, fromPhase, "awaiting-human", "AwaitingHumanReview")],
+      events: [makeEvent(input, fromPhase, 'awaiting-human', 'AwaitingHumanReview')],
     };
   }
 
@@ -496,25 +557,33 @@ function decideSucceeded(input: ReconcileInput): ReconcileDecision {
   return {
     taskName,
     fromPhase,
-    toPhase: "awaiting-human",
+    toPhase: 'awaiting-human',
     effects: [],
-    events: [makeEvent(input, fromPhase, "awaiting-human", "PlanAwaitingApproval")],
+    events: [makeEvent(input, fromPhase, 'awaiting-human', 'PlanAwaitingApproval')],
   };
 }
 
 function decideReviewing(input: ReconcileInput): ReconcileDecision {
   const { task, flow, observed, now } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "reviewing" as TaskPhase;
+  const fromPhase = 'reviewing' as TaskPhase;
   const reviewRunName = task.status?.worker?.reviewRunName;
 
   if (!reviewRunName) {
     return {
       taskName,
       fromPhase,
-      toPhase: "awaiting-human",
+      toPhase: 'awaiting-human',
       effects: [],
-      events: [makeEvent(input, fromPhase, "awaiting-human", "NoReviewRun", "Falling back to human review")],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'awaiting-human',
+          'NoReviewRun',
+          'Falling back to human review',
+        ),
+      ],
     };
   }
 
@@ -525,18 +594,18 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
-  if (reviewRun.status?.phase === "Failed") {
+  if (reviewRun.status?.phase === 'Failed') {
     return {
       taskName,
       fromPhase,
-      toPhase: "awaiting-human",
-      effects: [{ type: "DeleteRun", name: reviewRunName, reason: "ReviewRunFailed" }],
-      events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewRunFailed")],
+      toPhase: 'awaiting-human',
+      effects: [],
+      events: [makeEvent(input, fromPhase, 'awaiting-human', 'ReviewRunFailed')],
     };
   }
 
   const staleThresholdMs = flow.timeouts.reviewStaleSeconds * 1000;
-  if (reviewRun.status?.phase === "Running") {
+  if (reviewRun.status?.phase === 'Running') {
     const lastEvent = reviewRun.status?.lastEventAt;
     if (lastEvent) {
       const elapsed = new Date(now).getTime() - new Date(lastEvent).getTime();
@@ -544,67 +613,138 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
         return {
           taskName,
           fromPhase,
-          toPhase: "awaiting-human",
-          effects: [{ type: "DeleteRun", name: reviewRunName, reason: "ReviewRunStale" }],
-          events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewRunStale", `Stale after ${flow.timeouts.reviewStaleSeconds}s`)],
+          toPhase: 'awaiting-human',
+          effects: [],
+          events: [
+            makeEvent(
+              input,
+              fromPhase,
+              'awaiting-human',
+              'ReviewRunStale',
+              `Stale after ${flow.timeouts.reviewStaleSeconds}s`,
+            ),
+          ],
         };
       }
     }
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
-  if (reviewRun.status?.phase !== "Succeeded") {
+  if (reviewRun.status?.phase !== 'Succeeded') {
     return { taskName, fromPhase, effects: [], events: [] };
+  }
+
+  // Build a review feedback string that includes diagnosis.
+  function buildReviewFeedback(diagnosis?: string, feedback?: string): string {
+    let result = diagnosis ?? '';
+    if (feedback) {
+      result += (result ? '\n\n' : '') + feedback;
+    }
+    return result;
   }
 
   // Review succeeded — check for structured verdict annotation.
   const verdict = getReviewVerdict(reviewRun);
   if (verdict) {
-    if (verdict.action === "approve") {
+    if (verdict.action === 'approve') {
+      // Compute attempt number for review record
+      const attempt =
+        (task.status?.worker?.retryCount ?? 0) + (task.status?.worker?.aiReworkCount ?? 0);
+
+      // Append review record to statusPatch.reviews
+      const existingReviews = task.status?.reviews ?? [];
+      const newRecord: {
+        action: string;
+        diagnosis?: string;
+        feedback?: string;
+        reviewRunName: string;
+        reviewedAt: string;
+        attempt?: number;
+      } = {
+        action: 'approve',
+        diagnosis: verdict.diagnosis,
+        feedback: verdict.feedback,
+        reviewRunName: reviewRun.metadata.name,
+        reviewedAt: now,
+        attempt,
+      };
+      const feedback = buildReviewFeedback(verdict.diagnosis, verdict.feedback);
+
       return {
         taskName,
         fromPhase,
-        toPhase: "awaiting-human",
+        toPhase: 'awaiting-human',
         statusPatch: {
           worker: {
             reviewApproved: true,
-            reviewFeedback: verdict.feedback,
+            reviewFeedback: feedback,
           },
+          reviews: [...existingReviews, newRecord],
         },
         effects: [],
-        events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewApproved", verdict.feedback)],
+        events: [makeEvent(input, fromPhase, 'awaiting-human', 'ReviewApproved', feedback)],
       };
     }
-    if (verdict.action === "request_changes") {
+    if (verdict.action === 'request_changes') {
       const aiCount = (task.status?.worker?.aiReworkCount ?? 0) + 1;
       const ceiling = flow.review.maxAutoReworks;
+      // Compute attempt number for review record
+      // Attempt is the current retry count plus how many AI reworks have already been done before this one
+      const attempt = (task.status?.worker?.retryCount ?? 0) + aiCount - 1;
+
+      // Append review record to statusPatch.reviews
+      const existingReviews = task.status?.reviews ?? [];
+      const newRecord: {
+        action: string;
+        diagnosis?: string;
+        feedback?: string;
+        reviewRunName: string;
+        reviewedAt: string;
+        attempt?: number;
+      } = {
+        action: 'request_changes',
+        diagnosis: verdict.diagnosis,
+        feedback: verdict.feedback,
+        reviewRunName: reviewRun.metadata.name,
+        reviewedAt: now,
+        attempt,
+      };
+      const feedback = buildReviewFeedback(verdict.diagnosis, verdict.feedback);
+
       if (aiCount > ceiling) {
+        const escalatedRecord = { ...newRecord, action: 'escalate' };
         return {
           taskName,
           fromPhase,
-          toPhase: "awaiting-human",
+          toPhase: 'awaiting-human',
           statusPatch: {
             worker: {
               aiReworkCount: aiCount,
-              reviewFeedback: `${verdict.feedback ?? ""}\n\n(AI rework ceiling reached)`,
+              reviewFeedback: `${feedback}\n\n(AI rework ceiling reached)`,
             },
+            reviews: [...existingReviews, escalatedRecord],
           },
           effects: [],
-          events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewReworkCeilingReached", verdict.feedback)],
+          events: [
+            makeEvent(input, fromPhase, 'awaiting-human', 'ReviewReworkCeilingReached', feedback),
+          ],
         };
       }
       return {
         taskName,
         fromPhase,
-        toPhase: "rework-requested",
+        toPhase: 'rework-requested',
         statusPatch: {
           worker: {
             aiReworkCount: aiCount,
-            reviewFeedback: verdict.feedback,
+            reviewFeedback: feedback,
           },
+          reviews: [...existingReviews, newRecord],
         },
         effects: [],
-        events: [makeEvent(input, fromPhase, "rework-requested", "ReviewRequestedChanges", verdict.feedback)],
+        events: [
+          makeEvent(input, fromPhase, 'rework-requested', 'ReviewRequestedChanges', feedback),
+        ],
       };
     }
   }
@@ -613,26 +753,34 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
   return {
     taskName,
     fromPhase,
-    toPhase: "awaiting-human",
+    toPhase: 'awaiting-human',
     effects: [],
-    events: [makeEvent(input, fromPhase, "awaiting-human", "ReviewSucceeded", "Review complete but no structured verdict; awaiting human decision")],
+    events: [
+      makeEvent(
+        input,
+        fromPhase,
+        'awaiting-human',
+        'ReviewSucceeded',
+        'Review complete but no structured verdict; awaiting human decision',
+      ),
+    ],
   };
 }
 
 function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
   const { task, manualActions, flow, now, capacity } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "awaiting-human" as TaskPhase;
+  const fromPhase = 'awaiting-human' as TaskPhase;
 
   if (manualActions.abandon) {
     const consumedKeys = getConsumedAnnotationKeys(manualActions);
     return {
       taskName,
       fromPhase,
-      toPhase: "done",
-      statusPatch: { worker: { status: "Succeeded", completedAt: now } },
-      effects: [{ type: "ClearTaskAnnotations", keys: consumedKeys }],
-      events: [makeEvent(input, fromPhase, "done", "TaskAbandoned")],
+      toPhase: 'done',
+      statusPatch: { worker: { status: 'Succeeded', completedAt: now } },
+      effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
+      events: [makeEvent(input, fromPhase, 'done', 'TaskAbandoned')],
     };
   }
 
@@ -641,45 +789,60 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
     return {
       taskName,
       fromPhase,
-      toPhase: "rework-requested",
+      toPhase: 'rework-requested',
       statusPatch: {
         worker: {
-          reviewFeedback: manualActions.reworkFeedback ?? "No feedback provided",
+          reviewFeedback: manualActions.reworkFeedback ?? 'No feedback provided',
           retryCount: (task.status?.worker?.retryCount ?? 0) + 1,
           aiReworkCount: 0,
         },
       },
-      effects: [{ type: "ClearTaskAnnotations", keys: consumedKeys }],
-      events: [makeEvent(input, fromPhase, "rework-requested", "HumanRequestedChanges", manualActions.reworkFeedback)],
+      effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'rework-requested',
+          'HumanRequestedChanges',
+          manualActions.reworkFeedback,
+        ),
+      ],
     };
   }
 
   if (manualActions.approved) {
     const consumedKeys = getConsumedAnnotationKeys(manualActions);
-    if (task.spec.type === "PLAN") {
+    if (task.spec.type === 'PLAN') {
       // Merge failure retry — skip buildgen cycle, retry merge directly.
       if (task.status?.worker?.mergeError) {
         return {
           taskName,
           fromPhase,
-          toPhase: "awaiting-feature-merge",
+          toPhase: 'awaiting-feature-merge',
           statusPatch: { worker: { mergeRunName: null, mergeError: null } },
-          effects: [{ type: "ClearTaskAnnotations", keys: consumedKeys }],
-          events: [makeEvent(input, fromPhase, "awaiting-feature-merge", "MergeRetryApproved",
-            "Human approved retry of failed feature merge")],
+          effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
+          events: [
+            makeEvent(
+              input,
+              fromPhase,
+              'awaiting-feature-merge',
+              'MergeRetryApproved',
+              'Human approved retry of failed feature merge',
+            ),
+          ],
         };
       }
-      if (flow.plan.onApprove === "done") {
+      if (flow.plan.onApprove === 'done') {
         const planRunName = task.status?.worker?.runName;
         return {
           taskName,
           fromPhase,
-          toPhase: "done",
+          toPhase: 'done',
           effects: [
-            { type: "ClearTaskAnnotations", keys: consumedKeys },
-            ...(planRunName ? [{ type: "CleanupWorktree" as const, runName: planRunName }] : []),
+            { type: 'ClearTaskAnnotations', keys: consumedKeys },
+            ...(planRunName ? [{ type: 'CleanupWorktree' as const, runName: planRunName }] : []),
           ],
-          events: [makeEvent(input, fromPhase, "done", "PlanApprovedDone")],
+          events: [makeEvent(input, fromPhase, 'done', 'PlanApprovedDone')],
         };
       }
       if (capacity.activeCount >= capacity.maxParallel) {
@@ -688,45 +851,50 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
       return {
         taskName,
         fromPhase,
-        toPhase: "generating-builds",
-        effects: [{ type: "ClearTaskAnnotations", keys: consumedKeys }],
-        events: [makeEvent(input, fromPhase, "generating-builds", "PlanApprovedGenerateBuilds")],
+        toPhase: 'generating-builds',
+        effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
+        events: [makeEvent(input, fromPhase, 'generating-builds', 'PlanApprovedGenerateBuilds')],
       };
     }
 
-    if (task.spec.type === "BUILD") {
-      if (flow.build.onApprove === "done" || flow.merge.mode === "disabled") {
+    if (task.spec.type === 'BUILD') {
+      if (flow.build.onApprove === 'done' || flow.merge.mode === 'disabled') {
         const buildRunName = task.status?.worker?.runName;
         return {
           taskName,
           fromPhase,
-          toPhase: "done",
+          toPhase: 'done',
           effects: [
-            { type: "ClearTaskAnnotations", keys: consumedKeys },
-            ...(buildRunName ? [{ type: "CleanupWorktree" as const, runName: buildRunName }] : []),
+            { type: 'ClearTaskAnnotations', keys: consumedKeys },
+            ...(buildRunName ? [{ type: 'CleanupWorktree' as const, runName: buildRunName }] : []),
           ],
-          events: [makeEvent(input, fromPhase, "done", "BuildApprovedDone")],
+          events: [makeEvent(input, fromPhase, 'done', 'BuildApprovedDone')],
         };
       }
       const retryCount = task.status?.worker?.retryCount ?? 0;
-      const mergeSeq = createHash("sha256")
+      const mergeSeq = createHash('sha256')
         .update(`${input.project.metadata.name}:${taskName}:${retryCount}`)
-        .digest("hex")
+        .digest('hex')
         .slice(0, 8);
       if (capacity.activeCount >= capacity.maxParallel) {
         return { taskName, fromPhase, effects: [], events: [] };
       }
-      const mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSeq);
+      const mergeRunName = auxiliaryRunName(
+        input.project.metadata.name,
+        'merge',
+        taskName,
+        mergeSeq,
+      );
       return {
         taskName,
         fromPhase,
-        toPhase: "awaiting-merge",
+        toPhase: 'awaiting-merge',
         statusPatch: { worker: { mergeRunName } },
         effects: [
-          { type: "ClearTaskAnnotations", keys: consumedKeys },
-          { type: "ScheduleMergeRun", mergeRunName },
+          { type: 'ClearTaskAnnotations', keys: consumedKeys },
+          { type: 'ScheduleMergeRun', mergeRunName },
         ],
-        events: [makeEvent(input, fromPhase, "awaiting-merge", "BuildApprovedMerge")],
+        events: [makeEvent(input, fromPhase, 'awaiting-merge', 'BuildApprovedMerge')],
       };
     }
   }
@@ -737,19 +905,24 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
 function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
   const { task, flow, observed, now } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "awaiting-merge" as TaskPhase;
+  const fromPhase = 'awaiting-merge' as TaskPhase;
   let mergeRunName = task.status?.worker?.mergeRunName;
 
   if (!mergeRunName) {
-    const suffix = randomBytes(3).toString("hex");
-    mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, suffix);
+    const retSuffix = createHash('sha256')
+      .update(
+        `${input.project.metadata.name}:${taskName}:merge:${task.status?.worker?.retryCount ?? 0}`,
+      )
+      .digest('hex')
+      .slice(0, 10);
+    mergeRunName = auxiliaryRunName(input.project.metadata.name, 'merge', taskName, retSuffix);
     return {
       taskName,
       fromPhase,
       toPhase: undefined,
       statusPatch: { worker: { mergeRunName } },
-      effects: [{ type: "ScheduleMergeRun", mergeRunName }],
-      events: [makeEvent(input, fromPhase, "awaiting-merge", "MergeRunScheduled")],
+      effects: [{ type: 'ScheduleMergeRun', mergeRunName }],
+      events: [makeEvent(input, fromPhase, 'awaiting-merge', 'MergeRunScheduled')],
     };
   }
 
@@ -758,45 +931,45 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
     return {
       taskName,
       fromPhase,
-      toPhase: "failed",
-      statusPatch: { worker: { status: "Failed", mergeError: "Merge run disappeared" } },
-      effects: [{ type: "CleanupWorktree", runName: mergeRunName }],
-      events: [makeEvent(input, fromPhase, "failed", "MergeRunMissing")],
+      toPhase: 'failed',
+      statusPatch: { worker: { status: 'Failed', mergeError: 'Merge run disappeared' } },
+      effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
+      events: [makeEvent(input, fromPhase, 'failed', 'MergeRunMissing')],
     };
   }
 
-  if (mergeRun.status?.phase === "Succeeded") {
+  if (mergeRun.status?.phase === 'Succeeded') {
     const buildRunName = task.status?.worker?.runName;
-    const cleanupEffects: ReconcileEffect[] = [
-      { type: "CleanupWorktree", runName: mergeRunName },
-    ];
+    const cleanupEffects: ReconcileEffect[] = [{ type: 'CleanupWorktree', runName: mergeRunName }];
     if (buildRunName) {
-      cleanupEffects.push({ type: "CleanupWorktree", runName: buildRunName });
+      cleanupEffects.push({ type: 'CleanupWorktree', runName: buildRunName });
     }
     return {
       taskName,
       fromPhase,
-      toPhase: "done",
+      toPhase: 'done',
       statusPatch: {
-        worker: { status: "Succeeded", mergedAt: now, completedAt: now },
+        worker: { status: 'Succeeded', mergedAt: now, completedAt: now },
       },
       effects: cleanupEffects,
-      events: [makeEvent(input, fromPhase, "done", "MergeSucceeded")],
+      events: [makeEvent(input, fromPhase, 'done', 'MergeSucceeded')],
     };
   }
 
-  if (mergeRun.status?.phase === "Failed") {
+  if (mergeRun.status?.phase === 'Failed') {
     return {
       taskName,
       fromPhase,
-      toPhase: "failed",
-      statusPatch: { worker: { status: "Failed", mergeError: mergeRun.status?.message ?? "Merge failed" } },
-      effects: [{ type: "CleanupWorktree", runName: mergeRunName }],
-      events: [makeEvent(input, fromPhase, "failed", "MergeFailed")],
+      toPhase: 'failed',
+      statusPatch: {
+        worker: { status: 'Failed', mergeError: mergeRun.status?.message ?? 'Merge failed' },
+      },
+      effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
+      events: [makeEvent(input, fromPhase, 'failed', 'MergeFailed')],
     };
   }
 
-  if (mergeRun.status?.phase === "Running") {
+  if (mergeRun.status?.phase === 'Running') {
     const staleThresholdMs = flow.timeouts.mergeStaleSeconds * 1000;
     const lastEvent = mergeRun.status?.lastEventAt;
     if (lastEvent) {
@@ -805,13 +978,18 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
         return {
           taskName,
           fromPhase,
-          toPhase: "failed",
-          statusPatch: { worker: { status: "Failed", mergeError: `Stale after ${flow.timeouts.mergeStaleSeconds}s` } },
+          toPhase: 'failed',
+          statusPatch: {
+            worker: {
+              status: 'Failed',
+              mergeError: `Stale after ${flow.timeouts.mergeStaleSeconds}s`,
+            },
+          },
           effects: [
-            { type: "DeleteRun", name: mergeRunName, reason: "MergeRunStale" },
-            { type: "CleanupWorktree", runName: mergeRunName },
+            { type: 'DeleteRun', name: mergeRunName, reason: 'MergeRunStale' },
+            { type: 'CleanupWorktree', runName: mergeRunName },
           ],
-          events: [makeEvent(input, fromPhase, "failed", "MergeRunStale")],
+          events: [makeEvent(input, fromPhase, 'failed', 'MergeRunStale')],
         };
       }
     }
@@ -823,7 +1001,7 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
 function decideReworkRequested(input: ReconcileInput): ReconcileDecision {
   const { task, capacity } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "rework-requested" as TaskPhase;
+  const fromPhase = 'rework-requested' as TaskPhase;
 
   if (capacity.activeCount >= capacity.maxParallel) {
     return { taskName, fromPhase, effects: [], events: [] };
@@ -832,16 +1010,16 @@ function decideReworkRequested(input: ReconcileInput): ReconcileDecision {
   return {
     taskName,
     fromPhase,
-    toPhase: "scheduled",
+    toPhase: 'scheduled',
     effects: [],
-    events: [makeEvent(input, fromPhase, "scheduled", "ReworkRescheduled")],
+    events: [makeEvent(input, fromPhase, 'scheduled', 'ReworkRescheduled')],
   };
 }
 
 function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
-  const { task, project, observed, now } = input;
+  const { task, project, observed } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "generating-builds" as TaskPhase;
+  const fromPhase = 'generating-builds' as TaskPhase;
   const buildgenRunName = task.status?.worker?.buildTasksFacilitatorRun;
 
   if (!buildgenRunName) {
@@ -850,20 +1028,23 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
       return {
         taskName,
         fromPhase,
-        toPhase: "awaiting-human",
+        toPhase: 'awaiting-human',
         effects: [],
-        events: [makeEvent(input, fromPhase, "awaiting-human", "NoWorkerRunForBuildGen")],
+        events: [makeEvent(input, fromPhase, 'awaiting-human', 'NoWorkerRunForBuildGen')],
       };
     }
-    const suffix = randomBytes(3).toString("hex");
-    const name = auxiliaryRunName(input.project.metadata.name, "buildgen", taskName, suffix);
+    const suffix = createHash('sha256')
+      .update(`${input.project.metadata.name}:${taskName}:buildgen`)
+      .digest('hex')
+      .slice(0, 10);
+    const name = auxiliaryRunName(input.project.metadata.name, 'buildgen', taskName, suffix);
     return {
       taskName,
       fromPhase,
       toPhase: undefined,
       statusPatch: { worker: { buildTasksFacilitatorRun: name } },
-      effects: [{ type: "ScheduleBuildGenRun", buildgenRunName: name, succeededRunName }],
-      events: [makeEvent(input, fromPhase, "generating-builds", "BuildGenRunCreating")],
+      effects: [{ type: 'ScheduleBuildGenRun', buildgenRunName: name, succeededRunName }],
+      events: [makeEvent(input, fromPhase, 'generating-builds', 'BuildGenRunCreating')],
     };
   }
 
@@ -874,25 +1055,25 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
-  if (buildgenRun.status?.phase === "Failed") {
+  if (buildgenRun.status?.phase === 'Failed') {
     return {
       taskName,
       fromPhase,
-      toPhase: "awaiting-human",
+      toPhase: 'awaiting-human',
       statusPatch: { worker: { buildTasksFacilitatorRun: null } },
       effects: [],
-      events: [makeEvent(input, fromPhase, "awaiting-human", "BuildGenFailed")],
+      events: [makeEvent(input, fromPhase, 'awaiting-human', 'BuildGenFailed')],
     };
   }
 
-  if (buildgenRun.status?.phase !== "Succeeded") {
+  if (buildgenRun.status?.phase !== 'Succeeded') {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
   // Buildgen succeeded — check if child BUILD Task CRs exist.
   // The buildgen agent creates BUILD Task CRs directly via MCP tools.
   const childTasks = input.allTasks.filter(
-    (t) => t.spec.type === "BUILD" && t.spec.parentTaskRef === taskName,
+    (t) => t.spec.type === 'BUILD' && t.spec.parentTaskRef === taskName,
   );
 
   if (childTasks.length === 0) {
@@ -901,11 +1082,18 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
     return {
       taskName,
       fromPhase,
-      toPhase: "awaiting-human",
+      toPhase: 'awaiting-human',
       statusPatch: { worker: { buildTasksFacilitatorRun: null } },
       effects: [],
-      events: [makeEvent(input, fromPhase, "awaiting-human", "NoBuildTasksCreated",
-        `Buildgen "${buildgenRunName}" finished without creating any BUILD tasks`)],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'awaiting-human',
+          'NoBuildTasksCreated',
+          `Buildgen "${buildgenRunName}" finished without creating any BUILD tasks`,
+        ),
+      ],
     };
   }
 
@@ -913,7 +1101,7 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
   return {
     taskName,
     fromPhase,
-    toPhase: "awaiting-children",
+    toPhase: 'awaiting-children',
     statusPatch: {
       worker: {
         buildTasksCreated: true,
@@ -921,106 +1109,178 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
       },
     },
     effects: [],
-    events: [makeEvent(input, fromPhase, "awaiting-children", "BuildGenSucceeded", `Created ${childTasks.length} BUILD task(s)` + (project.spec.featureBranchingEnabled ? ", waiting for children before feature branch merge" : ""))],
+    events: [
+      makeEvent(
+        input,
+        fromPhase,
+        'awaiting-children',
+        'BuildGenSucceeded',
+        `Created ${childTasks.length} BUILD task(s)` +
+          (project.spec.featureBranchingEnabled
+            ? ', waiting for children before feature branch merge'
+            : ''),
+      ),
+    ],
   };
 }
 
 function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
-  const { task, project, allTasks, flow, now } = input;
+  const { task, project, allTasks, flow } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "awaiting-children" as TaskPhase;
+  const fromPhase = 'awaiting-children' as TaskPhase;
 
   const childTasks = allTasks.filter(
-    (t) => t.spec.type === "BUILD" && t.spec.parentTaskRef === taskName,
+    (t) => t.spec.type === 'BUILD' && t.spec.parentTaskRef === taskName,
   );
-  const allDone = childTasks.every((t) => t.status?.phase === "done");
+  const hasChildren = childTasks.length > 0;
+  const allDone =
+    hasChildren &&
+    childTasks.every((t) => t.status?.phase === 'done' && t.status?.worker?.mergedAt);
+
+  if (!hasChildren) {
+    // No child BUILD tasks exist — escalate to awaiting-human with explicit reason.
+    return {
+      taskName,
+      fromPhase,
+      toPhase: 'awaiting-human',
+      effects: [],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'awaiting-human',
+          'ChildTasksMissing',
+          'No child BUILD tasks found while in awaiting-children phase',
+        ),
+      ],
+    };
+  }
 
   if (!allDone) {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
   // All children done — decide next step based on integration config.
-  if (!project.spec.featureBranchingEnabled || flow.integration.mode === "disabled") {
+  if (!project.spec.featureBranchingEnabled || flow.integration.mode === 'disabled') {
     return {
-      taskName, fromPhase,
-      toPhase: "done",
+      taskName,
+      fromPhase,
+      toPhase: 'done',
       effects: [],
-      events: [makeEvent(input, fromPhase, "done", "AllChildrenDoneNoIntegration")],
+      events: [makeEvent(input, fromPhase, 'done', 'AllChildrenDoneNoIntegration')],
     };
   }
 
-  if (flow.integration.mode === "manual") {
+  if (flow.integration.mode === 'manual') {
     return {
-      taskName, fromPhase,
-      toPhase: "awaiting-human",
+      taskName,
+      fromPhase,
+      toPhase: 'awaiting-human',
       effects: [],
-      events: [makeEvent(input, fromPhase, "awaiting-human", "AllChildrenDoneManualMerge",
-        "All BUILD tasks complete. Merge feature branch to target manually.")],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'awaiting-human',
+          'AllChildrenDoneManualMerge',
+          'All BUILD tasks complete. Merge feature branch to target manually.',
+        ),
+      ],
     };
   }
 
   // auto-merge mode — schedule merge run for feature branch → target.
-  const mergeSuffix = randomBytes(3).toString("hex");
-  const mergeRunName = auxiliaryRunName(input.project.metadata.name, "merge", taskName, mergeSuffix);
+  const mergeSuffix = createHash('sha256')
+    .update(`${input.project.metadata.name}:${taskName}:merge`)
+    .digest('hex')
+    .slice(0, 10);
+  const mergeRunName = auxiliaryRunName(
+    input.project.metadata.name,
+    'merge',
+    taskName,
+    mergeSuffix,
+  );
 
   return {
-    taskName, fromPhase,
-    toPhase: "awaiting-feature-merge",
+    taskName,
+    fromPhase,
+    toPhase: 'awaiting-feature-merge',
     statusPatch: { worker: { mergeRunName } },
-    effects: [{ type: "ScheduleMergeRun", mergeRunName }],
-    events: [makeEvent(input, fromPhase, "awaiting-feature-merge", "AutoMergingFeatureBranch",
-      `Scheduled merge run for feature branch merge to target`)],
+    effects: [{ type: 'ScheduleMergeRun', mergeRunName }],
+    events: [
+      makeEvent(
+        input,
+        fromPhase,
+        'awaiting-feature-merge',
+        'AutoMergingFeatureBranch',
+        `Scheduled merge run for feature branch merge to target`,
+      ),
+    ],
   };
 }
 
 function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
   const { task, observed, now } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "awaiting-feature-merge" as TaskPhase;
+  const fromPhase = 'awaiting-feature-merge' as TaskPhase;
   const mergeRunName = task.status?.worker?.mergeRunName;
 
   if (!mergeRunName) {
     // Create merge run if not yet assigned.
-    const suffix = randomBytes(3).toString("hex");
-    const name = auxiliaryRunName(input.project.metadata.name, "merge", taskName, suffix);
+    const suffix = createHash('sha256')
+      .update(`${input.project.metadata.name}:${taskName}:merge`)
+      .digest('hex')
+      .slice(0, 10);
+    const name = auxiliaryRunName(input.project.metadata.name, 'merge', taskName, suffix);
     return {
-      taskName, fromPhase,
+      taskName,
+      fromPhase,
       toPhase: undefined,
       statusPatch: { worker: { mergeRunName: name } },
-      effects: [{ type: "ScheduleMergeRun", mergeRunName: name }],
-      events: [makeEvent(input, fromPhase, "awaiting-feature-merge", "MergeRunScheduled")],
+      effects: [{ type: 'ScheduleMergeRun', mergeRunName: name }],
+      events: [makeEvent(input, fromPhase, 'awaiting-feature-merge', 'MergeRunScheduled')],
     };
   }
 
   const mergeRun = observed.merge;
   if (!mergeRun) {
     return {
-      taskName, fromPhase,
-      toPhase: "failed",
-      statusPatch: { worker: { mergeError: "Merge run disappeared" } },
-      effects: [{ type: "CleanupWorktree", runName: mergeRunName }],
-      events: [makeEvent(input, fromPhase, "failed", "MergeRunMissing")],
+      taskName,
+      fromPhase,
+      toPhase: 'failed',
+      statusPatch: { worker: { mergeError: 'Merge run disappeared' } },
+      effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
+      events: [makeEvent(input, fromPhase, 'failed', 'MergeRunMissing')],
     };
   }
 
-  if (mergeRun.status?.phase === "Succeeded") {
+  if (mergeRun.status?.phase === 'Succeeded') {
     return {
-      taskName, fromPhase,
-      toPhase: "done",
+      taskName,
+      fromPhase,
+      toPhase: 'done',
       statusPatch: { worker: { mergedAt: now } },
-      effects: [{ type: "CleanupWorktree", runName: mergeRunName }],
-      events: [makeEvent(input, fromPhase, "done", "FeatureBranchMerged")],
+      effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
+      events: [makeEvent(input, fromPhase, 'done', 'FeatureBranchMerged')],
     };
   }
 
-  if (mergeRun.status?.phase === "Failed") {
+  if (mergeRun.status?.phase === 'Failed') {
     return {
-      taskName, fromPhase,
-      toPhase: "awaiting-human",
+      taskName,
+      fromPhase,
+      toPhase: 'awaiting-human',
       statusPatch: { worker: { mergeError: mergeRun.status?.message } },
-      effects: [{ type: "CleanupWorktree", runName: mergeRunName }],
-      events: [makeEvent(input, fromPhase, "awaiting-human", "FeatureBranchMergeFailed",
-        mergeRun.status?.message ?? "Merge run failed")],
+      effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'awaiting-human',
+          'FeatureBranchMergeFailed',
+          mergeRun.status?.message ?? 'Merge run failed',
+        ),
+      ],
     };
   }
 
@@ -1031,7 +1291,7 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
 function decideFailed(input: ReconcileInput): ReconcileDecision {
   const { task, flow, manualActions, now, capacity } = input;
   const taskName = task.metadata.name;
-  const fromPhase = "failed" as TaskPhase;
+  const fromPhase = 'failed' as TaskPhase;
 
   // Handle human-triggered actions (via approve/request-changes annotations).
   if (manualActions.approved) {
@@ -1047,11 +1307,18 @@ function decideFailed(input: ReconcileInput): ReconcileDecision {
       return {
         taskName,
         fromPhase,
-        toPhase: "awaiting-merge",
+        toPhase: 'awaiting-merge',
         statusPatch: { worker: { mergeRunName: null, mergeError: null } },
-        effects: [{ type: "ClearTaskAnnotations", keys: consumedKeys }],
-        events: [makeEvent(input, fromPhase, "awaiting-merge", "MergeRetryApproved",
-          "Human approved retry of failed merge")],
+        effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
+        events: [
+          makeEvent(
+            input,
+            fromPhase,
+            'awaiting-merge',
+            'MergeRetryApproved',
+            'Human approved retry of failed merge',
+          ),
+        ],
       };
     }
 
@@ -1059,10 +1326,17 @@ function decideFailed(input: ReconcileInput): ReconcileDecision {
     return {
       taskName,
       fromPhase,
-      toPhase: "awaiting-human",
-      effects: [{ type: "ClearTaskAnnotations", keys: consumedKeys }],
-      events: [makeEvent(input, fromPhase, "awaiting-human", "FailureEscalated",
-        "Human reviewed failed task")],
+      toPhase: 'awaiting-human',
+      effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'awaiting-human',
+          'FailureEscalated',
+          'Human reviewed failed task',
+        ),
+      ],
     };
   }
 
@@ -1081,7 +1355,7 @@ function decideFailed(input: ReconcileInput): ReconcileDecision {
   }
 
   const backoff = Math.min(
-    flow.retry.backoffSeconds * Math.pow(flow.retry.backoffMultiplier, retryCount),
+    flow.retry.backoffSeconds * flow.retry.backoffMultiplier ** retryCount,
     flow.retry.maxBackoffSeconds,
   );
   const retryAfter = new Date(new Date(now).getTime() + backoff * 1000).toISOString();
@@ -1089,12 +1363,20 @@ function decideFailed(input: ReconcileInput): ReconcileDecision {
   return {
     taskName,
     fromPhase,
-    toPhase: "pending",
+    toPhase: 'pending',
     statusPatch: {
       worker: { retryCount: retryCount + 1 },
       retryAfter,
     },
     effects: [],
-    events: [makeEvent(input, fromPhase, "pending", "RetryScheduled", `Retry ${retryCount + 1}/${flow.retry.maxAttempts} after ${backoff}s`)],
+    events: [
+      makeEvent(
+        input,
+        fromPhase,
+        'pending',
+        'RetryScheduled',
+        `Retry ${retryCount + 1}/${flow.retry.maxAttempts} after ${backoff}s`,
+      ),
+    ],
   };
 }

@@ -14,13 +14,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json",
-    "codegen": "pnpm run build && node ../../codegen/gen-crds.mjs"
+    "codegen": "pnpm run build && node ../../codegen/gen-crds.mjs",
+    "test": "bun test src/"
   },
   "dependencies": {
     "zod": "3.23.8"
   },
   "devDependencies": {
     "yaml": "2.9.0",
-    "zod-to-json-schema": "3.24.5"
+    "zod-to-json-schema": "3.24.5",
+    "@types/bun": "latest"
   }
 }

@@ -13,6 +13,8 @@
     "resolveJsonModule": true,
     "isolatedModules": false,
     "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
   }
 }

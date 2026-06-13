@@ -1389,8 +1389,9 @@ kubectl apply -f k8s/deploy/ollama.yaml
 kubectl -n percussionist wait --for=condition=Ready pod -l app.kubernetes.io/component=ollama
 ```
 
-The init container on the Ollama Deployment automatically pulls `nomic-embed-text`
-before the main container starts, so no manual pull is required.
+Model warmup is handled per-project by the memory service at startup.
+The memory service pulls the model declared in `spec.embedding.model`
+(default `nomic-embed-text`), so no global preload or manual pull is required.
 
 ### MCP Tools
 

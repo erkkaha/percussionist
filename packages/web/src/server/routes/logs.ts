@@ -1,9 +1,9 @@
-import { Hono } from "hono";
-import { core, getRun, readPodLog } from "../kube.js";
-import { RUNNER_CONTAINER, DISPATCHER_CONTAINER, GIT_CLONE_CONTAINER } from "@percussionist/api";
-import { auth } from "../auth.js";
+import { DISPATCHER_CONTAINER, GIT_CLONE_CONTAINER, RUNNER_CONTAINER } from '@percussionist/api';
+import { Hono } from 'hono';
+import { auth } from '../auth.js';
+import { core, getRun, readPodLog } from '../kube.js';
 
-const BOOTSTRAP_CONTAINER = "bootstrap";
+const BOOTSTRAP_CONTAINER = 'bootstrap';
 const BOOTSTRAP_EXCLUDE = new Set([RUNNER_CONTAINER, DISPATCHER_CONTAINER]);
 
 const VALID_CONTAINERS = new Set([
@@ -29,7 +29,9 @@ function kubeErrMsg(e: unknown): string {
       const bodyStr = JSON.parse(bodyMatch[1]) as string;
       const parsed = JSON.parse(bodyStr) as { message?: string };
       if (parsed?.message) return parsed.message;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
   return raw;
 }
@@ -52,10 +54,7 @@ async function readLogBlock(
   }
 }
 
-async function listBootstrapContainers(
-  podName: string,
-  ns: string,
-): Promise<string[]> {
+async function listBootstrapContainers(podName: string, ns: string): Promise<string[]> {
   try {
     const pod = await core().readNamespacedPod({ name: podName, namespace: ns });
     const initNames = (pod.spec?.initContainers ?? []).map((c) => c.name).filter(Boolean);
@@ -80,16 +79,18 @@ async function listBootstrapContainers(
 // When the requested container is still waiting (init failed, pod never
 // started) and no explicit container was requested, we auto-fall-back to
 // the workspace-init init container so the caller always gets useful output.
-logs.get("/:name/logs", auth(), async (c) => {
-  const name = c.req.param("name");
-  const explicitContainer = c.req.query("container");
+logs.get('/:name/logs', auth(), async (c) => {
+  const name = c.req.param('name');
+  const explicitContainer = c.req.query('container');
   const container = explicitContainer ?? RUNNER_CONTAINER;
-  const tailParam = c.req.query("tailLines");
+  const tailParam = c.req.query('tailLines');
   const tailLines = tailParam ? parseInt(tailParam, 10) : DEFAULT_TAIL;
 
   if (!VALID_CONTAINERS.has(container)) {
     return c.json(
-      { error: `Invalid container: ${container}. Must be one of: ${[...VALID_CONTAINERS].join(", ")}` },
+      {
+        error: `Invalid container: ${container}. Must be one of: ${[...VALID_CONTAINERS].join(', ')}`,
+      },
       400,
     );
   }
@@ -100,7 +101,7 @@ logs.get("/:name/logs", auth(), async (c) => {
   try {
     const run = await getRun(name);
     podName = run.status?.podName ?? name;
-    ns = run.metadata.namespace ?? "percussionist";
+    ns = run.metadata.namespace ?? 'percussionist';
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number };
     const status = anyE.statusCode === 404 ? 404 : 500;
@@ -113,19 +114,17 @@ logs.get("/:name/logs", auth(), async (c) => {
       return c.json({
         podName,
         container,
-        lines: "No bootstrap containers found for this pod.",
+        lines: 'No bootstrap containers found for this pod.',
         bootstrapContainers,
       });
     }
     const blocks = await Promise.all(
-      bootstrapContainers.map((name) =>
-        readLogBlock(podName, name, tailLines || undefined, ns),
-      ),
+      bootstrapContainers.map((name) => readLogBlock(podName, name, tailLines || undefined, ns)),
     );
     return c.json({
       podName,
       container,
-      lines: blocks.join("\n\n"),
+      lines: blocks.join('\n\n'),
       bootstrapContainers,
     });
   }
@@ -142,17 +141,12 @@ logs.get("/:name/logs", auth(), async (c) => {
     const errStr = kubeErrMsg(e);
     const isWaiting =
       !explicitContainer &&
-      (anyE.statusCode === 400 || String(e).includes("400")) &&
-      errStr.includes("waiting to start");
+      (anyE.statusCode === 400 || String(e).includes('400')) &&
+      errStr.includes('waiting to start');
 
     if (isWaiting) {
       try {
-        const initText = await readPodLog(
-          podName,
-          GIT_CLONE_CONTAINER,
-          tailLines || undefined,
-          ns,
-        );
+        const initText = await readPodLog(podName, GIT_CLONE_CONTAINER, tailLines || undefined, ns);
         return c.json({ podName, container: GIT_CLONE_CONTAINER, lines: initText });
       } catch {
         // Fall through to the original error below.

@@ -14,13 +14,11 @@
 // already trust, and (b) it handles reconnection logic that we'd otherwise
 // have to reproduce.
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { createServer } from "node:net";
-import {
-  CONTAINER_PORT,
-  RunPhase,
-} from "@percussionist/api";
-import { DEFAULT_NAMESPACE, fatal, getRun, loadKube } from "./kube.js";
+import { type ChildProcess, spawn } from 'node:child_process';
+import { createServer } from 'node:net';
+import type { Run } from '@percussionist/api';
+import { CONTAINER_PORT, RunPhase } from '@percussionist/api';
+import { DEFAULT_NAMESPACE, fatal, getRun, loadKube } from './kube.js';
 
 export interface AttachOpts {
   namespace?: string;
@@ -32,15 +30,15 @@ async function pickFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = createServer();
     srv.unref();
-    srv.on("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
       const addr = srv.address();
-      if (addr && typeof addr === "object") {
+      if (addr && typeof addr === 'object') {
         const port = addr.port;
         srv.close(() => resolve(port));
       } else {
         srv.close();
-        reject(new Error("could not determine free port"));
+        reject(new Error('could not determine free port'));
       }
     });
   });
@@ -53,14 +51,14 @@ async function startPortForward(
 ): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     const args = [
-      "port-forward",
-      "-n",
+      'port-forward',
+      '-n',
       namespace,
       `svc/${serviceName}`,
       `${localPort}:${CONTAINER_PORT}`,
     ];
-    const child = spawn("kubectl", args, {
-      stdio: ["ignore", "pipe", "pipe"],
+    const child = spawn('kubectl', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     let ready = false;
@@ -73,19 +71,19 @@ async function startPortForward(
     const onChunk = (buf: Buffer) => {
       const s = buf.toString();
       // kubectl prints this on stdout when the forward is live.
-      if (s.includes("Forwarding from")) onReady();
+      if (s.includes('Forwarding from')) onReady();
       // Don't swallow errors — echo to stderr so the user sees auth/RBAC/etc.
       process.stderr.write(s);
     };
-    child.stdout?.on("data", onChunk);
-    child.stderr?.on("data", onChunk);
+    child.stdout?.on('data', onChunk);
+    child.stderr?.on('data', onChunk);
 
-    child.on("exit", (code) => {
+    child.on('exit', (code) => {
       if (!ready) {
         reject(new Error(`kubectl port-forward exited with code ${code}`));
       }
     });
-    child.on("error", reject);
+    child.on('error', reject);
   });
 }
 
@@ -93,7 +91,7 @@ export async function runAttach(name: string, opts: AttachOpts): Promise<void> {
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
   const { custom } = loadKube();
 
-  let run;
+  let run: Run | undefined;
   try {
     run = await getRun(custom, ns, name);
   } catch (e) {
@@ -107,9 +105,7 @@ export async function runAttach(name: string, opts: AttachOpts): Promise<void> {
   const terminal = [RunPhase.Succeeded, RunPhase.Failed, RunPhase.Cancelled];
   const phase = run.status?.phase;
   if (phase && (terminal as string[]).includes(phase)) {
-    console.error(
-      `beatctl: run ${name} is already ${phase}; nothing to attach to.`,
-    );
+    console.error(`beatctl: run ${name} is already ${phase}; nothing to attach to.`);
     process.exit(1);
   }
 
@@ -118,54 +114,50 @@ export async function runAttach(name: string, opts: AttachOpts): Promise<void> {
   // but warn so the user knows why it might take a few extra seconds.
   if (!phase || phase === RunPhase.Pending || phase === RunPhase.Initializing) {
     console.log(
-      `beatctl: run is ${phase ?? "Pending"}; port-forward may take a few seconds to settle.`,
+      `beatctl: run is ${phase ?? 'Pending'}; port-forward may take a few seconds to settle.`,
     );
   }
 
   const serviceName = run.status?.serviceName ?? run.metadata.name;
 
-  const localPort = opts.localPort
-    ? Number(opts.localPort)
-    : await pickFreePort();
+  const localPort = opts.localPort ? Number(opts.localPort) : await pickFreePort();
 
-  console.log(
-    `beatctl: port-forwarding svc/${serviceName} -> localhost:${localPort}`,
-  );
+  console.log(`beatctl: port-forwarding svc/${serviceName} -> localhost:${localPort}`);
 
   let pf: ChildProcess;
   try {
     pf = await startPortForward(ns, serviceName, localPort);
   } catch (e) {
-    fatal("port-forward failed", e);
+    fatal('port-forward failed', e);
   }
 
   // Clean teardown no matter how the attach exits (ctrl-c, opencode exit, ...)
   const kill = () => {
-    if (!pf.killed) pf.kill("SIGTERM");
+    if (!pf.killed) pf.kill('SIGTERM');
   };
-  process.on("exit", kill);
-  process.on("SIGINT", () => {
+  process.on('exit', kill);
+  process.on('SIGINT', () => {
     kill();
     process.exit(130);
   });
-  process.on("SIGTERM", () => {
+  process.on('SIGTERM', () => {
     kill();
     process.exit(143);
   });
 
   console.log(`beatctl: launching opencode attach...`);
-  const opencodeArgs = ["attach", `http://localhost:${localPort}`];
-  if (opts.continue) opencodeArgs.push("--continue");
-  const attach = spawn("opencode", opencodeArgs, {
-    stdio: "inherit",
+  const opencodeArgs = ['attach', `http://localhost:${localPort}`];
+  if (opts.continue) opencodeArgs.push('--continue');
+  const attach = spawn('opencode', opencodeArgs, {
+    stdio: 'inherit',
     env: { ...process.env },
   });
-  attach.on("exit", (code) => {
+  attach.on('exit', (code) => {
     kill();
     process.exit(code ?? 0);
   });
-  attach.on("error", (e) => {
+  attach.on('error', (e) => {
     kill();
-    fatal("failed to spawn opencode", e);
+    fatal('failed to spawn opencode', e);
   });
 }

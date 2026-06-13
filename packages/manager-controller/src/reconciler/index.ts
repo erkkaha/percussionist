@@ -1,24 +1,20 @@
 // Manager reconciler — phase-driven architecture with pure decision engine.
 
-import type { Project, Task, TaskPhase } from "@percussionist/api";
-import { observe, getConsumedAnnotationKeys } from "./observations.js";
-import { decide } from "./decision.js";
-import { executeEffects } from "./effects.js";
-import { persistEvent } from "./audit.js";
-import { emitEvent } from "../events.js";
-import { resolveFlow } from "./flow.js";
-import { byPriority, isActivePhase } from "./scheduler.js";
+import type { Project, TaskPhase } from '@percussionist/api';
+import { emitEvent } from '../events.js';
+import { persistEvent } from './audit.js';
+import { decide } from './decision.js';
+import { executeEffects } from './effects.js';
+import { observe } from './observations.js';
+import { byPriority, isActivePhase } from './scheduler.js';
 
 // Reconcile a single project's tasks.
-export async function reconcileProject(
-  project: Project,
-  namespace: string,
-): Promise<void> {
+export async function reconcileProject(project: Project, namespace: string): Promise<void> {
   const projectName = project.metadata.name;
   console.log(`[reconcile] ${projectName} starting`);
 
   // Fetch all tasks for this project.
-  const { listTasks, patchTaskStatus } = await import("@percussionist/kube");
+  const { listTasks, patchTaskStatus } = await import('@percussionist/kube');
   const tasks = await listTasks(projectName, namespace);
 
   // Auto-heal: detect tasks missing status.phase and repair them to pending.
@@ -26,10 +22,10 @@ export async function reconcileProject(
   // which would otherwise be invisible to scheduling logic.
   for (const task of tasks) {
     if (!task.status?.phase) {
-      console.log(
-        `[reconcile] ${task.metadata.name}: missing status.phase — healing to "pending"`,
-      );
-      await patchTaskStatus(task.metadata.name!, { phase: "pending" }, namespace).catch(() => {
+      console.log(`[reconcile] ${task.metadata.name}: missing status.phase — healing to "pending"`);
+      const taskName = task.metadata.name;
+      if (!taskName) continue;
+      await patchTaskStatus(taskName, { phase: 'pending' }, namespace).catch(() => {
         // Best-effort heal; reconciler will retry on next cycle.
       });
     }
@@ -41,14 +37,16 @@ export async function reconcileProject(
   // Filter to active tasks (not idea or done).
   const activeTasks = refreshedTasks.filter((t) => {
     const phase = t.status?.phase;
-    return phase !== "idea" && phase !== "done";
+    return phase !== 'idea' && phase !== 'done';
   });
 
   // Sort by priority for fairness.
   activeTasks.sort(byPriority);
 
   // Track active count across transitions in this cycle to respect maxParallel.
-  let activeCount = refreshedTasks.filter((t) => isActivePhase(t.status?.phase ?? "pending")).length;
+  let activeCount = refreshedTasks.filter((t) =>
+    isActivePhase(t.status?.phase ?? 'pending'),
+  ).length;
 
   // Reconcile each active task.
   for (const task of activeTasks) {
@@ -61,11 +59,9 @@ export async function reconcileProject(
     // should set phase at create time, but legacy/manual/external creation
     // can produce limbo tasks without a persisted phase.
     if (task.status?.phase === undefined) {
-      console.log(
-        `[reconcile] ${task.metadata.name} healing: missing status.phase → pending`,
-      );
+      console.log(`[reconcile] ${task.metadata.name} healing: missing status.phase → pending`);
       try {
-        await patchTaskStatus(task.metadata.name, { phase: "pending" }, namespace);
+        await patchTaskStatus(task.metadata.name, { phase: 'pending' }, namespace);
       } catch (e) {
         console.error(`[reconcile] ${task.metadata.name} heal failed:`, e);
       }
@@ -106,24 +102,20 @@ export async function reconcileProject(
       );
 
       if (!result.applied) {
-        console.warn(
-          `[reconcile] ${task.metadata.name} execution failed:`,
-          result.error,
-        );
+        console.warn(`[reconcile] ${task.metadata.name} execution failed:`, result.error);
         continue;
       }
 
       // Persist audit events to K8s Events and SQLite (via web service).
-      const taskUid = task.metadata.uid ?? "";
+      const taskUid = task.metadata.uid ?? '';
       for (const event of decision.events) {
         await persistEvent(event, namespace, task.metadata.name, taskUid);
-        emitEvent(
-          event.project,
-          event.task,
-          task.spec.type,
-          event.reason,
-          { fromPhase: event.fromPhase, toPhase: event.toPhase, message: event.message, effects: event.effects },
-        );
+        emitEvent(event.project, event.task, task.spec.type, event.reason, {
+          fromPhase: event.fromPhase,
+          toPhase: event.toPhase,
+          message: event.message,
+          effects: event.effects,
+        });
       }
 
       // Adjust active count only when membership changes.

@@ -1,13 +1,9 @@
 // `beatctl agent` — manage ClusterAgent resources (cluster-scoped agent catalog).
 
-import { readFileSync } from "node:fs";
-import YAML from "yaml";
-import {
-  API_GROUP_VERSION,
-  KIND_CLUSTER_AGENT,
-  type ClusterAgent,
-} from "@percussionist/api";
-import { DEFAULT_NAMESPACE, fatal, loadKube } from "./kube.js";
+import { readFileSync } from 'node:fs';
+import { API_GROUP_VERSION, type ClusterAgent, KIND_CLUSTER_AGENT } from '@percussionist/api';
+import YAML from 'yaml';
+import { fatal, loadKube } from './kube.js';
 
 export interface AgentListOpts {
   allNamespaces?: boolean;
@@ -30,34 +26,30 @@ export interface AgentDeleteOpts {
 }
 
 // List all ClusterAgents in the cluster.
-export async function runAgentList(opts: AgentListOpts): Promise<void> {
+export async function runAgentList(_opts: AgentListOpts): Promise<void> {
   const { custom } = loadKube();
   try {
     const list = await custom.listClusterCustomObject({
-      group: "percussionist.dev",
-      version: "v1alpha1",
-      plural: "clusteragents",
+      group: 'percussionist.dev',
+      version: 'v1alpha1',
+      plural: 'clusteragents',
     });
     const items = (list as unknown as { items: ClusterAgent[] }).items;
     if (items.length === 0) {
-      console.log("No ClusterAgents found.");
+      console.log('No ClusterAgents found.');
       return;
     }
     // Table output.
-    console.log(
-      ["NAME", "AGE"].map((h) => h.padEnd(24)).join(""),
-    );
+    console.log(['NAME', 'AGE'].map((h) => h.padEnd(24)).join(''));
     for (const agent of items.sort((a, b) =>
-      (a.metadata?.name ?? "").localeCompare(b.metadata?.name ?? ""),
+      (a.metadata?.name ?? '').localeCompare(b.metadata?.name ?? ''),
     )) {
-      const name = agent.metadata?.name ?? "?";
+      const name = agent.metadata?.name ?? '?';
       const age = formatAge(agent.metadata?.creationTimestamp);
-      console.log(
-        [name.padEnd(24), age.padEnd(24)].join(""),
-      );
+      console.log([name.padEnd(24), age.padEnd(24)].join(''));
     }
   } catch (e) {
-    fatal("list failed", e);
+    fatal('list failed', e);
   }
 }
 
@@ -66,14 +58,14 @@ export async function runAgentGet(name: string, opts: AgentGetOpts): Promise<voi
   const { custom } = loadKube();
   try {
     const agent = await custom.getClusterCustomObject({
-      group: "percussionist.dev",
-      version: "v1alpha1",
-      plural: "clusteragents",
+      group: 'percussionist.dev',
+      version: 'v1alpha1',
+      plural: 'clusteragents',
       name,
     });
-    if (opts.output === "json") {
+    if (opts.output === 'json') {
       console.log(JSON.stringify(agent, null, 2));
-    } else if (opts.output === "yaml") {
+    } else if (opts.output === 'yaml') {
       const doc = YAML.stringify({
         apiVersion: API_GROUP_VERSION,
         kind: KIND_CLUSTER_AGENT,
@@ -82,13 +74,13 @@ export async function runAgentGet(name: string, opts: AgentGetOpts): Promise<voi
       console.log(doc);
     } else {
       // Default: show spec.content preview.
-      const content = (agent as unknown as { spec?: { content?: string } }).spec?.content ?? "";
-      const lines = content.split("\n").slice(0, 10).join("\n");
+      const content = (agent as unknown as { spec?: { content?: string } }).spec?.content ?? '';
+      const lines = content.split('\n').slice(0, 10).join('\n');
       console.log(`name: ${name}`);
       console.log(`content (${content.length} bytes):`);
       console.log(lines);
-      if (content.split("\n").length > 10) {
-        console.log(`... (${content.split("\n").length - 10} more lines)`);
+      if (content.split('\n').length > 10) {
+        console.log(`... (${content.split('\n').length - 10} more lines)`);
       }
     }
   } catch (e) {
@@ -100,37 +92,42 @@ export async function runAgentGet(name: string, opts: AgentGetOpts): Promise<voi
 export async function runAgentCreate(opts: AgentCreateOpts): Promise<void> {
   const name = opts.name;
   if (!name && !opts.file) {
-    console.error("beatctl: --name is required when --file is not supplied");
+    console.error('beatctl: --name is required when --file is not supplied');
     process.exit(1);
   }
 
   let doc: unknown;
   try {
     doc = opts.file
-      ? YAML.parse(readFileSync(opts.file, "utf8"))
+      ? YAML.parse(readFileSync(opts.file, 'utf8'))
       : { apiVersion: API_GROUP_VERSION, kind: KIND_CLUSTER_AGENT };
   } catch (e) {
-    fatal("invalid agent spec", e);
+    fatal('invalid agent spec', e);
   }
 
   if (opts.name && !opts.file) {
     doc = { ...(doc as object), metadata: { name: opts.name } };
   } else if (opts.file) {
     const d = doc as Record<string, unknown>;
-    d.metadata = { ...(d.metadata ?? {}), name: opts.name ?? (d.metadata as Record<string, unknown>)?.name };
+    d.metadata = {
+      ...(d.metadata ?? {}),
+      name: opts.name ?? (d.metadata as Record<string, unknown>)?.name,
+    };
   }
 
   try {
     const { custom } = loadKube();
     await custom.createClusterCustomObject({
-      group: "percussionist.dev",
-      version: "v1alpha1",
-      plural: "clusteragents",
+      group: 'percussionist.dev',
+      version: 'v1alpha1',
+      plural: 'clusteragents',
       body: doc,
     });
-    console.log(`${((doc as Record<string, unknown>)?.metadata as Record<string, unknown>)?.name ?? "?"} created`);
+    console.log(
+      `${((doc as Record<string, unknown>)?.metadata as Record<string, unknown>)?.name ?? '?'} created`,
+    );
   } catch (e) {
-    fatal("create failed", e);
+    fatal('create failed', e);
   }
 }
 
@@ -139,9 +136,9 @@ export async function runAgentDelete(name: string): Promise<void> {
   const { custom } = loadKube();
   try {
     await custom.deleteClusterCustomObject({
-      group: "percussionist.dev",
-      version: "v1alpha1",
-      plural: "clusteragents",
+      group: 'percussionist.dev',
+      version: 'v1alpha1',
+      plural: 'clusteragents',
       name,
     });
     console.log(`${name} deleted`);
@@ -151,7 +148,7 @@ export async function runAgentDelete(name: string): Promise<void> {
 }
 
 function formatAge(timestamp?: string): string {
-  if (!timestamp) return "?";
+  if (!timestamp) return '?';
   const diff = Date.now() - new Date(timestamp).getTime();
   const seconds = Math.floor(diff / 1000);
   if (seconds < 60) return `${seconds}s`;

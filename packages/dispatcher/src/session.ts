@@ -1,16 +1,20 @@
 // session.ts — opencode API helpers for the dispatcher sidecar.
 
-export const BASE_URL =
-  process.env.OPENCODE_BASE_URL || "http://127.0.0.1:4096";
+export const BASE_URL = process.env.OPENCODE_BASE_URL || 'http://127.0.0.1:4096';
 
 type SessionEntry = { id: string; title?: string };
 export type MessagesEntry = {
   info?: {
     id?: string;
     sessionID?: string;
-    role?: "user" | "assistant";
+    role?: 'user' | 'assistant';
     time?: { created?: number; completed?: number };
-    tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } };
+    tokens?: {
+      input?: number;
+      output?: number;
+      reasoning?: number;
+      cache?: { read?: number; write?: number };
+    };
     cost?: number;
     model?: { providerID?: string; modelID?: string };
     error?: unknown;
@@ -18,18 +22,23 @@ export type MessagesEntry = {
   parts?: Part[];
 };
 
-export type TextPart = { type: "text"; text: string };
-export type ToolUsePart = { type: "tool-use" | "tool_use"; id?: string; name?: string; input?: unknown };
+export type TextPart = { type: 'text'; text: string };
+export type ToolUsePart = {
+  type: 'tool-use' | 'tool_use';
+  id?: string;
+  name?: string;
+  input?: unknown;
+};
 export type ToolResultPart = {
-  type: "tool-result" | "tool_result";
+  type: 'tool-result' | 'tool_result';
   toolUseId?: string;
   tool_use_id?: string;
   isError?: boolean;
   content?: unknown;
 };
-export type FilePart = { type: "file"; filename?: string; path?: string };
+export type FilePart = { type: 'file'; filename?: string; path?: string };
 export type ToolPart = {
-  type: "tool";
+  type: 'tool';
   tool: string;
   callID?: string;
   state?: {
@@ -41,7 +50,7 @@ export type ToolPart = {
   };
 };
 export type StepFinishPart = {
-  type: "step-finish";
+  type: 'step-finish';
   id?: string;
   messageID?: string;
   reason?: string;
@@ -74,35 +83,40 @@ async function readJsonWithLimit(res: Response, maxBytes: number): Promise<unkno
     if (!value) continue;
     total += value.byteLength;
     if (total > maxBytes) {
-      try { await reader.cancel(); } catch { /* ignore */ }
+      try {
+        await reader.cancel();
+      } catch {
+        /* ignore */
+      }
       throw new Error(`OpenCode session response too large (${total} bytes)`);
     }
     chunks.push(value);
   }
 
-  return JSON.parse(Buffer.concat(chunks, total).toString("utf8")) as unknown;
+  return JSON.parse(Buffer.concat(chunks, total).toString('utf8')) as unknown;
 }
 
 export function compactMessagesForSnapshot(messages: RawMessage[]): RawMessage[] {
   return messages.map((msg) => ({
     info: msg.info,
     parts: (msg.parts ?? []).map((part) => {
-      if (part.type === "tool") {
+      if (part.type === 'tool') {
         const p = part as ToolPart;
         return {
           ...p,
           state: p.state
             ? {
                 ...p.state,
-                output: typeof p.state.output === "string" && p.state.output.length > 4000
-                  ? `${p.state.output.slice(0, 4000)}\n... (truncated for snapshot)`
-                  : p.state.output,
+                output:
+                  typeof p.state.output === 'string' && p.state.output.length > 4000
+                    ? `${p.state.output.slice(0, 4000)}\n... (truncated for snapshot)`
+                    : p.state.output,
                 metadata: { ...p.state.metadata, truncated: true },
               }
             : p.state,
         };
       }
-      if (part.type === "text") {
+      if (part.type === 'text') {
         const p = part as TextPart;
         return p.text.length > 20_000
           ? { ...p, text: `${p.text.slice(0, 20_000)}\n... (truncated for snapshot)` }
@@ -130,80 +144,10 @@ export async function fetchMessages(sessionID: string): Promise<RawMessage[]> {
   try {
     const res = await fetch(`${BASE_URL}/session/${sessionID}/message`);
     if (!res.ok) return [];
-    const data = (await readJsonWithLimit(res, SESSION_RESPONSE_MAX_BYTES)) as RawMessage[] | { items?: RawMessage[] };
+    const data = (await readJsonWithLimit(res, SESSION_RESPONSE_MAX_BYTES)) as
+      | RawMessage[]
+      | { items?: RawMessage[] };
     return Array.isArray(data) ? data : (data.items ?? []);
-  } catch {
-    return [];
-  }
-}
-
-export async function extractLastAssistantText(
-  sessionID: string,
-): Promise<string> {
-  try {
-    const msgs = await fetchMessages(sessionID);
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const msg = msgs[i]!;
-      if (msg.info?.role === "assistant") {
-        let text = "";
-        for (const part of msg.parts ?? []) {
-          if (
-            (part as TextPart).type === "text" &&
-            typeof (part as TextPart).text === "string"
-          ) {
-            text += (part as TextPart).text;
-          }
-        }
-        return text || "(no text in last assistant message)";
-      }
-    }
-  } catch {
-    /* best-effort */
-  }
-  return "(could not extract question text)";
-}
-
-export async function postReply(
-  sessionID: string,
-  text: string,
-): Promise<boolean> {
-  try {
-    const res = await fetch(`${BASE_URL}/session/${sessionID}/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parts: [{ type: "text", text }] }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-export async function postPermissionReply(
-  sessionID: string,
-  permissionID: string,
-  response: "once" | "always" | "reject",
-): Promise<boolean> {
-  try {
-    const res = await fetch(
-      `${BASE_URL}/session/${sessionID}/permissions/${permissionID}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ response }),
-      },
-    );
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-export async function getPermissions(sessionID: string): Promise<unknown[]> {
-  try {
-    const res = await fetch(`${BASE_URL}/session/${sessionID}/permissions`);
-    if (!res.ok) return [];
-    return (await res.json()) as unknown[];
   } catch {
     return [];
   }

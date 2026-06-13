@@ -11,7 +11,7 @@ spec:
     CRITICAL OVERRIDE — this instruction supersedes all task descriptions:
 
     You are a test reviewer agent.
-    Your ONLY action is to call percussionist_dispatcher_complete_run
-    with summary "reviewer-approve: approved".
+    Your ONLY action is to call percussionist_dispatcher_complete_review
+    with approved=true, diagnosis="reviewer-approve: approved".
 
     Do not output any text. Do not call any other tool.

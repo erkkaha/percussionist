@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 // codegen/gen-crds.mjs — generate CRD YAML files from Zod schemas.
 //
 // Usage: node codegen/gen-crds.mjs [--out <dir>]
@@ -14,20 +15,21 @@
 //
 // zod-to-json-schema is a dev dependency of the api package.
 
-import { zodToJsonSchema } from "zod-to-json-schema";
-import * as YAML from "yaml";
-import path from "node:path";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import * as YAML from 'yaml';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 
 // Resolve paths.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, "..");
-const apiDist = path.resolve(repoRoot, "packages/api/dist/index.js");
+const repoRoot = path.resolve(__dirname, '..');
+const apiDist = path.resolve(repoRoot, 'packages/api/dist/index.js');
 
 // Parse --out flag.
-const outIdx = process.argv.indexOf("--out");
-const outDir = outIdx >= 0 ? path.resolve(process.argv[outIdx + 1]) : path.resolve(repoRoot, "k8s/crds");
+const outIdx = process.argv.indexOf('--out');
+const outDir =
+  outIdx >= 0 ? path.resolve(process.argv[outIdx + 1]) : path.resolve(repoRoot, 'k8s/crds');
 mkdirSync(outDir, { recursive: true });
 
 // Load compiled API.
@@ -47,7 +49,7 @@ function stripAdditionalProperties(obj) {
   if (Array.isArray(obj)) {
     return obj.map(stripAdditionalProperties);
   }
-  if (obj !== null && typeof obj === "object") {
+  if (obj !== null && typeof obj === 'object') {
     const { additionalProperties, default: _default, ...rest } = obj;
     void _default;
     const result = {};
@@ -60,7 +62,7 @@ function stripAdditionalProperties(obj) {
         void additionalProperties;
       } else {
         // Free-form map (z.record): preserve unknown fields so K8s doesn't prune keys.
-        result["x-kubernetes-preserve-unknown-fields"] = true;
+        result['x-kubernetes-preserve-unknown-fields'] = true;
       }
     }
     return result;
@@ -72,23 +74,23 @@ function stripAdditionalProperties(obj) {
  * Recursively resolve all $ref pointers in a JSON Schema.
  * Only handles local refs of the form "#/$defs/Foo".
  */
-function inlineRefs(obj, defs) {
+function _inlineRefs(obj, defs) {
   if (Array.isArray(obj)) {
-    return obj.map((v) => inlineRefs(v, defs));
+    return obj.map((v) => _inlineRefs(v, defs));
   }
-  if (obj !== null && typeof obj === "object") {
-    if (typeof obj.$ref === "string") {
+  if (obj !== null && typeof obj === 'object') {
+    if (typeof obj.$ref === 'string') {
       const refPath = obj.$ref; // e.g. "#/$defs/ResourceRequirements"
-      const name = refPath.replace(/^#\/\$defs\//, "");
+      const name = refPath.replace(/^#\/\$defs\//, '');
       const resolved = defs[name];
       if (!resolved) throw new Error(`Cannot resolve $ref: ${refPath}`);
       // Inline the resolved definition (recursively).
-      return inlineRefs({ ...resolved }, defs);
+      return _inlineRefs({ ...resolved }, defs);
     }
     const result = {};
     for (const [k, v] of Object.entries(obj)) {
-      if (k === "$defs") continue; // drop the defs block itself
-      result[k] = inlineRefs(v, defs);
+      if (k === '$defs') continue; // drop the defs block itself
+      result[k] = _inlineRefs(v, defs);
     }
     return result;
   }
@@ -98,7 +100,7 @@ function inlineRefs(obj, defs) {
 function toOpenAPISchema(schema) {
   // $refStrategy: "none" forces all schemas to be inlined — no $ref or $defs
   // generated. This is required for Kubernetes CRD validation which forbids $ref.
-  const js = zodToJsonSchema(schema, { target: "openApi3", $refStrategy: "none" });
+  const js = zodToJsonSchema(schema, { target: 'openApi3', $refStrategy: 'none' });
   const { $schema, title, $defs, ...rest } = js;
   void $defs; // should be empty with $refStrategy:"none" but drop anyway
   return stripAdditionalProperties(rest);
@@ -107,16 +109,25 @@ function toOpenAPISchema(schema) {
 // ---------------------------------------------------------------------------
 // CRD template helper.
 
-function makeCRD({ group, version, kind, plural, scope, specSchema, statusSchema, additionalPrinterColumns = [] }) {
+function makeCRD({
+  group,
+  version,
+  kind,
+  plural,
+  scope,
+  specSchema,
+  statusSchema,
+  additionalPrinterColumns = [],
+}) {
   const openApiV3Schema = {
-    type: "object",
+    type: 'object',
     properties: {
-      apiVersion: { type: "string" },
-      kind: { type: "string" },
-      metadata: { type: "object" },
+      apiVersion: { type: 'string' },
+      kind: { type: 'string' },
+      metadata: { type: 'object' },
       spec: toOpenAPISchema(specSchema),
     },
-    required: ["spec"],
+    required: ['spec'],
   };
 
   if (statusSchema) {
@@ -124,8 +135,8 @@ function makeCRD({ group, version, kind, plural, scope, specSchema, statusSchema
   }
 
   const crd = {
-    apiVersion: "apiextensions.k8s.io/v1",
-    kind: "CustomResourceDefinition",
+    apiVersion: 'apiextensions.k8s.io/v1',
+    kind: 'CustomResourceDefinition',
     metadata: {
       name: `${plural}.${group}`,
     },
@@ -142,11 +153,13 @@ function makeCRD({ group, version, kind, plural, scope, specSchema, statusSchema
           name: version,
           served: true,
           storage: true,
-          ...(statusSchema ? {
-            subresources: {
-              status: {},
-            },
-          } : {}),
+          ...(statusSchema
+            ? {
+                subresources: {
+                  status: {},
+                },
+              }
+            : {}),
           additionalPrinterColumns,
           schema: { openAPIV3Schema: openApiV3Schema },
         },
@@ -165,19 +178,19 @@ const clusterAgentYAML = makeCRD({
   version: api.API_VERSION,
   kind: api.KIND_CLUSTER_AGENT,
   plural: api.PLURAL_CLUSTER_AGENT,
-  scope: "Cluster",
+  scope: 'Cluster',
   specSchema: api.ClusterAgentSpecSchema,
   additionalPrinterColumns: [
     {
-      name: "Age",
-      type: "date",
-      jsonPath: ".metadata.creationTimestamp",
+      name: 'Age',
+      type: 'date',
+      jsonPath: '.metadata.creationTimestamp',
     },
   ],
 });
 
-writeFileSync(path.join(outDir, "clusteragent.yaml"), clusterAgentYAML);
-console.log(`wrote ${path.join(outDir, "clusteragent.yaml")}`);
+writeFileSync(path.join(outDir, 'clusteragent.yaml'), clusterAgentYAML);
+console.log(`wrote ${path.join(outDir, 'clusteragent.yaml')}`);
 
 // ---------------------------------------------------------------------------
 // Project CRD
@@ -187,30 +200,30 @@ const projectYAML = makeCRD({
   version: api.API_VERSION,
   kind: api.KIND_PROJECT,
   plural: api.PLURAL_PROJECT,
-  scope: "Namespaced",
+  scope: 'Namespaced',
   specSchema: api.ProjectSpecSchema,
   statusSchema: api.ProjectStatusSchema,
   additionalPrinterColumns: [
     {
-      name: "Phase",
-      type: "string",
-      jsonPath: ".spec.phase",
+      name: 'Phase',
+      type: 'string',
+      jsonPath: '.spec.phase',
     },
     {
-      name: "Workers",
-      type: "integer",
-      jsonPath: ".status.board.activeWorkers",
+      name: 'Workers',
+      type: 'integer',
+      jsonPath: '.status.board.activeWorkers',
     },
     {
-      name: "Age",
-      type: "date",
-      jsonPath: ".metadata.creationTimestamp",
+      name: 'Age',
+      type: 'date',
+      jsonPath: '.metadata.creationTimestamp',
     },
   ],
 });
 
-writeFileSync(path.join(outDir, "project.yaml"), projectYAML);
-console.log(`wrote ${path.join(outDir, "project.yaml")}`);
+writeFileSync(path.join(outDir, 'project.yaml'), projectYAML);
+console.log(`wrote ${path.join(outDir, 'project.yaml')}`);
 
 // ---------------------------------------------------------------------------
 // Run CRD
@@ -220,30 +233,30 @@ const runYAML = makeCRD({
   version: api.API_VERSION,
   kind: api.KIND_RUN,
   plural: api.PLURAL_RUN,
-  scope: "Namespaced",
+  scope: 'Namespaced',
   specSchema: api.RunSpecSchema,
   statusSchema: api.RunStatusSchema,
   additionalPrinterColumns: [
     {
-      name: "Phase",
-      type: "string",
-      jsonPath: ".status.phase",
+      name: 'Phase',
+      type: 'string',
+      jsonPath: '.status.phase',
     },
     {
-      name: "Project",
-      type: "string",
-      jsonPath: ".spec.project",
+      name: 'Project',
+      type: 'string',
+      jsonPath: '.spec.project',
     },
     {
-      name: "Age",
-      type: "date",
-      jsonPath: ".metadata.creationTimestamp",
+      name: 'Age',
+      type: 'date',
+      jsonPath: '.metadata.creationTimestamp',
     },
   ],
 });
 
-writeFileSync(path.join(outDir, "run.yaml"), runYAML);
-console.log(`wrote ${path.join(outDir, "run.yaml")}`);
+writeFileSync(path.join(outDir, 'run.yaml'), runYAML);
+console.log(`wrote ${path.join(outDir, 'run.yaml')}`);
 
 // ---------------------------------------------------------------------------
 // Task CRD
@@ -253,39 +266,39 @@ const taskYAML = makeCRD({
   version: api.API_VERSION,
   kind: api.KIND_TASK,
   plural: api.PLURAL_TASK,
-  scope: "Namespaced",
+  scope: 'Namespaced',
   specSchema: api.TaskSpecSchema,
   statusSchema: api.TaskStatusSchema,
   additionalPrinterColumns: [
     {
-      name: "Phase",
-      type: "string",
-      jsonPath: ".status.phase",
+      name: 'Phase',
+      type: 'string',
+      jsonPath: '.status.phase',
     },
     {
-      name: "Column",
-      type: "string",
-      jsonPath: ".status.column",
+      name: 'Column',
+      type: 'string',
+      jsonPath: '.status.column',
     },
     {
-      name: "Type",
-      type: "string",
-      jsonPath: ".spec.type",
+      name: 'Type',
+      type: 'string',
+      jsonPath: '.spec.type',
     },
     {
-      name: "Project",
-      type: "string",
-      jsonPath: ".spec.projectRef",
+      name: 'Project',
+      type: 'string',
+      jsonPath: '.spec.projectRef',
     },
     {
-      name: "Age",
-      type: "date",
-      jsonPath: ".metadata.creationTimestamp",
+      name: 'Age',
+      type: 'date',
+      jsonPath: '.metadata.creationTimestamp',
     },
   ],
 });
 
-writeFileSync(path.join(outDir, "task.yaml"), taskYAML);
-console.log(`wrote ${path.join(outDir, "task.yaml")}`);
+writeFileSync(path.join(outDir, 'task.yaml'), taskYAML);
+console.log(`wrote ${path.join(outDir, 'task.yaml')}`);
 
-console.log("CRD codegen complete.");
+console.log('CRD codegen complete.');

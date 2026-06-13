@@ -7,23 +7,30 @@
 
 import {
   API_GROUP_VERSION,
+  type FacilitationSpec,
   KIND_RUN,
   LABELS,
   MANAGED_BY,
-  FacilitationSpec,
-  Project,
-  Run,
-  RunStatus,
-  Task,
+  type Project,
+  type Run,
+  type RunStatus,
   resolveRunConfig,
-} from "@percussionist/api";
-import { fetchSessionMessages, readPodLog, core, getClusterSettings, readPlanFromConfigMap, getClusterAgent } from "@percussionist/kube";
-import { resolveParentBranch, resolveTaskBranch } from "./branch-resolver.js";
-import { truncateK8sName } from "./worker-builder.js";
+  type Task,
+} from '@percussionist/api';
+import {
+  core,
+  fetchSessionMessages,
+  getClusterAgent,
+  getClusterSettings,
+  readPlanFromConfigMap,
+  readPodLog,
+} from '@percussionist/kube';
+import { resolveParentBranch, resolveTaskBranch } from './branch-resolver.js';
+import { truncateK8sName } from './worker-builder.js';
 
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
 
-const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
+const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
 
 // Resolve summary source precedence and log the selection.
 // Precedence: explicit arg → stored ConfigMap summary → none.
@@ -53,7 +60,7 @@ async function readStoredSessionSummary(runName: string): Promise<string | undef
     });
     const data = cm.data ?? {};
     for (const [key, value] of Object.entries(data)) {
-      if (key.startsWith("summary-") && typeof value === "string" && value.length > 0) {
+      if (key.startsWith('summary-') && typeof value === 'string' && value.length > 0) {
         return value;
       }
     }
@@ -85,7 +92,7 @@ export async function buildFacilitationRun(
   const facilitationSpec: FacilitationSpec = {
     targetRunName: failedRunName,
     targetTaskId: task.metadata.name,
-    failureReason: failedRunStatus.message ?? "Unknown failure",
+    failureReason: failedRunStatus.message ?? 'Unknown failure',
     sessionSummary,
     successReview: false,
   };
@@ -96,35 +103,36 @@ export async function buildFacilitationRun(
 
   const promptLines = [
     `You are a facilitator agent that analyzes failed worker runs and recommends actions.`,
-    "",
+    '',
     `TASK: ${task.metadata.name} — ${task.spec.title}`,
     `WORKER RUN: ${failedRunName}`,
     `FAILURE: ${facilitationSpec.failureReason}`,
-    "",
+    '',
     `RECENT SESSION MESSAGES:`,
-    sessionSummary || "(none available)",
-    "",
+    sessionSummary || '(none available)',
+    '',
     ...(alternativeAgents.length > 0
       ? [
-          `AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(", ")}`,
+          `AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(', ')}`,
           `NOTE: If the failure is due to the specific worker agent refusing or being incapable, `,
           `recommend retry_alternative with one of the available alternative agents.`,
           `Only recommend skip if the task itself is inherently impossible or harmful.`,
-          "",
+          '',
         ]
       : []),
     project.spec.runner?.packages?.length
-      ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(", ")}`
-      : "RUNNER PACKAGES: (base image only)",
-    "",
+      ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(', ')}`
+      : 'RUNNER PACKAGES: (base image only)',
+    '',
     `Analyze the failure above and output ONLY valid JSON (no markdown, no explanation):`,
     JSON.stringify({
-      diagnosis: "(root cause in 1-2 sentences)",
-      recommendedAction: "(retry_same | retry_alternative | skip)",
-      alternativeAgent: "(required if recommendedAction is retry_alternative — must be one of the AVAILABLE ALTERNATIVE AGENTS listed above)",
-      suggestion: "(optional — fix suggestion for next attempt)",
+      diagnosis: '(root cause in 1-2 sentences)',
+      recommendedAction: '(retry_same | retry_alternative | skip)',
+      alternativeAgent:
+        '(required if recommendedAction is retry_alternative — must be one of the AVAILABLE ALTERNATIVE AGENTS listed above)',
+      suggestion: '(optional — fix suggestion for next attempt)',
     }),
-  ].join("\n");
+  ].join('\n');
 
   return await buildFacilitatorRun(
     project,
@@ -158,7 +166,7 @@ export async function buildSuccessReviewRun(
     },
   });
 
-  const completionMessage = succeededRunStatus.message ?? "session completed";
+  const completionMessage = succeededRunStatus.message ?? 'session completed';
 
   const facilitationSpec: FacilitationSpec = {
     targetRunName: succeededRunName,
@@ -174,21 +182,21 @@ export async function buildSuccessReviewRun(
 
   const branch = branchName ?? `feat/${task.metadata.name}`;
 
-  const taskTypeLabel = task.spec.type ? `TASK TYPE: ${task.spec.type}` : "";
-  const isBuildTask = task.spec.type === "BUILD";
-  const isPlanTask = task.spec.type === "PLAN";
+  const taskTypeLabel = task.spec.type ? `TASK TYPE: ${task.spec.type}` : '';
+  const isBuildTask = task.spec.type === 'BUILD';
+  const isPlanTask = task.spec.type === 'PLAN';
   const planPath = `.percussionist/plans/${task.metadata.name}.md`;
 
   const promptLines = [
     `You are a reviewer agent that checks whether a completed worker run actually fulfilled its task.`,
     ...(taskTypeLabel ? [taskTypeLabel] : []),
-    "",
+    '',
     `TASK: ${task.metadata.name} — ${task.spec.title}`,
-    `TASK DESCRIPTION: ${task.spec.description ?? "(none)"}`,
+    `TASK DESCRIPTION: ${task.spec.description ?? '(none)'}`,
     `WORKER RUN: ${succeededRunName}`,
     `BRANCH: ${branch}`,
     `COMPLETION MESSAGE: ${completionMessage}`,
-    "",
+    '',
     ...(isBuildTask
       ? [
           `This is a BUILD task. The worker should have committed the completed work before calling complete_run.`,
@@ -196,7 +204,7 @@ export async function buildSuccessReviewRun(
           `Review the session data to verify the task was completed satisfactorily.`,
           `If the completion message and session data indicate the task was completed, approve it.`,
           `If the work is incomplete or incorrect, use request_changes.`,
-          "",
+          '',
         ]
       : isPlanTask
         ? [
@@ -205,47 +213,44 @@ export async function buildSuccessReviewRun(
             `Approve only if the plan file exists and contains enough context to generate BUILD tasks: scope, assumptions, risks, acceptance criteria, and a concrete implementation breakdown.`,
             `Use request_changes if the plan artifact is missing, vague, or lacks enough context for builders.`,
             `Use escalate only for cases that require human judgment beyond improving the plan artifact.`,
-            "",
+            '',
           ]
-      : [
-          `The COMPLETION MESSAGE above summarizes what the worker accomplished.`,
-          `Check the completion message and session data to verify the task was completed.`,
-          "",
-        ]),
+        : [
+            `The COMPLETION MESSAGE above summarizes what the worker accomplished.`,
+            `Check the completion message and session data to verify the task was completed.`,
+            '',
+          ]),
     `RECENT SESSION MESSAGES:`,
-    sessionSummary || "(none available)",
-    "",
+    sessionSummary || '(none available)',
+    '',
     ...(isPlanTask
       ? [
-           `PLAN ARTIFACT PATH: ${planPath}`,
-           `Call the percussionist_dispatcher_read_plan MCP tool (percussionist_dispatcher_read_plan(project="<project>", task="<task-id>")) to retrieve plan content.`,
-          "",
+          `PLAN ARTIFACT PATH: ${planPath}`,
+          `Call the percussionist_dispatcher_read_plan MCP tool (percussionist_dispatcher_read_plan(project="<project>", task="<task-id>")) to retrieve plan content.`,
+          '',
         ]
       : []),
-    "",
+    '',
     ...(alternativeAgents.length > 0
-      ? [
-          `AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(", ")}`,
-          "",
-        ]
+      ? [`AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(', ')}`, '']
       : []),
     project.spec.runner?.packages?.length
-      ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(", ")}`
-      : "RUNNER PACKAGES: (base image only)",
-    "",
-    `Review the above and output ONLY valid JSON (no markdown, no explanation):`,
+      ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(', ')}`
+      : 'RUNNER PACKAGES: (base image only)',
+    '',
+    `Call the percussionist_dispatcher_complete_review MCP tool to submit your review verdict:`,
     JSON.stringify({
-      diagnosis: "(1-2 sentences: did the worker actually complete the task?)",
-      recommendedAction: "(approve | request_changes | retry_alternative | escalate)",
-      alternativeAgent: "(required if recommendedAction is retry_alternative — must be one of the AVAILABLE ALTERNATIVE AGENTS listed above)",
-      suggestion: "(optional — what to improve or why escalating)",
+      approved: true,
+      diagnosis: '(1-2 sentences: did the worker actually complete the task?)',
+      feedback: '(optional — detailed feedback, retry_alternative: <agent>, or escalate reason)',
+      suggestion: '(optional — what to improve)',
     }),
-    "",
-    `Use "approve" if the task was completed satisfactorily.`,
-    `Use "request_changes" if implementation changes are needed before human approval.`,
-    `Use "retry_alternative" only if a different agent should redo the task.`,
-    `Use "escalate" if human review is needed.`,
-  ].join("\n");
+    '',
+    `Use approved: true if the task was completed satisfactorily.`,
+    `Use approved: false if implementation changes are needed before human approval.`,
+    `If a different agent should redo the task, include "retry_alternative: <agent>" in the feedback field.`,
+    `If human review is needed, include "escalate" in the diagnosis or feedback.`,
+  ].join('\n');
 
   return await buildFacilitatorRun(
     project,
@@ -268,7 +273,7 @@ export async function buildBuildTaskGeneratorRun(
   sessionSummary: string,
   facilitatorAgentName: string,
   allTasks: Task[] = [],
-  defaultBuildAgent: string = "builder",
+  defaultBuildAgent: string = 'builder',
 ): Promise<Run> {
   const clusterSettings = await getClusterSettings().catch(() => undefined);
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
@@ -279,7 +284,7 @@ export async function buildBuildTaskGeneratorRun(
   });
 
   // Prefer explicitly passed summary, then fall back to stored ConfigMap summary.
-  const { source: summarySource, summary: actualSummary } = resolveSummarySource(
+  const { summary: actualSummary } = resolveSummarySource(
     sessionSummary,
     await readStoredSessionSummary(succeededRunName),
   );
@@ -294,7 +299,7 @@ export async function buildBuildTaskGeneratorRun(
   const facilitationSpec: FacilitationSpec = {
     targetRunName: succeededRunName,
     targetTaskId: planTask.metadata.name,
-    failureReason: "BUILD task generation from approved PLAN",
+    failureReason: 'BUILD task generation from approved PLAN',
     sessionSummary: actualSummary,
     successReview: false,
   };
@@ -306,45 +311,43 @@ export async function buildBuildTaskGeneratorRun(
   const promptLines = [
     `You are a facilitator agent that breaks down approved PLAN tasks into concrete BUILD tasks.`,
     `You do NOT implement code. You do NOT write, edit, or modify any files. You do NOT run git commands. You do NOT create pull requests. You do NOT explore the codebase.`,
-    "",
+    '',
     `PLAN TASK: ${planTask.metadata.name} — ${planTask.spec.title}`,
-    `PLAN DESCRIPTION: ${planTask.spec.description ?? "(none)"}`,
+    `PLAN DESCRIPTION: ${planTask.spec.description ?? '(none)'}`,
     `PLAN WORKER RUN: ${succeededRunName}`,
-    "",
+    '',
     `PLAN SESSION CONTEXT:`,
-    actualSummary || "(none available — use the task description above)",
-    "",
-    ...(planContent
-      ? ["", `PLAN ARTIFACT CONTENT:`, planContent, ""]
-      : []),
+    actualSummary || '(none available — use the task description above)',
+    '',
+    ...(planContent ? ['', `PLAN ARTIFACT CONTENT:`, planContent, ''] : []),
     `PLAN ARTIFACT PATH: .percussionist/plans/${planTask.metadata.name}.md`,
-    "",
+    '',
     `The PLAN task has been approved by a human reviewer. Your job is to call the`,
     `percussionist_dispatcher_create_task tool for each BUILD task that implements the plan. Work ONLY from`,
     `the task description and plan session context provided above. Do NOT read any`,
     `workspace files. Do NOT explore the codebase. Do NOT run shell commands.`,
     `Do NOT write or edit any files.`,
-    "",
+    '',
     ...(availableAgents.length > 0
       ? [
-          `AVAILABLE AGENTS: ${availableAgents.join(", ")}`,
+          `AVAILABLE AGENTS: ${availableAgents.join(', ')}`,
           `For each BUILD task, specify the agent via the percussionist_dispatcher_create_task "agent" parameter.`,
           `If not specified, the "${defaultBuildAgent}" agent will be used.`,
-          "",
+          '',
         ]
       : []),
-    (project.spec.runner?.packages?.length
-      ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(", ")}`
-      : "RUNNER PACKAGES: (none declared beyond base image)"),
-    "",
+    project.spec.runner?.packages?.length
+      ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(', ')}`
+      : 'RUNNER PACKAGES: (none declared beyond base image)',
+    '',
     `AVAILABLE TOOLS:`,
     `- percussionist_dispatcher_create_task(title, description?, agent, priority?, predecessorRef?) — creates a BUILD Task CR and returns { taskName, project, type, phase }`,
     `- percussionist_dispatcher_complete_run — call after all BUILD tasks are created to signal completion`,
-    "",
+    '',
     `If the context above is insufficient to derive concrete BUILD tasks, call percussionist_dispatcher_complete_run`,
     `with summary "no build tasks required" so the PLAN escalates for manual BUILD task creation.`,
-    "",
-     `WORKFLOW:`,
+    '',
+    `WORKFLOW:`,
     `1. Decide your BUILD tasks and their order.`,
     `2. Call percussionist_dispatcher_create_task for each task IN ORDER:`,
     `   - title (required): short actionable title`,
@@ -354,7 +357,7 @@ export async function buildBuildTaskGeneratorRun(
     `   - predecessorRef: the taskName returned by a previous percussionist_dispatcher_create_task call if this task depends on it`,
     `3. Each percussionist_dispatcher_create_task returns { taskName, ... }. Use the returned taskName as predecessorRef for dependent tasks.`,
     `4. After ALL tasks are created, call percussionist_dispatcher_complete_run with a summary of what was created.`,
-    "",
+    '',
     `REQUIREMENTS:`,
     `- PLAN ARTIFACT CONTENT (if provided above) is the source of truth for task decomposition and ordering; session summaries may be stale or incomplete`,
     `- If the plan artifact defines an ordered/phased BUILD breakdown (for example BUILD A/B/C/D), preserve that order when creating tasks`,
@@ -369,7 +372,7 @@ export async function buildBuildTaskGeneratorRun(
     `- Mark tasks as independent only when they are genuinely disjoint (different files/modules with low merge-conflict risk); when uncertain, prefer sequencing with predecessorRef`,
     `- Only set predecessorRef when one task genuinely cannot start until another is done (imports code it creates, migrates schema it defines, etc.)`,
     `- If the PLAN requires no BUILD tasks (was purely research/planning), call percussionist_dispatcher_complete_run with summary "no build tasks required"`,
-    "",
+    '',
     `CRITICAL — DO NOT:`,
     `- Do NOT write or edit any files. You have NO file write access.`,
     `- Do NOT run any shell commands. You have NO shell access.`,
@@ -377,7 +380,7 @@ export async function buildBuildTaskGeneratorRun(
     `- Do NOT run git commands, commit, push, or create pull requests.`,
     `- Do NOT explore the codebase. Do NOT browse directories.`,
     `- Do NOT output JSON or prose — just call the tools.`,
-  ].join("\n");
+  ].join('\n');
 
   return await buildFacilitatorRun(
     project,
@@ -410,11 +413,11 @@ export async function buildReviewRun(
     },
   });
 
-  const completionMessage = succeededRunStatus.message ?? "session completed";
+  const completionMessage = succeededRunStatus.message ?? 'session completed';
   const branch = branchName ?? `feat/${task.metadata.name}`;
-  const taskTypeLabel = task.spec.type ? `TASK TYPE: ${task.spec.type}` : "";
-  const isBuildTask = task.spec.type === "BUILD";
-  const isPlanTask = task.spec.type === "PLAN";
+  const taskTypeLabel = task.spec.type ? `TASK TYPE: ${task.spec.type}` : '';
+  const isBuildTask = task.spec.type === 'BUILD';
+  const isPlanTask = task.spec.type === 'PLAN';
   const planPath = `.percussionist/plans/${task.metadata.name}.md`;
 
   const alternativeAgents = (project.spec.agents ?? [])
@@ -424,16 +427,16 @@ export async function buildReviewRun(
   const promptLines = [
     `You are a reviewer agent that checks whether a completed worker run actually fulfilled its task.`,
     ...(taskTypeLabel ? [taskTypeLabel] : []),
-    "",
+    '',
     `TASK: ${task.metadata.name} — ${task.spec.title}`,
-    `TASK DESCRIPTION: ${task.spec.description ?? "(none)"}`,
+    `TASK DESCRIPTION: ${task.spec.description ?? '(none)'}`,
     `WORKER RUN: ${succeededRunName}`,
     `BRANCH: ${branch}`,
     `COMPLETION MESSAGE: ${completionMessage}`,
-    "",
+    '',
     `SESSION DATA: Use the percussionist_dispatcher_read_session MCP tool (runName="${succeededRunName}") to read the full session.`,
     `The session data is persisted as a ConfigMap snapshot.`,
-    "",
+    '',
     ...(isBuildTask
       ? [
           `This is a BUILD task. The worker should have committed the completed work before calling complete_run.`,
@@ -441,7 +444,10 @@ export async function buildReviewRun(
           `Review the session data to verify the task was completed satisfactorily.`,
           `If the completion message and session data indicate the task was completed, approve it.`,
           `If the work is incomplete or incorrect, use request_changes.`,
-          "",
+          '',
+          `CODE ACCESS: The worker's committed code is on the same branch this reviewer is running on. Your /workspace contains the worker's committed changes.`,
+          `Use git log, git diff, read, grep, or the percussionist_dispatcher_search_code MCP tool to inspect files and review the changes.`,
+          '',
         ]
       : isPlanTask
         ? [
@@ -450,46 +456,43 @@ export async function buildReviewRun(
             `Approve only if the plan file exists and contains enough context to generate BUILD tasks: scope, assumptions, risks, acceptance criteria, and a concrete implementation breakdown.`,
             `Use request_changes if the plan artifact is missing, vague, or lacks enough context for builders.`,
             `Use escalate only for cases that require human judgment beyond improving the plan artifact.`,
-            "",
+            '',
           ]
-      : [
-          `The COMPLETION MESSAGE above summarizes what the worker accomplished.`,
-          `Check the completion message and session data to verify the task was completed.`,
-          "",
-        ]),
+        : [
+            `The COMPLETION MESSAGE above summarizes what the worker accomplished.`,
+            `Check the completion message and session data to verify the task was completed.`,
+            '',
+          ]),
     ...(isPlanTask
       ? [
-           `PLAN ARTIFACT PATH: ${planPath}`,
-           `Call the percussionist_dispatcher_read_plan MCP tool (percussionist_dispatcher_read_plan(project="<project>", task="<task-id>")) to retrieve plan content.`,
-          "",
+          `PLAN ARTIFACT PATH: ${planPath}`,
+          `Call the percussionist_dispatcher_read_plan MCP tool (percussionist_dispatcher_read_plan(project="<project>", task="<task-id>")) to retrieve plan content.`,
+          '',
         ]
       : []),
-    "",
+    '',
     ...(alternativeAgents.length > 0
-      ? [
-          `AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(", ")}`,
-          "",
-        ]
+      ? [`AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(', ')}`, '']
       : []),
-    `Review the above and output ONLY valid JSON (no markdown, no explanation):`,
+    `Call the percussionist_dispatcher_complete_review MCP tool to submit your review verdict:`,
     JSON.stringify({
-      diagnosis: "(1-2 sentences: did the worker actually complete the task?)",
-      recommendedAction: "(approve | request_changes | retry_alternative | escalate)",
-      alternativeAgent: "(required if recommendedAction is retry_alternative — must be one of the AVAILABLE ALTERNATIVE AGENTS listed above)",
-      suggestion: "(optional — what to improve or why escalating)",
+      approved: true,
+      diagnosis: '(1-2 sentences: did the worker actually complete the task?)',
+      feedback: '(optional — detailed feedback, retry_alternative: <agent>, or escalate reason)',
+      suggestion: '(optional — what to improve)',
     }),
-    "",
-    `Use "approve" if the task was completed satisfactorily.`,
-    `Use "request_changes" if implementation changes are needed before human approval.`,
-    `Use "retry_alternative" only if a different agent should redo the task.`,
-    `Use "escalate" if human review is needed.`,
-  ].join("\n");
+    '',
+    `Use approved: true if the task was completed satisfactorily.`,
+    `Use approved: false if implementation changes are needed before human approval.`,
+    `If a different agent should redo the task, include "retry_alternative: <agent>" in the feedback field.`,
+    `If human review is needed, include "escalate" in the diagnosis or feedback.`,
+  ].join('\n');
 
   const facilitationSpec: FacilitationSpec = {
     targetRunName: succeededRunName,
     targetTaskId: task.metadata.name,
     failureReason: completionMessage,
-    sessionSummary: "",
+    sessionSummary: '',
     successReview: true,
   };
 
@@ -528,8 +531,12 @@ async function buildFacilitatorRun(
   const source = resolved.source
     ? { ...resolved.source, ...(resolved.source.git ? { git: { ...resolved.source.git } } : {}) }
     : undefined;
-  const data = resolved.data ? { ...resolved.data, mountPath: resolved.data.mountPath ?? "/data" } : undefined;
-  const gitCache = resolved.gitCache ? { worktreeReuse: resolved.gitCache.worktreeReuse ?? true } : undefined;
+  const data = resolved.data
+    ? { ...resolved.data, mountPath: resolved.data.mountPath ?? '/data' }
+    : undefined;
+  const gitCache = resolved.gitCache
+    ? { worktreeReuse: resolved.gitCache.worktreeReuse ?? true }
+    : undefined;
   if (source?.git) {
     let gitBranch: string | undefined;
     let parentBranch: string | undefined;
@@ -557,9 +564,9 @@ async function buildFacilitatorRun(
       ownerReferences: [
         {
           apiVersion: API_GROUP_VERSION,
-          kind: "Project",
+          kind: 'Project',
           name: project.metadata.name,
-          uid: project.metadata.uid!,
+          uid: project.metadata.uid ?? '',
           controller: true,
           blockOwnerDeletion: true,
         },
@@ -571,9 +578,7 @@ async function buildFacilitatorRun(
       task: promptLines,
       interactive: false,
       agent: facilitatorAgentName,
-      agents: (project.spec.agents ?? []).filter(
-        (a) => a.name !== facilitatorAgentName,
-      ),
+      agents: (project.spec.agents ?? []).filter((a) => a.name !== facilitatorAgentName),
       model: resolved.model,
       image: resolved.image,
       timeoutSeconds: FACILITATION_TIMEOUT_SECONDS,
@@ -599,7 +604,13 @@ export async function parseFacilitationResult(
   sessionID?: string,
 ): Promise<{
   diagnosis: string;
-  recommendedAction: "retry_same" | "retry_alternative" | "skip" | "approve" | "request_changes" | "escalate";
+  recommendedAction:
+    | 'retry_same'
+    | 'retry_alternative'
+    | 'skip'
+    | 'approve'
+    | 'request_changes'
+    | 'escalate';
   alternativeAgent?: string;
   suggestion?: string;
 } | null> {
@@ -612,7 +623,7 @@ export async function parseFacilitationResult(
     });
     const data = cm.data ?? {};
     for (const [key, value] of Object.entries(data)) {
-      if (!key.startsWith("messages-")) continue;
+      if (!key.startsWith('messages-')) continue;
       const messages: Array<{
         info: { role: string };
         parts: Array<{ type: string; text?: string }>;
@@ -620,9 +631,9 @@ export async function parseFacilitationResult(
       // Walk messages in reverse to find the last assistant text.
       for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i];
-        if (!msg || msg.info.role !== "assistant") continue;
+        if (msg?.info.role !== 'assistant') continue;
         for (const part of msg.parts) {
-          if (part.type === "text" && part.text) {
+          if (part.type === 'text' && part.text) {
             const result = extractFacilitationJson(part.text);
             if (result) return result;
           }
@@ -642,11 +653,13 @@ export async function parseFacilitationResult(
       runStatus = null;
     }
   }
-  if (runStatus && typeof runStatus === "object" && "messages" in runStatus) {
-    const messages = (runStatus.messages as Array<{
-      role: string;
-      content: string;
-    }>).filter((m) => m.role === "assistant");
+  if (runStatus && typeof runStatus === 'object' && 'messages' in runStatus) {
+    const messages = (
+      runStatus.messages as Array<{
+        role: string;
+        content: string;
+      }>
+    ).filter((m) => m.role === 'assistant');
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
       if (!message) continue;
@@ -657,7 +670,7 @@ export async function parseFacilitationResult(
 
   // Last resort: pod log.
   try {
-    const logs = await readPodLog(runName, "opencode", undefined, ns);
+    const logs = await readPodLog(runName, 'opencode', undefined, ns);
     const result = extractFacilitationJson(logs);
     if (result) return result;
   } catch {
@@ -677,16 +690,22 @@ function extractFacilitationJson(text: string) {
     const parsed = JSON.parse(jsonMatch[0]);
     const action = parsed.recommendedAction as string;
     if (
-      action === "retry_same" ||
-      action === "retry_alternative" ||
-      action === "skip" ||
-      action === "approve" ||
-      action === "request_changes" ||
-      action === "escalate"
+      action === 'retry_same' ||
+      action === 'retry_alternative' ||
+      action === 'skip' ||
+      action === 'approve' ||
+      action === 'request_changes' ||
+      action === 'escalate'
     ) {
       return {
-        diagnosis: parsed.diagnosis ?? "",
-        recommendedAction: action as "retry_same" | "retry_alternative" | "skip" | "approve" | "request_changes" | "escalate",
+        diagnosis: parsed.diagnosis ?? '',
+        recommendedAction: action as
+          | 'retry_same'
+          | 'retry_alternative'
+          | 'skip'
+          | 'approve'
+          | 'request_changes'
+          | 'escalate',
         alternativeAgent: parsed.alternativeAgent,
         suggestion: parsed.suggestion,
       };

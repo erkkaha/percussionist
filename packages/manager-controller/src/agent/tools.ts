@@ -22,7 +22,6 @@ import {
   deleteRun,
   fetchSessionMessages,
   fetchAllSessionMessages,
-  patchProjectStatus,
   listClusterAgents,
   listPodsByLabels,
   listTasks,
@@ -37,7 +36,7 @@ import {
   createTask,
   apps,
 } from "@percussionist/kube";
-import { LABELS, MEMORY_SERVICE_PORT, type Project, type Task, type TaskPhase, type TaskSpec } from "@percussionist/api";
+import { LABELS, type Project, type Task, type TaskPhase } from "@percussionist/api";
 import { storeMemory, queryMemory, getContext } from "./memory-client.js";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
@@ -1521,7 +1520,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         : foundImage.image;
       const repo = imageWithoutTag.replace(/^[^/]+\//, ""); // strip registry host
 
-      // 4. Get GHCR anonymous bearer token for this repo
+      // 3. Get GHCR anonymous bearer token for this repo
       let latestTag: string | null = null;
       let registryError: string | undefined;
       try {
@@ -1532,7 +1531,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         if (!tokenRes.ok) throw new Error(`GHCR token endpoint returned ${tokenRes.status}`);
         const { token } = (await tokenRes.json()) as { token: string };
 
-        // 5. Fetch tag list
+        // 4. Fetch tag list
         const tagsRes = await fetch(
           `https://ghcr.io/v2/${repo}/tags/list?n=1000`,
           {
@@ -1543,7 +1542,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         if (!tagsRes.ok) throw new Error(`GHCR tags endpoint returned ${tagsRes.status}`);
         const { tags } = (await tagsRes.json()) as { tags: string[] };
 
-        // 6. Find latest semver tag (vMAJOR.MINOR.PATCH) via inline sort
+        // 5. Find latest semver tag (vMAJOR.MINOR.PATCH) via inline sort
         const semverTags = (tags ?? [])
           .filter((t) => /^v\d+\.\d+\.\d+$/.test(t))
           .sort((a, b) => {
@@ -1713,13 +1712,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const webUrl =
         process.env.WEB_SERVICE_URL ??
         `http://percussionist-web.${MANAGER_NAMESPACE}.svc.cluster.local:8080`;
-      const webAuthToken = process.env.WEB_AUTH_TOKEN ?? "";
-      const authHeaders: Record<string, string> = webAuthToken ? { Authorization: `Bearer ${webAuthToken}` } : {};
       let path = `/api/board/${encodeURIComponent(project)}/events?limit=${limit}`;
       if (taskFilter) {
         path = `/api/board/${encodeURIComponent(project)}/tasks/${encodeURIComponent(taskFilter)}/events?limit=${limit}`;
       }
-      const res = await fetch(`${webUrl}${path}`, { headers: { ...authHeaders } });
+      const res = await fetch(`${webUrl}${path}`);
       if (!res.ok) {
         throw new Error(`web server returned ${res.status}: ${res.statusText}`);
       }

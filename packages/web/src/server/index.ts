@@ -7,76 +7,76 @@
 // Stats DB is initialised eagerly on startup so the first POST from a
 // dispatcher doesn't pay the schema-creation cost.
 
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { createApp } from "./app.js";
-import stats, { runRetentionCleanup, RETENTION_DAYS } from "./routes/stats.js";
-import { NAMESPACE } from "./kube.js";
-import { getDb } from "./db.js";
-import { startMetricsCollector } from "./metrics-collector.js";
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createApp } from './app.js';
+import { getDb } from './db.js';
+import { NAMESPACE } from './kube.js';
+import { startMetricsCollector } from './metrics-collector.js';
+import stats, { RETENTION_DAYS, runRetentionCleanup } from './routes/stats.js';
 
 void stats; // imported for side-effect registration only (retention helpers)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // In dev (tsx):   src/server/index.ts  -> ../../dist/client
 // In production:  dist/server/index.js -> ../client
-const clientDir = path.resolve(__dirname, "../client");
+const clientDir = path.resolve(__dirname, '../client');
 
 const app = createApp();
 
 // Return 404 for any /api/* path that wasn't matched by the registered routes.
 // Without this, unmatched API paths would fall through to the SPA catch-all and
 // receive index.html with a 200, which is misleading for API consumers.
-app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
+app.all('/api/*', (c) => c.json({ error: 'Not Found' }, 404));
 
 // Serve the Vite-built SPA for all non-API routes.
 // Under Bun we use its built-in static file serving; under Node we fall back
 // to @hono/node-server/serve-static.
-const isBun = typeof Bun !== "undefined";
+const isBun = typeof Bun !== 'undefined';
 
 if (!isBun) {
-  const { serveStatic } = await import("@hono/node-server/serve-static");
+  const { serveStatic } = await import('@hono/node-server/serve-static');
   app.use(
-    "/*",
+    '/*',
     serveStatic({
       root: clientDir,
       rewriteRequestPath: (p) => p,
     }),
   );
   app.use(
-    "/*",
+    '/*',
     serveStatic({
       root: clientDir,
-      rewriteRequestPath: () => "/index.html",
+      rewriteRequestPath: () => '/index.html',
     }),
   );
 }
 
 if (isBun) {
   // Bun: serve static files from clientDir, fall back to index.html for SPA.
-  app.use("/*", async (c) => {
+  app.use('/*', async (c) => {
     const reqPath = new URL(c.req.url).pathname;
     const filePath = path.join(clientDir, reqPath);
 
     let file = Bun.file(filePath);
     if (!(await file.exists())) {
-      file = Bun.file(path.join(clientDir, "index.html"));
+      file = Bun.file(path.join(clientDir, 'index.html'));
     }
     if (!(await file.exists())) {
-      return c.text("Not found", 404);
+      return c.text('Not found', 404);
     }
     return new Response(file);
   });
 }
 
-const port = parseInt(process.env.PORT ?? "8080", 10);
+const port = parseInt(process.env.PORT ?? '8080', 10);
 
 // ---------------------------------------------------------------------------
 // Stats DB — initialise eagerly so schema is ready before first request.
 
 getDb();
 console.log(
-  `[stats] retention policy: ${RETENTION_DAYS > 0 ? `${RETENTION_DAYS} days` : "disabled (keep forever)"}`,
+  `[stats] retention policy: ${RETENTION_DAYS > 0 ? `${RETENTION_DAYS} days` : 'disabled (keep forever)'}`,
 );
 
 // ---------------------------------------------------------------------------
@@ -99,6 +99,6 @@ console.log(`serving client from ${clientDir}`);
 if (isBun) {
   Bun.serve({ fetch: app.fetch, port });
 } else {
-  const { serve } = await import("@hono/node-server");
+  const { serve } = await import('@hono/node-server');
   serve({ fetch: app.fetch, port });
 }

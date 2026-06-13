@@ -7,7 +7,9 @@ of TypeScript packages under `packages/*`.
 ## Key Commands
 - `pnpm build` - Build all packages
 - `pnpm typecheck` - Type-check all packages via `tsc -b` (run before committing; respects project references, runs in topological order)
-- `pnpm test` - Run unit + smoke tests across all packages (Vitest + Bun)
+- `pnpm lint` - Check lint + formatting via Biome (CI gate)
+- `pnpm format` - Auto-fix lint issues + format via Biome
+- `pnpm test` - Run unit + smoke tests across all packages (bun:test)
 - `pnpm e2e:core` - Run deterministic E2E suites on a live cluster (PR gate)
 - `pnpm e2e:extended` - Run extended E2E suites for complex paths like feature branching
 - `pnpm e2e` - Aggregate: runs all E2E suites
@@ -26,7 +28,7 @@ All commits must follow **Conventional Commits** format:
 ```
 
 Husky hooks enforce compliance on every commit:
-- **pre-commit** — runs `pnpm typecheck && pnpm test` (fails if either fails)
+- **pre-commit** — runs `pnpm typecheck && pnpm test` (fails if either fails); also runs `lint-staged` to auto-format and auto-fix staged files via Biome
 - **commit-msg** — runs `commitlint` to validate the message format
 
 Valid types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
@@ -222,8 +224,9 @@ spec:
   kubectl apply -f k8s/deploy/ollama.yaml
   kubectl -n percussionist wait --for=condition=Ready pod -l app.kubernetes.io/component=ollama
   ```
-  The init container on the Ollama Deployment automatically pulls `nomic-embed-text`
-  before the main container starts, so no manual pull is required.
+  Model warmup is handled per-project by the memory service at startup.
+  The memory service pulls the model declared in `spec.embedding.model`
+  (default `nomic-embed-text`), so no global preload or manual pull is required.
 - `source.git` or `source.local` must be set (needs a data PVC)
 
 ### Available MCP Tools
@@ -419,8 +422,8 @@ Drizzle-kit will produce a `DROP TABLE` migration and update the journal/snapsho
 Do not add `ALTER TABLE` try/catch blocks to `db.ts`. Do not duplicate DDL as raw SQL strings in `db.ts`. Always use drizzle-kit generate to produce a migration file.
 
 ## Conventions
-- No linter/formatting tool configured -- do not add one without asking
-- Testing: Vitest in `packages/manager-controller`; run `pnpm test` locally
+- Formatting and linting via Biome (see `biome.json`)
+- Testing: bun:test in all packages; run `pnpm test` locally
 - K8s client: `@kubernetes/client-node` (lazy singleton, typed CRUD helpers)
 - Console-based logging with timestamps (no structured logger)
 - CamelCase for TS, kebab-case for YAML
@@ -801,15 +804,6 @@ Never invent a version — read what exists and increment.
 Percussionist dogfoods itself for development using resources in `k8s/self-dev/`.
 This directory is for maintainers only — external users should skip it.
 
-### Meta-Agents (k8s/self-dev/agents/)
-
-| Agent | Role |
-|-------|------|
-| `meta-reviewer` | Runs typecheck/build/tests and reviews code quality before integration |
-| `meta-smoke-tester` | Builds Docker images via DinD and validates changes in an isolated test namespace |
-| `meta-integrator` | Rebases and merges an approved feature branch into main, pushes to remote |
-| `meta-documenter` | Updates README.md and AGENTS.md to reflect changes that landed on main |
-
 ### Project
 
 `percussionist-dev` (in `k8s/self-dev/projects/`) is the self-development Project.
@@ -819,15 +813,13 @@ branches and the integrator merges to main.
 ### Task Workflow
 
 ```
-PLAN → BUILD → REVIEW → (SMOKE) → INTEGRATE → (DOCUMENT)
+PLAN → BUILD → REVIEW → INTEGRATE
 ```
 
 1. **PLAN** (`planner`) — Explores codebase, produces implementation plan, creates child BUILD tasks
 2. **BUILD** (`builder`) — Implements changes on `agent/<task-name>` branch
-3. **REVIEW** (`meta-reviewer`) — Typecheck, build, code quality gate
-4. **SMOKE** (`meta-smoke-tester`) — Optional; build images + e2e in isolated namespace
-5. **INTEGRATE** (`meta-integrator`) — Rebase-merge to main, push to remote
-6. **DOCUMENT** (`meta-documenter`) — Optional; update docs post-merge
+3. **REVIEW** (`reviewer`) — Typecheck, build, code quality gate
+4. **INTEGRATE** (`integrator`) — Rebase-merge to main, push to remote
 
 Setup instructions: `k8s/self-dev/secrets/README.md`
 

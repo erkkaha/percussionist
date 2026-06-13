@@ -11,7 +11,7 @@ Percussionist uses a **four-layer testing model** to balance speed, confidence, 
 **Scope:** Individual functions, classes, and pure logic with no external dependencies.
 
 - Run via `pnpm test` (which delegates to `pnpm -r run test`).
-- Framework: Vitest (TypeScript packages) or Bun test (web package).
+- Framework: Bun test (all packages).
 - No network calls, no file system mutations beyond temp dirs, no Kubernetes client.
 - Examples: state-machine transitions (`transitions.test.ts`), scheduler logic (`scheduler.test.ts`), decision engine rules (`decision.test.ts`).
 
@@ -124,7 +124,7 @@ A test should pass regardless of which LLM provider or model is configured. The 
 |---------|-------------|
 | `pnpm build` | Build all packages (`tsc -b`) |
 | `pnpm typecheck` | Type-check all packages via `tsc -b` |
-| `pnpm test` | Run unit + smoke tests across all packages (Vitest + Bun) |
+| `pnpm test` | Run unit + smoke tests across all packages (bun:test) |
 | `pnpm e2e:core` | Run deterministic E2E suites on a live cluster |
 | `pnpm e2e:extended` | Run extended E2E suites (feature branching, dependencies) |
 | `pnpm e2e` | Aggregate: runs all E2E suites (same as `pnpm e2e:core && pnpm e2e:extended`) |
@@ -231,7 +231,7 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs:
 2. **Core E2E** — required on PRs, runs against a Kind cluster provisioned by the CI job
 3. **Extended E2E + Smoke** — optional; triggered manually or on scheduled runs
 
-The smoke-tester agent (`k8s/self-dev/agents/meta-smoke-tester.yaml`) handles deep validation: building Docker images, loading to minikube, and running full E2E suites in an isolated namespace. This is a release gate, not a PR gate.
+Extended E2E handles deep validation: building Docker images, loading to minikube, and running full E2E suites in an isolated namespace. This is a release gate, not a PR gate.
 
 ## Troubleshooting
 

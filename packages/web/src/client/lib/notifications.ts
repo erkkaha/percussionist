@@ -7,14 +7,14 @@
 // in _history and broadcast via a "percussionist:notification" CustomEvent so
 // React components can subscribe without prop-drilling.
 
-import { useNotificationStore } from "../stores/settingsStore";
+import { useNotificationStore } from '../stores/settingsStore';
 
-export type DrumSound = "success" | "failure" | "cancelled" | "escalated" | "running";
+export type DrumSound = 'success' | 'failure' | 'cancelled' | 'escalated' | 'running';
 
 // ---------------------------------------------------------------------------
 // Notification preferences (localStorage)
 
-const NOTIFICATION_PREFS_KEY = "percussionist:notifications";
+const NOTIFICATION_PREFS_KEY = 'percussionist:notifications';
 
 export interface NotificationPreferences {
   soundEnabled: boolean; // default: true — backward compatible
@@ -26,7 +26,7 @@ export function getNotificationPreferences(): NotificationPreferences {
     const raw = localStorage.getItem(NOTIFICATION_PREFS_KEY);
     if (!raw) return { soundEnabled: true };
     const parsed = JSON.parse(raw);
-    if (typeof parsed.soundEnabled !== "boolean") return { soundEnabled: true };
+    if (typeof parsed.soundEnabled !== 'boolean') return { soundEnabled: true };
     return { soundEnabled: parsed.soundEnabled };
   } catch {
     return { soundEnabled: true };
@@ -37,10 +37,7 @@ export function getNotificationPreferences(): NotificationPreferences {
 export function setNotificationPreferences(prefs: Partial<NotificationPreferences>): void {
   const existing = getNotificationPreferences();
   try {
-    localStorage.setItem(
-      NOTIFICATION_PREFS_KEY,
-      JSON.stringify({ ...existing, ...prefs }),
-    );
+    localStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify({ ...existing, ...prefs }));
   } catch {
     // Non-fatal — localStorage may be full or unavailable.
   }
@@ -64,7 +61,7 @@ export function getNotificationHistory(): NotificationEntry[] {
   return _history.slice();
 }
 
-const NOTIFICATION_EVENT = "percussionist:notification";
+const NOTIFICATION_EVENT = 'percussionist:notification';
 
 // ---------------------------------------------------------------------------
 // Audio synthesis
@@ -87,20 +84,20 @@ export function playDrum(sound: DrumSound): void {
   if (!ctx) return;
 
   // Resume if suspended (browsers require prior user gesture).
-  if (ctx.state === "suspended") {
+  if (ctx.state === 'suspended') {
     ctx.resume().catch(() => undefined);
   }
 
   const now = ctx.currentTime;
 
   switch (sound) {
-    case "success":
+    case 'success':
       // Clean rimshot: sharp attack noise + short ring
       playNoise(ctx, now, { duration: 0.08, frequency: 900, gain: 0.55 });
       playTone(ctx, now, { frequency: 320, duration: 0.18, gain: 0.3 });
       break;
 
-    case "failure":
+    case 'failure':
       // Gong crash: deep resonance + metallic overtones + attack noise
       playNoise(ctx, now, { duration: 0.08, frequency: 2000, gain: 0.3 });
       playTone(ctx, now + 0.02, { frequency: 100, duration: 0.9, gain: 0.5, pitchDrop: 5 });
@@ -108,22 +105,22 @@ export function playDrum(sound: DrumSound): void {
       playTone(ctx, now + 0.02, { frequency: 388, duration: 0.4, gain: 0.1 });
       break;
 
-    case "cancelled":
+    case 'cancelled':
       // Wood block: short dry "clack"
       playNoise(ctx, now, { duration: 0.03, frequency: 2500, gain: 0.3 });
       playTone(ctx, now, { frequency: 800, duration: 0.04, gain: 0.2 });
       break;
 
-    case "escalated":
+    case 'escalated':
       // Cowbell triple: bright cutting "clank-clank-clank"
-      playCowbell(ctx, now,        { frequency: 1000, gain: 0.4 });
+      playCowbell(ctx, now, { frequency: 1000, gain: 0.4 });
       playCowbell(ctx, now + 0.12, { frequency: 1000, gain: 0.3 });
       playCowbell(ctx, now + 0.24, { frequency: 1000, gain: 0.2 });
       break;
 
-    case "running":
+    case 'running':
       // Cabasa shake: overlapping noise washes + low body pulse
-      playNoise(ctx, now,       { duration: 0.35, frequency: 5000, gain: 0.2, highpass: true });
+      playNoise(ctx, now, { duration: 0.35, frequency: 5000, gain: 0.2, highpass: true });
       playNoise(ctx, now + 0.15, { duration: 0.35, frequency: 4000, gain: 0.15, highpass: true });
       playTone(ctx, now + 0.05, { frequency: 130, duration: 0.5, gain: 0.25, pitchDrop: 30 });
       break;
@@ -141,7 +138,7 @@ function playTone(ctx: AudioContext, startTime: number, opts: ToneOptions): void
   const osc = ctx.createOscillator();
   const env = ctx.createGain();
 
-  osc.type = "sine";
+  osc.type = 'sine';
   osc.frequency.setValueAtTime(opts.frequency, startTime);
   if (opts.pitchDrop) {
     osc.frequency.exponentialRampToValueAtTime(
@@ -176,7 +173,7 @@ function playCowbell(
   const osc = ctx.createOscillator();
   const env = ctx.createGain();
 
-  osc.type = "square";
+  osc.type = 'square';
   osc.frequency.value = opts.frequency;
 
   env.gain.setValueAtTime(opts.gain, startTime);
@@ -201,7 +198,7 @@ function playNoise(ctx: AudioContext, startTime: number, opts: NoiseOptions): vo
   source.buffer = buffer;
 
   const filter = ctx.createBiquadFilter();
-  filter.type = opts.highpass ? "highpass" : "lowpass";
+  filter.type = opts.highpass ? 'highpass' : 'lowpass';
   filter.frequency.value = opts.frequency;
 
   const env = ctx.createGain();
@@ -225,8 +222,8 @@ let _permissionRequested = false;
 export async function requestNotificationPermission(): Promise<void> {
   if (_permissionRequested) return;
   _permissionRequested = true;
-  if (typeof Notification === "undefined") return;
-  if (Notification.permission === "default") {
+  if (typeof Notification === 'undefined') return;
+  if (Notification.permission === 'default') {
     await Notification.requestPermission();
   }
 }
@@ -263,7 +260,7 @@ export function notify(opts: NotifyOptions): void {
   if (_history.length > HISTORY_CAP) _history.length = HISTORY_CAP;
 
   // Broadcast to any React subscribers.
-  if (typeof window !== "undefined") {
+  if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(NOTIFICATION_EVENT, { detail: entry }));
   }
 
@@ -273,13 +270,13 @@ export function notify(opts: NotifyOptions): void {
     playDrum(opts.sound);
   }
 
-  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
 
   try {
     const n = new Notification(opts.title, {
       body: opts.body,
       tag: opts.key,
-      icon: "/favicon.ico",
+      icon: '/favicon.ico',
     });
     // Auto-close after 6 s.
     setTimeout(() => n.close(), 6_000);

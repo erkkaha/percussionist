@@ -1,42 +1,23 @@
-import { Hono } from "hono";
-import {
-  getClusterSettings,
-  updateClusterSettings,
-  core,
-  NAMESPACE,
-} from "../kube.js";
-import {
-  ClusterSettingsSpecSchema,
-  API_GROUP_VERSION,
-  KIND_CLUSTER_SETTINGS,
-  type ClusterSettingsSpec,
-} from "@percussionist/api";
-import { auth } from "../auth.js";
+import { ClusterSettingsSpecSchema } from '@percussionist/api';
+import { Hono } from 'hono';
+import { adminAuth, auth } from '../auth.js';
+import { core, getClusterSettings, NAMESPACE, updateClusterSettings } from '../kube.js';
 
 const settings = new Hono();
 
-// All settings endpoints are sensitive (secrets listing, cluster config).
-settings.use("/*", auth());
-
-const CLUSTER_CONFIG_CM = "opencode-config";
-const CONFIG_CM_KEY = "opencode.json";
-const AGENT_CONFIG_CM = "agent-config";
-const DECISION_AGENT_CM_KEY = "manager-decision.md";
-
-const LLM_KEYS_SECRET = "llm-keys";
-const AUTH_SECRET = "percussionist-auth";
+const CLUSTER_CONFIG_CM = 'opencode-config';
+const CONFIG_CM_KEY = 'opencode.json';
+const AGENT_CONFIG_CM = 'agent-config';
+const DECISION_AGENT_CM_KEY = 'manager-decision.md';
 
 // ---------------------------------------------------------------------------
 // Helpers
 
-async function upsertSecret(
-  name: string,
-  data: Record<string, string>,
-): Promise<void> {
+async function upsertSecret(name: string, data: Record<string, string>): Promise<void> {
   const ns = NAMESPACE;
   const body = {
-    apiVersion: "v1",
-    kind: "Secret",
+    apiVersion: 'v1',
+    kind: 'Secret',
     metadata: { name, namespace: ns },
     stringData: data,
   };
@@ -56,30 +37,17 @@ async function deleteSecret(name: string): Promise<void> {
   }
 }
 
-function buildClusterSettingsCR(
-  name: string,
-  resourceVersion: string | undefined,
-  spec: ClusterSettingsSpec,
-): object {
-  return {
-    apiVersion: API_GROUP_VERSION,
-    kind: KIND_CLUSTER_SETTINGS,
-    metadata: { name, resourceVersion },
-    spec,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // GET /api/settings — read ClusterSettings/default
 
-settings.get("/", async (c) => {
+settings.get('/', auth(), async (c) => {
   try {
-    const cs = await getClusterSettings("default");
+    const cs = await getClusterSettings('default');
     return c.json(cs);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number };
     if ((anyE as { statusCode?: number }).statusCode === 404) {
-      return c.json({ metadata: { name: "default" }, spec: {} }, 200);
+      return c.json({ metadata: { name: 'default' }, spec: {} }, 200);
     }
     return c.json({ error: String(e) }, 500);
   }
@@ -87,25 +55,21 @@ settings.get("/", async (c) => {
 
 // PUT /api/settings — update ClusterSettings/default
 
-settings.put("/", async (c) => {
+settings.put('/', adminAuth(), async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ error: "Invalid JSON body" }, 400);
+    return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
   const parsed = ClusterSettingsSpecSchema.safeParse((body as { spec?: unknown })?.spec ?? body);
   if (!parsed.success) {
-    return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
+    return c.json({ error: parsed.error.issues.map((i) => i.message).join('; ') }, 400);
   }
 
   try {
-    const existing = await getClusterSettings("default").catch(() => null);
-    const updated = await updateClusterSettings(
-      "default",
-      parsed.data,
-    );
+    const updated = await updateClusterSettings('default', parsed.data);
     return c.json(updated);
   } catch (e: unknown) {
     return c.json({ error: String(e) }, 500);
@@ -114,15 +78,15 @@ settings.put("/", async (c) => {
 
 // GET /api/settings/opencode-config — read the resolved opencode.json
 
-settings.get("/opencode-config", async (c) => {
+settings.get('/opencode-config', auth(), async (c) => {
   try {
     const cm = await core().readNamespacedConfigMap({
       name: CLUSTER_CONFIG_CM,
       namespace: NAMESPACE,
     });
-    return c.json(cm.data?.[CONFIG_CM_KEY] ?? "");
+    return c.json(cm.data?.[CONFIG_CM_KEY] ?? '');
   } catch {
-    return c.json("");
+    return c.json('');
   }
 });
 
@@ -130,26 +94,26 @@ settings.get("/opencode-config", async (c) => {
 // from the agent-config ConfigMap, which the operator populates with the effective
 // content (user override or hardcoded default).
 
-settings.get("/decision-agent-default", async (c) => {
+settings.get('/decision-agent-default', auth(), async (c) => {
   try {
     const cm = await core().readNamespacedConfigMap({
       name: AGENT_CONFIG_CM,
       namespace: NAMESPACE,
     });
-    const content = cm.data?.[DECISION_AGENT_CM_KEY] ?? "";
+    const content = cm.data?.[DECISION_AGENT_CM_KEY] ?? '';
     return c.json({ content });
   } catch {
-    return c.json({ content: "" });
+    return c.json({ content: '' });
   }
 });
 
 // GET /api/settings/secrets — list Secrets matching our label pattern
 
-settings.get("/secrets", async (c) => {
+settings.get('/secrets', auth(), async (c) => {
   try {
     const res = await core().listNamespacedSecret({ namespace: NAMESPACE });
     const items = (res.items ?? []).map((s) => ({
-      name: s.metadata?.name ?? "",
+      name: s.metadata?.name ?? '',
       labels: s.metadata?.labels ?? {},
       keys: Object.keys(s.data ?? {}),
     }));
@@ -161,18 +125,18 @@ settings.get("/secrets", async (c) => {
 
 // POST /api/settings/secrets — create a Secret
 
-settings.post("/secrets", async (c) => {
+settings.post('/secrets', adminAuth(), async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ error: "Invalid JSON body" }, 400);
+    return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
   const { name, data } = body as { name?: string; data?: Record<string, string> };
-  if (!name?.trim()) return c.json({ error: "name is required" }, 400);
+  if (!name?.trim()) return c.json({ error: 'name is required' }, 400);
   if (!data || Object.keys(data).length === 0) {
-    return c.json({ error: "data (key-value pairs) is required" }, 400);
+    return c.json({ error: 'data (key-value pairs) is required' }, 400);
   }
 
   try {
@@ -185,18 +149,18 @@ settings.post("/secrets", async (c) => {
 
 // PUT /api/settings/secrets/:name — update a Secret's data
 
-settings.put("/secrets/:name", async (c) => {
-  const name = c.req.param("name");
+settings.put('/secrets/:name', adminAuth(), async (c) => {
+  const name = c.req.param('name');
   let body: unknown;
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ error: "Invalid JSON body" }, 400);
+    return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
   const { data } = body as { data?: Record<string, string> };
   if (!data || Object.keys(data).length === 0) {
-    return c.json({ error: "data (key-value pairs) is required" }, 400);
+    return c.json({ error: 'data (key-value pairs) is required' }, 400);
   }
 
   try {
@@ -209,8 +173,8 @@ settings.put("/secrets/:name", async (c) => {
 
 // DELETE /api/settings/secrets/:name
 
-settings.delete("/secrets/:name", async (c) => {
-  const name = c.req.param("name");
+settings.delete('/secrets/:name', adminAuth(), async (c) => {
+  const name = c.req.param('name');
   try {
     await deleteSecret(name);
     return c.body(null, 204);

@@ -7,135 +7,122 @@
 //   file_ops      — files read/written during a session
 //   task_events   — append-only audit log of Task state transitions
 
-import {
-  sqliteTable,
-  text,
-  integer,
-  real,
-  index,
-  primaryKey,
-} from "drizzle-orm/sqlite-core";
-import { sql } from "drizzle-orm";
+import { sql } from 'drizzle-orm';
+import { index, integer, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 export const runs = sqliteTable(
-  "runs",
+  'runs',
   {
-    id: text("id").primaryKey(),
-    name: text("name").notNull(),
-    namespace: text("namespace"),
-    task: text("task"),
-    model: text("model"),
-    agent: text("agent"),
-    phase: text("phase"),
-    startedAt: text("started_at"),
-    completedAt: text("completed_at"),
-    tokensIn: integer("tokens_in").default(0),
-    tokensOut: integer("tokens_out").default(0),
-    cost: real("cost"),
-    error: text("error"),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`(datetime('now'))`),
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    namespace: text('namespace'),
+    task: text('task'),
+    model: text('model'),
+    agent: text('agent'),
+    phase: text('phase'),
+    startedAt: text('started_at'),
+    completedAt: text('completed_at'),
+    tokensIn: integer('tokens_in').default(0),
+    tokensOut: integer('tokens_out').default(0),
+    cost: real('cost'),
+    error: text('error'),
+    createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
   },
-  (table) => [index("idx_runs_started_at").on(table.startedAt)],
+  (table) => [index('idx_runs_started_at').on(table.startedAt)],
 );
 
 export const messages = sqliteTable(
-  "messages",
+  'messages',
   {
-    id: text("id").primaryKey(),
-    sessionId: text("session_id")
+    id: text('id').primaryKey(),
+    sessionId: text('session_id')
       .notNull()
-      .references(() => runs.id, { onDelete: "cascade" }),
-    idx: integer("idx").notNull(),
-    role: text("role"), // "user" | "assistant"
-    content: text("content"),
-    model: text("model"),
-    tokensIn: integer("tokens_in"),
-    tokensOut: integer("tokens_out"),
-    tokensReasoning: integer("tokens_reasoning"),
-    tokensCacheRead: integer("tokens_cache_read"),
-    tokensCacheWrite: integer("tokens_cache_write"),
-    cost: real("cost"),
-    createdAt: text("created_at"),
-    completedAt: text("completed_at"),
+      .references(() => runs.id, { onDelete: 'cascade' }),
+    idx: integer('idx').notNull(),
+    role: text('role'), // "user" | "assistant"
+    content: text('content'),
+    model: text('model'),
+    tokensIn: integer('tokens_in'),
+    tokensOut: integer('tokens_out'),
+    tokensReasoning: integer('tokens_reasoning'),
+    tokensCacheRead: integer('tokens_cache_read'),
+    tokensCacheWrite: integer('tokens_cache_write'),
+    cost: real('cost'),
+    createdAt: text('created_at'),
+    completedAt: text('completed_at'),
   },
-  (table) => [index("idx_messages_session_id").on(table.sessionId)],
+  (table) => [index('idx_messages_session_id').on(table.sessionId)],
 );
 
 export const toolCalls = sqliteTable(
-  "tool_calls",
+  'tool_calls',
   {
-    id: text("id").primaryKey(),
-    sessionId: text("session_id")
+    id: text('id').primaryKey(),
+    sessionId: text('session_id')
       .notNull()
-      .references(() => runs.id, { onDelete: "cascade" }),
-    messageIdx: integer("message_idx").notNull(),
-    tool: text("tool").notNull(),
-    args: text("args"),
-    success: integer("success", { mode: "boolean" }),
-    error: text("error"),
-    durationMs: integer("duration_ms"),
+      .references(() => runs.id, { onDelete: 'cascade' }),
+    messageIdx: integer('message_idx').notNull(),
+    tool: text('tool').notNull(),
+    args: text('args'),
+    success: integer('success', { mode: 'boolean' }),
+    error: text('error'),
+    durationMs: integer('duration_ms'),
   },
-  (table) => [index("idx_tool_calls_session_id").on(table.sessionId)],
+  (table) => [index('idx_tool_calls_session_id').on(table.sessionId)],
 );
 
 export const fileOps = sqliteTable(
-  "file_ops",
+  'file_ops',
   {
-    sessionId: text("session_id")
+    sessionId: text('session_id')
       .notNull()
-      .references(() => runs.id, { onDelete: "cascade" }),
-    messageIdx: integer("message_idx").notNull(),
-    filePath: text("file_path").notNull(),
-    operation: text("operation").notNull(), // "read" | "write" | "delete"
+      .references(() => runs.id, { onDelete: 'cascade' }),
+    messageIdx: integer('message_idx').notNull(),
+    filePath: text('file_path').notNull(),
+    operation: text('operation').notNull(), // "read" | "write" | "delete"
   },
   (table) => [
     primaryKey({ columns: [table.sessionId, table.messageIdx, table.filePath] }),
-    index("idx_file_ops_session_id").on(table.sessionId),
+    index('idx_file_ops_session_id').on(table.sessionId),
   ],
 );
 
 export const metricSnapshots = sqliteTable(
-  "metric_snapshots",
+  'metric_snapshots',
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    node: text("node").notNull(),
-    cpuUsageMillicores: integer("cpu_usage_millicores").notNull(),
-    memoryUsageBytes: integer("memory_usage_bytes").notNull(),
-    cpuCapacityMillicores: integer("cpu_capacity_millicores").notNull(),
-    memoryCapacityBytes: integer("memory_capacity_bytes").notNull(),
-    recordedAt: text("recorded_at")
-      .notNull()
-      .default(sql`(datetime('now'))`),
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    node: text('node').notNull(),
+    cpuUsageMillicores: integer('cpu_usage_millicores').notNull(),
+    memoryUsageBytes: integer('memory_usage_bytes').notNull(),
+    cpuCapacityMillicores: integer('cpu_capacity_millicores').notNull(),
+    memoryCapacityBytes: integer('memory_capacity_bytes').notNull(),
+    recordedAt: text('recorded_at').notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
-    index("idx_metric_snapshots_node_recorded").on(table.node, table.recordedAt),
-    index("idx_metric_snapshots_recorded").on(table.recordedAt),
+    index('idx_metric_snapshots_node_recorded').on(table.node, table.recordedAt),
+    index('idx_metric_snapshots_recorded').on(table.recordedAt),
   ],
 );
 
 export const taskEvents = sqliteTable(
-  "task_events",
+  'task_events',
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: integer('id').primaryKey({ autoIncrement: true }),
     // Project name (Project metadata.name).
-    project: text("project").notNull(),
+    project: text('project').notNull(),
     // Task CR name (Task metadata.name).
-    taskName: text("task_name").notNull(),
+    taskName: text('task_name').notNull(),
     // Task type: "PLAN" | "BUILD".
-    taskType: text("task_type").notNull(),
+    taskType: text('task_type').notNull(),
     // Event type: "column.changed" | "run.created" | "run.failed" | "merged" |
     //             "escalated" | "blocked" | "approved" | "request-changes"
-    eventType: text("event_type").notNull(),
+    eventType: text('event_type').notNull(),
     // JSON payload with before/after state or relevant context.
-    payload: text("payload").notNull().default("{}"),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`(datetime('now'))`),
+    payload: text('payload').notNull().default('{}'),
+    createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
-    index("idx_task_events_project_task").on(table.project, table.taskName),
-    index("idx_task_events_project_created").on(table.project, table.createdAt),
+    index('idx_task_events_project_task').on(table.project, table.taskName),
+    index('idx_task_events_project_created').on(table.project, table.createdAt),
   ],
 );

@@ -3,12 +3,12 @@
 //
 // Unread count resets to 0 when markAllRead() is called (auto-read on open).
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getNotificationHistory,
   NOTIFICATION_EVENT,
   type NotificationEntry,
-} from "../lib/notifications";
+} from '../lib/notifications';
 
 export function useNotificationHistory(): {
   entries: NotificationEntry[];
@@ -16,9 +16,7 @@ export function useNotificationHistory(): {
   markAllRead: () => void;
   clearAll: () => void;
 } {
-  const [entries, setEntries] = useState<NotificationEntry[]>(() =>
-    getNotificationHistory(),
-  );
+  const [entries, setEntries] = useState<NotificationEntry[]>(() => getNotificationHistory());
 
   // Timestamp of the last time the panel was opened / marked read.
   const lastReadAt = useRef<number>(Date.now());

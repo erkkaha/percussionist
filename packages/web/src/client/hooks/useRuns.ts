@@ -1,12 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
-import { fetchRuns } from "../lib/api";
-import type { Run } from "../lib/types";
+import { useQuery } from '@tanstack/react-query';
+import { fetchRuns } from '../lib/api';
+import type { Run } from '../lib/types';
 
-export function useRuns(
-  refetchInterval: number | false = 5_000,
-) {
+export function useRuns(refetchInterval: number | false = 5_000) {
   return useQuery<Run[], Error>({
-    queryKey: ["runs"],
+    queryKey: ['runs'],
     queryFn: fetchRuns,
     refetchInterval,
   });

@@ -1,12 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
-import { fetchProjects } from "../lib/api";
-import type { Project } from "../lib/types";
+import { useQuery } from '@tanstack/react-query';
+import { fetchProjects } from '../lib/api';
+import type { Project } from '../lib/types';
 
-export function useProjects(
-  refetchInterval: number | false = 10_000,
-) {
+export function useProjects(refetchInterval: number | false = 10_000) {
   return useQuery<Project[], Error>({
-    queryKey: ["projects"],
+    queryKey: ['projects'],
     queryFn: fetchProjects,
     refetchInterval,
   });

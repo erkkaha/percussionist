@@ -5,63 +5,60 @@
 // route files.
 
 export {
-  NAMESPACE,
-  core,
-  custom,
-  // Run helpers
-  listRuns,
-  getRun,
-  createRun,
-  deleteRun,
-  // ClusterAgent helpers
-  listClusterAgents,
-  getClusterAgent,
-  createClusterAgent,
-  updateClusterAgent,
-  deleteClusterAgent,
-  // ClusterSettings helpers
-  getClusterSettings,
-  updateClusterSettings,
-  // Project helpers
-  listProjects,
-  getProject,
-  createProject,
-  updateProject,
-  patchProject,
-  patchProjectSpec,
-  patchProjectStatus,
-  deleteProject,
-  // Task helpers
-  listTasks,
-  getTask,
-  createTask,
-  deleteTask,
-  patchTask,
-  patchTaskStatus,
   buildTask,
-  // Pod helpers
-  readPodLog,
+  core,
+  createClusterAgent,
+  createProject,
+  createRun,
+  createTask,
+  custom,
+  deleteClusterAgent,
+  deleteProject,
+  deleteRun,
+  deleteTask,
+  execInWorkspace,
   // Session proxy
   fetchSessionMessages,
-  postSessionMessage,
-  postPermissionReply,
-  readSessionConfigMap,
-  execInWorkspace,
+  getClusterAgent,
+  // ClusterSettings helpers
+  getClusterSettings,
+  getProject,
+  getRun,
+  getTask,
+  gitUrlHash,
+  // ClusterAgent helpers
+  listClusterAgents,
+  listNodeAllocated,
+  listNodeCapacities,
+  listNodeHostStats,
   // Metrics helpers
   listNodeMetrics,
   listPodMetrics,
-  listNodeCapacities,
-  listNodeHostStats,
-  type NodeMetric,
+  listPodResources,
+  // Project helpers
+  listProjects,
+  // Run helpers
+  listRuns,
+  // Task helpers
+  listTasks,
+  NAMESPACE,
   type NodeCapacity,
   type NodeCapacityTotal,
   type NodeHostStats,
+  type NodeMetric,
   type PodMetric,
-} from "@percussionist/kube";
-
-// Convenience helper used by session.ts.
-import { getRun } from "@percussionist/kube";
-export async function getServiceNameForRun(runName: string): Promise<string | null> {
-  const run = await getRun(runName);
-  return (run as Record<string, unknown> & { status?: { serviceName?: string } }).status?.serviceName ?? null;
-}
+  type PodResourceSpec,
+  patchProject,
+  patchProjectSpec,
+  patchProjectStatus,
+  patchTask,
+  patchTaskStatus,
+  postPermissionReply,
+  postSessionMessage,
+  // Pod helpers
+  readPodLog,
+  readSessionConfigMap,
+  updateClusterAgent,
+  updateClusterSettings,
+  updateProject,
+} from '@percussionist/kube';

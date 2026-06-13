@@ -1,70 +1,70 @@
-import { describe, it, expect } from "bun:test";
-import { resolveFlow } from "../flow.js";
-import { makeProject } from "./fixtures.js";
+import { describe, expect, it } from 'bun:test';
+import { resolveFlow } from '../flow.js';
+import { makeProject } from './fixtures.js';
 
-describe("resolveFlow", () => {
-  it("resolves plan-build-review-merge preset by default", () => {
-    const project = makeProject("test-project");
+describe('resolveFlow', () => {
+  it('resolves plan-build-review-merge preset by default', () => {
+    const project = makeProject('test-project');
     const flow = resolveFlow(project);
-    expect(flow.preset).toBe("plan-build-review-merge");
-    expect(flow.plan.onApprove).toBe("generate-builds");
-    expect(flow.build.onApprove).toBe("merge");
-    expect(flow.merge.mode).toBe("auto");
-    expect(flow.merge.agent).toBe("integrator");
-    expect(flow.humanApproval.plan).toBe("required");
-    expect(flow.humanApproval.build).toBe("required");
+    expect(flow.preset).toBe('plan-build-review-merge');
+    expect(flow.plan.onApprove).toBe('generate-builds');
+    expect(flow.build.onApprove).toBe('merge');
+    expect(flow.merge.mode).toBe('auto');
+    expect(flow.merge.agent).toBe('integrator');
+    expect(flow.humanApproval.plan).toBe('required');
+    expect(flow.humanApproval.build).toBe('required');
   });
 
-  it("resolves simple preset", () => {
-    const project = makeProject("test-project");
-    project.spec.flow = { preset: "simple" };
+  it('resolves simple preset', () => {
+    const project = makeProject('test-project');
+    project.spec.flow = { preset: 'simple' };
     const flow = resolveFlow(project);
-    expect(flow.preset).toBe("simple");
-    expect(flow.plan.onApprove).toBe("done");
-    expect(flow.build.onApprove).toBe("done");
-    expect(flow.merge.mode).toBe("disabled");
-    expect(flow.humanApproval.plan).toBe("disabled");
-    expect(flow.humanApproval.build).toBe("disabled");
+    expect(flow.preset).toBe('simple');
+    expect(flow.plan.onApprove).toBe('done');
+    expect(flow.build.onApprove).toBe('done');
+    expect(flow.merge.mode).toBe('disabled');
+    expect(flow.humanApproval.plan).toBe('disabled');
+    expect(flow.humanApproval.build).toBe('disabled');
   });
 
-  it("resolves review preset", () => {
-    const project = makeProject("test-project");
-    project.spec.flow = { preset: "review" };
+  it('resolves review preset', () => {
+    const project = makeProject('test-project');
+    project.spec.flow = { preset: 'review' };
     const flow = resolveFlow(project);
-    expect(flow.preset).toBe("review");
-    expect(flow.plan.onApprove).toBe("done");
-    expect(flow.build.onSuccess).toBe("human-review");
-    expect(flow.build.onApprove).toBe("done");
-    expect(flow.merge.mode).toBe("disabled");
-    expect(flow.humanApproval.build).toBe("required");
+    expect(flow.preset).toBe('review');
+    expect(flow.plan.onApprove).toBe('done');
+    expect(flow.build.onSuccess).toBe('human-review');
+    expect(flow.build.onApprove).toBe('done');
+    expect(flow.merge.mode).toBe('disabled');
+    expect(flow.humanApproval.build).toBe('required');
   });
 
-  it("resolves plan-build preset", () => {
-    const project = makeProject("test-project");
-    project.spec.flow = { preset: "plan-build" };
+  it('resolves plan-build preset', () => {
+    const project = makeProject('test-project');
+    project.spec.flow = { preset: 'plan-build' };
     const flow = resolveFlow(project);
-    expect(flow.preset).toBe("plan-build");
-    expect(flow.plan.onApprove).toBe("generate-builds");
-    expect(flow.build.onApprove).toBe("done");
-    expect(flow.merge.mode).toBe("disabled");
+    expect(flow.preset).toBe('plan-build');
+    expect(flow.plan.onApprove).toBe('generate-builds');
+    expect(flow.build.onApprove).toBe('done');
+    expect(flow.merge.mode).toBe('disabled');
   });
 
-  it("overrides preset defaults with flow config", () => {
-    const project = makeProject("test-project");
+  it('overrides preset defaults with flow config', () => {
+    const project = makeProject('test-project');
     project.spec.flow = {
-      preset: "plan-build-review-merge",
-      build: { onApprove: "done", onSuccess: "human-review" },
-      merge: { mode: "disabled" },
+      preset: 'plan-build-review-merge',
+      build: { onApprove: 'done', onSuccess: 'human-review' },
+      merge: { mode: 'disabled' },
     };
     const flow = resolveFlow(project);
-    expect(flow.preset).toBe("plan-build-review-merge");
-    expect(flow.build.onApprove).toBe("done");
-    expect(flow.merge.mode).toBe("disabled");
-    expect(flow.plan.onApprove).toBe("generate-builds");
+    expect(flow.preset).toBe('plan-build-review-merge');
+    expect(flow.build.onApprove).toBe('done');
+    expect(flow.merge.mode).toBe('disabled');
+    expect(flow.plan.onApprove).toBe('generate-builds');
   });
 
-  it("merges legacy retryPolicy into flow.retry", () => {
-    const project = makeProject("test-project", {
+  it('merges legacy retryPolicy into flow.retry', () => {
+    const project = makeProject('test-project', {
       retryPolicy: {
         enabled: true,
         maxAttempts: 5,
@@ -79,44 +79,44 @@ describe("resolveFlow", () => {
     expect(flow.retry.maxBackoffSeconds).toBe(300);
   });
 
-  it("merges legacy reviewPolicy into flow.review", () => {
-    const project = makeProject("test-project", {
+  it('merges legacy reviewPolicy into flow.review', () => {
+    const project = makeProject('test-project', {
       reviewPolicy: {
         aiReviewerEnabled: true,
-        aiReviewerAgent: "custom-reviewer",
+        aiReviewerAgent: 'custom-reviewer',
         maxAutoReworks: 5,
       },
     });
     const flow = resolveFlow(project);
     expect(flow.review.aiReviewerEnabled).toBe(true);
-    expect(flow.review.agent).toBe("custom-reviewer");
+    expect(flow.review.agent).toBe('custom-reviewer');
     expect(flow.review.maxAutoReworks).toBe(5);
   });
 
-  it("flow.review overrides legacy reviewPolicy", () => {
-    const project = makeProject("test-project", {
+  it('flow.review overrides legacy reviewPolicy', () => {
+    const project = makeProject('test-project', {
       reviewPolicy: {
         aiReviewerEnabled: true,
-        aiReviewerAgent: "legacy-reviewer",
+        aiReviewerAgent: 'legacy-reviewer',
         maxAutoReworks: 5,
       },
     });
     project.spec.flow = {
-      preset: "plan-build-review-merge",
+      preset: 'plan-build-review-merge',
       review: {
         aiReviewerEnabled: false,
-        agent: "new-reviewer",
+        agent: 'new-reviewer',
         maxAutoReworks: 1,
       },
     };
     const flow = resolveFlow(project);
     expect(flow.review.aiReviewerEnabled).toBe(false);
-    expect(flow.review.agent).toBe("new-reviewer");
+    expect(flow.review.agent).toBe('new-reviewer');
     expect(flow.review.maxAutoReworks).toBe(1);
   });
 
-  it("flow.retry overrides legacy retryPolicy", () => {
-    const project = makeProject("test-project", {
+  it('flow.retry overrides legacy retryPolicy', () => {
+    const project = makeProject('test-project', {
       retryPolicy: {
         enabled: true,
         maxAttempts: 5,
@@ -124,7 +124,7 @@ describe("resolveFlow", () => {
       },
     });
     project.spec.flow = {
-      preset: "plan-build-review-merge",
+      preset: 'plan-build-review-merge',
       retry: {
         enabled: false,
         maxAttempts: 2,
@@ -140,8 +140,8 @@ describe("resolveFlow", () => {
     expect(flow.retry.backoffSeconds).toBe(10);
   });
 
-  it("uses default timeouts when not configured", () => {
-    const project = makeProject("test-project");
+  it('uses default timeouts when not configured', () => {
+    const project = makeProject('test-project');
     const flow = resolveFlow(project);
     expect(flow.timeouts.runningStaleSeconds).toBe(1800);
     expect(flow.timeouts.reviewStaleSeconds).toBe(600);
@@ -149,10 +149,10 @@ describe("resolveFlow", () => {
     expect(flow.timeouts.buildgenStaleSeconds).toBe(600);
   });
 
-  it("overrides timeouts from flow config", () => {
-    const project = makeProject("test-project");
+  it('overrides timeouts from flow config', () => {
+    const project = makeProject('test-project');
     project.spec.flow = {
-      preset: "plan-build-review-merge",
+      preset: 'plan-build-review-merge',
       timeouts: {
         runningStaleSeconds: 3600,
         reviewStaleSeconds: 1200,
@@ -167,75 +167,75 @@ describe("resolveFlow", () => {
     expect(flow.timeouts.buildgenStaleSeconds).toBe(1800);
   });
 
-  it("uses preset defaults for buildGenerationAgent and defaultAgent", () => {
-    const project = makeProject("test-project");
-    project.spec.flow = { preset: "simple" };
+  it('uses preset defaults for buildGenerationAgent and defaultAgent', () => {
+    const project = makeProject('test-project');
+    project.spec.flow = { preset: 'simple' };
     const flow = resolveFlow(project);
-    expect(flow.plan.buildGenerationAgent).toBe("buildgen");
-    expect(flow.build.defaultAgent).toBe("builder");
+    expect(flow.plan.buildGenerationAgent).toBe('buildgen');
+    expect(flow.build.defaultAgent).toBe('builder');
   });
 
-  it("overrides buildGenerationAgent from flow config", () => {
-    const project = makeProject("test-project");
+  it('overrides buildGenerationAgent from flow config', () => {
+    const project = makeProject('test-project');
     project.spec.flow = {
-      preset: "plan-build-review-merge",
-      plan: { buildGenerationAgent: "custom-buildgen" },
+      preset: 'plan-build-review-merge',
+      plan: { buildGenerationAgent: 'custom-buildgen' },
     };
     const flow = resolveFlow(project);
-    expect(flow.plan.buildGenerationAgent).toBe("custom-buildgen");
+    expect(flow.plan.buildGenerationAgent).toBe('custom-buildgen');
   });
 
-  it("overrides defaultAgent from flow config", () => {
-    const project = makeProject("test-project");
+  it('overrides defaultAgent from flow config', () => {
+    const project = makeProject('test-project');
     project.spec.flow = {
-      preset: "plan-build-review-merge",
-      build: { defaultAgent: "custom-builder" },
+      preset: 'plan-build-review-merge',
+      build: { defaultAgent: 'custom-builder' },
     };
     const flow = resolveFlow(project);
-    expect(flow.build.defaultAgent).toBe("custom-builder");
+    expect(flow.build.defaultAgent).toBe('custom-builder');
   });
 
-  it("uses merge.agent when configured", () => {
-    const project = makeProject("test-project");
+  it('uses merge.agent when configured', () => {
+    const project = makeProject('test-project');
     project.spec.flow = {
-      preset: "plan-build-review-merge",
-      merge: { agent: "integrator" },
+      preset: 'plan-build-review-merge',
+      merge: { agent: 'integrator' },
     };
     const flow = resolveFlow(project);
-    expect(flow.merge.agent).toBe("integrator");
+    expect(flow.merge.agent).toBe('integrator');
   });
 
-  it("uses merge.agent preset default when not configured", () => {
-    const project = makeProject("test-project");
-    project.spec.flow = { preset: "plan-build-review-merge" };
+  it('uses merge.agent preset default when not configured', () => {
+    const project = makeProject('test-project');
+    project.spec.flow = { preset: 'plan-build-review-merge' };
     const flow = resolveFlow(project);
-    expect(flow.merge.agent).toBe("integrator");
+    expect(flow.merge.agent).toBe('integrator');
   });
 
-  it("overrides merge.agent from flow config", () => {
-    const project = makeProject("test-project");
+  it('overrides merge.agent from flow config', () => {
+    const project = makeProject('test-project');
     project.spec.flow = {
-      preset: "plan-build-review-merge",
-      merge: { agent: "custom-merger" },
+      preset: 'plan-build-review-merge',
+      merge: { agent: 'custom-merger' },
     };
     const flow = resolveFlow(project);
-    expect(flow.merge.agent).toBe("custom-merger");
+    expect(flow.merge.agent).toBe('custom-merger');
   });
 
-  it("uses preset default for plan.defaultAgent", () => {
-    const project = makeProject("test-project");
-    project.spec.flow = { preset: "simple" };
+  it('uses preset default for plan.defaultAgent', () => {
+    const project = makeProject('test-project');
+    project.spec.flow = { preset: 'simple' };
     const flow = resolveFlow(project);
-    expect(flow.plan.defaultAgent).toBe("planner");
+    expect(flow.plan.defaultAgent).toBe('planner');
   });
 
-  it("overrides plan.defaultAgent from flow config", () => {
-    const project = makeProject("test-project");
+  it('overrides plan.defaultAgent from flow config', () => {
+    const project = makeProject('test-project');
     project.spec.flow = {
-      preset: "plan-build-review-merge",
-      plan: { defaultAgent: "custom-planner" },
+      preset: 'plan-build-review-merge',
+      plan: { defaultAgent: 'custom-planner' },
     };
     const flow = resolveFlow(project);
-    expect(flow.plan.defaultAgent).toBe("custom-planner");
+    expect(flow.plan.defaultAgent).toBe('custom-planner');
   });
 });

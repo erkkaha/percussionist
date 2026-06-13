@@ -1,24 +1,20 @@
 // worker-builder.ts — builds Run specs for Task CRs.
 
-import { createHash } from "node:crypto";
+import { createHash } from 'node:crypto';
 import {
   API_GROUP_VERSION,
   KIND_RUN,
   LABELS,
   MANAGED_BY,
   type Project,
-  type Task,
   type Run,
   type RunSpec,
   resolveRunConfig,
-} from "@percussionist/api";
-import {
-  resolveTaskBranch,
-  resolveParentBranch,
-  resolveMergeBranch,
-} from "./branch-resolver.js";
-import { getClusterAgent, getClusterSettings } from "@percussionist/kube";
-import { getContext } from "./agent/memory-client.js";
+  type Task,
+} from '@percussionist/api';
+import { getClusterAgent, getClusterSettings } from '@percussionist/kube';
+import { getContext } from './agent/memory-client.js';
+import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from './branch-resolver.js';
 
 const MAX_RETRIES = 3;
 
@@ -36,7 +32,7 @@ export async function buildWorkerRun(
   runName: string,
   retryCount: number,
   reworkFeedback?: string,
-  allTasks?: Task[]
+  allTasks?: Task[],
 ): Promise<Run> {
   const clusterSettings = await getClusterSettings().catch(() => undefined);
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
@@ -60,9 +56,7 @@ export async function buildWorkerRun(
 
   // Per-agent model override: if the task's agent has a `model` field set in
   // the project roster, use it instead of the ClusterAgent or project-level default.
-  const agentOverride = (project.spec.agents ?? []).find(
-    (a) => a.name === task.spec.agent,
-  );
+  const agentOverride = (project.spec.agents ?? []).find((a) => a.name === task.spec.agent);
   if (agentOverride?.model) {
     resolved.model = agentOverride.model;
   }
@@ -70,64 +64,60 @@ export async function buildWorkerRun(
   const taskName = task.metadata.name;
   const promptLines = [
     `TASK: ${taskName} — ${task.spec.title}`,
-    "",
-    "DESCRIPTION:",
-    task.spec.description ?? "No description provided.",
-    "",
+    '',
+    'DESCRIPTION:',
+    task.spec.description ?? 'No description provided.',
+    '',
   ];
 
   if (retryCount > 0) {
     promptLines.push(
       `RETRY ${retryCount}/${MAX_RETRIES}:`,
-      reworkFeedback ?? "Previous attempt failed. Review the error and try a different approach.",
-      "",
+      reworkFeedback ?? 'Previous attempt failed. Review the error and try a different approach.',
+      '',
     );
   } else if (reworkFeedback) {
-    promptLines.push(
-      "HUMAN FEEDBACK (rework):",
-      reworkFeedback,
-      "",
-    );
+    promptLines.push('HUMAN FEEDBACK (rework):', reworkFeedback, '');
   }
 
   const projectName = project.metadata.name;
   const planPath = `.percussionist/plans/${taskName}.md`;
 
-  if (task.spec.type === "PLAN") {
+  if (task.spec.type === 'PLAN') {
     // If this is a retry/rework, the agent should redo the plan. Otherwise,
     // instruct it to check for an existing plan first and short-circuit if found.
     const isRework = reworkFeedback != null || retryCount > 0;
     if (!isRework) {
       promptLines.push(
-        "IDEMPOTENCY CHECK (do this first, before any exploration):",
+        'IDEMPOTENCY CHECK (do this first, before any exploration):',
         `- Run: \`cat ${planPath}\``,
-        "- If the file exists and is non-empty:",
+        '- If the file exists and is non-empty:',
         `  1. Call percussionist_dispatcher_write_plan(project="${projectName}", task="${taskName}", content=<file-content>) to ensure it is persisted.`,
-        "  2. Call percussionist_dispatcher_complete_plan with a brief summary of the existing plan.",
-        "  3. Do NOT re-explore or re-plan — the work is already done.",
-        "- Only proceed with planning if the file does not exist or is empty.",
-        "",
+        '  2. Call percussionist_dispatcher_complete_plan with a brief summary of the existing plan.',
+        '  3. Do NOT re-explore or re-plan — the work is already done.',
+        '- Only proceed with planning if the file does not exist or is empty.',
+        '',
       );
     }
     promptLines.push(
-      "PLAN ARTIFACT REQUIREMENTS:",
+      'PLAN ARTIFACT REQUIREMENTS:',
       `- Create or update ${planPath} in the repository.`,
-      "- The file is the authoritative PLAN output and will be reviewed by facilitator/human reviewers.",
-      "- Include implementation context, scope boundaries, risks, acceptance criteria, and proposed BUILD task breakdown.",
-      "- Commit the plan artifact on this task branch before completing the run.",
+      '- The file is the authoritative PLAN output and will be reviewed by facilitator/human reviewers.',
+      '- Include implementation context, scope boundaries, risks, acceptance criteria, and proposed BUILD task breakdown.',
+      '- Commit the plan artifact on this task branch before completing the run.',
       `- After committing, call percussionist_dispatcher_write_plan(project="${projectName}", task="${taskName}", content=<plan-content>) to persist it to ConfigMap.`,
       `- Mention ${planPath} in the completion summary.`,
       `- When done, call percussionist_dispatcher_complete_plan instead of complete_run.`,
-      "",
+      '',
     );
-  } else if (task.spec.type === "BUILD" && task.spec.parentTaskRef) {
+  } else if (task.spec.type === 'BUILD' && task.spec.parentTaskRef) {
     const planPathForParent = `.percussionist/plans/${task.spec.parentTaskRef}.md`;
     promptLines.push(
-      "PLAN CONTEXT:",
+      'PLAN CONTEXT:',
       `- Read ${planPathForParent} before implementing.`,
-      "- Treat that PLAN artifact as the full feature context, even if this BUILD task covers only one slice.",
+      '- Treat that PLAN artifact as the full feature context, even if this BUILD task covers only one slice.',
       "- Keep your changes aligned with the plan's acceptance criteria and sequencing notes.",
-      "",
+      '',
     );
   }
 
@@ -136,12 +126,8 @@ export async function buildWorkerRun(
     try {
       const query = task.spec.description ?? task.spec.title ?? taskName;
       const { context } = await getContext(projectName, query, taskName);
-      if (context && context !== "No relevant context found.") {
-        promptLines.push(
-          "RELEVANT PROJECT CONTEXT:",
-          context,
-          "",
-        );
+      if (context && context !== 'No relevant context found.') {
+        promptLines.push('RELEVANT PROJECT CONTEXT:', context, '');
       }
     } catch {
       // Memory service unavailable — skip silently.
@@ -151,14 +137,14 @@ export async function buildWorkerRun(
   // Inject available system tools if declared.
   if (resolved.packages && resolved.packages.length > 0) {
     promptLines.push(
-      "AVAILABLE SYSTEM TOOLS:",
-      "The following packages are installed in this run environment:",
-      resolved.packages.map((p) => `  - ${p}`).join("\n"),
-      "",
-      "The opencode-native tools grep, glob, read, list, edit, bash, and todowrite are always available.",
-      "Note: the task tracking tool is called `todowrite`, not `todo`.",
-      "Use `which <tool>` to check if a specific tool is available at runtime.",
-      "",
+      'AVAILABLE SYSTEM TOOLS:',
+      'The following packages are installed in this run environment:',
+      resolved.packages.map((p) => `  - ${p}`).join('\n'),
+      '',
+      'The opencode-native tools grep, glob, read, list, edit, bash, and todowrite are always available.',
+      'Note: the task tracking tool is called `todowrite`, not `todo`.',
+      'Use `which <tool>` to check if a specific tool is available at runtime.',
+      '',
     );
   }
 
@@ -166,7 +152,7 @@ export async function buildWorkerRun(
   if (project.spec.featureBranchingEnabled && resolved.source?.git) {
     const gitBranch = resolveTaskBranch(task, project, allTasks ?? []);
     const parentBranch = resolveParentBranch(task, project, allTasks ?? []);
-    
+
     if (gitBranch) {
       resolved.source.git.ref = gitBranch;
     }
@@ -188,9 +174,9 @@ export async function buildWorkerRun(
       ownerReferences: [
         {
           apiVersion: API_GROUP_VERSION,
-          kind: "Project",
+          kind: 'Project',
           name: projectName,
-          uid: project.metadata.uid!,
+          uid: project.metadata.uid ?? '',
           controller: true,
           blockOwnerDeletion: true,
         },
@@ -199,7 +185,7 @@ export async function buildWorkerRun(
     spec: {
       project: projectName,
       boardTask: taskName,
-      task: promptLines.join("\n"),
+      task: promptLines.join('\n'),
       interactive: false,
       agent: task.spec.agent,
       agents: (project.spec.agents ?? []).filter((a) => a.name !== task.spec.agent),
@@ -248,15 +234,17 @@ export async function buildMergeRun(
     const mergeBranch = resolveMergeBranch(task, project, allTasks ?? []);
 
     if (!gitBranch) {
-      throw new Error(`Task ${taskName} has no git branch (feature branching enabled but branch not resolved)`);
+      throw new Error(
+        `Task ${taskName} has no git branch (feature branching enabled but branch not resolved)`,
+      );
     }
 
     sourceBranch = gitBranch;
-    targetBranch = mergeBranch ?? "main"; // Fallback to main if no merge target
+    targetBranch = mergeBranch ?? 'main'; // Fallback to main if no merge target
   } else {
     // Legacy: use feat/{taskName} branch
     sourceBranch = `feat/${taskName}`;
-    targetBranch = "main";
+    targetBranch = 'main';
   }
 
   // Determine merge agent: prefer explicit name, then env var, then task agent.
@@ -279,9 +267,7 @@ export async function buildMergeRun(
   }
 
   // Per-agent model override (project roster takes priority over ClusterAgent).
-  const mergeAgentOverride = (project.spec.agents ?? []).find(
-    (a) => a.name === mergeAgent,
-  );
+  const mergeAgentOverride = (project.spec.agents ?? []).find((a) => a.name === mergeAgent);
   if (mergeAgentOverride?.model) {
     resolved.model = mergeAgentOverride.model;
   }
@@ -293,25 +279,38 @@ export async function buildMergeRun(
   }
   const promptLines = [
     `TASK: Merge approved changes for ${taskName}`,
-    "",
+    '',
     `Task title: ${task.spec.title}`,
     `Source branch: ${sourceBranch}`,
     `Target branch: ${targetBranch}`,
-    "",
-    "Requirements:",
-    "- Merge the source branch into the target branch.",
-    "- Do not perform any code changes.",
-    "- If the merge is a fast-forward (source contains target), use:",
+    '',
+    '## Pre-flight Check',
+    '',
+    'Before merging, verify the worktree is at the latest remote state:',
+    `    git fetch origin ${sourceBranch}`,
+    `    CURRENT=$(git rev-parse HEAD)`,
+    `    LATEST=$(git rev-parse origin/${sourceBranch})`,
+    '    if [ "$CURRENT" != "$LATEST" ]; then',
+    `      echo "WARNING: HEAD ($CURRENT) does not match origin/${sourceBranch} ($LATEST)"`,
+    '      git reset --hard "origin/${sourceBranch}"',
+    '      echo "Reset to origin/${sourceBranch}"',
+    '    fi',
+    '',
+    '## Requirements',
+    '',
+    '- Merge the source branch into the target branch.',
+    '- Do not perform any code changes.',
+    '- If the merge is a fast-forward (source contains target), use:',
     `    git push origin ${sourceBranch}:refs/heads/${targetBranch}`,
-    "- If the merge is NOT a fast-forward (target has diverged since source was created):",
+    '- If the merge is NOT a fast-forward (target has diverged since source was created):',
     `    1. git fetch origin ${targetBranch}`,
     `    2. git merge origin/${targetBranch} --no-edit`,
     `    3. git push origin HEAD:refs/heads/${targetBranch}`,
-    "- If the branches are already merged, report success — do not re-create runs or PRs.",
-    "- Push the merged result to the remote repository.",
-    "",
-    "## Completion",
-    "",
+    '- If the branches are already merged, report success — do not re-create runs or PRs.',
+    '- Push the merged result to the remote repository.',
+    '',
+    '## Completion',
+    '',
     'When done, call `percussionist_dispatcher_complete_run` with a summary.',
   ];
 
@@ -328,9 +327,9 @@ export async function buildMergeRun(
       ownerReferences: [
         {
           apiVersion: API_GROUP_VERSION,
-          kind: "Project",
+          kind: 'Project',
           name: projectName,
-          uid: project.metadata.uid!,
+          uid: project.metadata.uid ?? '',
           controller: true,
           blockOwnerDeletion: true,
         },
@@ -339,7 +338,7 @@ export async function buildMergeRun(
     spec: {
       project: projectName,
       boardTask: taskName,
-      task: promptLines.join("\n"),
+      task: promptLines.join('\n'),
       interactive: false,
       agent: mergeAgent,
       agents: (project.spec.agents ?? []).filter((a) => a.name !== mergeAgent),
@@ -365,25 +364,34 @@ export async function buildMergeRun(
  */
 export function truncateK8sName(name: string, max: number = 63): string {
   if (name.length <= max) return name;
-  return name.slice(0, max).replace(/-+$/, "");
+  return name.slice(0, max).replace(/-+$/, '');
 }
 
+/**
+ * workerRunName computes a deterministic run name for worker runs.
+ *
+ * The name is keyed by project, task, retryCount (human rework), and aiReworkCount
+ * (AI auto-rework). Both counters must be included to ensure each attempt gets a
+ * unique name — human rework increments retryCount and resets aiReworkCount,
+ * while AI rework increments only aiReworkCount.
+ */
 export function workerRunName(
   projectName: string,
   taskName: string,
   retryCount: number = 0,
+  aiReworkCount: number = 0,
 ): string {
-  const sanitized = taskName.toLowerCase().replace(/[^a-z0-9]/g, "-");
+  const sanitized = taskName.toLowerCase().replace(/[^a-z0-9]/g, '-');
   // Deterministic suffix — same inputs always produce the same run name,
   // preventing duplicate runs across reconcile cycles.
-  const suffix = createHash("sha256")
-    .update(`${projectName}:${taskName}:${retryCount}`)
-    .digest("hex")
+  const suffix = createHash('sha256')
+    .update(`${projectName}:${taskName}:${retryCount}:${aiReworkCount}`)
+    .digest('hex')
     .slice(0, 10);
   // suffix + 2 separating hyphens = 12 chars reserved; project prefix = projectName.length + 1
   const reserved = projectName.length + 1 + 1 + suffix.length; // "{project}-{mid}-{suffix}"
   const maxMid = 63 - reserved;
-  const mid = maxMid > 0 ? sanitized.slice(0, maxMid).replace(/-+$/, "") : sanitized.slice(0, 1);
+  const mid = maxMid > 0 ? sanitized.slice(0, maxMid).replace(/-+$/, '') : sanitized.slice(0, 1);
   return truncateK8sName(`${projectName}-${mid}-${suffix}`);
 }
 
@@ -397,13 +405,15 @@ export function auxiliaryRunName(
   taskName: string,
   randomSuffix: string,
 ): string {
-  const sanitized = taskName.toLowerCase().replace(/[^a-z0-9]/g, "-");
+  const sanitized = taskName.toLowerCase().replace(/[^a-z0-9]/g, '-');
   // Strip project name prefix from the task name to avoid duplication
   // (e.g. "myproject-build-123" → "build-123" since project is already in the run name).
-  const projKey = projectName.toLowerCase().replace(/[^a-z0-9]/g, "-");
-  const stripped = sanitized.startsWith(`${projKey}-`) ? sanitized.slice(projKey.length + 1) : sanitized;
+  const projKey = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+  const stripped = sanitized.startsWith(`${projKey}-`)
+    ? sanitized.slice(projKey.length + 1)
+    : sanitized;
   const reserved = projectName.length + 1 + kind.length + 1 + 1 + randomSuffix.length;
   const maxMid = 63 - reserved;
-  const mid = maxMid > 0 ? stripped.slice(0, maxMid).replace(/-+$/, "") : stripped.slice(0, 1);
+  const mid = maxMid > 0 ? stripped.slice(0, maxMid).replace(/-+$/, '') : stripped.slice(0, 1);
   return truncateK8sName(`${projectName}-${kind}-${mid}-${randomSuffix}`);
 }

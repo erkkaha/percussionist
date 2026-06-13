@@ -1,11 +1,15 @@
 // polling.ts — prompt-mode and interactive-mode polling loops.
 
-import { RunPhase } from "@percussionist/api";
-import { BASE_URL, listSessions, fetchMessages, checkHealth, compactMessagesForSnapshot } from "./session.js";
-import http from "node:http";
-import { sendStats, incrementalFlush } from "./stats-reporter.js";
-
-import type { RawMessage } from "./session.js";
+import http from 'node:http';
+import { RunPhase } from '@percussionist/api';
+import {
+  BASE_URL,
+  checkHealth,
+  compactMessagesForSnapshot,
+  fetchMessages,
+  listSessions,
+} from './session.js';
+import { incrementalFlush, sendStats } from './stats-reporter.js';
 
 const log = (...args: unknown[]) =>
   console.log(`[dispatcher ${new Date().toISOString()}]`, ...args);
@@ -13,44 +17,70 @@ const err = (...args: unknown[]) =>
   console.error(`[dispatcher ${new Date().toISOString()}]`, ...args);
 
 function isMessageAbortedError(error: unknown): boolean {
-  if (typeof error === "string") return error.includes("Abort") || error === "MessageAbortedError";
-  if (error && typeof error === "object") {
+  if (typeof error === 'string') return error.includes('Abort') || error === 'MessageAbortedError';
+  if (error && typeof error === 'object') {
     const e = error as Record<string, unknown>;
-    if (e.name === "MessageAbortedError" || e.type === "MessageAbortedError" || e.code === "MessageAbortedError") return true;
-    if (e.name === "AbortError" || e.type === "AbortError") return true;
-    if (e.name === "Aborted") return true;
+    if (
+      e.name === 'MessageAbortedError' ||
+      e.type === 'MessageAbortedError' ||
+      e.code === 'MessageAbortedError'
+    )
+      return true;
+    if (e.name === 'AbortError' || e.type === 'AbortError') return true;
+    if (e.name === 'Aborted') return true;
   }
   return false;
 }
 
 function isAbortedMessageInError(e: Error): boolean {
-  return isMessageAbortedError(e) || e.message?.includes("MessageAbortedError") || e.message?.includes("AbortError") || e.message?.includes("Aborted");
+  return (
+    isMessageAbortedError(e) ||
+    e.message?.includes('MessageAbortedError') ||
+    e.message?.includes('AbortError') ||
+    e.message?.includes('Aborted')
+  );
 }
 
 function logEvent(evt: { type?: string; properties?: Record<string, unknown> }): void {
-  if (!evt.type || evt.type === "server.connected") return;
+  if (!evt.type || evt.type === 'server.connected') return;
   const p = evt.properties ?? {};
-  const info = p.info as { sessionID?: string; id?: string; role?: string; tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } }; cost?: number } | undefined;
+  const info = p.info as
+    | {
+        sessionID?: string;
+        id?: string;
+        role?: string;
+        tokens?: {
+          input?: number;
+          output?: number;
+          reasoning?: number;
+          cache?: { read?: number; write?: number };
+        };
+        cost?: number;
+      }
+    | undefined;
   const pieces = [
     info?.sessionID ? `session=${info.sessionID}` : undefined,
     info?.id ? `message=${info.id}` : undefined,
     info?.role ? `role=${info.role}` : undefined,
-    typeof info?.tokens?.input === "number" ? `tokens=${info.tokens.input}/${info.tokens.output ?? 0}` : undefined,
-    typeof info?.cost === "number" ? `cost=${info.cost}` : undefined,
+    typeof info?.tokens?.input === 'number'
+      ? `tokens=${info.tokens.input}/${info.tokens.output ?? 0}`
+      : undefined,
+    typeof info?.cost === 'number' ? `cost=${info.cost}` : undefined,
   ].filter(Boolean);
-  log(`[event] ${evt.type}${pieces.length ? ` ${pieces.join(" ")}` : ""}`);
+  log(`[event] ${evt.type}${pieces.length ? ` ${pieces.join(' ')}` : ''}`);
 }
 
-function maybeLogStreamReconnect(mode: "interactive" | "prompt", reconnects: number): void {
+function maybeLogStreamReconnect(mode: 'interactive' | 'prompt', reconnects: number): void {
   if (reconnects === 1 || reconnects % 60 === 0) {
-    log(`[event] ${mode} SSE stream reconnected ${reconnects} time(s); OpenCode may be closing /event after server.connected`);
+    log(
+      `[event] ${mode} SSE stream reconnected ${reconnects} time(s); OpenCode may be closing /event after server.connected`,
+    );
   }
 }
 
-const RUN_NAME = process.env.RUN_NAME ?? "";
-const MODEL = process.env.RUN_MODEL ?? "";
-const AGENT = process.env.RUN_AGENT ?? "";
-const TASK = process.env.RUN_TASK ?? "";
+const MODEL = process.env.RUN_MODEL ?? '';
+const AGENT = process.env.RUN_AGENT ?? '';
+const TASK = process.env.RUN_TASK ?? '';
 // Allow up to 1 hour for the model to produce its first assistant response.
 // POST /session/{id}/message may remain open while opencode processes the
 // model request, so the dispatcher starts it asynchronously and relies on the
@@ -64,11 +94,36 @@ const IDLE_TIMEOUT_MS = 900_000;
 // Token aggregator
 
 export class TokenAggregator {
-  private bySession = new Map<string, { input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number; cost: number }>();
+  private bySession = new Map<
+    string,
+    {
+      input: number;
+      output: number;
+      reasoning: number;
+      cacheRead: number;
+      cacheWrite: number;
+      cost: number;
+    }
+  >();
   private lastWrite = 0;
 
-  update(sessionID: string, input: number, output: number, reasoning?: number, cacheRead?: number, cacheWrite?: number, cost?: number): void {
-    const prev = this.bySession.get(sessionID) ?? { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+  update(
+    sessionID: string,
+    input: number,
+    output: number,
+    reasoning?: number,
+    cacheRead?: number,
+    cacheWrite?: number,
+    cost?: number,
+  ): void {
+    const prev = this.bySession.get(sessionID) ?? {
+      input: 0,
+      output: 0,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: 0,
+    };
     this.bySession.set(sessionID, {
       input: Math.max(prev.input, input),
       output: Math.max(prev.output, output),
@@ -79,14 +134,28 @@ export class TokenAggregator {
     });
   }
 
-  totals(): { tokensIn: number; tokensOut: number; tokensReasoning: number; tokensCacheRead: number; tokensCacheWrite: number; cost: number } {
+  totals(): {
+    tokensIn: number;
+    tokensOut: number;
+    tokensReasoning: number;
+    tokensCacheRead: number;
+    tokensCacheWrite: number;
+    cost: number;
+  } {
     let tokensIn = 0;
     let tokensOut = 0;
     let tokensReasoning = 0;
     let tokensCacheRead = 0;
     let tokensCacheWrite = 0;
     let cost = 0;
-    for (const { input, output, reasoning, cacheRead, cacheWrite, cost: c } of this.bySession.values()) {
+    for (const {
+      input,
+      output,
+      reasoning,
+      cacheRead,
+      cacheWrite,
+      cost: c,
+    } of this.bySession.values()) {
       tokensIn += input;
       tokensOut += output;
       tokensReasoning += reasoning;
@@ -97,10 +166,7 @@ export class TokenAggregator {
     return { tokensIn, tokensOut, tokensReasoning, tokensCacheRead, tokensCacheWrite, cost };
   }
 
-  async flush(
-    patchStatus: (p: object) => Promise<void>,
-    force = false,
-  ): Promise<void> {
+  async flush(patchStatus: (p: object) => Promise<void>, force = false): Promise<void> {
     const now = Date.now();
     if (!force && now - this.lastWrite < 3000) return;
     this.lastWrite = now;
@@ -114,19 +180,21 @@ export class TokenAggregator {
 const CM_MAX_BYTES = 900_000;
 
 export async function snapshotAllSessions(
-  coreApi: import("@kubernetes/client-node").CoreV1Api,
+  coreApi: import('@kubernetes/client-node').CoreV1Api,
   runName: string,
   runNamespace: string,
   runUid: string,
   knownSessionID?: string,
 ): Promise<void> {
-  const { API_GROUP_VERSION, KIND_RUN } = await import("@percussionist/api");
-  const { PatchStrategy, setHeaderOptions } = await import("@kubernetes/client-node");
+  const { API_GROUP_VERSION, KIND_RUN } = await import('@percussionist/api');
+  const { PatchStrategy, setHeaderOptions } = await import('@kubernetes/client-node');
 
   let sessions = await listSessions();
   if (sessions.length === 0 && knownSessionID) {
     // opencode may already be shut down; fall back to snapshotting the known session.
-    log(`snapshotAllSessions: listSessions() returned empty, falling back to knownSessionID ${knownSessionID}`);
+    log(
+      `snapshotAllSessions: listSessions() returned empty, falling back to knownSessionID ${knownSessionID}`,
+    );
     sessions = [{ id: knownSessionID }];
   }
   if (sessions.length === 0) return;
@@ -134,29 +202,29 @@ export async function snapshotAllSessions(
   log(`snapshotAllSessions: snapshotting ${sessions.length} session(s)`);
   const perSessionBudget = Math.floor(CM_MAX_BYTES / sessions.length);
   const cmData: Record<string, string> = {
-    "sessions.json": JSON.stringify(sessions.map((s) => s.id)),
+    'sessions.json': JSON.stringify(sessions.map((s) => s.id)),
   };
 
   for (const session of sessions) {
     let messages = compactMessagesForSnapshot(await fetchMessages(session.id));
     let json = JSON.stringify(messages);
     let truncated = false;
-    while (Buffer.byteLength(json, "utf8") > perSessionBudget && messages.length > 1) {
+    while (Buffer.byteLength(json, 'utf8') > perSessionBudget && messages.length > 1) {
       truncated = true;
       messages = messages.slice(1);
       json = JSON.stringify(messages);
     }
     cmData[`messages-${session.id}.json`] = json;
-    if (truncated) cmData[`truncated-${session.id}`] = "true";
+    if (truncated) cmData[`truncated-${session.id}`] = 'true';
   }
 
   const cmMeta = {
     name: `${runName}-session`,
     namespace: runNamespace,
     labels: {
-      "app.kubernetes.io/managed-by": "percussionist",
-      "percussionist.dev/run-name": runName,
-      "percussionist.dev/component": "session-snapshot",
+      'app.kubernetes.io/managed-by': 'percussionist',
+      'percussionist.dev/run-name': runName,
+      'percussionist.dev/component': 'session-snapshot',
     },
     ownerReferences: [
       {
@@ -173,21 +241,21 @@ export async function snapshotAllSessions(
   try {
     await coreApi.createNamespacedConfigMap({
       namespace: runNamespace,
-      body: { apiVersion: "v1", kind: "ConfigMap", metadata: cmMeta, data: cmData },
+      body: { apiVersion: 'v1', kind: 'ConfigMap', metadata: cmMeta, data: cmData },
     });
     log(`snapshotAllSessions: created ConfigMap ${runName}-session`);
   } catch (createErr) {
     if (!/already exists/i.test((createErr as Error).message)) {
-      err("snapshotAllSessions: create failed:", (createErr as Error).message);
+      err('snapshotAllSessions: create failed:', (createErr as Error).message);
       return;
     }
     try {
       await coreApi.patchNamespacedConfigMap(
         { name: `${runName}-session`, namespace: runNamespace, body: { data: cmData } },
-        setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
+        setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
       );
     } catch (patchErr) {
-      err("snapshotAllSessions: patch failed:", (patchErr as Error).message);
+      err('snapshotAllSessions: patch failed:', (patchErr as Error).message);
     }
   }
 }
@@ -199,7 +267,7 @@ export async function runInteractive(
   patchStatus: (p: object) => Promise<void>,
   isShuttingDown: () => boolean,
   sleep: (ms: number) => Promise<void>,
-  coreApi: import("@kubernetes/client-node").CoreV1Api,
+  coreApi: import('@kubernetes/client-node').CoreV1Api,
   runName: string,
   runNamespace: string,
   runUid: string,
@@ -207,9 +275,9 @@ export async function runInteractive(
   await patchStatus({
     phase: RunPhase.Running,
     startedAt: new Date().toISOString(),
-    message: "waiting for attach or web session",
+    message: 'waiting for attach or web session',
   });
-  log("interactive mode — waiting for session via web UI or `beatctl attach`");
+  log('interactive mode — waiting for session via web UI or `beatctl attach`');
 
   const tokens = new TokenAggregator();
   let firstSessionID: string | undefined;
@@ -225,32 +293,45 @@ export async function runInteractive(
     if (snapshotPending) return;
     snapshotPending = true;
     snapshotAllSessions(coreApi, runName, runNamespace, runUid, firstSessionID)
-      .then(() => { hasSnapshotted = true; })
+      .then(() => {
+        hasSnapshotted = true;
+      })
       .catch((e) => err(`snapshot (${reason}) failed:`, (e as Error).message))
-      .finally(() => { snapshotPending = false; });
+      .finally(() => {
+        snapshotPending = false;
+      });
   };
 
   const discoverSessions = async (): Promise<void> => {
     while (!terminate) {
       const sessions = await listSessions();
       for (const s of sessions) {
-          if (!knownSessions.has(s.id)) {
-            knownSessions.add(s.id);
-            log(`discovered session ${s.id}`);
-            if (!firstSessionID) {
-              firstSessionID = s.id;
-              await patchStatus({ sessionID: firstSessionID, message: "session active" });
-              // Snapshot immediately on first session discovery.
-              maybeSnapshot("session discovered");
-            }
+        if (!knownSessions.has(s.id)) {
+          knownSessions.add(s.id);
+          log(`discovered session ${s.id}`);
+          if (!firstSessionID) {
+            firstSessionID = s.id;
+            await patchStatus({ sessionID: firstSessionID, message: 'session active' });
+            // Snapshot immediately on first session discovery.
+            maybeSnapshot('session discovered');
           }
+        }
       }
       for (const sessionID of knownSessions) {
         const msgs = await fetchMessages(sessionID);
         for (const msg of msgs) {
           const t = msg.info?.tokens;
           const cost = (msg.info as { cost?: number })?.cost ?? 0;
-          if (t?.input || t?.output || cost > 0) tokens.update(sessionID, t?.input ?? 0, t?.output ?? 0, t?.reasoning, t?.cache?.read, t?.cache?.write, cost);
+          if (t?.input || t?.output || cost > 0)
+            tokens.update(
+              sessionID,
+              t?.input ?? 0,
+              t?.output ?? 0,
+              t?.reasoning,
+              t?.cache?.read,
+              t?.cache?.write,
+              cost,
+            );
         }
       }
       await tokens.flush(patchStatus);
@@ -263,65 +344,106 @@ export async function runInteractive(
     let reconnects = 0;
     while (!terminate) {
       try {
-        if (reconnects > 0) maybeLogStreamReconnect("interactive", reconnects);
-        const evtRes = await fetch(`${BASE_URL}/event`, { headers: { Accept: "text/event-stream" } });
+        if (reconnects > 0) maybeLogStreamReconnect('interactive', reconnects);
+        const evtRes = await fetch(`${BASE_URL}/event`, {
+          headers: { Accept: 'text/event-stream' },
+        });
         reconnects++;
-        if (!evtRes.ok || !evtRes.body) { await sleep(5000); continue; }
+        if (!evtRes.ok || !evtRes.body) {
+          await sleep(5000);
+          continue;
+        }
         streamErrors = 0;
         const reader = evtRes.body.getReader();
         const decoder = new TextDecoder();
-        let buffer = "";
+        let buffer = '';
         while (!terminate) {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
+          // biome-ignore lint/suspicious/noImplicitAnyLet: idx is inferred from indexOf
           let idx;
-          while ((idx = buffer.indexOf("\n\n")) >= 0) {
+          // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic SSE parse loop
+          while ((idx = buffer.indexOf('\n\n')) >= 0) {
             const raw = buffer.slice(0, idx);
             buffer = buffer.slice(idx + 2);
-            const dataLines = raw.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trimStart());
+            const dataLines = raw
+              .split('\n')
+              .filter((l) => l.startsWith('data:'))
+              .map((l) => l.slice(5).trimStart());
             if (dataLines.length === 0) continue;
             let evt: { type?: string; properties?: Record<string, unknown> };
-            try { evt = JSON.parse(dataLines.join("\n")); } catch { continue; }
+            try {
+              evt = JSON.parse(dataLines.join('\n'));
+            } catch {
+              continue;
+            }
             logEvent(evt);
-            if (evt.type === "session.status") {
+            if (evt.type === 'session.status') {
               // Snapshot after the first assistant turn completes.
               const p = evt.properties as { busy?: boolean } | undefined;
-              if (p?.busy === false && !hasSnapshotted) maybeSnapshot("first idle");
+              if (p?.busy === false && !hasSnapshotted) maybeSnapshot('first idle');
               // Incremental DB flush on each completed turn.
               if (p?.busy === false && firstSessionID) {
                 const sid = firstSessionID;
                 const totals = tokens.totals();
                 incrementalFlush(sid, interactiveStartedAt, totals, interactiveFlushCursor)
-                  .then((newCursor) => { interactiveFlushCursor = newCursor; })
-                  .catch((e) => err("interactive incrementalFlush failed (non-fatal):", (e as Error).message));
+                  .then((newCursor) => {
+                    interactiveFlushCursor = newCursor;
+                  })
+                  .catch((e) =>
+                    err('interactive incrementalFlush failed (non-fatal):', (e as Error).message),
+                  );
               }
             }
-            if (evt.type === "message.updated") {
-              const p = (evt.properties ?? {}) as { info?: { sessionID?: string; tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } }; cost?: number } };
+            if (evt.type === 'message.updated') {
+              const p = (evt.properties ?? {}) as {
+                info?: {
+                  sessionID?: string;
+                  tokens?: {
+                    input?: number;
+                    output?: number;
+                    reasoning?: number;
+                    cache?: { read?: number; write?: number };
+                  };
+                  cost?: number;
+                };
+              };
               const sid = p.info?.sessionID;
               if (sid) {
                 if (!knownSessions.has(sid)) {
                   knownSessions.add(sid);
                   if (!firstSessionID) {
                     firstSessionID = sid;
-                    await patchStatus({ sessionID: firstSessionID, message: "session active" });
+                    await patchStatus({ sessionID: firstSessionID, message: 'session active' });
                   }
                 }
-                if (typeof p.info?.tokens?.input === "number" || typeof p.info?.cost === "number")
-                  tokens.update(sid, p.info.tokens?.input ?? 0, p.info.tokens?.output ?? 0, p.info.tokens?.reasoning, p.info.tokens?.cache?.read, p.info.tokens?.cache?.write, p.info.cost);
+                if (typeof p.info?.tokens?.input === 'number' || typeof p.info?.cost === 'number')
+                  tokens.update(
+                    sid,
+                    p.info.tokens?.input ?? 0,
+                    p.info.tokens?.output ?? 0,
+                    p.info.tokens?.reasoning,
+                    p.info.tokens?.cache?.read,
+                    p.info.tokens?.cache?.write,
+                    p.info.cost,
+                  );
                 await tokens.flush(patchStatus);
               }
             }
           }
         }
-        try { await reader.cancel(); } catch { /* ignore */ }
+        try {
+          await reader.cancel();
+        } catch {
+          /* ignore */
+        }
       } catch (e) {
         if (terminate) return;
         streamErrors++;
-        err("SSE stream error:", (e as Error).message, `(${streamErrors}/5)`);
+        err('SSE stream error:', (e as Error).message, `(${streamErrors}/5)`);
         if (streamErrors >= 5) {
-          throw new Error("opencode server unreachable: stream disconnected");
+          throw new Error('opencode server unreachable: stream disconnected');
         }
         await sleep(5000);
       }
@@ -331,24 +453,33 @@ export async function runInteractive(
   };
 
   const shutdown = new Promise<void>((resolve) => {
-    const check = setInterval(() => { if (isShuttingDown()) { terminate = true; clearInterval(check); resolve(); } }, 500);
+    const check = setInterval(() => {
+      if (isShuttingDown()) {
+        terminate = true;
+        clearInterval(check);
+        resolve();
+      }
+    }, 500);
   });
 
   // Periodic snapshot every 2 minutes as a safety net for long interactive sessions.
   const periodicInteractiveSnapshot = async (): Promise<void> => {
     while (!terminate) {
       await sleep(120_000);
-      if (!terminate && firstSessionID) maybeSnapshot("periodic");
+      if (!terminate && firstSessionID) maybeSnapshot('periodic');
     }
   };
 
-  await Promise.race([Promise.all([discoverSessions(), streamEvents(), periodicInteractiveSnapshot()]), shutdown]);
+  await Promise.race([
+    Promise.all([discoverSessions(), streamEvents(), periodicInteractiveSnapshot()]),
+    shutdown,
+  ]);
   terminate = true;
 
   await tokens.flush(patchStatus, true);
-  log("interactive session ending — snapshotting");
+  log('interactive session ending — snapshotting');
   await snapshotAllSessions(coreApi, runName, runNamespace, runUid);
-  await patchStatus({ message: "dispatcher terminated" });
+  await patchStatus({ message: 'dispatcher terminated' });
 }
 
 // ---------------------------------------------------------------------------
@@ -367,21 +498,21 @@ async function httpJsonPost(
     const req = http.request(
       {
         hostname: u.hostname,
-        port: u.port === "" ? undefined : Number(u.port),
+        port: u.port === '' ? undefined : Number(u.port),
         path: u.pathname + u.search,
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(payload),
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
         },
         timeout: timeoutMs,
         signal,
       },
       (res) => {
         const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf-8");
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf-8');
           const status = res.statusCode ?? 0;
           resolve({
             ok: status >= 200 && status < 300,
@@ -392,10 +523,10 @@ async function httpJsonPost(
         });
       },
     );
-    req.on("timeout", () => {
+    req.on('timeout', () => {
       req.destroy(new Error(`Request timeout after ${timeoutMs}ms`));
     });
-    req.on("error", reject);
+    req.on('error', reject);
     req.write(payload);
     req.end();
   });
@@ -408,7 +539,7 @@ export async function runPrompt(
   patchStatus: (p: object) => Promise<void>,
   isShuttingDown: () => boolean,
   sleep: (ms: number) => Promise<void>,
-  coreApi: import("@kubernetes/client-node").CoreV1Api,
+  coreApi: import('@kubernetes/client-node').CoreV1Api,
   runName: string,
   runNamespace: string,
   runUid: string,
@@ -419,8 +550,8 @@ export async function runPrompt(
   const tokens = new TokenAggregator();
 
   const sessionRes = await fetch(`${BASE_URL}/session`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title: `run/${runName}` }),
   });
   if (!sessionRes.ok) throw new Error(`Failed to create session: HTTP ${sessionRes.status}`);
@@ -428,14 +559,22 @@ export async function runPrompt(
   const sessionID = sessionData.id;
   log(`created session ${sessionID}`);
   const runStartedAt = new Date().toISOString();
-  await patchStatus({ phase: RunPhase.Running, sessionID, startedAt: runStartedAt, message: "dispatching prompt" });
+  await patchStatus({
+    phase: RunPhase.Running,
+    sessionID,
+    startedAt: runStartedAt,
+    message: 'dispatching prompt',
+  });
 
-  const promptBody: Record<string, unknown> = { parts: [{ type: "text", text: TASK }] };
+  const promptBody: Record<string, unknown> = { parts: [{ type: 'text', text: TASK }] };
   if (AGENT) promptBody.agent = AGENT;
   if (MODEL) {
-    const slashIdx = MODEL.indexOf("/");
+    const slashIdx = MODEL.indexOf('/');
     if (slashIdx !== -1) {
-      promptBody.model = { providerID: MODEL.slice(0, slashIdx), modelID: MODEL.slice(slashIdx + 1) };
+      promptBody.model = {
+        providerID: MODEL.slice(0, slashIdx),
+        modelID: MODEL.slice(slashIdx + 1),
+      };
     } else {
       promptBody.model = { modelID: MODEL };
     }
@@ -450,7 +589,13 @@ export async function runPrompt(
   let lastMessageId: string | undefined;
 
   // Transient error codes that warrant a retry of the prompt POST.
-  const RETRYABLE_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "EPIPE", "ETIMEDOUT"]);
+  const RETRYABLE_CODES = new Set([
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'ECONNABORTED',
+    'EPIPE',
+    'ETIMEDOUT',
+  ]);
   const MAX_PROMPT_RETRIES = 3;
 
   const promptPostController = new AbortController();
@@ -471,8 +616,18 @@ export async function runPrompt(
         if (!syncRes.ok) {
           throw new Error(`prompt failed: HTTP ${syncRes.status} ${await syncRes.text()}`);
         }
-        const syncData = (await syncRes.json()) as { info?: Record<string, unknown>; parts?: unknown[] };
-        const syncTokens = syncData.info?.tokens as { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } } | undefined;
+        const syncData = (await syncRes.json()) as {
+          info?: Record<string, unknown>;
+          parts?: unknown[];
+        };
+        const syncTokens = syncData.info?.tokens as
+          | {
+              input?: number;
+              output?: number;
+              reasoning?: number;
+              cache?: { read?: number; write?: number };
+            }
+          | undefined;
         const syncTokensIn = syncTokens?.input ?? 0;
         const syncTokensOut = syncTokens?.output ?? 0;
         const syncTokensReasoning = syncTokens?.reasoning ?? 0;
@@ -480,18 +635,29 @@ export async function runPrompt(
         const syncTokensCacheWrite = syncTokens?.cache?.write ?? 0;
         const syncCost = (syncData.info?.cost as number | undefined) ?? 0;
         if (syncTokensIn > 0 || syncTokensOut > 0 || syncCost > 0) {
-          tokens.update(sessionID, syncTokensIn, syncTokensOut, syncTokensReasoning, syncTokensCacheRead, syncTokensCacheWrite, syncCost);
+          tokens.update(
+            sessionID,
+            syncTokensIn,
+            syncTokensOut,
+            syncTokensReasoning,
+            syncTokensCacheRead,
+            syncTokensCacheWrite,
+            syncCost,
+          );
           await tokens.flush(patchStatus);
         }
-        log("prompt completed (sync)", JSON.stringify(syncData.info));
+        log('prompt completed (sync)', JSON.stringify(syncData.info));
         return;
       } catch (e) {
         if (terminate || promptPostController.signal.aborted) return;
-        const code = (e as NodeJS.ErrnoException).code ?? "";
-        const isRetryable = RETRYABLE_CODES.has(code) || (e as Error).message?.includes("socket hang up");
+        const code = (e as NodeJS.ErrnoException).code ?? '';
+        const isRetryable =
+          RETRYABLE_CODES.has(code) || (e as Error).message?.includes('socket hang up');
         if (!isRetryable || attempt >= MAX_PROMPT_RETRIES) throw e;
         attempt++;
-        err(`prompt POST failed (${(e as Error).message}), retrying (${attempt}/${MAX_PROMPT_RETRIES})…`);
+        err(
+          `prompt POST failed (${(e as Error).message}), retrying (${attempt}/${MAX_PROMPT_RETRIES})…`,
+        );
         // Wait for opencode to be healthy before re-checking / re-posting.
         await sleep(5000);
         // Check whether the prompt was already received (session has messages).
@@ -499,10 +665,14 @@ export async function runPrompt(
         try {
           const existingMsgs = await fetchMessages(sessionID);
           if (existingMsgs.length > 0) {
-            log(`prompt POST failed but session already has ${existingMsgs.length} message(s) — skipping re-POST`);
+            log(
+              `prompt POST failed but session already has ${existingMsgs.length} message(s) — skipping re-POST`,
+            );
             return;
           }
-        } catch { /* ignore — we'll retry the POST regardless */ }
+        } catch {
+          /* ignore — we'll retry the POST regardless */
+        }
         log(`re-posting prompt (attempt ${attempt}/${MAX_PROMPT_RETRIES})`);
       }
     }
@@ -528,7 +698,7 @@ export async function runPrompt(
           if (!healthy) {
             unhealthyCount++;
             if (unhealthyCount >= 3) {
-              throw new Error("opencode server unreachable: health check failed");
+              throw new Error('opencode server unreachable: health check failed');
             }
           } else {
             unhealthyCount = 0;
@@ -537,7 +707,9 @@ export async function runPrompt(
 
         const elapsedSinceStart = Date.now() - startedAt;
         if (!sawBusy && elapsedSinceStart > FIRST_RESPONSE_TIMEOUT_MS) {
-          throw new Error(`opencode did not produce an assistant response within ${FIRST_RESPONSE_TIMEOUT_MS / 1000}s of dispatch`);
+          throw new Error(
+            `opencode did not produce an assistant response within ${FIRST_RESPONSE_TIMEOUT_MS / 1000}s of dispatch`,
+          );
         }
 
         // Activity detection — any new message (user or assistant) resets
@@ -548,11 +720,20 @@ export async function runPrompt(
           completingSince = undefined;
         }
 
-        if (last?.info?.role === "assistant") {
+        if (last?.info?.role === 'assistant') {
           sawBusy = true;
           const t = last.info.tokens;
           const cost = (last.info as { cost?: number }).cost ?? 0;
-          if (t?.input || t?.output || cost > 0) tokens.update(sessionID, t?.input ?? 0, t?.output ?? 0, t?.reasoning, t?.cache?.read, t?.cache?.write, cost);
+          if (t?.input || t?.output || cost > 0)
+            tokens.update(
+              sessionID,
+              t?.input ?? 0,
+              t?.output ?? 0,
+              t?.reasoning,
+              t?.cache?.read,
+              t?.cache?.write,
+              cost,
+            );
           await tokens.flush(patchStatus);
 
           // Check for errors regardless of time.completed — OpenCode may set
@@ -561,7 +742,7 @@ export async function runPrompt(
           if (last.info.error) {
             if (isMessageAbortedError(last.info.error)) {
               if (!waitingForInput) {
-                log("assistant message aborted by user — waiting for input");
+                log('assistant message aborted by user — waiting for input');
                 waitingForInput = true;
               }
             } else {
@@ -581,12 +762,14 @@ export async function runPrompt(
               // terminating — the poll loop keeps running.
             } else if (totalTokens.tokensIn === 0 && totalTokens.tokensOut === 0) {
               if (!sawBusy) {
-                throw new Error("opencode produced an assistant response with zero token usage before any work was done");
+                throw new Error(
+                  'opencode produced an assistant response with zero token usage before any work was done',
+                );
               }
               waitingForInput = true;
               idleSince ??= Date.now();
             } else if (completingSince && Date.now() - completingSince >= SETTLE_MS) {
-              log("last assistant message completed — settled, done");
+              log('last assistant message completed — settled, done');
               terminate = true;
               return;
             } else if (!completingSince) {
@@ -599,7 +782,7 @@ export async function runPrompt(
         if (waitingForInput) {
           if (idleSince === undefined) idleSince = Date.now();
           if (Date.now() - idleSince >= IDLE_TIMEOUT_MS) {
-            log("session idle for too long — terminating");
+            log('session idle for too long — terminating');
             terminate = true;
             return;
           }
@@ -608,8 +791,8 @@ export async function runPrompt(
         }
       } catch (e) {
         if (terminate) return;
-        if ((e as Error).message?.startsWith("session error:")) throw e;
-        err("pollStatus iter error:", (e as Error).message);
+        if ((e as Error).message?.startsWith('session error:')) throw e;
+        err('pollStatus iter error:', (e as Error).message);
       }
       await sleep(POLL_MS);
     }
@@ -620,63 +803,107 @@ export async function runPrompt(
     let reconnects = 0;
     while (!terminate) {
       try {
-        if (reconnects > 0) maybeLogStreamReconnect("prompt", reconnects);
-        const evtRes = await fetch(`${BASE_URL}/event`, { headers: { Accept: "text/event-stream" } });
+        if (reconnects > 0) maybeLogStreamReconnect('prompt', reconnects);
+        const evtRes = await fetch(`${BASE_URL}/event`, {
+          headers: { Accept: 'text/event-stream' },
+        });
         reconnects++;
-        if (!evtRes.ok || !evtRes.body) { await sleep(5000); continue; }
+        if (!evtRes.ok || !evtRes.body) {
+          await sleep(5000);
+          continue;
+        }
         streamErrors = 0;
         const reader = evtRes.body.getReader();
         const decoder = new TextDecoder();
-        let buffer = "";
+        let buffer = '';
         while (!terminate) {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
+          // biome-ignore lint/suspicious/noImplicitAnyLet: idx is inferred from indexOf
           let idx;
-          while ((idx = buffer.indexOf("\n\n")) >= 0) {
+          // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic SSE parse loop
+          while ((idx = buffer.indexOf('\n\n')) >= 0) {
             const raw = buffer.slice(0, idx);
             buffer = buffer.slice(idx + 2);
-            const dataLines = raw.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trimStart());
+            const dataLines = raw
+              .split('\n')
+              .filter((l) => l.startsWith('data:'))
+              .map((l) => l.slice(5).trimStart());
             if (dataLines.length === 0) continue;
             let evt: { type?: string; properties?: Record<string, unknown> };
-            try { evt = JSON.parse(dataLines.join("\n")); } catch { continue; }
+            try {
+              evt = JSON.parse(dataLines.join('\n'));
+            } catch {
+              continue;
+            }
             logEvent(evt);
-            if ((evt.type === "permission.updated" || evt.type === "session.idle") && !waitingForInput) {
+            if (
+              (evt.type === 'permission.updated' || evt.type === 'session.idle') &&
+              !waitingForInput
+            ) {
               waitingForInput = true;
               // Snapshot sessions immediately when entering WaitingForInput so
               // the manager can read the conversation context even if this pod
               // is killed while waiting.
               snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
-                err("WaitingForInput snapshot failed:", (e as Error).message),
+                err('WaitingForInput snapshot failed:', (e as Error).message),
               );
             }
-            if (evt.type === "session.status") {
+            if (evt.type === 'session.status') {
               // Incremental DB flush after each completed assistant turn.
               const p = evt.properties as { busy?: boolean } | undefined;
               if (p?.busy === false) {
                 const totals = tokens.totals();
                 incrementalFlush(sessionID, runStartedAt, totals, promptFlushCursor)
-                  .then((newCursor) => { promptFlushCursor = newCursor; })
-                  .catch((e) => err("prompt incrementalFlush failed (non-fatal):", (e as Error).message));
+                  .then((newCursor) => {
+                    promptFlushCursor = newCursor;
+                  })
+                  .catch((e) =>
+                    err('prompt incrementalFlush failed (non-fatal):', (e as Error).message),
+                  );
               }
             }
-            if (evt.type === "message.updated") {
-              const p = (evt.properties ?? {}) as { info?: { sessionID?: string; tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } }; cost?: number } };
+            if (evt.type === 'message.updated') {
+              const p = (evt.properties ?? {}) as {
+                info?: {
+                  sessionID?: string;
+                  tokens?: {
+                    input?: number;
+                    output?: number;
+                    reasoning?: number;
+                    cache?: { read?: number; write?: number };
+                  };
+                  cost?: number;
+                };
+              };
               if (p.info?.sessionID === sessionID) {
-                if (typeof p.info.tokens?.input === "number" || typeof p.info.cost === "number")
-                  tokens.update(sessionID, p.info.tokens?.input ?? 0, p.info.tokens?.output ?? 0, p.info.tokens?.reasoning, p.info.tokens?.cache?.read, p.info.tokens?.cache?.write, p.info.cost);
+                if (typeof p.info.tokens?.input === 'number' || typeof p.info.cost === 'number')
+                  tokens.update(
+                    sessionID,
+                    p.info.tokens?.input ?? 0,
+                    p.info.tokens?.output ?? 0,
+                    p.info.tokens?.reasoning,
+                    p.info.tokens?.cache?.read,
+                    p.info.tokens?.cache?.write,
+                    p.info.cost,
+                  );
                 await tokens.flush(patchStatus);
               }
             }
           }
         }
-        try { await reader.cancel(); } catch { /* ignore */ }
+        try {
+          await reader.cancel();
+        } catch {
+          /* ignore */
+        }
       } catch (e) {
         if (terminate) return;
         streamErrors++;
-        err("SSE stream error:", (e as Error).message, `(${streamErrors}/5)`);
+        err('SSE stream error:', (e as Error).message, `(${streamErrors}/5)`);
         if (streamErrors >= 5) {
-          throw new Error("opencode server unreachable: stream disconnected");
+          throw new Error('opencode server unreachable: stream disconnected');
         }
         await sleep(5000);
       }
@@ -687,15 +914,17 @@ export async function runPrompt(
 
   const hardTimeout = setTimeout(() => {
     if (waitingForInput) {
-      err("dispatcher timeout guard — waiting for input, exiting cleanly");
+      err('dispatcher timeout guard — waiting for input, exiting cleanly');
       process.exit(0);
     } else {
-      err("dispatcher timeout guard");
+      err('dispatcher timeout guard');
       process.exit(3);
     }
   }, HARD_TIMEOUT_MS);
   hardTimeout.unref();
-  void streamEvents().catch((e) => { if (!terminate) err("streamEvents fatal:", (e as Error).message); });
+  void streamEvents().catch((e) => {
+    if (!terminate) err('streamEvents fatal:', (e as Error).message);
+  });
 
   // Periodic snapshot every 30s for visibility during long-running tasks.
   // First iteration fires immediately (no initial delay) to capture early state.
@@ -706,12 +935,14 @@ export async function runPrompt(
       first = false;
       if (!terminate) {
         snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
-          err("periodic snapshot failed:", (e as Error).message),
+          err('periodic snapshot failed:', (e as Error).message),
         );
       }
     }
   };
-  void periodicSnapshot().catch((e) => { if (!terminate) err("periodicSnapshot fatal:", (e as Error).message); });
+  void periodicSnapshot().catch((e) => {
+    if (!terminate) err('periodicSnapshot fatal:', (e as Error).message);
+  });
 
   // Race the normal poll loop against:
   // - fail_run: agent signals failure → throw "session error:" → Failed
@@ -741,12 +972,14 @@ export async function runPrompt(
   let raceError: Error | undefined;
   let aborting = false;
   try {
-    await Promise.race([pollStatus(), promptPostFailure, failureRaced, completionRaced, planRaced].filter(Boolean));
+    await Promise.race(
+      [pollStatus(), promptPostFailure, failureRaced, completionRaced, planRaced].filter(Boolean),
+    );
   } catch (e) {
-    if ((e as Error).name === "AbortError") {
+    if ((e as Error).name === 'AbortError') {
       // not ours
     } else if (isAbortedMessageInError(e as Error)) {
-      log("message aborted (caught in race) — treating as waiting for input");
+      log('message aborted (caught in race) — treating as waiting for input');
       aborting = true;
     } else {
       raceError = e as Error;
@@ -757,9 +990,9 @@ export async function runPrompt(
   clearTimeout(hardTimeout);
 
   if (isShuttingDown()) {
-    log("shutting down mid-run");
+    log('shutting down mid-run');
     await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
-    await patchStatus({ message: "dispatcher terminated" });
+    await patchStatus({ message: 'dispatcher terminated' });
     return { sessionID, startedAt: runStartedAt };
   }
 
@@ -770,8 +1003,8 @@ export async function runPrompt(
     await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
     const totals = tokens.totals();
     await sendStats(sessionID, RunPhase.Running, runStartedAt, new Date().toISOString(), totals);
-    await patchStatus({ phase: RunPhase.Running, message: "waiting for input (message aborted)" });
-    log("done (waiting for input after abort)");
+    await patchStatus({ phase: RunPhase.Running, message: 'waiting for input (message aborted)' });
+    log('done (waiting for input after abort)');
     return { sessionID, startedAt: runStartedAt };
   }
 
@@ -798,13 +1031,17 @@ export async function runPrompt(
 
   if (agentCompletionSummary) {
     await sendStats(sessionID, RunPhase.Succeeded, runStartedAt, completedAt, totals);
-    await patchStatus({ phase: RunPhase.Succeeded, message: `agent signalled completion — ${agentCompletionSummary}`, completedAt });
-    log("done");
+    await patchStatus({
+      phase: RunPhase.Succeeded,
+      message: `agent signalled completion — ${agentCompletionSummary}`,
+      completedAt,
+    });
+    log('done');
   } else {
-    const msg = "session ended without completion signal";
+    const msg = 'session ended without completion signal';
     await sendStats(sessionID, RunPhase.Failed, runStartedAt, completedAt, totals, msg);
     await patchStatus({ phase: RunPhase.Failed, message: msg, completedAt });
-    log("done (failed — no explicit completion signal)");
+    log('done (failed — no explicit completion signal)');
   }
 
   return { sessionID, startedAt: runStartedAt };

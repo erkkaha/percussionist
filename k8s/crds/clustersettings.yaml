@@ -118,6 +118,13 @@ spec:
                           type: object
                           x-kubernetes-preserve-unknown-fields: true
                   description: Default runner pod settings for all projects and runs.
+                dispatcher:
+                  type: object
+                  properties:
+                    image:
+                      type: string
+                      description: Dispatcher sidecar image for run pods. When absent, the operator's DISPATCHER_IMAGE env var is used as fallback.
+                  description: Dispatcher sidecar configuration for run pods.
                 runTTLDays:
                   type: integer
                   exclusiveMinimum: true

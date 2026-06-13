@@ -1,13 +1,12 @@
-import { useState, useEffect } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAgent } from "../hooks/useAgent";
-import { submitAgent, updateAgent as apiUpdateAgent } from "../lib/api";
-import { authHeaders } from "../lib/auth";
-import ModelSelector from "./ModelSelector";
-import { Input } from "./ui/input";
-import { Textarea } from "./ui/textarea";
-import { Button } from "./ui/button";
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { updateAgent as apiUpdateAgent, submitAgent } from '../lib/api';
+import { authHeaders } from '../lib/auth';
+import ModelSelector from './ModelSelector';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Textarea } from './ui/textarea';
 
 export default function AgentForm() {
   const { name: editName } = useParams<{ name: string }>();
@@ -15,21 +14,24 @@ export default function AgentForm() {
   const queryClient = useQueryClient();
   const isEdit = !!editName;
 
-  const [name, setName] = useState("");
-  const [content, setContent] = useState("");
-  const [model, setModel] = useState("");
+  const [name, setName] = useState('');
+  const [content, setContent] = useState('');
+  const [model, setModel] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   // Load existing agent when editing.
   useEffect(() => {
     if (!isEdit) return;
-    fetch(`/api/agents/${encodeURIComponent(editName!)}`, { headers: authHeaders() })
+    if (!editName) return;
+    fetch(`/api/agents/${encodeURIComponent(editName)}`, { headers: authHeaders() })
       .then((r) => r.json())
-      .then((data: { metadata?: { name?: string }; spec?: { content?: string; model?: string } }) => {
-        setName(data.metadata?.name ?? "");
-        setContent(data.spec?.content ?? "");
-        setModel(data.spec?.model ?? "");
-      })
+      .then(
+        (data: { metadata?: { name?: string }; spec?: { content?: string; model?: string } }) => {
+          setName(data.metadata?.name ?? '');
+          setContent(data.spec?.content ?? '');
+          setModel(data.spec?.model ?? '');
+        },
+      )
       .catch(() => {});
   }, [isEdit, editName]);
 
@@ -42,16 +44,16 @@ export default function AgentForm() {
       } else {
         await submitAgent({ name: name.trim(), content, model: model || undefined });
       }
-      queryClient.invalidateQueries({ queryKey: ["agents"] });
-      navigate("/settings?tab=agents");
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
+      navigate('/settings?tab=agents');
     } catch (e) {
-      console.error("Failed to save agent:", e);
+      console.error('Failed to save agent:', e);
     } finally {
       setSubmitting(false);
     }
   };
 
-  const kbCount = content.length > 0 ? `${(content.length / 1024).toFixed(1)} KB` : "0 KB";
+  const kbCount = content.length > 0 ? `${(content.length / 1024).toFixed(1)} KB` : '0 KB';
 
   return (
     <div className="space-y-6">
@@ -65,17 +67,18 @@ export default function AgentForm() {
 
       {/* Header */}
       <div>
-        <h1 className="text-xl font-semibold">{isEdit ? `Edit "${name}"` : "New Agent"}</h1>
+        <h1 className="text-xl font-semibold">{isEdit ? `Edit "${name}"` : 'New Agent'}</h1>
         <p className="text-sm text-text-muted mt-0.5">
           {isEdit
             ? `Update the agent definition for ${name}.`
-            : "Define a cluster-scoped reusable agent prompt."}
+            : 'Define a cluster-scoped reusable agent prompt.'}
         </p>
       </div>
 
       {/* Form */}
       <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-4">
         <div className="space-y-1.5">
+          {/* biome-ignore lint/a11y/noLabelWithoutControl: adjacent Input provides context */}
           <label className="text-sm font-medium text-text-muted">Name</label>
           <Input
             type="text"
@@ -87,6 +90,7 @@ export default function AgentForm() {
         </div>
 
         <div className="space-y-1.5">
+          {/* biome-ignore lint/a11y/noLabelWithoutControl: adjacent ModelSelector provides context */}
           <label className="text-sm font-medium text-text-muted">Model</label>
           <ModelSelector
             value={model}
@@ -96,6 +100,7 @@ export default function AgentForm() {
         </div>
 
         <div className="space-y-1.5">
+          {/* biome-ignore lint/a11y/noLabelWithoutControl: adjacent Textarea provides context */}
           <label className="text-sm font-medium text-text-muted">Content</label>
           <Textarea
             value={content}
@@ -112,11 +117,8 @@ export default function AgentForm() {
 
         {/* Actions */}
         <div className="flex items-center gap-3 pt-2 border-t border-border-muted">
-          <Button
-            onClick={handleSave}
-            disabled={!name.trim() || submitting}
-          >
-            {submitting ? "Saving\u2026" : isEdit ? "Save Changes" : "Create Agent"}
+          <Button onClick={handleSave} disabled={!name.trim() || submitting}>
+            {submitting ? 'Saving\u2026' : isEdit ? 'Save Changes' : 'Create Agent'}
           </Button>
           <Link
             to="/settings?tab=agents"

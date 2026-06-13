@@ -1,8 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { sql } from "drizzle-orm";
-import { getDb, getRawDb } from "./db.js";
-import { memories } from "./schema.js";
-import { getEmbedding } from "./embed.js";
+import { randomUUID } from 'node:crypto';
+import { getDb, getRawDb } from './db.js';
+import { getEmbedding } from './embed.js';
 
 // ---------------------------------------------------------------------------
 // Request / Response types
@@ -44,7 +42,7 @@ interface ContextResponse {
 // Initialise vector tables
 
 export function initDb(): void {
-  const dims = parseInt(process.env.EMBEDDING_DIMENSIONS ?? "768", 10);
+  const dims = parseInt(process.env.EMBEDDING_DIMENSIONS ?? '768', 10);
   const raw = getRawDb();
   raw.run(`
     CREATE TABLE IF NOT EXISTS memories (
@@ -60,44 +58,37 @@ export function initDb(): void {
       embedding float[${dims}]
     )
   `);
-  raw.run(
-    "CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at)",
-  );
-  raw.run("CREATE INDEX IF NOT EXISTS idx_memories_run ON memories(agent_run)");
+  raw.run('CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at)');
+  raw.run('CREATE INDEX IF NOT EXISTS idx_memories_run ON memories(agent_run)');
 }
 
 // ---------------------------------------------------------------------------
 // Memory operations
 
-export async function handleStoreMemory(
-  body: StoreMemoryRequest,
-): Promise<StoreMemoryResponse> {
+export async function handleStoreMemory(body: StoreMemoryRequest): Promise<StoreMemoryResponse> {
   const id = randomUUID();
   const embedding = await getEmbedding(body.content);
-  const db = getDb();
-
-  db.insert(memories)
-    .values({
-      id,
-      content: body.content,
-      metadata: JSON.stringify(body.metadata ?? {}),
-      agentRun: body.agentRun,
-    })
-    .run();
-
   const raw = getRawDb();
+
+  // Use a transaction with last_insert_rowid() so the vec_memories rowid
+  // stays aligned with the memories rowid.  Without this, a DELETE (which
+  // resets the memories rowid counter but not the vec_memories counter)
+  // causes the two sequences to desync and search to silently return wrong
+  // content.
+  raw.run('BEGIN TRANSACTION');
   raw
-    .prepare(
-      `INSERT INTO vec_memories (rowid, embedding) VALUES (?1, ?2)`,
-    )
-    .run(null, new Uint8Array(embedding.buffer));
+    .prepare('INSERT INTO memories (id, content, metadata, agent_run) VALUES (?, ?, ?, ?)')
+    .run(id, body.content, JSON.stringify(body.metadata ?? {}), body.agentRun ?? null);
+  const rid = (raw.prepare('SELECT last_insert_rowid() AS rid').get() as { rid: number }).rid;
+  raw
+    .prepare('INSERT INTO vec_memories (rowid, embedding) VALUES (?, ?)')
+    .run(rid, new Uint8Array(embedding.buffer));
+  raw.run('COMMIT');
 
   return { id };
 }
 
-export async function handleSearch(
-  body: SearchRequest,
-): Promise<SearchResult[]> {
+export async function handleSearch(body: SearchRequest): Promise<SearchResult[]> {
   const queryEmbedding = await getEmbedding(body.query);
   const limit = Math.min(body.limit ?? 10, 100);
   const buf = new Uint8Array(queryEmbedding.buffer);
@@ -112,16 +103,14 @@ export async function handleSearch(
   if (rows.length === 0) return [];
 
   const ids = rows.map((r) => r.rowid);
-  const placeholders = ids.map(() => "?").join(",");
+  const placeholders = ids.map(() => '?').join(',');
   const params: (string | number)[] = [...ids];
   let memSql = `SELECT rowid, id, content, metadata, created_at FROM memories WHERE rowid IN (${placeholders})`;
   if (body.task) {
     memSql += ` AND json_extract(metadata, '$.task') = ?`;
     params.push(body.task);
   }
-  const memRows = raw
-    .prepare(memSql)
-    .all(...params) as {
+  const memRows = raw.prepare(memSql).all(...params) as {
     rowid: number;
     id: string;
     content: string;
@@ -134,7 +123,8 @@ export async function handleSearch(
   return rows
     .filter((r) => memMap.has(r.rowid))
     .map((r) => {
-      const mem = memMap.get(r.rowid)!;
+      const mem = memMap.get(r.rowid);
+      if (!mem) return null;
       return {
         id: mem.id,
         content: mem.content,
@@ -142,30 +132,26 @@ export async function handleSearch(
         distance: r.distance,
         createdAt: mem.created_at,
       };
-    });
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
 }
 
-export async function handleContext(
-  body: ContextRequest,
-): Promise<ContextResponse> {
+export async function handleContext(body: ContextRequest): Promise<ContextResponse> {
   const results = await handleSearch({ query: body.query, limit: 5, task: body.task });
   if (results.length === 0) {
-    return { context: "No relevant context found." };
+    return { context: 'No relevant context found.' };
   }
 
   const context = results
-    .map(
-      (r, i) =>
-        `[${i + 1}] (relevance: ${(1 - r.distance).toFixed(3)})\n${r.content}`,
-    )
-    .join("\n\n");
+    .map((r, i) => `[${i + 1}] (relevance: ${(1 - r.distance).toFixed(3)})\n${r.content}`)
+    .join('\n\n');
 
   return { context };
 }
 
 const OLLAMA_BASE_URL =
-  process.env.OLLAMA_BASE_URL ?? "http://ollama.percussionist.svc.cluster.local:11434";
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "nomic-embed-text";
+  process.env.OLLAMA_BASE_URL ?? 'http://ollama.percussionist.svc.cluster.local:11434';
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? 'nomic-embed-text';
 
 export async function handleHealth(): Promise<{ ok: boolean }> {
   getDb(); // ensure DB is initialised

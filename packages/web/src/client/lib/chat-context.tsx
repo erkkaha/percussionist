@@ -1,5 +1,5 @@
-import { createContext, useContext } from "react";
-import type { Task } from "./types";
+import { createContext, useContext } from 'react';
+import type { Task } from './types';
 
 export interface ChatContextValue {
   injectTask: (task: Task, projectName: string) => void;
