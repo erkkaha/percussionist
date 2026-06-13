@@ -6,7 +6,7 @@ import type { Task, ManagerMetrics } from "../lib/types";
 import { useBoardNotifications } from "../hooks/useBoardNotifications";
 import { useBoardEvents } from "../hooks/useBoardEvents";
 import { BoardHeader } from "./board/BoardHeader";
-import { TaskListPanel } from "./board/TaskListPanel";
+import { TaskListPanel, AddTaskForm } from "./board/TaskListPanel";
 import { TaskDetailPanel, TaskDetailEmpty } from "./board/TaskDetailPanel";
 import { Sheet, SheetContent } from "./ui/sheet";
 
@@ -29,10 +29,24 @@ export default function BoardView() {
     }
   }, [eventTick, projectName, queryClient]);
 
-  const [showAddTask, setShowAddTask] = useState(false);
+  // Responsive-aware add-task visibility: desktop uses inline form, mobile uses full-screen Sheet.
+  const [showAddTaskDesktop, setShowAddTaskDesktop] = useState(false);
+  const [showAddTaskMobile, setShowAddTaskMobile] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedTaskName = searchParams.get("task") ?? null;
   const [sheetOpen, setSheetOpen] = useState(false);
+
+  // Single handler that dispatches to the right state based on viewport width.
+  const handleAddTask = () => {
+    if (window.innerWidth < 768) {
+      setShowAddTaskMobile((v) => !v);
+    } else {
+      setShowAddTaskDesktop((v) => !v);
+    }
+  };
+
+  // Close mobile add-task overlay.
+  const handleCloseAddTaskMobile = () => setShowAddTaskMobile(false);
 
   const allTasks: Task[] = data ? Object.values(data.columns).flat() : [];
 
@@ -123,8 +137,8 @@ export default function BoardView() {
           phase={settings.phase}
           sseConnected={boardSseConnected}
           metrics={status.managerMetrics as ManagerMetrics | undefined}
-          onAddTask={() => setShowAddTask((v) => !v)}
-          showAddTask={showAddTask}
+          onAddTask={handleAddTask}
+          showAddTask={showAddTaskDesktop || showAddTaskMobile}
         />
       </div>
 
@@ -138,8 +152,8 @@ export default function BoardView() {
             roster={roster}
             selectedTaskName={selectedTaskName}
             onSelectTask={handleSelectTask}
-            showAddTask={showAddTask}
-            onCloseAddTask={() => setShowAddTask(false)}
+            showAddTask={showAddTaskDesktop}
+            onCloseAddTask={() => setShowAddTaskDesktop(false)}
             approvals={approvals}
           />
         </div>
@@ -151,7 +165,7 @@ export default function BoardView() {
       </div>
 
       {/* Mobile Sheet — slide-in detail panel. The SheetContent renders its own close
-           button at top-right; TaskDetailPanel handles its own scrolling. */}
+            button at top-right; TaskDetailPanel handles its own scrolling. */}
       <Sheet open={sheetOpen} onOpenChange={handleSheetClose}>
         <SheetContent
           side="right"
@@ -159,6 +173,25 @@ export default function BoardView() {
         >
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
             {detailPanel ?? <TaskDetailEmpty />}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Mobile full-screen add-task overlay */}
+      <Sheet open={showAddTaskMobile} onOpenChange={(open) => setShowAddTaskMobile(open)}>
+        <SheetContent
+          side="bottom"
+          className="md:hidden w-screen max-w-none h-svh p-0 border-border [&>button]:z-10"
+        >
+          <div className="flex flex-col h-full min-h-0">
+            {/* Scrollable inner region */}
+            <div className="flex-1 overflow-y-auto px-4 pt-4 pb-8 space-y-3">
+              <AddTaskForm
+                projectName={projectName}
+                roster={roster}
+                onClose={handleCloseAddTaskMobile}
+              />
+            </div>
           </div>
         </SheetContent>
       </Sheet>

@@ -23,7 +23,7 @@ interface AddTaskFormProps {
   onClose: () => void;
 }
 
-function AddTaskForm({ projectName, roster, defaultColumn = "backlog", onClose }: AddTaskFormProps) {
+export function AddTaskForm({ projectName, roster, defaultColumn = "backlog", onClose }: AddTaskFormProps) {
   const queryClient = useQueryClient();
   const [taskType, setTaskType] = useState<"PLAN" | "BUILD">("PLAN");
   const [taskTitle, setTaskTitle] = useState("");
