@@ -13,15 +13,17 @@ import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { Button } from "../ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { cn } from "../../lib/utils";
 
 export interface AddTaskFormProps {
   projectName: string;
   roster: string[];
   defaultColumn?: string;
   onClose: () => void;
+  className?: string;
 }
 
-export function AddTaskForm({ projectName, roster, defaultColumn = "backlog", onClose }: AddTaskFormProps) {
+export function AddTaskForm({ projectName, roster, defaultColumn = "backlog", onClose, className }: AddTaskFormProps) {
   const queryClient = useQueryClient();
   const [taskType, setTaskType] = useState<"PLAN" | "BUILD">("PLAN");
   const [taskTitle, setTaskTitle] = useState("");
@@ -41,7 +43,7 @@ export function AddTaskForm({ projectName, roster, defaultColumn = "backlog", on
   });
 
   return (
-    <div className="rounded-md border border-border bg-surface p-4 space-y-3 mx-2">
+    <div className={cn("rounded-md border border-border bg-surface p-4 space-y-3", className)}>
       <h2 className="text-sm font-semibold">Add Task {defaultColumn === "ideas" ? "to Ideas" : "to Backlog"}</h2>
 
       {/* Type */}

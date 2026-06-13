@@ -8,6 +8,7 @@ import { FilterBar } from "./FilterBar";
 import type { FilterState } from "./FilterBar";
 import { TaskRow } from "./TaskRow";
 import { AddTaskForm } from "./AddTaskForm";
+import { useIsMobile } from "../../hooks/use-mobile";
 
 const DEFAULT_COLUMNS = ["ideas", "backlog", "blocked", "in-progress", "review", "done"] as const;
 
@@ -19,7 +20,11 @@ interface TaskListPanelProps {
   onSelectTask: (name: string) => void;
   /** Whether the inline add-task form is open (desktop). */
   showAddTask: boolean;
+  /** Default column for the inline add-task form. */
+  addTaskDefaultColumn?: string;
   onCloseAddTask: () => void;
+  /** Called when the ideas-column add button is pressed on mobile. */
+  onAddIdea: () => void;
   /** When false, the panel never renders the inline add-task form regardless of `showAddTask`. */
   renderInlineAddTask?: boolean;
   approvals?: Record<string, { approved: boolean; requestChanges: boolean }>;
@@ -32,10 +37,14 @@ export function TaskListPanel({
   selectedTaskName,
   onSelectTask,
   showAddTask,
+  addTaskDefaultColumn = "backlog",
   onCloseAddTask,
+  onAddIdea,
   renderInlineAddTask = true,
   approvals,
 }: TaskListPanelProps) {
+  const isMobile = useIsMobile();
+
   const [filters, setFilters] = useState<FilterState>({
     column: "all",
     search: "",
@@ -116,7 +125,7 @@ export function TaskListPanel({
 
       {inlineAddTaskOpen && (
         <div className="pb-2 shrink-0">
-          <AddTaskForm projectName={projectName} roster={roster} onClose={onCloseAddTask} />
+          <AddTaskForm projectName={projectName} roster={roster} defaultColumn={addTaskDefaultColumn} onClose={onCloseAddTask} className="mx-2" />
         </div>
       )}
 
@@ -148,7 +157,15 @@ export function TaskListPanel({
                 </button>
                 {col === "ideas" && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); setShowAddIdea((v) => !v); if (isCollapsed) toggleCollapsed(col); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isMobile) {
+                        onAddIdea();
+                      } else {
+                        setShowAddIdea((v) => !v);
+                      }
+                      if (isCollapsed) toggleCollapsed(col);
+                    }}
                     className="ml-2 p-0.5 rounded text-text-dim hover:text-text transition-colors"
                     title="Add idea"
                   >
@@ -157,13 +174,14 @@ export function TaskListPanel({
                 )}
               </div>
 
-              {col === "ideas" && showAddIdea && !isCollapsed && (
+              {col === "ideas" && showAddIdea && !isCollapsed && !isMobile && (
                 <div className="pb-2">
                   <AddTaskForm
                     projectName={projectName}
                     roster={roster}
                     defaultColumn="ideas"
                     onClose={() => setShowAddIdea(false)}
+                    className="mx-2"
                   />
                 </div>
               )}

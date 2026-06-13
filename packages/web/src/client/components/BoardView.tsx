@@ -5,9 +5,11 @@ import { fetchBoard, deleteBoardTask, retryEscalatedTask, approveTask, requestCh
 import type { Task, ManagerMetrics } from "../lib/types";
 import { useBoardNotifications } from "../hooks/useBoardNotifications";
 import { useBoardEvents } from "../hooks/useBoardEvents";
+import { useIsMobile } from "../hooks/use-mobile";
 import { BoardHeader } from "./board/BoardHeader";
+import { TaskListPanel } from "./board/TaskListPanel";
 import { TaskDetailPanel, TaskDetailEmpty } from "./board/TaskDetailPanel";
-import { Sheet, SheetContent } from "./ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "./ui/sheet";
 import { AddTaskForm } from "./board/AddTaskForm";
 
 export default function BoardView() {
@@ -29,21 +31,50 @@ export default function BoardView() {
     }
   }, [eventTick, projectName, queryClient]);
 
+  const isMobile = useIsMobile();
+
   // Responsive-aware add-task visibility: desktop uses inline form, mobile uses full-screen Sheet.
   const [showAddTaskDesktop, setShowAddTaskDesktop] = useState(false);
+  const [desktopDefaultColumn, setDesktopDefaultColumn] = useState("backlog");
   const [showAddTaskMobile, setShowAddTaskMobile] = useState(false);
+  const [mobileDefaultColumn, setMobileDefaultColumn] = useState("backlog");
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedTaskName = searchParams.get("task") ?? null;
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  // Single handler that dispatches to the right state based on viewport width.
-  const handleAddTask = () => {
-    if (window.innerWidth < 768) {
-      setShowAddTaskMobile((v) => !v);
+  // Clear any add-task overlay that belongs to the other breakpoint when the
+  // viewport crosses the threshold, so a mobile sheet cannot leak onto desktop.
+  useEffect(() => {
+    if (!isMobile) setShowAddTaskMobile(false);
+    if (isMobile) setShowAddTaskDesktop(false);
+  }, [isMobile]);
+
+  // Toggle the add-task form for the current viewport.
+  const toggleAddTask = (defaultColumn: string) => {
+    if (isMobile) {
+      if (showAddTaskMobile && mobileDefaultColumn === defaultColumn) {
+        setShowAddTaskMobile(false);
+      } else {
+        setMobileDefaultColumn(defaultColumn);
+        setShowAddTaskMobile(true);
+        setSheetOpen(false);
+      }
     } else {
-      setShowAddTaskDesktop((v) => !v);
+      if (showAddTaskDesktop && desktopDefaultColumn === defaultColumn) {
+        setShowAddTaskDesktop(false);
+      } else {
+        setDesktopDefaultColumn(defaultColumn);
+        setShowAddTaskDesktop(true);
+      }
     }
   };
+
+  // Header trigger defaults to the backlog column.
+  const handleAddTask = () => toggleAddTask("backlog");
+
+  // Ideas-column trigger defaults to the ideas column on mobile (desktop keeps
+  // its local inline form).
+  const handleAddIdea = () => toggleAddTask("ideas");
 
   // Close mobile add-task overlay.
   const handleCloseAddTaskMobile = () => setShowAddTaskMobile(false);
@@ -84,8 +115,10 @@ export default function BoardView() {
     // Only open the sheet on mobile (below md breakpoint).
     // On desktop the detail panel is rendered inline; opening the Sheet would
     // trigger its backdrop overlay even though SheetContent is hidden via CSS.
-    if (window.innerWidth < 768) {
+    if (isMobile) {
       setSheetOpen(true);
+      // Enforce a single active mobile overlay path.
+      setShowAddTaskMobile(false);
     }
   };
 
@@ -153,7 +186,10 @@ export default function BoardView() {
             selectedTaskName={selectedTaskName}
             onSelectTask={handleSelectTask}
             showAddTask={showAddTaskDesktop}
+            addTaskDefaultColumn={desktopDefaultColumn}
             onCloseAddTask={() => setShowAddTaskDesktop(false)}
+            onAddIdea={handleAddIdea}
+            renderInlineAddTask={!isMobile}
             approvals={approvals}
           />
         </div>
@@ -178,18 +214,32 @@ export default function BoardView() {
       </Sheet>
 
       {/* Mobile full-screen add-task overlay */}
-      <Sheet open={showAddTaskMobile} onOpenChange={(open) => setShowAddTaskMobile(open)}>
+      <Sheet open={showAddTaskMobile} onOpenChange={setShowAddTaskMobile}>
         <SheetContent
           side="bottom"
           className="md:hidden w-screen max-w-none h-svh p-0 border-border [&>button]:z-10"
         >
           <div className="flex flex-col h-full min-h-0">
+            {/* Accessibility title/description for the sheet; visually hidden
+                because the form itself already renders a visible heading. */}
+            <div className="sr-only">
+              <SheetHeader>
+                <SheetTitle>
+                  {mobileDefaultColumn === "ideas" ? "Add idea" : "Add task"}
+                </SheetTitle>
+                <SheetDescription>
+                  Create a new board task in the {mobileDefaultColumn} column.
+                </SheetDescription>
+              </SheetHeader>
+            </div>
             {/* Scrollable inner region */}
             <div className="flex-1 overflow-y-auto px-4 pt-4 pb-8 space-y-3">
               <AddTaskForm
                 projectName={projectName}
                 roster={roster}
+                defaultColumn={mobileDefaultColumn}
                 onClose={handleCloseAddTaskMobile}
+                className="rounded-none border-0 shadow-none bg-transparent mx-0"
               />
             </div>
           </div>
