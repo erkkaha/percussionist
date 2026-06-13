@@ -791,14 +791,15 @@ to a truncated snapshot.
 Release tags follow `v<major>.<minor>.<patch>` semver format (e.g. `v0.15.0`).
 CI triggers on any push matching `v*`.
 
-**Do not guess tags.** Always derive from existing remote tags:
+**Never create a tag without asking the user first.** Tagging is a human decision.
+Always ask what version they want, then derive from existing remote tags:
 
 ```bash
 git fetch --tags origin
 git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1V -k2,2V -k3,3V | tail -1
 ```
 
-Start from that tag, increment the appropriate segment, create, and push:
+Once the user confirms the version, create and push:
 
 ```bash
 git tag v0.15.1
