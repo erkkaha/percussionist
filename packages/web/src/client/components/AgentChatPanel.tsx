@@ -372,7 +372,7 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
                 Ask the manager agent about board state, task status, or cluster issues.
               </p>
             )}
-            {messages.map((msg, i) => {
+            {messages.map((msg) => {
               // Parse option blocks for assistant messages
               let cleanText = msg.text;
               let options: Array<{ key: string; label: string; description?: string }> = [];
