@@ -9,10 +9,10 @@ import {
   ExternalLink, Check, X, Trash2, Flag, User,
   Wrench, FileText, RefreshCw, MousePointerClick, ArrowRight,
   ChevronDown, ChevronRight, GitCommit as GitCommitIcon,
-  History,
+  History, Sparkles,
 } from "lucide-react";
 import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan, moveTask, retryReviewTask } from "../../lib/api";
-import type { Task, Run, DiffCommit } from "../../lib/types";
+import type { Task, Run, DiffCommit, DiffFinding } from "../../lib/types";
 import { useTaskRuns } from "../../hooks/useTaskRuns";
 import { useTaskDiff } from "../../hooks/useTaskDiff";
 import StatusBadge from "../StatusBadge";
@@ -27,6 +27,36 @@ import { Textarea } from "../ui/textarea";
 import { Button } from "../ui/button";
 
 const remarkPlugins = [remarkGfm];
+
+const SEVERITY_RANK: Record<DiffFinding["severity"], number> = {
+  critical: 4,
+  high: 3,
+  medium: 2,
+  low: 1,
+  info: 0,
+};
+
+function formatFindingForFeedback(finding: DiffFinding): string {
+  const anchor = finding.anchors[0];
+  const location = anchor ? `${anchor.path}:${anchor.line}` : "unknown location";
+  const category = finding.category ? ` (${finding.category})` : "";
+  return `- **[${finding.severity}]** ${location}${category} — ${finding.title}\n  ${finding.comment}`;
+}
+
+function buildReworkFeedbackFromFindings(findings: DiffFinding[], max = 5): string {
+  const sorted = [...findings].sort((a, b) => {
+    const sev = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
+    if (sev !== 0) return sev;
+    const scoreA = a.score ?? 0;
+    const scoreB = b.score ?? 0;
+    return scoreB - scoreA;
+  });
+
+  return sorted
+    .slice(0, max)
+    .map((f) => formatFindingForFeedback(f))
+    .join("\n\n");
+}
 
 type Tab = "overview" | "runs" | "events" | "plan" | "diff";
 
@@ -742,7 +772,29 @@ function TaskDetailPanelInner({
         {/* Request Changes inline form */}
         {showRequestChanges && (
           <div className="space-y-2 border border-border rounded-md p-3 bg-surface">
-            <p className="text-label-md font-mono uppercase text-text-dim">Review feedback</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-label-md font-mono uppercase text-text-dim">Review feedback</p>
+              {(() => {
+                const items = task.status?.diffFindings?.items;
+                if (!items || items.length === 0) return null;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const findingsText = buildReworkFeedbackFromFindings(items, 5);
+                      const prefix = requestChangesComment.trim()
+                        ? `${requestChangesComment.trim()}\n\n`
+                        : "";
+                      setRequestChangesComment(`${prefix}${findingsText}`);
+                    }}
+                    className="flex items-center gap-1 text-xs text-text-dim hover:text-text transition-colors"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    Insert top findings ({items.length})
+                  </button>
+                );
+              })()}
+            </div>
             <Textarea
               placeholder="Describe required changes…"
               value={requestChangesComment}

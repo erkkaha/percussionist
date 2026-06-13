@@ -8,6 +8,24 @@ const now = "2026-05-29T00:00:00.000Z";
 const project = makeProject("test-project");
 const flow = resolveFlow(project);
 
+const reviewContext = {
+  baseSha: "base1",
+  headSha: "head1",
+  forkSha: "fork1",
+  diffFingerprint: "fp1",
+};
+
+const reviewFinding = {
+  id: "f1",
+  source: "reviewer" as const,
+  severity: "high" as const,
+  title: "Missing test",
+  comment: "Add coverage.",
+  anchors: [{ path: "src/index.ts", side: "new" as const, line: 42 }],
+  context: reviewContext,
+  createdAt: "2026-06-13T00:00:00.000Z",
+};
+
 function makeInput(task: ReturnType<typeof makeTask>, overrides?: {
   observed?: { worker?: ReturnType<typeof makeRun>; review?: ReturnType<typeof makeRun>; merge?: ReturnType<typeof makeRun>; buildgen?: ReturnType<typeof makeRun> };
   manualActions?: { approved?: boolean; requestChanges?: boolean; reworkFeedback?: string; abandon?: boolean; answer?: string };
@@ -268,6 +286,21 @@ describe("decide — awaiting-human", () => {
       now,
     });
     expect(result.toPhase).toBe("done");
+  });
+
+  it("awaiting-human + requestChanges preserves existing diffFindings", () => {
+    const task = makeTask("t1", "test-project", { phase: "awaiting-human" });
+    (task.status as any).diffFindings = {
+      version: 1,
+      context: { baseSha: "base", headSha: "head", forkSha: "fork", diffFingerprint: "fp" },
+      items: [{ id: "human-preserved" }],
+      updatedAt: "2026-06-12T00:00:00.000Z",
+      sourceRunName: "review-0",
+    };
+    const result = decide(makeInput(task, { manualActions: { requestChanges: true, reworkFeedback: "fix it" } }));
+    expect(result.toPhase).toBe("rework-requested");
+    expect(result.statusPatch?.diffFindings).toBeUndefined();
+    expect((result.statusPatch?.worker as any).reviewFeedback).toBe("fix it");
   });
 
   it("awaiting-human + approve BUILD + merge flow → awaiting-merge", () => {
@@ -693,6 +726,51 @@ describe("decide — reviewing", () => {
     expect(diffFindings.items.length).toBe(1);
     expect(diffFindings.items[0].id).toBe("f2");
     expect(diffFindings.sourceRunName).toBe("review-2");
+  });
+
+  it("reviewing + request_changes over ceiling with findings persists diffFindings", () => {
+    const task = makeTask("t1", "test-project", { phase: "reviewing" });
+    (task.status!.worker as any) = { reviewRunName: "review-1", retryCount: 0, aiReworkCount: 2 };
+    const reviewRun = makeRun("review-1", { phase: "Succeeded" });
+    (reviewRun.metadata as any).annotations = {
+      "percussionist.dev/review-verdict": JSON.stringify({
+        action: "request_changes",
+        feedback: "fix it",
+        diffFindings: {
+          version: 1,
+          context: reviewContext,
+          items: [reviewFinding],
+          updatedAt: "2026-06-13T01:00:00.000Z",
+          sourceRunName: "review-1",
+        },
+      }),
+    };
+    const result = decide(makeInput(task, { observed: { review: reviewRun } }));
+    expect(result.toPhase).toBe("awaiting-human");
+    expect((result.statusPatch?.worker as any).aiReworkCount).toBe(3);
+    expect((result.statusPatch?.worker as any).reviewFeedback).toMatch(/ceiling reached/);
+    expect((result.statusPatch?.diffFindings as any).items.length).toBe(1);
+  });
+
+  it("reviewing + malformed verdict preserves existing diffFindings", () => {
+    const task = makeTask("t1", "test-project", { phase: "reviewing" });
+    (task.status!.worker as any) = { reviewRunName: "review-1", retryCount: 0, aiReworkCount: 0 };
+    (task.status as any).diffFindings = {
+      version: 1,
+      context: { baseSha: "old", headSha: "old", forkSha: "old", diffFingerprint: "old" },
+      items: [{ id: "old-finding" }],
+      updatedAt: "2026-06-12T00:00:00.000Z",
+      sourceRunName: "review-0",
+    };
+
+    const reviewRun = makeRun("review-1", { phase: "Succeeded" });
+    (reviewRun.metadata as any).annotations = {
+      "percussionist.dev/review-verdict": "{ invalid json }",
+    };
+    const result = decide(makeInput(task, { observed: { review: reviewRun } }));
+    expect(result.toPhase).toBe("awaiting-human");
+    expect(result.events[0]?.reason).toBe("ReviewSucceeded");
+    expect(result.statusPatch?.diffFindings).toBeUndefined();
   });
 });
 

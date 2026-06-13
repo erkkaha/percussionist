@@ -104,7 +104,10 @@ export function getReviewVerdict(run: Run | undefined): NormalizedReviewVerdict 
   if (!verdict) return undefined;
   try {
     const parsed = JSON.parse(verdict) as unknown;
-    return normalizeReviewVerdict(parsed);
+    return normalizeReviewVerdict(parsed, {
+      sourceRunName: run.metadata.name,
+      updatedAt: run.status?.completedAt ?? new Date().toISOString(),
+    });
   } catch {
     return undefined;
   }

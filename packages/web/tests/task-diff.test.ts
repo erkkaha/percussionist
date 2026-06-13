@@ -343,4 +343,87 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
     expect(body.findings).toEqual([]);
     expect(body.empty).toBe(true);
   });
+
+  it("marks finding stale when only the diff fingerprint differs", async () => {
+    const fingerprintMismatch = makeFinding("f3", "high", {
+      context: {
+        baseSha: BASE_SHA,
+        headSha: HEAD_SHA,
+        forkSha: FORK_SHA,
+        diffFingerprint: "different-fingerprint",
+      },
+    });
+
+    getTaskSpy.mockResolvedValue(
+      makeTask({
+        version: 1,
+        context: fingerprintMismatch.context,
+        items: [fingerprintMismatch],
+        updatedAt: "2026-01-01T00:00:00Z",
+        sourceRunName: "review-run-1",
+      }),
+    );
+
+    const res = await getDiff();
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as {
+      findings: Array<{ id: string; isActive: boolean; isStale: boolean }>;
+    };
+
+    expect(body.findings.length).toBe(1);
+    expect(body.findings[0].isActive).toBe(false);
+    expect(body.findings[0].isStale).toBe(true);
+  });
+
+  it("returns stored findings even when the diff is empty", async () => {
+    const identicalTask = makeTask();
+    identicalTask.status.worker.gitBranch = "main";
+    identicalTask.status.worker.mergeIntoBranch = "main";
+    getTaskSpy.mockResolvedValue(
+      makeTask({
+        version: 1,
+        context: {
+          baseSha: BASE_SHA,
+          headSha: HEAD_SHA,
+          forkSha: FORK_SHA,
+          diffFingerprint: DIFF_FINGERPRINT,
+        },
+        items: [makeFinding("f4", "medium")],
+        updatedAt: "2026-01-01T00:00:00Z",
+        sourceRunName: "review-run-1",
+      }),
+    );
+
+    fetchSpy.mockImplementation(() =>
+      Promise.resolve(
+        makeMcpResponse(
+          [
+            "___META___",
+            `BASE_SHA=${BASE_SHA}`,
+            `HEAD_SHA=${BASE_SHA}`,
+            `FORK_SHA=${BASE_SHA}`,
+            "___UNIFIED___",
+            "",
+            "___COMMITS___",
+            "END",
+          ].join("\n"),
+        ),
+      ),
+    );
+
+    const res = await getDiff();
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as {
+      files: unknown[];
+      findings: Array<{ id: string }>;
+      empty: boolean;
+    };
+
+    expect(body.files).toEqual([]);
+    expect(body.empty).toBe(true);
+    expect(body.findings.length).toBe(1);
+    expect(body.findings[0].id).toBe("f4");
+  });
 });

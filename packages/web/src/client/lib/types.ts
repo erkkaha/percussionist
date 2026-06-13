@@ -4,7 +4,7 @@
 // derived from the server schema, plus a few client-specific view models.
 
 // Re-export server types so components import from a single place.
-export type {
+import type {
   Run,
   Project,
   ClusterAgent,
@@ -19,6 +19,21 @@ export type {
   DiffLineAnchor,
   TaskDiffFindings,
 } from "@percussionist/api";
+export type {
+  Run,
+  Project,
+  ClusterAgent,
+  BoardStatus,
+  ManagerMetrics,
+  WorkerStatus,
+  TaskColumn,
+  TaskType,
+  DiffContext,
+  DiffFinding,
+  DiffFindingSeverity,
+  DiffLineAnchor,
+  TaskDiffFindings,
+};
 export { RunPhase, TERMINAL_PHASES } from "@percussionist/api";
 
 import type { Project as _Project, Task as _Task } from "@percussionist/api";

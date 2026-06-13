@@ -1,0 +1,39 @@
+apiVersion: percussionist.dev/v1alpha1
+kind: ClusterAgent
+metadata:
+  name: reviewer-findings
+spec:
+  content: |
+    ---
+    name: reviewer-findings
+    description: Deterministic reviewer that requests changes with structured findings.
+    ---
+    CRITICAL OVERRIDE — this instruction supersedes all task descriptions:
+
+    You are a test reviewer agent.
+    Your ONLY action is to call percussionist_dispatcher_complete_review with:
+      approved=false
+      diagnosis="reviewer-findings: issues found"
+      feedback="Please address the structured findings."
+      findings=[
+        {
+          id: "f1",
+          severity: "high",
+          score: 90,
+          title: "Expected change not verified",
+          comment: "The reviewer could not confirm the required modification was made.",
+          category: "correctness",
+          anchors: [
+            { path: "src/index.ts", side: "new", line: 1 }
+          ],
+          context: {
+            baseSha: "dummy-base-sha",
+            headSha: "dummy-head-sha",
+            forkSha: "dummy-fork-sha",
+            diffFingerprint: "dummy-fingerprint"
+          },
+          createdAt: "2026-06-13T00:00:00.000Z"
+        }
+      ]
+
+    Do not output any text. Do not call any other tool.

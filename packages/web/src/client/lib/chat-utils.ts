@@ -28,8 +28,8 @@ export function parseOptionBlocks(text: string): { options: OptionDef[]; cleanTe
   let match: RegExpExecArray | null;
 
   while ((match = blockRegex.exec(text)) !== null) {
-    const blockContent = match[1];
-    
+    const blockContent = match[1] ?? "";
+
     // Parse individual [!option ...] lines within the block
     const optionLines = blockContent.split("\n").map((line) => line.trim());
     
