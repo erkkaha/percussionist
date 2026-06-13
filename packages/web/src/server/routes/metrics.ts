@@ -99,13 +99,13 @@ metrics.get('/pods', auth(), async (c) => {
               const r = res.containers.find((rc: { name: string }) => rc.name === c.name);
               return {
                 ...c,
-                requests: r ? { cpu: r.requests.cpu, memory: r.requests.memory } : null,
-                limits: r ? { cpu: r.limits.cpu, memory: r.limits.memory } : null,
+                requests: r ? { cpu: r.requests.cpu, memory: r.requests.memory, storage: r.requests.storage ?? null } : null,
+                limits: r ? { cpu: r.limits.cpu, memory: r.limits.memory, storage: r.limits.storage ?? null } : null,
               };
             })
           : p.containers.map((c: { name: string; usage: { cpu: string; memory: string } }) => ({ ...c, requests: null, limits: null })),
-        podRequests: res ? res.podRequests : null,
-        podLimits: res ? res.podLimits : null,
+        podRequests: res ? { ...res.podRequests, storage: res.podRequests.storage ?? null } : null,
+        podLimits: res ? { ...res.podLimits, storage: res.podLimits.storage ?? null } : null,
       };
     });
     return c.json({ items });

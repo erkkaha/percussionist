@@ -4,8 +4,8 @@ import { authHeaders } from '../lib/auth';
 interface ContainerUsage {
   name: string;
   usage: { cpu: string; memory: string };
-  requests: { cpu: string; memory: string } | null;
-  limits: { cpu: string; memory: string } | null;
+  requests: { cpu: string; memory: string; storage: number | null } | null;
+  limits: { cpu: string; memory: string; storage: number | null } | null;
 }
 
 export interface PodMetricRow {
@@ -20,6 +20,8 @@ export interface PodMetricRow {
   totalMemoryRequest: number;
   totalCpuLimit: number;
   totalMemoryLimit: number;
+  totalStorageRequestBytes: number | null;
+  totalStorageLimitBytes: number | null;
 }
 
 export interface NodeMetricRow {
@@ -38,6 +40,7 @@ export interface NodeMetricRow {
   allocated: { cpu: string; memory: string } | null;
   allocatedCpuMillicores: number;
   allocatedMemoryBytes: number;
+  volume: { usedBytes: number | null; capacityBytes: number | null; availableBytes: number | null } | null;
 }
 
 function parseCpu(raw: string): number {
@@ -53,6 +56,17 @@ function parseMemory(raw: string): number {
   if (raw.endsWith('Ki')) return n * 1024;
   if (raw.endsWith('Mi')) return n * 1024 * 1024;
   if (raw.endsWith('Gi')) return n * 1024 * 1024 * 1024;
+  return n;
+}
+
+/** Parse a Kubernetes storage quantity string to bytes. Handles Ki/Mi/Gi/Ti and plain integers. */
+function parseStorageBytes(raw: string): number {
+  const n = parseInt(raw, 10);
+  if (raw.endsWith('Ki')) return n * 1024;
+  if (raw.endsWith('Mi')) return n * 1024 * 1024;
+  if (raw.endsWith('Gi')) return n * 1024 * 1024 * 1024;
+  if (raw.endsWith('Ti')) return n * 1024 * 1024 * 1024 * 1024;
+  // Plain integer — treat as bytes.
   return n;
 }
 
@@ -80,6 +94,7 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
               capacity: { cpu: string; memory: string } | null;
               allocatable: { cpu: string; memory: string } | null;
               allocated: { cpu: string; memory: string } | null;
+              volume: { usedBytes: number | null; capacityBytes: number | null; availableBytes: number | null } | null;
             }>;
           })
         : { items: [] };
@@ -91,8 +106,8 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
               timestamp: string;
               window: string;
               containers: ContainerUsage[];
-              podRequests: { cpu: string; memory: string } | null;
-              podLimits: { cpu: string; memory: string } | null;
+              podRequests: { cpu: string; memory: string; storage: number | null } | null;
+              podLimits: { cpu: string; memory: string; storage: number | null } | null;
             }>;
           })
         : { items: [] };
@@ -113,6 +128,7 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
         allocated: n.allocated,
         allocatedCpuMillicores: n.allocated ? parseCpu(n.allocated.cpu) : 0,
         allocatedMemoryBytes: n.allocated ? parseMemory(n.allocated.memory) : 0,
+        volume: n.volume,
       }));
 
       const pods: PodMetricRow[] = podsData.items.map((p) => {
@@ -125,6 +141,8 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
         const totalMemoryRequest = p.podRequests ? parseMemory(p.podRequests.memory) : 0;
         const totalCpuLimit = p.podLimits ? parseCpu(p.podLimits.cpu) : 0;
         const totalMemoryLimit = p.podLimits ? parseMemory(p.podLimits.memory) : 0;
+        const totalStorageRequestBytes = p.podRequests?.storage ?? null;
+        const totalStorageLimitBytes = p.podLimits?.storage ?? null;
         return {
           name: p.name,
           namespace: p.namespace,
@@ -137,6 +155,8 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
           totalMemoryRequest,
           totalCpuLimit,
           totalMemoryLimit,
+          totalStorageRequestBytes,
+          totalStorageLimitBytes,
         };
       });
 

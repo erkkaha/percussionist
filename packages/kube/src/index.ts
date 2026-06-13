@@ -1281,16 +1281,16 @@ export async function listPodMetrics(ns: string = NAMESPACE): Promise<PodMetric[
 // Pod resource helpers (used by web metrics)
 export interface ContainerResources {
   name: string;
-  requests: { cpu: string; memory: string };
-  limits: { cpu: string; memory: string };
+  requests: { cpu: string; memory: string; storage?: string };
+  limits: { cpu: string; memory: string; storage?: string };
 }
 
 export interface PodResourceSpec {
   name: string;
   nodeName: string;
   containers: ContainerResources[];
-  podRequests: { cpu: string; memory: string };
-  podLimits: { cpu: string; memory: string };
+  podRequests: { cpu: string; memory: string; storage?: string };
+  podLimits: { cpu: string; memory: string; storage?: string };
 }
 
 function parseCpuRaw(raw: string): number {
@@ -1303,10 +1303,10 @@ function parseCpuRaw(raw: string): number {
 
 function parseMemoryRaw(raw: string): number {
   const n = parseInt(raw, 10);
-  if (raw.endsWith("Ki")) return Math.round(n / 1024);
-  if (raw.endsWith("Mi")) return n;
-  if (raw.endsWith("Gi")) return n * 1024;
-  if (raw.endsWith("Ti")) return n * 1024 * 1024;
+  if (raw.endsWith('Ki')) return Math.round(n / 1024);
+  if (raw.endsWith('Mi')) return n;
+  if (raw.endsWith('Gi')) return n * 1024;
+  if (raw.endsWith('Ti')) return n * 1024 * 1024;
   return Math.round(n / (1024 * 1024));
 }
 
@@ -1341,24 +1341,28 @@ export async function listPodResources(ns: string = NAMESPACE): Promise<PodResou
       nodeName: string;
       containers: Array<{
         name: string;
-        resources?: { requests?: { cpu?: string; memory?: string }; limits?: { cpu?: string; memory?: string } };
+        resources?: { requests?: { cpu?: string; memory?: string; 'ephemeral-storage'?: string }; limits?: { cpu?: string; memory?: string; 'ephemeral-storage'?: string } };
       }>;
     };
   };
   const body = (await res.json()) as { items: PodItem[] };
   return (body.items ?? []).map((pod) => {
-    const containers = (pod.spec?.containers ?? []).map((c) => ({
-      name: c.name,
-      requests: { cpu: c.resources?.requests?.cpu ?? "0", memory: c.resources?.requests?.memory ?? "0" },
-      limits: { cpu: c.resources?.limits?.cpu ?? "0", memory: c.resources?.limits?.memory ?? "0" },
-    }));
+    const containers = (pod.spec?.containers ?? []).map((c) => {
+      const req = c.resources?.requests;
+      const lim = c.resources?.limits;
+      return {
+        name: c.name,
+        requests: { cpu: req?.cpu ?? "0", memory: req?.memory ?? "0", storage: req?.['ephemeral-storage'] },
+        limits: { cpu: lim?.cpu ?? "0", memory: lim?.memory ?? "0", storage: lim?.['ephemeral-storage'] },
+      };
+    });
     const podRequests = containers.reduce(
-      (acc, c) => ({ cpu: addCpu(acc.cpu, c.requests.cpu), memory: addMemory(acc.memory, c.requests.memory) }),
-      { cpu: "0", memory: "0" },
+      (acc, c) => ({ cpu: addCpu(acc.cpu, c.requests.cpu), memory: addMemory(acc.memory, c.requests.memory), storage: acc.storage || c.requests.storage }),
+      { cpu: "0", memory: "0" } as { cpu: string; memory: string; storage?: string },
     );
     const podLimits = containers.reduce(
-      (acc, c) => ({ cpu: addCpu(acc.cpu, c.limits.cpu), memory: addMemory(acc.memory, c.limits.memory) }),
-      { cpu: "0", memory: "0" },
+      (acc, c) => ({ cpu: addCpu(acc.cpu, c.limits.cpu), memory: addMemory(acc.memory, c.limits.memory), storage: acc.storage || c.limits.storage }),
+      { cpu: "0", memory: "0" } as { cpu: string; memory: string; storage?: string },
     );
     return {
       name: pod.metadata.name,
