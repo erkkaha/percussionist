@@ -580,9 +580,119 @@ describe("decide — reviewing", () => {
     const result = decide(makeInput(task, { observed: { review: reviewRun } }));
     expect(result.toPhase).toBe("awaiting-human");
     expect(result.events[0]?.reason).toBe("ReviewSucceeded");
-    
+
     // No reviews should be added without verdict annotation
     expect(result.statusPatch?.reviews).toBeUndefined();
+  });
+
+  it("reviewing + verdict with findings → replaces diffFindings", () => {
+    const task = makeTask("t1", "test-project", { phase: "reviewing" });
+    (task.status!.worker as any) = { reviewRunName: "review-1", retryCount: 0, aiReworkCount: 0 };
+    const reviewRun = makeRun("review-1", { phase: "Succeeded" });
+    (reviewRun.metadata as any).annotations = {
+      "percussionist.dev/review-verdict": JSON.stringify({
+        action: "request_changes",
+        diagnosis: "issues found",
+        diffFindings: {
+          version: 1,
+          context: {
+            baseSha: "base1",
+            headSha: "head1",
+            forkSha: "fork1",
+            diffFingerprint: "fp1",
+          },
+          items: [
+            {
+              id: "f1",
+              source: "reviewer",
+              severity: "high",
+              title: "Missing test",
+              comment: "Add coverage.",
+              anchors: [{ path: "src/index.ts", side: "new", line: 42 }],
+              context: {
+                baseSha: "base1",
+                headSha: "head1",
+                forkSha: "fork1",
+                diffFingerprint: "fp1",
+              },
+              createdAt: "2026-06-13T00:00:00.000Z",
+            },
+          ],
+          updatedAt: "2026-06-13T01:00:00.000Z",
+          sourceRunName: "review-1",
+        },
+      }),
+    };
+    const result = decide(makeInput(task, { observed: { review: reviewRun } }));
+    expect(result.toPhase).toBe("rework-requested");
+    expect(result.statusPatch?.diffFindings).toBeDefined();
+    expect((result.statusPatch?.diffFindings as any).items.length).toBe(1);
+    expect((result.statusPatch?.diffFindings as any).items[0].id).toBe("f1");
+  });
+
+  it("reviewing + verdict without findings preserves existing diffFindings", () => {
+    const task = makeTask("t1", "test-project", { phase: "reviewing" });
+    (task.status!.worker as any) = { reviewRunName: "review-1", retryCount: 0, aiReworkCount: 0 };
+    (task.status as any).diffFindings = {
+      version: 1,
+      context: { baseSha: "old", headSha: "old", forkSha: "old", diffFingerprint: "old" },
+      items: [{ id: "old-finding" }],
+      updatedAt: "2026-06-12T00:00:00.000Z",
+      sourceRunName: "review-0",
+    };
+
+    const reviewRun = makeRun("review-1", { phase: "Succeeded" });
+    (reviewRun.metadata as any).annotations = {
+      "percussionist.dev/review-verdict": JSON.stringify({ action: "approve", diagnosis: "all good" }),
+    };
+    const result = decide(makeInput(task, { observed: { review: reviewRun } }));
+    expect(result.toPhase).toBe("awaiting-human");
+    expect(result.statusPatch?.diffFindings).toBeUndefined();
+  });
+
+  it("reviewing + later verdict replaces prior diffFindings", () => {
+    const task = makeTask("t1", "test-project", { phase: "reviewing" });
+    (task.status!.worker as any) = { reviewRunName: "review-2", retryCount: 0, aiReworkCount: 0 };
+    (task.status as any).diffFindings = {
+      version: 1,
+      context: { baseSha: "old", headSha: "old", forkSha: "old", diffFingerprint: "old" },
+      items: [{ id: "old-finding" }],
+      updatedAt: "2026-06-12T00:00:00.000Z",
+      sourceRunName: "review-1",
+    };
+
+    const reviewRun = makeRun("review-2", { phase: "Succeeded" });
+    (reviewRun.metadata as any).annotations = {
+      "percussionist.dev/review-verdict": JSON.stringify({
+        action: "approve",
+        diagnosis: "new findings",
+        diffFindings: {
+          version: 1,
+          context: { baseSha: "new", headSha: "new", forkSha: "new", diffFingerprint: "new" },
+          items: [
+            {
+              id: "f2",
+              source: "reviewer",
+              severity: "low",
+              title: "Nit",
+              comment: "Minor.",
+              anchors: [{ path: "src/other.ts", side: "old", line: 10 }],
+              context: { baseSha: "new", headSha: "new", forkSha: "new", diffFingerprint: "new" },
+              createdAt: "2026-06-13T00:00:00.000Z",
+            },
+          ],
+          updatedAt: "2026-06-13T02:00:00.000Z",
+          sourceRunName: "review-2",
+        },
+      }),
+    };
+    const result = decide(makeInput(task, { observed: { review: reviewRun } }));
+    expect(result.toPhase).toBe("awaiting-human");
+    const diffFindings = result.statusPatch?.diffFindings as any;
+    expect(diffFindings).toBeDefined();
+    expect(diffFindings.items.length).toBe(1);
+    expect(diffFindings.items[0].id).toBe("f2");
+    expect(diffFindings.sourceRunName).toBe("review-2");
   });
 });
 
