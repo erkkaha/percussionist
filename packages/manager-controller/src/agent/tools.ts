@@ -51,7 +51,6 @@ import {
   storeMemory,
   updateMemory,
 } from './memory-client.js';
-import { isValidPackageName, logSecurityEvent, sanitizeCommand } from './security.js';
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'percussionist-manager-agent';
