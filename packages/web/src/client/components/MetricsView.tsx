@@ -20,6 +20,14 @@ function fmtMemory(bytes: number): string {
   return `${(bytes / 1024).toFixed(0)} KiB`;
 }
 
+function fmtStorage(bytes: number): string {
+  if (bytes >= 1024 ** 4) return `${(bytes / 1024 ** 4).toFixed(1)} TiB`;
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MiB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KiB`;
+  return `${bytes} B`;
+}
+
 function age(iso: string | null): string {
   if (!iso) return '-';
   const ms = Date.now() - new Date(iso).getTime();
@@ -83,6 +91,17 @@ function NodeCard({ node }: { node: NodeMetricRow }) {
           variant="request"
         />
       )}
+      {node.volume?.capacityBytes != null && node.volume.capacityBytes > 0 && (
+        <UsageBar
+          label="Volume"
+          value={`${fmtStorage(node.volume.usedBytes ?? 0)} / ${fmtStorage(node.volume.capacityBytes)}`}
+          pct={
+            node.volume.capacityBytes > 0
+              ? Math.min(((node.volume.usedBytes ?? 0) / node.volume.capacityBytes) * 100, 100)
+              : 0
+          }
+        />
+      )}
     </div>
   );
 }
@@ -140,6 +159,13 @@ function fmtMemCompact(usage: number, request: number, limit: number): string {
   return `${u} / ${r} / ${l}`;
 }
 
+function fmtStorageCompact(usage: number, request: number | null, limit: number | null): string {
+  const u = usage > 0 ? fmtStorage(usage) : '0 B';
+  const r = request != null && request > 0 ? fmtStorage(request) : '-';
+  const l = limit != null && limit > 0 ? fmtStorage(limit) : '-';
+  return `${u} / ${r} / ${l}`;
+}
+
 function PodTable({ pods }: { pods: PodMetricRow[] }) {
   const sorted = [...pods].sort((a, b) => b.totalCpuMillicores - a.totalCpuMillicores);
 
@@ -159,6 +185,7 @@ function PodTable({ pods }: { pods: PodMetricRow[] }) {
             <th className="px-4 py-2.5 font-medium">Pod</th>
             <th className="px-4 py-2.5 font-medium">CPU (use / req / limit)</th>
             <th className="px-4 py-2.5 font-medium">Memory (use / req / limit)</th>
+            <th className="px-4 py-2.5 font-medium">Storage (use / req / limit)</th>
             <th className="px-4 py-2.5 font-medium">Containers</th>
             <th className="px-4 py-2.5 font-medium">Age</th>
           </tr>
@@ -177,6 +204,9 @@ function PodTable({ pods }: { pods: PodMetricRow[] }) {
               </td>
               <td className="px-4 py-3 tabular-nums font-mono text-xs text-text-muted">
                 {fmtMemCompact(p.totalMemoryBytes, p.totalMemoryRequest, p.totalMemoryLimit)}
+              </td>
+              <td className="px-4 py-3 tabular-nums font-mono text-xs text-text-muted">
+                {fmtStorageCompact(0, p.totalStorageRequestBytes, p.totalStorageLimitBytes)}
               </td>
               <td className="px-4 py-3 text-text-muted">
                 <span className="text-xs">{p.containers.length}</span>
