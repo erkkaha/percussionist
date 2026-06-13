@@ -33,7 +33,6 @@
         "useSemanticElements": "off"
       },
       "suspicious": {
-        "noArrayIndexKey": "warn",
         "noAssignInExpressions": "warn",
         "noMisleadingCharacterClass": "warn"
       }

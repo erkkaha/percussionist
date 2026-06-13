@@ -386,7 +386,7 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
 
               return (
                 <div
-                  key={`${messageKey(msg)}-${i}`}
+                  key={messageKey(msg)}
                   className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div

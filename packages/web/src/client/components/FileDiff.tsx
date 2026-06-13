@@ -102,8 +102,13 @@ export function FileDiff({ filename, path, diff }: FileDiffProps) {
 
               {/* Diff view */}
               <div className="overflow-x-auto text-xs font-mono">
-                {files.map((file, i) => (
-                  <Diff key={i} viewType={viewType} diffType={file.type} hunks={file.hunks}>
+                {files.map((file) => (
+                  <Diff
+                    key={file.newPath ?? file.oldPath}
+                    viewType={viewType}
+                    diffType={file.type}
+                    hunks={file.hunks}
+                  >
                     {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
                   </Diff>
                 ))}

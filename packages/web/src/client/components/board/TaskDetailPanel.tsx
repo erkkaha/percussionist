@@ -436,7 +436,7 @@ function OverviewContent({
           </button>
           {showReviews && (
             <div className="space-y-2">
-              {task.status.reviews.map((r, i) => {
+              {task.status.reviews.map((r) => {
                 const actionLabel =
                   r.action === 'approve'
                     ? 'Approved'
@@ -451,7 +451,7 @@ function OverviewContent({
                       : 'text-phase-failed border-phase-failed/30 bg-phase-failed/10';
                 return (
                   <div
-                    key={i}
+                    key={r.reviewedAt}
                     className="rounded border border-border-muted bg-surface p-3 space-y-1.5"
                   >
                     <div className="flex items-center justify-between gap-2">

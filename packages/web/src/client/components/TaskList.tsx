@@ -117,19 +117,21 @@ export function TaskList({ todos }: TaskListProps) {
             </button>
             {expandedSections.has('in_progress') && (
               <div className="ml-5 space-y-1 mt-1">
-                {grouped.in_progress.map((todo, i) => {
-                  const Icon = getStatusIcon(todo.status);
-                  return (
-                    <div key={i} className="flex items-start gap-2 px-2 py-1 rounded text-xs">
-                      <Icon
-                        className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`}
-                      />
-                      <span className={`flex-1 ${getPriorityColor(todo.priority)}`}>
-                        {todo.content}
-                      </span>
-                    </div>
-                  );
-                })}
+                {
+                  grouped.in_progress.map((todo) => {
+                    const Icon = getStatusIcon(todo.status);
+                    return (
+                      <div key={todo.content} className="flex items-start gap-2 px-2 py-1 rounded text-xs">
+                        <Icon
+                          className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`}
+                        />
+                        <span className={`flex-1 ${getPriorityColor(todo.priority)}`}>
+                          {todo.content}
+                        </span>
+                      </div>
+                    );
+                  })
+                }
               </div>
             )}
           </div>
@@ -154,19 +156,21 @@ export function TaskList({ todos }: TaskListProps) {
             </button>
             {expandedSections.has('pending') && (
               <div className="ml-5 space-y-1 mt-1">
-                {grouped.pending.map((todo, i) => {
-                  const Icon = getStatusIcon(todo.status);
-                  return (
-                    <div key={i} className="flex items-start gap-2 px-2 py-1 rounded text-xs">
-                      <Icon
-                        className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`}
-                      />
-                      <span className={`flex-1 ${getPriorityColor(todo.priority)}`}>
-                        {todo.content}
-                      </span>
-                    </div>
-                  );
-                })}
+                {
+                  grouped.pending.map((todo) => {
+                    const Icon = getStatusIcon(todo.status);
+                    return (
+                      <div key={todo.content} className="flex items-start gap-2 px-2 py-1 rounded text-xs">
+                        <Icon
+                          className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`}
+                        />
+                        <span className={`flex-1 ${getPriorityColor(todo.priority)}`}>
+                          {todo.content}
+                        </span>
+                      </div>
+                    );
+                  })
+                }
               </div>
             )}
           </div>
@@ -191,20 +195,22 @@ export function TaskList({ todos }: TaskListProps) {
             </button>
             {expandedSections.has('completed') && (
               <div className="ml-5 space-y-1 mt-1">
-                {grouped.completed.map((todo, i) => {
-                  const Icon = getStatusIcon(todo.status);
-                  return (
-                    <div
-                      key={i}
-                      className="flex items-start gap-2 px-2 py-1 rounded text-xs opacity-70"
-                    >
-                      <Icon
-                        className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`}
-                      />
-                      <span className="flex-1 line-through text-text-dim">{todo.content}</span>
-                    </div>
-                  );
-                })}
+                {
+                  grouped.completed.map((todo) => {
+                    const Icon = getStatusIcon(todo.status);
+                    return (
+                      <div
+                        key={todo.content}
+                        className="flex items-start gap-2 px-2 py-1 rounded text-xs opacity-70"
+                      >
+                        <Icon
+                          className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`}
+                        />
+                        <span className="flex-1 line-through text-text-dim">{todo.content}</span>
+                      </div>
+                    );
+                  })
+                }
               </div>
             )}
           </div>
@@ -229,20 +235,22 @@ export function TaskList({ todos }: TaskListProps) {
             </button>
             {expandedSections.has('cancelled') && (
               <div className="ml-5 space-y-1 mt-1">
-                {grouped.cancelled.map((todo, i) => {
-                  const Icon = getStatusIcon(todo.status);
-                  return (
-                    <div
-                      key={i}
-                      className="flex items-start gap-2 px-2 py-1 rounded text-xs opacity-70"
-                    >
-                      <Icon
-                        className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`}
-                      />
-                      <span className="flex-1 line-through text-text-dim">{todo.content}</span>
-                    </div>
-                  );
-                })}
+                {
+                  grouped.cancelled.map((todo) => {
+                    const Icon = getStatusIcon(todo.status);
+                    return (
+                      <div
+                        key={todo.content}
+                        className="flex items-start gap-2 px-2 py-1 rounded text-xs opacity-70"
+                      >
+                        <Icon
+                          className={`h-3.5 w-3.5 mt-0.5 flex-shrink-0 ${getStatusColor(todo.status)}`}
+                        />
+                        <span className="flex-1 line-through text-text-dim">{todo.content}</span>
+                      </div>
+                    );
+                  })
+                }
               </div>
             )}
           </div>

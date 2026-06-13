@@ -332,7 +332,7 @@ export default function CreateRunForm() {
             </button>
           </div>
           {agents.map((a, i) => (
-            <div key={i} className="space-y-2 rounded-md border border-border bg-surface p-3">
+            <div key={a.name} className="space-y-2 rounded-md border border-border bg-surface p-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-text-muted">Agent {i + 1}</span>
                 <Button

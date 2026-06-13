@@ -121,15 +121,16 @@ export default function AgentsPage({ showHeader = true }: { showHeader?: boolean
       {isLoading ? (
         <div className="rounded-lg border border-border overflow-hidden">
           <div className="divide-y divide-border-muted">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="px-4 py-4 flex gap-6">
-                <div className="h-4 w-32 rounded bg-surface-overlay animate-pulse" />
-                <div className="h-4 w-32 rounded bg-surface-overlay animate-pulse" />
-                <div className="h-4 w-48 rounded bg-surface-overlay animate-pulse" />
-                <div className="h-4 w-16 rounded bg-surface-overlay animate-pulse" />
-                <div className="h-4 w-16 rounded bg-surface-overlay animate-pulse" />
-              </div>
-            ))}
+            {[0, 1, 2].map((k) => (
+                <div key={k} className="px-4 py-4 flex gap-6">
+                  <div className="h-4 w-32 rounded bg-surface-overlay animate-pulse" />
+                  <div className="h-4 w-32 rounded bg-surface-overlay animate-pulse" />
+                  <div className="h-4 w-48 rounded bg-surface-overlay animate-pulse" />
+                  <div className="h-4 w-16 rounded bg-surface-overlay animate-pulse" />
+                  <div className="h-4 w-16 rounded bg-surface-overlay animate-pulse" />
+                </div>
+              ))
+            }
           </div>
         </div>
       ) : !agents || agents.length === 0 ? (

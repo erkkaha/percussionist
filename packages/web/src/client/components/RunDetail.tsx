@@ -259,9 +259,9 @@ export default function RunDetail() {
               <div className="flex items-baseline gap-3 text-sm">
                 <span className="text-text-dim w-36 shrink-0">Inline Agents</span>
                 <div className="flex flex-wrap gap-1.5">
-                  {run.spec.agents.map((a, i) => (
+                  {run.spec.agents.map((a) => (
                     <span
-                      key={i}
+                      key={a.name}
                       className="inline-flex items-center rounded bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text-muted"
                     >
                       {a.name}
@@ -320,8 +320,8 @@ export default function RunDetail() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border-muted">
-                  {run.status.conditions.map((c, i) => (
-                    <tr key={i}>
+                  {run.status.conditions.map((c) => (
+                    <tr key={c.type}>
                       <td className="py-2 pr-4 text-text">{c.type}</td>
                       <td className="py-2 pr-4">
                         <span
@@ -350,9 +350,7 @@ export default function RunDetail() {
       )}
 
       {/* Review verdict */}
-      {reviewVerdict(run) && (
-        <ReviewVerdictCard verdict={reviewVerdict(run)!} />
-      )}
+      {reviewVerdict(run) && <ReviewVerdictCard verdict={reviewVerdict(run)!} />}
 
       {/* Session conversation */}
       <Card>
@@ -420,14 +418,18 @@ function DetailSkeleton() {
       <div className="h-8 w-64 rounded bg-surface-overlay animate-pulse" />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-4 rounded bg-surface-overlay animate-pulse" />
-          ))}
+          {
+            [0, 1, 2, 3, 4, 5].map((k) => (
+              <div key={k} className="h-4 rounded bg-surface-overlay animate-pulse" />
+            ))
+          }
         </div>
         <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-4 rounded bg-surface-overlay animate-pulse" />
-          ))}
+          {
+            [0, 1, 2, 3, 4, 5].map((k) => (
+              <div key={k} className="h-4 rounded bg-surface-overlay animate-pulse" />
+            ))
+          }
         </div>
       </div>
     </div>

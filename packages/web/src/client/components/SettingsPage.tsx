@@ -63,7 +63,7 @@ export default function SettingsPage() {
     queryFn: fetchSettings,
   });
 
-  const { data: opencodeConfig, isLoading: configLoading } = useQuery({
+  const { data: opencodeConfig } = useQuery({
     queryKey: ['opencode-config'],
     queryFn: fetchOpencodeConfig,
   });

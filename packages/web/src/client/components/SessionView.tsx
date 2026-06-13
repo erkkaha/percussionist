@@ -64,12 +64,14 @@ export default function SessionView({
   if (isLoading) {
     return (
       <div className="space-y-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="rounded-lg border border-border bg-surface p-4 animate-pulse">
-            <div className="h-4 w-24 rounded bg-surface-overlay mb-2" />
-            <div className="h-4 w-full rounded bg-surface-overlay" />
-          </div>
-        ))}
+        {
+          [0, 1, 2].map((k) => (
+            <div key={k} className="rounded-lg border border-border bg-surface p-4 animate-pulse">
+              <div className="h-4 w-24 rounded bg-surface-overlay mb-2" />
+              <div className="h-4 w-full rounded bg-surface-overlay" />
+            </div>
+          ))
+        }
         <p className="text-xs text-text-dim">Loading session messages...</p>
       </div>
     );
