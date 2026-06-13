@@ -351,7 +351,7 @@ export default function RunDetail() {
 
       {/* Review verdict */}
       {reviewVerdict(run) && (
-        <ReviewVerdictCard verdict={reviewVerdict(run)!} runName={run.metadata.name} />
+        <ReviewVerdictCard verdict={reviewVerdict(run)!} />
       )}
 
       {/* Session conversation */}
@@ -453,7 +453,7 @@ function reviewVerdict(run: {
   }
 }
 
-function ReviewVerdictCard({ verdict, runName }: { verdict: ReviewVerdictData; runName: string }) {
+function ReviewVerdictCard({ verdict }: { verdict: ReviewVerdictData }) {
   const isApproved = verdict.action === 'approve';
   return (
     <Card>

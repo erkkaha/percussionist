@@ -7,11 +7,9 @@ interface FileDiffProps {
   filename: string;
   path?: string;
   diff?: string;
-  beforeContent?: string;
-  afterContent?: string;
 }
 
-export function FileDiff({ filename, path, diff, beforeContent, afterContent }: FileDiffProps) {
+export function FileDiff({ filename, path, diff }: FileDiffProps) {
   const [expanded, setExpanded] = useState(false);
   const [viewType, setViewType] = useState<'unified' | 'split'>('unified');
 
