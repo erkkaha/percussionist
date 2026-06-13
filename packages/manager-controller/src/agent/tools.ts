@@ -22,7 +22,6 @@ import {
   deleteRun,
   fetchSessionMessages,
   fetchAllSessionMessages,
-  patchProjectStatus,
   listClusterAgents,
   listPodsByLabels,
   listTasks,
@@ -37,7 +36,7 @@ import {
   createTask,
   apps,
 } from "@percussionist/kube";
-import { LABELS, MEMORY_SERVICE_PORT, type Project, type Task, type TaskPhase, type TaskSpec } from "@percussionist/api";
+import { LABELS, type Project, type Task, type TaskPhase } from "@percussionist/api";
 import { storeMemory, queryMemory, getContext } from "./memory-client.js";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
