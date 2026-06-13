@@ -4,9 +4,9 @@
 // name. Each project with spec.embedding.enabled has a memory-{project} Service
 // running on port 4100.
 
-import { MEMORY_SERVICE_PORT } from "@percussionist/api";
+import { MEMORY_SERVICE_PORT } from '@percussionist/api';
 
-const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
+const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
 
 function memoryServiceUrl(project: string): string {
   return `http://memory-${project}.${NAMESPACE}.svc.cluster.local:${MEMORY_SERVICE_PORT}`;
@@ -23,13 +23,13 @@ export async function storeMemory(
 ): Promise<{ id: string }> {
   const url = `${memoryServiceUrl(project)}/memory`;
   const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content, metadata, agentRun }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
+    const body = await res.text().catch(() => '');
     throw new Error(
       `memory service (${project}) store failed (${res.status}): ${body.slice(0, 200)}`,
     );
@@ -55,13 +55,13 @@ export async function queryMemory(
 ): Promise<MemorySearchResult[]> {
   const url = `${memoryServiceUrl(project)}/search`;
   const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, limit: limit ?? 10 }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
+    const body = await res.text().catch(() => '');
     throw new Error(
       `memory service (${project}) search failed (${res.status}): ${body.slice(0, 200)}`,
     );
@@ -79,13 +79,13 @@ export async function getContext(
 ): Promise<{ context: string }> {
   const url = `${memoryServiceUrl(project)}/context`;
   const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, task }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
+    const body = await res.text().catch(() => '');
     throw new Error(
       `memory service (${project}) context failed (${res.status}): ${body.slice(0, 200)}`,
     );

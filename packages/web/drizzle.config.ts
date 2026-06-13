@@ -1,4 +1,4 @@
-import { defineConfig } from "drizzle-kit";
+import { defineConfig } from 'drizzle-kit';
 
 // drizzle-kit config — used for `pnpm db:generate` to produce migration SQL files
 // from the Drizzle schema in schema.ts.
@@ -11,10 +11,12 @@ import { defineConfig } from "drizzle-kit";
 //      (migrate() is called in getDb() before any queries run)
 
 export default defineConfig({
-  dialect: "sqlite",
-  schema: "./src/server/schema.ts",
-  out: "./migrations",
+  dialect: 'sqlite',
+  schema: './src/server/schema.ts',
+  out: './migrations',
   dbCredentials: {
-    url: process.env.DATA_DIR ? `${process.env.DATA_DIR}/percussionist.db` : "./data/percussionist.db",
+    url: process.env.DATA_DIR
+      ? `${process.env.DATA_DIR}/percussionist.db`
+      : './data/percussionist.db',
   },
 });

@@ -15,12 +15,8 @@
 // cases (410 Gone resync, deleted-while-waiting) that aren't worth it for a
 // short-lived CLI command; submit.ts already uses the same polling pattern.
 
-import {
-  RunPhase,
-  TERMINAL_PHASES,
-  type Run,
-} from "@percussionist/api";
-import { DEFAULT_NAMESPACE, getRun, loadKube } from "./kube.js";
+import { type Run, RunPhase, TERMINAL_PHASES } from '@percussionist/api';
+import { DEFAULT_NAMESPACE, getRun, loadKube } from './kube.js';
 
 export interface WaitOpts {
   namespace?: string;
@@ -48,9 +44,7 @@ function normalisePhase(raw: string | undefined): string | undefined {
   const known = Object.values(RunPhase);
   const match = known.find((p) => p.toLowerCase() === raw.toLowerCase());
   if (!match) {
-    throw new Error(
-      `unknown --for phase '${raw}'. Known: ${known.join(", ")}`,
-    );
+    throw new Error(`unknown --for phase '${raw}'. Known: ${known.join(', ')}`);
   }
   return match;
 }
@@ -85,11 +79,11 @@ export async function runWait(name: string, opts: WaitOpts): Promise<void> {
       // "Cancelled" outcome rather than a transient error — the user
       // explicitly asked for the run to go away.
       if (code === 404) {
-        log("\n");
+        log('\n');
         if (!opts.quiet) {
           console.error(
             `beatctl: run ${name} was deleted before settling` +
-              (lastPhase ? ` (last phase=${lastPhase})` : ""),
+              (lastPhase ? ` (last phase=${lastPhase})` : ''),
           );
         }
         // If the caller was specifically waiting for a non-terminal phase
@@ -104,19 +98,19 @@ export async function runWait(name: string, opts: WaitOpts): Promise<void> {
 
     const phase = last.status?.phase;
     if (phase !== lastPhase) {
-      log(`\rbeatctl: [${stamp()}] phase=${phase ?? "-"}   `);
+      log(`\rbeatctl: [${stamp()}] phase=${phase ?? '-'}   `);
       lastPhase = phase;
     }
 
     // Specific-phase wait: succeed as soon as we see it, regardless of
     // whether it's terminal. (Useful for `--for Running` to gate attach.)
     if (awaited && phase === awaited) {
-      log("\n");
+      log('\n');
       process.exit(0);
     }
 
     if (phase && TERMINAL_PHASES.has(phase as RunPhase)) {
-      log("\n");
+      log('\n');
       // Default mode: Succeeded = 0, any other terminal = 1.
       // Explicit --for mode: we already handled the match above; landing
       // here means a *different* terminal phase was reached, which is a
@@ -126,10 +120,7 @@ export async function runWait(name: string, opts: WaitOpts): Promise<void> {
       }
       if (!opts.quiet) {
         const statusMsg = last.status?.message;
-        console.error(
-          `beatctl: run ${name} reached ${phase}` +
-            (statusMsg ? `: ${statusMsg}` : ""),
-        );
+        console.error(`beatctl: run ${name} reached ${phase}${statusMsg ? `: ${statusMsg}` : ''}`);
       }
       process.exit(1);
     }
@@ -137,11 +128,11 @@ export async function runWait(name: string, opts: WaitOpts): Promise<void> {
     await new Promise((r) => setTimeout(r, 1000));
   }
 
-  log("\n");
+  log('\n');
   console.error(
     `beatctl: timed out after ${timeoutSec}s waiting for ${
-      awaited ?? "a terminal phase"
-    } (last phase=${lastPhase ?? "-"})`,
+      awaited ?? 'a terminal phase'
+    } (last phase=${lastPhase ?? '-'})`,
   );
   process.exit(2);
 }

@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
-import { Navigate, Outlet } from "react-router-dom";
-import { useAuth, clearToken } from "../lib/auth";
+import { useEffect, useState } from 'react';
+import { Navigate, Outlet } from 'react-router-dom';
+import { clearToken, useAuth } from '../lib/auth';
 
 export default function AuthGuard() {
   const { isAuthenticated } = useAuth();
@@ -13,7 +13,7 @@ export default function AuthGuard() {
       return;
     }
     let cancelled = false;
-    fetch("/api/health")
+    fetch('/api/health')
       .then((r) => {
         if (cancelled) return;
         if (r.ok) {
@@ -28,7 +28,9 @@ export default function AuthGuard() {
       .finally(() => {
         if (!cancelled) setChecking(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [isAuthenticated]);
 
   if (checking) {

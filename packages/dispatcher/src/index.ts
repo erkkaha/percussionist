@@ -21,23 +21,17 @@
 //   WEB_STATS_URL                   — optional analytics endpoint
 
 import {
-  KubeConfig,
-  CustomObjectsApi,
   CoreV1Api,
+  CustomObjectsApi,
+  KubeConfig,
   PatchStrategy,
   setHeaderOptions,
-} from "@kubernetes/client-node";
-import {
-  API_GROUP,
-  API_VERSION,
-  PLURAL_RUN,
-  RunPhase,
-  type RunStatus,
-} from "@percussionist/api";
-import { waitForHealthy } from "./session.js";
-import { runInteractive, runPrompt, snapshotAllSessions } from "./polling.js";
-import { sendStats } from "./stats-reporter.js";
-import { startMcpServer } from "./mcp-server.js";
+} from '@kubernetes/client-node';
+import { API_GROUP, API_VERSION, PLURAL_RUN, RunPhase, type RunStatus } from '@percussionist/api';
+import { startMcpServer } from './mcp-server.js';
+import { runInteractive, runPrompt, snapshotAllSessions } from './polling.js';
+import { waitForHealthy } from './session.js';
+import { sendStats } from './stats-reporter.js';
 
 const env = (k: string, required = true): string => {
   const v = process.env[k];
@@ -45,14 +39,14 @@ const env = (k: string, required = true): string => {
     console.error(`[dispatcher] missing required env: ${k}`);
     process.exit(2);
   }
-  return v ?? "";
+  return v ?? '';
 };
 
-const RUN_NAME = env("RUN_NAME");
-const RUN_NAMESPACE = env("RUN_NAMESPACE");
-const RUN_UID = env("RUN_UID");
-const INTERACTIVE = env("RUN_INTERACTIVE", false) === "1";
-env("RUN_TASK", !INTERACTIVE); // validate required in prompt mode
+const RUN_NAME = env('RUN_NAME');
+const RUN_NAMESPACE = env('RUN_NAMESPACE');
+const RUN_UID = env('RUN_UID');
+const INTERACTIVE = env('RUN_INTERACTIVE', false) === '1';
+env('RUN_TASK', !INTERACTIVE); // validate required in prompt mode
 
 const log = (...args: unknown[]) =>
   console.log(`[dispatcher ${new Date().toISOString()}]`, ...args);
@@ -69,14 +63,17 @@ const shutdownSignalled = new Promise<void>((resolve) => {
     shuttingDown = true;
     resolve();
   };
-  process.once("SIGTERM", onSignal);
-  process.once("SIGINT", onSignal);
+  process.once('SIGTERM', onSignal);
+  process.once('SIGINT', onSignal);
 });
 
 function interruptibleSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const t = setTimeout(resolve, ms);
-    shutdownSignalled.then(() => { clearTimeout(t); resolve(); });
+    shutdownSignalled.then(() => {
+      clearTimeout(t);
+      resolve();
+    });
   });
 }
 
@@ -100,10 +97,10 @@ async function patchStatus(patch: RunStatus): Promise<void> {
         name: RUN_NAME,
         body,
       },
-      setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
+      setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
     );
   } catch (e) {
-    err("patchStatus failed:", (e as Error).message);
+    err('patchStatus failed:', (e as Error).message);
   }
 }
 
@@ -112,13 +109,14 @@ async function patchStatus(patch: RunStatus): Promise<void> {
 
 let _activeSessionID: string | undefined;
 let _runStartedAt: string | undefined;
-let _lastStatus: { phase: string; session?: string; tokensIn?: number; tokensOut?: number } | null = null;
+let _lastStatus: { phase: string; session?: string; tokensIn?: number; tokensOut?: number } | null =
+  null;
 
 function wrapPatchStatus(fn: typeof patchStatus) {
   return async (patch: RunStatus): Promise<void> => {
     await fn(patch);
     _lastStatus = {
-      phase: patch.phase ?? _lastStatus?.phase ?? "unknown",
+      phase: patch.phase ?? _lastStatus?.phase ?? 'unknown',
       session: patch.sessionID ?? _activeSessionID ?? _lastStatus?.session,
       tokensIn: patch.tokensIn ?? _lastStatus?.tokensIn,
       tokensOut: patch.tokensOut ?? _lastStatus?.tokensOut,
@@ -133,15 +131,21 @@ async function main(): Promise<void> {
   // Start the MCP server immediately so MCP tools are
   // available as soon as opencode accepts connections.
   let resolveFailure!: (reason: string) => void;
-  const failureSignal = new Promise<string>((resolve) => { resolveFailure = resolve; });
+  const failureSignal = new Promise<string>((resolve) => {
+    resolveFailure = resolve;
+  });
   let failureSignalled = false;
 
   let resolveCompletion!: (summary: string) => void;
-  const completionSignal = new Promise<string>((resolve) => { resolveCompletion = resolve; });
+  const completionSignal = new Promise<string>((resolve) => {
+    resolveCompletion = resolve;
+  });
   let completionSignalled = false;
 
   let resolvePlan!: (summary: string) => void;
-  const planSignal = new Promise<string>((resolve) => { resolvePlan = resolve; });
+  const planSignal = new Promise<string>((resolve) => {
+    resolvePlan = resolve;
+  });
   let planSignalled = false;
 
   const patchedPatchStatus = wrapPatchStatus(patchStatus);
@@ -166,10 +170,10 @@ async function main(): Promise<void> {
     },
     () => _lastStatus,
   );
-  log("MCP server listening on 127.0.0.1:4097");
+  log('MCP server listening on 127.0.0.1:4097');
 
   try {
-    await patchedPatchStatus({ phase: RunPhase.Initializing, message: "waiting for opencode" });
+    await patchedPatchStatus({ phase: RunPhase.Initializing, message: 'waiting for opencode' });
     await waitForHealthy(120_000, () => shuttingDown, interruptibleSleep);
 
     if (INTERACTIVE) {
@@ -205,35 +209,56 @@ async function main(): Promise<void> {
 
 main().catch(async (e) => {
   if (shuttingDown) {
-    log("shutdown in progress; suppressing fatal:", (e as Error).message ?? e);
+    log('shutdown in progress; suppressing fatal:', (e as Error).message ?? e);
     process.exit(0);
   }
   const msg = String((e as Error).message ?? e);
   // Last-resort safety net: if an aborted-message error reaches here, keep
   // the run in Running phase instead of failing it — the abort was not a
   // run failure, just the user pressing "cancel".
-  if (msg.includes("MessageAbortedError") || msg.includes("AbortError") || msg.includes("Aborted")) {
-    log("message aborted (caught in main().catch) — exiting cleanly");
+  if (
+    msg.includes('MessageAbortedError') ||
+    msg.includes('AbortError') ||
+    msg.includes('Aborted')
+  ) {
+    log('message aborted (caught in main().catch) — exiting cleanly');
     const completedAt = new Date().toISOString();
     if (_activeSessionID) {
-      await snapshotAllSessions(coreApi, RUN_NAME, RUN_NAMESPACE, RUN_UID, _activeSessionID).catch(() => {});
+      await snapshotAllSessions(coreApi, RUN_NAME, RUN_NAMESPACE, RUN_UID, _activeSessionID).catch(
+        () => {},
+      );
       await sendStats(
         _activeSessionID,
         RunPhase.Running,
         _runStartedAt ?? completedAt,
         completedAt,
-        { tokensIn: 0, tokensOut: 0, tokensReasoning: 0, tokensCacheRead: 0, tokensCacheWrite: 0, cost: 0 },
-        "message aborted",
+        {
+          tokensIn: 0,
+          tokensOut: 0,
+          tokensReasoning: 0,
+          tokensCacheRead: 0,
+          tokensCacheWrite: 0,
+          cost: 0,
+        },
+        'message aborted',
       ).catch(() => {});
     }
-    await patchStatus({ phase: RunPhase.Running, message: "waiting for input (message aborted)", completedAt }).catch(() => {});
+    await patchStatus({
+      phase: RunPhase.Running,
+      message: 'waiting for input (message aborted)',
+      completedAt,
+    }).catch(() => {});
     process.exit(0);
   }
-  err("fatal:", e);
+  err('fatal:', e);
   const completedAt = new Date().toISOString();
   // Best-effort snapshot so session data survives fatal errors (e.g. waitForHealthy timeout).
   if (_activeSessionID) {
-    await snapshotAllSessions(coreApi, RUN_NAME, RUN_NAMESPACE, RUN_UID, _activeSessionID).catch(() => { /* best effort */ });
+    await snapshotAllSessions(coreApi, RUN_NAME, RUN_NAMESPACE, RUN_UID, _activeSessionID).catch(
+      () => {
+        /* best effort */
+      },
+    );
   }
   if (_activeSessionID) {
     await sendStats(
@@ -241,9 +266,18 @@ main().catch(async (e) => {
       RunPhase.Failed,
       _runStartedAt ?? completedAt,
       completedAt,
-      { tokensIn: 0, tokensOut: 0, tokensReasoning: 0, tokensCacheRead: 0, tokensCacheWrite: 0, cost: 0 },
+      {
+        tokensIn: 0,
+        tokensOut: 0,
+        tokensReasoning: 0,
+        tokensCacheRead: 0,
+        tokensCacheWrite: 0,
+        cost: 0,
+      },
       msg,
-    ).catch(() => { /* best effort */ });
+    ).catch(() => {
+      /* best effort */
+    });
   }
   try {
     await patchStatus({
@@ -251,6 +285,8 @@ main().catch(async (e) => {
       message: msg,
       completedAt,
     });
-  } catch { /* best effort */ }
+  } catch {
+    /* best effort */
+  }
   process.exit(1);
 });

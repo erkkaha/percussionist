@@ -15,8 +15,6 @@ import {
   CustomObjectsApi,
   AppsV1Api,
   V1Pod,
-  PatchStrategy,
-  setHeaderOptions,
 } from "@kubernetes/client-node";
 import fs from "node:fs";
 import {
@@ -181,7 +179,7 @@ export async function patchRunStatus(
   let lastErr: Error | undefined;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, 100 * Math.pow(2, attempt - 1)));
+      await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
     }
     const res = await fetch(url, {
       method: "PATCH",
@@ -204,23 +202,32 @@ export async function patchRunStatus(
   throw lastErr!;
 }
 
+// Patch annotations on a Run (metadata only, not status).
 export async function patchRunAnnotations(
   name: string,
   annotations: Record<string, string | undefined>,
   ns: string = NAMESPACE,
 ): Promise<Run> {
-  const body = { metadata: { annotations } };
-  return (await custom().patchNamespacedCustomObject(
-    {
-      group: API_GROUP,
-      version: API_VERSION,
-      namespace: ns,
-      plural: PLURAL_RUN,
-      name,
-      body,
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error("No service account token available");
+
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_RUN}/${name}`;
+
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/merge-patch+json",
+      Accept: "application/json",
     },
-    setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
-  )) as Run;
+    body: JSON.stringify({ metadata: { annotations } }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (res.ok) return res.json() as Promise<Run>;
+  const body = await res.text();
+  throw new Error(`Kubernetes API error ${res.status}: ${body}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -478,7 +485,7 @@ export async function patchProjectStatus(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
       // Exponential back-off: 100ms, 200ms, 400ms
-      await new Promise((r) => setTimeout(r, 100 * Math.pow(2, attempt - 1)));
+      await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
     }
     const res = await fetch(url, {
       method: "PATCH",
@@ -582,31 +589,35 @@ export async function patchTaskStatus(
   ns: string = NAMESPACE,
   maxRetries = 3,
 ): Promise<Task> {
-  const client = custom();
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error("No service account token available");
+
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_TASK}/${name}/status`;
+
   let lastErr: Error | undefined;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, 100 * Math.pow(2, attempt - 1)));
+      await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
     }
-    try {
-      return (await client.patchNamespacedCustomObjectStatus(
-        {
-          group: API_GROUP,
-          version: API_VERSION,
-          namespace: ns,
-          plural: PLURAL_TASK,
-          name,
-          body: { status: statusPatch },
-        },
-        setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
-      )) as Task;
-    } catch (e) {
-      lastErr = e instanceof Error ? e : new Error(String(e));
-      if (attempt < maxRetries && (e as { statusCode?: number })?.statusCode === 409) {
-        continue;
-      }
-      throw lastErr;
+    const res = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/merge-patch+json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ status: statusPatch }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok) return res.json() as Promise<Task>;
+    const body = await res.text();
+    if (res.status === 409 && attempt < maxRetries) {
+      lastErr = new Error(`Kubernetes API conflict ${res.status}: ${body}`);
+      continue;
     }
+    throw new Error(`Kubernetes API error ${res.status}: ${body}`);
   }
   throw lastErr!;
 }
@@ -616,6 +627,7 @@ export async function patchTask(
   name: string,
   patch: Partial<Pick<Task, "metadata" | "spec">>,
   ns: string = NAMESPACE,
+  _client = custom(),
 ): Promise<Task> {
   // Use fetch directly for merge-patch since the client doesn't support custom headers well.
   const token = readServiceAccountToken() ?? readKubeconfigToken();
@@ -1038,6 +1050,17 @@ export async function readPlanFromConfigMap(
 }
 
 // ---------------------------------------------------------------------------
+// Utility functions
+
+// Deterministic hash of a git URL for mirror directory naming.
+export function gitUrlHash(url: string): string {
+  let h = 5381;
+  for (let i = 0; i < url.length; i++) {
+    h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
 // Render utilities
 
 export function padCols(rows: string[][]): string {
@@ -1077,23 +1100,6 @@ export function fatal(prefix: string, e: unknown): never {
   const msg = anyE?.body?.message ?? anyE?.message ?? String(e);
   console.error(`beatctl: ${prefix}: ${msg}`);
   process.exit(1);
-}
-
-/**
- * Deterministic 8-char hex hash of a git URL, used as a directory name for
- * bare git mirrors.  Uses a djb2-style algorithm — good enough for directory
- * naming without a dependency on node:crypto.
- *
- * IMPORTANT: Changing this function will break worktree cleanup, TTL cleanup,
- * diff generation, and plan read paths across the entire system.  A unit test
- * pins the output for a known URL so any future change is explicit.
- */
-export function gitUrlHash(url: string): string {
-  let h = 5381;
-  for (let i = 0; i < url.length; i++) {
-    h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
-  }
-  return h.toString(16).padStart(8, "0");
 }
 
 // ---------------------------------------------------------------------------
@@ -1255,6 +1261,11 @@ export async function listPodMetrics(ns: string = NAMESPACE): Promise<PodMetric[
   }));
 }
 
+// ---------------------------------------------------------------------------
+// Workspace exec — spawn a one-off maintenance pod to run a command against
+// the project data PVC, collect its output, then delete the pod.
+
+// Pod resource helpers (used by web metrics)
 export interface ContainerResources {
   name: string;
   requests: { cpu: string; memory: string };
@@ -1269,77 +1280,17 @@ export interface PodResourceSpec {
   podLimits: { cpu: string; memory: string };
 }
 
-/** Fetch pod specs from the core API and extract container resource requests/limits. */
-export async function listPodResources(ns: string = NAMESPACE): Promise<PodResourceSpec[]> {
-  const res = await core().listNamespacedPod({ namespace: ns });
-  return (res.items ?? []).map((pod) => {
-    const containers = (pod.spec?.containers ?? []).map((c) => {
-      const requests = {
-        cpu: c.resources?.requests?.cpu ?? "0",
-        memory: c.resources?.requests?.memory ?? "0",
-      };
-      const limits = {
-        cpu: c.resources?.limits?.cpu ?? "0",
-        memory: c.resources?.limits?.memory ?? "0",
-      };
-      return { name: c.name, requests, limits };
-    });
-    const podRequests = containers.reduce(
-      (acc, c) => ({
-        cpu: addCpu(acc.cpu, c.requests.cpu),
-        memory: addMemory(acc.memory, c.requests.memory),
-      }),
-      { cpu: "0", memory: "0" },
-    );
-    const podLimits = containers.reduce(
-      (acc, c) => ({
-        cpu: addCpu(acc.cpu, c.limits.cpu),
-        memory: addMemory(acc.memory, c.limits.memory),
-      }),
-      { cpu: "0", memory: "0" },
-    );
-    return { name: pod.metadata?.name ?? "", nodeName: pod.spec?.nodeName ?? "", containers, podRequests, podLimits };
-  });
-}
-
-/** Sum pod requests grouped by node — gives the "allocated" view like kubectl describe node. */
-export async function listNodeAllocated(ns: string = NAMESPACE): Promise<Map<string, { cpu: string; memory: string }>> {
-  const pods = await core().listNamespacedPod({ namespace: ns });
-  const nodeMap = new Map<string, { cpuSum: number; memSum: number }>();
-
-  for (const pod of pods.items ?? []) {
-    const nodeName = pod.spec?.nodeName;
-    if (!nodeName) continue;
-    let cpuTotal = 0;
-    let memTotal = 0;
-    for (const c of pod.spec?.containers ?? []) {
-      cpuTotal += parseCpuRaw(c.resources?.requests?.cpu ?? "0");
-      memTotal += parseMemoryRaw(c.resources?.requests?.memory ?? "0");
-    }
-    const cur = nodeMap.get(nodeName) ?? { cpuSum: 0, memSum: 0 };
-    cur.cpuSum += cpuTotal;
-    cur.memSum += memTotal;
-    nodeMap.set(nodeName, cur);
-  }
-
-  const result = new Map<string, { cpu: string; memory: string }>();
-  for (const [node, totals] of nodeMap) {
-    result.set(node, { cpu: `${totals.cpuSum}m`, memory: `${totals.memSum}Mi` });
-  }
-  return result;
-}
-
 function parseCpuRaw(raw: string): number {
   const n = parseInt(raw, 10);
   if (raw.endsWith("n")) return Math.round(n / 1_000_000);
   if (raw.endsWith("u")) return Math.round(n / 1_000);
   if (raw.endsWith("m")) return n;
-  return n * 1000;
+  return Math.round(n * 1000);
 }
 
 function parseMemoryRaw(raw: string): number {
   const n = parseInt(raw, 10);
-  if (raw.endsWith("Ki")) return n / 1024;
+  if (raw.endsWith("Ki")) return Math.round(n / 1024);
   if (raw.endsWith("Mi")) return n;
   if (raw.endsWith("Gi")) return n * 1024;
   if (raw.endsWith("Ti")) return n * 1024 * 1024;
@@ -1354,9 +1305,76 @@ function addMemory(a: string, b: string): string {
   return `${parseMemoryRaw(a) + parseMemoryRaw(b)}Mi`;
 }
 
-// ---------------------------------------------------------------------------
-// Workspace exec — spawn a one-off maintenance pod to run a command against
-// the project data PVC, collect its output, then delete the pod.
+/** Fetch pod specs from the core API and extract container resource requests/limits. */
+export async function listPodResources(ns: string = NAMESPACE): Promise<PodResourceSpec[]> {
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error("No service account token available");
+
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const url = `https://${host}:${port}/api/v1/namespaces/${ns}/pods`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`pods API ${res.status}: ${await res.text().catch(() => "")}`);
+  type PodItem = {
+    metadata: { name: string };
+    spec: {
+      nodeName: string;
+      containers: Array<{
+        name: string;
+        resources?: { requests?: { cpu?: string; memory?: string }; limits?: { cpu?: string; memory?: string } };
+      }>;
+    };
+  };
+  const body = (await res.json()) as { items: PodItem[] };
+  return (body.items ?? []).map((pod) => {
+    const containers = (pod.spec?.containers ?? []).map((c) => ({
+      name: c.name,
+      requests: { cpu: c.resources?.requests?.cpu ?? "0", memory: c.resources?.requests?.memory ?? "0" },
+      limits: { cpu: c.resources?.limits?.cpu ?? "0", memory: c.resources?.limits?.memory ?? "0" },
+    }));
+    const podRequests = containers.reduce(
+      (acc, c) => ({ cpu: addCpu(acc.cpu, c.requests.cpu), memory: addMemory(acc.memory, c.requests.memory) }),
+      { cpu: "0", memory: "0" },
+    );
+    const podLimits = containers.reduce(
+      (acc, c) => ({ cpu: addCpu(acc.cpu, c.limits.cpu), memory: addMemory(acc.memory, c.limits.memory) }),
+      { cpu: "0", memory: "0" },
+    );
+    return {
+      name: pod.metadata.name,
+      nodeName: pod.spec?.nodeName ?? "",
+      containers,
+      podRequests,
+      podLimits,
+    };
+  });
+}
+
+/** Compute total resource allocation per node across all pods in a namespace. */
+export async function listNodeAllocated(
+  ns: string = NAMESPACE,
+): Promise<Map<string, { cpu: string; memory: string }>> {
+  const pods = await listPodResources(ns);
+  const nodeMap = new Map<string, { cpuSum: number; memSum: number }>();
+  for (const pod of pods) {
+    const cur = nodeMap.get(pod.nodeName) ?? { cpuSum: 0, memSum: 0 };
+    cur.cpuSum += parseCpuRaw(pod.podRequests.cpu);
+    cur.memSum += parseMemoryRaw(pod.podRequests.memory);
+    nodeMap.set(pod.nodeName, cur);
+  }
+  const result = new Map<string, { cpu: string; memory: string }>();
+  for (const [node, totals] of nodeMap) {
+    result.set(node, { cpu: `${totals.cpuSum}m`, memory: `${totals.memSum}Mi` });
+  }
+  return result;
+}
 
 export interface WorkspaceExecResult {
   stdout: string;

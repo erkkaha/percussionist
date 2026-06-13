@@ -34,14 +34,14 @@ export async function waitFor<T>(
   while (true) {
     const result = await fn().catch(() => null);
     if (result !== null && result !== undefined) {
-      if (!first) process.stdout.write("\n");
+      if (!first) process.stdout.write('\n');
       return result;
     }
     if (Date.now() >= deadline) {
-      if (!first) process.stdout.write("\n");
+      if (!first) process.stdout.write('\n');
       throw new TimeoutError(desc, timeoutSec);
     }
-    process.stdout.write(".");
+    process.stdout.write('.');
     first = false;
     await Bun.sleep(intervalSec * 1000);
   }

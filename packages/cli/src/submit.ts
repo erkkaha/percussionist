@@ -12,25 +12,18 @@
 // is the common flow for interactive runs ("give me a shell in a pod") and
 // also useful for peeking into a scripted run while it's still thinking.
 
-import { readFileSync } from "node:fs";
-import YAML from "yaml";
+import { readFileSync } from 'node:fs';
 import {
   API_GROUP_VERSION,
   KIND_RUN,
-  RunSchema,
-  RunPhase,
-  TERMINAL_PHASES,
   type Run,
-} from "@percussionist/api";
-import {
-  DEFAULT_NAMESPACE,
-  createRun,
-  fatal,
-  getProject,
-  getRun,
-  loadKube,
-} from "./kube.js";
-import { runAttach } from "./attach.js";
+  RunPhase,
+  RunSchema,
+  TERMINAL_PHASES,
+} from '@percussionist/api';
+import YAML from 'yaml';
+import { runAttach } from './attach.js';
+import { createRun, DEFAULT_NAMESPACE, fatal, getProject, getRun, loadKube } from './kube.js';
 
 export interface SubmitOpts {
   task?: string;
@@ -66,14 +59,15 @@ function generateName(): string {
   return `run-${Date.now().toString(16)}`;
 }
 
-function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussionist/api").ProjectSpec): Run {
+function buildRunFromFlags(
+  opts: SubmitOpts,
+  projectDefaults?: import('@percussionist/api').ProjectSpec,
+): Run {
   if (!opts.task && !opts.interactive) {
-    throw new Error(
-      "either --task or --interactive is required when --file is not supplied",
-    );
+    throw new Error('either --task or --interactive is required when --file is not supplied');
   }
   if (!opts.project) {
-    throw new Error("--project is required");
+    throw new Error('--project is required');
   }
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
   const name = opts.name ?? generateName();
@@ -88,31 +82,37 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
   const resolvedGitUrl = opts.gitUrl ?? pd?.source?.git?.url;
   const resolvedGitRef = opts.gitRef ?? pd?.source?.git?.ref;
   const resolvedGitSshSecret = opts.gitSshSecret ?? pd?.source?.git?.sshSecret?.name;
-  const resolvedGitGithubTokenSecret = opts.gitGithubTokenSecret ?? pd?.source?.git?.githubTokenSecret?.name;
+  const resolvedGitGithubTokenSecret =
+    opts.gitGithubTokenSecret ?? pd?.source?.git?.githubTokenSecret?.name;
   const resolvedGitAuthorName = opts.gitAuthorName ?? pd?.source?.git?.author?.name;
   const resolvedGitAuthorEmail = opts.gitAuthorEmail ?? pd?.source?.git?.author?.email;
 
-  if ((resolvedGitAuthorName && !resolvedGitAuthorEmail) || (!resolvedGitAuthorName && resolvedGitAuthorEmail)) {
-    throw new Error("git author requires both name and email (--git-author-name and --git-author-email)");
+  if (
+    (resolvedGitAuthorName && !resolvedGitAuthorEmail) ||
+    (!resolvedGitAuthorName && resolvedGitAuthorEmail)
+  ) {
+    throw new Error(
+      'git author requires both name and email (--git-author-name and --git-author-email)',
+    );
   }
 
   // Build inline agents from --agent-file / --agent-name flags.
-  const rawAgents: Array<{name: string; content: string}> = [];
+  const rawAgents: Array<{ name: string; content: string }> = [];
   if (opts.agentFile) {
     for (let i = 0; i < opts.agentFile.length; i++) {
       const filePath = opts.agentFile[i];
       if (!filePath) continue;
       let agentName: string | undefined;
       // Check if there's a corresponding --agent-name override at the same index.
-      if (opts.agentName && opts.agentName[i]) {
+      if (opts.agentName?.[i]) {
         agentName = opts.agentName[i];
       } else {
         // Derive name from filename: strip directory, remove .md extension.
-        const basename = filePath.split("/").pop() ?? "";
-        agentName = basename.replace(/\.md$/, "");
+        const basename = filePath.split('/').pop() ?? '';
+        agentName = basename.replace(/\.md$/, '');
       }
       if (!agentName) continue;
-      const content = readFileSync(filePath, "utf8");
+      const content = readFileSync(filePath, 'utf8');
       rawAgents.push({ name: agentName, content });
     }
   }
@@ -134,9 +134,7 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
       ...(resolvedLlmSecret || resolvedAuthSecret
         ? {
             secrets: {
-              ...(resolvedLlmSecret
-                ? { llmKeysSecret: resolvedLlmSecret }
-                : {}),
+              ...(resolvedLlmSecret ? { llmKeysSecret: resolvedLlmSecret } : {}),
               ...(resolvedAuthSecret
                 ? {
                     authSecret: {
@@ -154,9 +152,7 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
               git: {
                 url: resolvedGitUrl,
                 ...(resolvedGitRef ? { ref: resolvedGitRef } : {}),
-                ...(resolvedGitSshSecret
-                  ? { sshSecret: { name: resolvedGitSshSecret } }
-                  : {}),
+                ...(resolvedGitSshSecret ? { sshSecret: { name: resolvedGitSshSecret } } : {}),
                 ...(resolvedGitGithubTokenSecret
                   ? { githubTokenSecret: { name: resolvedGitGithubTokenSecret } }
                   : {}),
@@ -183,7 +179,7 @@ function buildRunFromFlags(opts: SubmitOpts, projectDefaults?: import("@percussi
 }
 
 function buildRunFromFile(path: string, opts: SubmitOpts): Run {
-  const doc = YAML.parse(readFileSync(path, "utf8"));
+  const doc = YAML.parse(readFileSync(path, 'utf8'));
   // Let a user override the name/namespace at the CLI without editing the file.
   if (opts.name) doc.metadata = { ...(doc.metadata ?? {}), name: opts.name };
   if (opts.namespace) {
@@ -195,42 +191,37 @@ function buildRunFromFile(path: string, opts: SubmitOpts): Run {
 // Poll the CR status until phase is Running (or terminal, which is fatal for
 // --attach). We prefer polling over a Watch here because submits are short
 // and one-shot; setting up an informer is overkill and adds RBAC surface.
-async function waitForRunning(
-  namespace: string,
-  name: string,
-  timeoutMs = 120_000,
-): Promise<Run> {
+async function waitForRunning(namespace: string, name: string, timeoutMs = 120_000): Promise<Run> {
   const { custom } = loadKube();
   const deadline = Date.now() + timeoutMs;
   let lastPhase: string | undefined;
   // Small stderr spinner so the user knows we're alive. Keep it cheap —
   // a single line updated in place; no fancy spinner libs.
-  const stamp = () =>
-    new Date().toISOString().slice(11, 19); // HH:MM:SS
+  const stamp = () => new Date().toISOString().slice(11, 19); // HH:MM:SS
   while (Date.now() < deadline) {
     const run = await getRun(custom, namespace, name);
     const phase = run.status?.phase;
     if (phase !== lastPhase) {
-      process.stderr.write(`\rbeatctl: [${stamp()}] phase=${phase ?? "-"}   `);
+      process.stderr.write(`\rbeatctl: [${stamp()}] phase=${phase ?? '-'}   `);
       lastPhase = phase;
     }
     if (phase === RunPhase.Running) {
-      process.stderr.write("\n");
+      process.stderr.write('\n');
       return run;
     }
     if (phase && TERMINAL_PHASES.has(phase)) {
-      process.stderr.write("\n");
+      process.stderr.write('\n');
       throw new Error(
         `run reached terminal phase ${phase} before Running: ${
-          run.status?.message ?? "(no message)"
+          run.status?.message ?? '(no message)'
         }`,
       );
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
-  process.stderr.write("\n");
+  process.stderr.write('\n');
   throw new Error(
-    `run did not reach Running within ${timeoutMs / 1000}s (last phase=${lastPhase ?? "-"})`,
+    `run did not reach Running within ${timeoutMs / 1000}s (last phase=${lastPhase ?? '-'})`,
   );
 }
 
@@ -238,13 +229,13 @@ export async function runSubmit(opts: SubmitOpts): Promise<void> {
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
 
   if (!opts.project && !opts.file) {
-    fatal("--project is required (use --file to supply a fully-specified run YAML)", undefined);
+    fatal('--project is required (use --file to supply a fully-specified run YAML)', undefined);
   }
 
   // Resolve project defaults before building the run spec. Hard-fail if the
   // project is referenced but cannot be found — a missing project is almost
   // certainly a typo and silently ignoring it would produce a confusing run.
-  let projectDefaults: import("@percussionist/api").ProjectSpec | undefined;
+  let projectDefaults: import('@percussionist/api').ProjectSpec | undefined;
   if (opts.project) {
     const { custom } = loadKube();
     try {
@@ -258,11 +249,9 @@ export async function runSubmit(opts: SubmitOpts): Promise<void> {
 
   let run: Run;
   try {
-    run = opts.file
-      ? buildRunFromFile(opts.file, opts)
-      : buildRunFromFlags(opts, projectDefaults);
+    run = opts.file ? buildRunFromFile(opts.file, opts) : buildRunFromFlags(opts, projectDefaults);
   } catch (e) {
-    fatal("invalid run spec", e);
+    fatal('invalid run spec', e);
   }
   run.metadata.namespace = run.metadata.namespace ?? ns;
   const runNs = run.metadata.namespace;
@@ -274,7 +263,7 @@ export async function runSubmit(opts: SubmitOpts): Promise<void> {
     createdName = created.metadata.name;
     console.log(`${createdName} created in namespace ${runNs}`);
   } catch (e) {
-    fatal("create failed", e);
+    fatal('create failed', e);
   }
 
   if (opts.attach) {
@@ -283,11 +272,11 @@ export async function runSubmit(opts: SubmitOpts): Promise<void> {
     // terminate the pod as soon as the first assistant turn completes.
     if (!run.spec.interactive) {
       console.log(
-        "beatctl: non-interactive run; dispatcher will declare Succeeded " +
-          "after the first assistant turn completes.",
+        'beatctl: non-interactive run; dispatcher will declare Succeeded ' +
+          'after the first assistant turn completes.',
       );
     }
-    console.log("beatctl: waiting for run to reach Running...");
+    console.log('beatctl: waiting for run to reach Running...');
     try {
       await waitForRunning(runNs, createdName);
     } catch (e) {

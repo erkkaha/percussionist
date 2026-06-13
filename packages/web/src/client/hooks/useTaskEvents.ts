@@ -1,5 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
-import { fetchTaskEvents } from "../lib/api";
+import { useQuery } from '@tanstack/react-query';
+import { fetchTaskEvents } from '../lib/api';
 
 export interface TaskEvent {
   id: number;
@@ -11,13 +11,10 @@ export interface TaskEvent {
   createdAt: string;
 }
 
-export function useTaskEvents(
-  projectName: string | null,
-  taskName: string | null,
-) {
+export function useTaskEvents(projectName: string | null, taskName: string | null) {
   return useQuery<TaskEvent[], Error>({
-    queryKey: ["taskEvents", projectName, taskName],
-    queryFn: () => fetchTaskEvents(projectName!, taskName!),
+    queryKey: ['taskEvents', projectName, taskName],
+    queryFn: () => fetchTaskEvents(projectName ?? '', taskName ?? ''),
     enabled: !!projectName && !!taskName,
     refetchInterval: 10_000,
   });

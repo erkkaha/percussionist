@@ -7,6 +7,8 @@ of TypeScript packages under `packages/*`.
 ## Key Commands
 - `pnpm build` - Build all packages
 - `pnpm typecheck` - Type-check all packages via `tsc -b` (run before committing; respects project references, runs in topological order)
+- `pnpm lint` - Check lint + formatting via Biome (CI gate)
+- `pnpm format` - Auto-fix lint issues + format via Biome
 - `pnpm test` - Run unit + smoke tests across all packages (bun:test)
 - `pnpm e2e:core` - Run deterministic E2E suites on a live cluster (PR gate)
 - `pnpm e2e:extended` - Run extended E2E suites for complex paths like feature branching
@@ -26,7 +28,7 @@ All commits must follow **Conventional Commits** format:
 ```
 
 Husky hooks enforce compliance on every commit:
-- **pre-commit** — runs `pnpm typecheck && pnpm test` (fails if either fails)
+- **pre-commit** — runs `pnpm typecheck && pnpm test` (fails if either fails); also runs `lint-staged` to auto-format and auto-fix staged files via Biome
 - **commit-msg** — runs `commitlint` to validate the message format
 
 Valid types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
@@ -420,7 +422,7 @@ Drizzle-kit will produce a `DROP TABLE` migration and update the journal/snapsho
 Do not add `ALTER TABLE` try/catch blocks to `db.ts`. Do not duplicate DDL as raw SQL strings in `db.ts`. Always use drizzle-kit generate to produce a migration file.
 
 ## Conventions
-- No linter/formatting tool configured -- do not add one without asking
+- Formatting and linting via Biome (see `biome.json`)
 - Testing: bun:test in all packages; run `pnpm test` locally
 - K8s client: `@kubernetes/client-node` (lazy singleton, typed CRUD helpers)
 - Console-based logging with timestamps (no structured logger)

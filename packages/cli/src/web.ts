@@ -11,11 +11,11 @@
 //   4. Open http://localhost:<local>/ in the default browser.
 //   5. Block until the user presses Ctrl-C; kill the port-forward on exit.
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { createServer } from "node:net";
-import { DEFAULT_NAMESPACE } from "./kube.js";
+import { type ChildProcess, spawn } from 'node:child_process';
+import { createServer } from 'node:net';
+import { DEFAULT_NAMESPACE } from './kube.js';
 
-const WEB_SERVICE = "percussionist-web";
+const WEB_SERVICE = 'percussionist-web';
 const WEB_PORT = 8080;
 const DEFAULT_LOCAL_PORT = 8080;
 
@@ -30,15 +30,15 @@ async function pickFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = createServer();
     srv.unref();
-    srv.on("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
       const addr = srv.address();
-      if (addr && typeof addr === "object") {
+      if (addr && typeof addr === 'object') {
         const port = addr.port;
         srv.close(() => resolve(port));
       } else {
         srv.close();
-        reject(new Error("could not determine free port"));
+        reject(new Error('could not determine free port'));
       }
     });
   });
@@ -50,8 +50,8 @@ async function resolveLocalPort(explicit?: string): Promise<number> {
   const available = await new Promise<boolean>((resolve) => {
     const srv = createServer();
     srv.unref();
-    srv.on("error", () => resolve(false));
-    srv.listen(DEFAULT_LOCAL_PORT, "127.0.0.1", () => {
+    srv.on('error', () => resolve(false));
+    srv.listen(DEFAULT_LOCAL_PORT, '127.0.0.1', () => {
       srv.close(() => resolve(true));
     });
   });
@@ -61,19 +61,17 @@ async function resolveLocalPort(explicit?: string): Promise<number> {
   return pickFreePort();
 }
 
-async function startPortForward(
-  namespace: string,
-  localPort: number,
-): Promise<ChildProcess> {
+async function startPortForward(namespace: string, localPort: number): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     const args = [
-      "port-forward",
-      "-n", namespace,
+      'port-forward',
+      '-n',
+      namespace,
       `svc/${WEB_SERVICE}`,
       `${localPort}:${WEB_PORT}`,
     ];
-    const child = spawn("kubectl", args, {
-      stdio: ["ignore", "pipe", "pipe"],
+    const child = spawn('kubectl', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     let ready = false;
@@ -85,21 +83,21 @@ async function startPortForward(
 
     const onChunk = (buf: Buffer) => {
       const s = buf.toString();
-      if (s.includes("Forwarding from")) onReady();
+      if (s.includes('Forwarding from')) onReady();
       // Surface kubectl errors (auth, RBAC, etc.) to the user.
-      if (s.toLowerCase().includes("error") || s.toLowerCase().includes("unable")) {
+      if (s.toLowerCase().includes('error') || s.toLowerCase().includes('unable')) {
         process.stderr.write(s);
       }
     };
-    child.stdout?.on("data", onChunk);
-    child.stderr?.on("data", onChunk);
+    child.stdout?.on('data', onChunk);
+    child.stderr?.on('data', onChunk);
 
-    child.on("exit", (code) => {
+    child.on('exit', (code) => {
       if (!ready) {
         reject(new Error(`kubectl port-forward exited with code ${String(code)}`));
       }
     });
-    child.on("error", reject);
+    child.on('error', reject);
   });
 }
 
@@ -108,16 +106,19 @@ function openBrowser(url: string): void {
   let cmd: string;
   let args: string[];
 
-  if (platform === "darwin") {
-    cmd = "open"; args = [url];
-  } else if (platform === "win32") {
-    cmd = "cmd"; args = ["/c", "start", url];
+  if (platform === 'darwin') {
+    cmd = 'open';
+    args = [url];
+  } else if (platform === 'win32') {
+    cmd = 'cmd';
+    args = ['/c', 'start', url];
   } else {
     // Linux: try xdg-open, fall back gracefully.
-    cmd = "xdg-open"; args = [url];
+    cmd = 'xdg-open';
+    args = [url];
   }
 
-  const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+  const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
   child.unref();
 }
 
@@ -132,7 +133,7 @@ export async function runWeb(opts: WebOpts): Promise<void> {
   try {
     pf = await startPortForward(ns, localPort);
   } catch (e) {
-    console.error("beatctl: port-forward failed:", (e as Error).message);
+    console.error('beatctl: port-forward failed:', (e as Error).message);
     process.exit(1);
   }
 
@@ -142,20 +143,26 @@ export async function runWeb(opts: WebOpts): Promise<void> {
     openBrowser(url);
   }
 
-  console.log("beatctl: press Ctrl-C to stop");
+  console.log('beatctl: press Ctrl-C to stop');
 
   const kill = () => {
-    if (!pf.killed) pf.kill("SIGTERM");
+    if (!pf.killed) pf.kill('SIGTERM');
   };
 
-  pf.on("exit", () => {
-    console.error("\nbeatctl: port-forward exited unexpectedly");
+  pf.on('exit', () => {
+    console.error('\nbeatctl: port-forward exited unexpectedly');
     process.exit(1);
   });
 
-  process.on("exit", kill);
-  process.on("SIGINT", () => { kill(); process.exit(130); });
-  process.on("SIGTERM", () => { kill(); process.exit(143); });
+  process.on('exit', kill);
+  process.on('SIGINT', () => {
+    kill();
+    process.exit(130);
+  });
+  process.on('SIGTERM', () => {
+    kill();
+    process.exit(143);
+  });
 
   // Block forever — kubectl port-forward keeps running until killed.
   await new Promise<void>(() => undefined);

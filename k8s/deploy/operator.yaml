@@ -183,6 +183,8 @@ spec:
             #   "ReadWriteOnce" is minikube-safe. Override to "ReadWriteMany" for parallel workers.
             - name: DEFAULT_STORAGE_ACCESS_MODE
               value: "ReadWriteOnce"
+            - name: DEFAULT_STORAGE_SIZE
+              value: "50Gi"
             # Enable per-run Ingresses that expose the opencode web UI at
             # <run-name>.<baseURL-without-scheme>/.
             # Format: scheme://host[:port]  (no trailing slash)

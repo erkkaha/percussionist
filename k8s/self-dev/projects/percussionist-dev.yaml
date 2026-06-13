@@ -74,6 +74,9 @@ spec:
   initScript: |
     echo "[init] warming pnpm store"
     CI=true pnpm install --frozen-lockfile --config.strict-dep-builds=false 2>&1 || echo "[init] pnpm install skipped"
+    echo "[init] pruning pnpm store"
+    CI=true pnpm store prune 2>&1 || echo "[init] pnpm store prune skipped"
+    echo "[init] init complete"
 
   # Feature branching: each task works on its own branch to prevent
   # git mirror fetch conflicts when multiple tasks run in parallel.

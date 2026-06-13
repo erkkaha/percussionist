@@ -1,18 +1,18 @@
 // routes/activity.ts — cross-project activity feed.
 
-import { Hono } from "hono";
-import { eq, lt, and, desc } from "drizzle-orm";
-import { getDb, taskEvents } from "../db.js";
-import { auth } from "../auth.js";
+import { and, desc, eq, lt } from 'drizzle-orm';
+import { Hono } from 'hono';
+import { auth } from '../auth.js';
+import { getDb, taskEvents } from '../db.js';
 
 const activity = new Hono();
 
 // ---------------------------------------------------------------------------
 // GET /api/activity
-activity.get("/", auth(), (c) => {
-  const limit = Math.min(parseInt(c.req.query("limit") ?? "200", 10), 500);
-  const project = c.req.query("project");
-  const before = c.req.query("before");
+activity.get('/', auth(), (c) => {
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '200', 10), 500);
+  const project = c.req.query('project');
+  const before = c.req.query('before');
   const db = getDb();
 
   // Build where conditions
@@ -20,7 +20,7 @@ activity.get("/", auth(), (c) => {
   if (project) conditions.push(eq(taskEvents.project, project));
   if (before) {
     const beforeId = parseInt(before, 10);
-    if (!isNaN(beforeId)) conditions.push(lt(taskEvents.id, beforeId));
+    if (!Number.isNaN(beforeId)) conditions.push(lt(taskEvents.id, beforeId));
   }
 
   const rows = db

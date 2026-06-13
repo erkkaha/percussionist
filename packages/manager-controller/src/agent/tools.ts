@@ -35,17 +35,14 @@ import {
   buildTask,
   createTask,
   apps,
-  gitUrlHash,
 } from "@percussionist/kube";
 import { LABELS, type Project, type Task, type TaskPhase } from "@percussionist/api";
 import { storeMemory, queryMemory, getContext } from "./memory-client.js";
-import { isValidPackageName, sanitizeCommand, logSecurityEvent } from "./security.js";
 import { buildWorkerRun, workerRunName } from "../worker-builder.js";
 import { setPaused, getPauseStatus } from "../reconciler-bridge.js";
 import { resolveTaskBranch, resolveParentBranch, resolveMergeBranch } from "../branch-resolver.js";
 import { isValidTransition, TRANSITION_TABLE } from "../reconciler/transitions.js";
 import { resolveFlow } from "../reconciler/flow.js";
-import { clearWorkerRunRefs } from "./worker-status.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "percussionist-manager-agent";
@@ -264,7 +261,7 @@ const TOOLS = [
         },
         agent: {
           type: "string",
-          description: "Override the agent for the new run (e.g. 'reviewer')",
+          description: "Override the agent for the new run (e.g. 'meta-reviewer')",
         },
         model: {
           type: "string",
@@ -313,7 +310,7 @@ const TOOLS = [
         task: { type: "string", description: "Task CR name" },
         targetPhase: {
           type: "string",
-          enum: ["idea", "pending", "scheduled", "failed", "awaiting-human", "rework-requested", "done"],
+          enum: ["idea", "pending", "scheduled", "running", "failed", "awaiting-human", "rework-requested", "done"],
           description: "Target phase for the task. Most common: pending (reset to backlog), awaiting-human (needs review), rework-requested (AI/human requested changes), done (complete).",
         },
         cancelRunning: {
@@ -398,7 +395,7 @@ const TOOLS = [
   {
     name: "exec_in_workspace",
     description:
-      "Run a shell command inside a project's data volume by spawning a short-lived maintenance pod. Useful for git mirror cleanup, worktree pruning, disk inspection, or any workspace maintenance. The pod mounts the project's data PVC at the given mountPath (default: /data) and runs the command via /bin/sh -c. Returns stdout and the exit code. The pod is deleted after the command completes. Use skipSanitization: true (default false) for trusted backend-generated scripts that need shell constructs like pipes, redirects, or command substitution.",
+      "Run a shell command inside a project's data volume by spawning a short-lived maintenance pod. Useful for git mirror cleanup, worktree pruning, disk inspection, or any workspace maintenance. The pod mounts the project's data PVC at the given mountPath (default: /data) and runs the command via /bin/sh -c. Returns stdout and the exit code. The pod is deleted after the command completes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -415,10 +412,6 @@ const TOOLS = [
         namespace: {
           type: "string",
           description: "Namespace (optional, defaults to percussionist)",
-        },
-        skipSanitization: {
-          type: "boolean",
-          description: "Skip shell injection sanitization (default: false). Only set to true for trusted backend-generated scripts.",
         },
       },
       required: ["project", "command"],
@@ -672,7 +665,11 @@ async function cleanupRunWorktree(projectName: string, runName: string, resource
   const gitUrl = project.spec.source?.git?.url;
   if (!gitUrl) return;
   const mountPath = project.spec.data?.mountPath ?? "/data";
-  const hash = gitUrlHash(gitUrl);
+  const hash = (() => {
+    let h = 5381;
+    for (let i = 0; i < gitUrl.length; i++) h = ((h << 5) + h + gitUrl.charCodeAt(i)) >>> 0;
+    return h.toString(16).padStart(8, "0");
+  })();
   const quotedRun = runName.replace(/'/g, "'\\''");
   await execInWorkspace(
     projectName,
@@ -945,9 +942,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const retryCount = args.retryCount !== undefined
         ? Number(args.retryCount)
         : (existingWorker?.retryCount ?? 0);
-      const aiReworkCount = existingWorker?.aiReworkCount ?? 0;
 
-      const runName = workerRunName(projectName, taskName, retryCount, aiReworkCount);
+      const runName = workerRunName(projectName, taskName, retryCount);
       const workerRun = await buildWorkerRun(project, task, runName, retryCount, reworkFeedback, projectTasks);
       const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
       if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
@@ -1065,10 +1061,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       let createdRunName: string | undefined;
       const existingRetryCount = task.status?.worker?.retryCount ?? 0;
       const retryCount = existingRetryCount + 1;
-      // force_retry bumps retryCount and resets aiReworkCount (human-driven retry semantics).
-      const aiReworkCount = 0;
       if (shouldCreate) {
-        const runName = workerRunName(projectName, taskName, retryCount, aiReworkCount);
+        const runName = workerRunName(projectName, taskName, retryCount);
         const workerRun = await buildWorkerRun(project, task, runName, retryCount, undefined, projectTasks);
         const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
         if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
@@ -1107,23 +1101,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         createdRunName = runName;
       } else {
         // No run creation — reset to pending.
-        const existingWorker = task.status?.worker;
         await patchTaskStatus(taskName, {
           phase: "pending",
-          worker: existingWorker
-            ? {
-                ...existingWorker,
-                ...clearWorkerRunRefs(),
-                status: "Failed",
-                retryCount,
-                aiReworkCount: existingWorker.aiReworkCount ?? 0,
-              }
-            : {
-                ...clearWorkerRunRefs(),
-                status: "Failed" as const,
-                retryCount,
-                aiReworkCount: 0,
-              },
+          worker: {
+            ...(task.status?.worker ?? { status: "Failed" as const, retryCount: 0, aiReworkCount: 0 }),
+            status: "Failed",
+            runName: undefined,
+            retryCount,
+          },
         }, resourceNs);
       }
 
@@ -1251,15 +1236,6 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         );
       }
 
-      // Cannot transition directly to "running" — no Run would exist, so the
-      // next reconcile immediately flips the task to "failed". Use force_retry
-      // or create_run instead.
-      if (targetPhase === "running") {
-        throw new Error(
-          'Cannot transition directly to "running". Use force_retry to retry a task or create_run to start a new run.',
-        );
-      }
-
       const deletedRuns = preserveRuns
         ? []
         : await deleteRunsForTask(projectName, taskName, resourceNs, { includeActive: cancelRunning, includeUnknown: true });
@@ -1268,13 +1244,13 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       let workerCleared = true;
       
       // Phase-specific worker state updates
-      if (targetPhase === "scheduled") {
+      if (targetPhase === "scheduled" || targetPhase === "running") {
         const retryCount = existingWorker?.retryCount ?? 0;
         await patchTaskStatus(taskName, {
-          phase: "scheduled",
+          phase: targetPhase as "scheduled" | "running",
           worker: {
             ...(existingWorker ?? {}),
-            ...clearWorkerRunRefs(),
+            runName: undefined,
             status: "Running",
             ...workerBranchPatch(project, task, projectTasks),
             retryCount,
@@ -1286,11 +1262,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         await patchTaskStatus(taskName, {
           phase: "done",
           worker: {
-            ...(existingWorker ?? {}),
-            ...clearWorkerRunRefs(),
+            ...(existingWorker ?? { retryCount: 0, aiReworkCount: 0, status: "Succeeded" as const }),
             status: "Succeeded",
-            retryCount: existingWorker?.retryCount ?? 0,
-            aiReworkCount: existingWorker?.aiReworkCount ?? 0,
+            runName: undefined,
             completedAt: new Date().toISOString(),
           },
         }, resourceNs);
@@ -1299,13 +1273,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         await patchTaskStatus(taskName, {
           phase: targetPhase as "pending" | "rework-requested",
           worker: existingWorker
-            ? {
-                ...existingWorker,
-                ...clearWorkerRunRefs(),
-                status: "Failed",
-                retryCount: existingWorker.retryCount ?? 0,
-                aiReworkCount: existingWorker.aiReworkCount ?? 0,
-              }
+            ? { ...existingWorker, status: "Failed", runName: undefined }
             : undefined,
         }, resourceNs);
         workerCleared = !existingWorker;
@@ -1313,14 +1281,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         await patchTaskStatus(taskName, {
           phase: "failed",
           worker: existingWorker
-            ? {
-                ...existingWorker,
-                ...clearWorkerRunRefs(),
-                status: "Failed",
-                retryCount: existingWorker.retryCount ?? 0,
-                aiReworkCount: existingWorker.aiReworkCount ?? 0,
-              }
-            : { ...clearWorkerRunRefs(), status: "Failed" as const, retryCount: 0, aiReworkCount: 0 },
+            ? { ...existingWorker, status: "Failed", runName: undefined }
+            : { status: "Failed" as const, retryCount: 0, aiReworkCount: 0 },
         }, resourceNs);
         workerCleared = false;
       } else {
@@ -1425,21 +1387,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const mountPath = args.mountPath ? String(args.mountPath) : "/data";
       const timeoutMs = args.timeoutSeconds ? Number(args.timeoutSeconds) * 1000 : 120_000;
       const resourceNs = String(args.namespace ?? ns);
-      const skipSanitization = args.skipSanitization === true;
 
       if (!command) throw new Error("command is required");
-
-      // Security: sanitize command before execution to prevent shell injection.
-      // skipSanitization bypasses for trusted backend-generated scripts.
-      if (!skipSanitization) {
-        const sanitizationError = sanitizeCommand(command);
-        if (sanitizationError) {
-          logSecurityEvent("exec_in_workspace.rejected", { project: projectName, reason: sanitizationError });
-          throw new Error(sanitizationError);
-        }
-      }
-
-      console.log(`[exec_in_workspace] project=${projectName} command="${command.slice(0, 200)}"`);
 
       const result = await execInWorkspace(projectName, command, mountPath, timeoutMs, resourceNs);
       return {
@@ -1482,7 +1431,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       if (!isLocal && gitUrl) {
         const task = await getTask(taskName, resourceNs);
         const gitBranch = task.status?.worker?.gitBranch || `feature/${taskName}`;
-        const urlHash = gitUrlHash(gitUrl);
+        let h = 5381;
+        for (let i = 0; i < gitUrl.length; i++) {
+          h = ((h << 5) + h + gitUrl.charCodeAt(i)) >>> 0;
+        }
+        const urlHash = h.toString(16).padStart(8, "0");
         const mirrorPath = `${mountPath}/git-mirrors/${urlHash}`;
 
         const gitShowCmd = `apk add --no-cache git > /dev/null 2>&1 && cd '${mirrorPath}' && git show '${gitBranch}:${planPath}' 2>/dev/null`;
@@ -1567,7 +1520,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         : foundImage.image;
       const repo = imageWithoutTag.replace(/^[^/]+\//, ""); // strip registry host
 
-      // 4. Get GHCR anonymous bearer token for this repo
+      // 3. Get GHCR anonymous bearer token for this repo
       let latestTag: string | null = null;
       let registryError: string | undefined;
       try {
@@ -1578,7 +1531,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         if (!tokenRes.ok) throw new Error(`GHCR token endpoint returned ${tokenRes.status}`);
         const { token } = (await tokenRes.json()) as { token: string };
 
-        // 5. Fetch tag list
+        // 4. Fetch tag list
         const tagsRes = await fetch(
           `https://ghcr.io/v2/${repo}/tags/list?n=1000`,
           {
@@ -1589,7 +1542,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         if (!tagsRes.ok) throw new Error(`GHCR tags endpoint returned ${tagsRes.status}`);
         const { tags } = (await tagsRes.json()) as { tags: string[] };
 
-        // 6. Find latest semver tag (vMAJOR.MINOR.PATCH) via inline sort
+        // 5. Find latest semver tag (vMAJOR.MINOR.PATCH) via inline sort
         const semverTags = (tags ?? [])
           .filter((t) => /^v\d+\.\d+\.\d+$/.test(t))
           .sort((a, b) => {
@@ -1603,20 +1556,19 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         registryError = (e as Error).message;
       }
 
-      const current = {
-        operator: images["percussionist-operator"]?.tag ?? null,
-        manager: images["percussionist-manager"]?.tag ?? null,
-        web: images["percussionist-web"]?.tag ?? null,
-        dispatcher: dispatcherInfo?.tag ?? null,
-      };
-
+      const currentTag = foundImage.tag;
       const updateAvailable =
         latestTag !== null &&
-        !registryError &&
-        Object.values(current).some((tag) => tag !== null && tag !== latestTag);
+        latestTag !== currentTag &&
+        !registryError;
 
       return {
-        current,
+        current: {
+          operator: images["percussionist-operator"]?.tag ?? null,
+          manager: images["percussionist-manager"]?.tag ?? null,
+          web: images["percussionist-web"]?.tag ?? null,
+          dispatcher: dispatcherInfo?.tag ?? null,
+        },
         latest: latestTag,
         updateAvailable,
         registryPrefix: foundImage.registryPrefix,
@@ -1760,13 +1712,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const webUrl =
         process.env.WEB_SERVICE_URL ??
         `http://percussionist-web.${MANAGER_NAMESPACE}.svc.cluster.local:8080`;
-      const webAuthToken = process.env.WEB_AUTH_TOKEN ?? "";
-      const authHeaders: Record<string, string> = webAuthToken ? { Authorization: `Bearer ${webAuthToken}` } : {};
       let path = `/api/board/${encodeURIComponent(project)}/events?limit=${limit}`;
       if (taskFilter) {
         path = `/api/board/${encodeURIComponent(project)}/tasks/${encodeURIComponent(taskFilter)}/events?limit=${limit}`;
       }
-      const res = await fetch(`${webUrl}${path}`, { headers: { ...authHeaders } });
+      const res = await fetch(`${webUrl}${path}`);
       if (!res.ok) {
         throw new Error(`web server returned ${res.status}: ${res.statusText}`);
       }
@@ -1815,21 +1765,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const project = String(args.project ?? "");
       const pkgs = (args.packages ?? []) as string[];
       if (!project || !pkgs.length) throw new Error("project and packages are required");
-
-      // Security: validate each package name against Alpine package naming rules.
-      // Rejects shell metacharacters that could enable command injection via execInWorkspace.
-      for (const pkg of pkgs) {
-        if (!isValidPackageName(pkg)) {
-          logSecurityEvent("install_packages.rejected", { project, package: pkg });
-          throw new Error(
-            `Invalid package name "${pkg}": only alphanumeric characters, hyphens, dots, and plus signs are allowed.`,
-          );
-        }
-      }
-
       const cmd = `apk update --quiet && apk add --no-cache ${pkgs.join(" ")}`;
-      console.log(`[install_packages] project=${project} packages=[${pkgs.join(", ")}]`);
-
       const result = await execInWorkspace(project, cmd, undefined, undefined, MANAGER_NAMESPACE);
       return { installed: pkgs, output: result.stdout ?? "", exitCode: result.exitCode };
     }
