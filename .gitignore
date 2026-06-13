@@ -2,6 +2,9 @@
 *.tar
 *.tar.gz
 
+# VitePress build cache
+docs/.vitepress/cache/
+
 # Local env / secrets
 .env
 .env.*
