@@ -389,7 +389,7 @@ export async function reconcile(run: Run): Promise<void> {
     plural: PLURAL_CLUSTER_SETTINGS, name: "default",
   }).then((r) => r as ClusterSettings).catch(() => undefined);
   const runnerSpec = resolveRunnerSpec(cs);
-  const dispatcherImage = cs?.spec?.dispatcher?.image;
+  const dispatcherImage = run.spec.dispatcher?.image ?? cs?.spec?.dispatcher?.image;
 
   // Resolve agents from ClusterAgent CRs + inline escape hatch.
   const agentNames = (run.spec.agents ?? []).map((a) => a.name);

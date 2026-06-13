@@ -489,6 +489,11 @@ export const RunSpecSchema = z
 
     model: z.string().optional(),
     image: z.string().default("ghcr.io/erkkaha/percussionist/runner:latest"),
+    dispatcher: z
+      .object({
+        image: z.string().optional(),
+      })
+      .optional(),
     resources: ResourceRequirementsSchema.optional(),
     secrets: SecretsRefSchema.optional(),
     source: SourceSchema.optional(),
