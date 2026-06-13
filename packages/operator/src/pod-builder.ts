@@ -248,9 +248,9 @@ export function renderPod(
   function heapMbFromLimit(limit: string | undefined): number {
     if (!limit) return 2560;
     const giMatch = limit.match(/^(\d+(?:\.\d+)?)Gi$/);
-    if (giMatch) return Math.floor(parseFloat(giMatch[1]) * 1024 * 0.75);
+    if (giMatch) return Math.floor(parseFloat(giMatch[1] ?? '0') * 1024 * 0.75);
     const miMatch = limit.match(/^(\d+(?:\.\d+)?)Mi$/);
-    if (miMatch) return Math.floor(parseFloat(miMatch[1]) * 0.75);
+    if (miMatch) return Math.floor(parseFloat(miMatch[1] ?? '0') * 0.75);
     return 2560;
   }
   const nodeHeapMb = heapMbFromLimit(initContainerResources.limits?.memory);
