@@ -12,7 +12,11 @@
 import type { V1PersistentVolumeClaim } from '@kubernetes/client-node';
 import { API_GROUP_VERSION, KIND_PROJECT } from '@percussionist/api';
 import { core } from '@percussionist/kube';
-import { DEFAULT_STORAGE_ACCESS_MODE, DEFAULT_STORAGE_CLASS, DEFAULT_STORAGE_SIZE } from './config.js';
+import {
+  DEFAULT_STORAGE_ACCESS_MODE,
+  DEFAULT_STORAGE_CLASS,
+  DEFAULT_STORAGE_SIZE,
+} from './config.js';
 
 export interface DataPVCOptions {
   projectName: string;

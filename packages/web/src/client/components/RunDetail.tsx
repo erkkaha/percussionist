@@ -95,8 +95,7 @@ export default function RunDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  if (!name) return null;
-  const { data: run, error, isLoading, isFetching } = useRun(name);
+  const { data: run, error, isLoading, isFetching } = useRun(name ?? '');
   const runPhase = run?.status?.phase;
   const runIsActive = !!run && (!runPhase || !TERMINAL_PHASES.has(runPhase));
   const { connected: sseConnected, eventTick } = useRunEvents(name ?? '', runIsActive);
@@ -109,6 +108,8 @@ export default function RunDetail() {
       navigate('/runs');
     },
   });
+
+  if (!name) return null;
 
   if (error) {
     return (

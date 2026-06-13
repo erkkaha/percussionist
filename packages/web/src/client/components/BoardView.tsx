@@ -18,14 +18,14 @@ import { Sheet, SheetContent } from './ui/sheet';
 
 export default function BoardView() {
   const { name } = useParams<{ name: string }>();
-  if (!name) return null;
   const projectName = name;
   const queryClient = useQueryClient();
-  const { connected: boardSseConnected, eventTick } = useBoardEvents(projectName, true);
+  const { connected: boardSseConnected, eventTick } = useBoardEvents(projectName ?? '', true);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['board', projectName],
     queryFn: () => fetchBoard(projectName),
+    enabled: !!projectName,
     refetchInterval: boardSseConnected ? false : 10_000,
     staleTime: 5_000,
   });
@@ -43,7 +43,8 @@ export default function BoardView() {
 
   const allTasks: Task[] = data ? Object.values(data.columns).flat() : [];
 
-  const invalidateBoard = () => queryClient.invalidateQueries({ queryKey: ['board', projectName] });
+  const invalidateBoard = () =>
+    queryClient.invalidateQueries({ queryKey: ['board', projectName ?? ''] });
 
   const _deleteMutation = useMutation({
     mutationFn: (taskName: string) => deleteBoardTask(projectName, taskName),
@@ -70,7 +71,7 @@ export default function BoardView() {
     onSuccess: invalidateBoard,
   });
 
-  useBoardNotifications(projectName, allTasks);
+  useBoardNotifications(projectName ?? '', allTasks);
 
   const handleSelectTask = (name: string) => {
     setSearchParams({ task: name });
@@ -87,11 +88,10 @@ export default function BoardView() {
     if (!open) setSearchParams({}, { replace: true });
   };
 
-  // Stabilise approvals reference so TaskDetailPanel's memo comparator isn't
-  // invalidated on every board refetch when approvals haven't actually changed.
-  // Must be before early returns to satisfy Rules of Hooks.
   const rawApprovals = data?.approvals;
   const approvals = useMemo(() => rawApprovals, [rawApprovals]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!name) return null;
 
   if (isLoading && !data) return <p className="text-sm text-text-dim p-4">Loading board…</p>;
   if (error && !data) return <p className="text-sm text-phase-failed p-4">Failed to load board.</p>;

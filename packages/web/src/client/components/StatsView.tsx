@@ -667,14 +667,6 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
   const [metric, setMetric] = useState<string>('successRate');
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
 
-  if (agents.length === 0) {
-    return (
-      <div className="rounded-lg border border-border bg-surface-raised p-8 text-center text-text-dim">
-        No agent data available.
-      </div>
-    );
-  }
-
   // Chart data for bar chart
   const chartData = useMemo(() => {
     const metricKey = metric as keyof AgentSummary;
@@ -691,6 +683,14 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
       }))
       .sort((a, b) => b.value - a.value);
   }, [agents, metric]);
+
+  if (agents.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-surface-raised p-8 text-center text-text-dim">
+        No agent data available.
+      </div>
+    );
+  }
 
   const chartConfig = {
     value: {
