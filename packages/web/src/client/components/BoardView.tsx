@@ -6,9 +6,9 @@ import type { Task, ManagerMetrics } from "../lib/types";
 import { useBoardNotifications } from "../hooks/useBoardNotifications";
 import { useBoardEvents } from "../hooks/useBoardEvents";
 import { BoardHeader } from "./board/BoardHeader";
-import { TaskListPanel, AddTaskForm } from "./board/TaskListPanel";
 import { TaskDetailPanel, TaskDetailEmpty } from "./board/TaskDetailPanel";
 import { Sheet, SheetContent } from "./ui/sheet";
+import { AddTaskForm } from "./board/AddTaskForm";
 
 export default function BoardView() {
   const { name } = useParams<{ name: string }>();

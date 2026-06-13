@@ -3,123 +3,13 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, Plus, Filter, X } from "lucide-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Task } from "../../lib/types";
 import { FilterBar } from "./FilterBar";
 import type { FilterState } from "./FilterBar";
 import { TaskRow } from "./TaskRow";
-import { addBoardTask } from "../../lib/api";
-import { Input } from "../ui/input";
-import { Textarea } from "../ui/textarea";
-import { Button } from "../ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { AddTaskForm } from "./AddTaskForm";
 
 const DEFAULT_COLUMNS = ["ideas", "backlog", "blocked", "in-progress", "review", "done"] as const;
-
-interface AddTaskFormProps {
-  projectName: string;
-  roster: string[];
-  defaultColumn?: string;
-  onClose: () => void;
-}
-
-export function AddTaskForm({ projectName, roster, defaultColumn = "backlog", onClose }: AddTaskFormProps) {
-  const queryClient = useQueryClient();
-  const [taskType, setTaskType] = useState<"PLAN" | "BUILD">("PLAN");
-  const [taskTitle, setTaskTitle] = useState("");
-  const [taskDesc, setTaskDesc] = useState("");
-  const [taskAgent, setTaskAgent] = useState("");
-  const [taskPriority, setTaskPriority] = useState<"high" | "medium" | "low">("medium");
-  const [error, setError] = useState<string | null>(null);
-
-  const addMutation = useMutation({
-    mutationFn: async (task: { type: string; title: string; description?: string; agent: string; priority?: string }) =>
-      addBoardTask(projectName, { ...task, column: defaultColumn }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["board", projectName] });
-      onClose();
-    },
-    onError: (e) => setError((e as Error).message),
-  });
-
-  return (
-    <div className="rounded-md border border-border bg-surface p-4 space-y-3 mx-2">
-      <h2 className="text-sm font-semibold">Add Task {defaultColumn === "ideas" ? "to Ideas" : "to Backlog"}</h2>
-
-      {/* Type */}
-      <div className="flex gap-4">
-        {(["PLAN", "BUILD"] as const).map((t) => (
-          <label key={t} className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              value={t}
-              checked={taskType === t}
-              onChange={() => setTaskType(t)}
-              className="cursor-pointer"
-            />
-            <span className="text-sm">{t}</span>
-          </label>
-        ))}
-      </div>
-
-      {/* Agent */}
-      {roster.length === 0 ? (
-        <p className="text-xs text-phase-failed">
-          No agents in roster.{" "}
-          <Link to={`/projects/${encodeURIComponent(projectName)}/edit`} className="underline hover:opacity-80">
-            Add agents first.
-          </Link>
-        </p>
-      ) : (
-        <Select value={taskAgent} onValueChange={(v) => setTaskAgent(v)}>
-          <SelectTrigger>
-            <SelectValue placeholder="— agent —" />
-          </SelectTrigger>
-          <SelectContent>
-            {roster.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      )}
-
-      <Input
-        placeholder="Title"
-        value={taskTitle}
-        onChange={(e) => setTaskTitle(e.target.value)}
-      />
-
-      <Textarea
-        placeholder="Description (optional, supports Markdown)"
-        value={taskDesc}
-        onChange={(e) => setTaskDesc(e.target.value)}
-        rows={3}
-      />
-
-      <div className="flex items-center gap-3">
-        <Select value={taskPriority} onValueChange={(v) => setTaskPriority(v as "high" | "medium" | "low")}>
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="high">High</SelectItem>
-            <SelectItem value="medium">Medium</SelectItem>
-            <SelectItem value="low">Low</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button
-          onClick={() => {
-            if (!taskTitle.trim() || !taskAgent) { setError("Title and agent required"); return; }
-            addMutation.mutate({ type: taskType, title: taskTitle.trim(), description: taskDesc.trim() || undefined, agent: taskAgent, priority: taskPriority });
-          }}
-          disabled={addMutation.isPending}
-        >
-          {addMutation.isPending ? "Adding…" : "Add"}
-        </Button>
-        <button onClick={onClose} className="text-sm text-text-dim hover:text-text transition-colors">Cancel</button>
-      </div>
-      {error && <p className="text-xs text-phase-failed">{error}</p>}
-    </div>
-  );
-}
 
 interface TaskListPanelProps {
   projectName: string;
@@ -127,8 +17,11 @@ interface TaskListPanelProps {
   roster: string[];
   selectedTaskName: string | null;
   onSelectTask: (name: string) => void;
+  /** Whether the inline add-task form is open (desktop). */
   showAddTask: boolean;
   onCloseAddTask: () => void;
+  /** When false, the panel never renders the inline add-task form regardless of `showAddTask`. */
+  renderInlineAddTask?: boolean;
   approvals?: Record<string, { approved: boolean; requestChanges: boolean }>;
 }
 
@@ -140,6 +33,7 @@ export function TaskListPanel({
   onSelectTask,
   showAddTask,
   onCloseAddTask,
+  renderInlineAddTask = true,
   approvals,
 }: TaskListPanelProps) {
   const [filters, setFilters] = useState<FilterState>({
@@ -194,6 +88,8 @@ export function TaskListPanel({
     return true;
   });
 
+  const inlineAddTaskOpen = showAddTask && renderInlineAddTask;
+
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="px-2 pt-2 pb-2 shrink-0 space-y-2">
@@ -218,7 +114,7 @@ export function TaskListPanel({
         )}
       </div>
 
-      {showAddTask && (
+      {inlineAddTaskOpen && (
         <div className="pb-2 shrink-0">
           <AddTaskForm projectName={projectName} roster={roster} onClose={onCloseAddTask} />
         </div>
