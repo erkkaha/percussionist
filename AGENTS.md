@@ -481,6 +481,7 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `create_task` | Create a new Task CR from the manager |
 | `force_retry` | Restart a stuck task at an incremented retry count via `Task.status` (does not delete old runs) |
 | `set_task_state` | Move a task to a target column, optionally cancel running runs (runs preserved by default) |
+| `manager_approve` | Approve a BUILD task in `awaiting-human` for merge by writing the canonical approval annotation |
 | `exec_in_workspace` | Run commands in the project's data PVC workspace |
 | `read_plan` | Read a plan artifact from the project's plans ConfigMap |
 | `write_plan` | Write a plan artifact to the project's plans ConfigMap |
@@ -531,6 +532,22 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 - Deletes matching runs for the specified project/task and prunes remote-git run worktrees; if `cancelRunning: true` also deletes active runs
 - Patches `Task.status.phase`; phase-specific worker updates handle `running`, `done`,
   `pending`, `rework-requested`, and `failed` transitions
+- **Note:** For approving a BUILD task that is in `awaiting-human` and scheduling its merge,
+  prefer `manager_approve` instead of raw `set_task_state`. `manager_approve` writes the
+  canonical `percussionist.dev/action-approved` annotation and lets the reconciler handle
+  merge-run scheduling, avoiding skipped side effects.
+
+**`manager_approve`** — Approve a BUILD task for merge via the canonical annotation.
+- Requires: `project`, `task` (Task CR name)
+- Optional: `namespace`
+- Writes `percussionist.dev/action-approved: "true"` (and clears
+  `percussionist.dev/action-request-changes`) on the Task CR.
+- Actionable only for tasks in the `awaiting-human` phase.
+- Returns a soft no-op for `awaiting-merge` or `done` (task already approved/progressed).
+- Returns an error for any other phase (e.g. `running`, `pending`).
+- Idempotent: repeated calls are safe and do not duplicate reconciler state.
+- The reconciler consumes the annotation on its next pass and transitions the task to
+  `awaiting-merge`, scheduling the merge run with the correct feature-branch metadata.
 
 **`read_session_live`** — Real-time session message streaming.
 - Requires: `runName`

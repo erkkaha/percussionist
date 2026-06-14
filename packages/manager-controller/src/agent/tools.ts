@@ -333,7 +333,7 @@ const TOOLS = [
   {
     name: 'set_task_state',
     description:
-      "Atomically transition a task to a target phase. Cleans up terminal-phase runs (unless preserveRuns is true), optionally cancels running runs, and updates task status in a single operation. This avoids race conditions with the manager's reconciliation loop.",
+      "Atomically transition a task to a target phase. Cleans up terminal-phase runs (unless preserveRuns is true), optionally cancels running runs, and updates task status in a single operation. This avoids race conditions with the manager's reconciliation loop. For approving a BUILD task that is in 'awaiting-human' and scheduling its merge, prefer the manager_approve tool instead; it writes the canonical approval annotation and lets the reconciler schedule the merge run.",
     inputSchema: {
       type: 'object',
       properties: {
