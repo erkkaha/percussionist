@@ -26,8 +26,10 @@ function today(): string {
 }
 
 function buildResponse(
-  row: { reviewing: number; planning: number; other: number } | undefined,
-  settings: { maxTimeHours: number; showPercent: boolean; lockOnMax: boolean } | undefined,
+  row: { reviewing: number | null; planning: number | null; other: number | null } | undefined,
+  settings:
+    | { maxTimeHours: number | null; showPercent: boolean | null; lockOnMax: boolean | null }
+    | undefined,
 ): UsageResponse {
   const reviewing = row?.reviewing ?? 0;
   const planning = row?.planning ?? 0;
