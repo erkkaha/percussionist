@@ -14,11 +14,10 @@ import {
   KIND_PROJECT,
   LABELS,
   MANAGED_BY,
-  MEMORY_SERVICE_DEFAULT_IMAGE,
   MEMORY_SERVICE_PORT,
   type Project,
 } from '@percussionist/api';
-import { OLLAMA_BASE_URL } from './config.js';
+import { MEMORY_SERVICE_IMAGE, OLLAMA_BASE_URL } from './config.js';
 
 // ---------------------------------------------------------------------------
 // Naming helpers
@@ -52,7 +51,7 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
   const embedding = spec.embedding;
   if (!embedding) throw new Error('embedding config is required');
 
-  const image = MEMORY_SERVICE_DEFAULT_IMAGE;
+  const image = MEMORY_SERVICE_IMAGE;
   const pvcName = spec.data?.pvcName ?? `${name}-data`;
   const mountPath = spec.data?.mountPath ?? '/data';
 
@@ -108,6 +107,7 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
             {
               name: 'memory',
               image,
+              imagePullPolicy: 'Always',
               env,
               ports: [
                 {

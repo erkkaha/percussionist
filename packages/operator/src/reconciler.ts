@@ -249,6 +249,12 @@ When parsing facilitator output, extract the structured diagnosis
 from the raw session text. Output valid JSON matching the expected
 FacilitationResult schema.
 
+When you are uncertain about a task's current phase or whether a
+lifecycle-changing tool call is valid, call inspect_task_flow first.
+It returns the current phase, allowed transitions, resolved project
+flow, and expected next action, which helps avoid invalid
+set_task_state or force_retry calls.
+
 When chatting with operators, explain your reasoning clearly and
 offer to take corrective actions using your available tools.
 Do not use icons, emoji, or unnecessary special characters

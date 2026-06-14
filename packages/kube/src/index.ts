@@ -1407,7 +1407,17 @@ export async function execInWorkspace(
   ns: string = NAMESPACE,
 ): Promise<WorkspaceExecResult> {
   const podName = `ws-exec-${projectName}-${Date.now()}`.slice(0, 63).replace(/[^a-z0-9-]/g, "-");
-  const pvcName = `${projectName}-data`;
+
+  // Resolve project-level overrides (image + PVC name) with safe fallbacks.
+  let execImage = "alpine:3.20";
+  let pvcName = `${projectName}-data`;
+  try {
+    const project = await getProject(projectName, ns);
+    execImage = project.spec.exec?.image ?? "alpine:3.20";
+    pvcName = project.spec.data?.pvcName ?? `${projectName}-data`;
+  } catch {
+    // Project not found or inaccessible — use defaults (backward compatible).
+  }
 
   const pod: V1Pod = {
     apiVersion: "v1",
@@ -1426,7 +1436,7 @@ export async function execInWorkspace(
       containers: [
         {
           name: "exec",
-          image: "alpine:3.20",
+          image: execImage,
           command: ["/bin/sh", "-c", command],
           volumeMounts: [{ name: "data", mountPath }],
         },

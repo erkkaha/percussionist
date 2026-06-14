@@ -483,6 +483,11 @@ spec:
                       items:
                         type: string
                       maxItems: 50
+                exec:
+                  type: object
+                  properties:
+                    image:
+                      type: string
             status:
               type: object
               properties:

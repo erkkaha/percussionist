@@ -1,6 +1,7 @@
 // Observations — normalize K8s resources into ReconcileInput.
 
-import type { Project, Run, Task } from '@percussionist/api';
+import type { Project, Run, Task, NormalizedReviewVerdict } from '@percussionist/api';
+import { normalizeReviewVerdict } from '@percussionist/api';
 import { getRun } from '@percussionist/kube';
 import { isKubeNotFoundError } from '../kube-errors.js';
 import type { ManualActions, ObservedRuns, ReconcileInput } from './decision.js';
@@ -96,14 +97,16 @@ export function getConsumedAnnotationKeys(actions: ManualActions): string[] {
   return keys;
 }
 
-export function getReviewVerdict(
-  run: Run | undefined,
-): { action: string; diagnosis?: string; feedback?: string } | undefined {
+export function getReviewVerdict(run: Run | undefined): NormalizedReviewVerdict | undefined {
   if (!run) return undefined;
   const verdict = run.metadata.annotations?.[REVIEW_VERDICT_KEY];
   if (!verdict) return undefined;
   try {
-    return JSON.parse(verdict) as { action: string; diagnosis?: string; feedback?: string };
+    const parsed = JSON.parse(verdict) as unknown;
+    return normalizeReviewVerdict(parsed, {
+      sourceRunName: run.metadata.name,
+      updatedAt: run.status?.completedAt ?? new Date().toISOString(),
+    });
   } catch {
     return undefined;
   }

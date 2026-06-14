@@ -235,6 +235,7 @@ export default function CreateProjectForm({
       embeddingModel: form.embeddingModel,
       embeddingDimensions: form.embeddingDimensions,
       embeddingOllamaUrl: form.embeddingOllamaUrl,
+      execImage: form.execImage,
       setCodeServerEnabled: form.setCodeServerEnabled,
       setCodeServerImage: form.setCodeServerImage,
       setCSCpuRequest: form.setCSCpuRequest,
@@ -248,6 +249,7 @@ export default function CreateProjectForm({
       setEmbeddingModel: form.setEmbeddingModel,
       setEmbeddingDimensions: form.setEmbeddingDimensions,
       setEmbeddingOllamaUrl: form.setEmbeddingOllamaUrl,
+      setExecImage: form.setExecImage,
     },
   };
 

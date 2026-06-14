@@ -18,6 +18,7 @@ interface WorkspaceServicesTabProps {
     | 'embeddingModel'
     | 'embeddingDimensions'
     | 'embeddingOllamaUrl'
+    | 'execImage'
   > &
     Pick<
       ProjectFormHookReturn,
@@ -34,6 +35,7 @@ interface WorkspaceServicesTabProps {
       | 'setEmbeddingModel'
       | 'setEmbeddingDimensions'
       | 'setEmbeddingOllamaUrl'
+      | 'setExecImage'
     >;
 }
 
@@ -215,6 +217,25 @@ export default function WorkspaceServicesTab({ form }: WorkspaceServicesTabProps
             </div>
           </div>
         )}
+      </fieldset>
+
+      {/* Exec / Maintenance Pod Image */}
+      <fieldset className="space-y-3 rounded-md border border-border p-4">
+        <legend className="px-1 text-sm font-medium text-text-muted">Exec / Maintenance Pod</legend>
+        <p className="text-xs text-text-dim">
+          Container image used for workspace exec pods (e.g. by the <code>exec_in_workspace</code> MCP tool).
+          Leave blank to use the default fallback: <code>alpine:3.20</code>.
+        </p>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-text-muted">Container Image</label>
+          <Input
+            type="text"
+            value={form.execImage}
+            onChange={(e) => form.setExecImage(e.target.value)}
+            placeholder="(use default: alpine:3.20)"
+            className="font-mono"
+          />
+        </div>
       </fieldset>
     </div>
   );

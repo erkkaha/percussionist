@@ -31,6 +31,8 @@ try {
 const EXPOSE_WEB_DEFAULT = process.env.PERCUSSIONIST_EXPOSE_WEB_DEFAULT !== 'false';
 
 // Memory / embedding service defaults.
+const MEMORY_SERVICE_IMAGE =
+  process.env.MEMORY_SERVICE_IMAGE ?? 'ghcr.io/erkkaha/percussionist/memory:latest';
 const OLLAMA_BASE_URL =
   process.env.OLLAMA_BASE_URL ?? `http://ollama.${NAMESPACE}.svc.cluster.local:11434`;
 
@@ -62,6 +64,7 @@ export {
   INGRESS_ANNOTATIONS,
   INGRESS_BASE_URL,
   INGRESS_CLASS,
+  MEMORY_SERVICE_IMAGE,
   NAMESPACE,
   OLLAMA_BASE_URL,
   RUNNER_IMAGE_DEFAULT,
