@@ -69,6 +69,11 @@ spec:
   data:
     storageClass: longhorn-rwx
 
+  # Use a richer image for maintenance/exec pods (e.g. exec_in_workspace).
+  # Falls back to alpine:3.20 when unset.
+  exec:
+    image: ubuntu:24.04
+
   # Pre-warm pnpm store on startup so agent's pnpm install finishes within
   # the 120s bash tool timeout. Cache persists on the data PVC across runs.
   initScript: |

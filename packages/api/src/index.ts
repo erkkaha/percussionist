@@ -124,6 +124,14 @@ export const EmbeddingSpecSchema = z.object({
 });
 export type EmbeddingSpec = z.infer<typeof EmbeddingSpecSchema>;
 
+// Exec/maintenance pod configuration — controls which image is used for workspace
+// exec pods spawned by manager MCP tools (exec_in_workspace, install_packages, etc.).
+export const ExecSpecSchema = z.object({
+  /** Container image for maintenance/exec pods. Defaults to alpine:3.20 when unset. */
+  image: z.string().optional(),
+});
+export type ExecSpec = z.infer<typeof ExecSpecSchema>;
+
 // DEPRECATED — cluster-level secrets are managed via ClusterSettings.
 // This schema is kept for backwards compatibility only.
 export const SecretsRefSchema = z
@@ -995,6 +1003,11 @@ export const ProjectSpecSchema = z.object({
   // System packages (apk) installed into every run pod for this project.
   // Declared once on the project, inherited by all runs and board workers.
   runner: RunnerPackagesSchema,
+
+  // Per-project exec/maintenance pod configuration.
+  // Controls the container image used for workspace exec pods spawned by manager MCP tools
+  // (exec_in_workspace, install_packages, etc.). Defaults to alpine:3.20 when unset.
+  exec: ExecSpecSchema.optional(),
 });
 
 export type ProjectSpec = z.infer<typeof ProjectSpecSchema>;
@@ -1079,32 +1092,339 @@ export const TaskSpecSchema = z.object({
 
 export type TaskSpec = z.infer<typeof TaskSpecSchema>;
 
-export const TaskStatusSchema = z
+// ---------------------------------------------------------------------------
+// Structured diff findings (reviewer line-level comments).
+//
+// Stored in Task.status.diffFindings. Bounded to keep Task CR status patches
+// small and deterministic.
+
+export const DiffFindingSeveritySchema = z.enum([
+  "critical",
+  "high",
+  "medium",
+  "low",
+  "info",
+]);
+export type DiffFindingSeverity = z.infer<typeof DiffFindingSeveritySchema>;
+
+export const DiffLineAnchorSchema = z
   .object({
-    // Internal phase — authoritative state for reconciler logic.
-    phase: TaskPhase.default('pending'),
-
-    // Blocked flag — when true, task is excluded from scheduling regardless of phase.
-    blocked: z.boolean().default(false),
-    blockedReason: z.string().max(1024).optional(),
-
-    // Retry backoff — when set, scheduler skips this task until retryAfter time passes.
-    retryAfter: z.string().optional(),
-    lastFailureReason: z.string().max(4096).optional(),
-    lastFailureDuration: z.number().optional(),
-
-    // Legacy column field — kept for backwards compatibility, never written by new code.
-    column: z
-      .enum(['backlog', 'ready', 'in-progress', 'review', 'rework', 'done', 'blocked'])
-      .optional(),
-
-    // Worker execution state — set when phase is scheduled or beyond.
-    worker: WorkerStatusSchema.optional(),
-
-    // Append-only review history records.
-    reviews: ReviewRecordSchema.array().optional(),
+    path: z.string().min(1),
+    side: z.enum(["old", "new"]),
+    line: z.number().int().min(1),
+    endLine: z.number().int().min(1).optional(),
+    hunkHeader: z.string().max(256).optional(),
   })
-  .partial();
+  .refine((a) => a.endLine === undefined || a.endLine >= a.line, {
+    message: "endLine must be greater than or equal to line",
+    path: ["endLine"],
+  });
+export type DiffLineAnchor = z.infer<typeof DiffLineAnchorSchema>;
+
+export const DiffContextSchema = z.object({
+  baseSha: z.string().min(1),
+  headSha: z.string().min(1),
+  forkSha: z.string().min(1),
+  diffFingerprint: z.string().min(1),
+});
+export type DiffContext = z.infer<typeof DiffContextSchema>;
+
+export const DiffFindingSchema = z.object({
+  id: z.string().min(1),
+  source: z.literal("reviewer"),
+  severity: DiffFindingSeveritySchema,
+  score: z.number().min(0).max(100).optional(),
+  title: z.string().min(1).max(160),
+  comment: z.string().min(1).max(2000),
+  category: z.string().max(64).optional(),
+  anchors: z.array(DiffLineAnchorSchema).min(1).max(3),
+  context: DiffContextSchema,
+  createdAt: z.string().min(1),
+  authorRunName: z.string().optional(),
+});
+export type DiffFinding = z.infer<typeof DiffFindingSchema>;
+
+export const TaskDiffFindingsSchema = z.object({
+  version: z.literal(1),
+  context: DiffContextSchema,
+  items: z.array(DiffFindingSchema).max(25),
+  updatedAt: z.string().min(1),
+  sourceRunName: z.string().min(1),
+});
+export type TaskDiffFindings = z.infer<typeof TaskDiffFindingsSchema>;
+
+export interface NormalizedReviewVerdict {
+  action: "approve" | "request_changes";
+  diagnosis?: string;
+  feedback?: string;
+  suggestion?: string;
+  diffFindings?: TaskDiffFindings;
+}
+
+function clampScore(score: unknown): number | undefined {
+  if (score === undefined || score === null) return undefined;
+  const n = Number(score);
+  if (Number.isNaN(n)) return undefined;
+  return Math.max(0, Math.min(100, n));
+}
+
+function truncateString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
+}
+
+function normalizeAnchor(raw: unknown): DiffLineAnchor | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+
+  const path = truncateString(obj.path, Infinity);
+  if (!path) return undefined;
+
+  const side = obj.side === "old" || obj.side === "new" ? obj.side : undefined;
+  if (!side) return undefined;
+
+  const line = Number(obj.line);
+  if (!Number.isInteger(line) || line < 1) return undefined;
+
+  const rawEndLine = obj.endLine;
+  let endLine: number | undefined;
+  if (rawEndLine !== undefined && rawEndLine !== null) {
+    const n = Number(rawEndLine);
+    if (!Number.isInteger(n) || n < line) return undefined;
+    endLine = n;
+  }
+
+  const hunkHeader = truncateString(obj.hunkHeader, 256);
+
+  const anchor: DiffLineAnchor = { path, side, line };
+  if (endLine !== undefined) anchor.endLine = endLine;
+  if (hunkHeader) anchor.hunkHeader = hunkHeader;
+  return anchor;
+}
+
+function normalizeContext(raw: unknown): DiffContext | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+
+  const baseSha = truncateString(obj.baseSha, Infinity);
+  const headSha = truncateString(obj.headSha, Infinity);
+  const forkSha = truncateString(obj.forkSha, Infinity);
+  const diffFingerprint = truncateString(obj.diffFingerprint, Infinity);
+
+  if (!baseSha || !headSha || !forkSha || !diffFingerprint) return undefined;
+  return { baseSha, headSha, forkSha, diffFingerprint };
+}
+
+function normalizeFinding(raw: unknown): DiffFinding | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+
+  const id = truncateString(obj.id, Infinity);
+  if (!id) return undefined;
+
+  const severity = DiffFindingSeveritySchema.safeParse(obj.severity);
+  if (!severity.success) return undefined;
+
+  const title = truncateString(obj.title, 160);
+  if (!title) return undefined;
+
+  const comment = truncateString(obj.comment, 2000);
+  if (!comment) return undefined;
+
+  const category = truncateString(obj.category, 64);
+
+  const score = clampScore(obj.score);
+
+  if (!Array.isArray(obj.anchors) || obj.anchors.length === 0) return undefined;
+  const anchors: DiffLineAnchor[] = [];
+  for (const rawAnchor of obj.anchors.slice(0, 3)) {
+    const a = normalizeAnchor(rawAnchor);
+    if (!a) return undefined;
+    anchors.push(a);
+  }
+  if (anchors.length === 0) return undefined;
+
+  const context = normalizeContext(obj.context);
+  if (!context) return undefined;
+
+  const createdAt = truncateString(obj.createdAt, Infinity);
+  if (!createdAt) return undefined;
+
+  const authorRunName = truncateString(obj.authorRunName, Infinity);
+
+  const finding: DiffFinding = {
+    id,
+    source: "reviewer",
+    severity: severity.data,
+    title,
+    comment,
+    anchors,
+    context,
+    createdAt,
+  };
+  if (score !== undefined) finding.score = score;
+  if (category) finding.category = category;
+  if (authorRunName) finding.authorRunName = authorRunName;
+  return finding;
+}
+
+function buildTaskDiffFindings(
+  rawFindings: unknown[],
+  options: { sourceRunName: string; updatedAt: string },
+): TaskDiffFindings | undefined {
+  const seen = new Set<string>();
+  const items: DiffFinding[] = [];
+  let batchContext: DiffContext | undefined;
+
+  for (const raw of rawFindings) {
+    if (items.length >= 25) break;
+    const finding = normalizeFinding(raw);
+    if (!finding) continue;
+    if (seen.has(finding.id)) continue;
+    seen.add(finding.id);
+
+    if (!batchContext) {
+      batchContext = finding.context;
+    } else if (
+      finding.context.baseSha !== batchContext.baseSha ||
+      finding.context.headSha !== batchContext.headSha ||
+      finding.context.forkSha !== batchContext.forkSha ||
+      finding.context.diffFingerprint !== batchContext.diffFingerprint
+    ) {
+      continue;
+    }
+
+    items.push(finding);
+  }
+
+  if (!batchContext || items.length === 0) return undefined;
+
+  return {
+    version: 1,
+    context: batchContext,
+    items,
+    updatedAt: options.updatedAt,
+    sourceRunName: options.sourceRunName,
+  };
+}
+
+function normalizeTaskDiffFindings(raw: unknown): TaskDiffFindings | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+
+  if (obj.version !== 1) return undefined;
+
+  const context = normalizeContext(obj.context);
+  if (!context) return undefined;
+
+  const updatedAt = truncateString(obj.updatedAt, Infinity);
+  if (!updatedAt) return undefined;
+
+  const sourceRunName = truncateString(obj.sourceRunName, Infinity);
+  if (!sourceRunName) return undefined;
+
+  if (!Array.isArray(obj.items)) return undefined;
+
+  const seen = new Set<string>();
+  const items: DiffFinding[] = [];
+  for (const rawFinding of obj.items) {
+    if (items.length >= 25) break;
+    const finding = normalizeFinding(rawFinding);
+    if (!finding) continue;
+    if (seen.has(finding.id)) continue;
+    seen.add(finding.id);
+    items.push(finding);
+  }
+
+  return {
+    version: 1,
+    context,
+    items,
+    updatedAt,
+    sourceRunName,
+  };
+}
+
+/**
+ * Parse and normalize a review verdict payload.
+ *
+ * Accepts either a raw dispatcher payload (with `findings` array) or an
+ * already-normalized annotation (with `diffFindings` object). Invalid findings
+ * are dropped; caps are enforced by truncation. The core verdict fields are
+ * always preserved when present.
+ */
+export function normalizeReviewVerdict(
+  input: unknown,
+  options?: { sourceRunName?: string; updatedAt?: string },
+): NormalizedReviewVerdict | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const obj = input as Record<string, unknown>;
+
+  const action =
+    obj.action === "approve" || obj.action === "request_changes"
+      ? obj.action
+      : obj.action === "request-changes"
+      ? "request_changes"
+      : undefined;
+  if (!action) return undefined;
+
+  const diagnosis = truncateString(obj.diagnosis, 1024);
+  const feedback = truncateString(obj.feedback, 4096);
+  const suggestion = truncateString(obj.suggestion, 4096);
+
+  let diffFindings: TaskDiffFindings | undefined;
+
+  if (obj.diffFindings !== undefined) {
+    diffFindings = normalizeTaskDiffFindings(obj.diffFindings);
+  } else if (Array.isArray(obj.findings)) {
+    const sourceRunName = options?.sourceRunName;
+    const updatedAt = options?.updatedAt;
+    if (sourceRunName && updatedAt) {
+      diffFindings = buildTaskDiffFindings(obj.findings, {
+        sourceRunName,
+        updatedAt,
+      });
+    }
+  }
+
+  const verdict: NormalizedReviewVerdict = { action };
+  if (diagnosis) verdict.diagnosis = diagnosis;
+  if (feedback) verdict.feedback = feedback;
+  if (suggestion) verdict.suggestion = suggestion;
+  if (diffFindings) verdict.diffFindings = diffFindings;
+  return verdict;
+}
+
+export const TaskStatusSchema = z.object({
+  // Internal phase — authoritative state for reconciler logic.
+  phase: TaskPhase.default("pending"),
+  
+  // Blocked flag — when true, task is excluded from scheduling regardless of phase.
+  blocked: z.boolean().default(false),
+  blockedReason: z.string().max(1024).optional(),
+  
+  // Retry backoff — when set, scheduler skips this task until retryAfter time passes.
+  retryAfter: z.string().optional(),
+  lastFailureReason: z.string().max(4096).optional(),
+  lastFailureDuration: z.number().optional(),
+  
+  // Legacy column field — kept for backwards compatibility, never written by new code.
+  column: z
+    .enum(["backlog", "ready", "in-progress", "review", "rework", "done", "blocked"])
+    .optional(),
+
+  // Worker execution state — set when phase is scheduled or beyond.
+  worker: WorkerStatusSchema.optional(),
+  
+  // Append-only review history records.
+  reviews: ReviewRecordSchema.array().optional(),
+
+  // Latest normalized reviewer diff findings. Replaced in full by each review
+  // run that provides structured findings.
+  diffFindings: TaskDiffFindingsSchema.optional(),
+}).partial();
 
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 

@@ -35,7 +35,7 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { DISPATCHER_MCP_PORT } from '@percussionist/api';
+import { DISPATCHER_MCP_PORT, normalizeReviewVerdict } from '@percussionist/api';
 import {
   buildTask,
   createTask,
@@ -132,6 +132,56 @@ const TOOL_COMPLETE_REVIEW = {
       suggestion: {
         type: 'string',
         description: 'Optional suggestion for how to improve the work',
+      },
+      findings: {
+        type: "array",
+        description:
+          "Optional structured diff findings (max 25). Each finding has severity, title, comment, " +
+          "1-3 line anchors, and diff context. Invalid or overflowing findings are dropped; core verdict still writes.",
+        maxItems: 25,
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Unique finding ID" },
+            severity: {
+              type: "string",
+              enum: ["critical", "high", "medium", "low", "info"],
+            },
+            score: { type: "number", minimum: 0, maximum: 100 },
+            title: { type: "string", maxLength: 160 },
+            comment: { type: "string", maxLength: 2000 },
+            category: { type: "string", maxLength: 64 },
+            anchors: {
+              type: "array",
+              minItems: 1,
+              maxItems: 3,
+              items: {
+                type: "object",
+                properties: {
+                  path: { type: "string" },
+                  side: { type: "string", enum: ["old", "new"] },
+                  line: { type: "integer", minimum: 1 },
+                  endLine: { type: "integer", minimum: 1 },
+                  hunkHeader: { type: "string", maxLength: 256 },
+                },
+                required: ["path", "side", "line"],
+              },
+            },
+            context: {
+              type: "object",
+              properties: {
+                baseSha: { type: "string" },
+                headSha: { type: "string" },
+                forkSha: { type: "string" },
+                diffFingerprint: { type: "string" },
+              },
+              required: ["baseSha", "headSha", "forkSha", "diffFingerprint"],
+            },
+            createdAt: { type: "string" },
+            authorRunName: { type: "string" },
+          },
+          required: ["id", "severity", "title", "comment", "anchors", "context", "createdAt"],
+        },
       },
     },
     required: ['approved', 'diagnosis'],
@@ -822,17 +872,30 @@ async function handleMcp(
         }
         const feedback = typeof args.feedback === 'string' ? args.feedback : undefined;
         const suggestion = typeof args.suggestion === 'string' ? args.suggestion : undefined;
+        const findings = Array.isArray(args.findings) ? args.findings : undefined;
 
-        const verdict = {
+        const runName = process.env.RUN_NAME ?? '';
+        const namespace = process.env.RUN_NAMESPACE ?? 'percussionist';
+        const updatedAt = new Date().toISOString();
+
+        const rawVerdict = {
           action: approved ? 'approve' : 'request_changes',
           diagnosis,
           feedback,
           suggestion,
+          ...(findings ? { findings } : {}),
         };
 
+        const verdict = normalizeReviewVerdict(rawVerdict, {
+          sourceRunName: runName,
+          updatedAt,
+        });
+
+        if (!verdict) {
+          return rpcError(req.id, -32602, "invalid verdict payload");
+        }
+
         // Best-effort annotation write — never block completion
-        const runName = process.env.RUN_NAME ?? '';
-        const namespace = process.env.RUN_NAMESPACE ?? 'percussionist';
         try {
           await patchRunAnnotations(
             runName,
