@@ -43,6 +43,13 @@
       "when": 1780922258042,
       "tag": "0005_nifty_cammi",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1781464120176,
+      "tag": "0006_thankful_lady_ursula",
+      "breakpoints": true
     }
   ]
 }

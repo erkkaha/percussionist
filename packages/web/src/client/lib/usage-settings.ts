@@ -1,3 +1,6 @@
+import { authHeaders } from './auth';
+import { setGloballyLocked } from './usage-lock-state';
+
 export type Category = 'reviewing' | 'planning' | 'other';
 
 export type UsageSettings = {
@@ -6,14 +9,16 @@ export type UsageSettings = {
   lockOnMax: boolean;
 };
 
-const SETTINGS_KEY = 'percussionist-usage-settings';
-export const STORAGE_PREFIX = 'percussionist-usage';
-
-const DEFAULTS: UsageSettings = {
-  maxTimeHours: 0,
-  showPercent: false,
-  lockOnMax: false,
+export type UsageServerResponse = {
+  locked: boolean;
+  reviewing: number;
+  planning: number;
+  other: number;
+  total: number;
+  settings: UsageSettings;
 };
+
+export const STORAGE_PREFIX = 'percussionist-usage';
 
 export function getTodayKey(): string {
   const d = new Date();
@@ -21,22 +26,6 @@ export function getTodayKey(): string {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
   return `${STORAGE_PREFIX}-${yyyy}-${mm}-${dd}`;
-}
-
-export function readUsageSettings(): UsageSettings {
-  try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) {
-      return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<UsageSettings>) };
-    }
-  } catch {
-    // ignore
-  }
-  return { ...DEFAULTS };
-}
-
-export function writeUsageSettings(value: UsageSettings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(value));
 }
 
 export function readTodayUsage(): Record<Category, number> {
@@ -57,19 +46,70 @@ export function readTodayUsage(): Record<Category, number> {
   return { reviewing: 0, planning: 0, other: 0 };
 }
 
-export function isLocked(): boolean {
-  const settings = readUsageSettings();
-  if (settings.maxTimeHours === 0 || !settings.lockOnMax) return false;
-
-  const maxSeconds = settings.maxTimeHours * 3600;
-  const data = readTodayUsage();
-  const total = data.reviewing + data.planning + data.other;
-  return total >= maxSeconds;
-}
-
 export function formatDuration(totalSeconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
+}
+
+// ---------------------------------------------------------------------------
+// Server data cache (updated by tracker's heartbeat, read by UsageBar)
+
+let _serverCache: UsageServerResponse | null = null;
+
+export function getServerCache(): UsageServerResponse | null {
+  return _serverCache;
+}
+
+export function setServerCache(data: UsageServerResponse): void {
+  _serverCache = data;
+}
+
+// ---------------------------------------------------------------------------
+// Server API wrappers
+
+const BASE = '/api';
+
+async function fetchUsageJSON<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (res.status === 423) {
+    setGloballyLocked(true);
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? 'Locked');
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export async function reportHeartbeat(
+  usage: Record<Category, number>,
+): Promise<UsageServerResponse> {
+  return fetchUsageJSON<UsageServerResponse>('/usage/heartbeat', {
+    method: 'POST',
+    body: JSON.stringify(usage),
+  });
+}
+
+export async function fetchUsageToday(): Promise<UsageServerResponse> {
+  return fetchUsageJSON<UsageServerResponse>('/usage/today');
+}
+
+export async function fetchServerSettings(): Promise<UsageSettings> {
+  return fetchUsageJSON<UsageSettings>('/usage/settings');
+}
+
+export async function updateServerSettings(
+  partial: Partial<UsageSettings>,
+): Promise<UsageSettings> {
+  return fetchUsageJSON<UsageSettings>('/usage/settings', {
+    method: 'PUT',
+    body: JSON.stringify(partial),
+  });
 }

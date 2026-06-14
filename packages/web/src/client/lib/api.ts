@@ -23,6 +23,7 @@ import type {
   TaskDiffResponse,
   UpdateMemoryRequest,
 } from './types';
+import { setGloballyLocked } from './usage-lock-state';
 
 const BASE = '/api';
 
@@ -32,6 +33,11 @@ async function fetchJSON<T>(path: string): Promise<T> {
     clearToken();
     window.location.href = '/login';
     throw new Error('Unauthorized');
+  }
+  if (res.status === 423) {
+    setGloballyLocked(true);
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? 'Locked');
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

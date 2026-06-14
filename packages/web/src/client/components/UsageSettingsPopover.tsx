@@ -1,6 +1,10 @@
 import { Settings } from 'lucide-react';
-import { useState } from 'react';
-import { readUsageSettings, type UsageSettings, writeUsageSettings } from '../lib/usage-settings';
+import { useEffect, useState } from 'react';
+import {
+  fetchServerSettings,
+  type UsageSettings,
+  updateServerSettings,
+} from '../lib/usage-settings';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Switch } from './ui/switch';
@@ -20,12 +24,19 @@ const MAX_HOURS_OPTIONS = [
 ];
 
 export function UsageSettingsPopover() {
-  const [settings, setSettings] = useState<UsageSettings>(readUsageSettings);
+  const [settings, setSettings] = useState<UsageSettings | null>(null);
+
+  useEffect(() => {
+    fetchServerSettings()
+      .then(setSettings)
+      .catch(() => {});
+  }, []);
 
   function update(partial: Partial<UsageSettings>) {
+    if (!settings) return;
     const next = { ...settings, ...partial };
     setSettings(next);
-    writeUsageSettings(next);
+    updateServerSettings(partial).catch(() => {});
   }
 
   return (
@@ -43,41 +54,47 @@ export function UsageSettingsPopover() {
         <div className="flex flex-col gap-3">
           <p className="text-sm font-medium">Usage Settings</p>
 
-          <div className="flex items-center justify-between">
-            <label className="text-xs text-sidebar-foreground/80">Max daily time</label>
-            <Select
-              value={String(settings.maxTimeHours)}
-              onValueChange={(v) => update({ maxTimeHours: Number(v) })}
-            >
-              <SelectTrigger className="h-7 w-24 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {MAX_HOURS_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {!settings ? (
+            <p className="text-xs text-sidebar-foreground/60">Loading...</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-sidebar-foreground/80">Max daily time</label>
+                <Select
+                  value={String(settings.maxTimeHours)}
+                  onValueChange={(v) => update({ maxTimeHours: Number(v) })}
+                >
+                  <SelectTrigger className="h-7 w-24 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MAX_HOURS_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-          <div className="flex items-center justify-between">
-            <label className="text-xs text-sidebar-foreground/80">Show percentage</label>
-            <Switch
-              checked={settings.showPercent}
-              onCheckedChange={(v) => update({ showPercent: v })}
-            />
-          </div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-sidebar-foreground/80">Show percentage</label>
+                <Switch
+                  checked={settings.showPercent}
+                  onCheckedChange={(v) => update({ showPercent: v })}
+                />
+              </div>
 
-          <div className="flex items-center justify-between">
-            <label className="text-xs text-sidebar-foreground/80">Lock at 100%</label>
-            <Switch
-              checked={settings.lockOnMax}
-              onCheckedChange={(v) => update({ lockOnMax: v })}
-              disabled={settings.maxTimeHours === 0}
-            />
-          </div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-sidebar-foreground/80">Lock at 100%</label>
+                <Switch
+                  checked={settings.lockOnMax}
+                  onCheckedChange={(v) => update({ lockOnMax: v })}
+                  disabled={settings.maxTimeHours === 0}
+                />
+              </div>
+            </>
+          )}
         </div>
       </PopoverContent>
     </Popover>

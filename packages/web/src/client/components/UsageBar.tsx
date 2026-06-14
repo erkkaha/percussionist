@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react';
 import {
   type Category,
   formatDuration,
+  getServerCache,
   readTodayUsage,
-  readUsageSettings,
-  type UsageSettings,
 } from '../lib/usage-settings';
 import { UsageSettingsPopover } from './UsageSettingsPopover';
 
@@ -18,31 +17,37 @@ const SEGMENT_ORDER: Category[] = ['reviewing', 'planning', 'other'];
 
 export function UsageBar() {
   const [usage, setUsage] = useState(readTodayUsage);
-  const [settings, setSettings] = useState<UsageSettings>(readUsageSettings);
+  const [server, setServer] = useState(getServerCache);
 
   useEffect(() => {
     const interval = setInterval(() => {
       setUsage(readTodayUsage());
-      setSettings(readUsageSettings());
+      setServer(getServerCache());
     }, 5_000);
 
     return () => clearInterval(interval);
   }, []);
 
-  const total = usage.reviewing + usage.planning + usage.other;
+  // Merge local and server: take the max per category.
+  const reviewing = Math.max(usage.reviewing, server?.reviewing ?? 0);
+  const planning = Math.max(usage.planning, server?.planning ?? 0);
+  const other = Math.max(usage.other, server?.other ?? 0);
+  const total = reviewing + planning + other;
 
-  const maxSeconds = settings.maxTimeHours > 0 ? settings.maxTimeHours * 3600 : 0;
+  const settings = server?.settings;
+  const maxSeconds = settings && settings.maxTimeHours > 0 ? settings.maxTimeHours * 3600 : 0;
   const pctOfMax = maxSeconds > 0 ? (total / maxSeconds) * 100 : 0;
   const isAtMax = maxSeconds > 0 && total >= maxSeconds;
 
   let label: string;
-  if (maxSeconds > 0 && settings.showPercent) {
+  if (maxSeconds > 0 && settings?.showPercent) {
     label = `${Math.round(pctOfMax)}% of ${settings.maxTimeHours}h`;
-  } else if (maxSeconds > 0 && !settings.showPercent) {
+  } else if (maxSeconds > 0 && !settings?.showPercent) {
     label = `${formatDuration(total)} of ${settings.maxTimeHours}h`;
-  } else if (settings.showPercent) {
+  } else if (settings?.showPercent) {
     const parts = SEGMENT_ORDER.map((c) => {
-      const p = total > 0 ? Math.round((usage[c] / total) * 100) : 0;
+      const v = c === 'reviewing' ? reviewing : c === 'planning' ? planning : other;
+      const p = total > 0 ? Math.round((v / total) * 100) : 0;
       return p > 0 ? `${p}% ${c}` : null;
     }).filter(Boolean);
     label = parts.join(' · ');
@@ -63,17 +68,24 @@ export function UsageBar() {
         <div
           className={`flex-1 flex h-1.5 rounded-none overflow-hidden bg-sidebar-accent ${warningClass} ${isAtMax ? 'opacity-50' : ''}`}
         >
-          {SEGMENT_ORDER.map((cat) => {
-            const pct = total > 0 ? (usage[cat] / total) * 100 : 0;
-            if (pct <= 0) return null;
-            return (
-              <div
-                key={cat}
-                className={`h-full shrink-0 ${SEGMENT_COLORS[cat]}`}
-                style={{ width: `${pct}%` }}
-              />
-            );
-          })}
+          {(() => {
+            const cats: { cat: Category; val: number }[] = [
+              { cat: 'reviewing', val: reviewing },
+              { cat: 'planning', val: planning },
+              { cat: 'other', val: other },
+            ];
+            return cats.map(({ cat, val }) => {
+              const pct = total > 0 ? (val / total) * 100 : 0;
+              if (pct <= 0) return null;
+              return (
+                <div
+                  key={cat}
+                  className={`h-full shrink-0 ${SEGMENT_COLORS[cat]}`}
+                  style={{ width: `${pct}%` }}
+                />
+              );
+            });
+          })()}
         </div>
         <UsageSettingsPopover />
       </div>

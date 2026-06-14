@@ -104,6 +104,24 @@ export const metricSnapshots = sqliteTable(
   ],
 );
 
+export const usageDaily = sqliteTable(
+  'usage_daily',
+  {
+    date: text('date').notNull(),
+    reviewing: integer('reviewing').default(0),
+    planning: integer('planning').default(0),
+    other: integer('other').default(0),
+  },
+  (table) => [primaryKey({ columns: [table.date] })],
+);
+
+export const usageSettings = sqliteTable('usage_settings', {
+  id: integer('id').primaryKey().default(1),
+  maxTimeHours: integer('max_time_hours').default(0),
+  showPercent: integer('show_percent', { mode: 'boolean' }).default(false),
+  lockOnMax: integer('lock_on_max', { mode: 'boolean' }).default(false),
+});
+
 export const taskEvents = sqliteTable(
   'task_events',
   {
