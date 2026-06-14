@@ -2,17 +2,26 @@
 // Shows: Overview, Runs (with per-run Session/Logs), Events, Plan (PLAN tasks only).
 // Actions: Approve, Request Changes, Retry, Delete.
 
-import { useState, memo } from "react";
+import { useState, useMemo, memo } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   ExternalLink, Check, X, Trash2, Flag, User,
   Wrench, FileText, RefreshCw, MousePointerClick, ArrowRight,
   ChevronDown, ChevronRight, GitCommit as GitCommitIcon,
-  History, Sparkles,
+  History, Sparkles, AlertCircle,
 } from "lucide-react";
 import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan, moveTask, retryReviewTask } from "../../lib/api";
-import type { Task, Run, DiffCommit, DiffFinding } from "../../lib/types";
+import type { Task, Run, DiffCommit, TaskDiffFinding, DiffFindingSeverity } from "../../lib/types";
+import {
+  DIFF_FINDING_SEVERITIES,
+  SEVERITY_LABEL,
+  SEVERITY_DOT_CLASS,
+  SEVERITY_BG_CLASS,
+  countBySeverity,
+  sortFindings,
+  type DiffFindingSort,
+} from "../../lib/diff-findings";
 import { useTaskRuns } from "../../hooks/useTaskRuns";
 import { useTaskDiff } from "../../hooks/useTaskDiff";
 import StatusBadge from "../StatusBadge";
@@ -25,6 +34,14 @@ import { FileDiff } from "../FileDiff";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { Button } from "../ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
+import { Switch } from "../ui/switch";
 
 const remarkPlugins = [remarkGfm];
 
@@ -172,7 +189,7 @@ function PlanContent({ projectName, taskName }: { projectName: string; taskName:
 
 type DiffViewMode = "unified" | "commits";
 
-function CommitDiffList({ commits }: { commits: DiffCommit[] }) {
+function CommitDiffList({ commits, findings }: { commits: DiffCommit[]; findings: TaskDiffFinding[] }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const toggle = (sha: string) => {
@@ -223,6 +240,7 @@ function CommitDiffList({ commits }: { commits: DiffCommit[] }) {
                         filename={file.path}
                         path={file.path}
                         diff={file.diff}
+                        findings={findings}
                       />
                     ))}
                   </div>
@@ -243,6 +261,9 @@ function CommitDiffList({ commits }: { commits: DiffCommit[] }) {
 function DiffContent({ projectName, taskName }: { projectName: string; taskName: string }) {
   const { data, status, fetchStatus, error } = useTaskDiff(projectName, taskName, true);
   const [viewMode, setViewMode] = useState<DiffViewMode>("unified");
+  const [severityFilter, setSeverityFilter] = useState<DiffFindingSeverity | "all">("all");
+  const [sortBy, setSortBy] = useState<DiffFindingSort>("severity");
+  const [showStale, setShowStale] = useState(true);
 
   const isFirstLoad = status === "pending" && fetchStatus === "fetching";
   if (isFirstLoad) return <p className="text-xs text-text-dim p-4">Loading diff...</p>;
@@ -255,6 +276,24 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
   // Auto-switch to commits view when unified is empty but commits exist (merged scenario)
   const effectiveView = !hasFiles && hasCommits ? "commits" : viewMode;
 
+  const afterStale = useMemo(
+    () => (showStale ? (data.findings ?? []) : (data.findings ?? []).filter((f) => !f.isStale)),
+    [data.findings, showStale],
+  );
+  const severityCounts = useMemo(() => countBySeverity(afterStale), [afterStale]);
+  const findings = useMemo(
+    () =>
+      sortFindings(
+        afterStale.filter((f) => severityFilter === "all" || f.severity === severityFilter),
+        sortBy,
+      ),
+    [afterStale, severityFilter, sortBy],
+  );
+
+  const totalFindings = data.findings?.length ?? 0;
+  const hasFindings = totalFindings > 0;
+  const visibleCount = findings.length;
+
   return (
     <div className="space-y-3 px-4 py-3">
       <div className="rounded border border-border-muted bg-surface-overlay/30 px-3 py-2 text-xs text-text-dim">
@@ -264,6 +303,79 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
         {"  "}
         Default: <span className="font-mono text-text">{data.defaultRef}</span>
       </div>
+
+      {/* Findings summary panel */}
+      {hasFindings && (
+        <div className="rounded border border-border-muted bg-surface px-3 py-2 space-y-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-3.5 w-3.5 text-text-dim" />
+              <span className="text-xs font-medium text-text">
+                Findings ({visibleCount})
+              </span>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Select
+                value={severityFilter}
+                onValueChange={(v) => setSeverityFilter(v as DiffFindingSeverity | "all")}
+              >
+                <SelectTrigger className="h-7 w-auto min-w-[7rem] text-xs px-2 py-1">
+                  <SelectValue placeholder="All severities" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All severities</SelectItem>
+                  {DIFF_FINDING_SEVERITIES.map((severity) => (
+                    <SelectItem key={severity} value={severity}>
+                      {SEVERITY_LABEL[severity]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={sortBy} onValueChange={(v) => setSortBy(v as DiffFindingSort)}>
+                <SelectTrigger className="h-7 w-auto min-w-[6rem] text-xs px-2 py-1">
+                  <SelectValue placeholder="Sort" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="severity">Severity</SelectItem>
+                  <SelectItem value="score">Score</SelectItem>
+                  <SelectItem value="path">Path</SelectItem>
+                  <SelectItem value="line">Line</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <label className="flex items-center gap-1.5 text-xs text-text-dim cursor-pointer">
+                <Switch checked={showStale} onCheckedChange={setShowStale} />
+                Stale
+              </label>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {DIFF_FINDING_SEVERITIES.map((severity) => {
+              const count = severityCounts[severity];
+              if (count === 0) return null;
+              const active = severityFilter === severity;
+              return (
+                <button
+                  key={severity}
+                  onClick={() => setSeverityFilter(active ? "all" : severity)}
+                  className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border transition-colors ${
+                    active ? `border-accent ${SEVERITY_BG_CLASS[severity]}` : SEVERITY_BG_CLASS[severity]
+                  }`}
+                  title={`Filter ${SEVERITY_LABEL[severity].toLowerCase()} findings`}
+                >
+                  <span
+                    className={`inline-block rounded-full ${SEVERITY_DOT_CLASS[severity]}`}
+                    style={{ width: 5, height: 5 }}
+                  />
+                  {SEVERITY_LABEL[severity]} {count}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* View toggle */}
       {hasCommits && (
@@ -302,7 +414,13 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
           {hasFiles && (
             <div className="space-y-2">
               {data.files.map((file) => (
-                <FileDiff key={`${file.path}-${file.diff.length}`} filename={file.path} path={file.path} diff={file.diff} />
+                <FileDiff
+                  key={`${file.path}-${file.diff.length}`}
+                  filename={file.path}
+                  path={file.path}
+                  diff={file.diff}
+                  findings={findings}
+                />
               ))}
             </div>
           )}
@@ -311,7 +429,7 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
 
       {/* Commits view */}
       {effectiveView === "commits" && hasCommits && (
-        <CommitDiffList commits={data.commits!} />
+        <CommitDiffList commits={data.commits!} findings={findings} />
       )}
     </div>
   );
