@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { ClusterAgent, Project } from '@percussionist/api';
-import { AuditIssueCode, auditAgentCapabilities } from '../src/validate.js';
+import { AuditIssueCode, auditAgentCapabilities, runValidateAgents } from '../src/validate.js';
 
 function makeAgent(name: string, capabilities: unknown[]): ClusterAgent {
   return {
@@ -134,5 +134,68 @@ describe('auditAgentCapabilities', () => {
     expect(formattingFindings.some((finding) => finding.detail === 'casing')).toBeTrue();
     expect(formattingFindings.some((finding) => finding.detail === 'duplicate')).toBeTrue();
     expect(formattingFindings.some((finding) => finding.detail === 'non-string')).toBeTrue();
+  });
+});
+
+describe('runValidateAgents', () => {
+  let previousExitCode: number | undefined;
+
+  beforeEach(() => {
+    previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+  });
+
+  afterEach(() => {
+    process.exitCode = previousExitCode;
+  });
+
+  it('sets exitCode=0 on clean audit and prints summary/category headings', async () => {
+    const lines: string[] = [];
+
+    await runValidateAgents(
+      {},
+      {
+        loadData: async () => ({
+          clusterAgents: [
+            makeAgent('planner', ['task.plan.execute']),
+            makeAgent('builder', ['task.build.execute']),
+          ],
+          projects: [makeProject('demo', 'ns', ['planner', 'builder'])],
+        }),
+        log: (line) => lines.push(line),
+      },
+    );
+
+    expect(process.exitCode).toBe(0);
+    expect(lines).toContain('Summary');
+    expect(lines).toContain('Category totals');
+    expect(lines).toContain('  Invalid capability enum values: 0');
+    expect(lines).toContain('  Missing ClusterAgent references: 0');
+    expect(lines).toContain('  Missing PLAN capability coverage: 0');
+    expect(lines).toContain('  Missing BUILD capability coverage: 0');
+    expect(lines).toContain('No issues found.');
+  });
+
+  it('sets exitCode=1 when error findings exist', async () => {
+    const lines: string[] = [];
+
+    await runValidateAgents(
+      {},
+      {
+        loadData: async () => ({
+          clusterAgents: [makeAgent('planner', ['task.plan.execute'])],
+          projects: [makeProject('demo', 'ns', ['planner'])],
+        }),
+        log: (line) => lines.push(line),
+      },
+    );
+
+    expect(process.exitCode).toBe(1);
+    expect(lines).toContain('Summary');
+    expect(lines).toContain('Category totals');
+    expect(lines).toContain('  Missing BUILD capability coverage: 1');
+    expect(
+      lines.some((line) => line.startsWith('Missing BUILD capability coverage (1)')),
+    ).toBeTrue();
   });
 });

@@ -52,13 +52,71 @@ export interface ValidateAgentsOpts {
   namespace?: string;
 }
 
-export async function runValidateAgents(_opts: ValidateAgentsOpts): Promise<void> {
-  const { custom } = loadKube();
+interface ValidateAgentsDeps {
+  loadData?: () => Promise<{ clusterAgents: ClusterAgent[]; projects: Project[] }>;
+  log?: (line: string) => void;
+}
+
+const ISSUE_SECTIONS: ReadonlyArray<{
+  code: AuditIssueCode;
+  title: string;
+  description: string;
+}> = [
+  {
+    code: AuditIssueCode.AgentCapabilityInvalidEnum,
+    title: 'Invalid capability enum values',
+    description: 'Capabilities that are not valid AgentCapability enum entries.',
+  },
+  {
+    code: AuditIssueCode.AgentCapabilityFormatting,
+    title: 'Capability formatting issues',
+    description: 'Whitespace/casing/duplicate/non-string capability quality issues.',
+  },
+  {
+    code: AuditIssueCode.ProjectRosterMissingAgent,
+    title: 'Missing ClusterAgent references',
+    description: 'Project rosters that reference ClusterAgents that do not exist.',
+  },
+  {
+    code: AuditIssueCode.ProjectRosterMissingPlanCoverage,
+    title: 'Missing PLAN capability coverage',
+    description: 'Project rosters with no agent providing task.plan.execute.',
+  },
+  {
+    code: AuditIssueCode.ProjectRosterMissingBuildCoverage,
+    title: 'Missing BUILD capability coverage',
+    description: 'Project rosters with no agent providing task.build.execute.',
+  },
+  {
+    code: AuditIssueCode.AgentConventionCapabilityMismatch,
+    title: 'Name/role convention mismatches',
+    description: 'Agents matching canonical role names but missing expected capabilities.',
+  },
+  {
+    code: AuditIssueCode.AgentOrphaned,
+    title: 'Orphaned ClusterAgents',
+    description: 'ClusterAgents that are not referenced by any Project roster.',
+  },
+];
+
+export async function runValidateAgents(
+  _opts: ValidateAgentsOpts,
+  deps: ValidateAgentsDeps = {},
+): Promise<void> {
+  const log = deps.log ?? ((line: string) => console.log(line));
+  const loadData =
+    deps.loadData ??
+    (async () => {
+      const { custom } = loadKube();
+      const [clusterAgents, projects] = await Promise.all([
+        listClusterAgents(custom),
+        listAllProjects(custom),
+      ]);
+      return { clusterAgents, projects };
+    });
+
   try {
-    const [clusterAgents, projects] = await Promise.all([
-      listClusterAgents(custom),
-      listAllProjects(custom),
-    ]);
+    const { clusterAgents, projects } = await loadData();
     const report = auditAgentCapabilities(clusterAgents, projects);
 
     const byCode = new Map<AuditIssueCode, AgentCapabilityAuditFinding[]>();
@@ -68,41 +126,42 @@ export async function runValidateAgents(_opts: ValidateAgentsOpts): Promise<void
       byCode.set(finding.code, group);
     }
 
-    console.log('Agent capability audit');
-    console.log(`  ClusterAgents: ${clusterAgents.length}`);
-    console.log(`  Projects: ${projects.length}`);
-    console.log(
-      `  Findings: ${report.findings.length} (${report.errors.length} errors, ${report.warnings.length} warnings)`,
-    );
+    log('Agent capability audit report');
+    log('');
+    log('Summary');
+    log(`  ClusterAgents scanned: ${clusterAgents.length}`);
+    log(`  Projects scanned: ${projects.length}`);
+    log(`  Total findings: ${report.findings.length}`);
+    log(`  Errors: ${report.errors.length}`);
+    log(`  Warnings: ${report.warnings.length}`);
+    log('');
+    log('Category totals');
+
+    for (const section of ISSUE_SECTIONS) {
+      const count = byCode.get(section.code)?.length ?? 0;
+      log(`  ${section.title}: ${count}`);
+    }
 
     if (report.findings.length === 0) {
-      console.log('No issues found.');
+      log('');
+      log('No issues found.');
+      process.exitCode = 0;
       return;
     }
 
-    const issueOrder: AuditIssueCode[] = [
-      AuditIssueCode.AgentCapabilityInvalidEnum,
-      AuditIssueCode.AgentCapabilityFormatting,
-      AuditIssueCode.ProjectRosterMissingAgent,
-      AuditIssueCode.ProjectRosterMissingPlanCoverage,
-      AuditIssueCode.ProjectRosterMissingBuildCoverage,
-      AuditIssueCode.AgentConventionCapabilityMismatch,
-      AuditIssueCode.AgentOrphaned,
-    ];
-
-    for (const code of issueOrder) {
-      const entries = byCode.get(code);
+    for (const section of ISSUE_SECTIONS) {
+      const entries = byCode.get(section.code);
       if (!entries || entries.length === 0) continue;
-      console.log(`\n${code} (${entries.length})`);
+      log('');
+      log(`${section.title} (${entries.length})`);
+      log(`  ${section.description}`);
       for (const finding of entries) {
         const prefix = finding.severity === 'error' ? 'error' : 'warn';
-        console.log(`  - [${prefix}] ${finding.message}`);
+        log(`  - [${prefix}] ${finding.message}`);
       }
     }
 
-    if (report.errors.length > 0) {
-      process.exitCode = 1;
-    }
+    process.exitCode = report.errors.length > 0 ? 1 : 0;
   } catch (e) {
     fatal('validate agents failed', e);
   }
