@@ -66,6 +66,12 @@ function getWorkspaceInitArgs(run: Run): string {
     : String(container.args);
 }
 
+function getDispatcherEnv(run: Run): Array<{ name?: string; value?: string }> {
+  const pod = renderPod(run, []);
+  const dispatcher = pod.spec?.containers?.find((c) => c.name === 'dispatcher');
+  return (dispatcher?.env as Array<{ name?: string; value?: string }>) ?? [];
+}
+
 describe('renderPod - workspace-init script generation', () => {
   describe('remote git with worktreeReuse=true (default)', () => {
     it('should generate worktree creation with parent baseline resolution when creating new branch from parentRef', () => {
@@ -318,6 +324,58 @@ describe('renderPod - workspace-init script generation', () => {
 
       // Should have log for fallback
       expect(args).toContain('falling back to local ref');
+    });
+  });
+
+  describe('dispatcher RUN_CONTEXT env', () => {
+    it('sets RUN_CONTEXT=review-facilitator for success-review facilitation runs', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'review-task',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          boardTask: 'test-project-build-123',
+          agent: 'reviewer',
+          facilitation: {
+            targetRunName: 'worker-run-1',
+            targetTaskId: 'test-project-build-123',
+            failureReason: 'completed',
+            sessionSummary: 'summary',
+            successReview: true,
+          },
+          source: { local: true },
+        },
+      });
+
+      const env = getDispatcherEnv(run);
+      const runContext = env.find((e) => e.name === 'RUN_CONTEXT');
+      expect(runContext?.value).toBe('review-facilitator');
+    });
+
+    it('sets RUN_CONTEXT=facilitator for non-review facilitation runs', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'facilitation-task',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          boardTask: 'test-project-build-123',
+          agent: 'buildgen',
+          facilitation: {
+            targetRunName: 'worker-run-1',
+            targetTaskId: 'test-project-build-123',
+            failureReason: 'failure',
+            sessionSummary: 'summary',
+            successReview: false,
+          },
+          source: { local: true },
+        },
+      });
+
+      const env = getDispatcherEnv(run);
+      const runContext = env.find((e) => e.name === 'RUN_CONTEXT');
+      expect(runContext?.value).toBe('facilitator');
     });
   });
 });

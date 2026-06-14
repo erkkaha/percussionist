@@ -35,11 +35,18 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { DISPATCHER_MCP_PORT, normalizeReviewVerdict } from '@percussionist/api';
+import {
+  type AgentCapability,
+  DISPATCHER_MCP_PORT,
+  normalizeReviewVerdict,
+} from '@percussionist/api';
 import {
   buildTask,
   createTask,
+  getClusterAgent,
   getProject,
+  getRun,
+  getTask,
   patchRunAnnotations,
   patchTaskStatus,
   readAllSessionsFromConfigMap,
@@ -135,53 +142,53 @@ const TOOL_COMPLETE_REVIEW = {
         description: 'Optional suggestion for how to improve the work',
       },
       findings: {
-        type: "array",
+        type: 'array',
         description:
-          "Optional structured diff findings (max 25). Each finding has severity, title, comment, " +
-          "1-3 line anchors, and diff context. Invalid or overflowing findings are dropped; core verdict still writes.",
+          'Optional structured diff findings (max 25). Each finding has severity, title, comment, ' +
+          '1-3 line anchors, and diff context. Invalid or overflowing findings are dropped; core verdict still writes.',
         maxItems: 25,
         items: {
-          type: "object",
+          type: 'object',
           properties: {
-            id: { type: "string", description: "Unique finding ID" },
+            id: { type: 'string', description: 'Unique finding ID' },
             severity: {
-              type: "string",
-              enum: ["critical", "high", "medium", "low", "info"],
+              type: 'string',
+              enum: ['critical', 'high', 'medium', 'low', 'info'],
             },
-            score: { type: "number", minimum: 0, maximum: 100 },
-            title: { type: "string", maxLength: 160 },
-            comment: { type: "string", maxLength: 2000 },
-            category: { type: "string", maxLength: 64 },
+            score: { type: 'number', minimum: 0, maximum: 100 },
+            title: { type: 'string', maxLength: 160 },
+            comment: { type: 'string', maxLength: 2000 },
+            category: { type: 'string', maxLength: 64 },
             anchors: {
-              type: "array",
+              type: 'array',
               minItems: 1,
               maxItems: 3,
               items: {
-                type: "object",
+                type: 'object',
                 properties: {
-                  path: { type: "string" },
-                  side: { type: "string", enum: ["old", "new"] },
-                  line: { type: "integer", minimum: 1 },
-                  endLine: { type: "integer", minimum: 1 },
-                  hunkHeader: { type: "string", maxLength: 256 },
+                  path: { type: 'string' },
+                  side: { type: 'string', enum: ['old', 'new'] },
+                  line: { type: 'integer', minimum: 1 },
+                  endLine: { type: 'integer', minimum: 1 },
+                  hunkHeader: { type: 'string', maxLength: 256 },
                 },
-                required: ["path", "side", "line"],
+                required: ['path', 'side', 'line'],
               },
             },
             context: {
-              type: "object",
+              type: 'object',
               properties: {
-                baseSha: { type: "string" },
-                headSha: { type: "string" },
-                forkSha: { type: "string" },
-                diffFingerprint: { type: "string" },
+                baseSha: { type: 'string' },
+                headSha: { type: 'string' },
+                forkSha: { type: 'string' },
+                diffFingerprint: { type: 'string' },
               },
-              required: ["baseSha", "headSha", "forkSha", "diffFingerprint"],
+              required: ['baseSha', 'headSha', 'forkSha', 'diffFingerprint'],
             },
-            createdAt: { type: "string" },
-            authorRunName: { type: "string" },
+            createdAt: { type: 'string' },
+            authorRunName: { type: 'string' },
           },
-          required: ["id", "severity", "title", "comment", "anchors", "context", "createdAt"],
+          required: ['id', 'severity', 'title', 'comment', 'anchors', 'context', 'createdAt'],
         },
       },
     },
@@ -706,6 +713,123 @@ type RunStatus = {
   tokensOut?: number;
 };
 
+type CompletionToolName = 'complete_run' | 'complete_plan' | 'complete_review';
+type RunCompletionContext = 'plan-worker' | 'build-worker' | 'review-facilitator';
+
+type CompletionAuthorization = {
+  context: RunCompletionContext;
+  allowedTool: CompletionToolName;
+  requiredCapability: AgentCapability;
+  allowed: boolean;
+  denialReason?: string;
+};
+
+const COMPLETION_TOOL_NAMES = new Set<CompletionToolName>([
+  'complete_run',
+  'complete_plan',
+  'complete_review',
+]);
+
+function completionPolicyForContext(context: RunCompletionContext): {
+  allowedTool: CompletionToolName;
+  requiredCapability: AgentCapability;
+} {
+  if (context === 'plan-worker') {
+    return { allowedTool: 'complete_plan', requiredCapability: 'run.complete.plan' };
+  }
+  if (context === 'review-facilitator') {
+    return { allowedTool: 'complete_review', requiredCapability: 'run.complete.review' };
+  }
+  return { allowedTool: 'complete_run', requiredCapability: 'run.complete.build' };
+}
+
+function parseContextHint(value: string | undefined): RunCompletionContext | undefined {
+  switch (value) {
+    case 'plan-worker':
+    case 'build-worker':
+    case 'review-facilitator':
+      return value;
+    // Operator hint for non-review facilitation runs (failure/buildgen).
+    case 'facilitator':
+      return 'build-worker';
+    default:
+      return undefined;
+  }
+}
+
+async function inferRunCompletionContext(): Promise<RunCompletionContext> {
+  const explicit = parseContextHint(process.env.RUN_CONTEXT);
+  if (explicit) return explicit;
+
+  const runName = process.env.RUN_NAME ?? '';
+  const boardTaskName = process.env.RUN_BOARD_TASK ?? '';
+  const namespace = process.env.RUN_NAMESPACE ?? 'percussionist';
+
+  try {
+    if (runName) {
+      const run = await getRun(runName, namespace);
+      const facilitation = run.spec?.facilitation;
+      if (facilitation) {
+        return facilitation.successReview === true ? 'review-facilitator' : 'build-worker';
+      }
+    }
+  } catch {
+    // Fallback to task-type inference.
+  }
+
+  if (boardTaskName) {
+    try {
+      const task = await getTask(boardTaskName, namespace);
+      if (task.spec.type === 'PLAN') {
+        return 'plan-worker';
+      }
+    } catch {
+      // Fall through to build-worker default.
+    }
+  }
+
+  return 'build-worker';
+}
+
+async function resolveCompletionAuthorization(): Promise<CompletionAuthorization> {
+  const context = await inferRunCompletionContext();
+  const { allowedTool, requiredCapability } = completionPolicyForContext(context);
+
+  const agentName = process.env.RUN_AGENT ?? '';
+  if (!agentName) {
+    return {
+      context,
+      allowedTool,
+      requiredCapability,
+      allowed: false,
+      denialReason: `RUN_AGENT not set (requires capability "${requiredCapability}")`,
+    };
+  }
+
+  try {
+    const clusterAgent = await getClusterAgent(agentName);
+    const capabilities = clusterAgent.spec.capabilities ?? [];
+    if (!capabilities.includes(requiredCapability)) {
+      return {
+        context,
+        allowedTool,
+        requiredCapability,
+        allowed: false,
+        denialReason: `agent "${agentName}" missing required capability "${requiredCapability}" for context "${context}"`,
+      };
+    }
+    return { context, allowedTool, requiredCapability, allowed: true };
+  } catch (e) {
+    return {
+      context,
+      allowedTool,
+      requiredCapability,
+      allowed: false,
+      denialReason: `failed to resolve cluster agent "${agentName}": ${(e as Error).message}`,
+    };
+  }
+}
+
 async function handleCreateTask(
   id: JsonRpcRequest['id'],
   args: Record<string, unknown>,
@@ -781,6 +905,7 @@ async function handleMcp(
   onCompleteRun: (summary: string) => void,
   onCompletePlan: (summary: string) => void,
   getStatus: () => RunStatus | null,
+  getCompletionAuth: () => Promise<CompletionAuthorization>,
 ): Promise<JsonRpcResponse> {
   switch (req.method) {
     case 'initialize':
@@ -795,13 +920,21 @@ async function handleMcp(
       // with a no-op to keep some clients happy.
       return ok(req.id, {});
 
-    case 'tools/list':
+    case 'tools/list': {
+      const completionAuth = await getCompletionAuth();
+      const completionTools = completionAuth.allowed
+        ? [
+            completionAuth.allowedTool === 'complete_run'
+              ? TOOL_COMPLETE_RUN
+              : completionAuth.allowedTool === 'complete_plan'
+                ? TOOL_COMPLETE_PLAN
+                : TOOL_COMPLETE_REVIEW,
+          ]
+        : [];
       return ok(req.id, {
         tools: [
           TOOL_FAIL_RUN,
-          TOOL_COMPLETE_RUN,
-          TOOL_COMPLETE_PLAN,
-          TOOL_COMPLETE_REVIEW,
+          ...completionTools,
           TOOL_GET_STATUS,
           TOOL_CREATE_TASK,
           TOOL_SEARCH_CODE,
@@ -810,9 +943,27 @@ async function handleMcp(
           TOOL_READ_SESSION,
         ],
       });
+    }
 
     case 'tools/call': {
       const toolName = (req.params?.name as string | undefined) ?? '';
+      if (COMPLETION_TOOL_NAMES.has(toolName as CompletionToolName)) {
+        const completionAuth = await getCompletionAuth();
+        if (!completionAuth.allowed) {
+          return rpcError(
+            req.id,
+            -32602,
+            `completion tool "${toolName}" is not allowed: ${completionAuth.denialReason ?? 'missing capability'}`,
+          );
+        }
+        if (toolName !== completionAuth.allowedTool) {
+          return rpcError(
+            req.id,
+            -32602,
+            `completion tool "${toolName}" is not allowed in context "${completionAuth.context}"; allowed tool is "${completionAuth.allowedTool}"`,
+          );
+        }
+      }
 
       if (toolName === 'fail_run') {
         const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
@@ -889,7 +1040,7 @@ async function handleMcp(
         });
 
         if (!verdict) {
-          return rpcError(req.id, -32602, "invalid verdict payload");
+          return rpcError(req.id, -32602, 'invalid verdict payload');
         }
 
         // Best-effort annotation write — never block completion
@@ -982,6 +1133,12 @@ export function startMcpServer(
   getStatus: () => RunStatus | null,
 ): Promise<McpServer> {
   return new Promise((resolve, reject) => {
+    let completionAuthPromise: Promise<CompletionAuthorization> | undefined;
+    const getCompletionAuth = (): Promise<CompletionAuthorization> => {
+      completionAuthPromise ??= resolveCompletionAuthorization();
+      return completionAuthPromise;
+    };
+
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       if (req.method !== 'POST' || req.url !== '/mcp') {
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -1003,14 +1160,14 @@ export function startMcpServer(
 
           // Notifications have no id — return 202 with empty body.
           if (rpc.id === undefined || rpc.id === null) {
-            handleMcp(rpc, onFailRun, onCompleteRun, onCompletePlan, getStatus); // side-effects only (e.g. notifications/initialized)
+            handleMcp(rpc, onFailRun, onCompleteRun, onCompletePlan, getStatus, getCompletionAuth); // side-effects only (e.g. notifications/initialized)
             res.writeHead(202);
             res.end();
             return;
           }
 
           const response = await Promise.resolve(
-            handleMcp(rpc, onFailRun, onCompleteRun, onCompletePlan, getStatus),
+            handleMcp(rpc, onFailRun, onCompleteRun, onCompletePlan, getStatus, getCompletionAuth),
           );
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(response));
