@@ -39,6 +39,7 @@ import {
 } from '@percussionist/kube';
 import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../branch-resolver.js';
 import { resolveFlow } from '../reconciler/flow.js';
+import { inspectTaskFlow, type ObservedRuns } from '../reconciler/flow-introspection.js';
 import { isValidTransition, TRANSITION_TABLE } from '../reconciler/transitions.js';
 import { getPauseStatus, setPaused } from '../reconciler-bridge.js';
 import { buildWorkerRun, workerRunName } from '../worker-builder.js';
@@ -449,6 +450,31 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {},
+    },
+  },
+  {
+    name: 'inspect_task_flow',
+    description:
+      'Explain the current lifecycle state of a task, including valid phase transitions, ' +
+      'resolved project flow, worker status context, and the expected next action. ' +
+      'Use this before calling set_task_state or other lifecycle-changing tools when unsure ' +
+      'what a phase means or where the task will go next.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Project name' },
+        task: { type: 'string', description: "Task CR name (e.g. 'BUILD-4')" },
+        namespace: {
+          type: 'string',
+          description: 'Namespace (optional, defaults to percussionist)',
+        },
+        verbose: {
+          type: 'boolean',
+          description:
+            'Include observed run details (worker, review, merge, buildgen) in the response (default: false)',
+        },
+      },
+      required: ['project', 'task'],
     },
   },
   {
@@ -1723,6 +1749,41 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       };
     }
 
+    case 'inspect_task_flow': {
+      const projectName = String(args.project ?? '');
+      const taskName = String(args.task ?? '');
+      const resourceNs = String(args.namespace ?? ns);
+      const verbose = args.verbose === true;
+
+      if (!projectName) throw new Error('project is required');
+      if (!taskName) throw new Error('task is required');
+
+      const project = await getProject(projectName, resourceNs);
+      const task = await getTask(taskName, resourceNs);
+      const projectTasks = await listProjectTasks(projectName, resourceNs);
+
+      let observedRuns: ObservedRuns | undefined;
+      if (verbose) {
+        const worker = task.status?.worker;
+        const maybeRun = async (name: string | undefined) =>
+          name ? getRun(name, resourceNs).catch(() => undefined) : undefined;
+        const [workerRun, reviewRun, mergeRun, buildgenRun] = await Promise.all([
+          maybeRun(worker?.runName),
+          maybeRun(worker?.reviewRunName),
+          maybeRun(worker?.mergeRunName),
+          maybeRun(worker?.buildTasksFacilitatorRun),
+        ]);
+        observedRuns = {
+          worker: workerRun,
+          review: reviewRun,
+          merge: mergeRun,
+          buildgen: buildgenRun,
+        };
+      }
+
+      return inspectTaskFlow(task, project, projectTasks, observedRuns);
+    }
+
     case 'exec_in_workspace': {
       const projectName = String(args.project ?? '');
       const command = String(args.command ?? '');
@@ -2013,7 +2074,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
         if (depName === 'percussionist-operator') {
           const dispatcherNewImage = `${registryPrefix}/dispatcher:${targetTag}`;
-          containers[0]!.env = [{ name: 'DISPATCHER_IMAGE', value: dispatcherNewImage }];
+          const memoryNewImage = `${registryPrefix}/memory:${targetTag}`;
+          containers[0]!.env = [
+            { name: 'DISPATCHER_IMAGE', value: dispatcherNewImage },
+            { name: 'MEMORY_SERVICE_IMAGE', value: memoryNewImage },
+          ];
         }
 
         const patchBody = {

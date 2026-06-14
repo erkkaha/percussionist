@@ -408,6 +408,149 @@ ${priorityLine}\
 }
 
 /**
+ * Deploy a minimal web pod into the e2e namespace so tests can exercise the
+ * web diff/route endpoints against resources in that namespace.
+ *
+ * Uses an emptyDir for the SQLite database instead of the production PVC, and
+ * disables auth so tests can call endpoints without a token.
+ */
+export async function applyWebDeployment(ns: string): Promise<void> {
+  const image = process.env['E2E_WEB_IMAGE'] ?? 'ghcr.io/erkkaha/percussionist/web:latest';
+  console.log(`==> Deploy web watcher into ${ns} (${image})`);
+  await kubectlApply(`\
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: percussionist-web
+  namespace: ${ns}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: percussionist-web
+  namespace: ${ns}
+rules:
+  - apiGroups: ["percussionist.dev"]
+    resources: ["runs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: ["percussionist.dev"]
+    resources: ["projects"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["percussionist.dev"]
+    resources: ["projects/status"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["percussionist.dev"]
+    resources: ["tasks"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["percussionist.dev"]
+    resources: ["tasks/status"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: percussionist-web
+  namespace: ${ns}
+subjects:
+  - kind: ServiceAccount
+    name: percussionist-web
+    namespace: ${ns}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: percussionist-web
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: percussionist-web
+  namespace: ${ns}
+spec:
+  selector:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: web
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: percussionist-web
+  namespace: ${ns}
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: percussionist
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: percussionist
+        app.kubernetes.io/component: web
+    spec:
+      serviceAccountName: percussionist-web
+      containers:
+        - name: web
+          image: ${image}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PERCUSSIONIST_NAMESPACE
+              value: "${ns}"
+            - name: PORT
+              value: "8080"
+            - name: DATA_DIR
+              value: /app/data
+            - name: RETENTION_DAYS
+              value: "30"
+            - name: AUTH_DISABLED
+              value: "1"
+            - name: NODE_EXTRA_CA_CERTS
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          volumeMounts:
+            - name: web-db
+              mountPath: /app/data
+      volumes:
+        - name: web-db
+          emptyDir: {}
+`);
+  console.log(`    Web watcher deployed into ${ns}`);
+}
+
+/**
  * Teardown: delete the e2e namespace and restore PERCUSSIONIST_NAMESPACE to
  * the default operator namespace on both deployments.
  */
