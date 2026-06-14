@@ -22,6 +22,7 @@ import {
   fetchSessionMessages,
   getClusterAgent,
   getClusterSettings,
+  listClusterAgents,
   readPlanFromConfigMap,
   readPodLog,
 } from '@percussionist/kube';
@@ -37,17 +38,21 @@ const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
 export function resolveSummarySource(
   sessionSummary: string,
   storedSummary: string | undefined,
-): { source: "arg" | "configmap" | "none"; summary: string } {
+): { source: 'arg' | 'configmap' | 'none'; summary: string } {
   if (sessionSummary) {
-    console.log(`[facilitator] buildBuildTaskGeneratorRun: using explicit session summary (${sessionSummary.length} chars)`);
-    return { source: "arg", summary: sessionSummary };
+    console.log(
+      `[facilitator] buildBuildTaskGeneratorRun: using explicit session summary (${sessionSummary.length} chars)`,
+    );
+    return { source: 'arg', summary: sessionSummary };
   }
   if (storedSummary) {
-    console.log(`[facilitator] buildBuildTaskGeneratorRun: using stored ConfigMap summary (${storedSummary.length} chars)`);
-    return { source: "configmap", summary: storedSummary };
+    console.log(
+      `[facilitator] buildBuildTaskGeneratorRun: using stored ConfigMap summary (${storedSummary.length} chars)`,
+    );
+    return { source: 'configmap', summary: storedSummary };
   }
-  console.log("[facilitator] buildBuildTaskGeneratorRun: no session summary available");
-  return { source: "none", summary: "" };
+  console.log('[facilitator] buildBuildTaskGeneratorRun: no session summary available');
+  return { source: 'none', summary: '' };
 }
 
 // Read a stored session summary from the run's session ConfigMap, if one exists.
@@ -68,6 +73,23 @@ async function readStoredSessionSummary(runName: string): Promise<string | undef
     // ConfigMap not found — summary not available yet.
   }
   return undefined;
+}
+
+async function resolveEligibleBuildAgents(
+  project: Project,
+  facilitatorAgentName: string,
+): Promise<string[]> {
+  const roster = (project.spec.agents ?? []).map((a) => a.name);
+  if (roster.length === 0) return [];
+
+  const clusterAgents = await listClusterAgents().catch(() => []);
+  const eligibleFromLive = new Set(
+    clusterAgents
+      .filter((agent) => (agent.spec.capabilities ?? []).includes('task.build.execute'))
+      .map((agent) => agent.metadata.name),
+  );
+
+  return roster.filter((name) => name !== facilitatorAgentName && eligibleFromLive.has(name));
 }
 
 // Build the facilitator Run spec for a FAILED worker run.
@@ -346,9 +368,7 @@ export async function buildBuildTaskGeneratorRun(
     successReview: false,
   };
 
-  const availableAgents = (project.spec.agents ?? [])
-    .map((a) => a.name)
-    .filter((n) => n !== facilitatorAgentName);
+  const eligibleBuildAgents = await resolveEligibleBuildAgents(project, facilitatorAgentName);
 
   const promptLines = [
     `You are a facilitator agent that breaks down approved PLAN tasks into concrete BUILD tasks.`,
@@ -370,10 +390,10 @@ export async function buildBuildTaskGeneratorRun(
     `workspace files. Do NOT explore the codebase. Do NOT run shell commands.`,
     `Do NOT write or edit any files.`,
     '',
-    ...(availableAgents.length > 0
+    ...(eligibleBuildAgents.length > 0
       ? [
-          `AVAILABLE AGENTS: ${availableAgents.join(', ')}`,
-          `For each BUILD task, specify the agent via the percussionist_dispatcher_create_task "agent" parameter.`,
+          `ELIGIBLE BUILD AGENTS (task.build.execute): ${eligibleBuildAgents.join(', ')}`,
+          `For each BUILD task, specify the agent via the percussionist_dispatcher_create_task "agent" parameter from ELIGIBLE BUILD AGENTS only.`,
           `If not specified, the "${defaultBuildAgent}" agent will be used.`,
           '',
         ]
@@ -394,13 +414,14 @@ export async function buildBuildTaskGeneratorRun(
     `2. Call percussionist_dispatcher_create_task for each task IN ORDER:`,
     `   - title (required): short actionable title`,
     `   - description: detailed implementation context including the relevant PLAN slice`,
-    `   - agent (required): agent name from AVAILABLE AGENTS list`,
+    `   - agent (required): agent name from ELIGIBLE BUILD AGENTS list`,
     `   - priority: "high", "medium", or "low" (default: "medium")`,
     `   - predecessorRef: the taskName returned by a previous percussionist_dispatcher_create_task call if this task depends on it`,
     `3. Each percussionist_dispatcher_create_task returns { taskName, ... }. Use the returned taskName as predecessorRef for dependent tasks.`,
     `4. After ALL tasks are created, call percussionist_dispatcher_complete_run with a summary of what was created.`,
     '',
     `REQUIREMENTS:`,
+    `- BUILD tasks MUST be assigned only to agents that have capability task.build.execute (use only ELIGIBLE BUILD AGENTS listed above)`,
     `- PLAN ARTIFACT CONTENT (if provided above) is the source of truth for task decomposition and ordering; session summaries may be stale or incomplete`,
     `- If the plan artifact defines an ordered/phased BUILD breakdown (for example BUILD A/B/C/D), preserve that order when creating tasks`,
     `- For ordered/phased BUILD work, set predecessorRef to enforce the sequence (each dependent task points to the prior taskName returned by create_task)`,

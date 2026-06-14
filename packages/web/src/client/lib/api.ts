@@ -3,6 +3,7 @@
 import type { ClusterAgent, ClusterSettings } from '@percussionist/api';
 import { authHeaders, clearToken } from './auth';
 import type {
+  AgentCapability,
   BoardStatus,
   CreateAgentRequest,
   CreateMemoryRequest,
@@ -200,8 +201,17 @@ export async function updateProject(name: string, req: CreateProjectRequest): Pr
 // ---------------------------------------------------------------------------
 // Agents
 
-export async function fetchAgents(): Promise<{ name: string; content: string }[]> {
-  const data = await fetchJSON<{ agents: { name: string; content: string }[] }>('/agents');
+export async function fetchAgents(): Promise<
+  {
+    name: string;
+    content: string;
+    model?: string;
+    capabilities?: AgentCapability[];
+  }[]
+> {
+  const data = await fetchJSON<{
+    agents: { name: string; content: string; model?: string; capabilities?: AgentCapability[] }[];
+  }>('/agents');
   return data.agents;
 }
 

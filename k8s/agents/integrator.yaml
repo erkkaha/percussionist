@@ -3,6 +3,9 @@ kind: ClusterAgent
 metadata:
   name: integrator
 spec:
+  capabilities:
+    - task.merge.execute
+    - run.complete.build
   content: |
     ---
     name: integrator

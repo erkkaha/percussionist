@@ -3,6 +3,9 @@ kind: ClusterAgent
 metadata:
   name: planner
 spec:
+  capabilities:
+    - task.plan.execute
+    - run.complete.plan
   content: |
     ---
     name: planner

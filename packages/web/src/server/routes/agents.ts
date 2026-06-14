@@ -21,6 +21,7 @@ agents.get('/', auth(), async (c) => {
         name: a.metadata.name ?? '',
         content: a.spec.content,
         model: a.spec.model,
+        capabilities: a.spec.capabilities,
       })),
     });
   } catch (e: unknown) {
@@ -42,6 +43,7 @@ agents.get('/events', auth(), async (c) => {
           name: a.metadata.name,
           content: a.spec.content,
           model: a.spec.model,
+          capabilities: a.spec.capabilities,
         })),
       );
     },
