@@ -1,230 +1,225 @@
-# Plan: Gate completion tools and agents using explicit capabilities
+# Plan: Gate completion tools and agents to prevent wrong-tool usage
 
 **Task:** percussionist-dev-plan-3a0500  
 **Project:** percussionist-dev
 
 ## Context
 
-1. **Dispatcher exposes all completion tools to every run today**
-   - `packages/dispatcher/src/mcp-server.ts`
-   - `tools/list` always returns `complete_run`, `complete_plan`, and `complete_review`.
-   - `tools/call` accepts any of them regardless of run purpose.
-   - `complete_review` currently writes the verdict and then calls `onCompleteRun(...)`, so a non-review worker can finish through review semantics.
+1. **Completion tools are globally exposed in dispatcher run MCP today**
+   - File: `packages/dispatcher/src/mcp-server.ts`
+   - `tools/list` currently always returns `complete_run`, `complete_plan`, and `complete_review` together.
+   - `tools/call` currently allows all three in any run context.
+   - `complete_review` writes verdict annotations and then calls `onCompleteRun(...)`, which means a BUILD run can be “completed” through review semantics.
 
-2. **Task/agent compatibility is only “agent must exist in roster”**
-   - Manager MCP `create_task`: `packages/manager-controller/src/agent/tools.ts`
-   - Dispatcher MCP `create_task`: `packages/dispatcher/src/mcp-server.ts`
-   - Web board task creation route: `packages/web/src/server/routes/board.ts`
-   - None validates whether the chosen agent is actually capable of PLAN or BUILD execution.
+2. **Agent assignment validation currently checks roster membership only**
+   - Manager MCP create-task path: `packages/manager-controller/src/agent/tools.ts` (`create_task`)
+   - Dispatcher MCP create-task path: `packages/dispatcher/src/mcp-server.ts` (`handleCreateTask`)
+   - Web board task create path: `packages/web/src/server/routes/board.ts`
+   - None of these enforce task-type compatibility (PLAN vs BUILD) for selected agent.
 
-3. **Retry / override paths can reassign incompatible agents**
-   - Manager MCP `create_run` and `force_retry` accept `agent` overrides in `packages/manager-controller/src/agent/tools.ts`.
-   - No capability check is applied to overrides.
+3. **Run-level override paths can perpetuate bad agent choice**
+   - `create_run` / `force_retry` in `packages/manager-controller/src/agent/tools.ts` accept agent overrides.
+   - No task-type compatibility checks are applied to override agent.
 
-4. **Agent model has no capability metadata yet**
-   - `ClusterAgentSpecSchema` in `packages/api/src/index.ts` currently has only `content` and optional `model`.
-   - Agent CRUD routes (`packages/web/src/server/routes/agents.ts`) and UI (`packages/web/src/client/components/AgentForm.tsx`, `AgentsPage.tsx`) do not support capability editing/display.
+4. **No explicit agent capabilities model exists yet**
+   - `ClusterAgentSpecSchema` in `packages/api/src/index.ts` has `content` and optional `model`, but no capability metadata.
+   - Built-in agents under `k8s/agents/*.yaml` encode behavior in prompt prose only.
 
-5. **Buildgen has soft guidance, not hard compatibility rules**
-   - Static prompt: `k8s/agents/buildgen.yaml`
-   - Dynamic prompt builder: `packages/manager-controller/src/facilitator.ts` (`buildBuildTaskGeneratorRun`)
-   - Buildgen can select any roster agent, including reviewer-like agents, because there is no capability filter.
+5. **Buildgen prompt guidance is advisory, not enforceable**
+   - Static: `k8s/agents/buildgen.yaml`
+   - Dynamic: `packages/manager-controller/src/facilitator.ts` (`buildBuildTaskGeneratorRun`)
+   - Current prompt says “Use builder for most tasks,” but still permits choosing reviewer/planner-style agents for BUILD tasks.
 
-6. **Incident fit**
-   - BUILD task assigned to `reviewer` produced `complete_review` verdicts repeatedly instead of implementation completion.
-   - Because compatibility and tool exposure were ungated, retries repeated the same wrong behavior.
+6. **Observed incident aligns exactly with these gaps**
+   - A BUILD task assigned to `reviewer` repeatedly called `complete_review`, producing verdict loops instead of implementation.
+   - Retries reused the same incompatible agent, so the loop persisted.
 
 ## Scope boundaries
 
 In scope:
-- Add explicit agent capabilities (not name-based role matching).
-- Enforce capability-based task/agent compatibility in task creation and run override paths.
-- Gate completion tools by run context and/or agent capabilities so wrong completion tools are unavailable and rejected.
-- Expose and edit capabilities in the web UI.
-- Include buildgen and failure-analyst in the capability model.
+- Add explicit agent capabilities and enforce them (no legacy permissive fallback behavior).
+- Enforce agent↔task compatibility for task creation and run override entry points.
+- Gate completion tools by run context + agent capability (advertising + execution guard).
+- Harden buildgen so BUILD tasks are only assigned to implementation-capable agents.
+- Cover failure-analyst and buildgen in the same capability model.
 
 Out of scope:
-- New task lifecycle phases or major flow redesign.
-- Introducing new completion tools (e.g., `complete_merge`) in this change.
+- Introducing new completion tools (for example `complete_merge`).
+- Redesigning task lifecycle phases.
 
 ## Approach
 
-### 1) Add explicit agent capability schema
+### A. Introduce explicit agent capability schema (fail-closed)
 
-Introduce a capability enum in `@percussionist/api` (single source of truth), stored on `ClusterAgent.spec.capabilities`.
+Add an enum and list field to `ClusterAgent.spec` in `packages/api/src/index.ts`, for example:
+- `task.plan.execute`
+- `task.build.execute`
+- `task.build.generate`
+- `task.review.evaluate`
+- `task.failure.analyze`
+- `task.merge.execute`
+- `run.complete.plan`
+- `run.complete.build`
+- `run.complete.review`
 
-Proposed capability set (minimum to solve this problem):
-- `task.plan.execute` — may be assigned to PLAN tasks.
-- `task.build.execute` — may be assigned to BUILD tasks.
-- `run.complete.plan` — may call `complete_plan`.
-- `run.complete.build` — may call `complete_run`.
-- `run.complete.review` — may call `complete_review`.
-- `task.build.generate` — may generate BUILD tasks from PLAN context (buildgen).
-- `task.failure.analyze` — may run failure facilitation.
-- `task.review.evaluate` — may run success review facilitation.
-- `task.merge.execute` — may run merge/integration runs.
+Policy: **missing capability means denied**. No compatibility shim, no allow-all legacy mode.
 
-Notes:
-- This avoids name-based special-casing (`reviewer`, `builder`, etc.).
-- Keep capabilities additive/explicit; validation should be capability-driven only.
+### B. Enforce compatibility at all task/run creation entry points
 
-### 2) Capability-based compatibility checks at task and run entry points
+Use one shared validator used by:
+- manager MCP `create_task`
+- dispatcher MCP `create_task`
+- web board `POST /api/projects/:project/board/tasks`
+- manager MCP `create_run` / `force_retry` when override agent is supplied
 
-Create a shared compatibility helper used by:
-- Manager MCP `create_task`
-- Dispatcher MCP `create_task`
-- Web `POST /api/projects/:project/board/tasks`
-- Manager MCP `create_run` / `force_retry` when `agent` override is provided
+Rules:
+- PLAN tasks require `task.plan.execute`.
+- BUILD tasks require `task.build.execute`.
+- buildgen-created BUILD tasks are not exempt.
 
-Validation rule examples:
-- PLAN task assignment requires `task.plan.execute`.
-- BUILD task assignment requires `task.build.execute`.
-- Buildgen-created BUILD tasks must still pass the same check.
+### C. Gate completion tools in dispatcher by run context and capability
 
-To avoid repeated cluster lookups and drift, helper should resolve capabilities from authoritative agent specs (ClusterAgent CRs; optionally allow project roster override if later added).
+Apply gating in both phases:
+1. `tools/list`: only include completion tool(s) valid for this run.
+2. `tools/call`: reject disallowed completion calls with deterministic `-32602` error.
 
-### 3) Completion-tool gating in dispatcher (list + call)
+Run context source:
+- infer from `RUN_BOARD_TASK`, task type, and `Run.spec.facilitation.successReview`
+- add explicit context env from operator pod-builder if needed for clarity (`RUN_CONTEXT`)
 
-Gating should be done in both places:
-- `tools/list`: only advertise completion tools allowed for the run context.
-- `tools/call`: hard reject disallowed completion tools (`-32602`) even if client attempts direct call.
+Required mapping:
+- PLAN worker run: `complete_plan` only, requires `run.complete.plan`
+- BUILD/merge/buildgen/failure runs: `complete_run` only, requires `run.complete.build`
+- review facilitator run: `complete_review` only, requires `run.complete.review`
 
-Context/capability mapping:
-- PLAN worker run: require/expose `run.complete.plan` (`complete_plan` only).
-- BUILD/merge/buildgen/failure runs: require/expose `run.complete.build` (`complete_run` only).
-- Review facilitator runs: require/expose `run.complete.review` (`complete_review` only).
+### D. Buildgen and facilitator hardening
 
-Source of truth for gating:
-- Prefer explicit run context derived from `Run.spec.facilitation` + task type (already available in run metadata/env).
-- Optionally combine with agent capabilities as defense-in-depth (context AND capability must allow tool).
+- Update buildgen static prompt (`k8s/agents/buildgen.yaml`) to hard rule: BUILD tasks must use agents with `task.build.execute`.
+- Update dynamic buildgen prompt assembly (`packages/manager-controller/src/facilitator.ts`) to provide **eligible build agents only** (capability-filtered list, not raw roster).
 
-### 4) Buildgen guardrails become capability-aware
+### E. Update built-in ClusterAgent manifests to explicit capabilities
 
-- Update buildgen prompts (static and dynamic) to instruct selecting only agents with `task.build.execute` capability.
-- In manager-side buildgen prompt assembly, provide a filtered “eligible build agents” list (capability-based) instead of raw roster names.
+Patch agent manifests in `k8s/agents/` so defaults are valid under fail-closed enforcement:
+- `planner`: `task.plan.execute`, `run.complete.plan`
+- `builder`: `task.build.execute`, `run.complete.build`
+- `reviewer`: `task.review.evaluate`, `run.complete.review`
+- `failure-analyst`: `task.failure.analyze`, `run.complete.build`
+- `buildgen`: `task.build.generate`, `run.complete.build`
+- `integrator`: `task.merge.execute`, `run.complete.build`
 
-### 5) UI support for capabilities
-
-Allow editing capabilities in agent management UI:
-- Server routes: `packages/web/src/server/routes/agents.ts`
-- Client API/types: `packages/web/src/client/lib/api.ts`, `packages/web/src/client/lib/types.ts`
-- UI: `packages/web/src/client/components/AgentForm.tsx`, `AgentsPage.tsx`
-
-Expected UX:
-- Agent form includes capability multi-select/checklist.
-- Agent list shows capability badges/tags.
-- Validation errors surface when required capabilities for common workflows are missing.
+This is required so first deployment of strict checks does not break default flows.
 
 ## Tasks
 
-1. **Define capability schema in API package**
-   - Add capability enum/type and `capabilities` field to `ClusterAgentSpecSchema` in `packages/api/src/index.ts`.
-   - Decide default behavior for missing capabilities (see risks) and encode explicitly.
+1. **API: add capability primitives and schema fields**
+   - File: `packages/api/src/index.ts`
+   - Add capability enum/type and `spec.capabilities` to `ClusterAgentSpecSchema`.
+   - Keep schema strict: no implied defaults for missing capability entries.
 
-2. **Add shared capability resolution + compatibility helper**
-   - Implement reusable validation helper in manager-controller (or shared package if needed) that:
-     - loads agent capabilities,
-     - verifies task assignment compatibility by task type,
-     - returns deterministic error text.
+2. **Manager: implement shared capability resolution + validation helper**
+   - New helper under `packages/manager-controller/src/` (agent/reconciler shared location).
+   - Inputs: project, task type, selected agent.
+   - Output: pass/fail with deterministic message.
 
-3. **Enforce compatibility in manager MCP `create_task`**
+3. **Manager MCP create_task: enforce task-type capability checks**
    - File: `packages/manager-controller/src/agent/tools.ts`
-   - After roster check, reject PLAN/BUILD task creation when chosen agent lacks required execution capability.
+   - Validate after roster check, before `buildTask/createTask`.
 
-4. **Enforce compatibility in dispatcher MCP `create_task`**
+4. **Manager MCP create_run + force_retry: enforce override compatibility**
+   - File: `packages/manager-controller/src/agent/tools.ts`
+   - When agent override exists, validate it for the current task type before creating run.
+
+5. **Dispatcher MCP create_task: enforce BUILD capability checks**
    - File: `packages/dispatcher/src/mcp-server.ts`
-   - Apply same capability check before creating BUILD task CR.
+   - Validate selected agent has `task.build.execute` before creating BUILD task.
 
-5. **Enforce compatibility in web board task creation**
+6. **Web board API create task: enforce same capability rules**
    - File: `packages/web/src/server/routes/board.ts`
-   - Apply same capability checks in `POST /:project/board/tasks`.
+   - Ensure parity with manager/dispatcher behavior.
 
-6. **Enforce compatibility in manager `create_run` and `force_retry` overrides**
-   - File: `packages/manager-controller/src/agent/tools.ts`
-   - Validate `agentOverride` against task type capability requirements before run creation.
+7. **Operator/dispatcher run-context signal for deterministic tool gating**
+   - Files: `packages/operator/src/pod-builder.ts`, `packages/dispatcher/src/mcp-server.ts`
+   - Inject/consume explicit run-context env if needed.
 
-7. **Introduce explicit dispatcher run-context signal**
-   - Files: `packages/operator/src/pod-builder.ts`, `packages/api/src/index.ts` (if adding enum constants)
-   - Inject context env (e.g., `RUN_CONTEXT`) from run spec/facilitation intent.
-
-8. **Implement completion-tool gating in dispatcher `tools/list`**
+8. **Dispatcher tools/list completion gating**
    - File: `packages/dispatcher/src/mcp-server.ts`
-   - Return only completion tools allowed for current context/capability set.
+   - Advertise only valid completion tool for that run context.
 
-9. **Implement completion-tool gating in dispatcher `tools/call`**
+9. **Dispatcher tools/call completion gating**
    - File: `packages/dispatcher/src/mcp-server.ts`
-   - Reject disallowed completion calls with deterministic message.
-   - Ensure `complete_review` path is unreachable outside review context.
+   - Reject cross-context completion calls (`complete_review` in BUILD run, `complete_run` in review run, etc.).
 
-10. **Capability-aware buildgen prompt hardening**
+10. **Buildgen hardening (static + dynamic prompts)**
     - Files: `k8s/agents/buildgen.yaml`, `packages/manager-controller/src/facilitator.ts`
-    - Instruct buildgen to choose only agents with `task.build.execute`.
-    - Provide filtered eligible agent list.
+    - Force capability-aware agent selection for BUILD task creation.
 
-11. **Expose capability editing in agent API/UI**
+11. **Built-in agent manifests: add explicit capabilities**
+    - Files: `k8s/agents/{planner,builder,reviewer,failure-analyst,buildgen,integrator}.yaml`
+    - Ensure built-ins satisfy strict enforcement from first rollout.
+
+12. **Web agent CRUD/UI: expose capability editing and visibility**
     - Server: `packages/web/src/server/routes/agents.ts`
     - Client types/API: `packages/web/src/client/lib/types.ts`, `packages/web/src/client/lib/api.ts`
-    - UI: `packages/web/src/client/components/AgentForm.tsx`, `AgentsPage.tsx`
+    - UI: `packages/web/src/client/components/AgentForm.tsx`, `packages/web/src/client/components/AgentsPage.tsx`
 
-12. **Update compatibility checks where agent metadata is displayed/used**
-    - Review project form roster surfaces (`AdvancedTab`, `useProjectForm`) for capability visibility hints.
-    - Ensure no stale assumptions that agent is name-only.
+13. **Tests: strict enforcement and wrong-tool prevention**
+    - Unit tests for capability validation helper.
+    - Dispatcher tests for completion-tool gating in both `tools/list` and `tools/call`.
+    - Manager/dispatcher/web API tests for assignment rejection.
+    - Deterministic E2E proving incompatible BUILD agent cannot be created/run and wrong-tool retry loop cannot recur.
 
-13. **Add tests**
-    - API schema tests for capability parsing/defaults.
-    - Manager/dispatcher/web tests for capability-based rejection.
-    - Dispatcher tests for completion-tool gating (`tools/list` + `tools/call`).
-    - Deterministic E2E: BUILD task assigned to agent without `task.build.execute` is rejected and cannot enter wrong-tool loop.
+14. **Docs updates**
+    - Update MCP/tooling docs and task lifecycle docs to include capability matrix and strict fail-closed behavior.
 
-14. **Document capability model and migration behavior**
-    - Update docs describing agent capabilities, task compatibility rules, and completion-tool gating matrix.
+## Backward compatibility policy (explicit)
 
-## Backward compatibility handling
+**No backward-compatible permissive code will be added.**
 
-Because existing ClusterAgent CRs likely have no `capabilities` field, choose one explicit transition mode:
+Enforcement model is immediate and fail-closed:
+- Agents without required capabilities are rejected.
+- Disallowed completion tools are hidden and hard-rejected.
+- Task/run creation paths do not permit legacy exceptions.
 
-- **Preferred:** additive rollout with temporary permissive default for missing capabilities (`legacy-allow-all`) plus warnings/telemetry, then tighten later.
-- **Alternative (strict now):** missing capabilities means incompatible by default; requires immediately updating built-in agents and existing clusters.
-
-Plan assumption for this task: **implement a safe transitional mode first**, while still enforcing capability checks when capabilities are present. This avoids breaking all existing agents at once and allows UI-based editing to roll out cleanly.
+Operational requirement for rollout:
+- Built-in `k8s/agents/*.yaml` must be updated in the same change set so default installations remain functional.
+- Existing custom ClusterAgents in running clusters must be updated with capabilities before/with deployment of this change.
 
 ## Risks / open questions
 
-1. **Default behavior for missing capabilities is policy-critical**
-   - Strict default improves safety but may break existing deployments instantly.
-   - Transitional default reduces breakage but temporarily leaves some risk.
+1. **Strict rollout can break clusters with custom agents not updated yet**
+   - Mitigation: include explicit upgrade notes and preflight checks; fail with clear error messages naming missing capability.
 
-2. **Capability source precedence**
-   - If capabilities can exist in both ClusterAgent and project roster entries later, precedence must be explicit.
+2. **Context detection ambiguity for special run types**
+   - Mitigation: add explicit `RUN_CONTEXT` env in pod builder rather than inferring from prompts.
 
-3. **Context vs capability gating overlap**
-   - Need clear rule when they disagree (recommended: fail closed).
+3. **Capability drift between prompt text and enforced behavior**
+   - Mitigation: keep gating in runtime code authoritative; prompts only instructive.
 
-4. **UI complexity / usability**
-   - Too many capability flags may confuse users; may need grouped presets for common agent types.
+4. **Buildgen/facilitator agent filtering needs deterministic source**
+   - Mitigation: resolve capabilities from live ClusterAgent CRs, not free-form roster naming.
 
 ## Acceptance criteria mapping
 
 1. **Map of agents/tools and intended contexts**
-   - Provided via explicit capability taxonomy and completion-tool matrix.
+   - Delivered via explicit capability matrix and run-context completion-tool map.
 
 2. **Agent-to-task validation proposal (buildgen + API-level)**
-   - Capability checks at manager/dispatcher/web creation points and override paths; buildgen filtered by `task.build.execute`.
+   - Enforced at manager/dispatcher/web creation APIs and run overrides; buildgen receives filtered eligible BUILD agents.
 
 3. **Tool-context gating proposal**
-   - Dispatcher enforces context/capability-gated `tools/list` and `tools/call` for completion tools.
+   - Dispatcher enforces both visibility (`tools/list`) and execution (`tools/call`) gates.
 
-4. **Backward compatibility plan**
-   - Explicit transitional handling for agents missing capabilities, with path to strict mode.
+4. **Backward compatibility handling**
+   - Explicitly strict/fail-closed; no legacy permissive branch.
 
 5. **Extension to failure-analyst and buildgen**
-   - Included via dedicated facilitation capabilities and prompt/runtime compatibility checks.
+   - Included through `task.failure.analyze` / `task.build.generate` plus completion capability requirements.
 
 ## Proposed BUILD task breakdown
 
-1. **BUILD A — API capability schema + shared compatibility helper**
-2. **BUILD B — Enforce compatibility in manager/dispatcher/web task/run entry points**
-3. **BUILD C — Dispatcher completion-tool gating by run context and capabilities**
-4. **BUILD D — Buildgen capability-aware filtering + prompt hardening**
-5. **BUILD E — Agent UI/API capability editing surfaces**
-6. **BUILD F — Tests + docs + migration notes**
+1. **BUILD A:** API capability schema + strict validation helper
+2. **BUILD B:** Enforce compatibility in manager/dispatcher/web task/run entry points
+3. **BUILD C:** Dispatcher completion-tool context/capability gating
+4. **BUILD D:** Built-in agent capability updates + buildgen hardening
+5. **BUILD E:** Agent UI/API capability surfaces
+6. **BUILD F:** Tests + docs + rollout notes (strict mode)
