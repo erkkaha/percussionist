@@ -1,11 +1,20 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.181] - 2026-06-14
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Gate complete_merge by merge-worker context and fix test env _(dispatcher)_
 ## [v0.1.180] - 2026-06-14
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Create release in release.yml, dispatch images.yml via API _(ci)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.180
 ## [v0.1.179] - 2026-06-14
 
 ### <!-- 0 -->🚀 Features
@@ -23,13 +32,60 @@ All notable changes to Percussionist are documented here.
 - Release v0.1.179
 ## [v0.1.178] - 2026-06-14
 
+### <!-- 0 -->🚀 Features
+
+- Add agent capability validation foundation _(manager)_
+- Enforce capability checks across task creation entrypoints _(core)_
+- Gate completion tools by run context _(dispatcher)_
+- Harden buildgen agent capability constraints _(manager)_
+- Expose and edit agent capabilities _(web)_
+- Add inspect_task_flow MCP tool and flow introspection helper _(manager)_
+- Mention inspect_task_flow in default manager decision agent prompt _(operator)_
+- Enrich board task display references _(web)_
+- Consume board display refs in board UI _(web)_
+- Use friendly parent label in chat context _(web)_
+- Add merge verdict types and normalizer _(api)_
+- Add complete_merge MCP tool for structured merge verdicts _(dispatcher)_
+- Update merge completion prompt and add conflict e2e _(manager)_
+- Add manager_approve MCP tool for BUILD merge approvals _(manager)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Add local horizontal scroll to project form tabs on mobile _(web)_
+- Add touch-scroll-x utility and harden tabs primitive for mobile overflow _(web)_
+- Gate merge completion on structured verdict _(manager)_
+
 ### <!-- 2 -->🚜 Refactor
 
 - Replace native radio buttons with shadcn RadioGroup in AddTaskForm _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add plan for tool and agent gating _(plan)_
+- Refine guardrail plan for tool and agent gating _(plan)_
+- Address custom agent alias risk in guardrails _(plan)_
+- Refine percussionist-dev-plan-3a0500 guardrails _(plan)_
+- Update percussionist-dev-plan-3a0500 with capability-based guardrails _(plan)_
+- Finalize percussionist-dev-plan-3a0500 strict guardrails _(plan)_
+- Add percussionist-dev-plan-8860ff mobile tabs plan _(plan)_
+- Add percussionist-dev-plan-1e6da6 implementation plan _(plan)_
+- Add inspect_task_flow reference and lifecycle troubleshooting notes
+- Add plan for human-readable board waiting/from labels _(plan)_
+- Add merge-verdict implementation plan for a1301a _(plan)_
+- Add percussionist-dev-plan-12c569 artifact _(plan)_
+- Refine percussionist-dev-plan-12c569 for manager_approve _(plan)_
+- Document manager_approve approval flow _(manager)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add strict enforcement coverage across stack _(capabilities)_
 ## [v0.1.177] - 2026-06-14
 
 ### <!-- 0 -->🚀 Features
 
+- Add spec.exec.image field to Project CRD and wire exec pod resolution _(kube)_
+- Add exec/maintenance pod image field to project form UI _(web)_
+- Set maintenance pod image to ubuntu:24.04 _(self-dev)_
 - Add diff findings schemas and normalizeReviewVerdict helper _(api)_
 - Extend complete_review with optional findings and guardrails _(dispatcher)_
 - Use shared normalizer and persist diff findings with replacement semantics _(manager)_
@@ -43,30 +99,15 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 3 -->📚 Documentation
 
+- Add exec pod image configuration plan _(plan)_
+- Document spec.exec.image override and alpine fallback _(readme)_
 - Add diff ranking and comments plan _(plan)_
 - Revise diff ranking plan for 902b57 _(plan)_
 ## [v0.1.176] - 2026-06-14
 
-### <!-- 0 -->🚀 Features
-
-- Add manager_approve MCP tool for BUILD merge approvals _(manager)_
-- Add inspect_task_flow MCP tool and flow introspection helper _(manager)_
-- Mention inspect_task_flow in default manager decision agent prompt _(operator)_
-
 ### <!-- 1 -->🐛 Bug Fixes
 
-- Add local horizontal scroll to project form tabs on mobile _(web)_
-- Add touch-scroll-x utility and harden tabs primitive for mobile overflow _(web)_
 - Upgrade memory service image via MEMORY_SERVICE_IMAGE env var _(operator)_
-
-### <!-- 3 -->📚 Documentation
-
-- Add percussionist-dev-plan-12c569 artifact _(plan)_
-- Refine percussionist-dev-plan-12c569 for manager_approve _(plan)_
-- Document manager_approve approval flow _(manager)_
-- Add percussionist-dev-plan-8860ff mobile tabs plan _(plan)_
-- Add percussionist-dev-plan-1e6da6 implementation plan _(plan)_
-- Add inspect_task_flow reference and lifecycle troubleshooting notes
 ## [v0.1.174] - 2026-06-13
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -106,9 +147,6 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
-- Add spec.exec.image field to Project CRD and wire exec pod resolution _(kube)_
-- Add exec/maintenance pod image field to project form UI _(web)_
-- Set maintenance pod image to ubuntu:24.04 _(self-dev)_
 - Responsive mobile full-screen add-task overlay on board _(web)_
 - Polish mobile add-task overlay, wire add-from-ideas, enforce single overlay _(web)_
 - Add buildgen summary-source logging and facilitator unit tests _(manager)_
@@ -143,8 +181,6 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 3 -->📚 Documentation
 
-- Add exec pod image configuration plan _(plan)_
-- Document spec.exec.image override and alpine fallback _(readme)_
 - Add b00602 mobile add-task fullscreen plan _(plan)_
 - Add plan for session summarization pipeline fix _(plan)_
 - Refine summarization pipeline plan _(plan)_
