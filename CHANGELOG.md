@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.180] - 2026-06-14
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Create release in release.yml, dispatch images.yml via API _(ci)_
 ## [v0.1.179] - 2026-06-14
 
 ### <!-- 0 -->🚀 Features
@@ -12,6 +17,10 @@ All notable changes to Percussionist are documented here.
 - Add bun setup step to release workflow _(ci)_
 - Replace curl+tar with orhun/git-cliff-action for changelog _(ci)_
 - Remove duplicate --config arg in git-cliff action _(ci)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.179
 ## [v0.1.178] - 2026-06-14
 
 ### <!-- 2 -->🚜 Refactor
