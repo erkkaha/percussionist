@@ -23,7 +23,9 @@ function formatTaskContext(task: Task, projectName: string): string {
   lines.push(`Priority: ${task.spec.priority ?? 'medium'}`);
   lines.push(`Status: ${task.status?.phase ?? 'unknown'}`);
   if (task.spec.agent) lines.push(`Agent: ${task.spec.agent}`);
-  if (task.spec.parentTaskRef) lines.push(`Parent: ${task.spec.parentTaskRef}`);
+  if (task.spec.parentTaskRef) {
+    lines.push(`Parent: ${task.displayRefs?.parentTask ?? task.spec.parentTaskRef}`);
+  }
   return lines.join('\n');
 }
 
