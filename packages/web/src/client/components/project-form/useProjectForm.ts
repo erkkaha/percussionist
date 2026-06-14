@@ -97,6 +97,7 @@ export interface ProjectFormState {
   reviewPolicyAiReviewerAgent: string;
   reviewPolicyMaxAutoReworks: string;
   runnerImage: string;
+  runnerPackages: string;
   cpuRequest: string;
   memRequest: string;
   cpuLimit: string;
@@ -317,6 +318,17 @@ export function buildProjectRequest(
   if (state.runnerImage.trim()) req.image = state.runnerImage.trim();
   const resRequests: Record<string, string> = {};
   const resLimits: Record<string, string> = {};
+  const runnerPackages = Array.from(
+    new Set(
+      state.runnerPackages
+        .split(',')
+        .map((pkg) => pkg.trim())
+        .filter(Boolean),
+    ),
+  );
+  if (runnerPackages.length > 0) {
+    req.runner = { packages: runnerPackages };
+  }
   if (state.cpuRequest.trim()) resRequests.cpu = state.cpuRequest.trim();
   if (state.memRequest.trim()) resRequests.memory = state.memRequest.trim();
   if (state.cpuLimit.trim()) resLimits.cpu = state.cpuLimit.trim();
@@ -452,6 +464,7 @@ export function createInitialState(
     reviewPolicyAiReviewerAgent: spec.reviewPolicy?.aiReviewerAgent ?? 'reviewer',
     reviewPolicyMaxAutoReworks: String(spec.reviewPolicy?.maxAutoReworks ?? 2),
     runnerImage: spec.image ?? '',
+    runnerPackages: (spec.runner?.packages ?? []).join(', '),
     cpuRequest:
       (spec.resources as { requests?: Record<string, string> } | undefined)?.requests?.cpu ?? '',
     memRequest:
@@ -499,7 +512,7 @@ export function createInitialState(
     embeddingOllamaUrl: spec.embedding?.ollamaUrl ?? '',
 
     // Exec / Maintenance pod image
-    execImage: spec.exec?.image ?? "",
+    execImage: spec.exec?.image ?? '',
 
     // Advanced
     sidecars: initialSidecarRows(initialSpec),
@@ -546,6 +559,7 @@ export interface ProjectFormHookReturn extends ProjectFormState {
   setReviewPolicyAiReviewerAgent: React.Dispatch<React.SetStateAction<string>>;
   setReviewPolicyMaxAutoReworks: React.Dispatch<React.SetStateAction<string>>;
   setRunnerImage: React.Dispatch<React.SetStateAction<string>>;
+  setRunnerPackages: React.Dispatch<React.SetStateAction<string>>;
   setCpuRequest: React.Dispatch<React.SetStateAction<string>>;
   setMemRequest: React.Dispatch<React.SetStateAction<string>>;
   setCpuLimit: React.Dispatch<React.SetStateAction<string>>;
@@ -664,6 +678,7 @@ export function useProjectForm(
     initialState.reviewPolicyMaxAutoReworks,
   );
   const [runnerImage, setRunnerImage] = useState(initialState.runnerImage);
+  const [runnerPackages, setRunnerPackages] = useState(initialState.runnerPackages);
   const [cpuRequest, setCpuRequest] = useState(initialState.cpuRequest);
   const [memRequest, setMemRequest] = useState(initialState.memRequest);
   const [cpuLimit, setCpuLimit] = useState(initialState.cpuLimit);
@@ -791,6 +806,7 @@ export function useProjectForm(
     reviewPolicyAiReviewerAgent,
     reviewPolicyMaxAutoReworks,
     runnerImage,
+    runnerPackages,
     cpuRequest,
     memRequest,
     cpuLimit,
@@ -813,6 +829,7 @@ export function useProjectForm(
     setReviewPolicyAiReviewerAgent,
     setReviewPolicyMaxAutoReworks,
     setRunnerImage,
+    setRunnerPackages,
     setCpuRequest,
     setMemRequest,
     setCpuLimit,
