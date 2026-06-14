@@ -28,6 +28,7 @@ import {
   patchProjectSpec,
   patchTask,
   patchTaskStatus,
+  validateAgentTaskCapability,
 } from '../kube.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
@@ -247,12 +248,9 @@ board.post('/:project/board/tasks', adminAuth(), async (c) => {
 
   try {
     const project = await getProject(name);
-    const roster = (project.spec.agents ?? []).map((a) => a.name);
-    if (!roster.includes(agent)) {
-      return c.json(
-        { error: `agent "${agent}" not in project roster: ${roster.join(', ') || '(empty)'}` },
-        400,
-      );
+    const validation = await validateAgentTaskCapability(project, type, agent);
+    if (!validation.ok) {
+      return c.json({ error: validation.error }, 400);
     }
 
     const taskName = taskCRName(name, type);

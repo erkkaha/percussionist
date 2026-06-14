@@ -61,4 +61,5 @@ export {
   updateClusterAgent,
   updateClusterSettings,
   updateProject,
+  validateAgentTaskCapability,
 } from '@percussionist/kube';
