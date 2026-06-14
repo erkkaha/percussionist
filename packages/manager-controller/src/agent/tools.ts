@@ -32,12 +32,12 @@ import {
   patchTaskStatus,
   readAllSessionsFromConfigMap,
   readPlanFromConfigMap,
+  validateAgentTaskCapability,
   readPodLog,
   readSessionConfigMap,
   writePlanToConfigMap,
 } from '@percussionist/kube';
 import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../branch-resolver.js';
-import { validateAgentTaskCapability } from '../capability-validation.js';
 import { resolveFlow } from '../reconciler/flow.js';
 import { isValidTransition, TRANSITION_TABLE } from '../reconciler/transitions.js';
 import { getPauseStatus, setPaused } from '../reconciler-bridge.js';

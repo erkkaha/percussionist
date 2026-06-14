@@ -44,6 +44,7 @@ import {
   patchTaskStatus,
   readAllSessionsFromConfigMap,
   readPlanFromConfigMap,
+  validateAgentTaskCapability,
   writePlanToConfigMap,
 } from '@percussionist/kube';
 
@@ -728,13 +729,9 @@ async function handleCreateTask(
 
   try {
     const project = await getProject(projectName, ns);
-    const roster = (project.spec.agents ?? []).map((a: { name: string }) => a.name);
-    if (!roster.includes(agent)) {
-      return rpcError(
-        id,
-        -32602,
-        `agent "${agent}" not in project roster: ${roster.join(', ') || '(empty)'}`,
-      );
+    const validation = await validateAgentTaskCapability(project, 'BUILD', agent);
+    if (!validation.ok) {
+      return rpcError(id, -32602, validation.error);
     }
 
     const suffix = randomBytes(3).toString('hex');
