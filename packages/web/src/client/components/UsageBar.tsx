@@ -1,25 +1,12 @@
 import { useEffect, useState } from 'react';
-import { readUsageSettings, type UsageSettings } from '../lib/usage-settings';
+import {
+  type Category,
+  formatDuration,
+  readTodayUsage,
+  readUsageSettings,
+  type UsageSettings,
+} from '../lib/usage-settings';
 import { UsageSettingsPopover } from './UsageSettingsPopover';
-
-type Category = 'reviewing' | 'planning' | 'other';
-
-const STORAGE_PREFIX = 'percussionist-usage';
-
-function getTodayKey(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${STORAGE_PREFIX}-${yyyy}-${mm}-${dd}`;
-}
-
-function formatDuration(totalSeconds: number): string {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
-}
 
 const SEGMENT_COLORS: Record<Category, string> = {
   reviewing: 'bg-blue-500',
@@ -29,26 +16,8 @@ const SEGMENT_COLORS: Record<Category, string> = {
 
 const SEGMENT_ORDER: Category[] = ['reviewing', 'planning', 'other'];
 
-function readTodayUsage(): Record<Category, number> {
-  try {
-    const key = getTodayKey();
-    const stored = localStorage.getItem(key);
-    if (stored) {
-      const parsed = JSON.parse(stored) as Record<Category, number>;
-      return {
-        reviewing: parsed.reviewing || 0,
-        planning: parsed.planning || 0,
-        other: parsed.other || 0,
-      };
-    }
-  } catch {
-    // ignore
-  }
-  return { reviewing: 0, planning: 0, other: 0 };
-}
-
 export function UsageBar() {
-  const [usage, setUsage] = useState<Record<Category, number>>(readTodayUsage);
+  const [usage, setUsage] = useState(readTodayUsage);
   const [settings, setSettings] = useState<UsageSettings>(readUsageSettings);
 
   useEffect(() => {

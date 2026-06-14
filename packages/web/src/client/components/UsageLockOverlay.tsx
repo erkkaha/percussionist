@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { readUsageSettings } from '../lib/usage-settings';
+import {
+  type Category,
+  formatDuration,
+  getTodayKey,
+  isLocked,
+  readTodayUsage,
+} from '../lib/usage-settings';
 import { DrumLogo } from './app-sidebar';
-
-type Category = 'reviewing' | 'planning' | 'other';
-
-const STORAGE_PREFIX = 'percussionist-usage';
 
 const CATEGORY_LABELS: Record<Category, string> = {
   reviewing: 'Reviewing',
@@ -17,35 +19,6 @@ const CATEGORY_COLORS: Record<Category, string> = {
   planning: 'bg-emerald-500',
   other: 'bg-gray-500',
 };
-
-function getTodayKey(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${STORAGE_PREFIX}-${yyyy}-${mm}-${dd}`;
-}
-
-function formatDuration(totalSeconds: number): string {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
-}
-
-function isLocked(): boolean {
-  const settings = readUsageSettings();
-  if (settings.maxTimeHours === 0 || !settings.lockOnMax) return false;
-
-  const maxSeconds = settings.maxTimeHours * 3600;
-  const key = getTodayKey();
-  const stored = localStorage.getItem(key);
-  if (!stored) return false;
-
-  const data = JSON.parse(stored) as Record<Category, number>;
-  const total = (data.reviewing || 0) + (data.planning || 0) + (data.other || 0);
-  return total >= maxSeconds;
-}
 
 export function UsageLockOverlay() {
   const [show, setShow] = useState(isLocked);
@@ -62,12 +35,8 @@ export function UsageLockOverlay() {
 
   if (!show) return null;
 
-  const key = getTodayKey();
-  const stored = localStorage.getItem(key);
-  const data: Record<Category, number> = stored
-    ? JSON.parse(stored)
-    : { reviewing: 0, planning: 0, other: 0 };
-  const total = (data.reviewing || 0) + (data.planning || 0) + (data.other || 0);
+  const data = readTodayUsage();
+  const total = data.reviewing + data.planning + data.other;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
