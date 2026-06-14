@@ -1,13 +1,13 @@
 // lib/diff-findings.ts — shared helpers for Task diff findings UI.
 
-import type { DiffFindingSeverity, TaskDiffFinding } from "./types";
+import type { DiffFindingSeverity, TaskDiffFinding } from './types';
 
 export const DIFF_FINDING_SEVERITIES: DiffFindingSeverity[] = [
-  "critical",
-  "high",
-  "medium",
-  "low",
-  "info",
+  'critical',
+  'high',
+  'medium',
+  'low',
+  'info',
 ];
 
 export const SEVERITY_RANK: Record<DiffFindingSeverity, number> = {
@@ -19,46 +19,44 @@ export const SEVERITY_RANK: Record<DiffFindingSeverity, number> = {
 };
 
 export const SEVERITY_LABEL: Record<DiffFindingSeverity, string> = {
-  critical: "Critical",
-  high: "High",
-  medium: "Medium",
-  low: "Low",
-  info: "Info",
+  critical: 'Critical',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
+  info: 'Info',
 };
 
 export const SEVERITY_DOT_CLASS: Record<DiffFindingSeverity, string> = {
-  critical: "bg-red-500",
-  high: "bg-orange-500",
-  medium: "bg-yellow-500",
-  low: "bg-blue-500",
-  info: "bg-gray-500",
+  critical: 'bg-red-500',
+  high: 'bg-orange-500',
+  medium: 'bg-yellow-500',
+  low: 'bg-blue-500',
+  info: 'bg-gray-500',
 };
 
 export const SEVERITY_TEXT_CLASS: Record<DiffFindingSeverity, string> = {
-  critical: "text-red-400",
-  high: "text-orange-400",
-  medium: "text-yellow-400",
-  low: "text-blue-400",
-  info: "text-gray-400",
+  critical: 'text-red-400',
+  high: 'text-orange-400',
+  medium: 'text-yellow-400',
+  low: 'text-blue-400',
+  info: 'text-gray-400',
 };
 
 export const SEVERITY_BG_CLASS: Record<DiffFindingSeverity, string> = {
-  critical: "bg-red-500/15 text-red-400 border-red-500/30",
-  high: "bg-orange-500/15 text-orange-400 border-orange-500/30",
-  medium: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
-  low: "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  info: "bg-gray-500/15 text-gray-400 border-gray-500/30",
+  critical: 'bg-red-500/15 text-red-400 border-red-500/30',
+  high: 'bg-orange-500/15 text-orange-400 border-orange-500/30',
+  medium: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
+  low: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+  info: 'bg-gray-500/15 text-gray-400 border-gray-500/30',
 };
 
-export type DiffFindingSort = "severity" | "score" | "path" | "line";
+export type DiffFindingSort = 'severity' | 'score' | 'path' | 'line';
 
 export function normalizeAnchorPath(path: string): string {
-  return path.replace(/^\.\//, "").replace(/^\//, "");
+  return path.replace(/^\.\//, '').replace(/^\//, '');
 }
 
-export function countBySeverity(
-  findings: TaskDiffFinding[],
-): Record<DiffFindingSeverity, number> {
+export function countBySeverity(findings: TaskDiffFinding[]): Record<DiffFindingSeverity, number> {
   const counts: Record<DiffFindingSeverity, number> = {
     critical: 0,
     high: 0,
@@ -80,24 +78,22 @@ export function sortFindings(
 
   const compare = (a: TaskDiffFinding, b: TaskDiffFinding): number => {
     switch (sort) {
-      case "severity": {
+      case 'severity': {
         const sev = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
         if (sev !== 0) return sev;
         break;
       }
-      case "score": {
+      case 'score': {
         const score = (b.score ?? 0) - (a.score ?? 0);
         if (score !== 0) return score;
         break;
       }
-      case "path": {
-        const path = (firstAnchor(a)?.path ?? "").localeCompare(
-          firstAnchor(b)?.path ?? "",
-        );
+      case 'path': {
+        const path = (firstAnchor(a)?.path ?? '').localeCompare(firstAnchor(b)?.path ?? '');
         if (path !== 0) return path;
         break;
       }
-      case "line": {
+      case 'line': {
         const line = (firstAnchor(a)?.line ?? 0) - (firstAnchor(b)?.line ?? 0);
         if (line !== 0) return line;
         break;
@@ -109,9 +105,7 @@ export function sortFindings(
     if (sev !== 0) return sev;
     const score = (b.score ?? 0) - (a.score ?? 0);
     if (score !== 0) return score;
-    const path = (firstAnchor(a)?.path ?? "").localeCompare(
-      firstAnchor(b)?.path ?? "",
-    );
+    const path = (firstAnchor(a)?.path ?? '').localeCompare(firstAnchor(b)?.path ?? '');
     if (path !== 0) return path;
     return (firstAnchor(a)?.line ?? 0) - (firstAnchor(b)?.line ?? 0);
   };

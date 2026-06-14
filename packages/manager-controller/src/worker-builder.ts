@@ -329,7 +329,13 @@ export async function buildMergeRun(
     '',
     '## Completion',
     '',
-    'When done, call `percussionist_dispatcher_complete_run` with a summary.',
+    'When done, call `percussionist_dispatcher_complete_merge` with a structured merge outcome.',
+    'Use this outcome mapping exactly:',
+    '- Success and push verified: outcome=`merged` and include `mergeCommitSha`.',
+    '- Branches already aligned / no-op push: outcome=`already-merged`.',
+    '- Merge conflict that needs human intervention: outcome=`conflict`, requiresHuman=true.',
+    '- Push rejected (auth/protection/remote rejection): outcome=`push-failed`.',
+    '- Transient infra/network/git-host error: outcome=`transient-failure`.',
   ];
 
   return {

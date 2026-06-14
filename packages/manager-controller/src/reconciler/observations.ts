@@ -1,7 +1,17 @@
 // Observations — normalize K8s resources into ReconcileInput.
 
-import type { Project, Run, Task, NormalizedReviewVerdict } from '@percussionist/api';
-import { normalizeReviewVerdict } from '@percussionist/api';
+import type {
+  NormalizedMergeVerdict,
+  NormalizedReviewVerdict,
+  Project,
+  Run,
+  Task,
+} from '@percussionist/api';
+import {
+  MERGE_VERDICT_ANNOTATION,
+  normalizeMergeVerdict,
+  normalizeReviewVerdict,
+} from '@percussionist/api';
 import { getRun } from '@percussionist/kube';
 import { isKubeNotFoundError } from '../kube-errors.js';
 import type { ManualActions, ObservedRuns, ReconcileInput } from './decision.js';
@@ -17,6 +27,9 @@ const TASK_ANNOTATION_KEYS = {
 
 // Review verdict annotation on the review Run.
 const REVIEW_VERDICT_KEY = 'percussionist.dev/review-verdict';
+
+// Merge verdict annotation on merge Run.
+const MERGE_VERDICT_KEY = MERGE_VERDICT_ANNOTATION;
 
 export async function observe(
   task: Task,
@@ -107,6 +120,18 @@ export function getReviewVerdict(run: Run | undefined): NormalizedReviewVerdict 
       sourceRunName: run.metadata.name,
       updatedAt: run.status?.completedAt ?? new Date().toISOString(),
     });
+  } catch {
+    return undefined;
+  }
+}
+
+export function getMergeVerdict(run: Run | undefined): NormalizedMergeVerdict | undefined {
+  if (!run) return undefined;
+  const verdict = run.metadata.annotations?.[MERGE_VERDICT_KEY];
+  if (!verdict) return undefined;
+  try {
+    const parsed = JSON.parse(verdict) as unknown;
+    return normalizeMergeVerdict(parsed);
   } catch {
     return undefined;
   }

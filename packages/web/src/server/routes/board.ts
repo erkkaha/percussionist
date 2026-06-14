@@ -12,7 +12,7 @@
 // POST   /api/projects/:project/board/tasks/:taskName/request-changes
 
 import { randomBytes } from 'node:crypto';
-import type { TaskPhase, TaskSpec } from '@percussionist/api';
+import type { Task, TaskPhase, TaskSpec } from '@percussionist/api';
 import { computeBoardColumn } from '@percussionist/api';
 import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
@@ -50,6 +50,27 @@ function taskCRName(project: string, type: 'PLAN' | 'BUILD'): string {
   return `${project}-${type.toLowerCase()}-${suffix}`;
 }
 
+function taskShortId(taskName: string): string {
+  const parts = taskName.split('-');
+  return parts[parts.length - 1] || taskName;
+}
+
+function resolveTaskDisplayLabel(
+  taskName: string | undefined,
+  tasksByName: Map<string, Task>,
+  titleCounts: Map<string, number>,
+): string | null {
+  if (!taskName) return null;
+  const task = tasksByName.get(taskName);
+  if (!task) return taskName;
+  const title = task.spec.title?.trim();
+  if (!title) return taskName;
+  if ((titleCounts.get(title) ?? 0) > 1) {
+    return `${title} (${taskShortId(taskName)})`;
+  }
+  return title;
+}
+
 export async function appendTaskEvent(
   project: string,
   taskName: string,
@@ -80,11 +101,18 @@ board.get('/:project/board', auth(), async (c) => {
   const name = c.req.param('project');
   try {
     const [project, tasks] = await Promise.all([getProject(name), listTasks(name)]);
+    const tasksByName = new Map(tasks.map((task) => [task.metadata.name, task]));
+    const titleCounts = new Map<string, number>();
+    for (const task of tasks) {
+      const title = task.spec.title?.trim();
+      if (!title) continue;
+      titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1);
+    }
 
     // Build a map of child progress for PLAN tasks in awaiting-children phase.
     const childProgressMap = new Map<
       string,
-      { total: number; completed: number; childRefs: string[] }
+      { total: number; completed: number; childRefs: string[]; childDisplayRefs: string[] }
     >();
     for (const task of tasks) {
       if (task.spec.type === 'PLAN' && task.status?.phase === 'awaiting-children') {
@@ -97,6 +125,9 @@ board.get('/:project/board', auth(), async (c) => {
           total: children.length,
           completed,
           childRefs: children.map((t) => t.metadata.name),
+          childDisplayRefs: children.map((t) =>
+            resolveTaskDisplayLabel(t.metadata.name, tasksByName, titleCounts),
+          ) as string[],
         });
       }
     }
@@ -113,19 +144,33 @@ board.get('/:project/board', auth(), async (c) => {
         // Override to blocked if waiting for a predecessor that isn't done.
         const predRef = task.spec.predecessorRef;
         if (predRef && phase !== 'done') {
-          const pred = tasks.find((t) => t.metadata.name === predRef);
+          const pred = tasksByName.get(predRef);
           if (pred?.status?.phase !== 'done') {
             col = 'blocked';
-            task.status = { ...task.status, blockedReason: `Waiting for: ${predRef}` };
+            const predDisplay =
+              resolveTaskDisplayLabel(predRef, tasksByName, titleCounts) ?? predRef;
+            task.status = { ...task.status, blockedReason: `Waiting for: ${predDisplay}` };
           }
         }
       }
       if (!columns[col]) columns[col] = [];
 
+      const displayRefs = {
+        parentTask: resolveTaskDisplayLabel(task.spec.parentTaskRef, tasksByName, titleCounts),
+        predecessorTask: resolveTaskDisplayLabel(
+          task.spec.predecessorRef,
+          tasksByName,
+          titleCounts,
+        ),
+        parentTaskCanonical: task.spec.parentTaskRef ?? null,
+        predecessorTaskCanonical: task.spec.predecessorRef ?? null,
+      };
+
       // Attach child progress if available.
       const taskWithProgress = {
         ...task,
         childProgress: childProgressMap.get(task.metadata.name),
+        displayRefs,
       };
       columns[col]?.push(taskWithProgress);
     }

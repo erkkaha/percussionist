@@ -6,7 +6,7 @@ import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../b
 import { auxiliaryRunName, workerRunName } from '../worker-builder.js';
 import type { ReconcileEffect } from './effects.js';
 import type { ResolvedFlow } from './flow.js';
-import { getConsumedAnnotationKeys, getReviewVerdict } from './observations.js';
+import { getConsumedAnnotationKeys, getMergeVerdict, getReviewVerdict } from './observations.js';
 import { isValidTransition } from './transitions.js';
 
 function summarizeEffect(input: ReconcileInput, run: Run): ReconcileEffect | undefined {
@@ -942,6 +942,81 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
   }
 
   if (mergeRun.status?.phase === 'Succeeded') {
+    const verdict = getMergeVerdict(mergeRun);
+    const verdictMessage = [verdict?.diagnosis, verdict?.details].filter(Boolean).join('\n\n');
+
+    if (verdict) {
+      if (
+        (verdict.outcome === 'merged' || verdict.outcome === 'already-merged') &&
+        !verdict.requiresHuman
+      ) {
+        const buildRunName = task.status?.worker?.runName;
+        const cleanupEffects: ReconcileEffect[] = [
+          { type: 'CleanupWorktree', runName: mergeRunName },
+        ];
+        if (buildRunName) {
+          cleanupEffects.push({ type: 'CleanupWorktree', runName: buildRunName });
+        }
+        return {
+          taskName,
+          fromPhase,
+          toPhase: 'done',
+          statusPatch: {
+            worker: { status: 'Succeeded', mergedAt: now, completedAt: now },
+          },
+          effects: cleanupEffects,
+          events: [makeEvent(input, fromPhase, 'done', 'MergeSucceeded')],
+        };
+      }
+
+      if (verdict.outcome === 'push-failed' || verdict.outcome === 'transient-failure') {
+        return {
+          taskName,
+          fromPhase,
+          toPhase: 'failed',
+          statusPatch: {
+            worker: {
+              status: 'Failed',
+              mergeError: verdictMessage || `Merge outcome: ${verdict.outcome}`,
+            },
+          },
+          effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
+          events: [
+            makeEvent(
+              input,
+              fromPhase,
+              'failed',
+              'MergeStructuredFailure',
+              verdictMessage || `Merge outcome: ${verdict.outcome}`,
+            ),
+          ],
+        };
+      }
+
+      if (verdict.requiresHuman || verdict.outcome === 'conflict') {
+        return {
+          taskName,
+          fromPhase,
+          toPhase: 'awaiting-human',
+          statusPatch: {
+            worker: {
+              mergeError: verdictMessage || 'Merge requires human intervention',
+            },
+          },
+          effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
+          events: [
+            makeEvent(
+              input,
+              fromPhase,
+              'awaiting-human',
+              'MergeNeedsHumanIntervention',
+              verdictMessage || `Merge outcome: ${verdict.outcome}`,
+            ),
+          ],
+        };
+      }
+    }
+
     const buildRunName = task.status?.worker?.runName;
     const cleanupEffects: ReconcileEffect[] = [{ type: 'CleanupWorktree', runName: mergeRunName }];
     if (buildRunName) {
@@ -955,7 +1030,15 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
         worker: { status: 'Succeeded', mergedAt: now, completedAt: now },
       },
       effects: cleanupEffects,
-      events: [makeEvent(input, fromPhase, 'done', 'MergeSucceeded')],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'done',
+          'MergeSucceededUnstructured',
+          'Merge run succeeded without structured merge verdict; falling back to legacy success behavior',
+        ),
+      ],
     };
   }
 
@@ -1258,13 +1341,87 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
   }
 
   if (mergeRun.status?.phase === 'Succeeded') {
+    const verdict = getMergeVerdict(mergeRun);
+    const verdictMessage = [verdict?.diagnosis, verdict?.details].filter(Boolean).join('\n\n');
+
+    if (verdict) {
+      if (
+        (verdict.outcome === 'merged' || verdict.outcome === 'already-merged') &&
+        !verdict.requiresHuman
+      ) {
+        return {
+          taskName,
+          fromPhase,
+          toPhase: 'done',
+          statusPatch: { worker: { mergedAt: now } },
+          effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
+          events: [makeEvent(input, fromPhase, 'done', 'FeatureBranchMerged')],
+        };
+      }
+
+      if (verdict.outcome === 'push-failed' || verdict.outcome === 'transient-failure') {
+        return {
+          taskName,
+          fromPhase,
+          toPhase: 'failed',
+          statusPatch: {
+            worker: {
+              status: 'Failed',
+              mergeError: verdictMessage || `Merge outcome: ${verdict.outcome}`,
+            },
+          },
+          effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
+          events: [
+            makeEvent(
+              input,
+              fromPhase,
+              'failed',
+              'FeatureBranchMergeStructuredFailure',
+              verdictMessage || `Merge outcome: ${verdict.outcome}`,
+            ),
+          ],
+        };
+      }
+
+      if (verdict.requiresHuman || verdict.outcome === 'conflict') {
+        return {
+          taskName,
+          fromPhase,
+          toPhase: 'awaiting-human',
+          statusPatch: {
+            worker: {
+              mergeError: verdictMessage || 'Feature branch merge requires human intervention',
+            },
+          },
+          effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
+          events: [
+            makeEvent(
+              input,
+              fromPhase,
+              'awaiting-human',
+              'FeatureBranchMergeNeedsHumanIntervention',
+              verdictMessage || `Merge outcome: ${verdict.outcome}`,
+            ),
+          ],
+        };
+      }
+    }
+
     return {
       taskName,
       fromPhase,
       toPhase: 'done',
       statusPatch: { worker: { mergedAt: now } },
       effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
-      events: [makeEvent(input, fromPhase, 'done', 'FeatureBranchMerged')],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'done',
+          'FeatureBranchMergedUnstructured',
+          'Merge run succeeded without structured merge verdict; falling back to legacy success behavior',
+        ),
+      ],
     };
   }
 

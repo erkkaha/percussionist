@@ -3,6 +3,7 @@
 import { Check, FileText, Flag, MessageSquarePlus, RotateCcw, User, Wrench } from 'lucide-react';
 import { useChat } from '../../lib/chat-context';
 import type { Task } from '../../lib/types';
+import { getBlockedReasonPresentation, getParentRefPresentation } from './display-refs';
 
 function age(iso: string | undefined): string {
   if (!iso) return '';
@@ -41,6 +42,8 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
   const isBuild = task.spec.type === 'BUILD';
   const colColor = COLUMN_COLORS[col] ?? 'bg-surface-overlay text-text-dim';
   const lastActivity = worker?.completedAt ?? worker?.startedAt ?? task.metadata.creationTimestamp;
+  const parentRef = getParentRefPresentation(task);
+  const blockedReason = getBlockedReasonPresentation(task, col);
 
   const { injectTask } = useChat();
 
@@ -135,22 +138,25 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
             )}
 
             {/* Waiting for prerequisite */}
-            {col === 'blocked' && task.status?.blockedReason && (
+            {blockedReason.text && (
               <span
-                className="text-label-md font-mono uppercase text-phase-failed"
-                title={task.status.blockedReason}
+                className="text-label-md font-mono text-phase-failed max-w-[20rem] truncate"
+                title={blockedReason.tooltip}
               >
-                {task.status.blockedReason}
+                {blockedReason.text}
               </span>
             )}
           </div>
 
           {/* Bottom row: parent ref + timestamp */}
-          {(task.spec.parentTaskRef || lastActivity) && (
+          {(parentRef.text || lastActivity) && (
             <div className="flex items-center gap-2 flex-wrap pt-0.5">
-              {task.spec.parentTaskRef && (
-                <span className="text-label-md font-mono uppercase text-text-dim/70">
-                  from: {task.spec.parentTaskRef}
+              {parentRef.text && (
+                <span
+                  className="text-label-md font-mono uppercase text-text-dim/70 max-w-[20rem] truncate"
+                  title={parentRef.tooltip}
+                >
+                  from: {parentRef.text}
                 </span>
               )}
               {lastActivity && (

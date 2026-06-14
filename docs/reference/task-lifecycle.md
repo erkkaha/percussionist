@@ -94,6 +94,12 @@ When `featureBranchingEnabled: true`, additional states manage the merge workflo
 - `awaiting-feature-merge` replaces `awaiting-merge` for feature branch merges
 - On completion, transitions to `done` (success) or `awaiting-human` (requires intervention)
 
+## Troubleshooting Phase Ambiguity
+
+If you are unsure what a task's current phase means or which transition is appropriate, call the manager MCP tool `inspect_task_flow` before using `set_task_state` or `force_retry`. It returns the current phase, all legal target phases, the project's resolved flow, worker status context, and a flow-aware prediction of the expected next step. This is especially useful for high-risk phases such as `awaiting-human`, `reviewing`, `awaiting-merge`, `awaiting-feature-merge`, `awaiting-children`, and `failed`, where the correct action depends on task type (PLAN vs BUILD) and project flow configuration.
+
+See [`inspect_task_flow`](mcp-tools.md#inspect_task_flow) for inputs, outputs, and an example response.
+
 ## Backward Compatibility
 
 A legacy `column` field on `Task.status` maps phases to board columns: `backlog`, `ready`, `in-progress`, `review`, `rework`, `done`, `blocked`. The column field is never written by new code — all state is driven by the phase enum.

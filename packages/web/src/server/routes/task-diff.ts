@@ -1,6 +1,6 @@
-import { Hono } from 'hono';
 import { createHash } from 'node:crypto';
 import type { DiffContext, DiffFinding } from '@percussionist/api';
+import { Hono } from 'hono';
 import { auth } from '../auth.js';
 import { getProject, getRun, getTask, gitUrlHash, NAMESPACE } from '../kube.js';
 
@@ -93,24 +93,24 @@ type ProjectedFinding = DiffFinding & {
 
 function parseMetaSection(text: string): Partial<DiffContext> {
   const result: Partial<DiffContext> = {};
-  for (const line of text.split("\n")) {
-    const idx = line.indexOf("=");
+  for (const line of text.split('\n')) {
+    const idx = line.indexOf('=');
     if (idx === -1) continue;
     const key = line.slice(0, idx).trim();
     const value = line.slice(idx + 1).trim();
-    if (key === "BASE_SHA") result.baseSha = value;
-    if (key === "HEAD_SHA") result.headSha = value;
-    if (key === "FORK_SHA") result.forkSha = value;
+    if (key === 'BASE_SHA') result.baseSha = value;
+    if (key === 'HEAD_SHA') result.headSha = value;
+    if (key === 'FORK_SHA') result.forkSha = value;
   }
   return result;
 }
 
 function computeDiffFingerprint(forkSha: string, headSha: string, unifiedDiff: string): string {
   const payload = `${forkSha}\n${headSha}\n${unifiedDiff.trim()}`;
-  return createHash("sha256").update(payload).digest("hex");
+  return createHash('sha256').update(payload).digest('hex');
 }
 
-const SEVERITY_RANK: Record<DiffFinding["severity"], number> = {
+const SEVERITY_RANK: Record<DiffFinding['severity'], number> = {
   critical: 4,
   high: 3,
   medium: 2,
@@ -142,8 +142,8 @@ function projectFindings(
 
     const anchorA = a.anchors[0];
     const anchorB = b.anchors[0];
-    const pathA = anchorA?.path ?? "";
-    const pathB = anchorB?.path ?? "";
+    const pathA = anchorA?.path ?? '';
+    const pathB = anchorB?.path ?? '';
     const pathCmp = pathA.localeCompare(pathB);
     if (pathCmp !== 0) return pathCmp;
 
@@ -159,7 +159,7 @@ const router = new Hono();
 // The manager always runs in the operator namespace; keep the URL independent
 // of the web server's PERCUSSIONIST_NAMESPACE so the diff route works when the
 // web pod is deployed in a project/test namespace.
-const MCP_URL = "http://percussionist-manager.percussionist.svc.cluster.local:4097/mcp";
+const MCP_URL = 'http://percussionist-manager.percussionist.svc.cluster.local:4097/mcp';
 
 async function execInWorkspaceViaManager(
   project: string,
@@ -277,7 +277,6 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
     baseRef = baseRef ?? defaultRef;
     headRef = headRef ?? defaultRef;
 
-
     const source = project.spec.source;
     let repoPath: string;
 
@@ -324,7 +323,7 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
       'printf "BASE_SHA="; git -C "$REPO" rev-parse "$BASE^{commit}" 2>/dev/null; echo',
       'printf "HEAD_SHA="; git -C "$REPO" rev-parse "$HEAD^{commit}" 2>/dev/null; echo',
       'printf "FORK_SHA=%s\\n" "$FORK"',
-      'echo "___UNIFIED___"', 
+      'echo "___UNIFIED___"',
       'git -C "$REPO" diff --no-color --find-renames --binary "$FORK..$HEAD" -- 2>/dev/null || true',
       'echo "___COMMITS___"',
       'for SHA in $(git -C "$REPO" rev-list --no-merges "$FORK..$HEAD" 2>/dev/null | head -20); do',
@@ -391,9 +390,9 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
     }
 
     const meta = parseMetaSection(metaText);
-    const baseSha = meta.baseSha ?? "";
-    const headSha = meta.headSha ?? "";
-    const forkSha = meta.forkSha ?? "";
+    const baseSha = meta.baseSha ?? '';
+    const headSha = meta.headSha ?? '';
+    const forkSha = meta.forkSha ?? '';
     const diffFingerprint = computeDiffFingerprint(forkSha, headSha, unifiedDiff);
 
     const context: DiffContext = { baseSha, headSha, forkSha, diffFingerprint };

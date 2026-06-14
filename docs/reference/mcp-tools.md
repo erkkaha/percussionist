@@ -17,6 +17,89 @@ The manager runs an in-process MCP server on port 4097. OpenCode agents connect 
 | `delete_run` | Delete a Run by name |
 | `force_retry` | Restart a stuck task at an incremented retry count |
 | `set_task_state` | Move a task to a target column |
+| `manager_approve` | Approve a BUILD task in `awaiting-human` for merge by writing the canonical approval annotation |
+| `inspect_task_flow` | Explain current task lifecycle state, allowed transitions, and expected next action |
+
+### `inspect_task_flow`
+
+Explain the current lifecycle state of a task in the context of its project flow. Returns the task's current phase, valid transitions, fully resolved flow configuration, worker status context, manual action flags, and a natural-language "expected next" block. Use this before calling `set_task_state`, `force_retry`, or other lifecycle-changing tools when you are unsure what a phase means or where the task will go next.
+
+**Inputs**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project` | string | yes | Project name |
+| `task` | string | yes | Task CR name (e.g. `BUILD-4`) |
+| `namespace` | string | no | Namespace (defaults to `percussionist`) |
+| `verbose` | boolean | no | Include observed run details (worker, review, merge, buildgen) in the response |
+
+**Outputs**
+
+| Field | Description |
+|-------|-------------|
+| `project` | Project name |
+| `task` | Task CR name |
+| `taskType` | `PLAN` or `BUILD` |
+| `currentPhase` | Current `Task.status.phase` |
+| `validTargetPhases` | Array of phases that are legal transitions from `currentPhase` |
+| `resolvedFlow` | Full resolved flow object for the project (preset, review, merge, integration, retry, timeouts) |
+| `statusSummary.worker` | Worker status fields: `runName`, `reviewRunName`, `mergeRunName`, `buildTasksFacilitatorRun`, `reviewApproved`, `reviewFeedback`, `mergeError`, `mergedAt`, `retryCount`, `aiReworkCount` |
+| `statusSummary.manualActionFlagsPresent` | Action annotations currently set on the task (`approved`, `requestChanges`, `reworkFeedback`, `abandon`, `answer`) |
+| `statusSummary.blocked` / `blockedReason` / `retryAfter` | Scheduling freeze and backoff metadata |
+| `expectedNext.primary` | Short human-readable prediction of the next step |
+| `expectedNext.reason` | Why that prediction was made |
+| `expectedNext.blockingConditions` | Conditions preventing progress |
+| `expectedNext.suggestedActions` | Concrete actions to consider |
+
+**Example response**
+
+```json
+{
+  "project": "percussionist-dev",
+  "task": "BUILD-4",
+  "taskType": "BUILD",
+  "currentPhase": "awaiting-human",
+  "validTargetPhases": [
+    "awaiting-merge",
+    "generating-builds",
+    "awaiting-feature-merge",
+    "rework-requested",
+    "done",
+    "failed"
+  ],
+  "resolvedFlow": {
+    "preset": "plan-build-review-merge",
+    "build": { "onApprove": "merge" },
+    "merge": { "mode": "auto" },
+    "plan": { "onApprove": "generate-builds" },
+    "integration": { "mode": "auto-merge" },
+    "review": { "aiReviewerEnabled": true, "maxAutoReworks": 2 },
+    "retry": { "enabled": true, "maxAttempts": 3 },
+    "timeouts": { "runningStaleSeconds": 1800, "reviewStaleSeconds": 600, "mergeStaleSeconds": 600, "buildgenStaleSeconds": 600 }
+  },
+  "statusSummary": {
+    "worker": {
+      "runName": "percussionist-dev-worker-BUILD-4-0-abc123",
+      "reviewApproved": true,
+      "mergeRunName": null,
+      "retryCount": 0,
+      "aiReworkCount": 0
+    },
+    "manualActionFlagsPresent": ["approved"],
+    "blocked": false,
+    "retryAfter": null
+  },
+  "expectedNext": {
+    "primary": "Build will move to awaiting-merge",
+    "reason": "BUILD task + approval annotation is set + build.onApprove=merge",
+    "blockingConditions": [],
+    "suggestedActions": [
+      "Remove action-approved annotation to cancel",
+      "If changes are needed, set action-request-changes + action-rework-feedback"
+    ]
+  }
+}
+```
 
 ### Session
 

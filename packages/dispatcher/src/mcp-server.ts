@@ -1,7 +1,7 @@
 // mcp-server.ts — MCP (Model Context Protocol) HTTP server for run-pod agents.
 //
-// Exposes tools: fail_run, complete_run, complete_plan, get_status, create_task,
-//                search_code, write_plan, read_plan, read_session
+// Exposes tools: fail_run, complete_run, complete_plan, complete_merge, complete_review,
+//                get_status, create_task, search_code, write_plan, read_plan, read_session
 //
 // fail_run — the agent calls this to signal that it cannot complete its task.
 // The dispatcher detects the call and throws a "session error:" which causes
@@ -13,6 +13,13 @@
 //
 // complete_plan — like complete_run but for PLAN tasks; signals plan artifact
 // completeness. The orchestrator triggers build-task generation.
+//
+// complete_merge — like complete_run but for merge runs; submits a structured
+// merge verdict (outcome, diagnosis, branches, SHA). The orchestrator uses the
+// verdict annotation to decide task transitions.
+//
+// complete_review — submits a structured review verdict for a completed worker
+// run and marks the review run as complete.
 //
 // get_status — returns the current run state (phase, session ID, tokens, etc.)
 // for agent self-awareness without cluster API access.
@@ -38,6 +45,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import {
   type AgentCapability,
   DISPATCHER_MCP_PORT,
+  MERGE_VERDICT_ANNOTATION,
+  normalizeMergeVerdict,
   normalizeReviewVerdict,
 } from '@percussionist/api';
 import {
@@ -113,6 +122,49 @@ const TOOL_COMPLETE_PLAN = {
       },
     },
     required: ['summary'],
+  },
+};
+
+const TOOL_COMPLETE_MERGE = {
+  name: 'complete_merge',
+  description:
+    'Submit a structured merge verdict for a merge run and mark the run as complete. ' +
+    'Call this from an integrator agent run instead of complete_run. ' +
+    'Writes the verdict to the Run annotations so the orchestrator can act on it.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      outcome: {
+        type: 'string',
+        enum: ['merged', 'already-merged', 'conflict', 'push-failed', 'transient-failure'],
+        description: 'Deterministic merge outcome',
+      },
+      diagnosis: {
+        type: 'string',
+        description: '1-2 sentence assessment of the merge result',
+      },
+      details: {
+        type: 'string',
+        description: 'Optional detailed context',
+      },
+      sourceBranch: {
+        type: 'string',
+        description: 'Optional source branch name',
+      },
+      targetBranch: {
+        type: 'string',
+        description: 'Optional target branch name',
+      },
+      mergeCommitSha: {
+        type: 'string',
+        description: 'Merge commit SHA (required for merged outcome)',
+      },
+      requiresHuman: {
+        type: 'boolean',
+        description: 'Whether human intervention is required',
+      },
+    },
+    required: ['outcome', 'diagnosis'],
   },
 };
 
@@ -1011,6 +1063,63 @@ async function handleMcp(
         });
       }
 
+      if (toolName === 'complete_merge') {
+        const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
+        const diagnosis = typeof args.diagnosis === 'string' ? args.diagnosis : '';
+        if (!diagnosis) {
+          return rpcError(req.id, -32602, 'diagnosis is required');
+        }
+
+        const rawVerdict = {
+          outcome: args.outcome,
+          diagnosis,
+          details: typeof args.details === 'string' ? args.details : undefined,
+          sourceBranch: typeof args.sourceBranch === 'string' ? args.sourceBranch : undefined,
+          targetBranch: typeof args.targetBranch === 'string' ? args.targetBranch : undefined,
+          mergeCommitSha: typeof args.mergeCommitSha === 'string' ? args.mergeCommitSha : undefined,
+          requiresHuman: typeof args.requiresHuman === 'boolean' ? args.requiresHuman : undefined,
+        };
+
+        const verdict = normalizeMergeVerdict(rawVerdict);
+        if (!verdict) {
+          return rpcError(
+            req.id,
+            -32602,
+            'outcome must be one of merged, already-merged, conflict, push-failed, transient-failure',
+          );
+        }
+
+        const runName = process.env.RUN_NAME ?? '';
+        const namespace = process.env.RUN_NAMESPACE ?? 'percussionist';
+
+        // Best-effort annotation write — never block completion
+        try {
+          await patchRunAnnotations(
+            runName,
+            {
+              [MERGE_VERDICT_ANNOTATION]: JSON.stringify(verdict),
+            },
+            namespace,
+          );
+        } catch (e) {
+          console.error(
+            '[mcp-server] complete_merge: failed to patch annotations:',
+            (e as Error).message,
+          );
+        }
+
+        const summary = `merge ${verdict.outcome}: ${diagnosis}`;
+        onCompleteRun(summary);
+        return ok(req.id, {
+          content: [
+            {
+              type: 'text',
+              text: `Merge verdict submitted: ${verdict.outcome}. The orchestrator will process the verdict.`,
+            },
+          ],
+        });
+      }
+
       if (toolName === 'complete_review') {
         const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
         const approved = args.approved === true;
@@ -1130,6 +1239,7 @@ export const __test = {
 
 export interface McpServer {
   close(): void;
+  port: number;
 }
 
 export function startMcpServer(
@@ -1137,6 +1247,7 @@ export function startMcpServer(
   onCompleteRun: (summary: string) => void,
   onCompletePlan: (summary: string) => void,
   getStatus: () => RunStatus | null,
+  port: number = DISPATCHER_MCP_PORT,
 ): Promise<McpServer> {
   return new Promise((resolve, reject) => {
     let completionAuthPromise: Promise<CompletionAuthorization> | undefined;
@@ -1186,11 +1297,14 @@ export function startMcpServer(
     });
 
     server.on('error', reject);
-    server.listen(DISPATCHER_MCP_PORT, '127.0.0.1', () => {
+    server.listen(port, '127.0.0.1', () => {
+      const address = server.address();
+      const listeningPort = typeof address === 'object' && address !== null ? address.port : port;
       resolve({
         close() {
           server.close();
         },
+        port: listeningPort,
       });
     });
   });

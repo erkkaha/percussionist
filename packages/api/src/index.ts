@@ -1115,26 +1115,20 @@ export type TaskSpec = z.infer<typeof TaskSpecSchema>;
 // Stored in Task.status.diffFindings. Bounded to keep Task CR status patches
 // small and deterministic.
 
-export const DiffFindingSeveritySchema = z.enum([
-  "critical",
-  "high",
-  "medium",
-  "low",
-  "info",
-]);
+export const DiffFindingSeveritySchema = z.enum(['critical', 'high', 'medium', 'low', 'info']);
 export type DiffFindingSeverity = z.infer<typeof DiffFindingSeveritySchema>;
 
 export const DiffLineAnchorSchema = z
   .object({
     path: z.string().min(1),
-    side: z.enum(["old", "new"]),
+    side: z.enum(['old', 'new']),
     line: z.number().int().min(1),
     endLine: z.number().int().min(1).optional(),
     hunkHeader: z.string().max(256).optional(),
   })
   .refine((a) => a.endLine === undefined || a.endLine >= a.line, {
-    message: "endLine must be greater than or equal to line",
-    path: ["endLine"],
+    message: 'endLine must be greater than or equal to line',
+    path: ['endLine'],
   });
 export type DiffLineAnchor = z.infer<typeof DiffLineAnchorSchema>;
 
@@ -1148,7 +1142,7 @@ export type DiffContext = z.infer<typeof DiffContextSchema>;
 
 export const DiffFindingSchema = z.object({
   id: z.string().min(1),
-  source: z.literal("reviewer"),
+  source: z.literal('reviewer'),
   severity: DiffFindingSeveritySchema,
   score: z.number().min(0).max(100).optional(),
   title: z.string().min(1).max(160),
@@ -1171,7 +1165,7 @@ export const TaskDiffFindingsSchema = z.object({
 export type TaskDiffFindings = z.infer<typeof TaskDiffFindingsSchema>;
 
 export interface NormalizedReviewVerdict {
-  action: "approve" | "request_changes";
+  action: 'approve' | 'request_changes';
   diagnosis?: string;
   feedback?: string;
   suggestion?: string;
@@ -1186,20 +1180,20 @@ function clampScore(score: unknown): number | undefined {
 }
 
 function truncateString(value: unknown, maxLength: number): string | undefined {
-  if (typeof value !== "string") return undefined;
+  if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   if (trimmed.length === 0) return undefined;
   return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
 }
 
 function normalizeAnchor(raw: unknown): DiffLineAnchor | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
+  if (!raw || typeof raw !== 'object') return undefined;
   const obj = raw as Record<string, unknown>;
 
   const path = truncateString(obj.path, Infinity);
   if (!path) return undefined;
 
-  const side = obj.side === "old" || obj.side === "new" ? obj.side : undefined;
+  const side = obj.side === 'old' || obj.side === 'new' ? obj.side : undefined;
   if (!side) return undefined;
 
   const line = Number(obj.line);
@@ -1222,7 +1216,7 @@ function normalizeAnchor(raw: unknown): DiffLineAnchor | undefined {
 }
 
 function normalizeContext(raw: unknown): DiffContext | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
+  if (!raw || typeof raw !== 'object') return undefined;
   const obj = raw as Record<string, unknown>;
 
   const baseSha = truncateString(obj.baseSha, Infinity);
@@ -1235,7 +1229,7 @@ function normalizeContext(raw: unknown): DiffContext | undefined {
 }
 
 function normalizeFinding(raw: unknown): DiffFinding | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
+  if (!raw || typeof raw !== 'object') return undefined;
   const obj = raw as Record<string, unknown>;
 
   const id = truncateString(obj.id, Infinity);
@@ -1273,7 +1267,7 @@ function normalizeFinding(raw: unknown): DiffFinding | undefined {
 
   const finding: DiffFinding = {
     id,
-    source: "reviewer",
+    source: 'reviewer',
     severity: severity.data,
     title,
     comment,
@@ -1328,7 +1322,7 @@ function buildTaskDiffFindings(
 }
 
 function normalizeTaskDiffFindings(raw: unknown): TaskDiffFindings | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
+  if (!raw || typeof raw !== 'object') return undefined;
   const obj = raw as Record<string, unknown>;
 
   if (obj.version !== 1) return undefined;
@@ -1376,15 +1370,15 @@ export function normalizeReviewVerdict(
   input: unknown,
   options?: { sourceRunName?: string; updatedAt?: string },
 ): NormalizedReviewVerdict | undefined {
-  if (!input || typeof input !== "object") return undefined;
+  if (!input || typeof input !== 'object') return undefined;
   const obj = input as Record<string, unknown>;
 
   const action =
-    obj.action === "approve" || obj.action === "request_changes"
+    obj.action === 'approve' || obj.action === 'request_changes'
       ? obj.action
-      : obj.action === "request-changes"
-      ? "request_changes"
-      : undefined;
+      : obj.action === 'request-changes'
+        ? 'request_changes'
+        : undefined;
   if (!action) return undefined;
 
   const diagnosis = truncateString(obj.diagnosis, 1024);
@@ -1414,34 +1408,127 @@ export function normalizeReviewVerdict(
   return verdict;
 }
 
-export const TaskStatusSchema = z.object({
-  // Internal phase — authoritative state for reconciler logic.
-  phase: TaskPhase.default("pending"),
-  
-  // Blocked flag — when true, task is excluded from scheduling regardless of phase.
-  blocked: z.boolean().default(false),
-  blockedReason: z.string().max(1024).optional(),
-  
-  // Retry backoff — when set, scheduler skips this task until retryAfter time passes.
-  retryAfter: z.string().optional(),
-  lastFailureReason: z.string().max(4096).optional(),
-  lastFailureDuration: z.number().optional(),
-  
-  // Legacy column field — kept for backwards compatibility, never written by new code.
-  column: z
-    .enum(["backlog", "ready", "in-progress", "review", "rework", "done", "blocked"])
-    .optional(),
+// ---------------------------------------------------------------------------
+// Structured merge verdicts
+// ---------------------------------------------------------------------------
+// Merge runs report a deterministic outcome via the `complete_merge` MCP tool.
+// The verdict is persisted on the Run CR as the `percussionist.dev/merge-verdict`
+// annotation and consumed by the manager reconciler to decide task transitions.
 
-  // Worker execution state — set when phase is scheduled or beyond.
-  worker: WorkerStatusSchema.optional(),
-  
-  // Append-only review history records.
-  reviews: ReviewRecordSchema.array().optional(),
+/** Annotation key for structured merge verdicts on Run CRs. */
+export const MERGE_VERDICT_ANNOTATION = 'percussionist.dev/merge-verdict';
 
-  // Latest normalized reviewer diff findings. Replaced in full by each review
-  // run that provides structured findings.
-  diffFindings: TaskDiffFindingsSchema.optional(),
-}).partial();
+export interface NormalizedMergeVerdict {
+  outcome: 'merged' | 'already-merged' | 'conflict' | 'push-failed' | 'transient-failure';
+  diagnosis?: string;
+  details?: string;
+  sourceBranch?: string;
+  targetBranch?: string;
+  mergeCommitSha?: string;
+  requiresHuman: boolean;
+}
+
+const MERGE_OUTCOMES = [
+  'merged',
+  'already-merged',
+  'conflict',
+  'push-failed',
+  'transient-failure',
+] as const;
+type MergeOutcome = (typeof MERGE_OUTCOMES)[number];
+
+const LEGACY_OUTCOME_ALIASES: Record<string, MergeOutcome> = {
+  already_merged: 'already-merged',
+  push_failed: 'push-failed',
+  transient_failure: 'transient-failure',
+  'merge-failed': 'transient-failure',
+  failed: 'transient-failure',
+};
+
+function normalizeMergeOutcome(raw: unknown): MergeOutcome | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const normalized = raw.trim().toLowerCase();
+  if (LEGACY_OUTCOME_ALIASES[normalized]) return LEGACY_OUTCOME_ALIASES[normalized];
+  if (MERGE_OUTCOMES.includes(normalized as MergeOutcome)) return normalized as MergeOutcome;
+  return undefined;
+}
+
+function defaultRequiresHuman(outcome: MergeOutcome): boolean {
+  return outcome === 'conflict' || outcome === 'push-failed';
+}
+
+/**
+ * Parse and normalize a merge verdict payload.
+ *
+ * Accepts the raw dispatcher payload (from `complete_merge`) or an
+ * already-normalized annotation. Invalid optional fields are dropped, string
+ * fields are truncated to safe lengths, and legacy outcome aliases are coerced
+ * to the canonical form. `requiresHuman` defaults to `true` for `conflict` and
+ * `push-failed`, and `false` for all other valid outcomes.
+ */
+export function normalizeMergeVerdict(input: unknown): NormalizedMergeVerdict | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const obj = input as Record<string, unknown>;
+
+  const outcome = normalizeMergeOutcome(obj.outcome);
+  if (!outcome) return undefined;
+
+  const diagnosis = truncateString(obj.diagnosis, 1024);
+  const details = truncateString(obj.details, 4096);
+  const sourceBranch = truncateString(obj.sourceBranch, 255);
+  const targetBranch = truncateString(obj.targetBranch, 255);
+  const mergeCommitSha = truncateString(obj.mergeCommitSha, 64);
+
+  let requiresHuman: boolean;
+  if (typeof obj.requiresHuman === 'boolean') {
+    requiresHuman = obj.requiresHuman;
+  } else if (obj.requiresHuman === 'true') {
+    requiresHuman = true;
+  } else if (obj.requiresHuman === 'false') {
+    requiresHuman = false;
+  } else {
+    requiresHuman = defaultRequiresHuman(outcome);
+  }
+
+  const verdict: NormalizedMergeVerdict = { outcome, requiresHuman };
+  if (diagnosis) verdict.diagnosis = diagnosis;
+  if (details) verdict.details = details;
+  if (sourceBranch) verdict.sourceBranch = sourceBranch;
+  if (targetBranch) verdict.targetBranch = targetBranch;
+  if (mergeCommitSha) verdict.mergeCommitSha = mergeCommitSha;
+  return verdict;
+}
+
+export const TaskStatusSchema = z
+  .object({
+    // Internal phase — authoritative state for reconciler logic.
+    phase: TaskPhase.default('pending'),
+
+    // Blocked flag — when true, task is excluded from scheduling regardless of phase.
+    blocked: z.boolean().default(false),
+    blockedReason: z.string().max(1024).optional(),
+
+    // Retry backoff — when set, scheduler skips this task until retryAfter time passes.
+    retryAfter: z.string().optional(),
+    lastFailureReason: z.string().max(4096).optional(),
+    lastFailureDuration: z.number().optional(),
+
+    // Legacy column field — kept for backwards compatibility, never written by new code.
+    column: z
+      .enum(['backlog', 'ready', 'in-progress', 'review', 'rework', 'done', 'blocked'])
+      .optional(),
+
+    // Worker execution state — set when phase is scheduled or beyond.
+    worker: WorkerStatusSchema.optional(),
+
+    // Append-only review history records.
+    reviews: ReviewRecordSchema.array().optional(),
+
+    // Latest normalized reviewer diff findings. Replaced in full by each review
+    // run that provides structured findings.
+    diffFindings: TaskDiffFindingsSchema.optional(),
+  })
+  .partial();
 
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 

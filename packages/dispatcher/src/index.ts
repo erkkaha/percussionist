@@ -7,9 +7,10 @@
 //      or `beatctl attach`; observe all sessions that appear.
 //   3. Mirror session activity into the Run status subresource.
 //   4. On completion, snapshot all sessions to a ConfigMap and send analytics.
-//   5. Serve an MCP endpoint on 127.0.0.1:4097 so agents can call fail_run(),
-//      complete_run(), get_status(), create_task(), search_code(), read_session(),
-//      write_plan(), and read_plan() without cluster API access.
+// 5. Serve an MCP endpoint on 127.0.0.1:4097 so agents can call fail_run(),
+//      complete_run(), complete_plan(), complete_merge(), complete_review(),
+//      get_status(), create_task(), search_code(), read_session(), write_plan(),
+//      and read_plan() without cluster API access.
 //
 // Environment (injected by the operator):
 //   RUN_NAME, RUN_NAMESPACE, RUN_UID
