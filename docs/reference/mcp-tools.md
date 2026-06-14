@@ -17,6 +17,7 @@ The manager runs an in-process MCP server on port 4097. OpenCode agents connect 
 | `delete_run` | Delete a Run by name |
 | `force_retry` | Restart a stuck task at an incremented retry count |
 | `set_task_state` | Move a task to a target column |
+| `manager_approve` | Approve a BUILD task in `awaiting-human` for merge by writing the canonical approval annotation |
 | `inspect_task_flow` | Explain current task lifecycle state, allowed transitions, and expected next action |
 
 ### `inspect_task_flow`

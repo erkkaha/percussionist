@@ -1,24 +1,24 @@
-import { useState, useMemo } from 'react';
 import { ChevronDown, ChevronRight, File, GitCommit } from 'lucide-react';
-import {
-  parseDiff,
-  Diff,
-  Hunk,
-  findChangeByOldLineNumber,
-  findChangeByNewLineNumber,
-  getChangeKey,
-} from 'react-diff-view';
+import { useMemo, useState } from 'react';
 import type { ChangeData, FileData, GutterOptions } from 'react-diff-view';
+import {
+  Diff,
+  findChangeByNewLineNumber,
+  findChangeByOldLineNumber,
+  getChangeKey,
+  Hunk,
+  parseDiff,
+} from 'react-diff-view';
 import 'react-diff-view/style/index.css';
-import type { TaskDiffFinding, DiffFindingSeverity } from '../lib/types';
 import {
   DIFF_FINDING_SEVERITIES,
-  SEVERITY_RANK,
-  SEVERITY_DOT_CLASS,
-  SEVERITY_BG_CLASS,
-  SEVERITY_LABEL,
   normalizeAnchorPath,
+  SEVERITY_BG_CLASS,
+  SEVERITY_DOT_CLASS,
+  SEVERITY_LABEL,
+  SEVERITY_RANK,
 } from '../lib/diff-findings';
+import type { DiffFindingSeverity, TaskDiffFinding } from '../lib/types';
 
 interface FileDiffProps {
   filename: string;
@@ -39,12 +39,7 @@ function SeverityBadge({ severity }: { severity: DiffFindingSeverity }) {
   );
 }
 
-export function FileDiff({
-  filename,
-  path,
-  diff,
-  findings,
-}: FileDiffProps) {
+export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
   const [expanded, setExpanded] = useState(false);
   const [viewType, setViewType] = useState<'unified' | 'split'>('unified');
 
@@ -82,19 +77,14 @@ export function FileDiff({
     return (
       findings?.filter((finding) =>
         finding.anchors.some(
-          (anchor) =>
-            normalizeAnchorPath(anchor.path) ===
-            normalizeAnchorPath(displayPath),
+          (anchor) => normalizeAnchorPath(anchor.path) === normalizeAnchorPath(displayPath),
         ),
       ) ?? []
     );
   }, [findings, displayPath]);
 
   const { markers, unmappedFindings } = useMemo(() => {
-    const markers = new Map<
-      string,
-      { severity: DiffFindingSeverity; titles: string[] }
-    >();
+    const markers = new Map<string, { severity: DiffFindingSeverity; titles: string[] }>();
     const unmapped: TaskDiffFinding[] = [];
 
     if (!fileData) {
@@ -105,10 +95,7 @@ export function FileDiff({
       let anyMapped = false;
 
       for (const anchor of finding.anchors) {
-        if (
-          normalizeAnchorPath(anchor.path) !==
-          normalizeAnchorPath(displayPath)
-        ) {
+        if (normalizeAnchorPath(anchor.path) !== normalizeAnchorPath(displayPath)) {
           continue;
         }
 
@@ -118,7 +105,7 @@ export function FileDiff({
 
         for (let line = start; line <= end; line++) {
           const change =
-            side === "old"
+            side === 'old'
               ? findChangeByOldLineNumber(fileData.hunks, line)
               : findChangeByNewLineNumber(fileData.hunks, line);
 
@@ -127,15 +114,10 @@ export function FileDiff({
             const key = `${side}:${getChangeKey(change)}`;
             const existing = markers.get(key);
 
-            if (
-              !existing ||
-              SEVERITY_RANK[finding.severity] > SEVERITY_RANK[existing.severity]
-            ) {
+            if (!existing || SEVERITY_RANK[finding.severity] > SEVERITY_RANK[existing.severity]) {
               markers.set(key, {
                 severity: finding.severity,
-                titles: existing
-                  ? [finding.title, ...existing.titles]
-                  : [finding.title],
+                titles: existing ? [finding.title, ...existing.titles] : [finding.title],
               });
             } else {
               existing.titles.push(finding.title);
@@ -169,7 +151,7 @@ export function FileDiff({
           <span
             className={`inline-block rounded-full ${SEVERITY_DOT_CLASS[marker.severity]}`}
             style={{ width: 6, height: 6 }}
-            title={marker.titles.join("\n")}
+            title={marker.titles.join('\n')}
           />
         )}
         {renderDefault()}
@@ -191,9 +173,7 @@ export function FileDiff({
           <ChevronRight className="h-4 w-4 text-text-dim" />
         )}
         <File className="h-4 w-4 text-purple-600 dark:text-purple-400" />
-        <span className="text-sm font-mono text-text flex-1 text-left truncate">
-          {displayPath}
-        </span>
+        <span className="text-sm font-mono text-text flex-1 text-left truncate">{displayPath}</span>
         {severityCounts.length > 0 && (
           <div className="flex items-center gap-1.5">
             {severityCounts.map(({ severity, count }) => (
@@ -290,24 +270,18 @@ export function FileDiff({
                     <div className="flex items-center gap-2 flex-wrap">
                       <SeverityBadge severity={finding.severity} />
                       {finding.isStale && (
-                        <span className="text-[10px] uppercase text-text-dim/70">
-                          stale
-                        </span>
+                        <span className="text-[10px] uppercase text-text-dim/70">stale</span>
                       )}
-                      <span className="text-xs font-medium text-text">
-                        {finding.title}
-                      </span>
+                      <span className="text-xs font-medium text-text">{finding.title}</span>
                     </div>
-                    <p className="text-xs text-text-dim leading-relaxed">
-                      {finding.comment}
-                    </p>
+                    <p className="text-xs text-text-dim leading-relaxed">{finding.comment}</p>
                     <p className="text-[10px] text-text-dim/60 font-mono">
                       {finding.anchors
                         .map(
                           (a) =>
-                            `${normalizeAnchorPath(a.path)}:${a.side}:${a.line}${a.endLine ? `-${a.endLine}` : ""}`,
+                            `${normalizeAnchorPath(a.path)}:${a.side}:${a.line}${a.endLine ? `-${a.endLine}` : ''}`,
                         )
-                        .join(", ")}
+                        .join(', ')}
                     </p>
                   </div>
                 ))}

@@ -133,90 +133,87 @@ describe('getReviewVerdict', () => {
     });
   });
 
-  it("normalizes diffFindings from annotation", () => {
-    const run = makeRun("review-1", { phase: "Succeeded" });
+  it('normalizes diffFindings from annotation', () => {
+    const run = makeRun('review-1', { phase: 'Succeeded' });
     (run.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": JSON.stringify({
-        action: "request_changes",
-        diagnosis: "issues found",
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'request_changes',
+        diagnosis: 'issues found',
         diffFindings: {
           version: 1,
           context,
           items: [baseFinding],
-          updatedAt: "2026-06-13T01:00:00.000Z",
-          sourceRunName: "review-1",
+          updatedAt: '2026-06-13T01:00:00.000Z',
+          sourceRunName: 'review-1',
         },
       }),
     };
     const result = getReviewVerdict(run);
-    expect(result?.action).toBe("request_changes");
+    expect(result?.action).toBe('request_changes');
     expect(result?.diffFindings?.items.length).toBe(1);
-    expect(result?.diffFindings?.items[0]?.id).toBe("f1");
+    expect(result?.diffFindings?.items[0]?.id).toBe('f1');
   });
 
-  it("drops invalid diffFindings items but preserves core verdict", () => {
-    const run = makeRun("review-1", { phase: "Succeeded" });
+  it('drops invalid diffFindings items but preserves core verdict', () => {
+    const run = makeRun('review-1', { phase: 'Succeeded' });
     (run.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": JSON.stringify({
-        action: "approve",
-        diagnosis: "mostly good",
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'approve',
+        diagnosis: 'mostly good',
         diffFindings: {
           version: 1,
           context,
-          items: [
-            baseFinding,
-            { id: "bad", severity: "nope" },
-          ],
-          updatedAt: "2026-06-13T01:00:00.000Z",
-          sourceRunName: "review-1",
+          items: [baseFinding, { id: 'bad', severity: 'nope' }],
+          updatedAt: '2026-06-13T01:00:00.000Z',
+          sourceRunName: 'review-1',
         },
       }),
     };
     const result = getReviewVerdict(run);
-    expect(result?.action).toBe("approve");
+    expect(result?.action).toBe('approve');
     expect(result?.diffFindings?.items.length).toBe(1);
   });
 
-  it("returns undefined for malformed JSON", () => {
-    const run = makeRun("review-1", { phase: "Succeeded" });
+  it('returns undefined for malformed JSON', () => {
+    const run = makeRun('review-1', { phase: 'Succeeded' });
     (run.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": "{ invalid json }",
+      'percussionist.dev/review-verdict': '{ invalid json }',
     };
     const result = getReviewVerdict(run);
     expect(result).toBeUndefined();
   });
 
-  it("returns undefined for primitive verdict", () => {
-    const run = makeRun("review-1", { phase: "Succeeded" });
+  it('returns undefined for primitive verdict', () => {
+    const run = makeRun('review-1', { phase: 'Succeeded' });
     (run.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": '"just a string"',
+      'percussionist.dev/review-verdict': '"just a string"',
     };
     const result = getReviewVerdict(run);
     expect(result).toBeUndefined();
   });
 
-  it("normalizes raw dispatcher findings array into diffFindings", () => {
-    const run = makeRun("review-1", { phase: "Succeeded" });
+  it('normalizes raw dispatcher findings array into diffFindings', () => {
+    const run = makeRun('review-1', { phase: 'Succeeded' });
     (run.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": JSON.stringify({
-        action: "request_changes",
-        diagnosis: "issues found",
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'request_changes',
+        diagnosis: 'issues found',
         findings: [baseFinding],
       }),
     };
     const result = getReviewVerdict(run);
-    expect(result?.action).toBe("request_changes");
+    expect(result?.action).toBe('request_changes');
     expect(result?.diffFindings).toBeDefined();
     expect(result?.diffFindings?.items.length).toBe(1);
-    expect(result?.diffFindings?.sourceRunName).toBe("review-1");
+    expect(result?.diffFindings?.sourceRunName).toBe('review-1');
   });
 
-  it("truncates long title and clamps score", () => {
-    const run = makeRun("review-1", { phase: "Succeeded" });
-    const longTitle = "a".repeat(200);
+  it('truncates long title and clamps score', () => {
+    const run = makeRun('review-1', { phase: 'Succeeded' });
+    const longTitle = 'a'.repeat(200);
     (run.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": JSON.stringify({
-        action: "approve",
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'approve',
         findings: [
           {
             ...baseFinding,
@@ -232,50 +229,50 @@ describe('getReviewVerdict', () => {
     expect(item?.score).toBe(100);
   });
 
-  it("drops duplicate finding ids", () => {
-    const run = makeRun("review-1", { phase: "Succeeded" });
+  it('drops duplicate finding ids', () => {
+    const run = makeRun('review-1', { phase: 'Succeeded' });
     (run.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": JSON.stringify({
-        action: "approve",
-        findings: [baseFinding, { ...baseFinding, title: "duplicate id" }],
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'approve',
+        findings: [baseFinding, { ...baseFinding, title: 'duplicate id' }],
       }),
     };
     const result = getReviewVerdict(run);
     expect(result?.diffFindings?.items.length).toBe(1);
-    expect(result?.diffFindings?.items[0]?.title).toBe("Missing test");
+    expect(result?.diffFindings?.items[0]?.title).toBe('Missing test');
   });
 
-  it("drops findings whose context disagrees with the batch context", () => {
-    const run = makeRun("review-1", { phase: "Succeeded" });
+  it('drops findings whose context disagrees with the batch context', () => {
+    const run = makeRun('review-1', { phase: 'Succeeded' });
     (run.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": JSON.stringify({
-        action: "request_changes",
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'request_changes',
         findings: [
           baseFinding,
           {
             ...baseFinding,
-            id: "f2",
-            context: { ...context, baseSha: "other-base" },
+            id: 'f2',
+            context: { ...context, baseSha: 'other-base' },
           },
         ],
       }),
     };
     const result = getReviewVerdict(run);
     expect(result?.diffFindings?.items.length).toBe(1);
-    expect(result?.diffFindings?.items[0]?.id).toBe("f1");
+    expect(result?.diffFindings?.items[0]?.id).toBe('f1');
   });
 
-  it("preserves core verdict when all findings are invalid", () => {
-    const run = makeRun("review-1", { phase: "Succeeded" });
+  it('preserves core verdict when all findings are invalid', () => {
+    const run = makeRun('review-1', { phase: 'Succeeded' });
     (run.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": JSON.stringify({
-        action: "approve",
-        diagnosis: "all good",
-        findings: [{ id: "bad", severity: "nope" }],
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'approve',
+        diagnosis: 'all good',
+        findings: [{ id: 'bad', severity: 'nope' }],
       }),
     };
     const result = getReviewVerdict(run);
-    expect(result?.action).toBe("approve");
+    expect(result?.action).toBe('approve');
     expect(result?.diffFindings).toBeUndefined();
   });
 });

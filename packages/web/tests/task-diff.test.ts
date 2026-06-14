@@ -4,33 +4,25 @@
 // exercised without a live cluster. Verifies resolved SHAs, diff fingerprint,
 // and findings projection (active/stale mapping + stable sort order).
 
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  beforeEach,
-  spyOn,
-} from "bun:test";
-import { rmSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { createHash } from "node:crypto";
-import * as kube from "../src/server/kube.js";
-import type { Hono } from "hono";
-import type { Task, Project, DiffFinding } from "@percussionist/api";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { createHash } from 'node:crypto';
+import { mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import type { DiffFinding, Project, Task } from '@percussionist/api';
+import type { Hono } from 'hono';
+import * as kube from '../src/server/kube.js';
 
 // ---------------------------------------------------------------------------
 // Test environment
 
-const TEST_DATA_DIR = join("/tmp", `percussionist-task-diff-${Date.now()}`);
+const TEST_DATA_DIR = join('/tmp', `percussionist-task-diff-${Date.now()}`);
 
 process.env.DATA_DIR = TEST_DATA_DIR;
-process.env.AUTH_DISABLED = "1";
+process.env.AUTH_DISABLED = '1';
 
-const BASE_SHA = "base0000000000000000000000000000000000000";
-const HEAD_SHA = "head0000000000000000000000000000000000000";
-const FORK_SHA = "fork0000000000000000000000000000000000000";
+const BASE_SHA = 'base0000000000000000000000000000000000000';
+const HEAD_SHA = 'head0000000000000000000000000000000000000';
+const FORK_SHA = 'fork0000000000000000000000000000000000000';
 
 const SAMPLE_DIFF = `diff --git a/src/index.ts b/src/index.ts
 index 1111111..2222222 100644
@@ -43,45 +35,45 @@ index 1111111..2222222 100644
  }
 `;
 
-const DIFF_FINGERPRINT = createHash("sha256")
+const DIFF_FINGERPRINT = createHash('sha256')
   .update(`${FORK_SHA}\n${HEAD_SHA}\n${SAMPLE_DIFF.trim()}`)
-  .digest("hex");
+  .digest('hex');
 
 function makeGitOutput(diffText: string): string {
   return [
-    "___META___",
+    '___META___',
     `BASE_SHA=${BASE_SHA}`,
     `HEAD_SHA=${HEAD_SHA}`,
     `FORK_SHA=${FORK_SHA}`,
-    "___UNIFIED___",
+    '___UNIFIED___',
     diffText,
-    "___COMMITS___",
-    "END",
-  ].join("\n");
+    '___COMMITS___',
+    'END',
+  ].join('\n');
 }
 
 function makeMcpResponse(stdout: string): Response {
   return new Response(
     JSON.stringify({
-      jsonrpc: "2.0",
+      jsonrpc: '2.0',
       id: 1,
       result: {
         content: [
           {
-            type: "text",
+            type: 'text',
             text: JSON.stringify({ stdout, exitCode: 0 }),
           },
         ],
       },
     }),
-    { status: 200, statusText: "OK" },
+    { status: 200, statusText: 'OK' },
   );
 }
 
 const MOCK_PROJECT = {
-  apiVersion: "percussionist.dev/v1alpha1",
-  kind: "Project",
-  metadata: { name: "test-proj" },
+  apiVersion: 'percussionist.dev/v1alpha1',
+  kind: 'Project',
+  metadata: { name: 'test-proj' },
   spec: {
     source: { local: true },
     agents: [],
@@ -89,23 +81,23 @@ const MOCK_PROJECT = {
   },
 } as unknown as Project;
 
-function makeTask(diffFindings?: Task["status"]["diffFindings"]): Task {
+function makeTask(diffFindings?: Task['status']['diffFindings']): Task {
   return {
-    apiVersion: "percussionist.dev/v1alpha1",
-    kind: "Task",
-    metadata: { name: "test-proj-task-1" },
+    apiVersion: 'percussionist.dev/v1alpha1',
+    kind: 'Task',
+    metadata: { name: 'test-proj-task-1' },
     spec: {
-      projectRef: "test-proj",
-      type: "BUILD",
-      title: "test task",
-      agent: "builder",
+      projectRef: 'test-proj',
+      type: 'BUILD',
+      title: 'test task',
+      agent: 'builder',
     },
     status: {
-      phase: "succeeded",
+      phase: 'succeeded',
       worker: {
-        status: "Succeeded",
-        gitBranch: "feature/thing",
-        mergeIntoBranch: "main",
+        status: 'Succeeded',
+        gitBranch: 'feature/thing',
+        mergeIntoBranch: 'main',
       },
       diffFindings,
     },
@@ -114,25 +106,25 @@ function makeTask(diffFindings?: Task["status"]["diffFindings"]): Task {
 
 function makeFinding(
   id: string,
-  severity: DiffFinding["severity"],
+  severity: DiffFinding['severity'],
   options: {
     score?: number;
     line?: number;
     path?: string;
-    context?: DiffFinding["context"];
+    context?: DiffFinding['context'];
   } = {},
 ): DiffFinding {
   return {
     id,
-    source: "reviewer",
+    source: 'reviewer',
     severity,
     score: options.score,
     title: `Finding ${id}`,
-    comment: "comment",
+    comment: 'comment',
     anchors: [
       {
-        path: options.path ?? "src/index.ts",
-        side: "new",
+        path: options.path ?? 'src/index.ts',
+        side: 'new',
         line: options.line ?? 1,
       },
     ],
@@ -142,7 +134,7 @@ function makeFinding(
       forkSha: FORK_SHA,
       diffFingerprint: DIFF_FINGERPRINT,
     },
-    createdAt: "2026-01-01T00:00:00Z",
+    createdAt: '2026-01-01T00:00:00Z',
   } as DiffFinding;
 }
 
@@ -156,13 +148,13 @@ let fetchSpy: ReturnType<typeof spyOn>;
 beforeAll(async () => {
   mkdirSync(TEST_DATA_DIR, { recursive: true });
 
-  getProjectSpy = spyOn(kube, "getProject").mockResolvedValue(MOCK_PROJECT);
-  getTaskSpy = spyOn(kube, "getTask").mockResolvedValue(makeTask());
-  fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
+  getProjectSpy = spyOn(kube, 'getProject').mockResolvedValue(MOCK_PROJECT);
+  getTaskSpy = spyOn(kube, 'getTask').mockResolvedValue(makeTask());
+  fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(
     makeMcpResponse(makeGitOutput(SAMPLE_DIFF)),
   );
 
-  const { createApp } = await import("../src/server/app.js");
+  const { createApp } = await import('../src/server/app.js');
   app = createApp();
 });
 
@@ -178,19 +170,17 @@ afterAll(() => {
 beforeEach(() => {
   getProjectSpy.mockResolvedValue(MOCK_PROJECT);
   getTaskSpy.mockResolvedValue(makeTask());
-  fetchSpy.mockImplementation(() =>
-    Promise.resolve(makeMcpResponse(makeGitOutput(SAMPLE_DIFF))),
-  );
+  fetchSpy.mockImplementation(() => Promise.resolve(makeMcpResponse(makeGitOutput(SAMPLE_DIFF))));
 });
 
-async function getDiff(project = "test-proj", task = "test-proj-task-1") {
+async function getDiff(project = 'test-proj', task = 'test-proj-task-1') {
   return app.request(`/api/projects/${project}/tasks/${task}/diff`);
 }
 
 // ---------------------------------------------------------------------------
 
-describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
-  it("returns resolved SHAs, fingerprint, and empty findings", async () => {
+describe('GET /api/projects/:project/tasks/:taskName/diff', () => {
+  it('returns resolved SHAs, fingerprint, and empty findings', async () => {
     const res = await getDiff();
     expect(res.status).toBe(200);
 
@@ -207,8 +197,8 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
       empty: boolean;
     };
 
-    expect(body.baseRef).toBe("main");
-    expect(body.headRef).toBe("feature/thing");
+    expect(body.baseRef).toBe('main');
+    expect(body.headRef).toBe('feature/thing');
     expect(body.baseSha).toBe(BASE_SHA);
     expect(body.headSha).toBe(HEAD_SHA);
     expect(body.forkSha).toBe(FORK_SHA);
@@ -225,13 +215,13 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
     expect(body.empty).toBe(false);
   });
 
-  it("marks findings active when context matches and stale when it does not", async () => {
-    const active = makeFinding("f1", "high", { score: 80, line: 2 });
-    const stale = makeFinding("f2", "medium", {
+  it('marks findings active when context matches and stale when it does not', async () => {
+    const active = makeFinding('f1', 'high', { score: 80, line: 2 });
+    const stale = makeFinding('f2', 'medium', {
       score: 50,
       line: 3,
       context: {
-        baseSha: "old-base",
+        baseSha: 'old-base',
         headSha: HEAD_SHA,
         forkSha: FORK_SHA,
         diffFingerprint: DIFF_FINGERPRINT,
@@ -243,8 +233,8 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
         version: 1,
         context: active.context,
         items: [active, stale],
-        updatedAt: "2026-01-01T00:00:00Z",
-        sourceRunName: "review-run-1",
+        updatedAt: '2026-01-01T00:00:00Z',
+        sourceRunName: 'review-run-1',
       }),
     );
 
@@ -256,21 +246,21 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
     };
 
     expect(body.findings.length).toBe(2);
-    expect(body.findings[0].id).toBe("f1");
+    expect(body.findings[0].id).toBe('f1');
     expect(body.findings[0].isActive).toBe(true);
     expect(body.findings[0].isStale).toBe(false);
-    expect(body.findings[1].id).toBe("f2");
+    expect(body.findings[1].id).toBe('f2');
     expect(body.findings[1].isActive).toBe(false);
     expect(body.findings[1].isStale).toBe(true);
   });
 
-  it("sorts findings by severity desc, score desc, path asc, line asc", async () => {
+  it('sorts findings by severity desc, score desc, path asc, line asc', async () => {
     const findings: DiffFinding[] = [
-      makeFinding("a", "high", { score: 90, line: 10, path: "src/a.ts" }),
-      makeFinding("b", "critical", { score: 50, line: 1, path: "src/z.ts" }),
-      makeFinding("c", "high", { score: 90, line: 5, path: "src/a.ts" }),
-      makeFinding("d", "high", { score: 95, line: 1, path: "src/a.ts" }),
-      makeFinding("e", "medium", { score: 100, line: 1, path: "src/a.ts" }),
+      makeFinding('a', 'high', { score: 90, line: 10, path: 'src/a.ts' }),
+      makeFinding('b', 'critical', { score: 50, line: 1, path: 'src/z.ts' }),
+      makeFinding('c', 'high', { score: 90, line: 5, path: 'src/a.ts' }),
+      makeFinding('d', 'high', { score: 95, line: 1, path: 'src/a.ts' }),
+      makeFinding('e', 'medium', { score: 100, line: 1, path: 'src/a.ts' }),
     ];
 
     getTaskSpy.mockResolvedValue(
@@ -278,8 +268,8 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
         version: 1,
         context: findings[0].context,
         items: findings,
-        updatedAt: "2026-01-01T00:00:00Z",
-        sourceRunName: "review-run-1",
+        updatedAt: '2026-01-01T00:00:00Z',
+        sourceRunName: 'review-run-1',
       }),
     );
 
@@ -292,28 +282,28 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
 
     const ids = body.findings.map((f) => f.id);
     // critical first, then high by score desc, then path/line asc, then medium
-    expect(ids).toEqual(["b", "d", "c", "a", "e"]);
+    expect(ids).toEqual(['b', 'd', 'c', 'a', 'e']);
   });
 
-  it("returns empty diff with resolved SHAs/fingerprint when refs are identical", async () => {
+  it('returns empty diff with resolved SHAs/fingerprint when refs are identical', async () => {
     const identicalTask = makeTask();
-    identicalTask.status.worker.gitBranch = "main";
-    identicalTask.status.worker.mergeIntoBranch = "main";
+    identicalTask.status.worker.gitBranch = 'main';
+    identicalTask.status.worker.mergeIntoBranch = 'main';
     getTaskSpy.mockResolvedValue(identicalTask);
 
     fetchSpy.mockImplementation(() =>
       Promise.resolve(
         makeMcpResponse(
           [
-            "___META___",
+            '___META___',
             `BASE_SHA=${BASE_SHA}`,
             `HEAD_SHA=${BASE_SHA}`,
             `FORK_SHA=${BASE_SHA}`,
-            "___UNIFIED___",
-            "",
-            "___COMMITS___",
-            "END",
-          ].join("\n"),
+            '___UNIFIED___',
+            '',
+            '___COMMITS___',
+            'END',
+          ].join('\n'),
         ),
       ),
     );
@@ -333,8 +323,8 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
       empty: boolean;
     };
 
-    expect(body.baseRef).toBe("main");
-    expect(body.headRef).toBe("main");
+    expect(body.baseRef).toBe('main');
+    expect(body.headRef).toBe('main');
     expect(body.baseSha).toBe(BASE_SHA);
     expect(body.headSha).toBe(BASE_SHA);
     expect(body.forkSha).toBe(BASE_SHA);
@@ -344,13 +334,13 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
     expect(body.empty).toBe(true);
   });
 
-  it("marks finding stale when only the diff fingerprint differs", async () => {
-    const fingerprintMismatch = makeFinding("f3", "high", {
+  it('marks finding stale when only the diff fingerprint differs', async () => {
+    const fingerprintMismatch = makeFinding('f3', 'high', {
       context: {
         baseSha: BASE_SHA,
         headSha: HEAD_SHA,
         forkSha: FORK_SHA,
-        diffFingerprint: "different-fingerprint",
+        diffFingerprint: 'different-fingerprint',
       },
     });
 
@@ -359,8 +349,8 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
         version: 1,
         context: fingerprintMismatch.context,
         items: [fingerprintMismatch],
-        updatedAt: "2026-01-01T00:00:00Z",
-        sourceRunName: "review-run-1",
+        updatedAt: '2026-01-01T00:00:00Z',
+        sourceRunName: 'review-run-1',
       }),
     );
 
@@ -376,10 +366,10 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
     expect(body.findings[0].isStale).toBe(true);
   });
 
-  it("returns stored findings even when the diff is empty", async () => {
+  it('returns stored findings even when the diff is empty', async () => {
     const identicalTask = makeTask();
-    identicalTask.status.worker.gitBranch = "main";
-    identicalTask.status.worker.mergeIntoBranch = "main";
+    identicalTask.status.worker.gitBranch = 'main';
+    identicalTask.status.worker.mergeIntoBranch = 'main';
     getTaskSpy.mockResolvedValue(
       makeTask({
         version: 1,
@@ -389,9 +379,9 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
           forkSha: FORK_SHA,
           diffFingerprint: DIFF_FINGERPRINT,
         },
-        items: [makeFinding("f4", "medium")],
-        updatedAt: "2026-01-01T00:00:00Z",
-        sourceRunName: "review-run-1",
+        items: [makeFinding('f4', 'medium')],
+        updatedAt: '2026-01-01T00:00:00Z',
+        sourceRunName: 'review-run-1',
       }),
     );
 
@@ -399,15 +389,15 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
       Promise.resolve(
         makeMcpResponse(
           [
-            "___META___",
+            '___META___',
             `BASE_SHA=${BASE_SHA}`,
             `HEAD_SHA=${BASE_SHA}`,
             `FORK_SHA=${BASE_SHA}`,
-            "___UNIFIED___",
-            "",
-            "___COMMITS___",
-            "END",
-          ].join("\n"),
+            '___UNIFIED___',
+            '',
+            '___COMMITS___',
+            'END',
+          ].join('\n'),
         ),
       ),
     );
@@ -424,6 +414,6 @@ describe("GET /api/projects/:project/tasks/:taskName/diff", () => {
     expect(body.files).toEqual([]);
     expect(body.empty).toBe(true);
     expect(body.findings.length).toBe(1);
-    expect(body.findings[0].id).toBe("f4");
+    expect(body.findings[0].id).toBe('f4');
   });
 });

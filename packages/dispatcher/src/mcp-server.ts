@@ -1,7 +1,7 @@
 // mcp-server.ts — MCP (Model Context Protocol) HTTP server for run-pod agents.
 //
-// Exposes tools: fail_run, complete_run, complete_plan, get_status, create_task,
-//                search_code, write_plan, read_plan, read_session
+// Exposes tools: fail_run, complete_run, complete_plan, complete_merge, complete_review,
+//                get_status, create_task, search_code, write_plan, read_plan, read_session
 //
 // fail_run — the agent calls this to signal that it cannot complete its task.
 // The dispatcher detects the call and throws a "session error:" which causes
@@ -13,6 +13,13 @@
 //
 // complete_plan — like complete_run but for PLAN tasks; signals plan artifact
 // completeness. The orchestrator triggers build-task generation.
+//
+// complete_merge — like complete_run but for merge runs; submits a structured
+// merge verdict (outcome, diagnosis, branches, SHA). The orchestrator uses the
+// verdict annotation to decide task transitions.
+//
+// complete_review — submits a structured review verdict for a completed worker
+// run and marks the review run as complete.
 //
 // get_status — returns the current run state (phase, session ID, tokens, etc.)
 // for agent self-awareness without cluster API access.
@@ -35,7 +42,12 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { DISPATCHER_MCP_PORT, normalizeReviewVerdict } from '@percussionist/api';
+import {
+  DISPATCHER_MCP_PORT,
+  MERGE_VERDICT_ANNOTATION,
+  normalizeMergeVerdict,
+  normalizeReviewVerdict,
+} from '@percussionist/api';
 import {
   buildTask,
   createTask,
@@ -108,6 +120,49 @@ const TOOL_COMPLETE_PLAN = {
   },
 };
 
+const TOOL_COMPLETE_MERGE = {
+  name: 'complete_merge',
+  description:
+    'Submit a structured merge verdict for a merge run and mark the run as complete. ' +
+    'Call this from an integrator agent run instead of complete_run. ' +
+    'Writes the verdict to the Run annotations so the orchestrator can act on it.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      outcome: {
+        type: 'string',
+        enum: ['merged', 'already-merged', 'conflict', 'push-failed', 'transient-failure'],
+        description: 'Deterministic merge outcome',
+      },
+      diagnosis: {
+        type: 'string',
+        description: '1-2 sentence assessment of the merge result',
+      },
+      details: {
+        type: 'string',
+        description: 'Optional detailed context',
+      },
+      sourceBranch: {
+        type: 'string',
+        description: 'Optional source branch name',
+      },
+      targetBranch: {
+        type: 'string',
+        description: 'Optional target branch name',
+      },
+      mergeCommitSha: {
+        type: 'string',
+        description: 'Merge commit SHA (required for merged outcome)',
+      },
+      requiresHuman: {
+        type: 'boolean',
+        description: 'Whether human intervention is required',
+      },
+    },
+    required: ['outcome', 'diagnosis'],
+  },
+};
+
 const TOOL_COMPLETE_REVIEW = {
   name: 'complete_review',
   description:
@@ -134,53 +189,53 @@ const TOOL_COMPLETE_REVIEW = {
         description: 'Optional suggestion for how to improve the work',
       },
       findings: {
-        type: "array",
+        type: 'array',
         description:
-          "Optional structured diff findings (max 25). Each finding has severity, title, comment, " +
-          "1-3 line anchors, and diff context. Invalid or overflowing findings are dropped; core verdict still writes.",
+          'Optional structured diff findings (max 25). Each finding has severity, title, comment, ' +
+          '1-3 line anchors, and diff context. Invalid or overflowing findings are dropped; core verdict still writes.',
         maxItems: 25,
         items: {
-          type: "object",
+          type: 'object',
           properties: {
-            id: { type: "string", description: "Unique finding ID" },
+            id: { type: 'string', description: 'Unique finding ID' },
             severity: {
-              type: "string",
-              enum: ["critical", "high", "medium", "low", "info"],
+              type: 'string',
+              enum: ['critical', 'high', 'medium', 'low', 'info'],
             },
-            score: { type: "number", minimum: 0, maximum: 100 },
-            title: { type: "string", maxLength: 160 },
-            comment: { type: "string", maxLength: 2000 },
-            category: { type: "string", maxLength: 64 },
+            score: { type: 'number', minimum: 0, maximum: 100 },
+            title: { type: 'string', maxLength: 160 },
+            comment: { type: 'string', maxLength: 2000 },
+            category: { type: 'string', maxLength: 64 },
             anchors: {
-              type: "array",
+              type: 'array',
               minItems: 1,
               maxItems: 3,
               items: {
-                type: "object",
+                type: 'object',
                 properties: {
-                  path: { type: "string" },
-                  side: { type: "string", enum: ["old", "new"] },
-                  line: { type: "integer", minimum: 1 },
-                  endLine: { type: "integer", minimum: 1 },
-                  hunkHeader: { type: "string", maxLength: 256 },
+                  path: { type: 'string' },
+                  side: { type: 'string', enum: ['old', 'new'] },
+                  line: { type: 'integer', minimum: 1 },
+                  endLine: { type: 'integer', minimum: 1 },
+                  hunkHeader: { type: 'string', maxLength: 256 },
                 },
-                required: ["path", "side", "line"],
+                required: ['path', 'side', 'line'],
               },
             },
             context: {
-              type: "object",
+              type: 'object',
               properties: {
-                baseSha: { type: "string" },
-                headSha: { type: "string" },
-                forkSha: { type: "string" },
-                diffFingerprint: { type: "string" },
+                baseSha: { type: 'string' },
+                headSha: { type: 'string' },
+                forkSha: { type: 'string' },
+                diffFingerprint: { type: 'string' },
               },
-              required: ["baseSha", "headSha", "forkSha", "diffFingerprint"],
+              required: ['baseSha', 'headSha', 'forkSha', 'diffFingerprint'],
             },
-            createdAt: { type: "string" },
-            authorRunName: { type: "string" },
+            createdAt: { type: 'string' },
+            authorRunName: { type: 'string' },
           },
-          required: ["id", "severity", "title", "comment", "anchors", "context", "createdAt"],
+          required: ['id', 'severity', 'title', 'comment', 'anchors', 'context', 'createdAt'],
         },
       },
     },
@@ -804,6 +859,7 @@ async function handleMcp(
           TOOL_FAIL_RUN,
           TOOL_COMPLETE_RUN,
           TOOL_COMPLETE_PLAN,
+          TOOL_COMPLETE_MERGE,
           TOOL_COMPLETE_REVIEW,
           TOOL_GET_STATUS,
           TOOL_CREATE_TASK,
@@ -863,6 +919,63 @@ async function handleMcp(
         });
       }
 
+      if (toolName === 'complete_merge') {
+        const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
+        const diagnosis = typeof args.diagnosis === 'string' ? args.diagnosis : '';
+        if (!diagnosis) {
+          return rpcError(req.id, -32602, 'diagnosis is required');
+        }
+
+        const rawVerdict = {
+          outcome: args.outcome,
+          diagnosis,
+          details: typeof args.details === 'string' ? args.details : undefined,
+          sourceBranch: typeof args.sourceBranch === 'string' ? args.sourceBranch : undefined,
+          targetBranch: typeof args.targetBranch === 'string' ? args.targetBranch : undefined,
+          mergeCommitSha: typeof args.mergeCommitSha === 'string' ? args.mergeCommitSha : undefined,
+          requiresHuman: typeof args.requiresHuman === 'boolean' ? args.requiresHuman : undefined,
+        };
+
+        const verdict = normalizeMergeVerdict(rawVerdict);
+        if (!verdict) {
+          return rpcError(
+            req.id,
+            -32602,
+            'outcome must be one of merged, already-merged, conflict, push-failed, transient-failure',
+          );
+        }
+
+        const runName = process.env.RUN_NAME ?? '';
+        const namespace = process.env.RUN_NAMESPACE ?? 'percussionist';
+
+        // Best-effort annotation write — never block completion
+        try {
+          await patchRunAnnotations(
+            runName,
+            {
+              [MERGE_VERDICT_ANNOTATION]: JSON.stringify(verdict),
+            },
+            namespace,
+          );
+        } catch (e) {
+          console.error(
+            '[mcp-server] complete_merge: failed to patch annotations:',
+            (e as Error).message,
+          );
+        }
+
+        const summary = `merge ${verdict.outcome}: ${diagnosis}`;
+        onCompleteRun(summary);
+        return ok(req.id, {
+          content: [
+            {
+              type: 'text',
+              text: `Merge verdict submitted: ${verdict.outcome}. The orchestrator will process the verdict.`,
+            },
+          ],
+        });
+      }
+
       if (toolName === 'complete_review') {
         const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
         const approved = args.approved === true;
@@ -892,7 +1005,7 @@ async function handleMcp(
         });
 
         if (!verdict) {
-          return rpcError(req.id, -32602, "invalid verdict payload");
+          return rpcError(req.id, -32602, 'invalid verdict payload');
         }
 
         // Best-effort annotation write — never block completion
@@ -976,6 +1089,7 @@ async function handleMcp(
 
 export interface McpServer {
   close(): void;
+  port: number;
 }
 
 export function startMcpServer(
@@ -983,6 +1097,7 @@ export function startMcpServer(
   onCompleteRun: (summary: string) => void,
   onCompletePlan: (summary: string) => void,
   getStatus: () => RunStatus | null,
+  port: number = DISPATCHER_MCP_PORT,
 ): Promise<McpServer> {
   return new Promise((resolve, reject) => {
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -1026,11 +1141,14 @@ export function startMcpServer(
     });
 
     server.on('error', reject);
-    server.listen(DISPATCHER_MCP_PORT, '127.0.0.1', () => {
+    server.listen(port, '127.0.0.1', () => {
+      const address = server.address();
+      const listeningPort = typeof address === 'object' && address !== null ? address.port : port;
       resolve({
         close() {
           server.close();
         },
+        port: listeningPort,
       });
     });
   });

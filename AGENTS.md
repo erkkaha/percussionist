@@ -481,6 +481,7 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `create_task` | Create a new Task CR from the manager |
 | `force_retry` | Restart a stuck task at an incremented retry count via `Task.status` (does not delete old runs) |
 | `set_task_state` | Move a task to a target column, optionally cancel running runs (runs preserved by default) |
+| `manager_approve` | Approve a BUILD task in `awaiting-human` for merge by writing the canonical approval annotation |
 | `exec_in_workspace` | Run commands in the project's data PVC workspace |
 | `read_plan` | Read a plan artifact from the project's plans ConfigMap |
 | `write_plan` | Write a plan artifact to the project's plans ConfigMap |
@@ -531,6 +532,22 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 - Deletes matching runs for the specified project/task and prunes remote-git run worktrees; if `cancelRunning: true` also deletes active runs
 - Patches `Task.status.phase`; phase-specific worker updates handle `running`, `done`,
   `pending`, `rework-requested`, and `failed` transitions
+- **Note:** For approving a BUILD task that is in `awaiting-human` and scheduling its merge,
+  prefer `manager_approve` instead of raw `set_task_state`. `manager_approve` writes the
+  canonical `percussionist.dev/action-approved` annotation and lets the reconciler handle
+  merge-run scheduling, avoiding skipped side effects.
+
+**`manager_approve`** — Approve a BUILD task for merge via the canonical annotation.
+- Requires: `project`, `task` (Task CR name)
+- Optional: `namespace`
+- Writes `percussionist.dev/action-approved: "true"` (and clears
+  `percussionist.dev/action-request-changes`) on the Task CR.
+- Actionable only for tasks in the `awaiting-human` phase.
+- Returns a soft no-op for `awaiting-merge` or `done` (task already approved/progressed).
+- Returns an error for any other phase (e.g. `running`, `pending`).
+- Idempotent: repeated calls are safe and do not duplicate reconciler state.
+- The reconciler consumes the annotation on its next pass and transitions the task to
+  `awaiting-merge`, scheduling the merge run with the correct feature-branch metadata.
 
 **`read_session_live`** — Real-time session message streaming.
 - Requires: `runName`
@@ -677,9 +694,9 @@ applied when it isn't. Additionally:
 
 ### The correct deploy flow
 
-1. Commit code changes
-2. Tag with the next semver: `git tag v0.X.Y && git push origin v0.X.Y`
-3. CI builds images and pushes to ghcr.io automatically
+1. Commit and push code changes to `main`
+2. Trigger a release from GitHub Actions (see **Releases** below)
+3. CI builds images, pushes to ghcr.io, and creates a GitHub Release automatically
 4. When ready to deploy: `kubectl -n percussionist rollout restart deploy/<name>`
 5. Verify: `kubectl -n percussionist rollout status deploy/<name>`
 
@@ -786,27 +803,65 @@ ConfigMap budget. Do not raise the web pod memory limit to mask this issue.
 retrieval so large live sessions can be viewed incrementally instead of falling back
 to a truncated snapshot.
 
-## Tagging
+## Releases
 
 Release tags follow `v<major>.<minor>.<patch>` semver format (e.g. `v0.15.0`).
-CI triggers on any push matching `v*`.
+Beta/pre-release tags add a `-beta.N` suffix (e.g. `v0.16.0-beta.1`).
 
-**Never create a tag without asking the user first.** Tagging is a human decision.
-Always ask what version they want, then derive from existing remote tags:
+**Never create a tag locally.** Releases are triggered from GitHub's Actions tab.
+
+### How to release
+
+1. Go to GitHub → **Actions** → **Release** → "Run workflow"
+2. Select the version bump:
+   - `patch` — bug fixes, minor changes (most common)
+   - `minor` — new features, backward-compatible
+   - `major` — breaking changes
+3. Check **pre-release** for beta releases
+4. Click "Run workflow"
+
+### What CI does
+
+On trigger, the `release.yml` workflow:
+
+1. `pnpm build` + `pnpm test` — safety gate (fails fast if anything is broken)
+2. Calculates the next semver from the latest git tag (e.g. `v0.1.178` + patch → `v0.1.179`)
+3. Generates `CHANGELOG.md` from **conventional commits** since the last tag using `git-cliff`
+4. Bumps all `package.json` versions to match the new tag
+5. Commits `CHANGELOG.md` + version bumps as `chore: release v0.X.Y`
+6. Pushes the commit and tag to `main` — this triggers `images.yml`
+
+Then `images.yml`:
+
+7. Builds all 6 Docker images and pushes to GHCR with tags:
+   - `{version}`, `v{version}` (e.g. `0.1.179`, `v0.1.179`)
+   - `latest` (stable releases only)
+   - `beta` (pre-release tags only)
+8. Creates a **GitHub Release** with the generated changelog
+
+### Beta / pre-release channel
+
+- Tags like `v0.16.0-beta.1` are created automatically when **pre-release** is checked
+- Docker images get the `beta` tag instead of `latest`
+- The GitHub Release is marked as **Pre-release**
+- Beta numbering auto-increments: first `-beta.1`, then `-beta.2`, etc.
+
+### Manual fallback
+
+If the workflow fails after the tag is pushed but before images are built, you can
+re-trigger `images.yml` manually with the same tag:
+
+```
+Actions → Publish Images → Run workflow → Tag: v0.X.Y
+```
+
+Or, if needed, manually create a tag from the CLI (emergency only):
 
 ```bash
 git fetch --tags origin
-git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1V -k2,2V -k3,3V | tail -1
+git tag v0.1.179
+git push origin v0.1.179
 ```
-
-Once the user confirms the version, create and push:
-
-```bash
-git tag v0.15.1
-git push origin v0.15.1
-```
-
-Never invent a version — read what exists and increment.
 
 ## Self-Development Workflow
 

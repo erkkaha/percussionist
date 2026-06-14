@@ -58,6 +58,17 @@ function makeInput(
   };
 }
 
+function withMergeVerdict(
+  run: ReturnType<typeof makeRun>,
+  verdict: Record<string, unknown>,
+): ReturnType<typeof makeRun> {
+  (run.metadata as any).annotations = {
+    ...((run.metadata as any).annotations ?? {}),
+    'percussionist.dev/merge-verdict': JSON.stringify(verdict),
+  };
+  return run;
+}
+
 describe('decide — terminal/no-op', () => {
   it('returns no decision for done tasks', () => {
     const task = makeTask('t1', 'test-project', { phase: 'done' });
@@ -337,7 +348,9 @@ describe('decide — awaiting-human', () => {
       updatedAt: '2026-06-12T00:00:00.000Z',
       sourceRunName: 'review-0',
     };
-    const result = decide(makeInput(task, { manualActions: { requestChanges: true, reworkFeedback: 'fix it' } }));
+    const result = decide(
+      makeInput(task, { manualActions: { requestChanges: true, reworkFeedback: 'fix it' } }),
+    );
     expect(result.toPhase).toBe('rework-requested');
     expect(result.statusPatch?.diffFindings).toBeUndefined();
     expect((result.statusPatch?.worker as any).reviewFeedback).toBe('fix it');
@@ -467,7 +480,25 @@ describe('decide — failed', () => {
 });
 
 describe('decide — awaiting-merge', () => {
-  it('awaiting-merge + Succeeded merge → done', () => {
+  it('awaiting-merge + Succeeded merge + merged verdict → done', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'awaiting-merge' });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const mergeRun = withMergeVerdict(makeRun('merge-1', { phase: 'Succeeded' }), {
+      outcome: 'merged',
+      diagnosis: 'merged cleanly',
+      requiresHuman: false,
+    });
+    const result = decide(
+      makeInput(task, {
+        observed: { merge: mergeRun },
+      }),
+    );
+    expect(result.toPhase).toBe('done');
+    expect((result.statusPatch?.worker as any).mergedAt).toBe(now);
+    expect(result.events[0]?.reason).toBe('MergeSucceeded');
+  });
+
+  it('awaiting-merge + Succeeded merge + no verdict → done (legacy fallback)', () => {
     const task = makeTask('t1', 'test-project', { phase: 'awaiting-merge' });
     (task.status as any).worker = { mergeRunName: 'merge-1' };
     const result = decide(
@@ -476,7 +507,62 @@ describe('decide — awaiting-merge', () => {
       }),
     );
     expect(result.toPhase).toBe('done');
-    expect((result.statusPatch?.worker as any).mergedAt).toBe(now);
+    expect(result.events[0]?.reason).toBe('MergeSucceededUnstructured');
+  });
+
+  it('awaiting-merge + conflict verdict → awaiting-human with mergeError', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'awaiting-merge' });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const mergeRun = withMergeVerdict(makeRun('merge-1', { phase: 'Succeeded' }), {
+      outcome: 'conflict',
+      diagnosis: 'merge conflict in src/app.ts',
+      details: 'manual resolution required',
+      requiresHuman: true,
+    });
+    const result = decide(makeInput(task, { observed: { merge: mergeRun } }));
+    expect(result.toPhase).toBe('awaiting-human');
+    expect((result.statusPatch?.worker as any).mergeError).toContain(
+      'merge conflict in src/app.ts',
+    );
+    expect(result.events[0]?.reason).toBe('MergeNeedsHumanIntervention');
+  });
+
+  it('awaiting-merge + requiresHuman verdict on merged outcome → awaiting-human', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'awaiting-merge' });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const mergeRun = withMergeVerdict(makeRun('merge-1', { phase: 'Succeeded' }), {
+      outcome: 'merged',
+      diagnosis: 'push blocked by policy',
+      requiresHuman: true,
+    });
+    const result = decide(makeInput(task, { observed: { merge: mergeRun } }));
+    expect(result.toPhase).toBe('awaiting-human');
+    expect((result.statusPatch?.worker as any).mergeError).toContain('push blocked by policy');
+  });
+
+  it('awaiting-merge + push-failed verdict → failed', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'awaiting-merge' });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const mergeRun = withMergeVerdict(makeRun('merge-1', { phase: 'Succeeded' }), {
+      outcome: 'push-failed',
+      diagnosis: 'remote rejected push',
+    });
+    const result = decide(makeInput(task, { observed: { merge: mergeRun } }));
+    expect(result.toPhase).toBe('failed');
+    expect((result.statusPatch?.worker as any).mergeError).toContain('remote rejected push');
+    expect(result.events[0]?.reason).toBe('MergeStructuredFailure');
+  });
+
+  it('awaiting-merge + transient-failure verdict → failed', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'awaiting-merge' });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const mergeRun = withMergeVerdict(makeRun('merge-1', { phase: 'Succeeded' }), {
+      outcome: 'transient-failure',
+      diagnosis: 'network timeout',
+    });
+    const result = decide(makeInput(task, { observed: { merge: mergeRun } }));
+    expect(result.toPhase).toBe('failed');
+    expect((result.statusPatch?.worker as any).mergeError).toContain('network timeout');
   });
 
   it('awaiting-merge + Failed merge → failed', () => {
@@ -628,7 +714,29 @@ describe('decide — awaiting-feature-merge', () => {
     expect(result.effects.some((e) => e.type === 'CleanupWorktree')).toBe(true);
   });
 
-  it('merge run succeeded → done with mergedAt', () => {
+  it('merge run succeeded + merged verdict → done with mergedAt', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const mergeRun = withMergeVerdict(makeRun('merge-1', { phase: 'Succeeded' }), {
+      outcome: 'merged',
+      diagnosis: 'feature merged to main',
+      requiresHuman: false,
+    });
+    const result = decide(
+      makeInput(task, {
+        observed: { merge: mergeRun },
+      }),
+    );
+    expect(result.toPhase).toBe('done');
+    expect((result.statusPatch?.worker as any).mergedAt).toBe(now);
+    expect(result.effects.some((e) => e.type === 'CleanupWorktree')).toBe(true);
+    expect(result.events[0]?.reason).toBe('FeatureBranchMerged');
+  });
+
+  it('merge run succeeded + no verdict → done with legacy fallback event', () => {
     const task = makeTask('t1', 'test-project', {
       phase: 'awaiting-feature-merge',
       type: 'PLAN',
@@ -641,8 +749,57 @@ describe('decide — awaiting-feature-merge', () => {
       }),
     );
     expect(result.toPhase).toBe('done');
-    expect((result.statusPatch?.worker as any).mergedAt).toBe(now);
-    expect(result.effects.some((e) => e.type === 'CleanupWorktree')).toBe(true);
+    expect(result.events[0]?.reason).toBe('FeatureBranchMergedUnstructured');
+  });
+
+  it('merge run succeeded + conflict verdict → awaiting-human', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const mergeRun = withMergeVerdict(makeRun('merge-1', { phase: 'Succeeded' }), {
+      outcome: 'conflict',
+      diagnosis: 'conflict in README.md',
+      details: 'resolve manually',
+    });
+    const result = decide(makeInput(task, { observed: { merge: mergeRun } }));
+    expect(result.toPhase).toBe('awaiting-human');
+    expect((result.statusPatch?.worker as any).mergeError).toContain('conflict in README.md');
+    expect(result.events[0]?.reason).toBe('FeatureBranchMergeNeedsHumanIntervention');
+  });
+
+  it('merge run succeeded + push-failed verdict → failed', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const mergeRun = withMergeVerdict(makeRun('merge-1', { phase: 'Succeeded' }), {
+      outcome: 'push-failed',
+      diagnosis: 'branch protection rejected push',
+    });
+    const result = decide(makeInput(task, { observed: { merge: mergeRun } }));
+    expect(result.toPhase).toBe('failed');
+    expect((result.statusPatch?.worker as any).mergeError).toContain(
+      'branch protection rejected push',
+    );
+    expect(result.events[0]?.reason).toBe('FeatureBranchMergeStructuredFailure');
+  });
+
+  it('merge run succeeded + transient-failure verdict → failed', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { mergeRunName: 'merge-1' };
+    const mergeRun = withMergeVerdict(makeRun('merge-1', { phase: 'Succeeded' }), {
+      outcome: 'transient-failure',
+      diagnosis: 'remote timeout',
+    });
+    const result = decide(makeInput(task, { observed: { merge: mergeRun } }));
+    expect(result.toPhase).toBe('failed');
+    expect((result.statusPatch?.worker as any).mergeError).toContain('remote timeout');
   });
 
   it('merge run failed → awaiting-human with mergeError', () => {
@@ -852,158 +1009,161 @@ describe('decide — reviewing', () => {
     expect(result.statusPatch?.reviews).toBeUndefined();
   });
 
-  it("reviewing + verdict with findings → replaces diffFindings", () => {
-    const task = makeTask("t1", "test-project", { phase: "reviewing" });
-    (task.status!.worker as any) = { reviewRunName: "review-1", retryCount: 0, aiReworkCount: 0 };
-    const reviewRun = makeRun("review-1", { phase: "Succeeded" });
+  it('reviewing + verdict with findings → replaces diffFindings', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
+    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 };
+    const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": JSON.stringify({
-        action: "request_changes",
-        diagnosis: "issues found",
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'request_changes',
+        diagnosis: 'issues found',
         diffFindings: {
           version: 1,
           context: {
-            baseSha: "base1",
-            headSha: "head1",
-            forkSha: "fork1",
-            diffFingerprint: "fp1",
+            baseSha: 'base1',
+            headSha: 'head1',
+            forkSha: 'fork1',
+            diffFingerprint: 'fp1',
           },
           items: [
             {
-              id: "f1",
-              source: "reviewer",
-              severity: "high",
-              title: "Missing test",
-              comment: "Add coverage.",
-              anchors: [{ path: "src/index.ts", side: "new", line: 42 }],
+              id: 'f1',
+              source: 'reviewer',
+              severity: 'high',
+              title: 'Missing test',
+              comment: 'Add coverage.',
+              anchors: [{ path: 'src/index.ts', side: 'new', line: 42 }],
               context: {
-                baseSha: "base1",
-                headSha: "head1",
-                forkSha: "fork1",
-                diffFingerprint: "fp1",
+                baseSha: 'base1',
+                headSha: 'head1',
+                forkSha: 'fork1',
+                diffFingerprint: 'fp1',
               },
-              createdAt: "2026-06-13T00:00:00.000Z",
+              createdAt: '2026-06-13T00:00:00.000Z',
             },
           ],
-          updatedAt: "2026-06-13T01:00:00.000Z",
-          sourceRunName: "review-1",
+          updatedAt: '2026-06-13T01:00:00.000Z',
+          sourceRunName: 'review-1',
         },
       }),
     };
     const result = decide(makeInput(task, { observed: { review: reviewRun } }));
-    expect(result.toPhase).toBe("rework-requested");
+    expect(result.toPhase).toBe('rework-requested');
     expect(result.statusPatch?.diffFindings).toBeDefined();
     expect((result.statusPatch?.diffFindings as any).items.length).toBe(1);
-    expect((result.statusPatch?.diffFindings as any).items[0].id).toBe("f1");
+    expect((result.statusPatch?.diffFindings as any).items[0].id).toBe('f1');
   });
 
-  it("reviewing + verdict without findings preserves existing diffFindings", () => {
-    const task = makeTask("t1", "test-project", { phase: "reviewing" });
-    (task.status!.worker as any) = { reviewRunName: "review-1", retryCount: 0, aiReworkCount: 0 };
+  it('reviewing + verdict without findings preserves existing diffFindings', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
+    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 };
     (task.status as any).diffFindings = {
       version: 1,
-      context: { baseSha: "old", headSha: "old", forkSha: "old", diffFingerprint: "old" },
-      items: [{ id: "old-finding" }],
-      updatedAt: "2026-06-12T00:00:00.000Z",
-      sourceRunName: "review-0",
+      context: { baseSha: 'old', headSha: 'old', forkSha: 'old', diffFingerprint: 'old' },
+      items: [{ id: 'old-finding' }],
+      updatedAt: '2026-06-12T00:00:00.000Z',
+      sourceRunName: 'review-0',
     };
 
-    const reviewRun = makeRun("review-1", { phase: "Succeeded" });
+    const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": JSON.stringify({ action: "approve", diagnosis: "all good" }),
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'approve',
+        diagnosis: 'all good',
+      }),
     };
     const result = decide(makeInput(task, { observed: { review: reviewRun } }));
-    expect(result.toPhase).toBe("awaiting-human");
+    expect(result.toPhase).toBe('awaiting-human');
     expect(result.statusPatch?.diffFindings).toBeUndefined();
   });
 
-  it("reviewing + later verdict replaces prior diffFindings", () => {
-    const task = makeTask("t1", "test-project", { phase: "reviewing" });
-    (task.status!.worker as any) = { reviewRunName: "review-2", retryCount: 0, aiReworkCount: 0 };
+  it('reviewing + later verdict replaces prior diffFindings', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
+    (task.status!.worker as any) = { reviewRunName: 'review-2', retryCount: 0, aiReworkCount: 0 };
     (task.status as any).diffFindings = {
       version: 1,
-      context: { baseSha: "old", headSha: "old", forkSha: "old", diffFingerprint: "old" },
-      items: [{ id: "old-finding" }],
-      updatedAt: "2026-06-12T00:00:00.000Z",
-      sourceRunName: "review-1",
+      context: { baseSha: 'old', headSha: 'old', forkSha: 'old', diffFingerprint: 'old' },
+      items: [{ id: 'old-finding' }],
+      updatedAt: '2026-06-12T00:00:00.000Z',
+      sourceRunName: 'review-1',
     };
 
-    const reviewRun = makeRun("review-2", { phase: "Succeeded" });
+    const reviewRun = makeRun('review-2', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": JSON.stringify({
-        action: "approve",
-        diagnosis: "new findings",
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'approve',
+        diagnosis: 'new findings',
         diffFindings: {
           version: 1,
-          context: { baseSha: "new", headSha: "new", forkSha: "new", diffFingerprint: "new" },
+          context: { baseSha: 'new', headSha: 'new', forkSha: 'new', diffFingerprint: 'new' },
           items: [
             {
-              id: "f2",
-              source: "reviewer",
-              severity: "low",
-              title: "Nit",
-              comment: "Minor.",
-              anchors: [{ path: "src/other.ts", side: "old", line: 10 }],
-              context: { baseSha: "new", headSha: "new", forkSha: "new", diffFingerprint: "new" },
-              createdAt: "2026-06-13T00:00:00.000Z",
+              id: 'f2',
+              source: 'reviewer',
+              severity: 'low',
+              title: 'Nit',
+              comment: 'Minor.',
+              anchors: [{ path: 'src/other.ts', side: 'old', line: 10 }],
+              context: { baseSha: 'new', headSha: 'new', forkSha: 'new', diffFingerprint: 'new' },
+              createdAt: '2026-06-13T00:00:00.000Z',
             },
           ],
-          updatedAt: "2026-06-13T02:00:00.000Z",
-          sourceRunName: "review-2",
+          updatedAt: '2026-06-13T02:00:00.000Z',
+          sourceRunName: 'review-2',
         },
       }),
     };
     const result = decide(makeInput(task, { observed: { review: reviewRun } }));
-    expect(result.toPhase).toBe("awaiting-human");
+    expect(result.toPhase).toBe('awaiting-human');
     const diffFindings = result.statusPatch?.diffFindings as any;
     expect(diffFindings).toBeDefined();
     expect(diffFindings.items.length).toBe(1);
-    expect(diffFindings.items[0].id).toBe("f2");
-    expect(diffFindings.sourceRunName).toBe("review-2");
+    expect(diffFindings.items[0].id).toBe('f2');
+    expect(diffFindings.sourceRunName).toBe('review-2');
   });
 
-  it("reviewing + request_changes over ceiling with findings persists diffFindings", () => {
-    const task = makeTask("t1", "test-project", { phase: "reviewing" });
-    (task.status!.worker as any) = { reviewRunName: "review-1", retryCount: 0, aiReworkCount: 2 };
-    const reviewRun = makeRun("review-1", { phase: "Succeeded" });
+  it('reviewing + request_changes over ceiling with findings persists diffFindings', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
+    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 2 };
+    const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": JSON.stringify({
-        action: "request_changes",
-        feedback: "fix it",
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'request_changes',
+        feedback: 'fix it',
         diffFindings: {
           version: 1,
           context: reviewContext,
           items: [reviewFinding],
-          updatedAt: "2026-06-13T01:00:00.000Z",
-          sourceRunName: "review-1",
+          updatedAt: '2026-06-13T01:00:00.000Z',
+          sourceRunName: 'review-1',
         },
       }),
     };
     const result = decide(makeInput(task, { observed: { review: reviewRun } }));
-    expect(result.toPhase).toBe("awaiting-human");
+    expect(result.toPhase).toBe('awaiting-human');
     expect((result.statusPatch?.worker as any).aiReworkCount).toBe(3);
     expect((result.statusPatch?.worker as any).reviewFeedback).toMatch(/ceiling reached/);
     expect((result.statusPatch?.diffFindings as any).items.length).toBe(1);
   });
 
-  it("reviewing + malformed verdict preserves existing diffFindings", () => {
-    const task = makeTask("t1", "test-project", { phase: "reviewing" });
-    (task.status!.worker as any) = { reviewRunName: "review-1", retryCount: 0, aiReworkCount: 0 };
+  it('reviewing + malformed verdict preserves existing diffFindings', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
+    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 };
     (task.status as any).diffFindings = {
       version: 1,
-      context: { baseSha: "old", headSha: "old", forkSha: "old", diffFingerprint: "old" },
-      items: [{ id: "old-finding" }],
-      updatedAt: "2026-06-12T00:00:00.000Z",
-      sourceRunName: "review-0",
+      context: { baseSha: 'old', headSha: 'old', forkSha: 'old', diffFingerprint: 'old' },
+      items: [{ id: 'old-finding' }],
+      updatedAt: '2026-06-12T00:00:00.000Z',
+      sourceRunName: 'review-0',
     };
 
-    const reviewRun = makeRun("review-1", { phase: "Succeeded" });
+    const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
-      "percussionist.dev/review-verdict": "{ invalid json }",
+      'percussionist.dev/review-verdict': '{ invalid json }',
     };
     const result = decide(makeInput(task, { observed: { review: reviewRun } }));
-    expect(result.toPhase).toBe("awaiting-human");
-    expect(result.events[0]?.reason).toBe("ReviewSucceeded");
+    expect(result.toPhase).toBe('awaiting-human');
+    expect(result.events[0]?.reason).toBe('ReviewSucceeded');
     expect(result.statusPatch?.diffFindings).toBeUndefined();
   });
 });

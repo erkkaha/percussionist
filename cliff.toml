@@ -1,0 +1,23 @@
+[changelog]
+header = "# Changelog\n\nAll notable changes to Percussionist are documented here.\n"
+body = """
+{% if version %}\
+## [{{ version }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {{ commit.message | upper_first }}{% if commit.scope %} _({{ commit.scope }})_{% endif %}{% endfor %}
+{% endfor %}\n"""
+trim = true
+footer = """
+{% if version and previous %}\
+[{{ previous }}...{{ version }}](https://github.com/erkkaha/percussionist/compare/{{ previous }}...{{ version }})
+{% endif %}\
+"""
+
+[git]
+conventional_commits = true
+filter_unconventional = true

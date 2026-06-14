@@ -90,6 +90,10 @@ importers:
       '@percussionist/kube':
         specifier: workspace:*
         version: link:../kube
+    devDependencies:
+      '@types/bun':
+        specifier: latest
+        version: 1.3.14
 
   packages/kube:
     dependencies:

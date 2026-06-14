@@ -29,6 +29,7 @@ import {
   listPodsByLabels,
   listRuns,
   listTasks,
+  patchTask,
   patchTaskStatus,
   readAllSessionsFromConfigMap,
   readPlanFromConfigMap,
@@ -333,7 +334,7 @@ const TOOLS = [
   {
     name: 'set_task_state',
     description:
-      "Atomically transition a task to a target phase. Cleans up terminal-phase runs (unless preserveRuns is true), optionally cancels running runs, and updates task status in a single operation. This avoids race conditions with the manager's reconciliation loop.",
+      "Atomically transition a task to a target phase. Cleans up terminal-phase runs (unless preserveRuns is true), optionally cancels running runs, and updates task status in a single operation. This avoids race conditions with the manager's reconciliation loop. For approving a BUILD task that is in 'awaiting-human' and scheduling its merge, prefer the manager_approve tool instead; it writes the canonical approval annotation and lets the reconciler schedule the merge run.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -369,6 +370,23 @@ const TOOLS = [
         },
       },
       required: ['project', 'task', 'targetPhase'],
+    },
+  },
+  {
+    name: 'manager_approve',
+    description:
+      "Approve a BUILD task for merge by writing the canonical approval annotation `percussionist.dev/action-approved: \"true\"` on the Task CR. The reconciler consumes this annotation and schedules the merge run. Actionable only for tasks in the 'awaiting-human' phase; returns a soft no-op for 'awaiting-merge' or 'done', and an error for any other phase.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Project name' },
+        task: { type: 'string', description: "Task CR name (e.g. 'BUILD-4')" },
+        namespace: {
+          type: 'string',
+          description: 'Namespace (optional, defaults to percussionist)',
+        },
+      },
+      required: ['project', 'task'],
     },
   },
   {
@@ -805,6 +823,72 @@ function workerBranchPatch(project: Project, task: Task, allTasks: Task[]) {
     gitBranch,
     parentBranch,
     mergeIntoBranch,
+  };
+}
+
+const APPROVE_ANNOTATION_KEYS = {
+  approved: 'percussionist.dev/action-approved',
+  requestChanges: 'percussionist.dev/action-request-changes',
+} as const;
+
+type ApproveOutcome =
+  | { kind: 'error'; message: string }
+  | { kind: 'patch'; annotations: Record<string, string>; result: Record<string, unknown> }
+  | { kind: 'noop'; result: Record<string, unknown> };
+
+export function computeApproveMergeOutcome(projectName: string, task: Task): ApproveOutcome {
+  if (task.spec.projectRef !== projectName) {
+    return {
+      kind: 'error',
+      message: `Task ${task.metadata.name} belongs to project "${task.spec.projectRef}", not "${projectName}"`,
+    };
+  }
+
+  const phase = (task.status?.phase ?? 'pending') as TaskPhase;
+  const annotations = task.metadata.annotations ?? {};
+  const alreadyApproved = annotations[APPROVE_ANNOTATION_KEYS.approved] === 'true';
+  const baseResult = {
+    project: projectName,
+    task: task.metadata.name,
+    phase,
+    approved: true,
+    alreadyApproved,
+  };
+
+  if (phase === 'awaiting-merge' || phase === 'done') {
+    return {
+      kind: 'noop',
+      result: { ...baseResult, alreadyProgressed: true, patched: false },
+    };
+  }
+
+  if (phase !== 'awaiting-human') {
+    return {
+      kind: 'error',
+      message: `Task phase is "${phase}", expected "awaiting-human"`,
+    };
+  }
+
+  if (alreadyApproved) {
+    return {
+      kind: 'noop',
+      result: { ...baseResult, alreadyProgressed: false, patched: false },
+    };
+  }
+
+  return {
+    kind: 'patch',
+    annotations: {
+      ...annotations,
+      [APPROVE_ANNOTATION_KEYS.approved]: 'true',
+      [APPROVE_ANNOTATION_KEYS.requestChanges]: 'false',
+    },
+    result: {
+      ...baseResult,
+      alreadyApproved: false,
+      alreadyProgressed: false,
+      patched: true,
+    },
   };
 }
 
@@ -1546,6 +1630,37 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         workerCleared,
         preserveRuns,
       };
+    }
+
+    case 'manager_approve': {
+      const projectName = String(args.project ?? '');
+      const taskName = String(args.task ?? '');
+      const resourceNs = String(args.namespace ?? ns);
+
+      if (!projectName) throw new Error('project is required');
+      if (!taskName) throw new Error('task is required');
+
+      const task = await getTask(taskName, resourceNs);
+      const outcome = computeApproveMergeOutcome(projectName, task);
+
+      if (outcome.kind === 'error') {
+        throw new Error(outcome.message);
+      }
+
+      if (outcome.kind === 'patch') {
+        await patchTask(
+          taskName,
+          {
+            metadata: {
+              ...task.metadata,
+              annotations: outcome.annotations,
+            },
+          },
+          resourceNs,
+        );
+      }
+
+      return outcome.result;
     }
 
     case 'read_manager_logs': {
