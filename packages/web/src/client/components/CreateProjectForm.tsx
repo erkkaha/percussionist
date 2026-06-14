@@ -296,14 +296,18 @@ export default function CreateProjectForm({
 
       <form onSubmit={handleSubmit}>
         {/* Tab navigation */}
+        {/* Layout uses `overflow-x-hidden` on the main content, so local scroll */}
+        {/* containers are required for any horizontal tab bar on mobile. */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ProjectTabId)}>
-          <TabsList className="mb-4">
-            {TABS.map((tab) => (
-              <TabsTrigger key={tab.id} value={tab.id}>
-                {tab.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+          <div className="w-full overflow-x-auto [-webkit-overflow-scrolling:touch]">
+            <TabsList className="mb-4 w-max min-w-max">
+              {TABS.map((tab) => (
+                <TabsTrigger key={tab.id} value={tab.id} className="shrink-0">
+                  {tab.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
 
           {/* General tab */}
           <TabsContent value="general" className="space-y-5">
