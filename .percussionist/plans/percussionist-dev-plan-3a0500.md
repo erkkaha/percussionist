@@ -74,6 +74,19 @@ Initial strict policy (can be made configurable later):
 
 Assumption: project roster still gates *availability*; this matrix gates *compatibility*.
 
+### Agent metadata enhancement (from retry feedback)
+
+Current agent matching is name-based string comparison, which is fragile and opaque to buildgen.
+To reduce ambiguity, introduce lightweight agent metadata in project roster entries:
+
+- Extend `AgentRefSchema` (or add parallel config in `Project.spec.flow`) with optional fields such as:
+  - `description`: short human-readable role intent (surfaced in prompts/UI)
+  - `capabilities`: optional enum/list (e.g. `plan`, `build`, `review`, `merge`, `facilitate-failure`, `facilitate-buildgen`)
+- Keep defaults backward-compatible by deriving capabilities from known names (`builder`, `reviewer`, etc.) when metadata is absent.
+- Update buildgen prompt construction to include agent descriptions/capabilities instead of bare names, so model selection is guided by explicit semantics.
+
+This can be delivered incrementally: hard-enforce known-safe defaults first, then expand to metadata-driven policies for custom agent names.
+
 ## Tasks
 
 1. **Introduce shared agent-role compatibility helpers**
@@ -81,21 +94,28 @@ Assumption: project roster still gates *availability*; this matrix gates *compat
      - run context classification
      - allowed agents by task type/run type
      - human-readable validation errors.
-   - Ensure helpers accept both task-based context (PLAN/BUILD) and facilitation context (`Run.spec.facilitation.successReview`, buildgen run, merge run).
+    - Ensure helpers accept both task-based context (PLAN/BUILD) and facilitation context (`Run.spec.facilitation.successReview`, buildgen run, merge run).
+    - Include compatibility-mode behavior for custom agents (name-derived fallback now, metadata-driven in follow-up).
 
-2. **Add API-level validation for task creation endpoints**
+2. **Define run-context and agent-capability enums in API layer**
+   - Add explicit, reusable enums/types for:
+     - run completion context (`plan-worker`, `build-worker`, `review-facilitator`, `buildgen-facilitator`, `failure-facilitator`, `merge-facilitator`, `legacy`)
+     - agent capability/role tags (if metadata extension is accepted).
+   - Use these types across operator/dispatcher/manager to avoid stringly-typed drift.
+
+3. **Add API-level validation for task creation endpoints**
    - Update manager MCP `create_task` in `packages/manager-controller/src/agent/tools.ts`:
      - after roster check, enforce compatibility (`BUILD` -> allowed build agents; `PLAN` -> planner).
    - Update dispatcher MCP `create_task` in `packages/dispatcher/src/mcp-server.ts` similarly.
    - Update web route `POST /api/projects/:project/board/tasks` in `packages/web/src/server/routes/board.ts` with same checks.
    - Return deterministic 4xx errors that explain allowed agents for that task type.
 
-3. **Add run-override validation for `create_run` and `force_retry`**
+4. **Add run-override validation for `create_run` and `force_retry`**
    - In `packages/manager-controller/src/agent/tools.ts`, validate `agentOverride` (and resolved phase agent where relevant) against current task context.
    - Reject invalid overrides early with explicit remediation text.
    - Keep existing admin behavior (phase override) but do not bypass role/tool safety unless an explicit admin escape hatch is added.
 
-4. **Propagate explicit run context into dispatcher env**
+5. **Propagate explicit run context into dispatcher env**
    - In `packages/operator/src/pod-builder.ts`, add one or more env vars for dispatcher container (e.g. `RUN_COMPLETION_MODE` / `RUN_CONTEXT`), derived from `Run.spec`:
      - plan worker
      - build worker
@@ -105,35 +125,35 @@ Assumption: project roster still gates *availability*; this matrix gates *compat
      - merge facilitator
    - Keep backward-compatible default when env missing (`legacy` context with permissive behavior gated by feature flag).
 
-5. **Implement dispatcher tool-list gating by context**
+6. **Implement dispatcher tool-list gating by context**
    - In `packages/dispatcher/src/mcp-server.ts`, make `tools/list` context-aware:
      - review context: include `complete_review`, exclude `complete_run`/`complete_plan`.
      - plan worker: include `complete_plan`, exclude `complete_review`.
      - build/merge/buildgen/failure contexts: include `complete_run`, exclude `complete_review` and `complete_plan` (except plan worker).
    - Preserve non-completion tools (`fail_run`, `get_status`, `create_task`, etc.) as appropriate.
 
-6. **Implement dispatcher call-time enforcement (hard gate)**
+7. **Implement dispatcher call-time enforcement (hard gate)**
    - In `tools/call`, reject forbidden completion tool calls even if a client bypasses tool listing.
    - Use `-32602` with clear context-specific error messages.
    - Keep `complete_review` behavior of writing review verdict annotation + completion signaling in review context only.
 
-7. **Harden buildgen instructions and defaults**
+8. **Harden buildgen instructions and defaults**
    - Update `k8s/agents/buildgen.yaml`:
      - hard rule: BUILD tasks must use `builder` (or `integrator` only for explicit merge/integration tasks).
      - remove suggestion that reviewer/planner/failure-analyst are common BUILD assignees.
    - Update facilitator buildgen prompt builder in `packages/manager-controller/src/facilitator.ts` (`buildBuildTaskGeneratorRun`) to repeat this hard rule inline.
 
-8. **Decide and implement policy for failure-analyst/buildgen misuse**
+9. **Decide and implement policy for failure-analyst/buildgen misuse**
    - Extend same matrix so worker BUILD/PLAN tasks cannot be assigned `failure-analyst` or `buildgen`.
    - Ensure facilitation runs continue to use those agents where intended.
 
-9. **Backward compatibility and migration handling**
+10. **Backward compatibility and migration handling**
    - Define behavior for existing invalid tasks in-flight:
      - Option A (recommended): do not auto-mutate; fail fast on next run creation with actionable error + facilitator guidance.
      - Option B: auto-rewrite invalid `task.spec.agent` to flow default build/planner agent and emit Task event.
    - Add explicit manager log/task-event messaging so operators can repair tasks using `set_task_state` / patch / retry with override.
 
-10. **Add/extend deterministic tests**
+11. **Add/extend deterministic tests**
    - Dispatcher unit tests (`packages/dispatcher/src/...`):
      - tool list gating by context
      - forbidden tool call rejection.
@@ -144,7 +164,7 @@ Assumption: project roster still gates *availability*; this matrix gates *compat
    - E2E test (core or extended):
      - BUILD task with reviewer agent is rejected at creation or run start and does not enter retry loop.
 
-11. **Document guardrails**
+12. **Document guardrails**
    - Update AGENTS or architecture docs with:
      - role matrix
      - completion tool availability per run type
