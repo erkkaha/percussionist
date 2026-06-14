@@ -1,4 +1,4 @@
-# Plan: Add manager-agent `approve_merge` tool for BUILD merge approvals
+# Plan: Add manager-agent `manager_approve` tool for BUILD merge approvals
 
 ## Context
 
@@ -12,6 +12,12 @@
   - For BUILD tasks in `awaiting-human`, approval moves task to `awaiting-merge`, sets `worker.mergeRunName`, and schedules `ScheduleMergeRun`.
   - Annotation keys are cleared by reconciler effects (`ClearTaskAnnotations`) after consumption.
 - Transition table allows `awaiting-human -> awaiting-merge` (`packages/manager-controller/src/reconciler/transitions.ts`), but forcing phase changes manually (e.g., via `set_task_state`) risks bypassing merge scheduling logic if not done exactly right.
+
+## Assumptions
+
+- The MCP tool name should be **`manager_approve`** (explicit retry instruction), even though earlier discussion text used `approve_merge`.
+- Primary target is BUILD tasks that are AI-approved and sitting in `awaiting-human`.
+- Tool behavior should be safe to call multiple times and should not duplicate reconciler internals.
 
 ## Scope boundaries
 
@@ -47,9 +53,9 @@
    - If annotation already set to `"true"`, return success with `alreadyApproved: true`.
 
 4. **Expose the tool in MCP schema and runtime switch.**
-   - Add `approve_merge` to the `TOOLS` list with clear contract and examples.
-   - Add `case 'approve_merge'` in `callTool`.
-   - Reuse existing Kube helpers: `getTask`, `patchTask` (new import required in `tools.ts`).
+- Add `manager_approve` to the `TOOLS` list with clear contract and examples.
+- Add `case 'manager_approve'` in `callTool`.
+- Reuse existing Kube helpers: `getTask`, `patchTask` (new import required in `tools.ts`).
 
 5. **Add focused tests.**
    - Since `tools.ts` is hard to import directly (server boot side effects), follow existing source-level schema test pattern (see `agent/__tests__/memory-tools.test.ts`) for tool presence/required fields.
@@ -61,8 +67,8 @@
 
 ## Acceptance criteria
 
-1. Manager MCP `tools/list` includes `approve_merge` with required args `project` and `task`.
-2. Calling `approve_merge` on BUILD task in `awaiting-human` writes `percussionist.dev/action-approved: "true"` annotation.
+1. Manager MCP `tools/list` includes `manager_approve` with required args `project` and `task`.
+2. Calling `manager_approve` on BUILD task in `awaiting-human` writes `percussionist.dev/action-approved: "true"` annotation.
 3. Reconciler can pick up that annotation and move task to `awaiting-merge` with merge scheduling (existing flow unchanged).
 4. Repeated calls are idempotent and do not create conflicting state.
 5. Calling on non-actionable phases returns clear, deterministic result/error.
@@ -71,14 +77,14 @@
 ## Tasks
 
 1. **Add MCP tool schema entry** in `packages/manager-controller/src/agent/tools.ts`.
-   - Name: `approve_merge`.
-   - Description explicitly states canonical annotation behavior and expected phase.
-   - Input schema: `project` (string), `task` (string), optional `namespace`.
+- Name: `manager_approve`.
+- Description explicitly states canonical annotation behavior and expected phase.
+- Input schema: `project` (string), `task` (string), optional `namespace`.
 
 2. **Import metadata patch helper** in `tools.ts`.
    - Add `patchTask` import from `@percussionist/kube` (already used elsewhere in repo for annotations).
 
-3. **Implement runtime handler** in `callTool` (`case 'approve_merge'`).
+3. **Implement runtime handler** in `callTool` (`case 'manager_approve'`).
    - Load Task via `getTask(taskName, resourceNs)`.
    - Verify `task.spec.projectRef` matches `project` argument (defensive guard against cross-project task name mistakes).
    - Evaluate phase and existing annotations.
@@ -93,9 +99,9 @@
    - Preserve existing annotations by merging with current annotation map.
 
 6. **Add/update tests for tool definition.**
-   - Extend source-based schema tests in `packages/manager-controller/src/agent/__tests__/memory-tools.test.ts` or add a new focused `tools-schema.test.ts` to assert:
-     - `approve_merge` exists,
-     - required args include `project` and `task`.
+- Extend source-based schema tests in `packages/manager-controller/src/agent/__tests__/memory-tools.test.ts` or add a new focused `tools-schema.test.ts` to assert:
+  - `manager_approve` exists,
+  - required args include `project` and `task`.
 
 7. **Add behavior tests for approval handler.**
    - Prefer extracting small pure helper (e.g., `approveMergeAction(...)`) to avoid full MCP server boot in tests.
@@ -111,11 +117,11 @@
 9. **Verification pass.**
    - Run `pnpm typecheck`.
    - Run manager-controller tests (targeted or full `pnpm test` as feasible).
-   - Optionally validate in a dev environment by calling manager MCP `approve_merge` on a BUILD task in `awaiting-human` and confirming transition to `awaiting-merge` on reconcile.
+- Optionally validate in a dev environment by calling manager MCP `manager_approve` on a BUILD task in `awaiting-human` and confirming transition to `awaiting-merge` on reconcile.
 
 ## Proposed BUILD task breakdown
 
-1. **BUILD A — Implement `approve_merge` MCP tool**
+1. **BUILD A — Implement `manager_approve` MCP tool**
    - Add schema + runtime handler + imports + return contract.
    - Ensure annotation-first implementation and phase guards.
 
@@ -129,8 +135,8 @@
 
 ## Risks / open questions
 
-1. **Tool naming mismatch:** request title mentions `manager_approve` while body requests `approve_merge`.
-   - Assumption: canonical MCP tool name will be `approve_merge`.
+1. **Backwards compatibility for earlier naming:** previous discussions referenced `approve_merge`.
+   - Decision: implement `manager_approve` as canonical name per retry instruction; optional alias can be considered later if needed.
 
 2. **Phase strictness policy:** should non-`awaiting-human` calls hard-fail or soft-no-op?
    - Proposed: soft success for `awaiting-merge`/`done`, hard error otherwise.
