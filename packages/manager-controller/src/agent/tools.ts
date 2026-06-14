@@ -32,9 +32,9 @@ import {
   patchTaskStatus,
   readAllSessionsFromConfigMap,
   readPlanFromConfigMap,
-  validateAgentTaskCapability,
   readPodLog,
   readSessionConfigMap,
+  validateAgentTaskCapability,
   writePlanToConfigMap,
 } from '@percussionist/kube';
 import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../branch-resolver.js';
@@ -2151,6 +2151,11 @@ function handleMcp(req: JsonRpcRequest): JsonRpcResponse | Promise<JsonRpcRespon
       return rpcError(req.id, -32601, `method not found: ${req.method}`);
   }
 }
+
+export const __test = {
+  callTool,
+  handleMcp,
+};
 
 // ---------------------------------------------------------------------------
 // Server lifecycle

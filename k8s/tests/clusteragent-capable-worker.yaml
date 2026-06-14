@@ -3,6 +3,8 @@ kind: ClusterAgent
 metadata:
   name: e2e-capable-worker
 spec:
+  capabilities:
+    - task.build.execute
   content: |
     ---
     name: e2e-capable-worker

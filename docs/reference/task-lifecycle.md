@@ -64,6 +64,29 @@ PLAN and BUILD tasks follow the same state machine but differ in terminal paths:
 - **PLAN**: On approval, enters `generating-builds` → creates BUILD tasks, then `awaiting-children`
 - **BUILD**: On approval, enters `awaiting-merge` → automated merge run, then `done`
 
+## Capability-Gated Assignment and Completion
+
+Percussionist enforces a strict capability model for both assignment and completion tools.
+
+- Agent assignment to PLAN/BUILD tasks is validated against `ClusterAgent.spec.capabilities`.
+- BUILD assignment requires `task.build.execute`; PLAN assignment requires `task.plan.execute`.
+- Missing capabilities are hard failures (fail-closed), not warnings.
+
+Completion tools are also run-context gated:
+
+- PLAN worker runs can only use `complete_plan` (`run.complete.plan` required)
+- BUILD/merge/buildgen/failure runs can only use `complete_run` (`run.complete.build` required)
+- Review facilitator runs can only use `complete_review` (`run.complete.review` required)
+
+The dispatcher enforces this in both MCP tool discovery (`tools/list`) and execution (`tools/call`).
+Cross-context completion calls are rejected with deterministic `-32602` errors.
+
+### Rollout preflight for custom agents
+
+If you run custom `ClusterAgent` resources, add capabilities before enabling/deploying strict enforcement.
+Otherwise task creation and run overrides may be rejected. Error messages name the missing capability
+to make remediation explicit.
+
 ## Feature Branching States
 
 When `featureBranchingEnabled: true`, additional states manage the merge workflow:

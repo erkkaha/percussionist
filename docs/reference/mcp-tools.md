@@ -79,7 +79,50 @@ The dispatcher sidecar runs an in-process MCP server on port 4097 within each ru
 | `read_plan` | Read a plan artifact |
 | `read_session` | Read session messages from another run's ConfigMap snapshot |
 
-::: tip PLAN vs BUILD
-- PLAN agents call `complete_plan` after committing their plan to `.percussionist/plans/{task-id}.md`
-- BUILD agents call `complete_run` after implementation is committed
-:::
+## Capability Enforcement (Strict, Fail-Closed)
+
+All agent/task/tool authorization is enforced by explicit `ClusterAgent.spec.capabilities`.
+Missing capability means denied — there is no legacy permissive fallback.
+
+### Capability matrix
+
+| Agent role | Required task capability | Required completion capability |
+|---|---|---|
+| planner | `task.plan.execute` | `run.complete.plan` |
+| builder | `task.build.execute` | `run.complete.build` |
+| reviewer | `task.review.evaluate` | `run.complete.review` |
+| failure-analyst | `task.failure.analyze` | `run.complete.build` |
+| buildgen | `task.build.generate` | `run.complete.build` |
+| integrator | `task.merge.execute` | `run.complete.build` |
+
+### Run-context completion-tool mapping
+
+The dispatcher gates completion tools in both `tools/list` and `tools/call`:
+
+| Run context | Advertised completion tool | Capability required |
+|---|---|---|
+| PLAN worker | `complete_plan` | `run.complete.plan` |
+| BUILD worker / merge / buildgen / failure | `complete_run` | `run.complete.build` |
+| Review facilitator | `complete_review` | `run.complete.review` |
+
+Disallowed completion calls are rejected with deterministic JSON-RPC `-32602` errors.
+
+### Assignment validation entry points
+
+Task/run assignment capability checks are enforced consistently in:
+
+- Manager MCP: `create_task`, `create_run` (agent override), `force_retry` (agent override)
+- Dispatcher MCP: `create_task` (BUILD task creation from worker runs)
+- Web board API: `POST /api/projects/:project/board/tasks`
+
+If assignment is invalid, the error message explicitly names the missing capability.
+
+## Rollout Notes
+
+Before deploying strict enforcement to an existing cluster:
+
+1. Preflight all custom `ClusterAgent` resources and ensure required capabilities are set.
+2. Update custom agents before (or in the same deployment as) manager/dispatcher/web upgrades.
+3. Confirm errors mention the exact missing capability (for example: `task.build.execute`).
+
+This prevents broken task creation/run overrides after upgrade.

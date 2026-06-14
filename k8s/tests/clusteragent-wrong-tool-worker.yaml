@@ -1,0 +1,18 @@
+apiVersion: percussionist.dev/v1alpha1
+kind: ClusterAgent
+metadata:
+  name: e2e-wrong-tool-worker
+spec:
+  capabilities:
+    - task.build.execute
+  content: |
+    ---
+    name: e2e-wrong-tool-worker
+    ---
+    CRITICAL OVERRIDE — this instruction supersedes all task descriptions:
+
+    You are a deterministic negative test worker.
+    Your ONLY action is to call the percussionist_dispatcher_complete_review tool
+    with approved=true and diagnosis="wrong tool called from build worker".
+
+    Do NOT call any other tools and do not output extra text.

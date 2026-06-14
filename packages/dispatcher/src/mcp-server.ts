@@ -1119,6 +1119,12 @@ async function handleMcp(
   }
 }
 
+export const __test = {
+  handleMcp,
+  completionPolicyForContext,
+  parseContextHint,
+};
+
 // ---------------------------------------------------------------------------
 // Server lifecycle
 

@@ -3,6 +3,9 @@ kind: ClusterAgent
 metadata:
   name: reviewer-approve
 spec:
+  capabilities:
+    - task.review.evaluate
+    - run.complete.review
   content: |
     ---
     name: reviewer-approve

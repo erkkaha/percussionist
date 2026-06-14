@@ -3,6 +3,8 @@ kind: ClusterAgent
 metadata:
   name: e2e-stubborn-worker
 spec:
+  capabilities:
+    - task.build.execute
   content: |
     ---
     name: e2e-stubborn-worker
