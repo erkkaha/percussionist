@@ -175,6 +175,27 @@ When all BUILD tasks under a PLAN are done, the PLAN transitions to `awaiting-fe
 
 ---
 
+## Troubleshooting Phase Ambiguity
+
+When a task is stuck or its phase is unclear, prefer the manager MCP tool `inspect_task_flow` over guessing the right `set_task_state` target. Call it with the project and task name to get:
+
+- The exact current phase and all valid transitions
+- The project's resolved flow (review, merge, integration, retry settings)
+- Worker status such as `runName`, `reviewRunName`, `mergeRunName`, `mergeError`, `mergedAt`, and retry counters
+- Any pending manual action annotations (`approved`, `requestChanges`, `reworkFeedback`, `abandon`, `answer`)
+- A flow-aware prediction of what should happen next and why
+
+Common cases where `inspect_task_flow` helps:
+
+- A task is `awaiting-human` and you are not sure whether approval will move a BUILD to `awaiting-merge` or `done`
+- A PLAN task is `awaiting-human` and you need to know if approval creates BUILD tasks (`generating-builds`) or completes the PLAN
+- A task is `reviewing` or `awaiting-merge` and you want to know whether the review/merge run is still in progress, failed, or missing
+- A task is `failed` and you want to know whether automatic retry is possible or the retry ceiling is reached
+
+See [MCP tools reference: `inspect_task_flow`](reference/mcp-tools.md#inspect_task_flow).
+
+---
+
 ## Run Relationships
 
 A task has up to three live Runs at once:

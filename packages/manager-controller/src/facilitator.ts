@@ -37,17 +37,21 @@ const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
 export function resolveSummarySource(
   sessionSummary: string,
   storedSummary: string | undefined,
-): { source: "arg" | "configmap" | "none"; summary: string } {
+): { source: 'arg' | 'configmap' | 'none'; summary: string } {
   if (sessionSummary) {
-    console.log(`[facilitator] buildBuildTaskGeneratorRun: using explicit session summary (${sessionSummary.length} chars)`);
-    return { source: "arg", summary: sessionSummary };
+    console.log(
+      `[facilitator] buildBuildTaskGeneratorRun: using explicit session summary (${sessionSummary.length} chars)`,
+    );
+    return { source: 'arg', summary: sessionSummary };
   }
   if (storedSummary) {
-    console.log(`[facilitator] buildBuildTaskGeneratorRun: using stored ConfigMap summary (${storedSummary.length} chars)`);
-    return { source: "configmap", summary: storedSummary };
+    console.log(
+      `[facilitator] buildBuildTaskGeneratorRun: using stored ConfigMap summary (${storedSummary.length} chars)`,
+    );
+    return { source: 'configmap', summary: storedSummary };
   }
-  console.log("[facilitator] buildBuildTaskGeneratorRun: no session summary available");
-  return { source: "none", summary: "" };
+  console.log('[facilitator] buildBuildTaskGeneratorRun: no session summary available');
+  return { source: 'none', summary: '' };
 }
 
 // Read a stored session summary from the run's session ConfigMap, if one exists.

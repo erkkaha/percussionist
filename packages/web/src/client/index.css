@@ -342,6 +342,18 @@
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Touch momentum scroll helper
+   Use on any horizontal scroll container (especially tab bars) for consistent
+   iOS/Android swipe behavior. Keeps the utility narrowly scoped and reusable
+   instead of relying on inline Tailwind arbitrary-property syntax.
+   --------------------------------------------------------------------------- */
+
+.touch-scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 @keyframes progress-indeterminate {
   0% {
     transform: translateX(-100%);

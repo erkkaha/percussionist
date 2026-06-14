@@ -189,53 +189,53 @@ const TOOL_COMPLETE_REVIEW = {
         description: 'Optional suggestion for how to improve the work',
       },
       findings: {
-        type: "array",
+        type: 'array',
         description:
-          "Optional structured diff findings (max 25). Each finding has severity, title, comment, " +
-          "1-3 line anchors, and diff context. Invalid or overflowing findings are dropped; core verdict still writes.",
+          'Optional structured diff findings (max 25). Each finding has severity, title, comment, ' +
+          '1-3 line anchors, and diff context. Invalid or overflowing findings are dropped; core verdict still writes.',
         maxItems: 25,
         items: {
-          type: "object",
+          type: 'object',
           properties: {
-            id: { type: "string", description: "Unique finding ID" },
+            id: { type: 'string', description: 'Unique finding ID' },
             severity: {
-              type: "string",
-              enum: ["critical", "high", "medium", "low", "info"],
+              type: 'string',
+              enum: ['critical', 'high', 'medium', 'low', 'info'],
             },
-            score: { type: "number", minimum: 0, maximum: 100 },
-            title: { type: "string", maxLength: 160 },
-            comment: { type: "string", maxLength: 2000 },
-            category: { type: "string", maxLength: 64 },
+            score: { type: 'number', minimum: 0, maximum: 100 },
+            title: { type: 'string', maxLength: 160 },
+            comment: { type: 'string', maxLength: 2000 },
+            category: { type: 'string', maxLength: 64 },
             anchors: {
-              type: "array",
+              type: 'array',
               minItems: 1,
               maxItems: 3,
               items: {
-                type: "object",
+                type: 'object',
                 properties: {
-                  path: { type: "string" },
-                  side: { type: "string", enum: ["old", "new"] },
-                  line: { type: "integer", minimum: 1 },
-                  endLine: { type: "integer", minimum: 1 },
-                  hunkHeader: { type: "string", maxLength: 256 },
+                  path: { type: 'string' },
+                  side: { type: 'string', enum: ['old', 'new'] },
+                  line: { type: 'integer', minimum: 1 },
+                  endLine: { type: 'integer', minimum: 1 },
+                  hunkHeader: { type: 'string', maxLength: 256 },
                 },
-                required: ["path", "side", "line"],
+                required: ['path', 'side', 'line'],
               },
             },
             context: {
-              type: "object",
+              type: 'object',
               properties: {
-                baseSha: { type: "string" },
-                headSha: { type: "string" },
-                forkSha: { type: "string" },
-                diffFingerprint: { type: "string" },
+                baseSha: { type: 'string' },
+                headSha: { type: 'string' },
+                forkSha: { type: 'string' },
+                diffFingerprint: { type: 'string' },
               },
-              required: ["baseSha", "headSha", "forkSha", "diffFingerprint"],
+              required: ['baseSha', 'headSha', 'forkSha', 'diffFingerprint'],
             },
-            createdAt: { type: "string" },
-            authorRunName: { type: "string" },
+            createdAt: { type: 'string' },
+            authorRunName: { type: 'string' },
           },
-          required: ["id", "severity", "title", "comment", "anchors", "context", "createdAt"],
+          required: ['id', 'severity', 'title', 'comment', 'anchors', 'context', 'createdAt'],
         },
       },
     },
@@ -1005,7 +1005,7 @@ async function handleMcp(
         });
 
         if (!verdict) {
-          return rpcError(req.id, -32602, "invalid verdict payload");
+          return rpcError(req.id, -32602, 'invalid verdict payload');
         }
 
         // Best-effort annotation write — never block completion

@@ -415,7 +415,7 @@ ${priorityLine}\
  * disables auth so tests can call endpoints without a token.
  */
 export async function applyWebDeployment(ns: string): Promise<void> {
-  const image = process.env["E2E_WEB_IMAGE"] ?? "ghcr.io/erkkaha/percussionist/web:latest";
+  const image = process.env['E2E_WEB_IMAGE'] ?? 'ghcr.io/erkkaha/percussionist/web:latest';
   console.log(`==> Deploy web watcher into ${ns} (${image})`);
   await kubectlApply(`\
 apiVersion: v1

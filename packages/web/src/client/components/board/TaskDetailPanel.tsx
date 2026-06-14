@@ -2,59 +2,67 @@
 // Shows: Overview, Runs (with per-run Session/Logs), Events, Plan (PLAN tasks only).
 // Actions: Approve, Request Changes, Retry, Delete.
 
-import { useState, useMemo, memo } from 'react';
-import { Link } from 'react-router-dom';
-import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ExternalLink,
-  Check,
-  X,
-  Trash2,
-  Flag,
-  User,
-  Wrench,
-  FileText,
-  RefreshCw,
-  MousePointerClick,
+  AlertCircle,
   ArrowRight,
+  Check,
   ChevronDown,
   ChevronRight,
+  ExternalLink,
+  FileText,
+  Flag,
   GitCommit as GitCommitIcon,
   History,
+  MousePointerClick,
+  RefreshCw,
   Sparkles,
-  AlertCircle,
+  Trash2,
+  User,
+  Wrench,
+  X,
 } from 'lucide-react';
-import { approveTask, requestChangesTask, retryEscalatedTask, deleteBoardTask, fetchPlan, moveTask, retryReviewTask } from '../../lib/api';
-import type { Task, DiffCommit, TaskDiffFinding, DiffFindingSeverity, DiffFinding } from '../../lib/types';
+import { memo, useMemo, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { Link } from 'react-router-dom';
+import remarkGfm from 'remark-gfm';
+import { useTaskDiff } from '../../hooks/useTaskDiff';
+import { useTaskRuns } from '../../hooks/useTaskRuns';
 import {
-  DIFF_FINDING_SEVERITIES,
-  SEVERITY_LABEL,
-  SEVERITY_DOT_CLASS,
-  SEVERITY_BG_CLASS,
+  approveTask,
+  deleteBoardTask,
+  fetchPlan,
+  moveTask,
+  requestChangesTask,
+  retryEscalatedTask,
+  retryReviewTask,
+} from '../../lib/api';
+import type { DiffFindingSort } from '../../lib/diff-findings';
+import {
   countBySeverity,
+  DIFF_FINDING_SEVERITIES,
+  SEVERITY_BG_CLASS,
+  SEVERITY_DOT_CLASS,
+  SEVERITY_LABEL,
   sortFindings,
 } from '../../lib/diff-findings';
-import type { DiffFindingSort } from '../../lib/diff-findings';
-import { useTaskRuns } from '../../hooks/useTaskRuns';
-import { useTaskDiff } from '../../hooks/useTaskDiff';
-import StatusBadge from '../StatusBadge';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import type {
+  DiffCommit,
+  DiffFinding,
+  DiffFindingSeverity,
+  Task,
+  TaskDiffFinding,
+} from '../../lib/types';
 import { CodeBlock } from '../CodeBlock';
-import TaskRunsPanel from './TaskRunsPanel';
-import TaskEventsPanel from './TaskEventsPanel';
 import { FileDiff } from '../FileDiff';
-import { Input } from '../ui/input';
-import { Textarea } from '../ui/textarea';
+import StatusBadge from '../StatusBadge';
 import { Button } from '../ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '../ui/select';
+import { Input } from '../ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Switch } from '../ui/switch';
+import { Textarea } from '../ui/textarea';
+import TaskEventsPanel from './TaskEventsPanel';
+import TaskRunsPanel from './TaskRunsPanel';
 
 const remarkPlugins = [remarkGfm];
 
@@ -228,7 +236,13 @@ function PlanContent({ projectName, taskName }: { projectName: string; taskName:
 
 type DiffViewMode = 'unified' | 'commits';
 
-function CommitDiffList({ commits, findings }: { commits: DiffCommit[]; findings: TaskDiffFinding[] }) {
+function CommitDiffList({
+  commits,
+  findings,
+}: {
+  commits: DiffCommit[];
+  findings: TaskDiffFinding[];
+}) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const toggle = (sha: string) => {
@@ -361,14 +375,12 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">
               <AlertCircle className="h-3.5 w-3.5 text-text-dim" />
-              <span className="text-xs font-medium text-text">
-                Findings ({visibleCount})
-              </span>
+              <span className="text-xs font-medium text-text">Findings ({visibleCount})</span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <Select
                 value={severityFilter}
-                onValueChange={(v) => setSeverityFilter(v as DiffFindingSeverity | "all")}
+                onValueChange={(v) => setSeverityFilter(v as DiffFindingSeverity | 'all')}
               >
                 <SelectTrigger className="h-7 w-auto min-w-[7rem] text-xs px-2 py-1">
                   <SelectValue placeholder="All severities" />
@@ -410,9 +422,11 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
               return (
                 <button
                   key={severity}
-                  onClick={() => setSeverityFilter(active ? "all" : severity)}
+                  onClick={() => setSeverityFilter(active ? 'all' : severity)}
                   className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border transition-colors ${
-                    active ? `border-accent ${SEVERITY_BG_CLASS[severity]}` : SEVERITY_BG_CLASS[severity]
+                    active
+                      ? `border-accent ${SEVERITY_BG_CLASS[severity]}`
+                      : SEVERITY_BG_CLASS[severity]
                   }`}
                   title={`Filter ${SEVERITY_LABEL[severity].toLowerCase()} findings`}
                 >
@@ -547,7 +561,10 @@ function OverviewContent({
         {worker?.gitBranch && (
           <div>
             <p className="text-label-md font-mono uppercase text-text-dim">Branch</p>
-            <span className="inline-flex items-center rounded border border-border-muted bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text truncate max-w-full" title={worker.gitBranch}>
+            <span
+              className="inline-flex items-center rounded border border-border-muted bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text truncate max-w-full"
+              title={worker.gitBranch}
+            >
               {worker.gitBranch}
             </span>
           </div>
@@ -562,11 +579,7 @@ function OverviewContent({
                   : 'text-phase-failed border-phase-failed/30 bg-phase-failed/10'
               }`}
             >
-              {worker.reviewApproved ? (
-                <Check className="h-3 w-3" />
-              ) : (
-                <X className="h-3 w-3" />
-              )}
+              {worker.reviewApproved ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
               {worker.reviewApproved ? 'approved' : 'rejected'}
             </span>
           </div>
@@ -1059,7 +1072,7 @@ function TaskDetailPanelInner({
                       const findingsText = buildReworkFeedbackFromFindings(items, 5);
                       const prefix = requestChangesComment.trim()
                         ? `${requestChangesComment.trim()}\n\n`
-                        : "";
+                        : '';
                       setRequestChangesComment(`${prefix}${findingsText}`);
                     }}
                     className="flex items-center gap-1 text-xs text-text-dim hover:text-text transition-colors"
