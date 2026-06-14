@@ -73,6 +73,10 @@ Tabs.displayName = 'Tabs';
 
 // ---------------------------------------------------------------------------
 // TabsList — tab bar container with role="tablist"
+//
+// The base styles are intentionally neutral. Pass width/overflow classes via
+// `className` (e.g. `w-max min-w-max`) and wrap in a scroll container when
+// horizontal overflow is required on small viewports.
 // ---------------------------------------------------------------------------
 
 interface TabsListProps extends React.HTMLAttributes<HTMLDivElement> {}

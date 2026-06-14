@@ -299,7 +299,7 @@ export default function CreateProjectForm({
         {/* Layout uses `overflow-x-hidden` on the main content, so local scroll */}
         {/* containers are required for any horizontal tab bar on mobile. */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ProjectTabId)}>
-          <div className="w-full overflow-x-auto [-webkit-overflow-scrolling:touch]">
+          <div className="w-full touch-scroll-x">
             <TabsList className="mb-4 w-max min-w-max">
               {TABS.map((tab) => (
                 <TabsTrigger key={tab.id} value={tab.id} className="shrink-0">
