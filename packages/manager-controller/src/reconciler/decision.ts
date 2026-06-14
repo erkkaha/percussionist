@@ -680,6 +680,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
             reviewFeedback: feedback,
           },
           reviews: [...existingReviews, newRecord],
+          ...(verdict.diffFindings ? { diffFindings: verdict.diffFindings } : {}),
         },
         effects: [],
         events: [makeEvent(input, fromPhase, 'awaiting-human', 'ReviewApproved', feedback)],
@@ -723,6 +724,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
               reviewFeedback: `${feedback}\n\n(AI rework ceiling reached)`,
             },
             reviews: [...existingReviews, escalatedRecord],
+            ...(verdict.diffFindings ? { diffFindings: verdict.diffFindings } : {}),
           },
           effects: [],
           events: [
@@ -740,6 +742,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
             reviewFeedback: feedback,
           },
           reviews: [...existingReviews, newRecord],
+          ...(verdict.diffFindings ? { diffFindings: verdict.diffFindings } : {}),
         },
         effects: [],
         events: [

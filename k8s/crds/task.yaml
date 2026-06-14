@@ -220,5 +220,142 @@ spec:
                     required:
                       - action
                       - reviewedAt
+                diffFindings:
+                  type: object
+                  properties:
+                    version:
+                      type: number
+                      enum:
+                        - 1
+                    context:
+                      type: object
+                      properties:
+                        baseSha:
+                          type: string
+                          minLength: 1
+                        headSha:
+                          type: string
+                          minLength: 1
+                        forkSha:
+                          type: string
+                          minLength: 1
+                        diffFingerprint:
+                          type: string
+                          minLength: 1
+                      required:
+                        - baseSha
+                        - headSha
+                        - forkSha
+                        - diffFingerprint
+                    items:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            minLength: 1
+                          source:
+                            type: string
+                            enum:
+                              - reviewer
+                          severity:
+                            type: string
+                            enum:
+                              - critical
+                              - high
+                              - medium
+                              - low
+                              - info
+                          score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                          title:
+                            type: string
+                            minLength: 1
+                            maxLength: 160
+                          comment:
+                            type: string
+                            minLength: 1
+                            maxLength: 2000
+                          category:
+                            type: string
+                            maxLength: 64
+                          anchors:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                path:
+                                  type: string
+                                  minLength: 1
+                                side:
+                                  type: string
+                                  enum:
+                                    - old
+                                    - new
+                                line:
+                                  type: integer
+                                  minimum: 1
+                                endLine:
+                                  type: integer
+                                  minimum: 1
+                                hunkHeader:
+                                  type: string
+                                  maxLength: 256
+                              required:
+                                - path
+                                - side
+                                - line
+                            minItems: 1
+                            maxItems: 3
+                          context:
+                            type: object
+                            properties:
+                              baseSha:
+                                type: string
+                                minLength: 1
+                              headSha:
+                                type: string
+                                minLength: 1
+                              forkSha:
+                                type: string
+                                minLength: 1
+                              diffFingerprint:
+                                type: string
+                                minLength: 1
+                            required:
+                              - baseSha
+                              - headSha
+                              - forkSha
+                              - diffFingerprint
+                          createdAt:
+                            type: string
+                            minLength: 1
+                          authorRunName:
+                            type: string
+                        required:
+                          - id
+                          - source
+                          - severity
+                          - title
+                          - comment
+                          - anchors
+                          - context
+                          - createdAt
+                      maxItems: 25
+                    updatedAt:
+                      type: string
+                      minLength: 1
+                    sourceRunName:
+                      type: string
+                      minLength: 1
+                  required:
+                    - version
+                    - context
+                    - items
+                    - updatedAt
+                    - sourceRunName
           required:
             - spec
