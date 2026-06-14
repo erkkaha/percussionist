@@ -3,12 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAgents } from '../hooks/useAgents';
 import { useAgentsEvents } from '../hooks/useAgentsEvents';
 import { deleteAgent } from '../lib/api';
+import type { AgentCapability } from '../lib/types';
 import { Button } from './ui/button';
 
 interface AgentListItem {
   name: string;
   content: string;
   model?: string;
+  capabilities?: AgentCapability[];
 }
 
 function age(iso: string | undefined): string {
@@ -43,6 +45,22 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
     <tr className="hover:bg-surface-raised/60 transition-colors">
       <td className="px-4 py-3 font-medium text-text font-mono text-sm">{agent.name}</td>
       <td className="px-4 py-3 text-text-muted font-mono text-xs">{agent.model ?? '-'}</td>
+      <td className="px-4 py-3 text-text-muted font-mono text-xs max-w-md">
+        {agent.capabilities && agent.capabilities.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {agent.capabilities.map((capability) => (
+              <span
+                key={capability}
+                className="inline-flex rounded border border-border-muted bg-surface-raised px-1.5 py-0.5"
+              >
+                {capability}
+              </span>
+            ))}
+          </div>
+        ) : (
+          '-'
+        )}
+      </td>
       <td
         className="px-4 py-3 text-text-muted font-mono text-xs max-w-md truncate"
         title={agent.content}
@@ -125,6 +143,7 @@ export default function AgentsPage({ showHeader = true }: { showHeader?: boolean
               <div key={k} className="px-4 py-4 flex gap-6">
                 <div className="h-4 w-32 rounded bg-surface-overlay animate-pulse" />
                 <div className="h-4 w-32 rounded bg-surface-overlay animate-pulse" />
+                <div className="h-4 w-56 rounded bg-surface-overlay animate-pulse" />
                 <div className="h-4 w-48 rounded bg-surface-overlay animate-pulse" />
                 <div className="h-4 w-16 rounded bg-surface-overlay animate-pulse" />
                 <div className="h-4 w-16 rounded bg-surface-overlay animate-pulse" />
@@ -147,6 +166,7 @@ export default function AgentsPage({ showHeader = true }: { showHeader?: boolean
               <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
                 <th className="px-4 py-2.5 font-medium">Name</th>
                 <th className="px-4 py-2.5 font-medium">Model</th>
+                <th className="px-4 py-2.5 font-medium">Capabilities</th>
                 <th className="px-4 py-2.5 font-medium">Content Preview</th>
                 <th className="px-4 py-2.5 font-medium">Age</th>
                 <th className="px-4 py-2.5 font-medium" />
