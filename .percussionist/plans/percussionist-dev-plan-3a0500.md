@@ -87,6 +87,29 @@ To reduce ambiguity, introduce lightweight agent metadata in project roster entr
 
 This can be delivered incrementally: hard-enforce known-safe defaults first, then expand to metadata-driven policies for custom agent names.
 
+### Custom agent compatibility strategy (required for backward compatibility)
+
+To avoid breaking deployments that use non-default names (for example `my-builder-v2`), implement guardrails with a layered resolver instead of strict name-only checks:
+
+1. **Explicit project-level mapping (highest priority)**
+   - Add optional mapping under flow/project settings (for example `flow.agentRoleMap`) from role → allowed agent names.
+   - Example roles: `planWorker`, `buildWorker`, `reviewFacilitator`, `buildgenFacilitator`, `failureFacilitator`, `mergeFacilitator`.
+   - This gives operators a deterministic override without requiring ClusterAgent schema migration on day one.
+
+2. **Capability metadata (medium-term)**
+   - Add optional `capabilities` metadata on agent references (or ClusterAgent spec in a follow-up) so compatibility can be inferred from declared capabilities rather than string names.
+
+3. **Safe built-in defaults (fallback)**
+   - If neither mapping nor metadata is present, fall back to built-in defaults (`builder`, `integrator`, `reviewer`, `planner`, `buildgen`, `failure-analyst`).
+
+4. **Fail-closed only when role cannot be resolved**
+   - If role resolution fails, reject with actionable error listing:
+     - required role,
+     - configured aliases/capabilities detected,
+     - allowed agents currently recognized.
+
+This satisfies the retry feedback requirement: initial rollout is safe for default deployments, while custom deployments can opt in via explicit alias mapping and later capabilities.
+
 ## Tasks
 
 1. **Introduce shared agent-role compatibility helpers**
@@ -108,7 +131,7 @@ This can be delivered incrementally: hard-enforce known-safe defaults first, the
      - after roster check, enforce compatibility (`BUILD` -> allowed build agents; `PLAN` -> planner).
    - Update dispatcher MCP `create_task` in `packages/dispatcher/src/mcp-server.ts` similarly.
    - Update web route `POST /api/projects/:project/board/tasks` in `packages/web/src/server/routes/board.ts` with same checks.
-   - Return deterministic 4xx errors that explain allowed agents for that task type.
+    - Return deterministic 4xx errors that explain required role and allowed agents for that task type under the resolved mapping.
 
 4. **Add run-override validation for `create_run` and `force_retry`**
    - In `packages/manager-controller/src/agent/tools.ts`, validate `agentOverride` (and resolved phase agent where relevant) against current task context.
