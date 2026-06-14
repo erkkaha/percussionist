@@ -7,11 +7,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json",
-    "start": "tsx src/index.ts"
+    "start": "tsx src/index.ts",
+    "test": "bun test src/"
   },
   "dependencies": {
     "@kubernetes/client-node": "1.4.0",
     "@percussionist/api": "workspace:*",
     "@percussionist/kube": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
   }
 }
