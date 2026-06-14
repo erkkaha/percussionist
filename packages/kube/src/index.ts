@@ -421,6 +421,15 @@ export async function listProjects(
   return res.items ?? [];
 }
 
+export async function listAllProjects(client = custom()): Promise<Project[]> {
+  const res = (await client.listClusterCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
+    plural: PLURAL_PROJECT,
+  })) as { items: Project[] };
+  return res.items ?? [];
+}
+
 export async function getProject(
   name: string,
   ns: string = NAMESPACE,

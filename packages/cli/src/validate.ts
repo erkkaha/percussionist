@@ -1,4 +1,5 @@
 import { AgentCapabilitySchema, type ClusterAgent, type Project } from '@percussionist/api';
+import { fatal, listAllProjects, listClusterAgents, loadKube } from './kube.js';
 
 export const AuditIssueCode = {
   AgentCapabilityInvalidEnum: 'AGENT_CAPABILITY_INVALID_ENUM',
@@ -45,6 +46,66 @@ const REQUIRED_BUILD_CAPABILITY = 'task.build.execute';
 
 interface AgentAuditState {
   normalizedCapabilities: Set<string>;
+}
+
+export interface ValidateAgentsOpts {
+  namespace?: string;
+}
+
+export async function runValidateAgents(_opts: ValidateAgentsOpts): Promise<void> {
+  const { custom } = loadKube();
+  try {
+    const [clusterAgents, projects] = await Promise.all([
+      listClusterAgents(custom),
+      listAllProjects(custom),
+    ]);
+    const report = auditAgentCapabilities(clusterAgents, projects);
+
+    const byCode = new Map<AuditIssueCode, AgentCapabilityAuditFinding[]>();
+    for (const finding of report.findings) {
+      const group = byCode.get(finding.code) ?? [];
+      group.push(finding);
+      byCode.set(finding.code, group);
+    }
+
+    console.log('Agent capability audit');
+    console.log(`  ClusterAgents: ${clusterAgents.length}`);
+    console.log(`  Projects: ${projects.length}`);
+    console.log(
+      `  Findings: ${report.findings.length} (${report.errors.length} errors, ${report.warnings.length} warnings)`,
+    );
+
+    if (report.findings.length === 0) {
+      console.log('No issues found.');
+      return;
+    }
+
+    const issueOrder: AuditIssueCode[] = [
+      AuditIssueCode.AgentCapabilityInvalidEnum,
+      AuditIssueCode.AgentCapabilityFormatting,
+      AuditIssueCode.ProjectRosterMissingAgent,
+      AuditIssueCode.ProjectRosterMissingPlanCoverage,
+      AuditIssueCode.ProjectRosterMissingBuildCoverage,
+      AuditIssueCode.AgentConventionCapabilityMismatch,
+      AuditIssueCode.AgentOrphaned,
+    ];
+
+    for (const code of issueOrder) {
+      const entries = byCode.get(code);
+      if (!entries || entries.length === 0) continue;
+      console.log(`\n${code} (${entries.length})`);
+      for (const finding of entries) {
+        const prefix = finding.severity === 'error' ? 'error' : 'warn';
+        console.log(`  - [${prefix}] ${finding.message}`);
+      }
+    }
+
+    if (report.errors.length > 0) {
+      process.exitCode = 1;
+    }
+  } catch (e) {
+    fatal('validate agents failed', e);
+  }
 }
 
 export function auditAgentCapabilities(

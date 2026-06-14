@@ -24,6 +24,7 @@ export {
   getClusterAgent,
   // cluster agents
   listClusterAgents,
+  listAllProjects as _listAllProjects,
   listRuns as _listRuns,
   loadFromKubeconfig,
   loadFromKubeconfig as loadKube,
@@ -78,6 +79,10 @@ export async function listProjects(
   namespace: string,
 ): Promise<Project[]> {
   return kube.listProjects(namespace, client);
+}
+
+export async function listAllProjects(client: CustomObjectsApi): Promise<Project[]> {
+  return kube.listAllProjects(client);
 }
 
 export async function createProject(
