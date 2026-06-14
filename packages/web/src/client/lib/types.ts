@@ -5,34 +5,35 @@
 
 // Re-export server types so components import from a single place.
 import type {
-  Run,
-  Project,
-  ClusterAgent,
   BoardStatus,
-  ManagerMetrics,
-  WorkerStatus,
-  TaskColumn,
-  TaskType,
+  ClusterAgent,
   DiffContext,
   DiffFinding,
   DiffFindingSeverity,
   DiffLineAnchor,
+  ManagerMetrics,
+  Project,
+  Run,
+  TaskColumn,
   TaskDiffFindings,
-} from "@percussionist/api";
+  TaskType,
+  WorkerStatus,
+} from '@percussionist/api';
+
 export type {
   BoardStatus,
   ClusterAgent,
-  ManagerMetrics,
-  Project,
-  Run,
-  TaskColumn,
-  TaskType,
-  WorkerStatus,
   DiffContext,
   DiffFinding,
   DiffFindingSeverity,
   DiffLineAnchor,
+  ManagerMetrics,
+  Project,
+  Run,
+  TaskColumn,
   TaskDiffFindings,
+  TaskType,
+  WorkerStatus,
 } from '@percussionist/api';
 export { RunPhase, TERMINAL_PHASES } from '@percussionist/api';
 
@@ -45,10 +46,17 @@ export interface ProjectDetail extends _Project {
 
 /** Tasks in board responses may include computed child progress for awaiting-children phase. */
 export interface Task extends _Task {
+  displayRefs?: {
+    parentTask?: string | null;
+    parentTaskCanonical?: string | null;
+    predecessorTask?: string | null;
+    predecessorTaskCanonical?: string | null;
+  };
   childProgress?: {
     total: number;
     completed: number;
     childRefs: string[];
+    childDisplayRefs?: string[];
   };
 }
 
