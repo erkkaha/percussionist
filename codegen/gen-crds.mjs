@@ -167,7 +167,7 @@ function makeCRD({
     },
   };
 
-  return YAML.stringify(crd, { lineWidth: 0 });
+  return YAML.stringify(crd, { lineWidth: 0, version: '1.1' });
 }
 
 // ---------------------------------------------------------------------------
