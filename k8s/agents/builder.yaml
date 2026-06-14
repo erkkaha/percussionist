@@ -3,6 +3,9 @@ kind: ClusterAgent
 metadata:
   name: builder
 spec:
+  capabilities:
+    - task.build.execute
+    - run.complete.build
   content: |
     ---
     name: builder

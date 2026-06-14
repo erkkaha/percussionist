@@ -3,6 +3,9 @@ kind: ClusterAgent
 metadata:
   name: failure-analyst
 spec:
+  capabilities:
+    - task.failure.analyze
+    - run.complete.build
   content: |
     ---
     name: failure-analyst
