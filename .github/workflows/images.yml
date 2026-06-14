@@ -138,7 +138,7 @@ jobs:
       - name: Generate changelog
         uses: orhun/git-cliff-action@v4
         with:
-          args: --config cliff.toml --output CHANGELOG.md --tag "${{ steps.tag.outputs.tag }}"
+          args: --output CHANGELOG.md --tag "${{ steps.tag.outputs.tag }}"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

@@ -95,7 +95,7 @@ jobs:
       - name: Generate changelog
         uses: orhun/git-cliff-action@v4
         with:
-          args: --config cliff.toml --output CHANGELOG.md --tag "${{ steps.version.outputs.version }}"
+          args: --output CHANGELOG.md --tag "${{ steps.version.outputs.version }}"
 
       - name: Bump package versions
         run: |
