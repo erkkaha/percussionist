@@ -3,10 +3,24 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { updateAgent as apiUpdateAgent, submitAgent } from '../lib/api';
 import { authHeaders } from '../lib/auth';
+import type { AgentCapability } from '../lib/types';
 import ModelSelector from './ModelSelector';
 import { Button } from './ui/button';
+import { Checkbox } from './ui/checkbox';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
+
+const CAPABILITIES: AgentCapability[] = [
+  'task.plan.execute',
+  'task.build.execute',
+  'task.build.generate',
+  'task.review.evaluate',
+  'task.failure.analyze',
+  'task.merge.execute',
+  'run.complete.plan',
+  'run.complete.build',
+  'run.complete.review',
+];
 
 export default function AgentForm() {
   const { name: editName } = useParams<{ name: string }>();
@@ -17,6 +31,7 @@ export default function AgentForm() {
   const [name, setName] = useState('');
   const [content, setContent] = useState('');
   const [model, setModel] = useState('');
+  const [capabilities, setCapabilities] = useState<AgentCapability[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
   // Load existing agent when editing.
@@ -26,10 +41,14 @@ export default function AgentForm() {
     fetch(`/api/agents/${encodeURIComponent(editName)}`, { headers: authHeaders() })
       .then((r) => r.json())
       .then(
-        (data: { metadata?: { name?: string }; spec?: { content?: string; model?: string } }) => {
+        (data: {
+          metadata?: { name?: string };
+          spec?: { content?: string; model?: string; capabilities?: AgentCapability[] };
+        }) => {
           setName(data.metadata?.name ?? '');
           setContent(data.spec?.content ?? '');
           setModel(data.spec?.model ?? '');
+          setCapabilities(data.spec?.capabilities ?? []);
         },
       )
       .catch(() => {});
@@ -40,9 +59,18 @@ export default function AgentForm() {
     setSubmitting(true);
     try {
       if (isEdit) {
-        await apiUpdateAgent(name.trim(), { content, model: model || undefined });
+        await apiUpdateAgent(name.trim(), {
+          content,
+          model: model || undefined,
+          capabilities: capabilities.length > 0 ? capabilities : undefined,
+        });
       } else {
-        await submitAgent({ name: name.trim(), content, model: model || undefined });
+        await submitAgent({
+          name: name.trim(),
+          content,
+          model: model || undefined,
+          capabilities: capabilities.length > 0 ? capabilities : undefined,
+        });
       }
       queryClient.invalidateQueries({ queryKey: ['agents'] });
       navigate('/settings?tab=agents');
@@ -54,6 +82,16 @@ export default function AgentForm() {
   };
 
   const kbCount = content.length > 0 ? `${(content.length / 1024).toFixed(1)} KB` : '0 KB';
+
+  const toggleCapability = (capability: AgentCapability, checked: boolean) => {
+    setCapabilities((prev) => {
+      if (checked) {
+        if (prev.includes(capability)) return prev;
+        return [...prev, capability];
+      }
+      return prev.filter((c) => c !== capability);
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -78,7 +116,6 @@ export default function AgentForm() {
       {/* Form */}
       <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-4">
         <div className="space-y-1.5">
-          {/* biome-ignore lint/a11y/noLabelWithoutControl: adjacent Input provides context */}
           <label className="text-sm font-medium text-text-muted">Name</label>
           <Input
             type="text"
@@ -90,7 +127,6 @@ export default function AgentForm() {
         </div>
 
         <div className="space-y-1.5">
-          {/* biome-ignore lint/a11y/noLabelWithoutControl: adjacent ModelSelector provides context */}
           <label className="text-sm font-medium text-text-muted">Model</label>
           <ModelSelector
             value={model}
@@ -100,7 +136,6 @@ export default function AgentForm() {
         </div>
 
         <div className="space-y-1.5">
-          {/* biome-ignore lint/a11y/noLabelWithoutControl: adjacent Textarea provides context */}
           <label className="text-sm font-medium text-text-muted">Content</label>
           <Textarea
             value={content}
@@ -112,6 +147,27 @@ export default function AgentForm() {
           <div className="flex items-center justify-between text-xs text-text-muted">
             <span>YAML front-matter + system prompt</span>
             <span>{kbCount}</span>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-sm font-medium text-text-muted">Capabilities</div>
+          <p className="text-xs text-text-dim">
+            Select explicit capabilities this agent is allowed to perform.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {CAPABILITIES.map((capability) => (
+              <label
+                key={capability}
+                className="flex items-center gap-2 rounded border border-border-muted px-2.5 py-2 text-sm font-mono"
+              >
+                <Checkbox
+                  checked={capabilities.includes(capability)}
+                  onCheckedChange={(value) => toggleCapability(capability, value === true)}
+                />
+                <span>{capability}</span>
+              </label>
+            ))}
           </div>
         </div>
 
