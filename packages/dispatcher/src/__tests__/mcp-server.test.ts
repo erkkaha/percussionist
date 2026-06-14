@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { Run } from '@percussionist/api';
+import type { ClusterAgent, Run } from '@percussionist/api';
 
 // ---------------------------------------------------------------------------
 // Mock @percussionist/kube before importing the MCP server.
@@ -7,12 +7,30 @@ import type { Run } from '@percussionist/api';
 
 const patchRunAnnotationsMock = mock(async () => ({ metadata: { annotations: {} } }) as Run);
 
+function mockClusterAgent(name: string, capabilities: string[]): ClusterAgent {
+  return {
+    apiVersion: 'percussionist.dev/v1alpha1',
+    kind: 'ClusterAgent',
+    metadata: { name },
+    spec: { content: '', capabilities: capabilities as never[] },
+  };
+}
+
+const getClusterAgentMock = mock(async (name: string) => {
+  if (name === 'integrator') return mockClusterAgent('integrator', ['task.merge.execute']);
+  if (name === 'builder') return mockClusterAgent('builder', ['run.complete.build']);
+  if (name === 'planner')
+    return mockClusterAgent('planner', ['task.plan.execute', 'run.complete.plan']);
+  return mockClusterAgent(name, []);
+});
+
 mock.module('@percussionist/kube', () => ({
   buildTask: mock(() => ({}) as import('@percussionist/api').Task),
   createTask: mock(async () => ({}) as import('@percussionist/api').Task),
   getProject: mock(
     async () => ({ spec: { agents: [] } }) as unknown as import('@percussionist/api').Project,
   ),
+  getClusterAgent: getClusterAgentMock,
   patchRunAnnotations: patchRunAnnotationsMock,
   patchTaskStatus: mock(async () => ({}) as import('@percussionist/api').Task),
   readAllSessionsFromConfigMap: mock(async () => null),
@@ -46,10 +64,10 @@ function mcpCall(id: string | number, tool: string, args: Record<string, unknown
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Merge-worker context tests
 // ---------------------------------------------------------------------------
 
-describe('dispatcher MCP server', () => {
+describe('dispatcher MCP server — merge-worker context', () => {
   let server: McpServer;
   const completedSummaries: string[] = [];
   const completedPlans: string[] = [];
@@ -58,10 +76,13 @@ describe('dispatcher MCP server', () => {
   beforeEach(async () => {
     process.env.RUN_NAME = 'test-run';
     process.env.RUN_NAMESPACE = 'test-ns';
+    process.env.RUN_AGENT = 'integrator';
+    process.env.RUN_CONTEXT = 'merge-worker';
     completedSummaries.length = 0;
     completedPlans.length = 0;
     failureReasons.length = 0;
     patchRunAnnotationsMock.mockClear();
+    getClusterAgentMock.mockClear();
 
     server = await startMcpServer(
       (reason) => failureReasons.push(reason),
@@ -76,9 +97,11 @@ describe('dispatcher MCP server', () => {
     server.close();
     delete process.env.RUN_NAME;
     delete process.env.RUN_NAMESPACE;
+    delete process.env.RUN_AGENT;
+    delete process.env.RUN_CONTEXT;
   });
 
-  it('lists complete_merge in exposed tools', async () => {
+  it('lists complete_merge as the only completion tool', async () => {
     const res = (await postMcp(server.port, {
       jsonrpc: '2.0',
       id: 'list-1',
@@ -86,8 +109,9 @@ describe('dispatcher MCP server', () => {
     })) as { result?: { tools?: { name: string }[] } };
     const names = res.result?.tools?.map((t) => t.name) ?? [];
     expect(names).toContain('complete_merge');
-    expect(names).toContain('complete_run');
-    expect(names).toContain('complete_review');
+    expect(names).not.toContain('complete_run');
+    expect(names).not.toContain('complete_plan');
+    expect(names).not.toContain('complete_review');
   });
 
   it('writes merge verdict annotation and signals completion', async () => {
@@ -177,6 +201,56 @@ describe('dispatcher MCP server', () => {
     });
     expect(patchRunAnnotationsMock).toHaveBeenCalledTimes(0);
     expect(completedSummaries).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Build-worker context tests
+// ---------------------------------------------------------------------------
+
+describe('dispatcher MCP server — build-worker context', () => {
+  let server: McpServer;
+  const completedSummaries: string[] = [];
+  const completedPlans: string[] = [];
+  const failureReasons: string[] = [];
+
+  beforeEach(async () => {
+    process.env.RUN_NAME = 'test-run';
+    process.env.RUN_NAMESPACE = 'test-ns';
+    process.env.RUN_AGENT = 'builder';
+    completedSummaries.length = 0;
+    completedPlans.length = 0;
+    failureReasons.length = 0;
+    patchRunAnnotationsMock.mockClear();
+    getClusterAgentMock.mockClear();
+
+    server = await startMcpServer(
+      (reason) => failureReasons.push(reason),
+      (summary) => completedSummaries.push(summary),
+      (summary) => completedPlans.push(summary),
+      () => ({ phase: 'running', session: 'session-1' }),
+      0,
+    );
+  });
+
+  afterEach(() => {
+    server.close();
+    delete process.env.RUN_NAME;
+    delete process.env.RUN_NAMESPACE;
+    delete process.env.RUN_AGENT;
+  });
+
+  it('lists complete_run as the only completion tool', async () => {
+    const res = (await postMcp(server.port, {
+      jsonrpc: '2.0',
+      id: 'list-1',
+      method: 'tools/list',
+    })) as { result?: { tools?: { name: string }[] } };
+    const names = res.result?.tools?.map((t) => t.name) ?? [];
+    expect(names).toContain('complete_run');
+    expect(names).not.toContain('complete_merge');
+    expect(names).not.toContain('complete_plan');
+    expect(names).not.toContain('complete_review');
   });
 
   it('keeps complete_run available for non-merge runs', async () => {

@@ -4,7 +4,7 @@ import { __test } from './mcp-server.js';
 type CompletionAuthorization = {
   context: 'plan-worker' | 'build-worker' | 'review-facilitator';
   allowedTool: 'complete_run' | 'complete_plan' | 'complete_review';
-  requiredCapability: string;
+  requiredCapability: 'run.complete.build' | 'run.complete.plan' | 'run.complete.review';
   allowed: boolean;
   denialReason?: string;
 };

@@ -157,14 +157,14 @@ const TOOL_COMPLETE_MERGE = {
       },
       mergeCommitSha: {
         type: 'string',
-        description: 'Merge commit SHA (required for merged outcome)',
+        description: 'Optional merge commit SHA',
       },
       requiresHuman: {
         type: 'boolean',
-        description: 'Whether human intervention is required',
+        description: 'Whether this outcome requires human intervention',
       },
     },
-    required: ['outcome', 'diagnosis'],
+    required: ['outcome'],
   },
 };
 
@@ -764,9 +764,9 @@ type RunStatus = {
   tokensIn?: number;
   tokensOut?: number;
 };
+type CompletionToolName = 'complete_run' | 'complete_plan' | 'complete_review' | 'complete_merge';
 
-type CompletionToolName = 'complete_run' | 'complete_plan' | 'complete_review';
-type RunCompletionContext = 'plan-worker' | 'build-worker' | 'review-facilitator';
+type RunCompletionContext = 'plan-worker' | 'build-worker' | 'review-facilitator' | 'merge-worker';
 
 type CompletionAuthorization = {
   context: RunCompletionContext;
@@ -780,6 +780,7 @@ const COMPLETION_TOOL_NAMES = new Set<CompletionToolName>([
   'complete_run',
   'complete_plan',
   'complete_review',
+  'complete_merge',
 ]);
 
 function completionPolicyForContext(context: RunCompletionContext): {
@@ -792,6 +793,9 @@ function completionPolicyForContext(context: RunCompletionContext): {
   if (context === 'review-facilitator') {
     return { allowedTool: 'complete_review', requiredCapability: 'run.complete.review' };
   }
+  if (context === 'merge-worker') {
+    return { allowedTool: 'complete_merge', requiredCapability: 'task.merge.execute' };
+  }
   return { allowedTool: 'complete_run', requiredCapability: 'run.complete.build' };
 }
 
@@ -800,6 +804,7 @@ function parseContextHint(value: string | undefined): RunCompletionContext | und
     case 'plan-worker':
     case 'build-worker':
     case 'review-facilitator':
+    case 'merge-worker':
       return value;
     // Operator hint for non-review facilitation runs (failure/buildgen).
     case 'facilitator':
@@ -980,7 +985,9 @@ async function handleMcp(
               ? TOOL_COMPLETE_RUN
               : completionAuth.allowedTool === 'complete_plan'
                 ? TOOL_COMPLETE_PLAN
-                : TOOL_COMPLETE_REVIEW,
+                : completionAuth.allowedTool === 'complete_merge'
+                  ? TOOL_COMPLETE_MERGE
+                  : TOOL_COMPLETE_REVIEW,
           ]
         : [];
       return ok(req.id, {
