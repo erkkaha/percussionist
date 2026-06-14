@@ -310,11 +310,28 @@ export type AgentDef = z.infer<typeof AgentDefSchema>;
 // ---------------------------------------------------------------------------
 // ClusterAgent — cluster-scoped catalog of reusable agent role definitions.
 
+export const AgentCapabilitySchema = z.enum([
+  'task.plan.execute',
+  'task.build.execute',
+  'task.build.generate',
+  'task.review.evaluate',
+  'task.failure.analyze',
+  'task.merge.execute',
+  'run.complete.plan',
+  'run.complete.build',
+  'run.complete.review',
+]);
+
+export type AgentCapability = z.infer<typeof AgentCapabilitySchema>;
+
 export const ClusterAgentSpecSchema = z.object({
   // Full .md file contents (YAML front-matter + system prompt). Max 100KB.
   content: z.string().max(102400),
   // Optional model override for runs using this agent. Resolved between board and project level.
   model: z.string().optional(),
+  // Explicit capabilities for task/run authorization.
+  // Missing capability is treated as denied by runtime validators.
+  capabilities: z.array(AgentCapabilitySchema).max(64).optional(),
 });
 
 export type ClusterAgentSpec = z.infer<typeof ClusterAgentSpecSchema>;

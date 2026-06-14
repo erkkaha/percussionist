@@ -10,7 +10,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { setHeaderOptions } from '@kubernetes/client-node';
-import { LABELS, type Project, type Task, type TaskPhase } from '@percussionist/api';
+import { LABELS, type Project, type Task, type TaskPhase, type TaskType } from '@percussionist/api';
 import {
   apps,
   buildTask,
@@ -37,6 +37,7 @@ import {
   writePlanToConfigMap,
 } from '@percussionist/kube';
 import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../branch-resolver.js';
+import { validateAgentTaskCapability } from '../capability-validation.js';
 import { resolveFlow } from '../reconciler/flow.js';
 import { isValidTransition, TRANSITION_TABLE } from '../reconciler/transitions.js';
 import { getPauseStatus, setPaused } from '../reconciler-bridge.js';
@@ -1079,6 +1080,17 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const task = await getTask(taskName, resourceNs);
       const projectTasks = await listProjectTasks(projectName, resourceNs);
 
+      if (agentOverride) {
+        const validation = await validateAgentTaskCapability(
+          project,
+          task.spec.type as TaskType,
+          agentOverride,
+        );
+        if (!validation.ok) {
+          throw new Error(validation.error);
+        }
+      }
+
       const currentPhase = (task.status?.phase ?? 'pending') as TaskPhase;
       // Validate pending → running transition (create_run is an admin shortcut).
       if (!isValidTransition(currentPhase, 'running')) {
@@ -1169,11 +1181,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       }
 
       const project = await getProject(projectName, resourceNs);
-      const roster = (project.spec.agents ?? []).map((a: { name: string }) => a.name);
-      if (!roster.includes(agent)) {
-        throw new Error(
-          `agent "${agent}" not in project roster: ${roster.join(', ') || '(empty)'}`,
-        );
+      const validation = await validateAgentTaskCapability(project, taskType, agent);
+      if (!validation.ok) {
+        throw new Error(validation.error);
       }
 
       const suffix = randomBytes(3).toString('hex');
@@ -1219,6 +1229,17 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const project = await getProject(projectName, resourceNs);
       const task = await getTask(taskName, resourceNs);
       const projectTasks = await listProjectTasks(projectName, resourceNs);
+
+      if (agentOverride) {
+        const validation = await validateAgentTaskCapability(
+          project,
+          task.spec.type as TaskType,
+          agentOverride,
+        );
+        if (!validation.ok) {
+          throw new Error(validation.error);
+        }
+      }
 
       const currentPhase = (task.status?.phase ?? 'pending') as TaskPhase;
       // force_retry is an admin tool — validates but allows any phase → running.
