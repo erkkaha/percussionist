@@ -1397,6 +1397,97 @@ export function normalizeReviewVerdict(
   return verdict;
 }
 
+// ---------------------------------------------------------------------------
+// Structured merge verdicts
+// ---------------------------------------------------------------------------
+// Merge runs report a deterministic outcome via the `complete_merge` MCP tool.
+// The verdict is persisted on the Run CR as the `percussionist.dev/merge-verdict`
+// annotation and consumed by the manager reconciler to decide task transitions.
+
+/** Annotation key for structured merge verdicts on Run CRs. */
+export const MERGE_VERDICT_ANNOTATION = "percussionist.dev/merge-verdict";
+
+export interface NormalizedMergeVerdict {
+  outcome: "merged" | "already-merged" | "conflict" | "push-failed" | "transient-failure";
+  diagnosis?: string;
+  details?: string;
+  sourceBranch?: string;
+  targetBranch?: string;
+  mergeCommitSha?: string;
+  requiresHuman: boolean;
+}
+
+const MERGE_OUTCOMES = [
+  "merged",
+  "already-merged",
+  "conflict",
+  "push-failed",
+  "transient-failure",
+] as const;
+type MergeOutcome = (typeof MERGE_OUTCOMES)[number];
+
+const LEGACY_OUTCOME_ALIASES: Record<string, MergeOutcome> = {
+  already_merged: "already-merged",
+  push_failed: "push-failed",
+  transient_failure: "transient-failure",
+  "merge-failed": "transient-failure",
+  failed: "transient-failure",
+};
+
+function normalizeMergeOutcome(raw: unknown): MergeOutcome | undefined {
+  if (typeof raw !== "string") return undefined;
+  const normalized = raw.trim().toLowerCase();
+  if (LEGACY_OUTCOME_ALIASES[normalized]) return LEGACY_OUTCOME_ALIASES[normalized];
+  if (MERGE_OUTCOMES.includes(normalized as MergeOutcome)) return normalized as MergeOutcome;
+  return undefined;
+}
+
+function defaultRequiresHuman(outcome: MergeOutcome): boolean {
+  return outcome === "conflict" || outcome === "push-failed";
+}
+
+/**
+ * Parse and normalize a merge verdict payload.
+ *
+ * Accepts the raw dispatcher payload (from `complete_merge`) or an
+ * already-normalized annotation. Invalid optional fields are dropped, string
+ * fields are truncated to safe lengths, and legacy outcome aliases are coerced
+ * to the canonical form. `requiresHuman` defaults to `true` for `conflict` and
+ * `push-failed`, and `false` for all other valid outcomes.
+ */
+export function normalizeMergeVerdict(input: unknown): NormalizedMergeVerdict | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const obj = input as Record<string, unknown>;
+
+  const outcome = normalizeMergeOutcome(obj.outcome);
+  if (!outcome) return undefined;
+
+  const diagnosis = truncateString(obj.diagnosis, 1024);
+  const details = truncateString(obj.details, 4096);
+  const sourceBranch = truncateString(obj.sourceBranch, 255);
+  const targetBranch = truncateString(obj.targetBranch, 255);
+  const mergeCommitSha = truncateString(obj.mergeCommitSha, 64);
+
+  let requiresHuman: boolean;
+  if (typeof obj.requiresHuman === "boolean") {
+    requiresHuman = obj.requiresHuman;
+  } else if (obj.requiresHuman === "true") {
+    requiresHuman = true;
+  } else if (obj.requiresHuman === "false") {
+    requiresHuman = false;
+  } else {
+    requiresHuman = defaultRequiresHuman(outcome);
+  }
+
+  const verdict: NormalizedMergeVerdict = { outcome, requiresHuman };
+  if (diagnosis) verdict.diagnosis = diagnosis;
+  if (details) verdict.details = details;
+  if (sourceBranch) verdict.sourceBranch = sourceBranch;
+  if (targetBranch) verdict.targetBranch = targetBranch;
+  if (mergeCommitSha) verdict.mergeCommitSha = mergeCommitSha;
+  return verdict;
+}
+
 export const TaskStatusSchema = z.object({
   // Internal phase — authoritative state for reconciler logic.
   phase: TaskPhase.default("pending"),
