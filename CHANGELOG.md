@@ -1,11 +1,42 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.182] - 2026-06-14
+
+### <!-- 0 -->🚀 Features
+
+- Add typed agent capability metadata map _(web)_
+- Render capability descriptions in agent form _(web)_
+- Add terminal-styled testimonials to index page _(docs)_
+- Add usage bar with session tracking, settings popover, and lock overlay _(web)_
+- Server-side usage tracking with in-memory lock flag _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Show friendly capability labels in agents list _(web)_
+- Centralize isLocked() to prevent counter ticking past max _(web)_
+- Resolve type errors in usage route and fetch refs before rev-parse in task-diff _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add agent capability descriptions plan _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add capability metadata regression coverage _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Add yaml 1.1 version to codegen and update crds
 ## [v0.1.181] - 2026-06-14
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Gate complete_merge by merge-worker context and fix test env _(dispatcher)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.181
 ## [v0.1.180] - 2026-06-14
 
 ### <!-- 1 -->🐛 Bug Fixes
