@@ -1959,7 +1959,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
         if (depName === 'percussionist-operator') {
           const dispatcherNewImage = `${registryPrefix}/dispatcher:${targetTag}`;
-          containers[0]!.env = [{ name: 'DISPATCHER_IMAGE', value: dispatcherNewImage }];
+          const memoryNewImage = `${registryPrefix}/memory:${targetTag}`;
+          containers[0]!.env = [
+            { name: 'DISPATCHER_IMAGE', value: dispatcherNewImage },
+            { name: 'MEMORY_SERVICE_IMAGE', value: memoryNewImage },
+          ];
         }
 
         const patchBody = {

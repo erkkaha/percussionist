@@ -1,4 +1,6 @@
 import { Hono } from 'hono';
+import { createHash } from 'node:crypto';
+import type { DiffContext, DiffFinding } from '@percussionist/api';
 import { auth } from '../auth.js';
 import { getProject, getRun, getTask, gitUrlHash, NAMESPACE } from '../kube.js';
 
@@ -84,9 +86,80 @@ function parseCommitsSection(text: string): DiffCommit[] {
   return commits;
 }
 
+type ProjectedFinding = DiffFinding & {
+  isActive: boolean;
+  isStale: boolean;
+};
+
+function parseMetaSection(text: string): Partial<DiffContext> {
+  const result: Partial<DiffContext> = {};
+  for (const line of text.split("\n")) {
+    const idx = line.indexOf("=");
+    if (idx === -1) continue;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (key === "BASE_SHA") result.baseSha = value;
+    if (key === "HEAD_SHA") result.headSha = value;
+    if (key === "FORK_SHA") result.forkSha = value;
+  }
+  return result;
+}
+
+function computeDiffFingerprint(forkSha: string, headSha: string, unifiedDiff: string): string {
+  const payload = `${forkSha}\n${headSha}\n${unifiedDiff.trim()}`;
+  return createHash("sha256").update(payload).digest("hex");
+}
+
+const SEVERITY_RANK: Record<DiffFinding["severity"], number> = {
+  critical: 4,
+  high: 3,
+  medium: 2,
+  low: 1,
+  info: 0,
+};
+
+function projectFindings(
+  stored: { items: DiffFinding[] } | undefined,
+  context: DiffContext,
+): ProjectedFinding[] {
+  const projected: ProjectedFinding[] = [];
+  for (const finding of stored?.items ?? []) {
+    const isActive =
+      finding.context.baseSha === context.baseSha &&
+      finding.context.headSha === context.headSha &&
+      finding.context.forkSha === context.forkSha &&
+      finding.context.diffFingerprint === context.diffFingerprint;
+    projected.push({ ...finding, isActive, isStale: !isActive });
+  }
+
+  projected.sort((a, b) => {
+    const sev = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
+    if (sev !== 0) return sev;
+
+    const scoreA = a.score ?? 0;
+    const scoreB = b.score ?? 0;
+    if (scoreB !== scoreA) return scoreB - scoreA;
+
+    const anchorA = a.anchors[0];
+    const anchorB = b.anchors[0];
+    const pathA = anchorA?.path ?? "";
+    const pathB = anchorB?.path ?? "";
+    const pathCmp = pathA.localeCompare(pathB);
+    if (pathCmp !== 0) return pathCmp;
+
+    const lineA = anchorA?.line ?? 0;
+    const lineB = anchorB?.line ?? 0;
+    return lineA - lineB;
+  });
+
+  return projected;
+}
+
 const router = new Hono();
-const MANAGER_SERVICE = `http://percussionist-manager.${NAMESPACE}.svc.cluster.local`;
-const MCP_URL = `${MANAGER_SERVICE}:4097/mcp`;
+// The manager always runs in the operator namespace; keep the URL independent
+// of the web server's PERCUSSIONIST_NAMESPACE so the diff route works when the
+// web pod is deployed in a project/test namespace.
+const MCP_URL = "http://percussionist-manager.percussionist.svc.cluster.local:4097/mcp";
 
 async function execInWorkspaceViaManager(
   project: string,
@@ -204,18 +277,6 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
     baseRef = baseRef ?? defaultRef;
     headRef = headRef ?? defaultRef;
 
-    if (baseRef === headRef) {
-      return c.json({
-        project: projectName,
-        task: taskName,
-        defaultRef,
-        baseRef,
-        headRef,
-        files: [],
-        empty: true,
-        reason: 'No changes: base and head refs are identical',
-      });
-    }
 
     const source = project.spec.source;
     let repoPath: string;
@@ -259,7 +320,11 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
       '    done',
       '  fi',
       'fi',
-      'echo "___UNIFIED___"',
+      'echo "___META___"',
+      'printf "BASE_SHA="; git -C "$REPO" rev-parse "$BASE^{commit}" 2>/dev/null; echo',
+      'printf "HEAD_SHA="; git -C "$REPO" rev-parse "$HEAD^{commit}" 2>/dev/null; echo',
+      'printf "FORK_SHA=%s\\n" "$FORK"',
+      'echo "___UNIFIED___"', 
       'git -C "$REPO" diff --no-color --find-renames --binary "$FORK..$HEAD" -- 2>/dev/null || true',
       'echo "___COMMITS___"',
       'for SHA in $(git -C "$REPO" rev-list --no-merges "$FORK..$HEAD" 2>/dev/null | head -20); do',
@@ -296,14 +361,21 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
       );
     }
 
+    let metaText = '';
     let unifiedDiff = '';
     let commitsText = '';
 
+    const metaMarker = '___META___\n';
     const unifiedMarker = '___UNIFIED___\n';
     const commitsMarker = '\n___COMMITS___\n';
 
+    const metaIdx = output.indexOf(metaMarker);
     const unifiedIdx = output.indexOf(unifiedMarker);
     const commitsIdx = output.indexOf(commitsMarker);
+
+    if (metaIdx !== -1 && unifiedIdx !== -1) {
+      metaText = output.slice(metaIdx + metaMarker.length, unifiedIdx);
+    }
 
     if (unifiedIdx !== -1) {
       const afterUnified = output.slice(unifiedIdx + unifiedMarker.length);
@@ -318,6 +390,15 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
       commitsText = output.slice(commitsIdx + commitsMarker.length);
     }
 
+    const meta = parseMetaSection(metaText);
+    const baseSha = meta.baseSha ?? "";
+    const headSha = meta.headSha ?? "";
+    const forkSha = meta.forkSha ?? "";
+    const diffFingerprint = computeDiffFingerprint(forkSha, headSha, unifiedDiff);
+
+    const context: DiffContext = { baseSha, headSha, forkSha, diffFingerprint };
+    const findings = projectFindings(task.status?.diffFindings, context);
+
     const files = unifiedDiff.trim() ? splitDiffByFile(unifiedDiff.trim()) : [];
     const commits = parseCommitsSection(commitsText);
 
@@ -327,7 +408,13 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
       defaultRef,
       baseRef,
       headRef,
+      baseSha,
+      headSha,
+      forkSha,
+      diffFingerprint,
+      context,
       files,
+      findings,
       commits,
       empty: files.length === 0 && commits.length === 0,
     });
