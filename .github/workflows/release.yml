@@ -23,6 +23,7 @@ env:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   release:
@@ -119,14 +120,27 @@ jobs:
           done
 
       - name: Commit and tag
-        env:
-          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}"
           git add -A
           git commit -m "chore: release ${{ steps.version.outputs.version }}"
           git tag "${{ steps.version.outputs.version }}"
           git push origin main
           git push origin "${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          body_path: CHANGELOG.md
+          prerelease: ${{ github.event.inputs.pre-release == 'true' }}
+          make_latest: ${{ github.event.inputs.pre-release != 'true' }}
+
+      - name: Dispatch image builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run images.yml \
+            --ref main \
+            --field tag="${{ steps.version.outputs.version }}"

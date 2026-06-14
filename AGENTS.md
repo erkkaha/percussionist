@@ -846,18 +846,6 @@ Then `images.yml`:
 - The GitHub Release is marked as **Pre-release**
 - Beta numbering auto-increments: first `-beta.1`, then `-beta.2`, etc.
 
-### One-time setup
-
-The release workflow needs a **Personal Access Token** (PAT) with `contents: write`
-scope to push the tag (the default `GITHUB_TOKEN` does not trigger downstream
-workflows for security reasons).
-
-1. Create a PAT at https://github.com/settings/tokens (classic, `repo` scope)
-2. Add it as a repository secret named `RELEASE_PAT`:
-   ```
-   Settings → Secrets and variables → Actions → New repository secret
-   ```
-
 ### Manual fallback
 
 If the workflow fails after the tag is pushed but before images are built, you can
