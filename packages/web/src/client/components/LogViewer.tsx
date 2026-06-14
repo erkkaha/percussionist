@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import "@xterm/xterm/css/xterm.css";
-import { useLogs } from "../hooks/useLogs";
-import { Button } from "./ui/button";
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import '@xterm/xterm/css/xterm.css';
+import { useLogs } from '../hooks/useLogs';
+import { Button } from './ui/button';
 
 interface LogViewerProps {
   name: string;
@@ -17,18 +17,18 @@ interface LogViewerProps {
   eventTick: number;
 }
 
-const BASE_CONTAINERS = ["bootstrap", "opencode", "dispatcher"] as const;
+const BASE_CONTAINERS = ['bootstrap', 'opencode', 'dispatcher'] as const;
 const TAIL_OPTIONS = [100, 500, 1000] as const;
 
 /** Convert a plain-text log string to xterm-safe output (CRLF line endings). */
 function toTerminalLines(text: string): string {
-  return text.replace(/\r?\n/g, "\r\n");
+  return text.replace(/\r?\n/g, '\r\n');
 }
 
 export default function LogViewer({
   name,
   active,
-  defaultContainer = "bootstrap",
+  defaultContainer = 'bootstrap',
   sseConnected,
   eventTick,
 }: LogViewerProps) {
@@ -43,9 +43,9 @@ export default function LogViewer({
   /** Tracks how many characters of `data.lines` have already been written. */
   const writtenLenRef = useRef(0);
   /** Tracks which container+tail combo was last written (to detect resets). */
-  const lastKeyRef = useRef("");
+  const lastKeyRef = useRef('');
   /** Mirror of latest data.lines for use inside the mount effect. */
-  const dataRef = useRef<string>("");
+  const dataRef = useRef<string>('');
   /** Mirror of current container:tailLines key. */
   const keyRef = useRef(`${defaultContainer}:500`);
   /** Mirror of autoScroll state for use inside the mount effect. */
@@ -73,27 +73,27 @@ export default function LogViewer({
       fontSize: 12,
       fontFamily: '"JetBrains Mono", "Fira Mono", "Cascadia Code", monospace',
       theme: {
-        background: "#111317",
-        foreground: "#e2e2e8",
-        cursor: "#e8a852",
-        cursorAccent: "#111317",
-        selectionBackground: "#514537",
-        black: "#111317",
-        brightBlack: "#9e8e7e",
-        red: "#ffb4ab",
-        brightRed: "#ffb4ab",
-        green: "#58ea8a",
-        brightGreen: "#58ea8a",
-        yellow: "#fbbf24",
-        brightYellow: "#fbbf24",
-        blue: "#93c5fd",
-        brightBlue: "#93c5fd",
-        magenta: "#e879f9",
-        brightMagenta: "#e879f9",
-        cyan: "#67e8f9",
-        brightCyan: "#67e8f9",
-        white: "#e2e2e8",
-        brightWhite: "#ffffff",
+        background: '#111317',
+        foreground: '#e2e2e8',
+        cursor: '#e8a852',
+        cursorAccent: '#111317',
+        selectionBackground: '#514537',
+        black: '#111317',
+        brightBlack: '#9e8e7e',
+        red: '#ffb4ab',
+        brightRed: '#ffb4ab',
+        green: '#58ea8a',
+        brightGreen: '#58ea8a',
+        yellow: '#fbbf24',
+        brightYellow: '#fbbf24',
+        blue: '#93c5fd',
+        brightBlue: '#93c5fd',
+        magenta: '#e879f9',
+        brightMagenta: '#e879f9',
+        cyan: '#67e8f9',
+        brightCyan: '#67e8f9',
+        white: '#e2e2e8',
+        brightWhite: '#ffffff',
       },
       disableStdin: true,
       cursorBlink: false,
@@ -134,7 +134,7 @@ export default function LogViewer({
       termRef.current = null;
       fitAddonRef.current = null;
       writtenLenRef.current = 0;
-      lastKeyRef.current = "";
+      lastKeyRef.current = '';
     };
   }, []);
 
@@ -156,7 +156,7 @@ export default function LogViewer({
     const term = termRef.current;
 
     const currentKey = `${container}:${tailLines}`;
-    const newLines = data?.lines ?? "";
+    const newLines = data?.lines ?? '';
 
     // Always keep mirrors current so the mount effect can use them.
     dataRef.current = newLines;
@@ -181,7 +181,7 @@ export default function LogViewer({
     }
 
     if (isLoading && writtenLenRef.current === 0) {
-      term.write("\x1b[2mLoading logs...\x1b[0m");
+      term.write('\x1b[2mLoading logs...\x1b[0m');
       return;
     }
 
@@ -210,13 +210,13 @@ export default function LogViewer({
           {[...BASE_CONTAINERS].map((c) => (
             <Button
               key={c}
-              variant={container === c ? "secondary" : "ghost"}
+              variant={container === c ? 'secondary' : 'ghost'}
               size="sm"
               onClick={() => setContainer(c)}
               className={`rounded-none border-0 ${
                 container === c
-                  ? "bg-surface-overlay text-text"
-                  : "text-text-muted hover:text-text hover:bg-surface-overlay/50"
+                  ? 'bg-surface-overlay text-text'
+                  : 'text-text-muted hover:text-text hover:bg-surface-overlay/50'
               }`}
             >
               {c}
@@ -251,12 +251,10 @@ export default function LogViewer({
           auto-scroll
         </label>
 
-        {isFetching && (
-          <span className="text-xs text-text-dim animate-pulse">refreshing...</span>
-        )}
+        {isFetching && <span className="text-xs text-text-dim animate-pulse">refreshing...</span>}
         {active && (
           <span className="text-xs text-text-dim">
-            updates: {sseConnected ? "live stream" : "polling fallback"}
+            updates: {sseConnected ? 'live stream' : 'polling fallback'}
           </span>
         )}
       </div>
@@ -264,9 +262,9 @@ export default function LogViewer({
       {/* Log output — always render the terminal; error/loading written into it */}
       <div
         className="rounded-lg border border-border overflow-hidden"
-        style={{ height: "600px", background: "#111317", padding: "12px", minWidth: 0 }}
+        style={{ height: '600px', background: '#111317', padding: '12px', minWidth: 0 }}
       >
-        <div ref={termCallbackRef} style={{ height: "100%", overflow: "hidden" }} />
+        <div ref={termCallbackRef} style={{ height: '100%', overflow: 'hidden' }} />
       </div>
     </div>
   );

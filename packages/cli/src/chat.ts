@@ -8,12 +8,12 @@
 //
 // This follows the same port-forward pattern as attach.ts.
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { createInterface } from "node:readline/promises";
-import { createServer } from "node:net";
-import { DEFAULT_NAMESPACE, loadKube } from "./kube.js";
+import { type ChildProcess, spawn } from 'node:child_process';
+import { createServer } from 'node:net';
+import { createInterface } from 'node:readline/promises';
+import { DEFAULT_NAMESPACE, loadKube } from './kube.js';
 
-const MANAGER_SERVICE = "percussionist-manager";
+const MANAGER_SERVICE = 'percussionist-manager';
 const MANAGER_PORT = 4098;
 
 interface ChatOpts {
@@ -25,34 +25,31 @@ async function pickFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = createServer();
     srv.unref();
-    srv.on("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
       const addr = srv.address();
-      if (addr && typeof addr === "object") {
+      if (addr && typeof addr === 'object') {
         const port = addr.port;
         srv.close(() => resolve(port));
       } else {
         srv.close();
-        reject(new Error("could not determine free port"));
+        reject(new Error('could not determine free port'));
       }
     });
   });
 }
 
-async function startPortForward(
-  namespace: string,
-  localPort: number,
-): Promise<ChildProcess> {
+async function startPortForward(namespace: string, localPort: number): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     const args = [
-      "port-forward",
-      "-n",
+      'port-forward',
+      '-n',
       namespace,
       `svc/${MANAGER_SERVICE}`,
       `${localPort}:${MANAGER_PORT}`,
     ];
-    const child = spawn("kubectl", args, {
-      stdio: ["ignore", "pipe", "pipe"],
+    const child = spawn('kubectl', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     let ready = false;
@@ -64,18 +61,18 @@ async function startPortForward(
 
     const onChunk = (buf: Buffer) => {
       const s = buf.toString();
-      if (s.includes("Forwarding from")) onReady();
+      if (s.includes('Forwarding from')) onReady();
       process.stderr.write(s);
     };
-    child.stdout?.on("data", onChunk);
-    child.stderr?.on("data", onChunk);
+    child.stdout?.on('data', onChunk);
+    child.stderr?.on('data', onChunk);
 
-    child.on("exit", (code) => {
+    child.on('exit', (code) => {
       if (!ready) {
         reject(new Error(`kubectl port-forward exited with code ${code}`));
       }
     });
-    child.on("error", reject);
+    child.on('error', reject);
   });
 }
 
@@ -83,9 +80,7 @@ export async function runChat(opts: ChatOpts): Promise<void> {
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
   loadKube();
 
-  const localPort = opts.localPort
-    ? Number(opts.localPort)
-    : await pickFreePort();
+  const localPort = opts.localPort ? Number(opts.localPort) : await pickFreePort();
 
   console.error(`beatctl: port-forwarding svc/${MANAGER_SERVICE} -> localhost:${localPort}`);
 
@@ -93,19 +88,19 @@ export async function runChat(opts: ChatOpts): Promise<void> {
   try {
     pf = await startPortForward(ns, localPort);
   } catch (e) {
-    console.error("beatctl: port-forward failed:", (e as Error).message);
+    console.error('beatctl: port-forward failed:', (e as Error).message);
     process.exit(1);
   }
 
   const kill = () => {
-    if (!pf.killed) pf.kill("SIGTERM");
+    if (!pf.killed) pf.kill('SIGTERM');
   };
-  process.on("exit", kill);
-  process.on("SIGINT", () => {
+  process.on('exit', kill);
+  process.on('SIGINT', () => {
     kill();
     process.exit(130);
   });
-  process.on("SIGTERM", () => {
+  process.on('SIGTERM', () => {
     kill();
     process.exit(143);
   });
@@ -116,17 +111,17 @@ export async function runChat(opts: ChatOpts): Promise<void> {
   try {
     const statusRes = await fetch(`${BASE}/chat/history`, { signal: AbortSignal.timeout(3_000) });
     if (!statusRes.ok) {
-      console.error("beatctl: manager agent not reachable (status", statusRes.status + ")");
+      console.error('beatctl: manager agent not reachable (status', `${statusRes.status})`);
       kill();
       process.exit(1);
     }
   } catch {
-    console.error("beatctl: manager agent not reachable");
+    console.error('beatctl: manager agent not reachable');
     kill();
     process.exit(1);
   }
 
-  console.error("beatctl: connected to manager agent. Type your messages (Ctrl+C to exit).\n");
+  console.error('beatctl: connected to manager agent. Type your messages (Ctrl+C to exit).\n');
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
@@ -136,38 +131,40 @@ export async function runChat(opts: ChatOpts): Promise<void> {
     if (histRes.ok) {
       const hist = await histRes.json();
       if (hist.history?.length) {
-        console.error("--- previous conversation ---");
+        console.error('--- previous conversation ---');
         for (const msg of hist.history) {
           console.error(`[${msg.role}] ${msg.text}`);
         }
-        console.error("--- end ---\n");
+        console.error('--- end ---\n');
       }
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   while (true) {
-    const line = await rl.question("> ");
+    const line = await rl.question('> ');
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    console.error();  // blank line before response
+    console.error(); // blank line before response
     try {
       const res = await fetch(`${BASE}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: trimmed }),
       });
       const data = await res.json();
       if (data.response) {
         console.log(data.response);
       } else if (data.error) {
-        console.error("Error:", data.error);
+        console.error('Error:', data.error);
       } else {
-        console.error("Unexpected response:", JSON.stringify(data));
+        console.error('Unexpected response:', JSON.stringify(data));
       }
     } catch (e) {
-      console.error("Error:", (e as Error).message);
+      console.error('Error:', (e as Error).message);
     }
-    console.log();  // trailing blank line
+    console.log(); // trailing blank line
   }
 }

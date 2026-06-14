@@ -1,16 +1,16 @@
 // FilterBar.tsx — column filter tabs, search, type/priority filter chips.
 
-import { Search, X } from "lucide-react";
-import { Button } from "../ui/button";
+import { Search, X } from 'lucide-react';
+import { Button } from '../ui/button';
 
-const ALL_COLUMNS = ["ideas", "backlog", "blocked", "in-progress", "review", "done"] as const;
+const ALL_COLUMNS = ['ideas', 'backlog', 'blocked', 'in-progress', 'review', 'done'] as const;
 export type ColumnKey = (typeof ALL_COLUMNS)[number];
 
 export interface FilterState {
-  column: ColumnKey | "all";
+  column: ColumnKey | 'all';
   search: string;
-  type: "all" | "PLAN" | "BUILD";
-  priority: "all" | "high" | "medium" | "low";
+  type: 'all' | 'PLAN' | 'BUILD';
+  priority: 'all' | 'high' | 'medium' | 'low';
 }
 
 interface FilterBarProps {
@@ -19,9 +19,10 @@ interface FilterBarProps {
   columnCounts: Record<string, number>;
 }
 
-const pillBase = "shrink-0 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors capitalize";
-const pillActive = "border-accent/60 bg-surface-overlay text-text";
-const pillInactive = "border-border-muted text-text-dim hover:border-border hover:text-text-muted";
+const pillBase =
+  'shrink-0 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors capitalize';
+const pillActive = 'border-accent/60 bg-surface-overlay text-text';
+const pillInactive = 'border-border-muted text-text-dim hover:border-border hover:text-text-muted';
 
 export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
   return (
@@ -29,12 +30,12 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
       {/* Column tabs — scrollable row */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none flex-wrap">
         <Button
-          variant={filters.column === "all" ? "secondary" : "ghost"}
+          variant={filters.column === 'all' ? 'secondary' : 'ghost'}
           size="sm"
-          onClick={() => onChange({ ...filters, column: "all" })}
-          className={`${pillBase} ${filters.column === "all" ? pillActive : pillInactive}`}
+          onClick={() => onChange({ ...filters, column: 'all' })}
+          className={`${pillBase} ${filters.column === 'all' ? pillActive : pillInactive}`}
         >
-          All{" "}
+          All{' '}
           <span className="ml-1 text-text-dim">
             {Object.values(columnCounts).reduce((a, b) => a + b, 0)}
           </span>
@@ -42,13 +43,13 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
         {ALL_COLUMNS.map((col) => (
           <Button
             key={col}
-            variant={filters.column === col ? "secondary" : "ghost"}
+            variant={filters.column === col ? 'secondary' : 'ghost'}
             size="sm"
             onClick={() => onChange({ ...filters, column: col })}
             className={`${pillBase} ${filters.column === col ? pillActive : pillInactive}`}
           >
             {col}
-            {columnCounts[col] != null && columnCounts[col]! > 0 && (
+            {columnCounts[col] != null && columnCounts[col] > 0 && (
               <span className="ml-1 text-text-dim">{columnCounts[col]}</span>
             )}
           </Button>
@@ -68,7 +69,7 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
           />
           {filters.search && (
             <button
-              onClick={() => onChange({ ...filters, search: "" })}
+              onClick={() => onChange({ ...filters, search: '' })}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-text-dim hover:text-text"
             >
               <X className="h-3.5 w-3.5" />
@@ -78,30 +79,30 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
 
         {/* Type filter */}
         <div className="flex items-center gap-1.5">
-          {(["all", "PLAN", "BUILD"] as const).map((t) => (
+          {(['all', 'PLAN', 'BUILD'] as const).map((t) => (
             <Button
               key={t}
-              variant={filters.type === t ? "secondary" : "ghost"}
+              variant={filters.type === t ? 'secondary' : 'ghost'}
               size="sm"
               onClick={() => onChange({ ...filters, type: t })}
               className={`${pillBase} ${filters.type === t ? pillActive : pillInactive}`}
             >
-              {t === "all" ? "Any type" : t}
+              {t === 'all' ? 'Any type' : t}
             </Button>
           ))}
         </div>
 
         {/* Priority filter */}
         <div className="flex items-center gap-1.5">
-          {(["all", "high", "medium", "low"] as const).map((p) => (
+          {(['all', 'high', 'medium', 'low'] as const).map((p) => (
             <Button
               key={p}
-              variant={filters.priority === p ? "secondary" : "ghost"}
+              variant={filters.priority === p ? 'secondary' : 'ghost'}
               size="sm"
               onClick={() => onChange({ ...filters, priority: p })}
               className={`${pillBase} ${filters.priority === p ? pillActive : pillInactive}`}
             >
-              {p === "all" ? "Any priority" : p}
+              {p === 'all' ? 'Any priority' : p}
             </Button>
           ))}
         </div>

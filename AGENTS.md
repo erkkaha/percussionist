@@ -7,6 +7,8 @@ of TypeScript packages under `packages/*`.
 ## Key Commands
 - `pnpm build` - Build all packages
 - `pnpm typecheck` - Type-check all packages via `tsc -b` (run before committing; respects project references, runs in topological order)
+- `pnpm lint` - Check lint + formatting via Biome (CI gate)
+- `pnpm format` - Auto-fix lint issues + format via Biome
 - `pnpm test` - Run unit + smoke tests across all packages (bun:test)
 - `pnpm e2e:core` - Run deterministic E2E suites on a live cluster (PR gate)
 - `pnpm e2e:extended` - Run extended E2E suites for complex paths like feature branching
@@ -26,7 +28,7 @@ All commits must follow **Conventional Commits** format:
 ```
 
 Husky hooks enforce compliance on every commit:
-- **pre-commit** — runs `pnpm typecheck && pnpm test` (fails if either fails)
+- **pre-commit** — runs `pnpm typecheck && pnpm test` (fails if either fails); also runs `lint-staged` to auto-format and auto-fix staged files via Biome
 - **commit-msg** — runs `commitlint` to validate the message format
 
 Valid types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
@@ -237,6 +239,10 @@ these tools for agent use:
 | `store_memory` | Store a memory with semantic embedding for future context retrieval |
 | `query_memory` | Semantic search across stored memories, ranked by cosine distance |
 | `get_context` | Retrieve relevant context from past runs and memories, formatted for prompt injection |
+| `list_memories` | List stored memories with pagination and optional task filter |
+| `get_memory` | Retrieve a single memory by its UUID |
+| `update_memory` | Update a memory's content and/or metadata (regenerates embedding if content changes) |
+| `delete_memory` | Delete a memory and its associated embedding vector atomically |
 
 ### Resources
 
@@ -420,7 +426,7 @@ Drizzle-kit will produce a `DROP TABLE` migration and update the journal/snapsho
 Do not add `ALTER TABLE` try/catch blocks to `db.ts`. Do not duplicate DDL as raw SQL strings in `db.ts`. Always use drizzle-kit generate to produce a migration file.
 
 ## Conventions
-- No linter/formatting tool configured -- do not add one without asking
+- Formatting and linting via Biome (see `biome.json`)
 - Testing: bun:test in all packages; run `pnpm test` locally
 - K8s client: `@kubernetes/client-node` (lazy singleton, typed CRUD helpers)
 - Console-based logging with timestamps (no structured logger)
@@ -491,6 +497,10 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `store_memory` | Store a memory with semantic embedding for future context retrieval |
 | `query_memory` | Semantic search across stored memories, ranked by cosine distance |
 | `get_context` | Retrieve relevant context from past runs and memories, formatted for prompt injection |
+| `list_memories` | List stored memories with pagination and optional task filter |
+| `get_memory` | Retrieve a single memory by its UUID |
+| `update_memory` | Update a memory's content and/or metadata (regenerates embedding if content changes) |
+| `delete_memory` | Delete a memory and its associated embedding vector atomically |
 
 **`create_run`** — Direct run creation without waiting for reconcile cycle.
 - Requires: `project`, `task` (Task CR name)
@@ -781,14 +791,15 @@ to a truncated snapshot.
 Release tags follow `v<major>.<minor>.<patch>` semver format (e.g. `v0.15.0`).
 CI triggers on any push matching `v*`.
 
-**Do not guess tags.** Always derive from existing remote tags:
+**Never create a tag without asking the user first.** Tagging is a human decision.
+Always ask what version they want, then derive from existing remote tags:
 
 ```bash
 git fetch --tags origin
 git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1V -k2,2V -k3,3V | tail -1
 ```
 
-Start from that tag, increment the appropriate segment, create, and push:
+Once the user confirms the version, create and push:
 
 ```bash
 git tag v0.15.1

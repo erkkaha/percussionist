@@ -3,123 +3,16 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, Plus, Filter, X } from "lucide-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Task } from "../../lib/types";
 import { FilterBar } from "./FilterBar";
 import type { FilterState } from "./FilterBar";
 import { TaskRow } from "./TaskRow";
-import { addBoardTask } from "../../lib/api";
-import { Input } from "../ui/input";
-import { Textarea } from "../ui/textarea";
-import { Button } from "../ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { AddTaskForm } from "./AddTaskForm";
+import { useIsMobile } from "../../hooks/use-mobile";
 
-const DEFAULT_COLUMNS = ["ideas", "backlog", "blocked", "in-progress", "review", "done"] as const;
+const DEFAULT_COLUMNS = ['ideas', 'backlog', 'blocked', 'in-progress', 'review', 'done'] as const;
 
-interface AddTaskFormProps {
-  projectName: string;
-  roster: string[];
-  defaultColumn?: string;
-  onClose: () => void;
-}
 
-function AddTaskForm({ projectName, roster, defaultColumn = "backlog", onClose }: AddTaskFormProps) {
-  const queryClient = useQueryClient();
-  const [taskType, setTaskType] = useState<"PLAN" | "BUILD">("PLAN");
-  const [taskTitle, setTaskTitle] = useState("");
-  const [taskDesc, setTaskDesc] = useState("");
-  const [taskAgent, setTaskAgent] = useState("");
-  const [taskPriority, setTaskPriority] = useState<"high" | "medium" | "low">("medium");
-  const [error, setError] = useState<string | null>(null);
-
-  const addMutation = useMutation({
-    mutationFn: async (task: { type: string; title: string; description?: string; agent: string; priority?: string }) =>
-      addBoardTask(projectName, { ...task, column: defaultColumn }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["board", projectName] });
-      onClose();
-    },
-    onError: (e) => setError((e as Error).message),
-  });
-
-  return (
-    <div className="rounded-md border border-border bg-surface p-4 space-y-3 mx-2">
-      <h2 className="text-sm font-semibold">Add Task {defaultColumn === "ideas" ? "to Ideas" : "to Backlog"}</h2>
-
-      {/* Type */}
-      <div className="flex gap-4">
-        {(["PLAN", "BUILD"] as const).map((t) => (
-          <label key={t} className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              value={t}
-              checked={taskType === t}
-              onChange={() => setTaskType(t)}
-              className="cursor-pointer"
-            />
-            <span className="text-sm">{t}</span>
-          </label>
-        ))}
-      </div>
-
-      {/* Agent */}
-      {roster.length === 0 ? (
-        <p className="text-xs text-phase-failed">
-          No agents in roster.{" "}
-          <Link to={`/projects/${encodeURIComponent(projectName)}/edit`} className="underline hover:opacity-80">
-            Add agents first.
-          </Link>
-        </p>
-      ) : (
-        <Select value={taskAgent} onValueChange={(v) => setTaskAgent(v)}>
-          <SelectTrigger>
-            <SelectValue placeholder="— agent —" />
-          </SelectTrigger>
-          <SelectContent>
-            {roster.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      )}
-
-      <Input
-        placeholder="Title"
-        value={taskTitle}
-        onChange={(e) => setTaskTitle(e.target.value)}
-      />
-
-      <Textarea
-        placeholder="Description (optional, supports Markdown)"
-        value={taskDesc}
-        onChange={(e) => setTaskDesc(e.target.value)}
-        rows={3}
-      />
-
-      <div className="flex items-center gap-3">
-        <Select value={taskPriority} onValueChange={(v) => setTaskPriority(v as "high" | "medium" | "low")}>
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="high">High</SelectItem>
-            <SelectItem value="medium">Medium</SelectItem>
-            <SelectItem value="low">Low</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button
-          onClick={() => {
-            if (!taskTitle.trim() || !taskAgent) { setError("Title and agent required"); return; }
-            addMutation.mutate({ type: taskType, title: taskTitle.trim(), description: taskDesc.trim() || undefined, agent: taskAgent, priority: taskPriority });
-          }}
-          disabled={addMutation.isPending}
-        >
-          {addMutation.isPending ? "Adding…" : "Add"}
-        </Button>
-        <button onClick={onClose} className="text-sm text-text-dim hover:text-text transition-colors">Cancel</button>
-      </div>
-      {error && <p className="text-xs text-phase-failed">{error}</p>}
-    </div>
-  );
-}
 
 interface TaskListPanelProps {
   projectName: string;
@@ -127,8 +20,15 @@ interface TaskListPanelProps {
   roster: string[];
   selectedTaskName: string | null;
   onSelectTask: (name: string) => void;
+  /** Whether the inline add-task form is open (desktop). */
   showAddTask: boolean;
+  /** Default column for the inline add-task form. */
+  addTaskDefaultColumn?: string;
   onCloseAddTask: () => void;
+  /** Called when the ideas-column add button is pressed on mobile. */
+  onAddIdea: () => void;
+  /** When false, the panel never renders the inline add-task form regardless of `showAddTask`. */
+  renderInlineAddTask?: boolean;
   approvals?: Record<string, { approved: boolean; requestChanges: boolean }>;
 }
 
@@ -139,14 +39,19 @@ export function TaskListPanel({
   selectedTaskName,
   onSelectTask,
   showAddTask,
+  addTaskDefaultColumn = "backlog",
   onCloseAddTask,
+  onAddIdea,
+  renderInlineAddTask = true,
   approvals,
 }: TaskListPanelProps) {
+  const isMobile = useIsMobile();
+
   const [filters, setFilters] = useState<FilterState>({
-    column: "all",
-    search: "",
-    type: "all",
-    priority: "all",
+    column: 'all',
+    search: '',
+    type: 'all',
+    priority: 'all',
   });
 
   const [filterVisible, setFilterVisible] = useState(true);
@@ -164,23 +69,28 @@ export function TaskListPanel({
 
   // Column counts for filter bar
   const columnCounts = Object.fromEntries(
-    DEFAULT_COLUMNS.map((col) => [col, (columns[col] ?? []).length])
+    DEFAULT_COLUMNS.map((col) => [col, (columns[col] ?? []).length]),
   );
 
   // Filter tasks
   const searchLower = filters.search.toLowerCase();
   function matchesFilters(task: Task, col: string): boolean {
-    if (filters.column !== "all" && col !== filters.column) return false;
-    if (filters.type !== "all" && task.spec.type !== filters.type) return false;
-    if (filters.priority !== "all" && task.spec.priority !== filters.priority) return false;
+    if (filters.column !== 'all' && col !== filters.column) return false;
+    if (filters.type !== 'all' && task.spec.type !== filters.type) return false;
+    if (filters.priority !== 'all' && task.spec.priority !== filters.priority) return false;
     if (filters.search) {
-      const haystack = `${task.spec.title} ${task.metadata.name} ${task.spec.description ?? ""} ${task.spec.agent ?? ""}`.toLowerCase();
+      const haystack =
+        `${task.spec.title} ${task.metadata.name} ${task.spec.description ?? ''} ${task.spec.agent ?? ''}`.toLowerCase();
       if (!haystack.includes(searchLower)) return false;
     }
     return true;
   }
 
-  const isFiltering = filters.column !== "all" || filters.search || filters.type !== "all" || filters.priority !== "all";
+  const isFiltering =
+    filters.column !== 'all' ||
+    filters.search ||
+    filters.type !== 'all' ||
+    filters.priority !== 'all';
 
   // Build filtered column map
   const filteredColumns = DEFAULT_COLUMNS.map((col) => ({
@@ -188,11 +98,13 @@ export function TaskListPanel({
     tasks: (columns[col] ?? []).filter((t) => matchesFilters(t, col)),
   })).filter(({ tasks, col }) => {
     // Always show ideas when the ideas tab is active so the + button is reachable.
-    if (col === "ideas" && filters.column === "ideas") return true;
+    if (col === 'ideas' && filters.column === 'ideas') return true;
     if (isFiltering && tasks.length === 0) return false;
     if (!isFiltering && tasks.length === 0 && collapsed[col] !== false) return false;
     return true;
   });
+
+  const inlineAddTaskOpen = showAddTask && renderInlineAddTask;
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -202,7 +114,7 @@ export function TaskListPanel({
           <button
             onClick={() => setFilterVisible(!filterVisible)}
             className="text-text-dim hover:text-text transition-colors p-0.5"
-            title={filterVisible ? "Hide filters" : "Show filters"}
+            title={filterVisible ? 'Hide filters' : 'Show filters'}
           >
             {filterVisible ? <X className="h-3.5 w-3.5" /> : <Filter className="h-3.5 w-3.5" />}
           </button>
@@ -218,16 +130,18 @@ export function TaskListPanel({
         )}
       </div>
 
-      {showAddTask && (
+      {inlineAddTaskOpen && (
         <div className="pb-2 shrink-0">
-          <AddTaskForm projectName={projectName} roster={roster} onClose={onCloseAddTask} />
+          <AddTaskForm projectName={projectName} roster={roster} defaultColumn={addTaskDefaultColumn} onClose={onCloseAddTask} className="mx-2" />
         </div>
       )}
 
       {/* Scrollable task list */}
       <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-3">
         {filteredColumns.length === 0 && (
-          <p className="text-xs text-text-dim px-1 py-4 text-center italic">No tasks match filters.</p>
+          <p className="text-xs text-text-dim px-1 py-4 text-center italic">
+            No tasks match filters.
+          </p>
         )}
         {filteredColumns.map(({ col, tasks }) => {
           const isCollapsed = collapsed[col] ?? false;
@@ -246,13 +160,21 @@ export function TaskListPanel({
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-text-dim tabular-nums">{allColTasks.length}</span>
                     <ChevronDown
-                      className={`h-3.5 w-3.5 text-text-dim transition-transform duration-200 ${isCollapsed ? "-rotate-90" : ""}`}
+                      className={`h-3.5 w-3.5 text-text-dim transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`}
                     />
                   </div>
                 </button>
-                {col === "ideas" && (
+                {col === 'ideas' && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); setShowAddIdea((v) => !v); if (isCollapsed) toggleCollapsed(col); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isMobile) {
+                        onAddIdea();
+                      } else {
+                        setShowAddIdea((v) => !v);
+                      }
+                      if (isCollapsed) toggleCollapsed(col);
+                    }}
                     className="ml-2 p-0.5 rounded text-text-dim hover:text-text transition-colors"
                     title="Add idea"
                   >
@@ -261,13 +183,14 @@ export function TaskListPanel({
                 )}
               </div>
 
-              {col === "ideas" && showAddIdea && !isCollapsed && (
+              {col === "ideas" && showAddIdea && !isCollapsed && !isMobile && (
                 <div className="pb-2">
                   <AddTaskForm
                     projectName={projectName}
                     roster={roster}
                     defaultColumn="ideas"
                     onClose={() => setShowAddIdea(false)}
+                    className="mx-2"
                   />
                 </div>
               )}
@@ -277,21 +200,31 @@ export function TaskListPanel({
                   {tasks.length === 0 && !isFiltering ? (
                     <p className="text-xs text-text-dim italic px-1 py-1">empty</p>
                   ) : (
-                    [...tasks].sort((a, b) => {
-                      const aTime = a.status?.worker?.completedAt ?? a.status?.worker?.startedAt ?? a.metadata.creationTimestamp ?? "";
-                      const bTime = b.status?.worker?.completedAt ?? b.status?.worker?.startedAt ?? b.metadata.creationTimestamp ?? "";
-                      return String(bTime).localeCompare(String(aTime));
-                    }).map((task) => (
-                      <TaskRow
-                        key={task.metadata.name}
-                        task={task}
-                        col={col}
-                        isSelected={selectedTaskName === task.metadata.name}
-                        onClick={() => onSelectTask(task.metadata.name)}
-                        projectName={projectName}
-                        approvals={approvals}
-                      />
-                    ))
+                    [...tasks]
+                      .sort((a, b) => {
+                        const aTime =
+                          a.status?.worker?.completedAt ??
+                          a.status?.worker?.startedAt ??
+                          a.metadata.creationTimestamp ??
+                          '';
+                        const bTime =
+                          b.status?.worker?.completedAt ??
+                          b.status?.worker?.startedAt ??
+                          b.metadata.creationTimestamp ??
+                          '';
+                        return String(bTime).localeCompare(String(aTime));
+                      })
+                      .map((task) => (
+                        <TaskRow
+                          key={task.metadata.name}
+                          task={task}
+                          col={col}
+                          isSelected={selectedTaskName === task.metadata.name}
+                          onClick={() => onSelectTask(task.metadata.name)}
+                          projectName={projectName}
+                          approvals={approvals}
+                        />
+                      ))
                   )}
                 </div>
               )}

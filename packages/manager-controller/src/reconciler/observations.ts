@@ -1,21 +1,21 @@
 // Observations — normalize K8s resources into ReconcileInput.
 
-import type { Task, Project, Run } from "@percussionist/api";
-import { getRun } from "@percussionist/kube";
-import type { ReconcileInput, ObservedRuns, ManualActions } from "./decision.js";
-import { resolveFlow } from "./flow.js";
-import { isKubeNotFoundError } from "../kube-errors.js";
+import type { Project, Run, Task } from '@percussionist/api';
+import { getRun } from '@percussionist/kube';
+import { isKubeNotFoundError } from '../kube-errors.js';
+import type { ManualActions, ObservedRuns, ReconcileInput } from './decision.js';
+import { resolveFlow } from './flow.js';
 
 const TASK_ANNOTATION_KEYS = {
-  approved: "percussionist.dev/action-approved",
-  requestChanges: "percussionist.dev/action-request-changes",
-  reworkFeedback: "percussionist.dev/action-rework-feedback",
-  abandon: "percussionist.dev/action-abandon",
-  answer: "percussionist.dev/action-answer",
+  approved: 'percussionist.dev/action-approved',
+  requestChanges: 'percussionist.dev/action-request-changes',
+  reworkFeedback: 'percussionist.dev/action-rework-feedback',
+  abandon: 'percussionist.dev/action-abandon',
+  answer: 'percussionist.dev/action-answer',
 } as const;
 
 // Review verdict annotation on the review Run.
-const REVIEW_VERDICT_KEY = "percussionist.dev/review-verdict";
+const REVIEW_VERDICT_KEY = 'percussionist.dev/review-verdict';
 
 export async function observe(
   task: Task,
@@ -34,10 +34,11 @@ export async function observe(
   // Distinguish 404 (run legitimately gone) from transient errors
   // (network blip, API server 503) — the latter should propagate so the
   // reconciler retries instead of incorrectly flipping the task to failed.
-  const maybeRun = async (name: string) => getRun(name, namespace).catch((err: unknown) => {
-    if (isKubeNotFoundError(err)) return undefined;
-    throw err;
-  });
+  const maybeRun = async (name: string) =>
+    getRun(name, namespace).catch((err: unknown) => {
+      if (isKubeNotFoundError(err)) return undefined;
+      throw err;
+    });
   const [worker, review, merge, buildgen] = await Promise.all([
     workerRunName ? maybeRun(workerRunName) : undefined,
     reviewRunName ? maybeRun(reviewRunName) : undefined,
@@ -65,16 +66,14 @@ export async function observe(
   };
 }
 
-function normalizeManualActions(
-  task: Task,
-): ManualActions {
+function normalizeManualActions(task: Task): ManualActions {
   const taskAnnotations = task.metadata.annotations ?? {};
 
   return {
-    approved: taskAnnotations[TASK_ANNOTATION_KEYS.approved] === "true" || undefined,
-    requestChanges: taskAnnotations[TASK_ANNOTATION_KEYS.requestChanges] === "true" || undefined,
+    approved: taskAnnotations[TASK_ANNOTATION_KEYS.approved] === 'true' || undefined,
+    requestChanges: taskAnnotations[TASK_ANNOTATION_KEYS.requestChanges] === 'true' || undefined,
     reworkFeedback: taskAnnotations[TASK_ANNOTATION_KEYS.reworkFeedback] || undefined,
-    abandon: taskAnnotations[TASK_ANNOTATION_KEYS.abandon] === "true" || undefined,
+    abandon: taskAnnotations[TASK_ANNOTATION_KEYS.abandon] === 'true' || undefined,
     answer: taskAnnotations[TASK_ANNOTATION_KEYS.answer] || undefined,
   };
 }
@@ -97,7 +96,9 @@ export function getConsumedAnnotationKeys(actions: ManualActions): string[] {
   return keys;
 }
 
-export function getReviewVerdict(run: Run | undefined): { action: string; diagnosis?: string; feedback?: string } | undefined {
+export function getReviewVerdict(
+  run: Run | undefined,
+): { action: string; diagnosis?: string; feedback?: string } | undefined {
   if (!run) return undefined;
   const verdict = run.metadata.annotations?.[REVIEW_VERDICT_KEY];
   if (!verdict) return undefined;

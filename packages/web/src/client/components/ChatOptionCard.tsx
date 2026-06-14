@@ -1,5 +1,5 @@
-import { Card, CardContent } from "./ui/card";
-import { Button } from "./ui/button";
+import { Button } from './ui/button';
+import { Card, CardContent } from './ui/card';
 
 export interface OptionDef {
   key: string;
@@ -27,8 +27,8 @@ export default function ChatOptionCard({
   return (
     <Card className="mt-3 w-full">
       <CardContent className="space-y-2 p-3">
-        {options.map((option, idx) => (
-          <div key={idx} className="flex flex-col gap-0.5">
+        {options.map((option) => (
+          <div key={option.key} className="flex flex-col gap-0.5">
             <Button
               type="button"
               variant="secondary"
@@ -39,9 +39,7 @@ export default function ChatOptionCard({
               <span className="font-medium">{option.label}</span>
             </Button>
             {option.description && (
-              <p className="text-xs text-text-dim px-1 leading-relaxed">
-                {option.description}
-              </p>
+              <p className="text-xs text-text-dim px-1 leading-relaxed">{option.description}</p>
             )}
           </div>
         ))}

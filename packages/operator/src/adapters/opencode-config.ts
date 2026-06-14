@@ -3,10 +3,10 @@
 // supplied in ClusterSettings.spec.runnerAdapter.
 
 import {
+  type ClusterSettings,
   OPENCODE_RUNNER_DEFAULTS,
   type RunnerImageSpec,
-  type ClusterSettings,
-} from "@percussionist/api";
+} from '@percussionist/api';
 
 /**
  * Returns the effective RunnerImageSpec for this cluster.

@@ -1,17 +1,17 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { DrumLogo } from "../components/app-sidebar";
-import { useAuth } from "../lib/auth";
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { DrumLogo } from '../components/app-sidebar';
+import { useAuth } from '../lib/auth';
 
 export default function LoginPage() {
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { login, token } = useAuth();
   const navigate = useNavigate();
 
   if (token) {
-    navigate("/", { replace: true });
+    navigate('/', { replace: true });
     return null;
   }
 
@@ -24,19 +24,19 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      const res = await fetch("/api/settings", {
+      const res = await fetch('/api/settings', {
         headers: { Authorization: `Bearer ${trimmed}` },
       });
       if (res.ok) {
         login(trimmed);
-        navigate("/", { replace: true });
+        navigate('/', { replace: true });
       } else if (res.status === 401) {
-        setError("Invalid token");
+        setError('Invalid token');
       } else {
         setError(`Unexpected response (HTTP ${res.status})`);
       }
     } catch {
-      setError("Could not connect to server");
+      setError('Could not connect to server');
     } finally {
       setLoading(false);
     }
@@ -57,20 +57,17 @@ export default function LoginPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Auth token"
-            autoFocus
             className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none"
           />
 
-          {error && (
-            <p className="text-sm text-phase-failed">{error}</p>
-          )}
+          {error && <p className="text-sm text-phase-failed">{error}</p>}
 
           <button
             type="submit"
             disabled={loading || !input.trim()}
             className="rounded-md bg-accent text-on-primary px-3 py-2 text-sm font-medium hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
           >
-            {loading ? "Verifying..." : "Sign in"}
+            {loading ? 'Verifying...' : 'Sign in'}
           </button>
         </form>
       </div>

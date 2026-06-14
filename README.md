@@ -1429,6 +1429,10 @@ three related tools to agents:
 | `store_memory(project, content, metadata?)` | Store a memory with semantic embedding |
 | `query_memory(project, query, limit?)` | Semantic search across stored memories |
 | `get_context(project, query, task?)` | Get relevant context formatted for prompt injection |
+| `list_memories(project, task?, limit?, offset?)` | List stored memories with pagination and optional task filter |
+| `get_memory(project, id)` | Retrieve a single memory by its UUID |
+| `update_memory(project, id, content?, metadata?)` | Update a memory's content and/or metadata (regenerates embedding if content changes) |
+| `delete_memory(project, id)` | Delete a memory and its associated embedding vector atomically |
 
 ## Runner Packages
 

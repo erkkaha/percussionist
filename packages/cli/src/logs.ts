@@ -5,9 +5,9 @@
 // kubectl does awkwardly (Run-aware name resolution, attach, ...);
 // for the rest we're a polite wrapper.
 
-import { spawn } from "node:child_process";
-import { DEFAULT_NAMESPACE, fatal, getRun, loadKube } from "./kube.js";
-import { RUNNER_CONTAINER, DISPATCHER_CONTAINER } from "@percussionist/api";
+import { spawn } from 'node:child_process';
+import { DISPATCHER_CONTAINER, RUNNER_CONTAINER } from '@percussionist/api';
+import { DEFAULT_NAMESPACE, fatal, getRun, loadKube } from './kube.js';
 
 export interface LogsOpts {
   namespace?: string;
@@ -32,21 +32,18 @@ export async function runLogs(name: string, opts: LogsOpts): Promise<void> {
   }
 
   const container = opts.container ?? RUNNER_CONTAINER;
-  if (
-    container !== RUNNER_CONTAINER &&
-    container !== DISPATCHER_CONTAINER
-  ) {
+  if (container !== RUNNER_CONTAINER && container !== DISPATCHER_CONTAINER) {
     console.error(
       `beatctl: warning: container '${container}' is not a known percussionist container ` +
         `(${RUNNER_CONTAINER}, ${DISPATCHER_CONTAINER})`,
     );
   }
 
-  const args = ["logs", "-n", ns, podName, "-c", container];
-  if (opts.follow) args.push("-f");
+  const args = ['logs', '-n', ns, podName, '-c', container];
+  if (opts.follow) args.push('-f');
   if (opts.tail) args.push(`--tail=${opts.tail}`);
 
-  const child = spawn("kubectl", args, { stdio: "inherit" });
-  child.on("exit", (code) => process.exit(code ?? 0));
-  child.on("error", (e) => fatal("kubectl logs failed", e));
+  const child = spawn('kubectl', args, { stdio: 'inherit' });
+  child.on('exit', (code) => process.exit(code ?? 0));
+  child.on('error', (e) => fatal('kubectl logs failed', e));
 }

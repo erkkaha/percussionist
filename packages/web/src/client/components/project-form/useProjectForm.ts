@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { ProjectDetail, CreateProjectRequest } from "../../lib/types";
+import { useState } from 'react';
+import type { CreateProjectRequest, ProjectDetail } from '../../lib/types';
 
 // ---------------------------------------------------------------------------
 // Row types (local-only keys)
@@ -10,7 +10,7 @@ export interface SidecarRow {
   name: string;
   image: string;
   ports: string; // comma-separated numbers
-  env: string;   // newline-separated KEY=VALUE pairs
+  env: string; // newline-separated KEY=VALUE pairs
 }
 
 export interface InjectFileRow {
@@ -24,10 +24,14 @@ export interface InjectFileRow {
 // ---------------------------------------------------------------------------
 
 let _sidecarIdSeq = 0;
-function nextSidecarId() { return ++_sidecarIdSeq; }
+function nextSidecarId() {
+  return ++_sidecarIdSeq;
+}
 
 let _injectFileIdSeq = 0;
-function nextInjectFileId() { return ++_injectFileIdSeq; }
+function nextInjectFileId() {
+  return ++_injectFileIdSeq;
+}
 
 // ---------------------------------------------------------------------------
 // Initializers
@@ -42,14 +46,16 @@ export function initialInjectFileRows(project: ProjectDetail | undefined): Injec
   }));
 }
 
-export function initialSidecarRows(spec: ProjectDetail["spec"] | undefined): SidecarRow[] {
+export function initialSidecarRows(spec: ProjectDetail['spec'] | undefined): SidecarRow[] {
   if (!spec?.sidecars?.length) return [];
   return spec.sidecars.map((sc) => ({
     id: nextSidecarId(),
     name: sc.name,
     image: sc.image,
-    ports: (sc.ports ?? []).join(", "),
-    env: (sc.env ?? []).map((e: { name: string; value: string }) => `${e.name}=${e.value}`).join("\n"),
+    ports: (sc.ports ?? []).join(', '),
+    env: (sc.env ?? [])
+      .map((e: { name: string; value: string }) => `${e.name}=${e.value}`)
+      .join('\n'),
   }));
 }
 
@@ -66,7 +72,7 @@ export interface ProjectFormState {
   maxParallel: string;
   timeoutSeconds: string;
   featureBranchingEnabled: boolean;
-  phase: "Active" | "Complete" | "Archived";
+  phase: 'Active' | 'Complete' | 'Archived';
 
   // Source & Auth
   gitUrl: string;
@@ -96,13 +102,13 @@ export interface ProjectFormState {
   cpuLimit: string;
   memLimit: string;
   worktreeReuse: boolean;
-  flowPreset: "simple" | "review" | "plan-build" | "plan-build-review-merge";
-  flowHumanApprovalPlan: "required" | "disabled";
-  flowHumanApprovalBuild: "required" | "disabled";
-  flowPlanOnApprove: "generate-builds" | "done";
-  flowBuildOnSuccess: "human-review" | "ai-review" | "done";
-  flowBuildOnApprove: "merge" | "done";
-  flowMergeMode: "auto" | "manual" | "disabled";
+  flowPreset: 'simple' | 'review' | 'plan-build' | 'plan-build-review-merge';
+  flowHumanApprovalPlan: 'required' | 'disabled';
+  flowHumanApprovalBuild: 'required' | 'disabled';
+  flowPlanOnApprove: 'generate-builds' | 'done';
+  flowBuildOnSuccess: 'human-review' | 'ai-review' | 'done';
+  flowBuildOnApprove: 'merge' | 'done';
+  flowMergeMode: 'auto' | 'manual' | 'disabled';
 
   // Workspace & Services
   codeServerEnabled: boolean;
@@ -137,11 +143,23 @@ export interface ProjectFormState {
 export function computeSidecarErrors(sidecars: SidecarRow[]): Record<number, string> {
   const errors: Record<number, string> = {};
   for (const sc of sidecars) {
-    if (!sc.name.trim()) { errors[sc.id] = "Name is required"; continue; }
-    if (!sc.image.trim()) { errors[sc.id] = "Image is required"; continue; }
+    if (!sc.name.trim()) {
+      errors[sc.id] = 'Name is required';
+      continue;
+    }
+    if (!sc.image.trim()) {
+      errors[sc.id] = 'Image is required';
+      continue;
+    }
     if (sc.ports.trim()) {
-      const bad = sc.ports.split(",").map((p) => p.trim()).filter(Boolean).find((p) => !/^\d+$/.test(p) || Number(p) < 1 || Number(p) > 65535);
-      if (bad) { errors[sc.id] = `Invalid port: ${bad}`; continue; }
+      const bad = sc.ports
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .find((p) => !/^\d+$/.test(p) || Number(p) < 1 || Number(p) > 65535);
+      if (bad) {
+        errors[sc.id] = `Invalid port: ${bad}`;
+      }
     }
   }
   return errors;
@@ -150,16 +168,25 @@ export function computeSidecarErrors(sidecars: SidecarRow[]): Record<number, str
 export function computeInjectFileErrors(injectFiles: InjectFileRow[]): Record<number, string> {
   const errors: Record<number, string> = {};
   for (const f of injectFiles) {
-    if (!f.filename.trim()) { errors[f.id] = "Filename is required"; continue; }
-    if (f.filename.includes("/") || f.filename.includes("\\")) { errors[f.id] = "Filename must not contain path separators"; continue; }
+    if (!f.filename.trim()) {
+      errors[f.id] = 'Filename is required';
+      continue;
+    }
+    if (f.filename.includes('/') || f.filename.includes('\\')) {
+      errors[f.id] = 'Filename must not contain path separators';
+    }
   }
   return errors;
 }
 
 export function computeConfigJsonError(opencodeConfig: string): string | null {
   if (!opencodeConfig?.trim()) return null;
-  try { JSON.parse(opencodeConfig); return null; }
-  catch (e) { return (e as Error).message; }
+  try {
+    JSON.parse(opencodeConfig);
+    return null;
+  } catch (e) {
+    return (e as Error).message;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +202,7 @@ export function buildProjectRequest(
   if (state.displayName.trim()) req.displayName = state.displayName.trim();
   if (state.model.trim()) req.model = state.model.trim();
   if (state.agent.trim()) req.agent = state.agent.trim();
-  if (state.opencodeConfig !== null) req.opencodeConfig = state.opencodeConfig.trim() || "";
+  if (state.opencodeConfig !== null) req.opencodeConfig = state.opencodeConfig.trim() || '';
 
   // Source
   if (state.sourceLocal) {
@@ -185,9 +212,7 @@ export function buildProjectRequest(
       git: {
         url: state.gitUrl.trim(),
         ...(state.gitRef.trim() ? { ref: state.gitRef.trim() } : {}),
-        ...(state.gitSshSecret.trim()
-          ? { sshSecret: { name: state.gitSshSecret.trim() } }
-          : {}),
+        ...(state.gitSshSecret.trim() ? { sshSecret: { name: state.gitSshSecret.trim() } } : {}),
         ...(state.gitGithubTokenSecret.trim()
           ? { githubTokenSecret: { name: state.gitGithubTokenSecret.trim() } }
           : {}),
@@ -207,9 +232,7 @@ export function buildProjectRequest(
   if (state.llmKeysSecret.trim() || state.authSecret.trim()) {
     req.secrets = {
       ...(state.llmKeysSecret.trim() ? { llmKeysSecret: state.llmKeysSecret.trim() } : {}),
-      ...(state.authSecret.trim()
-        ? { authSecret: { name: state.authSecret.trim() } }
-        : {}),
+      ...(state.authSecret.trim() ? { authSecret: { name: state.authSecret.trim() } } : {}),
     };
   }
 
@@ -219,27 +242,35 @@ export function buildProjectRequest(
   }
 
   // Sidecars
-  req.sidecars = state.sidecars.length > 0
-    ? state.sidecars.map((sc) => {
-        const ports = sc.ports.trim()
-          ? sc.ports.split(",").map((p) => parseInt(p.trim(), 10)).filter(Boolean)
-          : undefined;
-        const env = sc.env.trim()
-          ? sc.env.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
-              const eq = line.indexOf("=");
-              return eq >= 1
-                ? { name: line.slice(0, eq), value: line.slice(eq + 1) }
-                : { name: line, value: "" };
-            })
-          : undefined;
-        return {
-          name: sc.name.trim(),
-          image: sc.image.trim(),
-          ...(ports?.length ? { ports } : {}),
-          ...(env?.length ? { env } : {}),
-        };
-      })
-    : [];
+  req.sidecars =
+    state.sidecars.length > 0
+      ? state.sidecars.map((sc) => {
+          const ports = sc.ports.trim()
+            ? sc.ports
+                .split(',')
+                .map((p) => parseInt(p.trim(), 10))
+                .filter(Boolean)
+            : undefined;
+          const env = sc.env.trim()
+            ? sc.env
+                .split('\n')
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line) => {
+                  const eq = line.indexOf('=');
+                  return eq >= 1
+                    ? { name: line.slice(0, eq), value: line.slice(eq + 1) }
+                    : { name: line, value: '' };
+                })
+            : undefined;
+          return {
+            name: sc.name.trim(),
+            image: sc.image.trim(),
+            ...(ports?.length ? { ports } : {}),
+            ...(env?.length ? { env } : {}),
+          };
+        })
+      : [];
 
   // Inject files
   req.injectFiles = state.injectFiles
@@ -251,9 +282,12 @@ export function buildProjectRequest(
 
   // Max parallel / timeout
   const parsedMaxParallel = state.maxParallel.trim() ? parseInt(state.maxParallel.trim(), 10) : NaN;
-  if (!isNaN(parsedMaxParallel) && parsedMaxParallel > 0) req.maxParallel = parsedMaxParallel;
-  const parsedTimeout = state.timeoutSeconds.trim() ? parseInt(state.timeoutSeconds.trim(), 10) : NaN;
-  if (!isNaN(parsedTimeout) && parsedTimeout > 0) req.timeoutSeconds = parsedTimeout;
+  if (!Number.isNaN(parsedMaxParallel) && parsedMaxParallel > 0)
+    req.maxParallel = parsedMaxParallel;
+  const parsedTimeout = state.timeoutSeconds.trim()
+    ? parseInt(state.timeoutSeconds.trim(), 10)
+    : NaN;
+  if (!Number.isNaN(parsedTimeout) && parsedTimeout > 0) req.timeoutSeconds = parsedTimeout;
 
   // Feature branching
   req.featureBranchingEnabled = state.featureBranchingEnabled;
@@ -274,7 +308,7 @@ export function buildProjectRequest(
   if (state.reviewPolicyAiReviewerEnabled) {
     req.reviewPolicy = {
       aiReviewerEnabled: true,
-      aiReviewerAgent: state.reviewPolicyAiReviewerAgent.trim() || "reviewer",
+      aiReviewerAgent: state.reviewPolicyAiReviewerAgent.trim() || 'reviewer',
       maxAutoReworks: parseInt(state.reviewPolicyMaxAutoReworks, 10) || 2,
     };
   }
@@ -295,30 +329,34 @@ export function buildProjectRequest(
   }
 
   // Phase (edit mode)
-  if (isEdit && state.phase !== "Active") req.phase = state.phase;
+  if (isEdit && state.phase !== 'Active') req.phase = state.phase;
 
   // Git cache
   req.gitCache = { worktreeReuse: state.worktreeReuse };
 
   // Flow configuration
   const flowOverrides: Record<string, unknown> = {};
-  if (state.flowPreset !== "plan-build-review-merge") flowOverrides.preset = state.flowPreset;
-  if (state.flowHumanApprovalPlan !== "required" || state.flowHumanApprovalBuild !== "required") {
+  if (state.flowPreset !== 'plan-build-review-merge') flowOverrides.preset = state.flowPreset;
+  if (state.flowHumanApprovalPlan !== 'required' || state.flowHumanApprovalBuild !== 'required') {
     flowOverrides.humanApproval = {
-      ...(state.flowHumanApprovalPlan !== "required" ? { plan: state.flowHumanApprovalPlan } : {}),
-      ...(state.flowHumanApprovalBuild !== "required" ? { build: state.flowHumanApprovalBuild } : {}),
+      ...(state.flowHumanApprovalPlan !== 'required' ? { plan: state.flowHumanApprovalPlan } : {}),
+      ...(state.flowHumanApprovalBuild !== 'required'
+        ? { build: state.flowHumanApprovalBuild }
+        : {}),
     };
   }
-  if (state.flowPlanOnApprove !== "generate-builds") {
+  if (state.flowPlanOnApprove !== 'generate-builds') {
     flowOverrides.plan = { onApprove: state.flowPlanOnApprove };
   }
-  if (state.flowBuildOnSuccess !== "human-review" || state.flowBuildOnApprove !== "merge") {
+  if (state.flowBuildOnSuccess !== 'human-review' || state.flowBuildOnApprove !== 'merge') {
     flowOverrides.build = {
-      ...(state.flowBuildOnSuccess !== "human-review" ? { onSuccess: state.flowBuildOnSuccess } : {}),
-      ...(state.flowBuildOnApprove !== "merge" ? { onApprove: state.flowBuildOnApprove } : {}),
+      ...(state.flowBuildOnSuccess !== 'human-review'
+        ? { onSuccess: state.flowBuildOnSuccess }
+        : {}),
+      ...(state.flowBuildOnApprove !== 'merge' ? { onApprove: state.flowBuildOnApprove } : {}),
     };
   }
-  if (state.flowMergeMode !== "auto") {
+  if (state.flowMergeMode !== 'auto') {
     flowOverrides.merge = { mode: state.flowMergeMode };
   }
   if (Object.keys(flowOverrides).length > 0) {
@@ -346,7 +384,7 @@ export function buildProjectRequest(
   // Data PVC (only if any field is set)
   const dataFields: Record<string, string> = {};
   if (state.pvcName.trim()) dataFields.pvcName = state.pvcName.trim();
-  if (state.mountPath !== "/data") dataFields.mountPath = state.mountPath;
+  if (state.mountPath !== '/data') dataFields.mountPath = state.mountPath;
   if (state.storageClass.trim()) dataFields.storageClass = state.storageClass.trim();
   if (Object.keys(dataFields).length > 0) {
     req.data = dataFields as { pvcName?: string; mountPath?: string; storageClass?: string };
@@ -374,32 +412,34 @@ export function buildProjectRequest(
 // Hook factory — creates form state from initial project data
 // ---------------------------------------------------------------------------
 
-const EMPTY_SPEC: NonNullable<ProjectDetail["spec"]> = {} as NonNullable<ProjectDetail["spec"]>;
+const EMPTY_SPEC: NonNullable<ProjectDetail['spec']> = {} as NonNullable<ProjectDetail['spec']>;
 
-export function createInitialState(initialSpec: ProjectDetail["spec"] | undefined): ProjectFormState {
+export function createInitialState(
+  initialSpec: ProjectDetail['spec'] | undefined,
+): ProjectFormState {
   const spec = initialSpec ?? EMPTY_SPEC;
   return {
     // General
-    name: "",
-    displayName: spec.displayName ?? "",
-    model: spec.model ?? "",
-    agent: spec.agent ?? "",
-    maxParallel: spec.maxParallel !== undefined ? String(spec.maxParallel) : "",
-    timeoutSeconds: spec.timeoutSeconds !== undefined ? String(spec.timeoutSeconds) : "",
+    name: '',
+    displayName: spec.displayName ?? '',
+    model: spec.model ?? '',
+    agent: spec.agent ?? '',
+    maxParallel: spec.maxParallel !== undefined ? String(spec.maxParallel) : '',
+    timeoutSeconds: spec.timeoutSeconds !== undefined ? String(spec.timeoutSeconds) : '',
     featureBranchingEnabled: spec.featureBranchingEnabled ?? false,
-    phase: (spec.phase as "Active" | "Complete" | "Archived") ?? "Active",
+    phase: (spec.phase as 'Active' | 'Complete' | 'Archived') ?? 'Active',
 
     // Source & Auth
-    gitUrl: spec.source?.git?.url ?? "",
-    gitRef: spec.source?.git?.ref ?? "",
-    gitSshSecret: spec.source?.git?.sshSecret?.name ?? "",
-    gitGithubTokenSecret: spec.source?.git?.githubTokenSecret?.name ?? "",
-    gitAuthorName: spec.source?.git?.author?.name ?? "",
-    gitAuthorEmail: spec.source?.git?.author?.email ?? "",
+    gitUrl: spec.source?.git?.url ?? '',
+    gitRef: spec.source?.git?.ref ?? '',
+    gitSshSecret: spec.source?.git?.sshSecret?.name ?? '',
+    gitGithubTokenSecret: spec.source?.git?.githubTokenSecret?.name ?? '',
+    gitAuthorName: spec.source?.git?.author?.name ?? '',
+    gitAuthorEmail: spec.source?.git?.author?.email ?? '',
     sourceLocal: spec.source?.local ?? false,
-    llmKeysSecret: spec.secrets?.llmKeysSecret ?? "",
-    authSecret: spec.secrets?.authSecret?.name ?? "",
-    opencodeConfig: "",
+    llmKeysSecret: spec.secrets?.llmKeysSecret ?? '',
+    authSecret: spec.secrets?.authSecret?.name ?? '',
+    opencodeConfig: '',
 
     // Execution
     retryPolicyEnabled: spec.retryPolicy?.enabled ?? false,
@@ -409,36 +449,54 @@ export function createInitialState(initialSpec: ProjectDetail["spec"] | undefine
     retryPolicyMaxBackoffSeconds: String(spec.retryPolicy?.maxBackoffSeconds ?? 300),
     retryPolicyPoisonPillThreshold: String(spec.retryPolicy?.poisonPillThresholdSeconds ?? 30),
     reviewPolicyAiReviewerEnabled: spec.reviewPolicy?.aiReviewerEnabled ?? false,
-    reviewPolicyAiReviewerAgent: spec.reviewPolicy?.aiReviewerAgent ?? "reviewer",
+    reviewPolicyAiReviewerAgent: spec.reviewPolicy?.aiReviewerAgent ?? 'reviewer',
     reviewPolicyMaxAutoReworks: String(spec.reviewPolicy?.maxAutoReworks ?? 2),
-    runnerImage: spec.image ?? "",
-    cpuRequest: (spec.resources as { requests?: Record<string, string> } | undefined)?.requests?.cpu ?? "",
-    memRequest: (spec.resources as { requests?: Record<string, string> } | undefined)?.requests?.memory ?? "",
-    cpuLimit: (spec.resources as { limits?: Record<string, string> } | undefined)?.limits?.cpu ?? "",
-    memLimit: (spec.resources as { limits?: Record<string, string> } | undefined)?.limits?.memory ?? "",
+    runnerImage: spec.image ?? '',
+    cpuRequest:
+      (spec.resources as { requests?: Record<string, string> } | undefined)?.requests?.cpu ?? '',
+    memRequest:
+      (spec.resources as { requests?: Record<string, string> } | undefined)?.requests?.memory ?? '',
+    cpuLimit:
+      (spec.resources as { limits?: Record<string, string> } | undefined)?.limits?.cpu ?? '',
+    memLimit:
+      (spec.resources as { limits?: Record<string, string> } | undefined)?.limits?.memory ?? '',
     worktreeReuse: spec.gitCache?.worktreeReuse ?? true,
-    flowPreset: (spec.flow?.preset as "simple" | "review" | "plan-build" | "plan-build-review-merge") ?? "plan-build-review-merge",
-    flowHumanApprovalPlan: (spec.flow?.humanApproval?.plan as "required" | "disabled") ?? "required",
-    flowHumanApprovalBuild: (spec.flow?.humanApproval?.build as "required" | "disabled") ?? "required",
-    flowPlanOnApprove: (spec.flow?.plan?.onApprove as "generate-builds" | "done") ?? "generate-builds",
-    flowBuildOnSuccess: (spec.flow?.build?.onSuccess as "human-review" | "ai-review" | "done") ?? "human-review",
-    flowBuildOnApprove: (spec.flow?.build?.onApprove as "merge" | "done") ?? "merge",
-    flowMergeMode: (spec.flow?.merge?.mode as "auto" | "manual" | "disabled") ?? "auto",
+    flowPreset:
+      (spec.flow?.preset as 'simple' | 'review' | 'plan-build' | 'plan-build-review-merge') ??
+      'plan-build-review-merge',
+    flowHumanApprovalPlan:
+      (spec.flow?.humanApproval?.plan as 'required' | 'disabled') ?? 'required',
+    flowHumanApprovalBuild:
+      (spec.flow?.humanApproval?.build as 'required' | 'disabled') ?? 'required',
+    flowPlanOnApprove:
+      (spec.flow?.plan?.onApprove as 'generate-builds' | 'done') ?? 'generate-builds',
+    flowBuildOnSuccess:
+      (spec.flow?.build?.onSuccess as 'human-review' | 'ai-review' | 'done') ?? 'human-review',
+    flowBuildOnApprove: (spec.flow?.build?.onApprove as 'merge' | 'done') ?? 'merge',
+    flowMergeMode: (spec.flow?.merge?.mode as 'auto' | 'manual' | 'disabled') ?? 'auto',
 
     // Workspace & Services
     codeServerEnabled: spec.codeServer?.enabled ?? false,
-    codeServerImage: spec.codeServer?.image ?? "codercom/code-server:4.96.4",
-    csCpuRequest: (spec.codeServer?.resources as { requests?: Record<string, string> } | undefined)?.requests?.cpu ?? "",
-    csMemRequest: (spec.codeServer?.resources as { requests?: Record<string, string> } | undefined)?.requests?.memory ?? "",
-    csCpuLimit: (spec.codeServer?.resources as { limits?: Record<string, string> } | undefined)?.limits?.cpu ?? "",
-    csMemLimit: (spec.codeServer?.resources as { limits?: Record<string, string> } | undefined)?.limits?.memory ?? "",
-    pvcName: spec.data?.pvcName ?? "",
-    mountPath: spec.data?.mountPath ?? "/data",
-    storageClass: spec.data?.storageClass ?? "",
+    codeServerImage: spec.codeServer?.image ?? 'codercom/code-server:4.96.4',
+    csCpuRequest:
+      (spec.codeServer?.resources as { requests?: Record<string, string> } | undefined)?.requests
+        ?.cpu ?? '',
+    csMemRequest:
+      (spec.codeServer?.resources as { requests?: Record<string, string> } | undefined)?.requests
+        ?.memory ?? '',
+    csCpuLimit:
+      (spec.codeServer?.resources as { limits?: Record<string, string> } | undefined)?.limits
+        ?.cpu ?? '',
+    csMemLimit:
+      (spec.codeServer?.resources as { limits?: Record<string, string> } | undefined)?.limits
+        ?.memory ?? '',
+    pvcName: spec.data?.pvcName ?? '',
+    mountPath: spec.data?.mountPath ?? '/data',
+    storageClass: spec.data?.storageClass ?? '',
     embeddingEnabled: spec.embedding?.enabled ?? false,
-    embeddingModel: spec.embedding?.model ?? "nomic-embed-text",
+    embeddingModel: spec.embedding?.model ?? 'nomic-embed-text',
     embeddingDimensions: String(spec.embedding?.dimensions ?? 768),
-    embeddingOllamaUrl: spec.embedding?.ollamaUrl ?? "",
+    embeddingOllamaUrl: spec.embedding?.ollamaUrl ?? '',
 
     // Exec / Maintenance pod image
     execImage: spec.exec?.image ?? "",
@@ -446,9 +504,9 @@ export function createInitialState(initialSpec: ProjectDetail["spec"] | undefine
     // Advanced
     sidecars: initialSidecarRows(initialSpec),
     injectFiles: [], // will be set by caller with project data
-    initScript: spec.initScript ?? "",
+    initScript: spec.initScript ?? '',
     rosterAgents: (spec.agents ?? []).map((a: { name: string }) => a.name),
-    rosterPickerValue: "",
+    rosterPickerValue: '',
   };
 }
 
@@ -465,7 +523,7 @@ export interface ProjectFormHookReturn extends ProjectFormState {
   setMaxParallel: React.Dispatch<React.SetStateAction<string>>;
   setTimeoutSeconds: React.Dispatch<React.SetStateAction<string>>;
   setFeatureBranchingEnabled: React.Dispatch<React.SetStateAction<boolean>>;
-  setPhase: React.Dispatch<React.SetStateAction<"Active" | "Complete" | "Archived">>;
+  setPhase: React.Dispatch<React.SetStateAction<'Active' | 'Complete' | 'Archived'>>;
 
   setGitUrl: React.Dispatch<React.SetStateAction<string>>;
   setGitRef: React.Dispatch<React.SetStateAction<string>>;
@@ -493,13 +551,17 @@ export interface ProjectFormHookReturn extends ProjectFormState {
   setCpuLimit: React.Dispatch<React.SetStateAction<string>>;
   setMemLimit: React.Dispatch<React.SetStateAction<string>>;
   setWorktreeReuse: React.Dispatch<React.SetStateAction<boolean>>;
-  setFlowPreset: React.Dispatch<React.SetStateAction<"simple" | "review" | "plan-build" | "plan-build-review-merge">>;
-  setFlowHumanApprovalPlan: React.Dispatch<React.SetStateAction<"required" | "disabled">>;
-  setFlowHumanApprovalBuild: React.Dispatch<React.SetStateAction<"required" | "disabled">>;
-  setFlowPlanOnApprove: React.Dispatch<React.SetStateAction<"generate-builds" | "done">>;
-  setFlowBuildOnSuccess: React.Dispatch<React.SetStateAction<"human-review" | "ai-review" | "done">>;
-  setFlowBuildOnApprove: React.Dispatch<React.SetStateAction<"merge" | "done">>;
-  setFlowMergeMode: React.Dispatch<React.SetStateAction<"auto" | "manual" | "disabled">>;
+  setFlowPreset: React.Dispatch<
+    React.SetStateAction<'simple' | 'review' | 'plan-build' | 'plan-build-review-merge'>
+  >;
+  setFlowHumanApprovalPlan: React.Dispatch<React.SetStateAction<'required' | 'disabled'>>;
+  setFlowHumanApprovalBuild: React.Dispatch<React.SetStateAction<'required' | 'disabled'>>;
+  setFlowPlanOnApprove: React.Dispatch<React.SetStateAction<'generate-builds' | 'done'>>;
+  setFlowBuildOnSuccess: React.Dispatch<
+    React.SetStateAction<'human-review' | 'ai-review' | 'done'>
+  >;
+  setFlowBuildOnApprove: React.Dispatch<React.SetStateAction<'merge' | 'done'>>;
+  setFlowMergeMode: React.Dispatch<React.SetStateAction<'auto' | 'manual' | 'disabled'>>;
 
   setCodeServerEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setCodeServerImage: React.Dispatch<React.SetStateAction<string>>;
@@ -525,12 +587,12 @@ export interface ProjectFormHookReturn extends ProjectFormState {
   // Sidecar helpers
   addSidecar: () => void;
   removeSidecar: (id: number) => void;
-  updateSidecar: (id: number, field: keyof Omit<SidecarRow, "id">, value: string) => void;
+  updateSidecar: (id: number, field: keyof Omit<SidecarRow, 'id'>, value: string) => void;
 
   // Inject file helpers
   addInjectFile: () => void;
   removeInjectFile: (id: number) => void;
-  updateInjectFile: (id: number, field: keyof Omit<InjectFileRow, "id">, value: string) => void;
+  updateInjectFile: (id: number, field: keyof Omit<InjectFileRow, 'id'>, value: string) => void;
 
   // Validation signals
   sidecarErrors: Record<number, string>;
@@ -542,7 +604,7 @@ export interface ProjectFormHookReturn extends ProjectFormState {
 }
 
 export function useProjectForm(
-  initialSpec: ProjectDetail["spec"] | undefined,
+  initialSpec: ProjectDetail['spec'] | undefined,
   initialProject: ProjectDetail | undefined,
 ): ProjectFormHookReturn {
   const initialState = createInitialState(initialSpec);
@@ -556,14 +618,18 @@ export function useProjectForm(
   const [agent, setAgent] = useState(initialState.agent);
   const [maxParallel, setMaxParallel] = useState(initialState.maxParallel);
   const [timeoutSeconds, setTimeoutSeconds] = useState(initialState.timeoutSeconds);
-  const [featureBranchingEnabled, setFeatureBranchingEnabled] = useState(initialState.featureBranchingEnabled);
-  const [phase, setPhase] = useState<"Active" | "Complete" | "Archived">(initialState.phase);
+  const [featureBranchingEnabled, setFeatureBranchingEnabled] = useState(
+    initialState.featureBranchingEnabled,
+  );
+  const [phase, setPhase] = useState<'Active' | 'Complete' | 'Archived'>(initialState.phase);
 
   // Source & Auth
   const [gitUrl, setGitUrl] = useState(initialState.gitUrl);
   const [gitRef, setGitRef] = useState(initialState.gitRef);
   const [gitSshSecret, setGitSshSecret] = useState(initialState.gitSshSecret);
-  const [gitGithubTokenSecret, setGitGithubTokenSecret] = useState(initialState.gitGithubTokenSecret);
+  const [gitGithubTokenSecret, setGitGithubTokenSecret] = useState(
+    initialState.gitGithubTokenSecret,
+  );
   const [gitAuthorName, setGitAuthorName] = useState(initialState.gitAuthorName);
   const [gitAuthorEmail, setGitAuthorEmail] = useState(initialState.gitAuthorEmail);
   const [sourceLocal, setSourceLocal] = useState(initialState.sourceLocal);
@@ -573,14 +639,30 @@ export function useProjectForm(
 
   // Execution
   const [retryPolicyEnabled, setRetryPolicyEnabled] = useState(initialState.retryPolicyEnabled);
-  const [retryPolicyMaxAttempts, setRetryPolicyMaxAttempts] = useState(initialState.retryPolicyMaxAttempts);
-  const [retryPolicyBackoffSeconds, setRetryPolicyBackoffSeconds] = useState(initialState.retryPolicyBackoffSeconds);
-  const [retryPolicyBackoffMultiplier, setRetryPolicyBackoffMultiplier] = useState(initialState.retryPolicyBackoffMultiplier);
-  const [retryPolicyMaxBackoffSeconds, setRetryPolicyMaxBackoffSeconds] = useState(initialState.retryPolicyMaxBackoffSeconds);
-  const [retryPolicyPoisonPillThreshold, setRetryPolicyPoisonPillThreshold] = useState(initialState.retryPolicyPoisonPillThreshold);
-  const [reviewPolicyAiReviewerEnabled, setReviewPolicyAiReviewerEnabled] = useState(initialState.reviewPolicyAiReviewerEnabled);
-  const [reviewPolicyAiReviewerAgent, setReviewPolicyAiReviewerAgent] = useState(initialState.reviewPolicyAiReviewerAgent);
-  const [reviewPolicyMaxAutoReworks, setReviewPolicyMaxAutoReworks] = useState(initialState.reviewPolicyMaxAutoReworks);
+  const [retryPolicyMaxAttempts, setRetryPolicyMaxAttempts] = useState(
+    initialState.retryPolicyMaxAttempts,
+  );
+  const [retryPolicyBackoffSeconds, setRetryPolicyBackoffSeconds] = useState(
+    initialState.retryPolicyBackoffSeconds,
+  );
+  const [retryPolicyBackoffMultiplier, setRetryPolicyBackoffMultiplier] = useState(
+    initialState.retryPolicyBackoffMultiplier,
+  );
+  const [retryPolicyMaxBackoffSeconds, setRetryPolicyMaxBackoffSeconds] = useState(
+    initialState.retryPolicyMaxBackoffSeconds,
+  );
+  const [retryPolicyPoisonPillThreshold, setRetryPolicyPoisonPillThreshold] = useState(
+    initialState.retryPolicyPoisonPillThreshold,
+  );
+  const [reviewPolicyAiReviewerEnabled, setReviewPolicyAiReviewerEnabled] = useState(
+    initialState.reviewPolicyAiReviewerEnabled,
+  );
+  const [reviewPolicyAiReviewerAgent, setReviewPolicyAiReviewerAgent] = useState(
+    initialState.reviewPolicyAiReviewerAgent,
+  );
+  const [reviewPolicyMaxAutoReworks, setReviewPolicyMaxAutoReworks] = useState(
+    initialState.reviewPolicyMaxAutoReworks,
+  );
   const [runnerImage, setRunnerImage] = useState(initialState.runnerImage);
   const [cpuRequest, setCpuRequest] = useState(initialState.cpuRequest);
   const [memRequest, setMemRequest] = useState(initialState.memRequest);
@@ -588,8 +670,12 @@ export function useProjectForm(
   const [memLimit, setMemLimit] = useState(initialState.memLimit);
   const [worktreeReuse, setWorktreeReuse] = useState(initialState.worktreeReuse);
   const [flowPreset, setFlowPreset] = useState(initialState.flowPreset);
-  const [flowHumanApprovalPlan, setFlowHumanApprovalPlan] = useState(initialState.flowHumanApprovalPlan);
-  const [flowHumanApprovalBuild, setFlowHumanApprovalBuild] = useState(initialState.flowHumanApprovalBuild);
+  const [flowHumanApprovalPlan, setFlowHumanApprovalPlan] = useState(
+    initialState.flowHumanApprovalPlan,
+  );
+  const [flowHumanApprovalBuild, setFlowHumanApprovalBuild] = useState(
+    initialState.flowHumanApprovalBuild,
+  );
   const [flowPlanOnApprove, setFlowPlanOnApprove] = useState(initialState.flowPlanOnApprove);
   const [flowBuildOnSuccess, setFlowBuildOnSuccess] = useState(initialState.flowBuildOnSuccess);
   const [flowBuildOnApprove, setFlowBuildOnApprove] = useState(initialState.flowBuildOnApprove);
@@ -620,24 +706,27 @@ export function useProjectForm(
 
   // Sidecar helpers
   function addSidecar() {
-    setSidecars((prev) => [...prev, { id: nextSidecarId(), name: "", image: "", ports: "", env: "" }]);
+    setSidecars((prev) => [
+      ...prev,
+      { id: nextSidecarId(), name: '', image: '', ports: '', env: '' },
+    ]);
   }
   function removeSidecar(id: number) {
     setSidecars((prev) => prev.filter((sc) => sc.id !== id));
   }
-  function updateSidecar(id: number, field: keyof Omit<SidecarRow, "id">, value: string) {
-    setSidecars((prev) => prev.map((sc) => sc.id === id ? { ...sc, [field]: value } : sc));
+  function updateSidecar(id: number, field: keyof Omit<SidecarRow, 'id'>, value: string) {
+    setSidecars((prev) => prev.map((sc) => (sc.id === id ? { ...sc, [field]: value } : sc)));
   }
 
   // Inject file helpers
   function addInjectFile() {
-    setInjectFiles((prev) => [...prev, { id: nextInjectFileId(), filename: "", content: "" }]);
+    setInjectFiles((prev) => [...prev, { id: nextInjectFileId(), filename: '', content: '' }]);
   }
   function removeInjectFile(id: number) {
     setInjectFiles((prev) => prev.filter((f) => f.id !== id));
   }
-  function updateInjectFile(id: number, field: keyof Omit<InjectFileRow, "id">, value: string) {
-    setInjectFiles((prev) => prev.map((f) => f.id === id ? { ...f, [field]: value } : f));
+  function updateInjectFile(id: number, field: keyof Omit<InjectFileRow, 'id'>, value: string) {
+    setInjectFiles((prev) => prev.map((f) => (f.id === id ? { ...f, [field]: value } : f)));
   }
 
   // Validation signals (computed inline — cheap enough for form fields count)
@@ -652,36 +741,147 @@ export function useProjectForm(
 
   return {
     // General
-    name, displayName, model, agent, maxParallel, timeoutSeconds, featureBranchingEnabled, phase,
-    setName, setDisplayName, setModel, setAgent, setMaxParallel, setTimeoutSeconds, setFeatureBranchingEnabled, setPhase,
+    name,
+    displayName,
+    model,
+    agent,
+    maxParallel,
+    timeoutSeconds,
+    featureBranchingEnabled,
+    phase,
+    setName,
+    setDisplayName,
+    setModel,
+    setAgent,
+    setMaxParallel,
+    setTimeoutSeconds,
+    setFeatureBranchingEnabled,
+    setPhase,
 
     // Source & Auth
-    gitUrl, gitRef, gitSshSecret, gitGithubTokenSecret, gitAuthorName, gitAuthorEmail, sourceLocal, llmKeysSecret, authSecret, opencodeConfig,
-    setGitUrl, setGitRef, setGitSshSecret, setGitGithubTokenSecret, setGitAuthorName, setGitAuthorEmail, setSourceLocal, setLlmKeysSecret, setAuthSecret, setOpencodeConfig,
+    gitUrl,
+    gitRef,
+    gitSshSecret,
+    gitGithubTokenSecret,
+    gitAuthorName,
+    gitAuthorEmail,
+    sourceLocal,
+    llmKeysSecret,
+    authSecret,
+    opencodeConfig,
+    setGitUrl,
+    setGitRef,
+    setGitSshSecret,
+    setGitGithubTokenSecret,
+    setGitAuthorName,
+    setGitAuthorEmail,
+    setSourceLocal,
+    setLlmKeysSecret,
+    setAuthSecret,
+    setOpencodeConfig,
 
     // Execution
-    retryPolicyEnabled, retryPolicyMaxAttempts, retryPolicyBackoffSeconds, retryPolicyBackoffMultiplier, retryPolicyMaxBackoffSeconds, retryPolicyPoisonPillThreshold,
-    reviewPolicyAiReviewerEnabled, reviewPolicyAiReviewerAgent, reviewPolicyMaxAutoReworks,
-    runnerImage, cpuRequest, memRequest, cpuLimit, memLimit, worktreeReuse,
-    flowPreset, flowHumanApprovalPlan, flowHumanApprovalBuild, flowPlanOnApprove, flowBuildOnSuccess, flowBuildOnApprove, flowMergeMode,
-    setRetryPolicyEnabled, setRetryPolicyMaxAttempts, setRetryPolicyBackoffSeconds, setRetryPolicyBackoffMultiplier, setRetryPolicyMaxBackoffSeconds, setRetryPolicyPoisonPillThreshold,
-    setReviewPolicyAiReviewerEnabled, setReviewPolicyAiReviewerAgent, setReviewPolicyMaxAutoReworks,
-    setRunnerImage, setCpuRequest, setMemRequest, setCpuLimit, setMemLimit, setWorktreeReuse,
-    setFlowPreset, setFlowHumanApprovalPlan, setFlowHumanApprovalBuild, setFlowPlanOnApprove, setFlowBuildOnSuccess, setFlowBuildOnApprove, setFlowMergeMode,
+    retryPolicyEnabled,
+    retryPolicyMaxAttempts,
+    retryPolicyBackoffSeconds,
+    retryPolicyBackoffMultiplier,
+    retryPolicyMaxBackoffSeconds,
+    retryPolicyPoisonPillThreshold,
+    reviewPolicyAiReviewerEnabled,
+    reviewPolicyAiReviewerAgent,
+    reviewPolicyMaxAutoReworks,
+    runnerImage,
+    cpuRequest,
+    memRequest,
+    cpuLimit,
+    memLimit,
+    worktreeReuse,
+    flowPreset,
+    flowHumanApprovalPlan,
+    flowHumanApprovalBuild,
+    flowPlanOnApprove,
+    flowBuildOnSuccess,
+    flowBuildOnApprove,
+    flowMergeMode,
+    setRetryPolicyEnabled,
+    setRetryPolicyMaxAttempts,
+    setRetryPolicyBackoffSeconds,
+    setRetryPolicyBackoffMultiplier,
+    setRetryPolicyMaxBackoffSeconds,
+    setRetryPolicyPoisonPillThreshold,
+    setReviewPolicyAiReviewerEnabled,
+    setReviewPolicyAiReviewerAgent,
+    setReviewPolicyMaxAutoReworks,
+    setRunnerImage,
+    setCpuRequest,
+    setMemRequest,
+    setCpuLimit,
+    setMemLimit,
+    setWorktreeReuse,
+    setFlowPreset,
+    setFlowHumanApprovalPlan,
+    setFlowHumanApprovalBuild,
+    setFlowPlanOnApprove,
+    setFlowBuildOnSuccess,
+    setFlowBuildOnApprove,
+    setFlowMergeMode,
 
     // Workspace & Services
-    codeServerEnabled, codeServerImage, csCpuRequest, csMemRequest, csCpuLimit, csMemLimit, pvcName, mountPath, storageClass, embeddingEnabled, embeddingModel, embeddingDimensions, embeddingOllamaUrl, execImage,
-    setCodeServerEnabled, setCodeServerImage, setCSCpuRequest, setCSMemRequest, setCSCpuLimit, setCSMemLimit, setPvcName, setMountPath, setStorageClass, setEmbeddingEnabled, setEmbeddingModel, setEmbeddingDimensions, setEmbeddingOllamaUrl, setExecImage,
+    codeServerEnabled,
+    codeServerImage,
+    csCpuRequest,
+    csMemRequest,
+    csCpuLimit,
+    csMemLimit,
+    pvcName,
+    mountPath,
+    storageClass,
+    embeddingEnabled,
+    embeddingModel,
+    embeddingDimensions,
+    embeddingOllamaUrl,
+    execImage,
+    setCodeServerEnabled,
+    setCodeServerImage,
+    setCSCpuRequest,
+    setCSMemRequest,
+    setCSCpuLimit,
+    setCSMemLimit,
+    setPvcName,
+    setMountPath,
+    setStorageClass,
+    setEmbeddingEnabled,
+    setEmbeddingModel,
+    setEmbeddingDimensions,
+    setEmbeddingOllamaUrl,
+    setExecImage,
 
     // Advanced
-    sidecars, injectFiles, initScript, rosterAgents, rosterPickerValue,
-    setSidecars, setInjectFiles, setInitScript, setRosterAgents, setRosterPickerValue,
+    sidecars,
+    injectFiles,
+    initScript,
+    rosterAgents,
+    rosterPickerValue,
+    setSidecars,
+    setInjectFiles,
+    setInitScript,
+    setRosterAgents,
+    setRosterPickerValue,
 
     // Helpers
-    addSidecar, removeSidecar, updateSidecar,
-    addInjectFile, removeInjectFile, updateInjectFile,
+    addSidecar,
+    removeSidecar,
+    updateSidecar,
+    addInjectFile,
+    removeInjectFile,
+    updateInjectFile,
 
     // Validation
-    sidecarErrors, hasSidecarErrors, injectFileErrors, hasInjectFileErrors, gitAuthorIncomplete, configJsonError,
+    sidecarErrors,
+    hasSidecarErrors,
+    injectFileErrors,
+    hasInjectFileErrors,
+    gitAuthorIncomplete,
+    configJsonError,
   };
 }

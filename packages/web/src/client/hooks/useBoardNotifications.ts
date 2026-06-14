@@ -3,14 +3,11 @@
 // Watches board tasks for status changes: Running, Succeeded, Failed, Escalated.
 // Call this hook inside BoardView where you have the board data.
 
-import { useEffect, useRef } from "react";
-import type { Task } from "@percussionist/api";
-import { notify } from "../lib/notifications";
+import type { Task } from '@percussionist/api';
+import { useEffect, useRef } from 'react';
+import { notify } from '../lib/notifications';
 
-export function useBoardNotifications(
-  projectName: string,
-  tasks: Task[],
-): void {
+export function useBoardNotifications(projectName: string, tasks: Task[]): void {
   // Map of taskName → last-seen worker status.
   const prevStatuses = useRef<Map<string, string>>(new Map());
 
@@ -25,33 +22,33 @@ export function useBoardNotifications(
         if (prev !== undefined) {
           // Only notify on actual transitions (not initial population).
           const label = task.spec.title || taskName;
-          if (status === "Succeeded") {
+          if (status === 'Succeeded') {
             notify({
               key: `board:${projectName}:${taskName}:${status}`,
               title: `Task succeeded`,
               body: `${label} in ${projectName}`,
-              sound: "success",
+              sound: 'success',
             });
-          } else if (status === "Failed") {
+          } else if (status === 'Failed') {
             notify({
               key: `board:${projectName}:${taskName}:${status}`,
               title: `Task failed`,
               body: `${label} in ${projectName}`,
-              sound: "failure",
+              sound: 'failure',
             });
-          } else if (status === "Escalated") {
+          } else if (status === 'Escalated') {
             notify({
               key: `board:${projectName}:${taskName}:${status}`,
               title: `Task escalated`,
               body: `${label} in ${projectName} needs attention`,
-              sound: "escalated",
+              sound: 'escalated',
             });
-          } else if (status === "Running") {
+          } else if (status === 'Running') {
             notify({
               key: `board:${projectName}:${taskName}:${status}`,
               title: `Task started`,
               body: `${label} in ${projectName}`,
-              sound: "running",
+              sound: 'running',
             });
           }
         }

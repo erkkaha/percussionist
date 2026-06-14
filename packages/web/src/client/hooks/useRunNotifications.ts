@@ -3,10 +3,10 @@
 // Watches for runs entering terminal phases (Succeeded, Failed, Cancelled).
 // Call this hook wherever you have access to the full run list (Layout).
 
-import { useEffect, useRef } from "react";
-import type { Run } from "../lib/types";
-import { RunPhase } from "../lib/types";
-import { notify, requestNotificationPermission } from "../lib/notifications";
+import { useEffect, useRef } from 'react';
+import { notify, requestNotificationPermission } from '../lib/notifications';
+import type { Run } from '../lib/types';
+import { RunPhase } from '../lib/types';
 
 export function useRunNotifications(runs: Run[] | undefined): void {
   // Map of runName → last-seen phase.
@@ -34,21 +34,21 @@ export function useRunNotifications(runs: Run[] | undefined): void {
             key: `run:${name}:${phase}`,
             title: `Run succeeded`,
             body: name,
-            sound: "success",
+            sound: 'success',
           });
         } else if (phase === RunPhase.Failed && prev !== undefined) {
           notify({
             key: `run:${name}:${phase}`,
             title: `Run failed`,
-            body: `${name}${run.status?.message ? ` — ${run.status.message}` : ""}`,
-            sound: "failure",
+            body: `${name}${run.status?.message ? ` — ${run.status.message}` : ''}`,
+            sound: 'failure',
           });
         } else if (phase === RunPhase.Cancelled && prev !== undefined) {
           notify({
             key: `run:${name}:${phase}`,
             title: `Run cancelled`,
             body: name,
-            sound: "cancelled",
+            sound: 'cancelled',
           });
         }
 

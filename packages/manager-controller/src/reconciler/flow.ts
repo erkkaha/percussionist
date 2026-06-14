@@ -1,26 +1,26 @@
 // Flow resolver — merges project flow config, presets, and legacy policies.
 
-import type { Project } from "@percussionist/api";
+import type { Project } from '@percussionist/api';
 
 export interface ResolvedFlow {
   preset: string;
   humanApproval: {
-    plan: "required" | "disabled";
-    build: "required" | "disabled";
+    plan: 'required' | 'disabled';
+    build: 'required' | 'disabled';
   };
   plan: {
-    onApprove: "generate-builds" | "done";
-    buildGeneration: "ai" | "manual" | "disabled";
+    onApprove: 'generate-builds' | 'done';
+    buildGeneration: 'ai' | 'manual' | 'disabled';
     buildGenerationAgent: string;
     defaultAgent: string;
   };
   build: {
-    onSuccess: "human-review" | "ai-review" | "done";
-    onApprove: "merge" | "done";
+    onSuccess: 'human-review' | 'ai-review' | 'done';
+    onApprove: 'merge' | 'done';
     defaultAgent: string;
   };
   merge: {
-    mode: "auto" | "manual" | "disabled";
+    mode: 'auto' | 'manual' | 'disabled';
     agent: string;
   };
   review: {
@@ -29,7 +29,7 @@ export interface ResolvedFlow {
     maxAutoReworks: number;
   };
   integration: {
-    mode: "auto-merge" | "manual" | "disabled";
+    mode: 'auto-merge' | 'manual' | 'disabled';
     agent: string;
   };
   retry: {
@@ -50,40 +50,88 @@ export interface ResolvedFlow {
 
 const PRESETS: Record<string, Partial<ResolvedFlow>> = {
   simple: {
-    humanApproval: { plan: "disabled", build: "disabled" },
-    plan: { onApprove: "done", buildGeneration: "disabled", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
-    build: { onSuccess: "done", onApprove: "done", defaultAgent: "builder" },
-    merge: { mode: "disabled", agent: "integrator" },
-    integration: { mode: "disabled", agent: "integrator" },
-    review: { aiReviewerEnabled: false, agent: "reviewer", maxAutoReworks: 0 },
-    retry: { enabled: false, maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2, maxBackoffSeconds: 300, poisonPillThresholdSeconds: 30 },
+    humanApproval: { plan: 'disabled', build: 'disabled' },
+    plan: {
+      onApprove: 'done',
+      buildGeneration: 'disabled',
+      buildGenerationAgent: 'buildgen',
+      defaultAgent: 'planner',
+    },
+    build: { onSuccess: 'done', onApprove: 'done', defaultAgent: 'builder' },
+    merge: { mode: 'disabled', agent: 'integrator' },
+    integration: { mode: 'disabled', agent: 'integrator' },
+    review: { aiReviewerEnabled: false, agent: 'reviewer', maxAutoReworks: 0 },
+    retry: {
+      enabled: false,
+      maxAttempts: 3,
+      backoffSeconds: 30,
+      backoffMultiplier: 2,
+      maxBackoffSeconds: 300,
+      poisonPillThresholdSeconds: 30,
+    },
   },
   review: {
-    humanApproval: { plan: "required", build: "required" },
-    plan: { onApprove: "done", buildGeneration: "disabled", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
-    build: { onSuccess: "human-review", onApprove: "done", defaultAgent: "builder" },
-    merge: { mode: "disabled", agent: "integrator" },
-    integration: { mode: "disabled", agent: "integrator" },
-    review: { aiReviewerEnabled: false, agent: "reviewer", maxAutoReworks: 0 },
-    retry: { enabled: false, maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2, maxBackoffSeconds: 300, poisonPillThresholdSeconds: 30 },
+    humanApproval: { plan: 'required', build: 'required' },
+    plan: {
+      onApprove: 'done',
+      buildGeneration: 'disabled',
+      buildGenerationAgent: 'buildgen',
+      defaultAgent: 'planner',
+    },
+    build: { onSuccess: 'human-review', onApprove: 'done', defaultAgent: 'builder' },
+    merge: { mode: 'disabled', agent: 'integrator' },
+    integration: { mode: 'disabled', agent: 'integrator' },
+    review: { aiReviewerEnabled: false, agent: 'reviewer', maxAutoReworks: 0 },
+    retry: {
+      enabled: false,
+      maxAttempts: 3,
+      backoffSeconds: 30,
+      backoffMultiplier: 2,
+      maxBackoffSeconds: 300,
+      poisonPillThresholdSeconds: 30,
+    },
   },
-  "plan-build": {
-    humanApproval: { plan: "required", build: "required" },
-    plan: { onApprove: "generate-builds", buildGeneration: "ai", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
-    build: { onSuccess: "human-review", onApprove: "done", defaultAgent: "builder" },
-    merge: { mode: "disabled", agent: "integrator" },
-    integration: { mode: "auto-merge", agent: "integrator" },
-    review: { aiReviewerEnabled: false, agent: "reviewer", maxAutoReworks: 0 },
-    retry: { enabled: false, maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2, maxBackoffSeconds: 300, poisonPillThresholdSeconds: 30 },
+  'plan-build': {
+    humanApproval: { plan: 'required', build: 'required' },
+    plan: {
+      onApprove: 'generate-builds',
+      buildGeneration: 'ai',
+      buildGenerationAgent: 'buildgen',
+      defaultAgent: 'planner',
+    },
+    build: { onSuccess: 'human-review', onApprove: 'done', defaultAgent: 'builder' },
+    merge: { mode: 'disabled', agent: 'integrator' },
+    integration: { mode: 'auto-merge', agent: 'integrator' },
+    review: { aiReviewerEnabled: false, agent: 'reviewer', maxAutoReworks: 0 },
+    retry: {
+      enabled: false,
+      maxAttempts: 3,
+      backoffSeconds: 30,
+      backoffMultiplier: 2,
+      maxBackoffSeconds: 300,
+      poisonPillThresholdSeconds: 30,
+    },
   },
-  "plan-build-review-merge": {
-      humanApproval: { plan: "required", build: "required" },
-      plan: { onApprove: "generate-builds", buildGeneration: "ai", buildGenerationAgent: "buildgen", defaultAgent: "planner" },
-      build: { onSuccess: "human-review", onApprove: "merge", defaultAgent: "builder" },
-      merge: { mode: "auto", agent: "integrator" },
-    integration: { mode: "auto-merge", agent: "integrator" },
-    review: { aiReviewerEnabled: false, agent: "reviewer", maxAutoReworks: 2 },
-    retry: { enabled: false, maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2, maxBackoffSeconds: 300, poisonPillThresholdSeconds: 30 },
+  'plan-build-review-merge': {
+    humanApproval: { plan: 'required', build: 'required' },
+    plan: {
+      onApprove: 'generate-builds',
+      buildGeneration: 'ai',
+      buildGenerationAgent: 'buildgen',
+      defaultAgent: 'planner',
+    },
+    build: { onSuccess: 'human-review', onApprove: 'merge', defaultAgent: 'builder' },
+    merge: { mode: 'auto', agent: 'integrator' },
+    integration: { mode: 'auto-merge', agent: 'integrator' },
+    review: { aiReviewerEnabled: false, agent: 'reviewer', maxAutoReworks: 2 },
+    retry: {
+      enabled: false,
+      maxAttempts: 3,
+      backoffSeconds: 30,
+      backoffMultiplier: 2,
+      maxBackoffSeconds: 300,
+      poisonPillThresholdSeconds: 30,
+    },
   },
 };
 
@@ -96,8 +144,10 @@ const DEFAULT_TIMEOUTS = {
 
 export function resolveFlow(project: Project): ResolvedFlow {
   const flowConfig = project.spec.flow;
-  const presetName = flowConfig?.preset ?? "plan-build-review-merge";
-  const preset = PRESETS[presetName] ?? PRESETS["plan-build-review-merge"]!;
+  const presetName = flowConfig?.preset ?? 'plan-build-review-merge';
+  const defaultPreset = PRESETS['plan-build-review-merge'];
+  if (!defaultPreset) throw new Error('Default preset "plan-build-review-merge" not found');
+  const preset = PRESETS[presetName] ?? defaultPreset;
 
   // Legacy policy compatibility.
   const legacyRetry = project.spec.retryPolicy;
@@ -115,46 +165,75 @@ export function resolveFlow(project: Project): ResolvedFlow {
   return {
     preset: presetName,
     humanApproval: {
-      plan: flowConfig?.humanApproval?.plan ?? preset.humanApproval!.plan ?? "required",
-      build: flowConfig?.humanApproval?.build ?? preset.humanApproval!.build ?? "required",
+      plan: flowConfig?.humanApproval?.plan ?? preset.humanApproval?.plan ?? 'required',
+      build: flowConfig?.humanApproval?.build ?? preset.humanApproval?.build ?? 'required',
     },
     plan: {
-      onApprove: flowPlan?.onApprove ?? preset.plan!.onApprove ?? "generate-builds",
-      buildGeneration: flowPlan?.buildGeneration ?? preset.plan!.buildGeneration ?? "ai",
-      buildGenerationAgent: flowPlan?.buildGenerationAgent ?? preset.plan!.buildGenerationAgent ?? "buildgen",
-      defaultAgent: flowPlan?.defaultAgent ?? preset.plan!.defaultAgent ?? "planner",
+      onApprove: flowPlan?.onApprove ?? preset.plan?.onApprove ?? 'generate-builds',
+      buildGeneration: flowPlan?.buildGeneration ?? preset.plan?.buildGeneration ?? 'ai',
+      buildGenerationAgent:
+        flowPlan?.buildGenerationAgent ?? preset.plan?.buildGenerationAgent ?? 'buildgen',
+      defaultAgent: flowPlan?.defaultAgent ?? preset.plan?.defaultAgent ?? 'planner',
     },
     build: {
-      onSuccess: flowBuild?.onSuccess ?? preset.build!.onSuccess ?? "human-review",
-      onApprove: flowBuild?.onApprove ?? preset.build!.onApprove ?? "merge",
-      defaultAgent: flowBuild?.defaultAgent ?? preset.build!.defaultAgent ?? "builder",
+      onSuccess: flowBuild?.onSuccess ?? preset.build?.onSuccess ?? 'human-review',
+      onApprove: flowBuild?.onApprove ?? preset.build?.onApprove ?? 'merge',
+      defaultAgent: flowBuild?.defaultAgent ?? preset.build?.defaultAgent ?? 'builder',
     },
     merge: {
-      mode: flowMerge?.mode ?? preset.merge!.mode ?? "auto",
-      agent: flowMerge?.agent ?? preset.merge!.agent ?? "integrator",
+      mode: flowMerge?.mode ?? preset.merge?.mode ?? 'auto',
+      agent: flowMerge?.agent ?? preset.merge?.agent ?? 'integrator',
     },
     integration: {
-      mode: flowIntegration?.mode ?? preset.integration!.mode ?? "auto-merge",
-      agent: flowIntegration?.agent ?? preset.integration!.agent ?? "integrator",
+      mode: flowIntegration?.mode ?? preset.integration?.mode ?? 'auto-merge',
+      agent: flowIntegration?.agent ?? preset.integration?.agent ?? 'integrator',
     },
     review: {
-      aiReviewerEnabled: flowReview?.aiReviewerEnabled ?? legacyReview?.aiReviewerEnabled ?? preset.review!.aiReviewerEnabled ?? false,
-      agent: flowReview?.agent ?? legacyReview?.aiReviewerAgent ?? preset.review!.agent ?? "reviewer",
-      maxAutoReworks: flowReview?.maxAutoReworks ?? legacyReview?.maxAutoReworks ?? preset.review!.maxAutoReworks ?? 2,
+      aiReviewerEnabled:
+        flowReview?.aiReviewerEnabled ??
+        legacyReview?.aiReviewerEnabled ??
+        preset.review?.aiReviewerEnabled ??
+        false,
+      agent:
+        flowReview?.agent ?? legacyReview?.aiReviewerAgent ?? preset.review?.agent ?? 'reviewer',
+      maxAutoReworks:
+        flowReview?.maxAutoReworks ??
+        legacyReview?.maxAutoReworks ??
+        preset.review?.maxAutoReworks ??
+        2,
     },
     retry: {
-      enabled: flowRetry?.enabled ?? legacyRetry?.enabled ?? preset.retry!.enabled ?? false,
-      maxAttempts: flowRetry?.maxAttempts ?? legacyRetry?.maxAttempts ?? preset.retry!.maxAttempts ?? 3,
-      backoffSeconds: flowRetry?.backoffSeconds ?? legacyRetry?.backoffSeconds ?? preset.retry!.backoffSeconds ?? 30,
-      backoffMultiplier: flowRetry?.backoffMultiplier ?? legacyRetry?.backoffMultiplier ?? preset.retry!.backoffMultiplier ?? 2,
-      maxBackoffSeconds: flowRetry?.maxBackoffSeconds ?? legacyRetry?.maxBackoffSeconds ?? preset.retry!.maxBackoffSeconds ?? 300,
-      poisonPillThresholdSeconds: flowRetry?.poisonPillThresholdSeconds ?? legacyRetry?.poisonPillThresholdSeconds ?? preset.retry!.poisonPillThresholdSeconds ?? 30,
+      enabled: flowRetry?.enabled ?? legacyRetry?.enabled ?? preset.retry?.enabled ?? false,
+      maxAttempts:
+        flowRetry?.maxAttempts ?? legacyRetry?.maxAttempts ?? preset.retry?.maxAttempts ?? 3,
+      backoffSeconds:
+        flowRetry?.backoffSeconds ??
+        legacyRetry?.backoffSeconds ??
+        preset.retry?.backoffSeconds ??
+        30,
+      backoffMultiplier:
+        flowRetry?.backoffMultiplier ??
+        legacyRetry?.backoffMultiplier ??
+        preset.retry?.backoffMultiplier ??
+        2,
+      maxBackoffSeconds:
+        flowRetry?.maxBackoffSeconds ??
+        legacyRetry?.maxBackoffSeconds ??
+        preset.retry?.maxBackoffSeconds ??
+        300,
+      poisonPillThresholdSeconds:
+        flowRetry?.poisonPillThresholdSeconds ??
+        legacyRetry?.poisonPillThresholdSeconds ??
+        preset.retry?.poisonPillThresholdSeconds ??
+        30,
     },
     timeouts: {
-      runningStaleSeconds: flowTimeouts?.runningStaleSeconds ?? DEFAULT_TIMEOUTS.runningStaleSeconds,
+      runningStaleSeconds:
+        flowTimeouts?.runningStaleSeconds ?? DEFAULT_TIMEOUTS.runningStaleSeconds,
       reviewStaleSeconds: flowTimeouts?.reviewStaleSeconds ?? DEFAULT_TIMEOUTS.reviewStaleSeconds,
       mergeStaleSeconds: flowTimeouts?.mergeStaleSeconds ?? DEFAULT_TIMEOUTS.mergeStaleSeconds,
-      buildgenStaleSeconds: flowTimeouts?.buildgenStaleSeconds ?? DEFAULT_TIMEOUTS.buildgenStaleSeconds,
+      buildgenStaleSeconds:
+        flowTimeouts?.buildgenStaleSeconds ?? DEFAULT_TIMEOUTS.buildgenStaleSeconds,
     },
   };
 }

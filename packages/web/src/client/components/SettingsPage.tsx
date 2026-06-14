@@ -14,13 +14,12 @@ import {
   type UpdateStatus,
   type UpgradeResult,
 } from "../lib/api";
-import { authHeaders } from "../lib/auth";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./ui/card";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
-import { RefreshCw, Loader2, FolderKanban, Bot, Key, FileCode, Sliders, Play, Bell, ArrowUpCircle, Settings } from "lucide-react";
+import { RefreshCw, Loader2 } from "lucide-react";
 import ModelSelector from "./ModelSelector";
 import ProjectsPage from "./ProjectsPage";
 import AgentsPage from "./AgentsPage";
@@ -88,24 +87,21 @@ export default function SettingsPage() {
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
-  const tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-    { id: "projects", label: "Projects", icon: FolderKanban },
-    { id: "agents", label: "Agents", icon: Bot },
-    { id: "secrets", label: "Provider Secrets", icon: Key },
-    { id: "opencode", label: "OpenCode Config", icon: FileCode },
-    { id: "manager", label: "Manager Agent", icon: Sliders },
-    { id: "runner", label: "Runner Defaults", icon: Play },
-    { id: "notifications", label: "Notifications", icon: Bell },
-    { id: "updates", label: "Updates", icon: ArrowUpCircle },
+  const tabs: { id: Tab; label: string }[] = [
+    { id: "projects", label: "Projects" },
+    { id: "agents", label: "Agents" },
+    { id: "secrets", label: "Provider Secrets" },
+    { id: "opencode", label: "OpenCode Config" },
+    { id: "manager", label: "Manager Agent" },
+    { id: "runner", label: "Runner Defaults" },
+    { id: "notifications", label: "Notifications" },
+    { id: "updates", label: "Updates" },
   ];
 
   return (
     <div className="flex flex-col gap-4 w-full">
       <div className="flex items-center justify-between settings-header-mobile">
-        <h1 className="text-headline-lg flex items-center gap-2">
-          <Settings className="w-5 h-5 text-text-muted" />
-          Settings
-        </h1>
+        <h1 className="text-xl font-semibold text-lg sm:text-xl">Settings</h1>
         {saveMsg && (
           <span className={cn(
             "text-sm",
@@ -115,30 +111,27 @@ export default function SettingsPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b border-border overflow-x-auto sm:overflow-visible">
-        {tabs.map((t) => {
-          const Icon = t.icon;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setActiveTab(t.id)}
-              className={cn(
-                "flex items-center gap-1.5 shrink-0 whitespace-nowrap px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px",
-                activeTab === t.id
-                  ? "border-primary text-text"
-                  : "border-transparent text-text-muted hover:text-text",
+      <div className="flex gap-1 border-b border-border settings-tabs-wrap overflow-x-auto sm:overflow-visible">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={cn(
+              "px-4 py-2 text-sm font-medium transition-colors",
+              "border-b-2 -mb-px",
+              activeTab === t.id
+                ? "border-accent text-accent"
+                : "border-transparent text-text-dim hover:text-text"
+            )}
+          >
+            <span className="relative">
+              {t.label}
+              {t.id === "updates" && updateStatus?.updateAvailable && (
+                <span className="absolute -top-0.5 -right-2.5 w-2 h-2 rounded-full bg-accent" />
               )}
-            >
-              <Icon className="w-4 h-4 shrink-0" />
-              <span className="relative">
-                {t.label}
-                {t.id === "updates" && updateStatus?.updateAvailable && (
-                  <span className="absolute -top-0.5 -right-2.5 w-2 h-2 rounded-full bg-primary" />
-                )}
-              </span>
-            </button>
-          );
-        })}
+            </span>
+          </button>
+        ))}
       </div>
 
       {activeTab === "projects" && <ProjectsPage showHeader={false} />}
@@ -312,6 +305,11 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
   const [value, setValue] = useState(config);
   const [jsonError, setJsonError] = useState<string | null>(null);
 
+  // Keep value in sync when config loads from query
+  if (config !== value && value === config) {
+    // already in sync
+  }
+
   function handleChange(raw: string) {
     setValue(raw);
     try {
@@ -367,6 +365,7 @@ interface ManagerPanelProps {
 function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
   const manager = (spec.manager as Record<string, unknown> | undefined) ?? {};
   const [agentName, setAgentName] = useState((manager.agentName as string) ?? "manager-agent");
+  const [decisionAgentName, setDecisionAgentName] = useState((manager.decisionAgentName as string) ?? "manager-decision");
   const [model, setModel] = useState((manager.model as string) ?? "");
   const [timeoutSec, setTimeoutSec] = useState(String(Math.round(((manager.timeoutMs as number) ?? 30000) / 1000)));
   const [firstResponseTimeoutSec, setFirstResponseTimeoutSec] = useState(
@@ -377,21 +376,6 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
   const [decisionAgentContent, setDecisionAgentContent] = useState(
     (manager.decisionAgentContent as string) ?? ""
   );
-
-  // When the user hasn't customized the content, fetch the operator's default.
-  useEffect(() => {
-    if (!manager.decisionAgentContent) {
-      fetch("/api/settings/decision-agent-default", { headers: authHeaders() })
-        .then((r) => {
-          if (!r.ok) return;
-          return r.json() as Promise<{ content: string }>;
-        })
-        .then((data) => {
-          if (data?.content) setDecisionAgentContent(data.content);
-        })
-        .catch(() => { /* fall through to empty */ });
-    }
-  }, [manager.decisionAgentContent]);
 
   return (
     <Card>
@@ -409,6 +393,12 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
             <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} />
           </div>
           <div>
+            <label className="text-sm font-medium block mb-1">Decision Agent Name</label>
+            <Input value={decisionAgentName} onChange={(e) => setDecisionAgentName(e.target.value)} />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
             <label className="text-sm font-medium block mb-1">Model</label>
             <ModelSelector
               value={model}
@@ -416,8 +406,6 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
               placeholder="e.g. anthropic/claude-sonnet-4-20250514"
             />
           </div>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-medium block mb-1">Timeout (seconds)</label>
             <Input
@@ -427,16 +415,16 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
               min={1}
             />
           </div>
-          <div>
-            <label className="text-sm font-medium block mb-1">First Response Timeout (seconds) <span className="text-text-dim font-normal">— empty = default (min of overall timeout, 60s)</span></label>
-            <Input
-              type="number"
-              value={firstResponseTimeoutSec}
-              onChange={(e) => setFirstResponseTimeoutSec(e.target.value)}
-              min={1}
-              placeholder="default"
-            />
-          </div>
+        </div>
+        <div>
+          <label className="text-sm font-medium block mb-1">First Response Timeout (seconds) <span className="text-text-dim font-normal">— empty = default (min of overall timeout, 60s)</span></label>
+          <Input
+            type="number"
+            value={firstResponseTimeoutSec}
+            onChange={(e) => setFirstResponseTimeoutSec(e.target.value)}
+            min={1}
+            placeholder="default"
+          />
         </div>
         <div>
           <label className="text-sm font-medium block mb-1">Decision Agent Content (.md)</label>
@@ -444,6 +432,7 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
             className="h-48 font-mono text-sm"
             value={decisionAgentContent}
             onChange={(e) => setDecisionAgentContent(e.target.value)}
+            placeholder={"---\ndescription: ...\nmode: subagent\npermission:\n  edit: allow\n  bash: allow\n---\n\nYou are the decision-making agent..."}
             spellCheck={false}
           />
         </div>
@@ -459,6 +448,7 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
               ...spec,
               manager: {
                 agentName: agentName.trim() || undefined,
+                decisionAgentName: decisionAgentName.trim() || undefined,
                 model: model.trim() || undefined,
                 timeoutMs: timeoutMsVal || undefined,
                 firstResponseTimeoutMs: frtVal || undefined,

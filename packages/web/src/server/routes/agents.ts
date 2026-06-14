@@ -1,26 +1,28 @@
-import { Hono } from "hono";
+import { API_GROUP_VERSION, ClusterAgentSpecSchema, KIND_CLUSTER_AGENT } from '@percussionist/api';
+import { Hono } from 'hono';
+import { adminAuth, auth } from '../auth.js';
 import {
-  listClusterAgents,
-  getClusterAgent,
   createClusterAgent,
-  updateClusterAgent,
   deleteClusterAgent,
-} from "../kube.js";
-import { createPollingSseResponse } from "../lib/sse.js";
-import {
-  ClusterAgentSpecSchema,
-  API_GROUP_VERSION,
-  KIND_CLUSTER_AGENT,
-} from "@percussionist/api";
-import { auth, adminAuth } from "../auth.js";
+  getClusterAgent,
+  listClusterAgents,
+  updateClusterAgent,
+} from '../kube.js';
+import { createPollingSseResponse } from '../lib/sse.js';
 
 const agents = new Hono();
 
 // GET /api/agents — list all cluster-scoped agents.
-agents.get("/", auth(), async (c) => {
+agents.get('/', auth(), async (c) => {
   try {
     const items = await listClusterAgents();
-    return c.json({ agents: items.map((a) => ({ name: a.metadata.name!, content: a.spec.content, model: a.spec.model })) });
+    return c.json({
+      agents: items.map((a) => ({
+        name: a.metadata.name ?? '',
+        content: a.spec.content,
+        model: a.spec.model,
+      })),
+    });
   } catch (e: unknown) {
     const msg = (e as { body?: { message?: string } })?.body?.message ?? String(e);
     return c.json({ error: msg }, 500);
@@ -28,28 +30,30 @@ agents.get("/", auth(), async (c) => {
 });
 
 // GET /api/agents/events — SSE stream for agent list changes.
-agents.get("/events", auth(), async (c) => {
+agents.get('/events', auth(), async (c) => {
   return createPollingSseResponse({
     signal: c.req.raw.signal,
     getSignature: async () => {
       const items = await listClusterAgents();
-      return JSON.stringify(items.map((a) => ({
-        resourceVersion: a.metadata.resourceVersion,
-        generation: a.metadata.generation,
-        name: a.metadata.name,
-        content: a.spec.content,
-        model: a.spec.model,
-      })));
+      return JSON.stringify(
+        items.map((a) => ({
+          resourceVersion: a.metadata.resourceVersion,
+          generation: a.metadata.generation,
+          name: a.metadata.name,
+          content: a.spec.content,
+          model: a.spec.model,
+        })),
+      );
     },
-    updatedEvent: "agents.updated",
-    errorEvent: "agents.error",
-    readyEvent: { event: "ready", data: { collection: "agents" } },
+    updatedEvent: 'agents.updated',
+    errorEvent: 'agents.error',
+    readyEvent: { event: 'ready', data: { collection: 'agents' } },
   });
 });
 
 // GET /api/agents/:name — get a single agent.
-agents.get("/:name", auth(), async (c) => {
-  const name = c.req.param("name");
+agents.get('/:name', auth(), async (c) => {
+  const name = c.req.param('name');
   try {
     const agent = await getClusterAgent(name);
     return c.json(agent);
@@ -61,17 +65,17 @@ agents.get("/:name", auth(), async (c) => {
 });
 
 // POST /api/agents — create a new ClusterAgent.
-agents.post("/", adminAuth(), async (c) => {
+agents.post('/', adminAuth(), async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ error: "Invalid JSON body" }, 400);
+    return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
   const parsed = ClusterAgentSpecSchema.safeParse(body);
   if (!parsed.success) {
-    return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
+    return c.json({ error: parsed.error.issues.map((i) => i.message).join('; ') }, 400);
   }
 
   const name = (body as { name?: string }).name ?? `agent-${Date.now().toString(16)}`;
@@ -94,18 +98,18 @@ agents.post("/", adminAuth(), async (c) => {
 });
 
 // PUT /api/agents/:name — update an existing agent.
-agents.put("/:name", adminAuth(), async (c) => {
-  const name = c.req.param("name");
+agents.put('/:name', adminAuth(), async (c) => {
+  const name = c.req.param('name');
   let body: unknown;
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ error: "Invalid JSON body" }, 400);
+    return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
   const parsed = ClusterAgentSpecSchema.safeParse(body);
   if (!parsed.success) {
-    return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
+    return c.json({ error: parsed.error.issues.map((i) => i.message).join('; ') }, 400);
   }
 
   try {
@@ -119,14 +123,17 @@ agents.put("/:name", adminAuth(), async (c) => {
 });
 
 // DELETE /api/agents/:name — delete an agent.
-agents.delete("/:name", adminAuth(), async (c) => {
-  const name = c.req.param("name");
+agents.delete('/:name', adminAuth(), async (c) => {
+  const name = c.req.param('name');
   try {
     await deleteClusterAgent(name);
     return c.body(null, 204);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    return c.json({ error: anyE.body?.message ?? anyE.message ?? String(e) }, (anyE.statusCode ?? 500) as 400 | 404 | 500);
+    return c.json(
+      { error: anyE.body?.message ?? anyE.message ?? String(e) },
+      (anyE.statusCode ?? 500) as 400 | 404 | 500,
+    );
   }
 });
 

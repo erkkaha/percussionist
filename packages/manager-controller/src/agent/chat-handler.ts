@@ -8,20 +8,19 @@
 // so it survives pod restarts. If the ConfigMap is unavailable the handler
 // degrades gracefully (in-memory only).
 
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { CHAT_PORT, FIRST_RESPONSE_TIMEOUT_MS, MANAGER_NAMESPACE as NAMESPACE } from "./config.js";
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { PatchStrategy, setHeaderOptions } from '@kubernetes/client-node';
+import { core } from '@percussionist/kube';
+import { getErrorStatusCode, isKubeNotFoundError } from '../kube-errors.js';
 import {
-  createSession,
-  sendMessage,
-  getMessages,
-  waitForCompletion,
-} from "./session.js";
-import { DECISION_AGENT_NAME } from "./config.js";
-import { core } from "@percussionist/kube";
-import { PatchStrategy, setHeaderOptions } from "@kubernetes/client-node";
-import { getErrorStatusCode, isKubeNotFoundError } from "../kube-errors.js";
+  CHAT_PORT,
+  DECISION_AGENT_NAME,
+  FIRST_RESPONSE_TIMEOUT_MS,
+  MANAGER_NAMESPACE as NAMESPACE,
+} from './config.js';
+import { createSession, getMessages, sendMessage, waitForCompletion } from './session.js';
 
-const CONFIGMAP_NAME = "manager-chat-history";
+const CONFIGMAP_NAME = 'manager-chat-history';
 const SAVE_DEBOUNCE_MS = 2000;
 
 const log = (...args: unknown[]) =>
@@ -30,7 +29,7 @@ const err = (...args: unknown[]) =>
   console.error(`[agent-chat ${new Date().toISOString()}]`, ...args);
 
 let currentSessionId: string | null = null;
-let conversationHistory: Array<{ role: "user" | "assistant"; text: string }> = [];
+let conversationHistory: Array<{ role: 'user' | 'assistant'; text: string }> = [];
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ---------------------------------------------------------------------------
@@ -42,10 +41,19 @@ async function loadHistoryFromConfigMap(): Promise<void> {
       name: CONFIGMAP_NAME,
       namespace: NAMESPACE,
     });
-    const raw = cm.data?.["history.json"];
+    const raw = cm.data?.['history.json'];
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.every((m: unknown) => typeof m === "object" && m !== null && (m as Record<string, unknown>).role && (m as Record<string, unknown>).text)) {
+      if (
+        Array.isArray(parsed) &&
+        parsed.every(
+          (m: unknown) =>
+            typeof m === 'object' &&
+            m !== null &&
+            (m as Record<string, unknown>).role &&
+            (m as Record<string, unknown>).text,
+        )
+      ) {
         conversationHistory = parsed;
         log(`restored ${conversationHistory.length} messages from ConfigMap`);
       }
@@ -67,10 +75,10 @@ async function saveHistoryToConfigMap(): Promise<void> {
         name: CONFIGMAP_NAME,
         namespace: NAMESPACE,
         body: {
-          data: { "history.json": data },
+          data: { 'history.json': data },
         },
       },
-      setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
+      setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
     );
   } catch (e: unknown) {
     const status = getErrorStatusCode(e);
@@ -83,11 +91,11 @@ async function saveHistoryToConfigMap(): Promise<void> {
             metadata: {
               name: CONFIGMAP_NAME,
               labels: {
-                "app.kubernetes.io/name": "percussionist",
-                "app.kubernetes.io/component": "manager",
+                'app.kubernetes.io/name': 'percussionist',
+                'app.kubernetes.io/component': 'manager',
               },
             },
-            data: { "history.json": data },
+            data: { 'history.json': data },
           },
         });
         return;
@@ -120,7 +128,7 @@ async function ensureSession(): Promise<string> {
       // Session gone — create new one
     }
   }
-  const id = await createSession("manager-interactive", DECISION_AGENT_NAME);
+  const id = await createSession('manager-interactive', DECISION_AGENT_NAME);
   currentSessionId = id;
   conversationHistory = [];
   log(`created interactive session ${id}`);
@@ -130,14 +138,14 @@ async function ensureSession(): Promise<string> {
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => chunks.push(c));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
   });
 }
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
+  res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
 }
 
@@ -151,30 +159,30 @@ export async function startChatServer(): Promise<void> {
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
-      if (req.method === "POST" && req.url === "/chat") {
+      if (req.method === 'POST' && req.url === '/chat') {
         await handleChat(req, res);
-      } else if (req.method === "GET" && req.url === "/chat/stream") {
+      } else if (req.method === 'GET' && req.url === '/chat/stream') {
         await handleStream(req, res);
-      } else if (req.method === "GET" && req.url === "/chat/history") {
+      } else if (req.method === 'GET' && req.url === '/chat/history') {
         sendJson(res, 200, { history: conversationHistory, sessionId: currentSessionId });
       } else {
         res.writeHead(404);
-        res.end("not found");
+        res.end('not found');
       }
     } catch (e) {
-      err("chat handler error:", (e as Error).message);
+      err('chat handler error:', (e as Error).message);
       if (!res.headersSent) {
         sendJson(res, 500, { error: (e as Error).message });
       }
     }
   });
 
-  server.listen(CHAT_PORT, "0.0.0.0", () => {
+  server.listen(CHAT_PORT, '0.0.0.0', () => {
     log(`chat handler listening on 0.0.0.0:${CHAT_PORT}`);
   });
 
-  server.on("error", (e) => {
-    err("chat server error:", (e as Error).message);
+  server.on('error', (e) => {
+    err('chat server error:', (e as Error).message);
   });
 }
 
@@ -184,28 +192,30 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
   try {
     chatReq = JSON.parse(body) as ChatRequest;
   } catch {
-    sendJson(res, 400, { error: "invalid JSON" });
+    sendJson(res, 400, { error: 'invalid JSON' });
     return;
   }
 
-  const message = chatReq.message ?? "";
+  const message = chatReq.message ?? '';
   if (!message) {
-    sendJson(res, 400, { error: "message is required" });
+    sendJson(res, 400, { error: 'message is required' });
     return;
   }
 
-  conversationHistory.push({ role: "user", text: message });
+  conversationHistory.push({ role: 'user', text: message });
   debouncedSave();
 
   const abortController = new AbortController();
-  const onClose = () => { abortController.abort(); };
-  req.on("close", onClose);
-  req.on("error", onClose);
+  const onClose = () => {
+    abortController.abort();
+  };
+  req.on('close', onClose);
+  req.on('error', onClose);
 
   try {
     const sessionId = await ensureSession();
     const sendController = new AbortController();
-    abortController.signal.addEventListener("abort", () => sendController.abort(), { once: true });
+    abortController.signal.addEventListener('abort', () => sendController.abort(), { once: true });
     const sendPromise = sendMessage(sessionId, message, DECISION_AGENT_NAME, sendController.signal);
     const sendFailure = sendPromise.then(() => new Promise<void>(() => {}));
 
@@ -216,25 +226,28 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
     ]);
     sendController.abort();
     if (response) {
-      conversationHistory.push({ role: "assistant", text: response });
+      conversationHistory.push({ role: 'assistant', text: response });
       debouncedSave();
       sendJson(res, 200, { response, sessionId });
     } else if (abortController.signal.aborted) {
       sendJson(res, 200, { cancelled: true, sessionId });
     } else {
-      sendJson(res, 200, { response: "Agent did not respond in time. Please try again.", sessionId });
+      sendJson(res, 200, {
+        response: 'Agent did not respond in time. Please try again.',
+        sessionId,
+      });
     }
   } catch (e) {
-    err("chat message failed:", (e as Error).message);
+    err('chat message failed:', (e as Error).message);
     sendJson(res, 500, { error: (e as Error).message });
   }
 }
 
 async function handleStream(req: IncomingMessage, res: ServerResponse): Promise<void> {
   res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
   });
 
   // Poll for new messages and stream them (history is loaded separately via GET /chat/history)
@@ -256,13 +269,15 @@ async function handleStream(req: IncomingMessage, res: ServerResponse): Promise<
         const id = msg.info?.id;
         if (!id || knownMessageCount.has(id)) continue;
         knownMessageCount.add(id);
-        if (msg.info?.role === "assistant") {
-          let text = "";
+        if (msg.info?.role === 'assistant') {
+          let text = '';
           for (const part of msg.parts ?? []) {
-            if (part.type === "text" && part.text) text += part.text;
+            if (part.type === 'text' && part.text) text += part.text;
           }
           if (text) {
-            res.write(`data: ${JSON.stringify({ role: "assistant", text, completed: !!msg.info?.time?.completed, id: msg.info?.id, created: msg.info?.time?.created })}\n\n`);
+            res.write(
+              `data: ${JSON.stringify({ role: 'assistant', text, completed: !!msg.info?.time?.completed, id: msg.info?.id, created: msg.info?.time?.created })}\n\n`,
+            );
           }
         }
       }
@@ -271,11 +286,11 @@ async function handleStream(req: IncomingMessage, res: ServerResponse): Promise<
     }
   }, 2000);
 
-  req.on("close", () => {
+  req.on('close', () => {
     clearInterval(poll);
   });
 
-  req.on("error", () => {
+  req.on('error', () => {
     clearInterval(poll);
   });
 }

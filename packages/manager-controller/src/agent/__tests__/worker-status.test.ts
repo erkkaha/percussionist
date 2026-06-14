@@ -1,8 +1,8 @@
-import { describe, expect, it } from "bun:test";
-import { clearWorkerRunRefs } from "../worker-status.js";
+import { describe, expect, it } from 'bun:test';
+import { clearWorkerRunRefs } from '../worker-status.js';
 
-describe("clearWorkerRunRefs", () => {
-  it("replaces run reference fields with null while preserving other fields", () => {
+describe('clearWorkerRunRefs', () => {
+  it('replaces run reference fields with null while preserving other fields', () => {
     const cleared = clearWorkerRunRefs();
 
     expect(cleared).toEqual({

@@ -1,5 +1,5 @@
-import type { Run } from "../lib/types";
-import { TERMINAL_PHASES } from "../lib/types";
+import type { Run } from '../lib/types';
+import { TERMINAL_PHASES } from '../lib/types';
 
 interface OpenOpencodeButtonProps {
   run: Run;
@@ -16,21 +16,18 @@ export default function OpenOpencodeButton({ run, compact }: OpenOpencodeButtonP
 
   if (!isActive) {
     const cls = compact
-      ? "rounded border border-border-muted px-2 py-1 text-xs font-medium text-text-dim cursor-not-allowed opacity-50"
-      : "rounded-md border border-border-muted px-3 py-1.5 text-sm font-medium text-text-dim cursor-not-allowed opacity-50";
+      ? 'rounded border border-border-muted px-2 py-1 text-xs font-medium text-text-dim cursor-not-allowed opacity-50'
+      : 'rounded-md border border-border-muted px-3 py-1.5 text-sm font-medium text-text-dim cursor-not-allowed opacity-50';
     return (
-      <span
-        title="Run is not active"
-        className={cls}
-      >
+      <span title="Run is not active" className={cls}>
         Open web
       </span>
     );
   }
 
   const cls = compact
-    ? "rounded border border-border-muted px-2 py-1 text-xs font-medium text-text-dim hover:border-border hover:text-text-muted transition-colors"
-    : "rounded-md border border-border-muted px-3 py-1.5 text-sm font-medium text-text-muted hover:border-border hover:text-text transition-colors";
+    ? 'rounded border border-border-muted px-2 py-1 text-xs font-medium text-text-dim hover:border-border hover:text-text-muted transition-colors'
+    : 'rounded-md border border-border-muted px-3 py-1.5 text-sm font-medium text-text-muted hover:border-border hover:text-text transition-colors';
 
   return (
     <a
