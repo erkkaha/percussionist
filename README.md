@@ -869,7 +869,7 @@ The web dashboard renders board state on project detail pages under the Board ta
 
 Manager MCP tools such as `exec_in_workspace`, `read_plan`, `install_packages`,
 and worktree cleanup spawn short-lived maintenance pods inside the project's
-data PVC namespace. The container image for these pods defaults to `alpine:3.20`
+data PVC namespace. The container image for these pods defaults to `alpine/git:v2.54.0`
 when no override is set.
 
 Override it per-project with `spec.exec.image`:
@@ -885,10 +885,9 @@ spec:
 ```
 
 When `spec.exec.image` is omitted or empty, the manager falls back to
-`alpine:3.20`. Choose a richer image (for example `ubuntu:24.04`) when
-maintenance commands need tools that are not available in the Alpine
-minimal image, such as a fuller `git`, `curl`, or distro-specific package
-managers.
+`alpine/git:v2.54.0`. Choose a richer image (for example `ubuntu:24.04`) when
+maintenance commands need tools that are not available in the image,
+such as `curl` or distro-specific package managers.
 
 ## Feature branch workflow
 

@@ -127,7 +127,7 @@ export type EmbeddingSpec = z.infer<typeof EmbeddingSpecSchema>;
 // Exec/maintenance pod configuration — controls which image is used for workspace
 // exec pods spawned by manager MCP tools (exec_in_workspace, install_packages, etc.).
 export const ExecSpecSchema = z.object({
-  /** Container image for maintenance/exec pods. Defaults to alpine:3.20 when unset. */
+  /** Container image for maintenance/exec pods. Defaults to alpine/git:v2.54.0 when unset. */
   image: z.string().optional(),
 });
 export type ExecSpec = z.infer<typeof ExecSpecSchema>;
