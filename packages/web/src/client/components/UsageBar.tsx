@@ -39,10 +39,10 @@ export function UsageBar() {
   const isAtMax = maxSeconds > 0 && total >= maxSeconds;
 
   let label: string;
-  if (maxSeconds > 0 && settings?.showPercent) {
-    label = `${Math.round(pctOfMax)}% of ${settings.maxTimeHours}h`;
-  } else if (maxSeconds > 0 && !settings?.showPercent) {
-    label = `${formatDuration(total)} of ${settings.maxTimeHours}h`;
+  if (maxSeconds > 0 && settings) {
+    label = settings.showPercent
+      ? `${Math.round(pctOfMax)}% of ${settings.maxTimeHours}h`
+      : `${formatDuration(total)} of ${settings.maxTimeHours}h`;
   } else if (settings?.showPercent) {
     const parts = SEGMENT_ORDER.map((c) => {
       const v = c === 'reviewing' ? reviewing : c === 'planning' ? planning : other;
@@ -68,13 +68,10 @@ export function UsageBar() {
           className={`flex-1 flex h-1.5 rounded-none overflow-hidden bg-sidebar-accent ${warningClass} ${isAtMax ? 'opacity-50' : ''}`}
         >
           {(() => {
-            const cats: { cat: Category; val: number }[] = [
-              { cat: 'reviewing', val: reviewing },
-              { cat: 'planning', val: planning },
-              { cat: 'other', val: other },
-            ];
-            return cats.map(({ cat, val }) => {
-              const pct = total > 0 ? (val / total) * 100 : 0;
+            const denominator = maxSeconds > 0 ? maxSeconds : total;
+            return SEGMENT_ORDER.map((cat) => {
+              const val = cat === 'reviewing' ? reviewing : cat === 'planning' ? planning : other;
+              const pct = denominator > 0 ? (val / denominator) * 100 : 0;
               if (pct <= 0) return null;
               return (
                 <div
