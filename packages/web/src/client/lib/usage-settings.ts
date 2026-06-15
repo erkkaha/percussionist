@@ -14,6 +14,10 @@ export type ProjectUsageCounters = {
   planning: number;
 };
 
+export type TodayUsage = Record<Category, number> & {
+  projects: Record<string, ProjectUsageCounters>;
+};
+
 export type UsageServerResponse = {
   locked: boolean;
   reviewing: number;
@@ -34,22 +38,59 @@ export function getTodayKey(): string {
   return `${STORAGE_PREFIX}-${yyyy}-${mm}-${dd}`;
 }
 
-export function readTodayUsage(): Record<Category, number> {
+function toNonNegativeNumber(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+  return value;
+}
+
+function parseProjectUsage(value: unknown): Record<string, ProjectUsageCounters> {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  const projects: Record<string, ProjectUsageCounters> = {};
+
+  for (const [project, counters] of entries) {
+    const name = project.trim();
+    if (!name || !counters || typeof counters !== 'object') {
+      continue;
+    }
+
+    const typedCounters = counters as { reviewing?: unknown; planning?: unknown };
+    projects[name] = {
+      reviewing: toNonNegativeNumber(typedCounters.reviewing),
+      planning: toNonNegativeNumber(typedCounters.planning),
+    };
+  }
+
+  return projects;
+}
+
+export function readTodayUsage(): TodayUsage {
   try {
     const key = getTodayKey();
     const stored = localStorage.getItem(key);
     if (stored) {
-      const parsed = JSON.parse(stored) as Record<Category, number>;
+      const parsed = JSON.parse(stored) as {
+        reviewing?: unknown;
+        planning?: unknown;
+        other?: unknown;
+        projects?: unknown;
+      };
       return {
-        reviewing: parsed.reviewing || 0,
-        planning: parsed.planning || 0,
-        other: parsed.other || 0,
+        reviewing: toNonNegativeNumber(parsed.reviewing),
+        planning: toNonNegativeNumber(parsed.planning),
+        other: toNonNegativeNumber(parsed.other),
+        projects: parseProjectUsage(parsed.projects),
       };
     }
   } catch {
     // ignore
   }
-  return { reviewing: 0, planning: 0, other: 0 };
+  return { reviewing: 0, planning: 0, other: 0, projects: {} };
 }
 
 export function formatDuration(totalSeconds: number): string {
@@ -94,12 +135,25 @@ async function fetchUsageJSON<T>(path: string, options?: RequestInit): Promise<T
   return res.json() as Promise<T>;
 }
 
-export async function reportHeartbeat(
-  usage: Record<Category, number>,
-): Promise<UsageServerResponse> {
+export async function reportHeartbeat(usage: TodayUsage): Promise<UsageServerResponse> {
+  const payload: {
+    reviewing: number;
+    planning: number;
+    other: number;
+    projectUsage?: Record<string, ProjectUsageCounters>;
+  } = {
+    reviewing: usage.reviewing,
+    planning: usage.planning,
+    other: usage.other,
+  };
+
+  if (Object.keys(usage.projects).length > 0) {
+    payload.projectUsage = usage.projects;
+  }
+
   return fetchUsageJSON<UsageServerResponse>('/usage/heartbeat', {
     method: 'POST',
-    body: JSON.stringify(usage),
+    body: JSON.stringify(payload),
   });
 }
 

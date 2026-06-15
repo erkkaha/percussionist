@@ -11,11 +11,41 @@ import {
   setServerCache,
 } from '../lib/usage-settings';
 
-function categorizeRoute(path: string): Category {
-  if (/^\/projects\/[^/]+\/board/.test(path)) return 'reviewing';
-  if (/^\/sessions\/[^/]+$/.test(path)) return 'reviewing';
-  if (/^\/projects\/[^/]+\/plans\//.test(path)) return 'planning';
-  return 'other';
+type RouteUsage = {
+  category: Category;
+  project?: string;
+};
+
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+function parseRouteUsage(path: string): RouteUsage {
+  const boardMatch = path.match(/^\/projects\/([^/]+)\/board(?:\/|$)/);
+  if (boardMatch?.[1]) {
+    return {
+      category: 'reviewing',
+      project: decodePathSegment(boardMatch[1]),
+    };
+  }
+
+  const planMatch = path.match(/^\/projects\/([^/]+)\/plans\/(?:.+)/);
+  if (planMatch?.[1]) {
+    return {
+      category: 'planning',
+      project: decodePathSegment(planMatch[1]),
+    };
+  }
+
+  if (/^\/sessions\/[^/]+$/.test(path)) {
+    return { category: 'reviewing' };
+  }
+
+  return { category: 'other' };
 }
 
 function cleanupOldKeys() {
@@ -30,9 +60,9 @@ function cleanupOldKeys() {
 
 export function useUsageTracker() {
   const location = useLocation();
-  const category = categorizeRoute(location.pathname);
-  const categoryRef = useRef(category);
-  categoryRef.current = category;
+  const routeUsage = parseRouteUsage(location.pathname);
+  const routeUsageRef = useRef(routeUsage);
+  routeUsageRef.current = routeUsage;
 
   const heartbeatRef = useRef<(() => Promise<void>) | null>(null);
   heartbeatRef.current = useCallback(async () => {
@@ -67,7 +97,18 @@ export function useUsageTracker() {
       if (document.hidden || lockedRef.current) return;
       const key = getTodayKey();
       const data = readTodayUsage();
-      data[categoryRef.current] = (data[categoryRef.current] || 0) + 5;
+
+      const { category, project } = routeUsageRef.current;
+      data[category] = (data[category] || 0) + 5;
+
+      if (project && (category === 'reviewing' || category === 'planning')) {
+        const existing = data.projects[project] ?? { reviewing: 0, planning: 0 };
+        data.projects[project] = {
+          ...existing,
+          [category]: (existing[category] || 0) + 5,
+        };
+      }
+
       localStorage.setItem(key, JSON.stringify(data));
     }, 5_000);
 
