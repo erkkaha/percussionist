@@ -1,6 +1,6 @@
 {
   "name": "@percussionist/operator",
-  "version": "0.1.183",
+  "version": "0.1.184",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",

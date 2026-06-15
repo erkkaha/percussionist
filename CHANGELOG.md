@@ -1,10 +1,17 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.184] - 2026-06-15
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Resolve empty git diff in task detail panel _(web)_
 ## [v0.1.183] - 2026-06-15
 
 ### <!-- 0 -->🚀 Features
 
+- Add per-project daily usage persistence _(web)_
+- Add project-aware client usage heartbeat tracking _(web)_
 - Add active usage category indicator dot _(web)_
 - Add runner package form state plumbing _(web)_
 - Add runner packages field to execution tab _(web)_
@@ -24,13 +31,20 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 3 -->📚 Documentation
 
+- Add per-project session tracking plan _(plan)_
+- Revise f2304a to keep total-only usage UI _(plan)_
 - Add sidebar usage indicator plan _(plan)_
 - Add runner packages execution settings plan _(plan)_
 - Add validate agents capability audit plan _(plan)_
 
+### <!-- 6 -->🧪 Testing
+
+- Add per-project usage regression coverage _(web)_
+
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Polish runner packages helper copy _(web)_
+- Release v0.1.183
 ## [v0.1.182] - 2026-06-14
 
 ### <!-- 0 -->🚀 Features
