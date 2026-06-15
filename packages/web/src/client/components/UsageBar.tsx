@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { CATEGORY_COLORS } from '../lib/usage-categorization';
 import {
   type Category,
   formatDuration,
@@ -6,12 +7,6 @@ import {
   readTodayUsage,
 } from '../lib/usage-settings';
 import { UsageSettingsPopover } from './UsageSettingsPopover';
-
-const SEGMENT_COLORS: Record<Category, string> = {
-  reviewing: 'bg-blue-500',
-  planning: 'bg-emerald-500',
-  other: 'bg-gray-500',
-};
 
 const SEGMENT_ORDER: Category[] = ['reviewing', 'planning', 'other'];
 
@@ -80,7 +75,7 @@ export function UsageBar() {
               return (
                 <div
                   key={cat}
-                  className={`h-full shrink-0 ${SEGMENT_COLORS[cat]}`}
+                  className={`h-full shrink-0 ${CATEGORY_COLORS[cat]}`}
                   style={{ width: `${pct}%` }}
                 />
               );

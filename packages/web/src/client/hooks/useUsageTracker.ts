@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
+import { categorizeUsageRoute } from '../lib/usage-categorization';
 import { isGloballyLocked, onGlobalLockChange, setGloballyLocked } from '../lib/usage-lock-state';
 import {
-  type Category,
   fetchUsageToday,
   getTodayKey,
   readTodayUsage,
@@ -10,13 +10,6 @@ import {
   STORAGE_PREFIX,
   setServerCache,
 } from '../lib/usage-settings';
-
-function categorizeRoute(path: string): Category {
-  if (/^\/projects\/[^/]+\/board/.test(path)) return 'reviewing';
-  if (/^\/sessions\/[^/]+$/.test(path)) return 'reviewing';
-  if (/^\/projects\/[^/]+\/plans\//.test(path)) return 'planning';
-  return 'other';
-}
 
 function cleanupOldKeys() {
   const todayKey = getTodayKey();
@@ -30,7 +23,7 @@ function cleanupOldKeys() {
 
 export function useUsageTracker() {
   const location = useLocation();
-  const category = categorizeRoute(location.pathname);
+  const category = categorizeUsageRoute(location.pathname);
   const categoryRef = useRef(category);
   categoryRef.current = category;
 
