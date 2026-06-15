@@ -16,6 +16,7 @@ interface ExecutionTabProps {
     | 'reviewPolicyAiReviewerAgent'
     | 'reviewPolicyMaxAutoReworks'
     | 'runnerImage'
+    | 'runnerPackages'
     | 'cpuRequest'
     | 'memRequest'
     | 'cpuLimit'
@@ -41,6 +42,7 @@ interface ExecutionTabProps {
       | 'setReviewPolicyAiReviewerAgent'
       | 'setReviewPolicyMaxAutoReworks'
       | 'setRunnerImage'
+      | 'setRunnerPackages'
       | 'setCpuRequest'
       | 'setMemRequest'
       | 'setCpuLimit'
@@ -205,6 +207,19 @@ export default function ExecutionTab({ form }: ExecutionTabProps) {
             placeholder="percussionist/runner:dev"
             className="font-mono"
           />
+        </div>
+        <div className="space-y-1.5 border-t border-border pt-3">
+          <label className="text-sm font-medium text-text-muted">Runner Packages</label>
+          <Input
+            type="text"
+            value={form.runnerPackages}
+            onChange={(e) => form.setRunnerPackages(e.target.value)}
+            placeholder="ripgrep, jq, tree"
+            className="font-mono"
+          />
+          <p className="text-xs text-text-dim">
+            Comma-separated Alpine packages to install at pod init (e.g. ripgrep, jq, tree).
+          </p>
         </div>
         <div className="border-t border-border pt-3">
           <p className="text-xs font-medium mb-2 text-text-muted">Resource Requests</p>

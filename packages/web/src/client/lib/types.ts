@@ -166,6 +166,11 @@ export interface CreateProjectRequest {
     limits?: Record<string, string>;
   };
 
+  /** Alpine packages installed in every run pod at initialization. */
+  runner?: {
+    packages?: string[];
+  };
+
   /** Board lifecycle phase: Active / Complete / Archived. */
   phase?: 'Active' | 'Complete' | 'Archived';
 

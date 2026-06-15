@@ -26,6 +26,7 @@ import { runProjectCreate, runProjectDelete, runProjectGet, runProjectList } fro
 import { runSshKeyCreate } from './ssh-key.js';
 import { runSubmit } from './submit.js';
 import { runTailscaleAuthCreate } from './tailscale-auth.js';
+import { runValidateAgents } from './validate.js';
 import { runGet, runLs } from './view.js';
 import { runWait } from './wait.js';
 import { runWeb } from './web.js';
@@ -445,6 +446,18 @@ boardTask
       taskName: opts.taskName,
     });
   });
+
+// validate ------------------------------------------------------------------
+// Subcommand group for read-only cluster validation checks.
+const validate = program
+  .command('validate')
+  .description('run validation checks against percussionist resources');
+
+validate
+  .command('agents')
+  .description('audit ClusterAgent capabilities and Project roster coverage')
+  .option('-n, --namespace <ns>', 'namespace (reserved; audit is cluster-wide)', DEFAULT_NAMESPACE)
+  .action(runValidateAgents);
 
 program.parseAsync(process.argv).catch((e) => {
   console.error('beatctl:', (e as Error).message ?? e);
