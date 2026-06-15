@@ -19,7 +19,7 @@
 
 - Track planning/reviewing usage per project (daily granularity) while preserving existing global behavior.
 - Extend usage heartbeat payload, DB schema, API responses, and client cache types for per-project data.
-- Surface per-project usage in the UI in a minimal, reviewable way (at least accessible from existing usage components).
+- Keep existing usage bar UX focused on total progress (no new per-project UI breakdown requirement).
 - Add/adjust tests for server usage routes and client usage tracking behavior.
 
 ### Out of scope
@@ -42,7 +42,7 @@
    - keep top-level totals for backward compatibility,
    - add project-scoped deltas/totals in request/response payloads.
 3. **Update client tracker to infer project from route** and send project-aware heartbeat data.
-4. **Render project breakdown in usage UI** (compact list/tooltip/popover style) while keeping existing total bar behavior intact.
+4. **Do not expand UI surface area for this change**; keep current total progress bar behavior and lock UX.
 5. **Keep idempotent semantics** (`max()` style upserts) for both global and per-project counters.
 
 ## Data/API design proposal
@@ -91,21 +91,17 @@
    - Update `reportHeartbeat()` usage contract and payload in `usage-settings.ts` + `useUsageTracker.ts`.
    - Ensure backward compatibility if server ignores unknown project fields during rollout.
 
-7. **Render per-project usage in UI**
-   - Update `packages/web/src/client/components/UsageBar.tsx` and/or `UsageLockOverlay.tsx` to show a concise per-project planning/reviewing breakdown.
-   - Keep existing total bar and lock behavior unchanged.
-
-8. **Server test coverage for usage routes**
+7. **Server test coverage for usage routes**
    - Add/extend tests in `packages/web/tests/` for:
-     - heartbeat with project payload,
-     - idempotent max-upsert semantics for same day/project,
-     - today endpoint returning expected project breakdown,
-     - backward compatibility with old payload shape.
+      - heartbeat with project payload,
+      - idempotent max-upsert semantics for same day/project,
+      - today endpoint returning expected project breakdown,
+      - backward compatibility with old payload shape.
 
-9. **Client behavior tests (targeted)**
+8. **Client behavior tests (targeted)**
    - Add targeted tests for route categorization + local storage migration-safe parsing (if existing client test harness is available).
 
-10. **Verification and compatibility checks**
+9. **Verification and compatibility checks**
     - Validate type alignment across server/client usage payloads.
     - Run `pnpm --filter @percussionist/web typecheck` and relevant web tests during BUILD.
 
@@ -114,7 +110,7 @@
 1. Visiting project board/plan routes increments planning/reviewing counters tied to that project for the current day.
 2. `/api/usage/heartbeat` persists per-project planning/reviewing usage idempotently (no double-count regressions on repeated heartbeats).
 3. `/api/usage/today` returns global totals and per-project planning/reviewing breakdown.
-4. Usage UI exposes per-project planning/reviewing totals while preserving existing global total/lock UX.
+4. Existing global UsageBar/lock UX continues to show total progress correctly (no regression from project-scoped tracking additions).
 5. Existing clients that send only old heartbeat payload still work.
 
 ## Proposed BUILD task breakdown
@@ -125,8 +121,8 @@
 2. **BUILD B — Client tracking + heartbeat integration**
    - Add route-based project extraction, local model updates, and project-aware heartbeat payload.
 
-3. **BUILD C — UI exposure + tests/hardening**
-   - Add per-project usage display and complete server/client regression coverage.
+3. **BUILD C — Tests + hardening**
+   - Complete regression coverage and compatibility hardening without adding new per-project usage UI.
 
 ## Risks / open questions
 
@@ -139,5 +135,5 @@
 3. **Cardinality growth**
    - Many projects can increase per-day rows; acceptable for SQLite scale here, but should be monitored.
 
-4. **UI density**
-   - Showing too many projects in sidebar/footer can become noisy; may require truncation/top-N + “other projects” aggregation.
+4. **Local storage shape migration**
+   - Existing `Record<Category, number>` data must remain readable when moving to a project-aware local shape.
