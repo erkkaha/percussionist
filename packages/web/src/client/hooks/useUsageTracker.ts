@@ -24,7 +24,7 @@ function decodePathSegment(segment: string): string {
   }
 }
 
-function parseRouteUsage(path: string): RouteUsage {
+export function parseRouteUsage(path: string): RouteUsage {
   const boardMatch = path.match(/^\/projects\/([^/]+)\/board(?:\/|$)/);
   if (boardMatch?.[1]) {
     return {
