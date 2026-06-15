@@ -14,6 +14,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useProjects } from '../hooks/useProjects';
 import { useProjectsEvents } from '../hooks/useProjectsEvents';
 import { fetchUpdateStatus } from '../lib/api';
+import { UsageBar } from './UsageBar';
 import {
   Sidebar,
   SidebarContent,
@@ -206,6 +207,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
         </SidebarMenu>
       </SidebarContent>
       <SidebarFooter>
+        <UsageBar />
         <div className="flex items-center gap-1.5 px-1 py-1 group-data-[collapsible=icon]:justify-center">
           <span
             className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${

@@ -27,7 +27,7 @@ declare module 'hono' {
 // ---------------------------------------------------------------------------
 // Helpers
 
-function getAuthValue(c: Context): string | null {
+export function getAuthValue(c: Context): string | null {
   const authHeader = c.req.header('Authorization');
   if (authHeader?.startsWith('Bearer ')) {
     return authHeader.slice(7);
@@ -39,7 +39,7 @@ function getAuthValue(c: Context): string | null {
   return null;
 }
 
-function isValidToken(token: string): boolean {
+export function isValidToken(token: string): boolean {
   const secret = process.env.AUTH_SECRET;
   if (!secret) return false;
   // Constant-time comparison to prevent timing attacks.

@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAgents } from '../hooks/useAgents';
 import { useAgentsEvents } from '../hooks/useAgentsEvents';
+import { AGENT_CAPABILITY_METADATA } from '../lib/agent-capabilities';
 import { deleteAgent } from '../lib/api';
 import type { AgentCapability } from '../lib/types';
 import { Button } from './ui/button';
@@ -31,6 +32,20 @@ function truncate(s: string, max: number): string {
   return `${s.slice(0, max)}\u2026`;
 }
 
+function getCapabilityDisplay(capability: AgentCapability): {
+  label: string;
+  description?: string;
+} {
+  const metadata = AGENT_CAPABILITY_METADATA[capability];
+  if (!metadata) {
+    return { label: capability };
+  }
+  return {
+    label: metadata.label,
+    description: metadata.description,
+  };
+}
+
 function AgentRow({ agent }: { agent: AgentListItem }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -48,14 +63,18 @@ function AgentRow({ agent }: { agent: AgentListItem }) {
       <td className="px-4 py-3 text-text-muted font-mono text-xs max-w-md">
         {agent.capabilities && agent.capabilities.length > 0 ? (
           <div className="flex flex-wrap gap-1">
-            {agent.capabilities.map((capability) => (
-              <span
-                key={capability}
-                className="inline-flex rounded border border-border-muted bg-surface-raised px-1.5 py-0.5"
-              >
-                {capability}
-              </span>
-            ))}
+            {agent.capabilities.map((capability) => {
+              const display = getCapabilityDisplay(capability);
+              return (
+                <span
+                  key={capability}
+                  className="inline-flex rounded border border-border-muted bg-surface-raised px-1.5 py-0.5"
+                  title={display.description ?? capability}
+                >
+                  {display.label}
+                </span>
+              );
+            })}
           </div>
         ) : (
           '-'

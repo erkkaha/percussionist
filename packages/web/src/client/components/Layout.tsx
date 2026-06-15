@@ -5,10 +5,12 @@ import type { Task } from '@/lib/types';
 import { useRunNotifications } from '../hooks/useRunNotifications';
 import { useRuns } from '../hooks/useRuns';
 import { useRunsEvents } from '../hooks/useRunsEvents';
+import { useUsageTracker } from '../hooks/useUsageTracker';
 import { authHeaders } from '../lib/auth';
 import AgentChatPanel from './AgentChatPanel';
 import { AppSidebar } from './app-sidebar';
 import NotificationBell from './NotificationBell';
+import { UsageLockOverlay } from './UsageLockOverlay';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from './ui/sidebar';
 
 export default function Layout({
@@ -27,6 +29,7 @@ export default function Layout({
     (r) => r.status?.phase != null && !TERMINAL_PHASES.has(r.status.phase),
   );
   useRunNotifications(runs);
+  useUsageTracker();
 
   const [managerAvailable, setManagerAvailable] = useState<boolean | null>(null);
   useEffect(() => {
@@ -60,6 +63,7 @@ export default function Layout({
         onOpenChange={onChatOpenChange}
         onChatReady={onChatReady}
       />
+      <UsageLockOverlay />
     </SidebarProvider>
   );
 }

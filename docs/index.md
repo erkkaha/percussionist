@@ -33,3 +33,5 @@ features:
     details: Tailscale sidecar provisions Let's Encrypt TLS certificates. Access the web dashboard from any device on your tailnet.
     link: /features/tailscale
 ---
+
+<Testimonials />

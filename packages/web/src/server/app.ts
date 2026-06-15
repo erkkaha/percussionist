@@ -24,12 +24,20 @@ import settings from './routes/settings.js';
 import stats from './routes/stats.js';
 import taskDiff from './routes/task-diff.js';
 import upgrade from './routes/upgrade.js';
+import usage from './routes/usage.js';
+import { usageLockMiddleware } from './usage-lock-middleware.js';
 
 export function createApp() {
   const app = new Hono();
 
   app.use('*', logger());
   app.use('*', compress());
+
+  // Usage routes must be registered before the lock middleware applies.
+  app.route('/api/usage', usage);
+
+  // Lock middleware applies to all /api/* routes — it skips /api/usage/* internally.
+  app.use('/api/*', usageLockMiddleware());
 
   app.route('/api/runs', runs);
   app.route('/api/runs', logs);
