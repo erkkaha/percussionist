@@ -208,7 +208,7 @@ export default function ExecutionTab({ form }: ExecutionTabProps) {
             className="font-mono"
           />
         </div>
-        <div className="border-t border-border pt-3 space-y-1.5">
+        <div className="space-y-1.5 border-t border-border pt-3">
           <label className="text-sm font-medium text-text-muted">Runner Packages</label>
           <Input
             type="text"
@@ -218,7 +218,7 @@ export default function ExecutionTab({ form }: ExecutionTabProps) {
             className="font-mono"
           />
           <p className="text-xs text-text-dim">
-            Comma-separated Alpine package names installed when the runner pod initializes.
+            Comma-separated Alpine packages to install at pod init (e.g. ripgrep, jq, tree).
           </p>
         </div>
         <div className="border-t border-border pt-3">
