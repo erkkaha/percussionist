@@ -195,7 +195,7 @@ spec:
                           enum:
                             - strict
                             - accept-new
-                            - no
+                            - "no"
                         known_hostsSecret:
                           type: object
                           properties:

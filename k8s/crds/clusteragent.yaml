@@ -35,6 +35,21 @@ spec:
                   maxLength: 102400
                 model:
                   type: string
+                capabilities:
+                  type: array
+                  items:
+                    type: string
+                    enum:
+                      - task.plan.execute
+                      - task.build.execute
+                      - task.build.generate
+                      - task.review.evaluate
+                      - task.failure.analyze
+                      - task.merge.execute
+                      - run.complete.plan
+                      - run.complete.build
+                      - run.complete.review
+                  maxItems: 64
               required:
                 - content
           required:

@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { AGENT_CAPABILITIES } from '../lib/agent-capabilities';
 import { updateAgent as apiUpdateAgent, submitAgent } from '../lib/api';
 import { authHeaders } from '../lib/auth';
 import type { AgentCapability } from '../lib/types';
@@ -9,18 +10,6 @@ import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
-
-const CAPABILITIES: AgentCapability[] = [
-  'task.plan.execute',
-  'task.build.execute',
-  'task.build.generate',
-  'task.review.evaluate',
-  'task.failure.analyze',
-  'task.merge.execute',
-  'run.complete.plan',
-  'run.complete.build',
-  'run.complete.review',
-];
 
 export default function AgentForm() {
   const { name: editName } = useParams<{ name: string }>();
@@ -156,16 +145,20 @@ export default function AgentForm() {
             Select explicit capabilities this agent is allowed to perform.
           </p>
           <div className="grid gap-2 sm:grid-cols-2">
-            {CAPABILITIES.map((capability) => (
+            {AGENT_CAPABILITIES.map((capability) => (
               <label
-                key={capability}
-                className="flex items-center gap-2 rounded border border-border-muted px-2.5 py-2 text-sm font-mono"
+                key={capability.value}
+                className="flex items-start gap-2 rounded border border-border-muted px-2.5 py-2"
               >
                 <Checkbox
-                  checked={capabilities.includes(capability)}
-                  onCheckedChange={(value) => toggleCapability(capability, value === true)}
+                  checked={capabilities.includes(capability.value)}
+                  onCheckedChange={(value) => toggleCapability(capability.value, value === true)}
+                  className="mt-0.5"
                 />
-                <span>{capability}</span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium">{capability.label}</span>
+                  <span className="block text-xs text-text-dim">{capability.description}</span>
+                </span>
               </label>
             ))}
           </div>
