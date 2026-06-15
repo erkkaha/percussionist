@@ -1,6 +1,6 @@
 {
   "name": "@percussionist/memory-service",
-  "version": "0.1.182",
+  "version": "0.1.183",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
