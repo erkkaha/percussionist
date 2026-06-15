@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { CATEGORY_COLORS } from '../lib/usage-categorization';
+import { useLocation } from 'react-router-dom';
+import { CATEGORY_COLORS, categorizeUsageRoute } from '../lib/usage-categorization';
 import {
   type Category,
   formatDuration,
@@ -11,8 +12,11 @@ import { UsageSettingsPopover } from './UsageSettingsPopover';
 const SEGMENT_ORDER: Category[] = ['reviewing', 'planning', 'other'];
 
 export function UsageBar() {
+  const location = useLocation();
   const [usage, setUsage] = useState(readTodayUsage);
   const [server, setServer] = useState(getServerCache);
+  const activeCategory = categorizeUsageRoute(location.pathname);
+  const activeCategoryLabel = activeCategory.charAt(0).toUpperCase() + activeCategory.slice(1);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -82,6 +86,12 @@ export function UsageBar() {
             });
           })()}
         </div>
+        <span
+          className={`w-1.5 h-1.5 rounded-full shrink-0 ${CATEGORY_COLORS[activeCategory]}`}
+          role="img"
+          title={`Tracking: ${activeCategoryLabel}`}
+          aria-label={`Tracking: ${activeCategoryLabel}`}
+        />
         <UsageSettingsPopover />
       </div>
       <span className="text-caption-xs text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
