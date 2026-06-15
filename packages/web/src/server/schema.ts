@@ -115,6 +115,17 @@ export const usageDaily = sqliteTable(
   (table) => [primaryKey({ columns: [table.date] })],
 );
 
+export const usageDailyProject = sqliteTable(
+  'usage_daily_project',
+  {
+    date: text('date').notNull(),
+    project: text('project').notNull(),
+    reviewing: integer('reviewing').default(0),
+    planning: integer('planning').default(0),
+  },
+  (table) => [primaryKey({ columns: [table.date, table.project] })],
+);
+
 export const usageSettings = sqliteTable('usage_settings', {
   id: integer('id').primaryKey().default(1),
   maxTimeHours: integer('max_time_hours').default(0),

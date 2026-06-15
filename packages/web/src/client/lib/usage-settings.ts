@@ -9,12 +9,18 @@ export type UsageSettings = {
   lockOnMax: boolean;
 };
 
+export type ProjectUsageCounters = {
+  reviewing: number;
+  planning: number;
+};
+
 export type UsageServerResponse = {
   locked: boolean;
   reviewing: number;
   planning: number;
   other: number;
   total: number;
+  projectUsage: Record<string, ProjectUsageCounters>;
   settings: UsageSettings;
 };
 
