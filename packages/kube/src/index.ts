@@ -9,45 +9,45 @@
 //
 // Single env var for namespace: PERCUSSIONIST_NAMESPACE (default: "percussionist")
 
+import fs from 'node:fs';
 import {
-  KubeConfig,
+  AppsV1Api,
   CoreV1Api,
   CustomObjectsApi,
-  AppsV1Api,
-  V1Pod,
-} from "@kubernetes/client-node";
-import fs from "node:fs";
+  KubeConfig,
+  type V1Pod,
+} from '@kubernetes/client-node';
 import {
-  API_GROUP,
-  API_VERSION,
-  API_GROUP_VERSION,
-  KIND_PROJECT,
-  KIND_TASK,
-  KIND_CLUSTER_AGENT,
-  KIND_CLUSTER_SETTINGS,
-  PLURAL_RUN,
-  PLURAL_PROJECT,
-  PLURAL_TASK,
-  PLURAL_CLUSTER_AGENT,
-  PLURAL_CLUSTER_SETTINGS,
-  LABELS,
-  OPENCODE_RUNNER_DEFAULTS,
   type AgentCapability,
-  type Run,
-  type RunStatus,
-  type Project,
-  type Task,
-  type TaskType,
-  type TaskStatus,
+  API_GROUP,
+  API_GROUP_VERSION,
+  API_VERSION,
+  type BoardStatus,
   type ClusterAgent,
   type ClusterSettings,
-  type BoardStatus,
-} from "@percussionist/api";
+  KIND_CLUSTER_AGENT,
+  KIND_CLUSTER_SETTINGS,
+  KIND_PROJECT,
+  KIND_TASK,
+  LABELS,
+  OPENCODE_RUNNER_DEFAULTS,
+  PLURAL_CLUSTER_AGENT,
+  PLURAL_CLUSTER_SETTINGS,
+  PLURAL_PROJECT,
+  PLURAL_RUN,
+  PLURAL_TASK,
+  type Project,
+  type Run,
+  type RunStatus,
+  type Task,
+  type TaskStatus,
+  type TaskType,
+} from '@percussionist/api';
 
 // ---------------------------------------------------------------------------
 // Namespace
 
-export const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? "percussionist";
+export const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
 
 // ---------------------------------------------------------------------------
 // Client initialisation — two modes:
@@ -110,10 +110,7 @@ export function loadFromKubeconfig(): {
 // ---------------------------------------------------------------------------
 // Run helpers
 
-export async function listRuns(
-  ns: string = NAMESPACE,
-  client = custom(),
-): Promise<Run[]> {
+export async function listRuns(ns: string = NAMESPACE, client = custom()): Promise<Run[]> {
   const res = (await client.listNamespacedCustomObject({
     group: API_GROUP,
     version: API_VERSION,
@@ -137,11 +134,7 @@ export async function getRun(
   })) as Run;
 }
 
-export async function createRun(
-  run: Run,
-  ns: string = NAMESPACE,
-  client = custom(),
-): Promise<Run> {
+export async function createRun(run: Run, ns: string = NAMESPACE, client = custom()): Promise<Run> {
   return (await client.createNamespacedCustomObject({
     group: API_GROUP,
     version: API_VERSION,
@@ -172,10 +165,10 @@ export async function patchRunStatus(
   maxRetries = 3,
 ): Promise<Run> {
   const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
+  if (!token) throw new Error('No service account token available');
 
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
   const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_RUN}/${name}/status`;
 
   let lastErr: Error | undefined;
@@ -184,11 +177,11 @@ export async function patchRunStatus(
       await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
     }
     const res = await fetch(url, {
-      method: "PATCH",
+      method: 'PATCH',
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Type": "application/merge-patch+json",
-        Accept: "application/json",
+        'Content-Type': 'application/merge-patch+json',
+        Accept: 'application/json',
       },
       body: JSON.stringify({ status: statusPatch }),
       signal: AbortSignal.timeout(15_000),
@@ -211,18 +204,18 @@ export async function patchRunAnnotations(
   ns: string = NAMESPACE,
 ): Promise<Run> {
   const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
+  if (!token) throw new Error('No service account token available');
 
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
   const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_RUN}/${name}`;
 
   const res = await fetch(url, {
-    method: "PATCH",
+    method: 'PATCH',
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": "application/merge-patch+json",
-      Accept: "application/json",
+      'Content-Type': 'application/merge-patch+json',
+      Accept: 'application/json',
     },
     body: JSON.stringify({ metadata: { annotations } }),
     signal: AbortSignal.timeout(15_000),
@@ -235,9 +228,7 @@ export async function patchRunAnnotations(
 // ---------------------------------------------------------------------------
 // ClusterAgent helpers (cluster-scoped — no namespace)
 
-export async function listClusterAgents(
-  client = custom(),
-): Promise<ClusterAgent[]> {
+export async function listClusterAgents(client = custom()): Promise<ClusterAgent[]> {
   const res = (await client.listClusterCustomObject({
     group: API_GROUP,
     version: API_VERSION,
@@ -260,7 +251,7 @@ export interface CapabilityValidationFailure {
 export type CapabilityValidationResult = CapabilityValidationSuccess | CapabilityValidationFailure;
 
 export function requiredCapabilityForTaskType(taskType: TaskType): AgentCapability {
-  return taskType === "PLAN" ? "task.plan.execute" : "task.build.execute";
+  return taskType === 'PLAN' ? 'task.plan.execute' : 'task.build.execute';
 }
 
 export async function validateAgentTaskCapability(
@@ -276,7 +267,7 @@ export async function validateAgentTaskCapability(
     return {
       ok: false,
       requiredCapability,
-      error: `agent "${selectedAgent}" not in project roster: ${roster.join(", ") || "(empty)"}`,
+      error: `agent "${selectedAgent}" not in project roster: ${roster.join(', ') || '(empty)'}`,
     };
   }
 
@@ -305,10 +296,7 @@ export async function validateAgentTaskCapability(
   };
 }
 
-export async function getClusterAgent(
-  name: string,
-  client = custom(),
-): Promise<ClusterAgent> {
+export async function getClusterAgent(name: string, client = custom()): Promise<ClusterAgent> {
   return (await client.getClusterCustomObject({
     group: API_GROUP,
     version: API_VERSION,
@@ -331,7 +319,7 @@ export async function createClusterAgent(
 
 export async function updateClusterAgent(
   name: string,
-  spec: ClusterAgent["spec"],
+  spec: ClusterAgent['spec'],
   client = custom(),
 ): Promise<ClusterAgent> {
   const existing = await getClusterAgent(name, client);
@@ -349,10 +337,7 @@ export async function updateClusterAgent(
   })) as ClusterAgent;
 }
 
-export async function deleteClusterAgent(
-  name: string,
-  client = custom(),
-): Promise<void> {
+export async function deleteClusterAgent(name: string, client = custom()): Promise<void> {
   await client.deleteClusterCustomObject({
     group: API_GROUP,
     version: API_VERSION,
@@ -365,7 +350,7 @@ export async function deleteClusterAgent(
 // ClusterSettings helpers (cluster-scoped singleton — name is always "default")
 
 export async function getClusterSettings(
-  name = "default",
+  name = 'default',
   client = custom(),
 ): Promise<ClusterSettings> {
   return (await client.getClusterCustomObject({
@@ -378,7 +363,7 @@ export async function getClusterSettings(
 
 export async function updateClusterSettings(
   name: string,
-  spec: ClusterSettings["spec"],
+  spec: ClusterSettings['spec'],
   client = custom(),
 ): Promise<ClusterSettings> {
   const existing = await getClusterSettings(name, client).catch(() => null);
@@ -408,14 +393,20 @@ export async function updateClusterSettings(
 // ---------------------------------------------------------------------------
 // Project helpers
 
-export async function listProjects(
-  ns: string = NAMESPACE,
-  client = custom(),
-): Promise<Project[]> {
+export async function listProjects(ns: string = NAMESPACE, client = custom()): Promise<Project[]> {
   const res = (await client.listNamespacedCustomObject({
     group: API_GROUP,
     version: API_VERSION,
     namespace: ns,
+    plural: PLURAL_PROJECT,
+  })) as { items: Project[] };
+  return res.items ?? [];
+}
+
+export async function listAllProjects(client = custom()): Promise<Project[]> {
+  const res = (await client.listClusterCustomObject({
+    group: API_GROUP,
+    version: API_VERSION,
     plural: PLURAL_PROJECT,
   })) as { items: Project[] };
   return res.items ?? [];
@@ -451,7 +442,7 @@ export async function createProject(
 
 export async function updateProject(
   name: string,
-  spec: Project["spec"],
+  spec: Project['spec'],
   ns: string = NAMESPACE,
   client = custom(),
 ): Promise<Project> {
@@ -473,20 +464,20 @@ export async function updateProject(
 
 export async function patchProjectSpec(
   name: string,
-  specPatch: Partial<Project["spec"]>,
+  specPatch: Partial<Project['spec']>,
   ns: string = NAMESPACE,
 ): Promise<Project> {
   const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  if (!token) throw new Error('No service account token available');
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
   const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_PROJECT}/${name}`;
   const res = await fetch(url, {
-    method: "PATCH",
+    method: 'PATCH',
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": "application/merge-patch+json",
-      Accept: "application/json",
+      'Content-Type': 'application/merge-patch+json',
+      Accept: 'application/json',
     },
     body: JSON.stringify({ spec: specPatch }),
     signal: AbortSignal.timeout(15_000),
@@ -498,20 +489,20 @@ export async function patchProjectSpec(
 
 export async function patchProject(
   name: string,
-  patch: { metadata?: Partial<Project["metadata"]>; spec?: Partial<Project["spec"]> },
+  patch: { metadata?: Partial<Project['metadata']>; spec?: Partial<Project['spec']> },
   ns: string = NAMESPACE,
 ): Promise<Project> {
   const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  if (!token) throw new Error('No service account token available');
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
   const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_PROJECT}/${name}`;
   const res = await fetch(url, {
-    method: "PATCH",
+    method: 'PATCH',
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": "application/merge-patch+json",
-      Accept: "application/json",
+      'Content-Type': 'application/merge-patch+json',
+      Accept: 'application/json',
     },
     body: JSON.stringify(patch),
     signal: AbortSignal.timeout(15_000),
@@ -536,10 +527,10 @@ export async function patchProjectStatus(
   // still race if one is a full replace of the status object. We retry up to
   // maxRetries times with exponential back-off.
   const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
+  if (!token) throw new Error('No service account token available');
 
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
   const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_PROJECT}/${name}/status`;
 
   let lastErr: Error | undefined;
@@ -549,11 +540,11 @@ export async function patchProjectStatus(
       await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
     }
     const res = await fetch(url, {
-      method: "PATCH",
+      method: 'PATCH',
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Type": "application/merge-patch+json",
-        Accept: "application/json",
+        'Content-Type': 'application/merge-patch+json',
+        Accept: 'application/json',
       },
       body: JSON.stringify({ status: statusPatch }),
       signal: AbortSignal.timeout(15_000),
@@ -651,10 +642,10 @@ export async function patchTaskStatus(
   maxRetries = 3,
 ): Promise<Task> {
   const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
+  if (!token) throw new Error('No service account token available');
 
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
   const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_TASK}/${name}/status`;
 
   let lastErr: Error | undefined;
@@ -663,11 +654,11 @@ export async function patchTaskStatus(
       await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
     }
     const res = await fetch(url, {
-      method: "PATCH",
+      method: 'PATCH',
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Type": "application/merge-patch+json",
-        Accept: "application/json",
+        'Content-Type': 'application/merge-patch+json',
+        Accept: 'application/json',
       },
       body: JSON.stringify({ status: statusPatch }),
       signal: AbortSignal.timeout(15_000),
@@ -686,24 +677,24 @@ export async function patchTaskStatus(
 // Patch a Task (metadata + spec, not status).
 export async function patchTask(
   name: string,
-  patch: Partial<Pick<Task, "metadata" | "spec">>,
+  patch: Partial<Pick<Task, 'metadata' | 'spec'>>,
   ns: string = NAMESPACE,
   _client = custom(),
 ): Promise<Task> {
   // Use fetch directly for merge-patch since the client doesn't support custom headers well.
   const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
+  if (!token) throw new Error('No service account token available');
 
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
   const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_TASK}/${name}`;
 
   const res = await fetch(url, {
-    method: "PATCH",
+    method: 'PATCH',
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": "application/merge-patch+json",
-      Accept: "application/json",
+      'Content-Type': 'application/merge-patch+json',
+      Accept: 'application/json',
     },
     body: JSON.stringify(patch),
     signal: AbortSignal.timeout(15_000),
@@ -728,7 +719,7 @@ export function buildTask({
   projectName: string;
   projectUid: string;
   ns: string;
-  spec: Task["spec"];
+  spec: Task['spec'];
 }): Task {
   return {
     apiVersion: API_GROUP_VERSION,
@@ -738,7 +729,7 @@ export function buildTask({
       namespace: ns,
       labels: {
         [LABELS.projectName]: projectName,
-        [LABELS.component]: "task",
+        [LABELS.component]: 'task',
       },
       ownerReferences: [
         {
@@ -752,7 +743,7 @@ export function buildTask({
       ],
     },
     spec,
-    status: { phase: "pending" as const },
+    status: { phase: 'pending' as const },
   };
 }
 
@@ -771,13 +762,10 @@ export async function readPodLog(
     container,
     tailLines,
   });
-  return res ?? "";
+  return res ?? '';
 }
 
-export async function getPod(
-  name: string,
-  ns: string = NAMESPACE,
-): Promise<V1Pod> {
+export async function getPod(name: string, ns: string = NAMESPACE): Promise<V1Pod> {
   return await core().readNamespacedPod({ name, namespace: ns });
 }
 
@@ -785,7 +773,9 @@ export async function listPodsByLabels(
   labels: Record<string, string>,
   ns: string = NAMESPACE,
 ): Promise<V1Pod[]> {
-  const labelSelector = Object.entries(labels).map(([k, v]) => `${k}=${v}`).join(",");
+  const labelSelector = Object.entries(labels)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(',');
   const res = await core().listNamespacedPod({ namespace: ns, labelSelector });
   return res.items ?? [];
 }
@@ -793,27 +783,29 @@ export async function listPodsByLabels(
 export async function listPodEvents(
   podName: string,
   ns: string = NAMESPACE,
-): Promise<Array<{
-  type: string;
-  reason: string;
-  message: string;
-  count: number;
-  firstTimestamp: string;
-  lastTimestamp: string;
-  source: string;
-}>> {
+): Promise<
+  Array<{
+    type: string;
+    reason: string;
+    message: string;
+    count: number;
+    firstTimestamp: string;
+    lastTimestamp: string;
+    source: string;
+  }>
+> {
   const res = await core().listNamespacedEvent({
     namespace: ns,
     fieldSelector: `involvedObject.name=${podName}`,
   });
   return (res.items ?? []).map((e) => ({
-    type: e.type ?? "",
-    reason: e.reason ?? "",
-    message: e.message ?? "",
+    type: e.type ?? '',
+    reason: e.reason ?? '',
+    message: e.message ?? '',
     count: e.count ?? 1,
-    firstTimestamp: e.firstTimestamp?.toISOString() ?? "",
-    lastTimestamp: e.lastTimestamp?.toISOString() ?? "",
-    source: e.source ? `${e.source.component ?? ""}/${e.source.host ?? ""}` : "",
+    firstTimestamp: e.firstTimestamp?.toISOString() ?? '',
+    lastTimestamp: e.lastTimestamp?.toISOString() ?? '',
+    source: e.source ? `${e.source.component ?? ''}/${e.source.host ?? ''}` : '',
   }));
 }
 
@@ -833,13 +825,17 @@ async function readJsonWithLimit(res: Response, maxBytes: number): Promise<unkno
     if (!value) continue;
     total += value.byteLength;
     if (total > maxBytes) {
-      try { await reader.cancel(); } catch { /* ignore */ }
+      try {
+        await reader.cancel();
+      } catch {
+        /* ignore */
+      }
       throw new Error(`OpenCode session response too large (${total} bytes)`);
     }
     chunks.push(value);
   }
 
-  const body = Buffer.concat(chunks, total).toString("utf8");
+  const body = Buffer.concat(chunks, total).toString('utf8');
   return JSON.parse(body) as unknown;
 }
 
@@ -852,16 +848,16 @@ export async function fetchSessionMessages(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   const res = await fetch(url, {
-    headers: { Accept: "application/json" },
+    headers: { Accept: 'application/json' },
     signal: controller.signal,
   });
 
   try {
     if (!res.ok) {
-      throw new Error(`OpenCode API ${res.status}: ${await res.text().catch(() => "")}`);
+      throw new Error(`OpenCode API ${res.status}: ${await res.text().catch(() => '')}`);
     }
 
-    const contentLength = Number(res.headers.get("content-length") ?? "0");
+    const contentLength = Number(res.headers.get('content-length') ?? '0');
     if (contentLength > 20_000_000) {
       throw new Error(`OpenCode session response too large (${contentLength} bytes)`);
     }
@@ -880,29 +876,30 @@ export async function postSessionMessage(
 ): Promise<void> {
   const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session/${sessionID}/message`;
   const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ parts: [{ type: "text", text }] }),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parts: [{ type: 'text', text }] }),
     signal: AbortSignal.timeout(10_000),
   });
-  if (!res.ok) throw new Error(`OpenCode API ${res.status}: ${await res.text().catch(() => "")}`);
+  if (!res.ok) throw new Error(`OpenCode API ${res.status}: ${await res.text().catch(() => '')}`);
 }
 
 export async function postPermissionReply(
   serviceName: string,
   sessionID: string,
   permissionID: string,
-  response: "once" | "always" | "reject",
+  response: 'once' | 'always' | 'reject',
   ns: string = NAMESPACE,
 ): Promise<void> {
   const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session/${sessionID}/permissions/${permissionID}`;
   const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ response }),
     signal: AbortSignal.timeout(10_000),
   });
-  if (!res.ok) throw new Error(`OpenCode permission API ${res.status}: ${await res.text().catch(() => "")}`);
+  if (!res.ok)
+    throw new Error(`OpenCode permission API ${res.status}: ${await res.text().catch(() => '')}`);
 }
 
 // Fetch all sessions and their messages from a live run pod.
@@ -913,16 +910,20 @@ export async function fetchAllSessionMessages(
 ): Promise<{ sessions: Array<{ id: string; messages: unknown[] }>; allMessages: unknown[] }> {
   const listUrl = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session`;
   const listRes = await fetch(listUrl, {
-    headers: { Accept: "application/json" },
+    headers: { Accept: 'application/json' },
     signal: AbortSignal.timeout(10_000),
   });
   if (!listRes.ok) {
-    throw new Error(`OpenCode session list API ${listRes.status}: ${await listRes.text().catch(() => "")}`);
+    throw new Error(
+      `OpenCode session list API ${listRes.status}: ${await listRes.text().catch(() => '')}`,
+    );
   }
   const listData = (await listRes.json()) as unknown;
   const sessionList: Array<{ id: string }> = Array.isArray(listData)
     ? listData
-    : ((listData as Record<string, unknown>).items ?? (listData as Record<string, unknown>).sessions ?? []) as Array<{ id: string }>;
+    : (((listData as Record<string, unknown>).items ??
+        (listData as Record<string, unknown>).sessions ??
+        []) as Array<{ id: string }>);
 
   const sessions: Array<{ id: string; messages: unknown[] }> = [];
   const allMessages: unknown[] = [];
@@ -931,14 +932,14 @@ export async function fetchAllSessionMessages(
     try {
       const msgUrl = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session/${session.id}/message`;
       const msgRes = await fetch(msgUrl, {
-        headers: { Accept: "application/json" },
+        headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(10_000),
       });
       if (!msgRes.ok) continue;
       const msgData = (await msgRes.json()) as unknown;
       const messages: unknown[] = Array.isArray(msgData)
         ? msgData
-        : ((msgData as Record<string, unknown>).items ?? []) as unknown[];
+        : (((msgData as Record<string, unknown>).items ?? []) as unknown[]);
       sessions.push({ id: session.id, messages });
       allMessages.push(...messages);
     } catch {
@@ -960,7 +961,7 @@ export async function readSessionConfigMap(
       name: `${runName}-session`,
       namespace: ns,
     });
-    const sessionsRaw = cm.data?.["sessions.json"];
+    const sessionsRaw = cm.data?.['sessions.json'];
     if (!sessionsRaw) return null;
     const sessions: string[] = JSON.parse(sessionsRaw);
     if (!sessions.includes(sessionID)) return null;
@@ -968,10 +969,14 @@ export async function readSessionConfigMap(
     if (!raw) return null;
     return {
       messages: JSON.parse(raw),
-      truncated: cm.data?.[`truncated-${sessionID}`] === "true",
+      truncated: cm.data?.[`truncated-${sessionID}`] === 'true',
     };
   } catch (e: unknown) {
-    if (((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) === 404) return null;
+    if (
+      ((e as { statusCode?: number; code?: number }).statusCode ??
+        (e as { code?: number }).code) === 404
+    )
+      return null;
     throw e;
   }
 }
@@ -981,13 +986,16 @@ export async function readSessionConfigMap(
 export async function readAllSessionsFromConfigMap(
   runName: string,
   ns: string = NAMESPACE,
-): Promise<{ sessions: Array<{ id: string; messages: unknown[]; truncated: boolean }>; allMessages: unknown[] } | null> {
+): Promise<{
+  sessions: Array<{ id: string; messages: unknown[]; truncated: boolean }>;
+  allMessages: unknown[];
+} | null> {
   try {
     const cm = await core().readNamespacedConfigMap({
       name: `${runName}-session`,
       namespace: ns,
     });
-    const sessionsRaw = cm.data?.["sessions.json"];
+    const sessionsRaw = cm.data?.['sessions.json'];
     if (!sessionsRaw) return null;
     const sessionIDs: string[] = JSON.parse(sessionsRaw);
 
@@ -998,14 +1006,18 @@ export async function readAllSessionsFromConfigMap(
       const raw = cm.data?.[`messages-${sessionID}.json`];
       if (!raw) continue;
       const messages: unknown[] = JSON.parse(raw);
-      const truncated = cm.data?.[`truncated-${sessionID}`] === "true";
+      const truncated = cm.data?.[`truncated-${sessionID}`] === 'true';
       sessions.push({ id: sessionID, messages, truncated });
       allMessages.push(...messages);
     }
 
     return { sessions, allMessages };
   } catch (e: unknown) {
-    if (((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) === 404) return null;
+    if (
+      ((e as { statusCode?: number; code?: number }).statusCode ??
+        (e as { code?: number }).code) === 404
+    )
+      return null;
     throw e;
   }
 }
@@ -1019,20 +1031,29 @@ const CONFIGMAP_SIZE_WARN = 900 * 1024; // 900 KB soft limit warning
 export async function getPlansConfigMap(
   projectName: string,
   ns: string = NAMESPACE,
-): Promise<{ apiVersion: string; kind: string; metadata: Record<string, unknown>; data?: Record<string, string> } | null> {
+): Promise<{
+  apiVersion: string;
+  kind: string;
+  metadata: Record<string, unknown>;
+  data?: Record<string, string>;
+} | null> {
   try {
     const cm = await core().readNamespacedConfigMap({
       name: `${projectName}-plans`,
       namespace: ns,
     });
     return {
-      apiVersion: cm.apiVersion ?? "v1",
-      kind: cm.kind ?? "ConfigMap",
+      apiVersion: cm.apiVersion ?? 'v1',
+      kind: cm.kind ?? 'ConfigMap',
       metadata: cm.metadata as unknown as Record<string, unknown>,
       data: cm.data,
     };
   } catch (e: unknown) {
-    if (((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) === 404) return null;
+    if (
+      ((e as { statusCode?: number; code?: number }).statusCode ??
+        (e as { code?: number }).code) === 404
+    )
+      return null;
     throw e;
   }
 }
@@ -1049,14 +1070,14 @@ export async function writePlanToConfigMap(
 
   if (!existing) {
     existing = {
-      apiVersion: "v1",
-      kind: "ConfigMap",
+      apiVersion: 'v1',
+      kind: 'ConfigMap',
       metadata: {
         name: cmName,
         namespace: ns,
         labels: {
           [LABELS.projectName]: projectName,
-          "percussionist.dev/component": "plans",
+          'percussionist.dev/component': 'plans',
         },
       },
       data: {},
@@ -1064,7 +1085,10 @@ export async function writePlanToConfigMap(
   }
 
   const newData = { ...existing.data, [key]: content };
-  const totalSize = Object.values(newData).reduce((sum, v) => sum + Buffer.byteLength(v, "utf8"), 0);
+  const totalSize = Object.values(newData).reduce(
+    (sum, v) => sum + Buffer.byteLength(v, 'utf8'),
+    0,
+  );
   let warning: string | undefined;
   if (totalSize > CONFIGMAP_SIZE_WARN) {
     warning = `ConfigMap data size (${Math.round(totalSize / 1024)}KB) approaching 1MB limit. Consider removing old plans.`;
@@ -1075,8 +1099,8 @@ export async function writePlanToConfigMap(
     await core().createNamespacedConfigMap({
       namespace: ns,
       body: {
-        apiVersion: "v1",
-        kind: "ConfigMap",
+        apiVersion: 'v1',
+        kind: 'ConfigMap',
         metadata: existing.metadata as any,
         data: newData,
       },
@@ -1087,8 +1111,8 @@ export async function writePlanToConfigMap(
       name: cmName,
       namespace: ns,
       body: {
-        apiVersion: "v1",
-        kind: "ConfigMap",
+        apiVersion: 'v1',
+        kind: 'ConfigMap',
         metadata: {
           ...existing.metadata,
         } as any,
@@ -1097,7 +1121,7 @@ export async function writePlanToConfigMap(
     });
   }
 
-  return { written: true, sizeBytes: Buffer.byteLength(content, "utf8"), warning };
+  return { written: true, sizeBytes: Buffer.byteLength(content, 'utf8'), warning };
 }
 
 export async function readPlanFromConfigMap(
@@ -1119,13 +1143,13 @@ export function gitUrlHash(url: string): string {
   for (let i = 0; i < url.length; i++) {
     h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
   }
-  return h.toString(16).padStart(8, "0");
+  return h.toString(16).padStart(8, '0');
 }
 
 // Render utilities
 
 export function padCols(rows: string[][]): string {
-  if (rows.length === 0) return "";
+  if (rows.length === 0) return '';
   const widths: number[] = [];
   for (const row of rows) {
     row.forEach((cell, i) => {
@@ -1135,18 +1159,16 @@ export function padCols(rows: string[][]): string {
   return rows
     .map((row) =>
       row
-        .map((cell, i) =>
-          i === row.length - 1 ? cell : cell.padEnd((widths[i] ?? 0) + 2),
-        )
-        .join(""),
+        .map((cell, i) => (i === row.length - 1 ? cell : cell.padEnd((widths[i] ?? 0) + 2)))
+        .join(''),
     )
-    .join("\n");
+    .join('\n');
 }
 
 export function age(iso: string | undefined): string {
-  if (!iso) return "-";
+  if (!iso) return '-';
   const ms = Date.now() - new Date(iso).getTime();
-  if (Number.isNaN(ms) || ms < 0) return "-";
+  if (Number.isNaN(ms) || ms < 0) return '-';
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
@@ -1218,20 +1240,21 @@ export async function listNodeHostStats(nodeName: string): Promise<NodeHostStats
   if (cached && Date.now() - cached.ts < KUBELET_CACHE_TTL) return cached.data;
 
   const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
+  if (!token) throw new Error('No service account token available');
 
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
   const url = `https://${host}:${port}/api/v1/nodes/${encodeURIComponent(nodeName)}/proxy/stats/summary`;
 
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
-      Accept: "application/json",
+      Accept: 'application/json',
     },
     signal: AbortSignal.timeout(10_000),
   });
-  if (!res.ok) throw new Error(`kubelet summary ${res.status}: ${await res.text().catch(() => "")}`);
+  if (!res.ok)
+    throw new Error(`kubelet summary ${res.status}: ${await res.text().catch(() => '')}`);
 
   type SummaryResponse = {
     node: {
@@ -1246,11 +1269,13 @@ export async function listNodeHostStats(nodeName: string): Promise<NodeHostStats
     hostMemoryBytes: body.node.memory.usageBytes,
     hostCpuNanoCores: body.node.cpu.usageNanoCores,
     // Populate filesystem fields defensively — kubelet may omit fs data on some runtimes.
-    ...(body.node.fs ? {
-      hostFsUsedBytes: body.node.fs.usedBytes ?? null,
-      hostFsCapacityBytes: body.node.fs.capacityBytes ?? null,
-      hostFsAvailableBytes: body.node.fs.availableBytes ?? null,
-    } : {}),
+    ...(body.node.fs
+      ? {
+          hostFsUsedBytes: body.node.fs.usedBytes ?? null,
+          hostFsCapacityBytes: body.node.fs.capacityBytes ?? null,
+          hostFsAvailableBytes: body.node.fs.availableBytes ?? null,
+        }
+      : {}),
   };
   kubeletSummaryCache.set(nodeName, { data: result, ts: Date.now() });
   return result;
@@ -1259,21 +1284,27 @@ export async function listNodeHostStats(nodeName: string): Promise<NodeHostStats
 /** Fetch node capacity (allocatable + total capacity CPU/memory) from the core API. */
 export async function listNodeCapacities(): Promise<NodeCapacityTotal[]> {
   const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
+  if (!token) throw new Error('No service account token available');
 
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
   const url = `https://${host}:${port}/api/v1/nodes`;
 
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
-      Accept: "application/json",
+      Accept: 'application/json',
     },
     signal: AbortSignal.timeout(10_000),
   });
-  if (!res.ok) throw new Error(`node API ${res.status}: ${await res.text().catch(() => "")}`);
-  type NodeItem = { metadata: { name: string }; status: { allocatable: { cpu: string; memory: string }; capacity: { cpu: string; memory: string } } };
+  if (!res.ok) throw new Error(`node API ${res.status}: ${await res.text().catch(() => '')}`);
+  type NodeItem = {
+    metadata: { name: string };
+    status: {
+      allocatable: { cpu: string; memory: string };
+      capacity: { cpu: string; memory: string };
+    };
+  };
   const body = (await res.json()) as { items: NodeItem[] };
   return (body.items ?? []).map((item) => ({
     name: item.metadata.name,
@@ -1286,21 +1317,28 @@ export async function listNodeCapacities(): Promise<NodeCapacityTotal[]> {
 
 export async function listNodeMetrics(): Promise<NodeMetric[]> {
   const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
+  if (!token) throw new Error('No service account token available');
 
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
   const url = `https://${host}:${port}/apis/metrics.k8s.io/v1beta1/nodes`;
 
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
-      Accept: "application/json",
+      Accept: 'application/json',
     },
     signal: AbortSignal.timeout(10_000),
   });
-  if (!res.ok) throw new Error(`metrics API ${res.status}: ${await res.text().catch(() => "")}`);
-  const body = (await res.json()) as { items?: Array<{ metadata: { name: string }; timestamp: string; window: string; usage: { cpu: string; memory: string } }> };
+  if (!res.ok) throw new Error(`metrics API ${res.status}: ${await res.text().catch(() => '')}`);
+  const body = (await res.json()) as {
+    items?: Array<{
+      metadata: { name: string };
+      timestamp: string;
+      window: string;
+      usage: { cpu: string; memory: string };
+    }>;
+  };
   return (body.items ?? []).map((item) => ({
     name: item.metadata.name,
     timestamp: item.timestamp,
@@ -1311,21 +1349,28 @@ export async function listNodeMetrics(): Promise<NodeMetric[]> {
 
 export async function listPodMetrics(ns: string = NAMESPACE): Promise<PodMetric[]> {
   const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
+  if (!token) throw new Error('No service account token available');
 
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
   const url = `https://${host}:${port}/apis/metrics.k8s.io/v1beta1/namespaces/${ns}/pods`;
 
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
-      Accept: "application/json",
+      Accept: 'application/json',
     },
     signal: AbortSignal.timeout(10_000),
   });
-  if (!res.ok) throw new Error(`metrics API ${res.status}: ${await res.text().catch(() => "")}`);
-  const body = (await res.json()) as { items?: Array<{ metadata: { name: string; namespace: string }; timestamp: string; window: string; containers: Array<{ name: string; usage: { cpu: string; memory: string } }> }> };
+  if (!res.ok) throw new Error(`metrics API ${res.status}: ${await res.text().catch(() => '')}`);
+  const body = (await res.json()) as {
+    items?: Array<{
+      metadata: { name: string; namespace: string };
+      timestamp: string;
+      window: string;
+      containers: Array<{ name: string; usage: { cpu: string; memory: string } }>;
+    }>;
+  };
   return (body.items ?? []).map((item) => ({
     name: item.metadata.name,
     namespace: item.metadata.namespace,
@@ -1356,9 +1401,9 @@ export interface PodResourceSpec {
 
 function parseCpuRaw(raw: string): number {
   const n = parseInt(raw, 10);
-  if (raw.endsWith("n")) return Math.round(n / 1_000_000);
-  if (raw.endsWith("u")) return Math.round(n / 1_000);
-  if (raw.endsWith("m")) return n;
+  if (raw.endsWith('n')) return Math.round(n / 1_000_000);
+  if (raw.endsWith('u')) return Math.round(n / 1_000);
+  if (raw.endsWith('m')) return n;
   return Math.round(n * 1000);
 }
 
@@ -1382,27 +1427,30 @@ function addMemory(a: string, b: string): string {
 /** Fetch pod specs from the core API and extract container resource requests/limits. */
 export async function listPodResources(ns: string = NAMESPACE): Promise<PodResourceSpec[]> {
   const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error("No service account token available");
+  if (!token) throw new Error('No service account token available');
 
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? "kubernetes.default.svc";
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
   const url = `https://${host}:${port}/api/v1/namespaces/${ns}/pods`;
 
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
-      Accept: "application/json",
+      Accept: 'application/json',
     },
     signal: AbortSignal.timeout(15_000),
   });
-  if (!res.ok) throw new Error(`pods API ${res.status}: ${await res.text().catch(() => "")}`);
+  if (!res.ok) throw new Error(`pods API ${res.status}: ${await res.text().catch(() => '')}`);
   type PodItem = {
     metadata: { name: string };
     spec: {
       nodeName: string;
       containers: Array<{
         name: string;
-        resources?: { requests?: { cpu?: string; memory?: string; 'ephemeral-storage'?: string }; limits?: { cpu?: string; memory?: string; 'ephemeral-storage'?: string } };
+        resources?: {
+          requests?: { cpu?: string; memory?: string; 'ephemeral-storage'?: string };
+          limits?: { cpu?: string; memory?: string; 'ephemeral-storage'?: string };
+        };
       }>;
     };
   };
@@ -1413,21 +1461,37 @@ export async function listPodResources(ns: string = NAMESPACE): Promise<PodResou
       const lim = c.resources?.limits;
       return {
         name: c.name,
-        requests: { cpu: req?.cpu ?? "0", memory: req?.memory ?? "0", storage: req?.['ephemeral-storage'] },
-        limits: { cpu: lim?.cpu ?? "0", memory: lim?.memory ?? "0", storage: lim?.['ephemeral-storage'] },
+        requests: {
+          cpu: req?.cpu ?? '0',
+          memory: req?.memory ?? '0',
+          storage: req?.['ephemeral-storage'],
+        },
+        limits: {
+          cpu: lim?.cpu ?? '0',
+          memory: lim?.memory ?? '0',
+          storage: lim?.['ephemeral-storage'],
+        },
       };
     });
     const podRequests = containers.reduce(
-      (acc, c) => ({ cpu: addCpu(acc.cpu, c.requests.cpu), memory: addMemory(acc.memory, c.requests.memory), storage: acc.storage || c.requests.storage }),
-      { cpu: "0", memory: "0" } as { cpu: string; memory: string; storage?: string },
+      (acc, c) => ({
+        cpu: addCpu(acc.cpu, c.requests.cpu),
+        memory: addMemory(acc.memory, c.requests.memory),
+        storage: acc.storage || c.requests.storage,
+      }),
+      { cpu: '0', memory: '0' } as { cpu: string; memory: string; storage?: string },
     );
     const podLimits = containers.reduce(
-      (acc, c) => ({ cpu: addCpu(acc.cpu, c.limits.cpu), memory: addMemory(acc.memory, c.limits.memory), storage: acc.storage || c.limits.storage }),
-      { cpu: "0", memory: "0" } as { cpu: string; memory: string; storage?: string },
+      (acc, c) => ({
+        cpu: addCpu(acc.cpu, c.limits.cpu),
+        memory: addMemory(acc.memory, c.limits.memory),
+        storage: acc.storage || c.limits.storage,
+      }),
+      { cpu: '0', memory: '0' } as { cpu: string; memory: string; storage?: string },
     );
     return {
       name: pod.metadata.name,
-      nodeName: pod.spec?.nodeName ?? "",
+      nodeName: pod.spec?.nodeName ?? '',
       containers,
       podRequests,
       podLimits,
@@ -1463,48 +1527,48 @@ export interface WorkspaceExecResult {
 export async function execInWorkspace(
   projectName: string,
   command: string,
-  mountPath = "/data",
+  mountPath = '/data',
   timeoutMs = 120_000,
   ns: string = NAMESPACE,
 ): Promise<WorkspaceExecResult> {
-  const podName = `ws-exec-${projectName}-${Date.now()}`.slice(0, 63).replace(/[^a-z0-9-]/g, "-");
+  const podName = `ws-exec-${projectName}-${Date.now()}`.slice(0, 63).replace(/[^a-z0-9-]/g, '-');
 
   // Resolve project-level overrides (image + PVC name) with safe fallbacks.
-  let execImage = "alpine:3.20";
+  let execImage = 'alpine/git:v2.54.0';
   let pvcName = `${projectName}-data`;
   try {
     const project = await getProject(projectName, ns);
-    execImage = project.spec.exec?.image ?? "alpine:3.20";
+    execImage = project.spec.exec?.image ?? 'alpine/git:v2.54.0';
     pvcName = project.spec.data?.pvcName ?? `${projectName}-data`;
   } catch {
     // Project not found or inaccessible — use defaults (backward compatible).
   }
 
   const pod: V1Pod = {
-    apiVersion: "v1",
-    kind: "Pod",
+    apiVersion: 'v1',
+    kind: 'Pod',
     metadata: {
       name: podName,
       namespace: ns,
       labels: {
-        "app.kubernetes.io/managed-by": "percussionist",
-        "percussionist.dev/component": "ws-exec",
-        "percussionist.dev/project": projectName,
+        'app.kubernetes.io/managed-by': 'percussionist',
+        'percussionist.dev/component': 'ws-exec',
+        'percussionist.dev/project': projectName,
       },
     },
     spec: {
-      restartPolicy: "Never",
+      restartPolicy: 'Never',
       containers: [
         {
-          name: "exec",
+          name: 'exec',
           image: execImage,
-          command: ["/bin/sh", "-c", command],
-          volumeMounts: [{ name: "data", mountPath }],
+          command: ['/bin/sh', '-c', command],
+          volumeMounts: [{ name: 'data', mountPath }],
         },
       ],
       volumes: [
         {
-          name: "data",
+          name: 'data',
           persistentVolumeClaim: { claimName: pvcName },
         },
       ],
@@ -1516,7 +1580,7 @@ export async function execInWorkspace(
   // Poll until the pod reaches a terminal phase or timeout
   const deadline = Date.now() + timeoutMs;
   let exitCode: number | null = null;
-  let finalPhase = "Unknown";
+  let finalPhase = 'Unknown';
 
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 2_000));
@@ -1526,25 +1590,32 @@ export async function execInWorkspace(
     } catch {
       break;
     }
-    finalPhase = podStatus.status?.phase ?? "Unknown";
-    if (finalPhase === "Succeeded" || finalPhase === "Failed") {
-      exitCode =
-        podStatus.status?.containerStatuses?.[0]?.state?.terminated?.exitCode ?? null;
+    finalPhase = podStatus.status?.phase ?? 'Unknown';
+    if (finalPhase === 'Succeeded' || finalPhase === 'Failed') {
+      exitCode = podStatus.status?.containerStatuses?.[0]?.state?.terminated?.exitCode ?? null;
       break;
     }
   }
 
   // Collect logs before deletion (best-effort)
-  let stdout = "";
+  let stdout = '';
   try {
-    const logRes = await core().readNamespacedPodLog({ name: podName, namespace: ns, container: "exec" });
-    stdout = typeof logRes === "string" ? logRes : JSON.stringify(logRes);
+    const logRes = await core().readNamespacedPodLog({
+      name: podName,
+      namespace: ns,
+      container: 'exec',
+    });
+    stdout = typeof logRes === 'string' ? logRes : JSON.stringify(logRes);
   } catch {
     stdout = `(logs unavailable — pod phase: ${finalPhase})`;
   }
 
   // Delete the pod (best-effort)
-  core().deleteNamespacedPod({ name: podName, namespace: ns }).catch(() => { /* ignore */ });
+  core()
+    .deleteNamespacedPod({ name: podName, namespace: ns })
+    .catch(() => {
+      /* ignore */
+    });
 
   return { stdout, exitCode, podName };
 }
@@ -1575,14 +1646,14 @@ export async function getDeploymentImages(
     deploymentNames.map(async (name) => {
       try {
         const res = await apps().readNamespacedDeployment({ name, namespace });
-        const image = res.spec?.template?.spec?.containers?.[0]?.image ?? "";
+        const image = res.spec?.template?.spec?.containers?.[0]?.image ?? '';
         if (!image) return;
-        const colonIdx = image.lastIndexOf(":");
-        const tag = colonIdx >= 0 ? image.slice(colonIdx + 1) : "latest";
+        const colonIdx = image.lastIndexOf(':');
+        const tag = colonIdx >= 0 ? image.slice(colonIdx + 1) : 'latest';
         // Strip the last path segment (component name) to get the registry prefix
         // e.g. "ghcr.io/erkkaha/percussionist/operator" → "ghcr.io/erkkaha/percussionist"
         const imageWithoutTag = colonIdx >= 0 ? image.slice(0, colonIdx) : image;
-        const slashIdx = imageWithoutTag.lastIndexOf("/");
+        const slashIdx = imageWithoutTag.lastIndexOf('/');
         const registryPrefix = slashIdx >= 0 ? imageWithoutTag.slice(0, slashIdx) : imageWithoutTag;
         results[name] = { image, tag, registryPrefix };
       } catch {
@@ -1601,15 +1672,18 @@ export async function getDispatcherImageFromOperatorDeployment(
   namespace: string,
 ): Promise<DeploymentImageInfo | null> {
   try {
-    const res = await apps().readNamespacedDeployment({ name: "percussionist-operator", namespace });
+    const res = await apps().readNamespacedDeployment({
+      name: 'percussionist-operator',
+      namespace,
+    });
     const env = res.spec?.template?.spec?.containers?.[0]?.env ?? [];
-    const dispatcherEnv = env.find((e) => e.name === "DISPATCHER_IMAGE");
-    const image = dispatcherEnv?.value ?? "";
+    const dispatcherEnv = env.find((e) => e.name === 'DISPATCHER_IMAGE');
+    const image = dispatcherEnv?.value ?? '';
     if (!image) return null;
-    const colonIdx = image.lastIndexOf(":");
-    const tag = colonIdx >= 0 ? image.slice(colonIdx + 1) : "latest";
+    const colonIdx = image.lastIndexOf(':');
+    const tag = colonIdx >= 0 ? image.slice(colonIdx + 1) : 'latest';
     const imageWithoutTag = colonIdx >= 0 ? image.slice(0, colonIdx) : image;
-    const slashIdx = imageWithoutTag.lastIndexOf("/");
+    const slashIdx = imageWithoutTag.lastIndexOf('/');
     const registryPrefix = slashIdx >= 0 ? imageWithoutTag.slice(0, slashIdx) : imageWithoutTag;
     return { image, tag, registryPrefix };
   } catch {
@@ -1622,10 +1696,7 @@ export async function getDispatcherImageFromOperatorDeployment(
 
 function readServiceAccountToken(): string | undefined {
   try {
-    return fs.readFileSync(
-      "/var/run/secrets/kubernetes.io/serviceaccount/token",
-      "utf8",
-    ).trim();
+    return fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8').trim();
   } catch {
     return undefined;
   }

@@ -416,4 +416,48 @@ describe('GET /api/projects/:project/tasks/:taskName/diff', () => {
     expect(body.findings.length).toBe(1);
     expect(body.findings[0].id).toBe('f4');
   });
+
+  it('detects __PERCUSSIONIST_ERROR__ after preceding output like fetch failure', async () => {
+    getTaskSpy.mockResolvedValue(makeTask());
+
+    fetchSpy.mockImplementation(() =>
+      Promise.resolve(
+        makeMcpResponse(
+          '[diff] fetch failed, using stale mirror\n__PERCUSSIONIST_ERROR__ base_missing feature/test',
+        ),
+      ),
+    );
+
+    const res = await getDiff();
+    expect(res.status).toBe(404);
+
+    const body = (await res.json()) as {
+      reason: string;
+      empty: boolean;
+    };
+
+    expect(body.reason).toBe('base_missing feature/test');
+    expect(body.empty).toBe(true);
+  });
+
+  it('includes RESOLVE function and origin/ ref resolution in the command', async () => {
+    getTaskSpy.mockResolvedValue(makeTask());
+
+    let capturedCommand = '';
+    fetchSpy.mockImplementation((url: URL | string, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as {
+        params?: { arguments?: { command?: string } };
+      };
+      capturedCommand = body.params?.arguments?.command ?? '';
+      return Promise.resolve(makeMcpResponse(makeGitOutput(SAMPLE_DIFF)));
+    });
+
+    const res = await getDiff();
+    expect(res.status).toBe(200);
+
+    expect(capturedCommand).toContain('RESOLVE()');
+    expect(capturedCommand).toContain('origin/$1^{commit}');
+    expect(capturedCommand).toContain('BASE_REF=$(RESOLVE');
+    expect(capturedCommand).toContain('HEAD_REF=$(RESOLVE');
+  });
 });

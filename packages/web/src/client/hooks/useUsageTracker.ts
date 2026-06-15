@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
+import { categorizeUsageRoute } from '../lib/usage-categorization';
 import { isGloballyLocked, onGlobalLockChange, setGloballyLocked } from '../lib/usage-lock-state';
 import {
-  type Category,
   fetchUsageToday,
   getTodayKey,
   readTodayUsage,
@@ -47,7 +47,6 @@ export function parseRouteUsage(path: string): RouteUsage {
 
   return { category: 'other' };
 }
-
 function cleanupOldKeys() {
   const todayKey = getTodayKey();
   for (let i = 0; i < localStorage.length; i++) {

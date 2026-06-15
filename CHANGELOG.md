@@ -1,6 +1,36 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.183] - 2026-06-15
+
+### <!-- 0 -->🚀 Features
+
+- Add active usage category indicator dot _(web)_
+- Add runner package form state plumbing _(web)_
+- Add runner packages field to execution tab _(web)_
+- Add pure agent capability audit engine _(cli)_
+- Wire validate agents command and cluster project listing _(cli)_
+- Improve validate agents report UX and exit behavior _(cli)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Pause usage tracker intervals when lock is active _(web)_
+- Scale usage bar width to pctOfMax instead of full width _(web)_
+
+### <!-- 2 -->🚜 Refactor
+
+- Extract shared usage categorization constants _(web)_
+- Dedupe usage lock overlay category colors _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add sidebar usage indicator plan _(plan)_
+- Add runner packages execution settings plan _(plan)_
+- Add validate agents capability audit plan _(plan)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Polish runner packages helper copy _(web)_
 ## [v0.1.182] - 2026-06-14
 
 ### <!-- 0 -->🚀 Features
@@ -28,6 +58,7 @@ All notable changes to Percussionist are documented here.
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Add yaml 1.1 version to codegen and update crds
+- Release v0.1.182
 ## [v0.1.181] - 2026-06-14
 
 ### <!-- 1 -->🐛 Bug Fixes

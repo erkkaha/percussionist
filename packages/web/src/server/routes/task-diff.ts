@@ -178,7 +178,6 @@ async function execInWorkspaceViaManager(
         mountPath: '/data',
         timeoutSeconds: Math.ceil(timeoutMs / 1000),
         namespace: NAMESPACE,
-        skipSanitization: true,
       },
     },
   };
@@ -302,31 +301,33 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
     }
 
     const cmd = [
-      'apk add --no-cache git >/dev/null 2>&1',
       `REPO=${quoteSh(repoPath)}`,
       `BASE=${quoteSh(baseRef)}`,
       `HEAD=${quoteSh(headRef)}`,
       'if [ ! -d "$REPO" ]; then printf \'__PERCUSSIONIST_ERROR__ repo_not_found %s\\n\' "$REPO"; exit 0; fi',
-      'git -C "$REPO" fetch origin "$BASE" "$HEAD" 2>/dev/null || echo "[diff] fetch failed, using stale mirror"',
-      'if ! git -C "$REPO" rev-parse --verify "$BASE^{commit}" >/dev/null 2>&1; then printf \'__PERCUSSIONIST_ERROR__ base_missing %s\\n\' "$BASE"; exit 0; fi',
-      'if ! git -C "$REPO" rev-parse --verify "$HEAD^{commit}" >/dev/null 2>&1; then printf \'__PERCUSSIONIST_ERROR__ head_missing %s\\n\' "$HEAD"; exit 0; fi',
-      'FORK=$(git -C "$REPO" merge-base "$BASE" "$HEAD" 2>/dev/null)',
-      'if git -C "$REPO" merge-base --is-ancestor "$HEAD" "$BASE" 2>/dev/null; then',
-      '  MERGE=$(git -C "$REPO" rev-list --merges --ancestry-path "$HEAD".."$BASE" 2>/dev/null | tail -1)',
+      'git -C "$REPO" fetch origin "+refs/heads/*:refs/remotes/origin/*" --prune 2>/dev/null || echo "[diff] fetch failed, using stale mirror"',
+      'RESOLVE() { if git -C "$REPO" rev-parse --verify "origin/$1^{commit}" >/dev/null 2>&1; then printf "origin/%s" "$1"; elif git -C "$REPO" rev-parse --verify "$1^{commit}" >/dev/null 2>&1; then printf "%s" "$1"; fi; }',
+      'BASE_REF=$(RESOLVE "$BASE")',
+      'HEAD_REF=$(RESOLVE "$HEAD")',
+      'if [ -z "$BASE_REF" ]; then printf \'__PERCUSSIONIST_ERROR__ base_missing %s\\n\' "$BASE"; exit 0; fi',
+      'if [ -z "$HEAD_REF" ]; then printf \'__PERCUSSIONIST_ERROR__ head_missing %s\\n\' "$HEAD"; exit 0; fi',
+      'FORK=$(git -C "$REPO" merge-base "$BASE_REF" "$HEAD_REF" 2>/dev/null)',
+      'if git -C "$REPO" merge-base --is-ancestor "$HEAD_REF" "$BASE_REF" 2>/dev/null; then',
+      '  MERGE=$(git -C "$REPO" rev-list --merges --ancestry-path "$HEAD_REF".."$BASE_REF" 2>/dev/null | tail -1)',
       '  if [ -n "$MERGE" ]; then',
       '    for PARENT in $(git -C "$REPO" rev-parse "$MERGE^@" 2>/dev/null); do',
-      '      if ! git -C "$REPO" merge-base --is-ancestor "$HEAD" "$PARENT" 2>/dev/null; then FORK="$PARENT"; break; fi',
+      '      if ! git -C "$REPO" merge-base --is-ancestor "$HEAD_REF" "$PARENT" 2>/dev/null; then FORK="$PARENT"; break; fi',
       '    done',
       '  fi',
       'fi',
       'echo "___META___"',
-      'printf "BASE_SHA="; git -C "$REPO" rev-parse "$BASE^{commit}" 2>/dev/null; echo',
-      'printf "HEAD_SHA="; git -C "$REPO" rev-parse "$HEAD^{commit}" 2>/dev/null; echo',
+      'printf "BASE_SHA="; git -C "$REPO" rev-parse "$BASE_REF^{commit}" 2>/dev/null; echo',
+      'printf "HEAD_SHA="; git -C "$REPO" rev-parse "$HEAD_REF^{commit}" 2>/dev/null; echo',
       'printf "FORK_SHA=%s\\n" "$FORK"',
       'echo "___UNIFIED___"',
-      'git -C "$REPO" diff --no-color --find-renames --binary "$FORK..$HEAD" -- 2>/dev/null || true',
+      'git -C "$REPO" diff --no-color --find-renames --binary "$FORK..$HEAD_REF" -- 2>/dev/null || true',
       'echo "___COMMITS___"',
-      'for SHA in $(git -C "$REPO" rev-list --no-merges "$FORK..$HEAD" 2>/dev/null | head -20); do',
+      'for SHA in $(git -C "$REPO" rev-list --no-merges "$FORK..$HEAD_REF" 2>/dev/null | head -20); do',
       '  echo ">>>SHA=$SHA"',
       "  printf '>>>SUBJECT='",
       '  git -C "$REPO" log --format=%s -1 "$SHA" 2>/dev/null | od -A n -t x1 | tr -d " \\n"',
@@ -343,8 +344,11 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
     const result = await execInWorkspaceViaManager(projectName, cmd, 120_000);
     const output = result.stdout.trim();
 
-    if (output.startsWith('__PERCUSSIONIST_ERROR__')) {
-      const reason = output.replace('__PERCUSSIONIST_ERROR__', '').trim();
+    if (output.includes('__PERCUSSIONIST_ERROR__')) {
+      const reason = output
+        .slice(output.indexOf('__PERCUSSIONIST_ERROR__'))
+        .replace('__PERCUSSIONIST_ERROR__', '')
+        .trim();
       return c.json(
         {
           project: projectName,

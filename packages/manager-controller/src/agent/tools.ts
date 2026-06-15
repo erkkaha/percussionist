@@ -1862,7 +1862,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         const urlHash = h.toString(16).padStart(8, '0');
         const mirrorPath = `${mountPath}/git-mirrors/${urlHash}`;
 
-        const gitShowCmd = `apk add --no-cache git > /dev/null 2>&1 && cd '${mirrorPath}' && git show '${gitBranch}:${planPath}' 2>/dev/null`;
+        const gitShowCmd = `cd '${mirrorPath}' && git show '${gitBranch}:${planPath}' 2>/dev/null`;
         const result = await execInWorkspace(
           projectName,
           gitShowCmd,
@@ -1882,7 +1882,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
           };
         }
 
-        const mainBranchCmd = `apk add --no-cache git > /dev/null 2>&1 && cd '${mirrorPath}' && git show 'main:${planPath}' 2>/dev/null`;
+        const mainBranchCmd = `cd '${mirrorPath}' && git show 'main:${planPath}' 2>/dev/null`;
         const mainResult = await execInWorkspace(
           projectName,
           mainBranchCmd,

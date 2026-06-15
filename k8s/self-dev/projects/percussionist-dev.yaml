@@ -70,7 +70,7 @@ spec:
     storageClass: longhorn-rwx
 
   # Use a richer image for maintenance/exec pods (e.g. exec_in_workspace).
-  # Falls back to alpine:3.20 when unset.
+  # Falls back to alpine/git:v2.54.0 when unset.
   exec:
     image: ubuntu:24.04
 

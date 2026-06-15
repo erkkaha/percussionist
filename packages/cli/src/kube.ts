@@ -22,6 +22,7 @@ export {
   deleteRun as _deleteRun,
   fatal,
   getClusterAgent,
+  listAllProjects as _listAllProjects,
   // cluster agents
   listClusterAgents,
   listRuns as _listRuns,
@@ -78,6 +79,10 @@ export async function listProjects(
   namespace: string,
 ): Promise<Project[]> {
   return kube.listProjects(namespace, client);
+}
+
+export async function listAllProjects(client: CustomObjectsApi): Promise<Project[]> {
+  return kube.listAllProjects(client);
 }
 
 export async function createProject(

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { CATEGORY_COLORS } from '../lib/usage-categorization';
 import { isGloballyLocked, onGlobalLockChange } from '../lib/usage-lock-state';
 import {
   type Category,
@@ -12,12 +13,6 @@ const CATEGORY_LABELS: Record<Category, string> = {
   reviewing: 'Reviewing',
   planning: 'Planning',
   other: 'Other',
-};
-
-const CATEGORY_COLORS: Record<Category, string> = {
-  reviewing: 'bg-blue-500',
-  planning: 'bg-emerald-500',
-  other: 'bg-gray-500',
 };
 
 export function UsageLockOverlay() {

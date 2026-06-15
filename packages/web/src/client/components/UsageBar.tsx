@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { CATEGORY_COLORS, categorizeUsageRoute } from '../lib/usage-categorization';
 import {
   type Category,
   formatDuration,
@@ -7,17 +9,14 @@ import {
 } from '../lib/usage-settings';
 import { UsageSettingsPopover } from './UsageSettingsPopover';
 
-const SEGMENT_COLORS: Record<Category, string> = {
-  reviewing: 'bg-blue-500',
-  planning: 'bg-emerald-500',
-  other: 'bg-gray-500',
-};
-
 const SEGMENT_ORDER: Category[] = ['reviewing', 'planning', 'other'];
 
 export function UsageBar() {
+  const location = useLocation();
   const [usage, setUsage] = useState(readTodayUsage);
   const [server, setServer] = useState(getServerCache);
+  const activeCategory = categorizeUsageRoute(location.pathname);
+  const activeCategoryLabel = activeCategory.charAt(0).toUpperCase() + activeCategory.slice(1);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -40,10 +39,10 @@ export function UsageBar() {
   const isAtMax = maxSeconds > 0 && total >= maxSeconds;
 
   let label: string;
-  if (maxSeconds > 0 && settings?.showPercent) {
-    label = `${Math.round(pctOfMax)}% of ${settings.maxTimeHours}h`;
-  } else if (maxSeconds > 0 && !settings?.showPercent) {
-    label = `${formatDuration(total)} of ${settings.maxTimeHours}h`;
+  if (maxSeconds > 0 && settings) {
+    label = settings.showPercent
+      ? `${Math.round(pctOfMax)}% of ${settings.maxTimeHours}h`
+      : `${formatDuration(total)} of ${settings.maxTimeHours}h`;
   } else if (settings?.showPercent) {
     const parts = SEGMENT_ORDER.map((c) => {
       const v = c === 'reviewing' ? reviewing : c === 'planning' ? planning : other;
@@ -69,24 +68,27 @@ export function UsageBar() {
           className={`flex-1 flex h-1.5 rounded-none overflow-hidden bg-sidebar-accent ${warningClass} ${isAtMax ? 'opacity-50' : ''}`}
         >
           {(() => {
-            const cats: { cat: Category; val: number }[] = [
-              { cat: 'reviewing', val: reviewing },
-              { cat: 'planning', val: planning },
-              { cat: 'other', val: other },
-            ];
-            return cats.map(({ cat, val }) => {
-              const pct = total > 0 ? (val / total) * 100 : 0;
+            const denominator = maxSeconds > 0 ? maxSeconds : total;
+            return SEGMENT_ORDER.map((cat) => {
+              const val = cat === 'reviewing' ? reviewing : cat === 'planning' ? planning : other;
+              const pct = denominator > 0 ? (val / denominator) * 100 : 0;
               if (pct <= 0) return null;
               return (
                 <div
                   key={cat}
-                  className={`h-full shrink-0 ${SEGMENT_COLORS[cat]}`}
+                  className={`h-full shrink-0 ${CATEGORY_COLORS[cat]}`}
                   style={{ width: `${pct}%` }}
                 />
               );
             });
           })()}
         </div>
+        <span
+          className={`w-1.5 h-1.5 rounded-full shrink-0 ${CATEGORY_COLORS[activeCategory]}`}
+          role="img"
+          title={`Tracking: ${activeCategoryLabel}`}
+          aria-label={`Tracking: ${activeCategoryLabel}`}
+        />
         <UsageSettingsPopover />
       </div>
       <span className="text-caption-xs text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
