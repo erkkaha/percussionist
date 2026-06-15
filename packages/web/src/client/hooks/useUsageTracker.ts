@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { setGloballyLocked } from '../lib/usage-lock-state';
+import { isGloballyLocked, onGlobalLockChange, setGloballyLocked } from '../lib/usage-lock-state';
 import {
   type Category,
   fetchUsageToday,
@@ -34,7 +34,7 @@ export function useUsageTracker() {
   const categoryRef = useRef(category);
   categoryRef.current = category;
 
-  const heartbeatRef = useRef<() => Promise<void>>();
+  const heartbeatRef = useRef<(() => Promise<void>) | null>(null);
   heartbeatRef.current = useCallback(async () => {
     try {
       const res = await reportHeartbeat(readTodayUsage());
@@ -45,8 +45,14 @@ export function useUsageTracker() {
     }
   }, []);
 
+  const lockedRef = useRef(isGloballyLocked());
+
   useEffect(() => {
     cleanupOldKeys();
+
+    const unsub = onGlobalLockChange((locked) => {
+      lockedRef.current = locked;
+    });
 
     // Fetch current server state on mount (detect existing lock).
     fetchUsageToday()
@@ -58,7 +64,7 @@ export function useUsageTracker() {
 
     // 5s tick: foreground-aware local tracking.
     const localTick = setInterval(() => {
-      if (document.hidden) return;
+      if (document.hidden || lockedRef.current) return;
       const key = getTodayKey();
       const data = readTodayUsage();
       data[categoryRef.current] = (data[categoryRef.current] || 0) + 5;
@@ -67,12 +73,13 @@ export function useUsageTracker() {
 
     // 30s heartbeat: report local totals to server.
     const heartbeat = setInterval(() => {
-      heartbeatRef.current?.();
+      if (!lockedRef.current) heartbeatRef.current?.();
     }, 30_000);
 
     return () => {
       clearInterval(localTick);
       clearInterval(heartbeat);
+      unsub();
     };
   }, []);
 }
