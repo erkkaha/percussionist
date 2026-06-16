@@ -54,6 +54,7 @@ import {
   storeMemory,
   updateMemory,
 } from './memory-client.js';
+import { isValidPackageName, sanitizeCommand } from './security.js';
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'percussionist-manager-agent';
@@ -1813,6 +1814,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const resourceNs = String(args.namespace ?? ns);
 
       if (!command) throw new Error('command is required');
+      const commandValidation = sanitizeCommand(command);
+      if (commandValidation) throw new Error(commandValidation);
 
       const result = await execInWorkspace(projectName, command, mountPath, timeoutMs, resourceNs);
       return {
@@ -2272,6 +2275,13 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const project = String(args.project ?? '');
       const pkgs = (args.packages ?? []) as string[];
       if (!project || !pkgs.length) throw new Error('project and packages are required');
+
+      for (const pkg of pkgs) {
+        if (!isValidPackageName(pkg)) {
+          throw new Error(`invalid Alpine package name: ${pkg}`);
+        }
+      }
+
       const cmd = `apk update --quiet && apk add --no-cache ${pkgs.join(' ')}`;
       const result = await execInWorkspace(project, cmd, undefined, undefined, MANAGER_NAMESPACE);
       return { installed: pkgs, output: result.stdout ?? '', exitCode: result.exitCode };
