@@ -6,6 +6,10 @@ All notable changes to Percussionist are documented here.
 ### <!-- 0 -->🚀 Features
 
 - Add list/update/create_task findings MCP tools + prompt awareness _(agent)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.190
 ## [v0.1.189] - 2026-06-16
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -58,6 +62,10 @@ All notable changes to Percussionist are documented here.
 - Validate external status patch inputs with zod _(board)_
 - Use session.idle for idle-triggered flushes _(dispatcher)_
 - Avoid clobbering run terminal phase _(operator)_
+
+### <!-- 2 -->🚜 Refactor
+
+- Tighten executeEffects project typing _(manager)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
