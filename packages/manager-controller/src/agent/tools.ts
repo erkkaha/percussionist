@@ -61,7 +61,7 @@ import {
   storeMemory,
   updateMemory,
 } from './memory-client.js';
-import { isValidPackageName, sanitizeCommand } from './security.js';
+import { isValidPackageName, logSecurityEvent, sanitizeCommand } from './security.js';
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'percussionist-manager-agent';
@@ -513,6 +513,11 @@ const TOOLS = [
         namespace: {
           type: 'string',
           description: 'Namespace (optional, defaults to percussionist)',
+        },
+        skipSanitization: {
+          type: 'boolean',
+          description:
+            'Skip shell injection sanitization (default: false). Only set to true for trusted backend-generated scripts.',
         },
       },
       required: ['project', 'command'],
@@ -1824,10 +1829,20 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const mountPath = args.mountPath ? String(args.mountPath) : '/data';
       const timeoutMs = args.timeoutSeconds ? Number(args.timeoutSeconds) * 1000 : 120_000;
       const resourceNs = String(args.namespace ?? ns);
+      const skipSanitization = args.skipSanitization === true;
 
       if (!command) throw new Error('command is required');
-      const commandValidation = sanitizeCommand(command);
-      if (commandValidation) throw new Error(commandValidation);
+
+      if (!skipSanitization) {
+        const commandValidation = sanitizeCommand(command);
+        if (commandValidation) {
+          logSecurityEvent('exec_in_workspace.rejected', {
+            project: projectName,
+            reason: commandValidation,
+          });
+          throw new Error(commandValidation);
+        }
+      }
 
       const result = await execInWorkspace(projectName, command, mountPath, timeoutMs, resourceNs);
       return {
