@@ -156,10 +156,7 @@ function projectFindings(
 }
 
 const router = new Hono();
-// The manager always runs in the operator namespace; keep the URL independent
-// of the web server's PERCUSSIONIST_NAMESPACE so the diff route works when the
-// web pod is deployed in a project/test namespace.
-const MCP_URL = 'http://percussionist-manager.percussionist.svc.cluster.local:4097/mcp';
+const MCP_URL = `http://percussionist-manager.${NAMESPACE}.svc.cluster.local:4097/mcp`;
 
 async function execInWorkspaceViaManager(
   project: string,
