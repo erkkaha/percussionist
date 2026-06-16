@@ -10,7 +10,14 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { setHeaderOptions } from '@kubernetes/client-node';
-import { LABELS, type Project, type Task, type TaskPhase, type TaskType } from '@percussionist/api';
+import {
+  BoardStatusSchema,
+  LABELS,
+  type Project,
+  type Task,
+  type TaskPhase,
+  type TaskType,
+} from '@percussionist/api';
 import {
   apps,
   buildTask,
@@ -1165,9 +1172,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
     case 'patch_board': {
       const project = String(args.project ?? '');
-      const patch = args.patch as Record<string, unknown>;
+      const parsedPatch = BoardStatusSchema.partial().safeParse(args.patch);
+      if (!parsedPatch.success) {
+        throw new Error(
+          `Invalid board patch: ${parsedPatch.error.issues[0]?.message ?? 'unknown'}`,
+        );
+      }
       const { patchProjectStatus } = await import('@percussionist/kube');
-      await patchProjectStatus(project, { board: patch as never }, ns);
+      await patchProjectStatus(project, { board: parsedPatch.data }, ns);
       return { project, patched: true };
     }
 
