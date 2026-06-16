@@ -22,6 +22,7 @@ export {
   getClusterAgent,
   // ClusterSettings helpers
   getClusterSettings,
+  getFindingsConfigMap,
   getProject,
   getRun,
   getTask,
@@ -48,6 +49,9 @@ export {
   type NodeMetric,
   type PodMetric,
   type PodResourceSpec,
+  parseInboxFindings,
+  parseTriagedFindings,
+  patchFindingsConfigMap,
   patchProject,
   patchProjectSpec,
   patchProjectStatus,

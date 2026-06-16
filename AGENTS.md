@@ -389,6 +389,7 @@ includes git, openssh, node, npm, bash, curl, unzip, and github-cli.
 - Operator and Manager use `makeInformer` + in-memory work queue pattern
 - API group: `percussionist.dev/v1alpha1`
 - Tasks are first-class `Task` CRs (not embedded in project spec); task state is authoritative in `Task.status`; project `spec.agents`, `spec.maxParallel`, `spec.phase` are top-level (no `spec.board` key)
+- Findings are stored in `board.status.findings[]` (curated, deduped view) and the raw inbox in a per-project `{project}-findings` ConfigMap
 - `opencode-web` supports MCP servers via the `mcp` config key (not `mcpServers` — that was a legacy format); the manager's agent-config ConfigMap uses `mcp` with `type: "remote"` pointing at the in-process MCP server on :4097.
 
 ## Database (SQLite — `@percussionist/web`)
@@ -577,12 +578,22 @@ but served within each run pod). These tools are available to agents during run 
 | `write_plan` | Persist a plan artifact to the project's plans ConfigMap |
 | `read_plan` | Read a plan artifact from the project's plans ConfigMap |
 | `read_session` | Read session messages from another run's ConfigMap snapshot |
+| `report_finding` | Report an off-task issue (bug, security, performance, debt) for manager triage |
 
 **`complete_plan`** vs **`complete_run`**:
 - PLAN agents should call `complete_plan` after committing their plan document to `.percussionist/plans/{task-id}.md`
 - BUILD agents should call `complete_run` after implementation is committed
 - `complete_plan` signals plan artifact completion (no code work expected)
 - `complete_run` signals implementation work is done
+
+**`report_finding`** — Off-task issue reporting:
+- Available to all run-pod agents (BUILD, PLAN, review runs; not merge runs)
+- Accepts: `title` (≤256 chars), `description` (≤8192 chars), `severity` (`low`/`medium`/`high`/`critical`), `category` (`bug`/`security`/`performance`/`debt`/`docs`/`other`), optional `filePath` and `snippet`
+- The dispatcher writes the finding to a per-project `{project}-findings` ConfigMap inbox key using merge-patch (conflict-free across concurrent agents)
+- The manager ingests findings on every reconcile cycle: deduplicates (exact key, file+snippet hash, optional semantic similarity via vector memory), triages, and updates `board.status.findings[]`
+- High/critical severity + bug/security category → auto-creates a Task CR with `percussionist.dev/finding-id` and `percussionist.dev/finding-cluster` annotations
+- Returns `{ id, status: "accepted" }` synchronously — dedup is asynchronous (within 60s resync)
+- The worker prompt includes an `OFF-TASK FINDINGS` block instructing agents to report issues once and continue their assigned task
 
 ## Dispatcher SSE Event Streaming
 
