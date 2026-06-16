@@ -201,6 +201,23 @@ describe('decide — running', () => {
     expect(result.toPhase).toBe('failed');
   });
 
+  it('running + podPhase Failed while run phase stale Running → failed', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'running' });
+    const result = decide(
+      makeInput(task, {
+        observed: {
+          worker: makeRun('run-1', {
+            phase: 'Running',
+            podPhase: 'Failed',
+            startedAt: '2026-05-28T23:59:30.000Z',
+          }),
+        },
+      }),
+    );
+    expect(result.toPhase).toBe('failed');
+    expect(result.events[0]?.reason).toBe('WorkerRunFailed');
+  });
+
   it('running + missing run → failed', () => {
     const task = makeTask('t1', 'test-project', { phase: 'running' });
     const result = decide(makeInput(task, { observed: {} }));

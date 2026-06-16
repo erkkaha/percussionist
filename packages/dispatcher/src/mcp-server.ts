@@ -41,16 +41,19 @@
 // operator into the runner container's environment.
 
 import { execFile } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import {
   type AgentCapability,
   DISPATCHER_MCP_PORT,
+  type Finding,
+  FindingSchema,
   MERGE_VERDICT_ANNOTATION,
   normalizeMergeVerdict,
   normalizeReviewVerdict,
 } from '@percussionist/api';
 import {
+  appendFindingToConfigMap,
   buildTask,
   createTask,
   getClusterAgent,
@@ -370,6 +373,31 @@ const TOOL_READ_SESSION = {
       runName: { type: 'string', description: 'Name of the completed run' },
     },
     required: ['runName'],
+  },
+};
+
+const TOOL_REPORT_FINDING = {
+  name: 'report_finding',
+  description:
+    'Report an off-task issue you noticed while working — a bug, security problem, ' +
+    'performance issue, or tech debt that is OUTSIDE your assigned task. The manager ' +
+    'triages it, de-duplicates against existing findings, and may file a task. ' +
+    'Do NOT use this for your own task; finish that and report only incidental discoveries. ' +
+    'Returns { id, status: "accepted" }. Deduplication happens asynchronously.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', description: 'One-line summary (≤256 chars)' },
+      description: { type: 'string', description: 'What is wrong, why it matters, suggested fix' },
+      severity: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+      category: {
+        type: 'string',
+        enum: ['bug', 'security', 'performance', 'debt', 'docs', 'other'],
+      },
+      filePath: { type: 'string', description: 'Repo-relative path of the issue (optional)' },
+      snippet: { type: 'string', description: 'Short code excerpt, ≤2048 chars (optional)' },
+    },
+    required: ['title', 'description', 'severity', 'category'],
   },
 };
 
@@ -957,6 +985,88 @@ async function handleCreateTask(
   }
 }
 
+function normalizeFindingText(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function computeDedupKey(category: string, filePath: string | undefined, title: string): string {
+  const parts = [
+    category,
+    filePath ? normalizeFindingText(filePath) : '',
+    normalizeFindingText(title),
+  ];
+  return createHash('sha256').update(parts.join(':')).digest('hex').slice(0, 16);
+}
+
+async function handleReportFinding(
+  id: JsonRpcRequest['id'],
+  args: Record<string, unknown>,
+): Promise<JsonRpcResponse> {
+  const project = process.env.RUN_PROJECT ?? '';
+  const task = process.env.RUN_BOARD_TASK ?? '';
+  const run = process.env.RUN_NAME ?? '';
+  const agent = process.env.RUN_AGENT ?? '';
+  const ns = process.env.RUN_NAMESPACE ?? 'percussionist';
+
+  if (!project) {
+    return rpcError(id, -32602, 'RUN_PROJECT not set — cannot report finding outside a run pod');
+  }
+
+  const title = String(args.title ?? '').trim();
+  const description = String(args.description ?? '').trim();
+  const severity = String(args.severity ?? '');
+  const category = String(args.category ?? '');
+  const filePath = args.filePath ? String(args.filePath).trim() : undefined;
+  const snippet = args.snippet ? String(args.snippet).trim() : undefined;
+
+  if (!title) return rpcError(id, -32602, 'title is required');
+  if (!description) return rpcError(id, -32602, 'description is required');
+  if (!severity) return rpcError(id, -32602, 'severity is required');
+  if (!category) return rpcError(id, -32602, 'category is required');
+
+  const parsed = FindingSchema.safeParse({
+    id: 'pending',
+    title: title.slice(0, 256),
+    description: description.slice(0, 8192),
+    severity,
+    category,
+    source: { project, task: task || undefined, run: run || undefined, agent: agent || undefined },
+    filePath: filePath?.slice(0, 1024),
+    snippet: snippet?.slice(0, 2048),
+    status: 'new',
+    dedupKey: 'pending',
+    occurrences: 1,
+    createdAt: new Date().toISOString(),
+  });
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+    return rpcError(id, -32602, `invalid finding: ${issues}`);
+  }
+
+  const findingId = `${Date.now()}-${randomBytes(6).toString('hex')}`;
+  const dedupKey = computeDedupKey(category, filePath, title);
+
+  const finding: Finding = {
+    ...parsed.data,
+    id: findingId,
+    dedupKey,
+  };
+
+  try {
+    await appendFindingToConfigMap(project, finding, ns);
+    return ok(id, {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ id: findingId, status: 'accepted' }),
+        },
+      ],
+    });
+  } catch (e) {
+    return rpcError(id, -32603, `failed to report finding: ${(e as Error).message}`);
+  }
+}
+
 async function handleMcp(
   req: JsonRpcRequest,
   onFailRun: (reason: string) => void,
@@ -1001,6 +1111,7 @@ async function handleMcp(
           TOOL_WRITE_PLAN,
           TOOL_READ_PLAN,
           TOOL_READ_SESSION,
+          TOOL_REPORT_FINDING,
         ],
       });
     }
@@ -1228,6 +1339,13 @@ async function handleMcp(
         return handleReadSession(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>);
       }
 
+      if (toolName === 'report_finding') {
+        return handleReportFinding(
+          req.id,
+          (req.params?.arguments ?? {}) as Record<string, unknown>,
+        );
+      }
+
       return rpcError(req.id, -32602, `unknown tool: ${toolName}`);
     }
 
@@ -1240,6 +1358,8 @@ export const __test = {
   handleMcp,
   completionPolicyForContext,
   parseContextHint,
+  computeDedupKey,
+  normalizeFindingText,
 };
 
 // ---------------------------------------------------------------------------

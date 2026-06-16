@@ -161,6 +161,24 @@ The dispatcher sidecar runs an in-process MCP server on port 4097 within each ru
 | `write_plan` | Persist a plan artifact |
 | `read_plan` | Read a plan artifact |
 | `read_session` | Read session messages from another run's ConfigMap snapshot |
+| `report_finding` | Report an off-task issue (bug, security, performance, debt) for manager triage |
+
+### `report_finding`
+
+Report an off-task issue discovered while working — a bug, security problem, performance trap, or tech debt that is **outside** the agent's assigned task. The manager triages it, de-duplicates against existing findings, and may auto-create a Task CR.
+
+**Inputs**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `title` | string | yes | One-line summary (≤256 chars) |
+| `description` | string | yes | What is wrong, why it matters, suggested fix |
+| `severity` | string | yes | One of: `low`, `medium`, `high`, `critical` |
+| `category` | string | yes | One of: `bug`, `security`, `performance`, `debt`, `docs`, `other` |
+| `filePath` | string | no | Repo-relative path of the issue |
+| `snippet` | string | no | Short code excerpt (≤2048 chars) |
+
+**Returns** `{ id, status: "accepted" }` synchronously. Deduplication and triage happen asynchronously on the next manager reconcile cycle (within ≤60s).
 
 ## Capability Enforcement (Strict, Fail-Closed)
 

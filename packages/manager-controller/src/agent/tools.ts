@@ -10,7 +10,14 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { setHeaderOptions } from '@kubernetes/client-node';
-import { LABELS, type Project, type Task, type TaskPhase, type TaskType } from '@percussionist/api';
+import {
+  BoardStatusSchema,
+  LABELS,
+  type Project,
+  type Task,
+  type TaskPhase,
+  type TaskType,
+} from '@percussionist/api';
 import {
   apps,
   buildTask,
@@ -54,6 +61,7 @@ import {
   storeMemory,
   updateMemory,
 } from './memory-client.js';
+import { isValidPackageName, logSecurityEvent, sanitizeCommand } from './security.js';
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'percussionist-manager-agent';
@@ -505,6 +513,11 @@ const TOOLS = [
         namespace: {
           type: 'string',
           description: 'Namespace (optional, defaults to percussionist)',
+        },
+        skipSanitization: {
+          type: 'boolean',
+          description:
+            'Skip shell injection sanitization (default: false). Only set to true for trusted backend-generated scripts.',
         },
       },
       required: ['project', 'command'],
@@ -1165,9 +1178,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
     case 'patch_board': {
       const project = String(args.project ?? '');
-      const patch = args.patch as Record<string, unknown>;
+      const parsedPatch = BoardStatusSchema.partial().safeParse(args.patch);
+      if (!parsedPatch.success) {
+        throw new Error(
+          `Invalid board patch: ${parsedPatch.error.issues[0]?.message ?? 'unknown'}`,
+        );
+      }
       const { patchProjectStatus } = await import('@percussionist/kube');
-      await patchProjectStatus(project, { board: patch as never }, ns);
+      await patchProjectStatus(project, { board: parsedPatch.data }, ns);
       return { project, patched: true };
     }
 
@@ -1811,8 +1829,20 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const mountPath = args.mountPath ? String(args.mountPath) : '/data';
       const timeoutMs = args.timeoutSeconds ? Number(args.timeoutSeconds) * 1000 : 120_000;
       const resourceNs = String(args.namespace ?? ns);
+      const skipSanitization = args.skipSanitization === true;
 
       if (!command) throw new Error('command is required');
+
+      if (!skipSanitization) {
+        const commandValidation = sanitizeCommand(command);
+        if (commandValidation) {
+          logSecurityEvent('exec_in_workspace.rejected', {
+            project: projectName,
+            reason: commandValidation,
+          });
+          throw new Error(commandValidation);
+        }
+      }
 
       const result = await execInWorkspace(projectName, command, mountPath, timeoutMs, resourceNs);
       return {
@@ -2272,6 +2302,13 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const project = String(args.project ?? '');
       const pkgs = (args.packages ?? []) as string[];
       if (!project || !pkgs.length) throw new Error('project and packages are required');
+
+      for (const pkg of pkgs) {
+        if (!isValidPackageName(pkg)) {
+          throw new Error(`invalid Alpine package name: ${pkg}`);
+        }
+      }
+
       const cmd = `apk update --quiet && apk add --no-cache ${pkgs.join(' ')}`;
       const result = await execInWorkspace(project, cmd, undefined, undefined, MANAGER_NAMESPACE);
       return { installed: pkgs, output: result.stdout ?? '', exitCode: result.exitCode };
