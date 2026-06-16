@@ -1,6 +1,25 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.192] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Reframe findings as review-priority signals with inline widgets _(review)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Grant dispatcher clusteragent list permission for create_task tool _(rbac)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Remaining uncommitted changes across web UI, tests, and docs
+- Security sweep before going public
+## [v0.1.191] - 2026-06-16
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.191
 ## [v0.1.190] - 2026-06-16
 
 ### <!-- 0 -->🚀 Features
