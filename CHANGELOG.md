@@ -1,11 +1,28 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.185] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Add agent finding reporting, ingestion pipeline, and web API _(findings)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Validate workspace command and package inputs _(manager)_
+- Lock mirror cleanup operations with flock _(manager)_
+- Validate external status patch inputs with zod _(board)_
+- Use session.idle for idle-triggered flushes _(dispatcher)_
+- Avoid clobbering run terminal phase _(operator)_
 ## [v0.1.184] - 2026-06-15
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Resolve empty git diff in task detail panel _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.184
 ## [v0.1.183] - 2026-06-15
 
 ### <!-- 0 -->🚀 Features

@@ -1,6 +1,6 @@
 {
   "name": "@percussionist/web",
-  "version": "0.1.184",
+  "version": "0.1.185",
   "private": true,
   "type": "module",
   "description": "Web dashboard for percussionist",
