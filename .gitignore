@@ -35,3 +35,6 @@ packages/web/data/
 
 prds/
 *.bak
+
+# Agent-generated plan artifacts (risk surface for secrets)
+.percussionist/

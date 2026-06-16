@@ -20,6 +20,10 @@ Session analytics, tool usage metrics, and cost breakdowns help you understand a
 
 ![Stats dashboard showing session and tool analytics](/images/stats.png)
 
+## Findings
+
+The findings panel shows agent-reported off-task issues — bugs, security problems, performance traps, and tech debt — surfaced via the `report_finding` MCP tool. Each finding displays severity (color-coded), category, title, source task/run, file path, status, and occurrence count. Expand a finding to see the full description and code snippet. Action buttons allow creating a Task from a finding, dismissing it, or marking it as a duplicate. The findings data comes from `board.status.findings[]` and the `{project}-findings` ConfigMap.
+
 ## Cluster Metrics
 
 Real-time pod CPU and memory usage across the Percussionist cluster. Monitor resource consumption per pod (operator, manager, runner, memory service, Ollama), track aggregate utilization trends, and identify resource pressure before it impacts agent runs. Metrics auto-refresh and support configurable time windows.

@@ -1,16 +1,23 @@
-import { useState, useEffect, useMemo } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchBoard, deleteBoardTask, retryEscalatedTask, approveTask, requestChangesTask } from "../lib/api";
-import type { Task, ManagerMetrics } from "../lib/types";
-import { useBoardNotifications } from "../hooks/useBoardNotifications";
-import { useBoardEvents } from "../hooks/useBoardEvents";
-import { useIsMobile } from "../hooks/use-mobile";
-import { BoardHeader } from "./board/BoardHeader";
-import { TaskListPanel } from "./board/TaskListPanel";
-import { TaskDetailPanel, TaskDetailEmpty } from "./board/TaskDetailPanel";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "./ui/sheet";
-import { AddTaskForm } from "./board/AddTaskForm";
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { useIsMobile } from '../hooks/use-mobile';
+import { useBoardEvents } from '../hooks/useBoardEvents';
+import { useBoardNotifications } from '../hooks/useBoardNotifications';
+import {
+  approveTask,
+  deleteBoardTask,
+  fetchBoard,
+  requestChangesTask,
+  retryEscalatedTask,
+} from '../lib/api';
+import type { ManagerMetrics, Task } from '../lib/types';
+import { AddTaskForm } from './board/AddTaskForm';
+import { BoardHeader } from './board/BoardHeader';
+import { FindingsPanel } from './board/FindingsPanel';
+import { TaskDetailEmpty, TaskDetailPanel } from './board/TaskDetailPanel';
+import { TaskListPanel } from './board/TaskListPanel';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from './ui/sheet';
 
 export default function BoardView() {
   const { name } = useParams<{ name: string }>();
@@ -36,9 +43,10 @@ export default function BoardView() {
 
   // Responsive-aware add-task visibility: desktop uses inline form, mobile uses full-screen Sheet.
   const [showAddTaskDesktop, setShowAddTaskDesktop] = useState(false);
-  const [desktopDefaultColumn, setDesktopDefaultColumn] = useState("backlog");
+  const [desktopDefaultColumn, setDesktopDefaultColumn] = useState('backlog');
   const [showAddTaskMobile, setShowAddTaskMobile] = useState(false);
-  const [mobileDefaultColumn, setMobileDefaultColumn] = useState("backlog");
+  const [mobileDefaultColumn, setMobileDefaultColumn] = useState('backlog');
+  const [showFindings, setShowFindings] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedTaskName = searchParams.get('task') ?? null;
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -71,11 +79,11 @@ export default function BoardView() {
   };
 
   // Header trigger defaults to the backlog column.
-  const handleAddTask = () => toggleAddTask("backlog");
+  const handleAddTask = () => toggleAddTask('backlog');
 
   // Ideas-column trigger defaults to the ideas column on mobile (desktop keeps
   // its local inline form).
-  const handleAddIdea = () => toggleAddTask("ideas");
+  const handleAddIdea = () => toggleAddTask('ideas');
 
   // Close mobile add-task overlay.
   const handleCloseAddTaskMobile = () => setShowAddTaskMobile(false);
@@ -177,8 +185,11 @@ export default function BoardView() {
           phase={settings.phase}
           sseConnected={boardSseConnected}
           metrics={status.managerMetrics as ManagerMetrics | undefined}
+          findings={status.findings}
           onAddTask={handleAddTask}
           showAddTask={showAddTaskDesktop || showAddTaskMobile}
+          onToggleFindings={() => setShowFindings((f) => !f)}
+          showFindings={showFindings}
         />
       </div>
 
@@ -207,10 +218,17 @@ export default function BoardView() {
         <div className="hidden md:flex flex-col flex-1 min-h-0">
           {detailPanel ?? <TaskDetailEmpty />}
         </div>
+
+        {/* Desktop findings panel — shown when toggled */}
+        {showFindings && (
+          <div className="hidden md:flex flex-col w-80 border-l border-border bg-surface overflow-hidden">
+            <FindingsPanel findings={status.findings ?? []} projectName={projectName} />
+          </div>
+        )}
       </div>
 
       {/* Mobile Sheet — slide-in detail panel. The SheetContent renders its own close
-            button at top-right; TaskDetailPanel handles its own scrolling. */}
+             button at top-right; TaskDetailPanel handles its own scrolling. */}
       <Sheet open={sheetOpen} onOpenChange={handleSheetClose}>
         <SheetContent
           side="right"
@@ -218,6 +236,27 @@ export default function BoardView() {
         >
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
             {detailPanel ?? <TaskDetailEmpty />}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Mobile findings Sheet */}
+      <Sheet
+        open={showFindings && isMobile}
+        onOpenChange={(open) => {
+          if (!open) setShowFindings(false);
+        }}
+      >
+        <SheetContent
+          side="right"
+          className="md:hidden w-full sm:max-w-lg p-0 flex flex-col overflow-hidden bg-surface text-text border-border [&>button]:z-10"
+        >
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+            <FindingsPanel
+              findings={status.findings ?? []}
+              projectName={projectName}
+              onClose={() => setShowFindings(false)}
+            />
           </div>
         </SheetContent>
       </Sheet>
@@ -233,9 +272,7 @@ export default function BoardView() {
                 because the form itself already renders a visible heading. */}
             <div className="sr-only">
               <SheetHeader>
-                <SheetTitle>
-                  {mobileDefaultColumn === "ideas" ? "Add idea" : "Add task"}
-                </SheetTitle>
+                <SheetTitle>{mobileDefaultColumn === 'ideas' ? 'Add idea' : 'Add task'}</SheetTitle>
                 <SheetDescription>
                   Create a new board task in the {mobileDefaultColumn} column.
                 </SheetDescription>

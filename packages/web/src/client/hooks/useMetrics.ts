@@ -40,7 +40,11 @@ export interface NodeMetricRow {
   allocated: { cpu: string; memory: string } | null;
   allocatedCpuMillicores: number;
   allocatedMemoryBytes: number;
-  volume: { usedBytes: number | null; capacityBytes: number | null; availableBytes: number | null } | null;
+  volume: {
+    usedBytes: number | null;
+    capacityBytes: number | null;
+    availableBytes: number | null;
+  } | null;
 }
 
 function parseCpu(raw: string): number {
@@ -94,7 +98,11 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
               capacity: { cpu: string; memory: string } | null;
               allocatable: { cpu: string; memory: string } | null;
               allocated: { cpu: string; memory: string } | null;
-              volume: { usedBytes: number | null; capacityBytes: number | null; availableBytes: number | null } | null;
+              volume: {
+                usedBytes: number | null;
+                capacityBytes: number | null;
+                availableBytes: number | null;
+              } | null;
             }>;
           })
         : { items: [] };

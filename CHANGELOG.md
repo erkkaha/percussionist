@@ -1,11 +1,103 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.192] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Reframe findings as review-priority signals with inline widgets _(review)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Grant dispatcher clusteragent list permission for create_task tool _(rbac)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Remaining uncommitted changes across web UI, tests, and docs
+- Security sweep before going public
+## [v0.1.191] - 2026-06-16
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.191
+## [v0.1.190] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Add list/update/create_task findings MCP tools + prompt awareness _(agent)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.190
+## [v0.1.189] - 2026-06-16
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Restore skipSanitization support in exec_in_workspace handler _(manager)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.189
+## [v0.1.188] - 2026-06-16
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.188
+## [v0.1.187] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Add findings panel to board view _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Update reviewer prompt with structured findings schema _(agents)_
+- Restore skipSanitization for trusted diff script in exec_in_workspace _(web)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add unit tests for schema, ConfigMap helpers, dedup, and dispatcher _(findings)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Regenerate CRD YAML with findings schema in board status
+- Release v0.1.187
+## [v0.1.186] - 2026-06-16
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.186
+## [v0.1.185] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Add agent finding reporting, ingestion pipeline, and web API _(findings)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Align label keys and stale hygiene comments
+- Validate workspace command and package inputs _(manager)_
+- Lock mirror cleanup operations with flock _(manager)_
+- Validate external status patch inputs with zod _(board)_
+- Use session.idle for idle-triggered flushes _(dispatcher)_
+- Avoid clobbering run terminal phase _(operator)_
+
+### <!-- 2 -->🚜 Refactor
+
+- Tighten executeEffects project typing _(manager)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.185
 ## [v0.1.184] - 2026-06-15
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Resolve empty git diff in task detail panel _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.184
 ## [v0.1.183] - 2026-06-15
 
 ### <!-- 0 -->🚀 Features

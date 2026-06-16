@@ -5,6 +5,7 @@ import { emitEvent } from '../events.js';
 import { persistEvent } from './audit.js';
 import { decide } from './decision.js';
 import { executeEffects } from './effects.js';
+import { ingestFindings } from './findings-ingestion.js';
 import { observe } from './observations.js';
 import { byPriority, isActivePhase } from './scheduler.js';
 
@@ -96,7 +97,7 @@ export async function reconcileProject(project: Project, namespace: string): Pro
         decision.effects,
         decision.statusPatch,
         namespace,
-        project as never,
+        project,
         input.flow,
         refreshedTasks,
       );
@@ -131,6 +132,13 @@ export async function reconcileProject(project: Project, namespace: string): Pro
       console.error(`[reconcile] ${task.metadata.name} handler error:`, e);
       throw e;
     }
+  }
+
+  // Ingest findings from the project's findings ConfigMap inbox.
+  try {
+    await ingestFindings(project, namespace);
+  } catch (e) {
+    console.error(`[reconcile] ${projectName} findings ingestion error:`, e);
   }
 
   console.log(`[reconcile] ${projectName} complete`);

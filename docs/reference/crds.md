@@ -54,6 +54,7 @@ status:
     review: []
     done: []
     blocked: []
+    findings: []
 ```
 
 ## Task
