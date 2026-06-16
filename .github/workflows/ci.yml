@@ -5,12 +5,36 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.1.2 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --config.strict-dep-builds=false
+
+      - name: Run dependency audit
+        run: pnpm audit --audit-level=high
+
   typecheck-and-build:
     name: Typecheck & Build
     runs-on: ubuntu-latest
