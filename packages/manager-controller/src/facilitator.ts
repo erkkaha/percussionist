@@ -27,11 +27,25 @@ import {
   readPodLog,
 } from '@percussionist/kube';
 import { resolveParentBranch, resolveTaskBranch } from './branch-resolver.js';
+import { getErrorStatusCode, isKubeNotFoundError } from './kube-errors.js';
 import { truncateK8sName } from './worker-builder.js';
 
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
 
 const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
+
+async function getOptionalClusterSettings(context: string) {
+  try {
+    return await getClusterSettings();
+  } catch (e) {
+    if (isKubeNotFoundError(e)) return undefined;
+    console.error(
+      `[facilitator] getClusterSettings failed (${context}) status=${getErrorStatusCode(e) ?? 'unknown'}`,
+      e,
+    );
+    throw e;
+  }
+}
 
 // Resolve summary source precedence and log the selection.
 // Precedence: explicit arg → stored ConfigMap summary → none.
@@ -103,7 +117,7 @@ export async function buildFacilitationRun(
   facilitatorAgentName: string,
   allTasks: Task[] = [],
 ): Promise<Run> {
-  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const clusterSettings = await getOptionalClusterSettings('buildFacilitationRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
       image: clusterSettings?.spec?.runner?.image,
@@ -180,7 +194,7 @@ export async function buildSuccessReviewRun(
   branchName?: string,
   allTasks: Task[] = [],
 ): Promise<Run> {
-  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const clusterSettings = await getOptionalClusterSettings('buildSuccessReviewRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
       image: clusterSettings?.spec?.runner?.image,
@@ -339,7 +353,7 @@ export async function buildBuildTaskGeneratorRun(
   allTasks: Task[] = [],
   defaultBuildAgent: string = 'builder',
 ): Promise<Run> {
-  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const clusterSettings = await getOptionalClusterSettings('buildBuildTaskGeneratorRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
       image: clusterSettings?.spec?.runner?.image,

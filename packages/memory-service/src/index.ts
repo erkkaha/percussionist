@@ -28,6 +28,11 @@ import {
 
 const PORT = parseInt(process.env.MEMORY_SERVICE_PORT ?? '4100', 10);
 
+process.on('unhandledRejection', (reason) => {
+  console.error(`[memory] unhandledRejection:`, reason);
+  process.exit(1);
+});
+
 // Initialise database and vector tables on startup
 initDb();
 

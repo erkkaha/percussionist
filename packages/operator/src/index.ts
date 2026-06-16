@@ -31,6 +31,11 @@ const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOStr
 const err = (...args: unknown[]) =>
   console.error(`[operator ${new Date().toISOString()}]`, ...args);
 
+process.on('unhandledRejection', (reason) => {
+  err('unhandledRejection:', reason);
+  process.exit(1);
+});
+
 async function main(): Promise<void> {
   log(`watching ${API_GROUP}/${API_VERSION}/${PLURAL_RUN} in namespace=${NAMESPACE}`);
   if (INGRESS_BASE_URL) {

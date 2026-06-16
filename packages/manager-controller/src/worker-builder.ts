@@ -15,10 +15,24 @@ import {
 import { getClusterAgent, getClusterSettings } from '@percussionist/kube';
 import { getContext } from './agent/memory-client.js';
 import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from './branch-resolver.js';
+import { getErrorStatusCode, isKubeNotFoundError } from './kube-errors.js';
 
 const MAX_RETRIES = 3;
 
 export { MAX_RETRIES };
+
+async function getOptionalClusterSettings(context: string) {
+  try {
+    return await getClusterSettings();
+  } catch (e) {
+    if (isKubeNotFoundError(e)) return undefined;
+    console.error(
+      `[worker-builder] getClusterSettings failed (${context}) status=${getErrorStatusCode(e) ?? 'unknown'}`,
+      e,
+    );
+    throw e;
+  }
+}
 
 /**
  * Builds a fully-resolved Run for an Task CR.
@@ -34,7 +48,7 @@ export async function buildWorkerRun(
   reworkFeedback?: string,
   allTasks?: Task[],
 ): Promise<Run> {
-  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const clusterSettings = await getOptionalClusterSettings('buildWorkerRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
       image: clusterSettings?.spec?.runner?.image,
@@ -214,7 +228,7 @@ export async function buildMergeRun(
   allTasks?: Task[],
   mergeAgentName?: string,
 ): Promise<Run> {
-  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const clusterSettings = await getOptionalClusterSettings('buildMergeRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
       image: clusterSettings?.spec?.runner?.image,

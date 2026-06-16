@@ -28,6 +28,11 @@ import {
 const log = (...args: unknown[]) => console.log(`[manager ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) => console.error(`[manager ${new Date().toISOString()}]`, ...args);
 
+process.on('unhandledRejection', (reason) => {
+  err('unhandledRejection:', reason);
+  process.exit(1);
+});
+
 async function main(): Promise<void> {
   try {
     log(`NAMESPACE=${NAMESPACE}`);
