@@ -375,6 +375,16 @@ additional tools for package management:
 | `list_available_packages(project)` | Returns the packages declared for a project |
 | `install_packages(project, packages)` | Installs ad-hoc packages via a maintenance pod (not persistent across restarts) |
 
+### Finding Tools
+
+The manager MCP server also provides tools for managing agent-reported findings:
+
+| Tool | Purpose |
+|------|---------|
+| `list_findings(project, status?, severity?, category?, limit?)` | List findings with optional filters |
+| `update_finding(project, id, status?, severity?, category?)` | Update a finding's status, severity, or category |
+| `create_task_from_finding(project, id, agent?, priority?)` | Promote a finding to a Task CR |
+
 ### Base image
 
 Packages are installed on top of the runner image
@@ -496,6 +506,9 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `get_reconcile_status` | Check whether the reconcile loop is paused and when it was last paused |
 | `list_available_packages` | List Alpine packages declared for a project's runner |
 | `install_packages` | Install ad-hoc Alpine packages via a maintenance pod |
+| `list_findings` | List agent-reported findings with optional status/severity/category filters |
+| `update_finding` | Update a finding's status, severity, or category for manual triage |
+| `create_task_from_finding` | Create a Task CR from a finding regardless of severity |
 | `store_memory` | Store a memory with semantic embedding for future context retrieval |
 | `query_memory` | Semantic search across stored memories, ranked by cosine distance |
 | `get_context` | Retrieve relevant context from past runs and memories, formatted for prompt injection |

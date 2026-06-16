@@ -7,11 +7,15 @@
 // in its config (deployed as the agent-config ConfigMap).
 // Note: uses `mcp` key (not `mcpServers` — that was a legacy format).
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { setHeaderOptions } from '@kubernetes/client-node';
 import {
   BoardStatusSchema,
+  type Finding,
+  FindingCategory,
+  FindingSeverity,
+  FindingStatus,
   LABELS,
   type Project,
   type Task,
@@ -29,6 +33,7 @@ import {
   fetchSessionMessages,
   getDeploymentImages,
   getDispatcherImageFromOperatorDeployment,
+  getFindingsConfigMap,
   getProject,
   getRun,
   getTask,
@@ -36,6 +41,9 @@ import {
   listPodsByLabels,
   listRuns,
   listTasks,
+  parseTriagedFindings,
+  patchFindingsConfigMap,
+  patchProjectStatus,
   patchTask,
   patchTaskStatus,
   readAllSessionsFromConfigMap,
@@ -770,6 +778,99 @@ const TOOLS = [
         },
       },
       required: ['project', 'packages'],
+    },
+  },
+  {
+    name: 'list_findings',
+    description:
+      'List agent-reported findings for a project. Returns the curated, deduplicated view ' +
+      'from board.status.findings. Optionally filter by status, severity, or category.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Project name (required)' },
+        status: {
+          type: 'string',
+          enum: ['new', 'triaged', 'in-progress', 'resolved', 'duplicate', 'wontfix'],
+          description: 'Filter by status (optional)',
+        },
+        severity: {
+          type: 'string',
+          enum: ['low', 'medium', 'high', 'critical'],
+          description: 'Filter by severity (optional)',
+        },
+        category: {
+          type: 'string',
+          enum: ['bug', 'security', 'performance', 'debt', 'docs', 'other'],
+          description: 'Filter by category (optional)',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max results to return (default: 50, max: 200)',
+        },
+      },
+      required: ['project'],
+    },
+  },
+  {
+    name: 'update_finding',
+    description:
+      "Update a finding's status, severity, or category. Use to manually triage reported " +
+      'issues: mark as wontfix/resolved/dropped, escalate severity, or reclassify category. ' +
+      'Specify the finding by its id or clusterId.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Project name (required)' },
+        id: {
+          type: 'string',
+          description: 'Finding id or clusterId to update (required)',
+        },
+        status: {
+          type: 'string',
+          enum: ['new', 'triaged', 'in-progress', 'resolved', 'duplicate', 'wontfix'],
+          description: 'New status (optional)',
+        },
+        severity: {
+          type: 'string',
+          enum: ['low', 'medium', 'high', 'critical'],
+          description: 'New severity (optional)',
+        },
+        category: {
+          type: 'string',
+          enum: ['bug', 'security', 'performance', 'debt', 'docs', 'other'],
+          description: 'New category (optional)',
+        },
+      },
+      required: ['project', 'id'],
+    },
+  },
+  {
+    name: 'create_task_from_finding',
+    description:
+      'Create a new Task CR from a reported finding, regardless of its severity or category. ' +
+      'Use to promote any finding to actionable work. The agent assigns the task type ' +
+      '(PLAN for security/debt findings, BUILD otherwise) and links it back to the finding.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Project name (required)' },
+        id: {
+          type: 'string',
+          description: 'Finding id or clusterId to promote to a task (required)',
+        },
+        agent: {
+          type: 'string',
+          description:
+            'Agent to assign (optional; defaults to first planner for PLAN, first builder for BUILD)',
+        },
+        priority: {
+          type: 'string',
+          enum: ['high', 'medium', 'low'],
+          description: 'Task priority (default: medium; critical findings default to high)',
+        },
+      },
+      required: ['project', 'id'],
     },
   },
 ];
@@ -2312,6 +2413,225 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const cmd = `apk update --quiet && apk add --no-cache ${pkgs.join(' ')}`;
       const result = await execInWorkspace(project, cmd, undefined, undefined, MANAGER_NAMESPACE);
       return { installed: pkgs, output: result.stdout ?? '', exitCode: result.exitCode };
+    }
+
+    case 'list_findings': {
+      const projectNameLF = String(args.project ?? '');
+      const resourceNsLF = String(args.namespace ?? ns);
+      if (!projectNameLF) throw new Error('project is required');
+
+      const projectLF = await getProject(projectNameLF, resourceNsLF);
+      const findingsLF = projectLF.status?.board?.findings ?? [];
+
+      let filteredLF = findingsLF;
+      if (args.status) {
+        const s = String(args.status);
+        filteredLF = filteredLF.filter((f) => f.status === s);
+      }
+      if (args.severity) {
+        const s = String(args.severity);
+        filteredLF = filteredLF.filter((f) => f.severity === s);
+      }
+      if (args.category) {
+        const c = String(args.category);
+        filteredLF = filteredLF.filter((f) => f.category === c);
+      }
+
+      const limitLF = args.limit ? Math.min(Number(args.limit), 200) : 50;
+      filteredLF = filteredLF.slice(0, limitLF);
+
+      return {
+        project: projectNameLF,
+        total: findingsLF.length,
+        returned: filteredLF.length,
+        findings: filteredLF,
+      };
+    }
+
+    case 'update_finding': {
+      const projectNameUF = String(args.project ?? '');
+      const findingIdUF = String(args.id ?? '');
+      const resourceNsUF = String(args.namespace ?? ns);
+      if (!projectNameUF) throw new Error('project is required');
+      if (!findingIdUF) throw new Error('id is required');
+
+      const dataUF = await getFindingsConfigMap(projectNameUF, resourceNsUF);
+      if (!dataUF) throw new Error('No findings ConfigMap found for this project');
+
+      const triagedMapUF = parseTriagedFindings(dataUF);
+
+      const canonicalUF =
+        triagedMapUF.get(findingIdUF) ||
+        [...triagedMapUF.values()].find((f) => f.id === findingIdUF);
+
+      if (!canonicalUF) throw new Error(`Finding "${findingIdUF}" not found`);
+
+      const clusterIdUF = canonicalUF.clusterId!;
+      const updatedUF: Finding = { ...canonicalUF };
+
+      if (args.status) {
+        const parsedStatus = FindingStatus.safeParse(String(args.status));
+        if (!parsedStatus.success) throw new Error(`Invalid status: ${String(args.status)}`);
+        updatedUF.status = parsedStatus.data;
+      }
+      if (args.severity) {
+        const parsedSeverity = FindingSeverity.safeParse(String(args.severity));
+        if (!parsedSeverity.success) throw new Error(`Invalid severity: ${String(args.severity)}`);
+        updatedUF.severity = parsedSeverity.data;
+      }
+      if (args.category) {
+        const parsedCategory = FindingCategory.safeParse(String(args.category));
+        if (!parsedCategory.success) throw new Error(`Invalid category: ${String(args.category)}`);
+        updatedUF.category = parsedCategory.data;
+      }
+
+      const patchDataUF: Record<string, string | null> = {};
+      patchDataUF[`triaged/${clusterIdUF}.json`] = JSON.stringify(updatedUF);
+
+      await patchFindingsConfigMap(projectNameUF, patchDataUF, resourceNsUF);
+
+      // Rebuild board findings
+      triagedMapUF.set(clusterIdUF, updatedUF);
+      const allTriagedUF = [...triagedMapUF.values()];
+      allTriagedUF.sort((a, b) =>
+        (b.triagedAt ?? b.createdAt).localeCompare(a.triagedAt ?? a.createdAt),
+      );
+      await patchProjectStatus(
+        projectNameUF,
+        { board: { findings: allTriagedUF.slice(0, 100) } },
+        resourceNsUF,
+      );
+
+      return {
+        project: projectNameUF,
+        finding: updatedUF,
+        updated: true,
+      };
+    }
+
+    case 'create_task_from_finding': {
+      const projectNameCT = String(args.project ?? '');
+      const findingIdCT = String(args.id ?? '');
+      const resourceNsCT = String(args.namespace ?? ns);
+      if (!projectNameCT) throw new Error('project is required');
+      if (!findingIdCT) throw new Error('id is required');
+
+      const projectCT = await getProject(projectNameCT, resourceNsCT);
+      const dataCT = await getFindingsConfigMap(projectNameCT, resourceNsCT);
+
+      let findingCT: Finding | undefined;
+
+      if (dataCT) {
+        const triagedMapCT = parseTriagedFindings(dataCT);
+        findingCT =
+          triagedMapCT.get(findingIdCT) ||
+          [...triagedMapCT.values()].find((f) => f.id === findingIdCT);
+      }
+
+      if (!findingCT) {
+        // Fallback to board findings
+        const boardFindingsCT = projectCT.status?.board?.findings ?? [];
+        findingCT = boardFindingsCT.find(
+          (f) => f.id === findingIdCT || f.clusterId === findingIdCT,
+        );
+      }
+
+      if (!findingCT) throw new Error(`Finding "${findingIdCT}" not found`);
+
+      const taskTypeCT =
+        findingCT.category === 'security' || findingCT.category === 'debt' ? 'PLAN' : 'BUILD';
+
+      const agentsCT = projectCT.spec.agents ?? [];
+      const defaultAgentCT = args.agent
+        ? String(args.agent)
+        : (agentsCT.find((a) =>
+            taskTypeCT === 'PLAN'
+              ? a.name.toLowerCase().includes('planner')
+              : a.name.toLowerCase().includes('builder'),
+          )?.name ?? (agentsCT.length > 0 ? agentsCT[0]!.name : 'default'));
+
+      const taskPriorityCT = args.priority
+        ? (String(args.priority) as 'high' | 'medium' | 'low')
+        : findingCT.severity === 'critical'
+          ? 'high'
+          : 'medium';
+
+      const taskSuffixCT = createHash('sha256').update(findingCT.id).digest('hex').slice(0, 6);
+      const taskNameCT = `${projectNameCT}-${taskTypeCT.toLowerCase()}-find-${taskSuffixCT}`;
+
+      const newTaskCT = buildTask({
+        name: taskNameCT,
+        projectName: projectNameCT,
+        projectUid: projectCT.metadata.uid ?? '',
+        ns: resourceNsCT,
+        spec: {
+          projectRef: projectNameCT,
+          type: taskTypeCT,
+          title: `[Finding] ${findingCT.title.slice(0, 240)}`,
+          description: `Created from finding ${findingCT.id}:\n\n${findingCT.description}${findingCT.filePath ? `\n\nFile: ${findingCT.filePath}` : ''}`,
+          agent: defaultAgentCT,
+          priority: taskPriorityCT,
+        },
+      });
+
+      await createTask(newTaskCT, resourceNsCT);
+      await patchTaskStatus(taskNameCT, { phase: 'pending' }, resourceNsCT).catch(() => {
+        /* best effort */
+      });
+      await patchTask(
+        taskNameCT,
+        {
+          metadata: {
+            name: taskNameCT,
+            annotations: {
+              'percussionist.dev/finding-id': findingCT.id,
+              'percussionist.dev/finding-cluster': findingCT.clusterId ?? findingCT.id,
+            },
+          },
+        },
+        resourceNsCT,
+      ).catch(() => {
+        /* best effort */
+      });
+
+      // Update the triaged finding's taskRef and status
+      if (findingCT.clusterId && dataCT) {
+        const triagedMapCT2 = parseTriagedFindings(dataCT);
+        const triagedCT = triagedMapCT2.get(findingCT.clusterId);
+        if (triagedCT) {
+          triagedCT.taskRef = taskNameCT;
+          triagedCT.status = 'in-progress';
+          const clusterIdCT = triagedCT.clusterId!;
+          const patchDataCT: Record<string, string | null> = {};
+          patchDataCT[`triaged/${clusterIdCT}.json`] = JSON.stringify(triagedCT);
+          await patchFindingsConfigMap(projectNameCT, patchDataCT, resourceNsCT).catch(() => {
+            /* best effort */
+          });
+
+          // Rebuild board findings
+          triagedMapCT2.set(clusterIdCT, triagedCT);
+          const allTriagedCT = [...triagedMapCT2.values()];
+          allTriagedCT.sort((a, b) =>
+            (b.triagedAt ?? b.createdAt).localeCompare(a.triagedAt ?? a.createdAt),
+          );
+          await patchProjectStatus(
+            projectNameCT,
+            { board: { findings: allTriagedCT.slice(0, 100) } },
+            resourceNsCT,
+          ).catch(() => {
+            /* best effort */
+          });
+        }
+      }
+
+      return {
+        project: projectNameCT,
+        taskName: taskNameCT,
+        findingId: findingCT.id,
+        type: taskTypeCT,
+        agent: defaultAgentCT,
+        priority: taskPriorityCT,
+      };
     }
 
     default:
