@@ -119,6 +119,7 @@ export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Pro
 
   const podName = cleanupPodName('cleanup', runName);
   const mirrorDir = gitUrl ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}` : undefined;
+  const lockFile = gitUrl ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}.lock` : undefined;
   const worktreeDir = `${dataMountPath}/worktrees/${runName}`;
 
   const script = [
@@ -129,14 +130,18 @@ export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Pro
     ...(mirrorDir
       ? [
           `if [ -d "${mirrorDir}" ]; then`,
-          `  echo "[cleanup] pruning mirror ${mirrorDir}"`,
-          `  git -C "${mirrorDir}" worktree prune --expire=now 2>/dev/null || true`,
-          `  if [ -n "$BRANCH" ]; then`,
-          `    echo "[cleanup] deleting branch ref \${BRANCH#refs/heads/}"`,
-          `    git -C "${mirrorDir}" branch -D "\${BRANCH#refs/heads/}" 2>/dev/null || true`,
-          `  fi`,
-          `  echo "[cleanup] repacking mirror objects"`,
-          `  git -C "${mirrorDir}" gc --auto 2>/dev/null || true`,
+          `  mkdir -p "$(dirname "${lockFile}")"`,
+          `  (`,
+          `    flock -x 200`,
+          `    echo "[cleanup] pruning mirror ${mirrorDir}"`,
+          `    git -C "${mirrorDir}" worktree prune --expire=now 2>/dev/null || true`,
+          `    if [ -n "$BRANCH" ]; then`,
+          `      echo "[cleanup] deleting branch ref \${BRANCH#refs/heads/}"`,
+          `      git -C "${mirrorDir}" branch -D "\${BRANCH#refs/heads/}" 2>/dev/null || true`,
+          `    fi`,
+          `    echo "[cleanup] repacking mirror objects"`,
+          `    git -C "${mirrorDir}" gc --auto 2>/dev/null || true`,
+          `  ) 200>"${lockFile}"`,
           `fi`,
         ]
       : []),
@@ -213,6 +218,7 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
   const taskName = task.metadata.name;
   const podName = cleanupPodName('cleanup-task', taskName);
   const mirrorDir = gitUrl ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}` : undefined;
+  const lockFile = gitUrl ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}.lock` : undefined;
   const worktreeDir = `${dataMountPath}/worktrees`;
 
   const sanitizedTaskName = taskName.toLowerCase().replace(/[^a-z0-9]/g, '-');
@@ -239,14 +245,18 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
     ...(mirrorDir
       ? [
           `if [ -d "${mirrorDir}" ]; then`,
-          `  echo "[cleanup] pruning mirror ${mirrorDir}"`,
-          `  git -C "${mirrorDir}" worktree prune --expire=now 2>/dev/null || true`,
-          `  for b in $BRANCHES; do`,
-          `    echo "[cleanup] deleting branch ref $b"`,
-          `    git -C "${mirrorDir}" branch -D "$b" 2>/dev/null || true`,
-          `  done`,
-          `  echo "[cleanup] repacking mirror objects"`,
-          `  git -C "${mirrorDir}" gc --auto 2>/dev/null || true`,
+          `  mkdir -p "$(dirname "${lockFile}")"`,
+          `  (`,
+          `    flock -x 200`,
+          `    echo "[cleanup] pruning mirror ${mirrorDir}"`,
+          `    git -C "${mirrorDir}" worktree prune --expire=now 2>/dev/null || true`,
+          `    for b in $BRANCHES; do`,
+          `      echo "[cleanup] deleting branch ref $b"`,
+          `      git -C "${mirrorDir}" branch -D "$b" 2>/dev/null || true`,
+          `    done`,
+          `    echo "[cleanup] repacking mirror objects"`,
+          `    git -C "${mirrorDir}" gc --auto 2>/dev/null || true`,
+          `  ) 200>"${lockFile}"`,
           `fi`,
         ]
       : []),
