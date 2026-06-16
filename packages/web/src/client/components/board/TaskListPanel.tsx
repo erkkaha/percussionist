@@ -1,18 +1,16 @@
 // TaskListPanel.tsx — scrollable grouped task list with filter bar.
 
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { ChevronDown, Plus, Filter, X } from "lucide-react";
-import type { Task } from "../../lib/types";
-import { FilterBar } from "./FilterBar";
-import type { FilterState } from "./FilterBar";
-import { TaskRow } from "./TaskRow";
-import { AddTaskForm } from "./AddTaskForm";
-import { useIsMobile } from "../../hooks/use-mobile";
+import { ChevronDown, Filter, Plus, X } from 'lucide-react';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useIsMobile } from '../../hooks/use-mobile';
+import type { Task } from '../../lib/types';
+import { AddTaskForm } from './AddTaskForm';
+import type { FilterState } from './FilterBar';
+import { FilterBar } from './FilterBar';
+import { TaskRow } from './TaskRow';
 
 const DEFAULT_COLUMNS = ['ideas', 'backlog', 'blocked', 'in-progress', 'review', 'done'] as const;
-
-
 
 interface TaskListPanelProps {
   projectName: string;
@@ -39,7 +37,7 @@ export function TaskListPanel({
   selectedTaskName,
   onSelectTask,
   showAddTask,
-  addTaskDefaultColumn = "backlog",
+  addTaskDefaultColumn = 'backlog',
   onCloseAddTask,
   onAddIdea,
   renderInlineAddTask = true,
@@ -132,7 +130,13 @@ export function TaskListPanel({
 
       {inlineAddTaskOpen && (
         <div className="pb-2 shrink-0">
-          <AddTaskForm projectName={projectName} roster={roster} defaultColumn={addTaskDefaultColumn} onClose={onCloseAddTask} className="mx-2" />
+          <AddTaskForm
+            projectName={projectName}
+            roster={roster}
+            defaultColumn={addTaskDefaultColumn}
+            onClose={onCloseAddTask}
+            className="mx-2"
+          />
         </div>
       )}
 
@@ -183,7 +187,7 @@ export function TaskListPanel({
                 )}
               </div>
 
-              {col === "ideas" && showAddIdea && !isCollapsed && !isMobile && (
+              {col === 'ideas' && showAddIdea && !isCollapsed && !isMobile && (
                 <div className="pb-2">
                   <AddTaskForm
                     projectName={projectName}

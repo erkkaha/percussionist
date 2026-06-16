@@ -90,4 +90,6 @@ Both controllers use `makeInformer` + in-memory work queue pattern. They are sin
 5. **Runner** launches OpenCode agent with dispatcher sidecar
 6. **Agent** communicates with Manager via MCP tools (`create_task`, `force_retry`, etc.)
 7. **Agent** signals completion via `complete_run` / `fail_run` MCP tools
-8. **Manager** updates `Task.status` and board state accordingly
+8. **Agent** may report off-task issues via `report_finding` MCP tool → writes to `{project}-findings` ConfigMap inbox
+9. **Manager** ingests findings from ConfigMap inbox on each reconcile cycle: deduplicates, triages, optionally auto-creates Task CRs, and updates `board.status.findings[]`
+10. **Manager** updates `Task.status` and board state accordingly

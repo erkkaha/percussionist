@@ -137,6 +137,30 @@ roleRef:
   kind: Role
   name: percussionist-dispatcher
 ---
+# Cluster-scope permissions for the dispatcher: create_task validates the
+# selected agent's capabilities by listing ClusterAgent CRs (cluster-scoped).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: percussionist-dispatcher
+rules:
+  - apiGroups: ["percussionist.dev"]
+    resources: ["clusteragents"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: percussionist-dispatcher
+subjects:
+  - kind: ServiceAccount
+    name: percussionist-dispatcher
+    namespace: percussionist
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: percussionist-dispatcher
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

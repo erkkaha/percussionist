@@ -162,6 +162,25 @@ export async function buildWorkerRun(
     );
   }
 
+  // Off-task finding reporting prompt — only for BUILD and PLAN runs, not merge.
+  if (task.spec.type !== 'BUILD' || !task.spec.description?.toLowerCase().includes('merge')) {
+    promptLines.push(
+      'OFF-TASK FINDINGS:',
+      '- Your job is the TASK above. Stay on it.',
+      '- If, while working, you notice a SEPARATE problem unrelated to your task — a security hole,',
+      '  a real bug, a performance trap, or notable tech debt — report it ONCE with the',
+      '  `report_finding` tool, then continue your task. Do not investigate it further.',
+      '- Provide: a one-line title, a short description (what is wrong + why it matters +',
+      '  suggested fix), severity (low/medium/high/critical), category',
+      '  (bug/security/performance/debt/docs/other), and filePath/snippet when you have them.',
+      '- Do NOT report: style nits, things already covered by your task, speculative',
+      '  "could be better" ideas, or anything you are not fairly confident about.',
+      '- One finding per distinct issue. The manager de-duplicates, so do not worry about',
+      '  repeats — but do not spam.',
+      '',
+    );
+  }
+
   // Feature branching: override git ref with task's branch.
   if (project.spec.featureBranchingEnabled && resolved.source?.git) {
     const gitBranch = resolveTaskBranch(task, project, allTasks ?? []);

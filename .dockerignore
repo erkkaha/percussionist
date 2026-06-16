@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+**/*.secret.*
+**/*.key
+**/*.pem
+**/*.p12
+**/*.cert
+
+# Node
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+.npmrc
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# CI / tooling
+.github/
+
+# Documentation only
+docs/
+
+# Kubernetes manifests (not needed for images)
+k8s/
+
+# Runtime data
+packages/web/data/
+
+# Test fixtures
+tests/
