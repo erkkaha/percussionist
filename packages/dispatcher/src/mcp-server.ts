@@ -1357,6 +1357,8 @@ export const __test = {
   handleMcp,
   completionPolicyForContext,
   parseContextHint,
+  computeDedupKey,
+  normalizeFindingText,
 };
 
 // ---------------------------------------------------------------------------
