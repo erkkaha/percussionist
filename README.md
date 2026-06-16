@@ -119,7 +119,8 @@ the old image ID, and runs `minikube image rm` before the fresh load.
 beatctl deploy
 ```
 
-Installs all three CRDs, the operator, manager controller, and web dashboard,
+Installs all five CRDs (`run`, `project`, `task`, `clusteragent`, `clustersettings`),
+the operator, manager controller, and web dashboard,
 then waits for rollouts to complete. Equivalent manual flow:
 
 ```sh
@@ -476,9 +477,9 @@ pnpm bundle
 | `beatctl wait <name>` | Block until terminal phase. Exit 0 = Succeeded, 1 = other terminal or deleted, 2 = timeout, 3 = API error. `--for <phase>` to await a specific phase. |
 | `beatctl cancel <name>` | Delete the run and all owned resources. |
 | `beatctl board get <project>` | Show the board state (columns, workers, escalations) for an Project. |
-| `beatctl board task add <project> --id X --title Y --agent Z` | Add a task to the project's board. |
-| `beatctl board task move <project> --task-id X --to column` | Move a task between columns. |
-| `beatctl board task remove <project> --task-id X` | Remove a task from the board (spec + status). |
+| `beatctl board task add <project> --title "Task title" --agent <agent>` | Add a task to the project's board. |
+| `beatctl board task move <project> --task-name <task-name> --to <phase>` | Move a task between phases. |
+| `beatctl board task remove <project> --task-name <task-name>` | Remove a task from the board (spec + status). |
 | `beatctl project list` / `get` / `create` / `delete` | Manage Project templates. |
 | `beatctl agent list` / `get` / `create` / `delete` | Manage ClusterAgent resources (cluster-scoped). |
 
@@ -587,6 +588,18 @@ spec:
 `author` sets `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in both the init container
 and the runner, so in-run `git commit` works without manual `git config`.
 
+### SSH host-key verification
+
+Git SSH host-key verification mode is configured with
+`spec.source.git.sshHostKeyVerification`:
+
+- `strict` — always verify against known_hosts; reject unknown hosts
+- `accept-new` — accept unknown host keys on first connect, reject changed keys
+- `no` — disable host-key verification (**default**, for backward compatibility)
+
+When using `strict` or `accept-new`, set `known_hostsSecret` so the runner can
+verify host keys against your trusted entries.
+
 ## Caching
 
 Percussionist automatically caches package manager stores and build artifacts
@@ -595,21 +608,22 @@ monorepos and repeated builds.
 
 ### How it works
 
-- Each `Project` gets a dedicated **5Gi PersistentVolumeClaim** mounted
-  at `/cache` in all runner pods.
-- The PVC uses **ReadWriteMany (RWX)** access mode, allowing parallel workers
-  to share the cache simultaneously.
+- Each `Project` gets a dedicated **data PersistentVolumeClaim** named
+  `{project}-data` mounted at `/data` in run pods.
+- Operator defaults for this PVC are **50Gi** and **ReadWriteOnce (RWO)**.
+- `ReadWriteMany` is supported when your storage class supports RWX and you
+  override the access mode/class via `spec.data`.
 - Package managers are automatically configured via environment variables to use
   the cache:
-  - **pnpm**: `PNPM_HOME=/cache/pnpm`, `pnpm_config_store_dir=/cache/pnpm-store`
-  - **npm**: `NPM_CONFIG_CACHE=/cache/npm`
-  - **bun**: `BUN_INSTALL_CACHE_DIR=/cache/bun`
-  - **Turbo**: `TURBO_CACHE_DIR=/cache/turbo`
+  - **pnpm**: `PNPM_HOME=/data/cache/pnpm`, `pnpm_config_store_dir=/data/cache/pnpm-store`
+  - **npm**: `NPM_CONFIG_CACHE=/data/cache/npm`
+  - **bun**: `BUN_INSTALL_CACHE_DIR=/data/cache/bun`
+  - **Turbo**: `TURBO_CACHE_DIR=/data/cache/turbo`
 
 ### Cache structure
 
 ```
-/cache/
+/data/cache/
 ├── pnpm/          # pnpm home (global bins)
 ├── pnpm-store/    # pnpm store (hardlinked packages)
 ├── npm/           # npm cache
@@ -620,15 +634,15 @@ monorepos and repeated builds.
 ### Lifecycle
 
 - **Created**: Automatically when the first run in a project starts.
-- **Shared**: All runs with the same `metadata.labels["percussionist.dev/project"]`
-  label share the cache.
+- **Shared**: All runs in the same project share the same data PVC and cache.
 - **Deleted**: Automatically when the `Project` is deleted (via owner
   references).
 
 ### Storage requirements
 
-**RWX storage provisioner required** for parallel worker execution. The default
-`hostPath` provisioner in minikube/k3s only supports RWO (single-node access).
+Default configuration works on typical single-node setups (`ReadWriteOnce`).
+If you need true multi-writer RWX behavior, use an RWX-capable storage class and
+set access-mode/class overrides in `spec.data`.
 
 | Cluster type | RWX solution |
 |--------------|--------------|
@@ -638,22 +652,22 @@ monorepos and repeated builds.
 
 ### Configuration overrides
 
-Override defaults per-run via `spec.cache`:
+Override defaults via `spec.data`:
 
 ```yaml
 apiVersion: percussionist.dev/v1alpha1
 kind: Run
 metadata:
   name: my-run
-  labels:
-    percussionist.dev/project: my-project
 spec:
   task: "run pnpm install && pnpm build"
   project: my-project
-  cache:
-    pvcName: custom-cache-pvc      # default: {project}-cache
-    mountPath: /custom-cache        # default: /cache
+  data:
+    pvcName: custom-data-pvc         # default: {project}-data
+    mountPath: /custom-data          # default: /data
     storageClass: fast-ssd          # default: cluster default
+    accessMode: ReadWriteMany       # default: ReadWriteOnce
+    storageSize: 100Gi              # default: 50Gi
 ```
 
 ### Performance impact
