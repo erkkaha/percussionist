@@ -19,6 +19,7 @@ All notable changes to Percussionist are documented here.
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Regenerate CRD YAML with findings schema in board status
+- Release v0.1.187
 ## [v0.1.186] - 2026-06-16
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
