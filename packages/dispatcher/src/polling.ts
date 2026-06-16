@@ -1,7 +1,7 @@
 // polling.ts — prompt-mode and interactive-mode polling loops.
 
 import http from 'node:http';
-import { RunPhase } from '@percussionist/api';
+import { LABELS, MANAGED_BY, RunPhase } from '@percussionist/api';
 import {
   BASE_URL,
   checkHealth,
@@ -222,8 +222,8 @@ export async function snapshotAllSessions(
     name: `${runName}-session`,
     namespace: runNamespace,
     labels: {
-      'app.kubernetes.io/managed-by': 'percussionist',
-      'percussionist.dev/run-name': runName,
+      [LABELS.managedBy]: MANAGED_BY,
+      [LABELS.runName]: runName,
       'percussionist.dev/component': 'session-snapshot',
     },
     ownerReferences: [

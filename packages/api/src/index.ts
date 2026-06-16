@@ -39,7 +39,7 @@ export const PLURAL_CLUSTER_SETTINGS = 'clustersettings';
 // Set as ClusterSettings.spec.runnerAdapter to override the opencode defaults.
 
 export interface RunnerImageSpec {
-  /** Container image. Defaults to ghcr.io/anomalyco/opencode:latest */
+  /** Container image for the runner adapter. Defaults to ghcr.io/anomalyco/opencode:latest. */
   image: string;
   /** HTTP port the runner listens on. Defaults to 4096. */
   port: number;

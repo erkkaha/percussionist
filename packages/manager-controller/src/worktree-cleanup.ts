@@ -263,7 +263,7 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
         [LABELS.managedBy]: MANAGED_BY,
         [LABELS.projectName]: projectName,
         'percussionist.dev/component': 'worktree-cleanup',
-        'percussionist.dev/task': taskName,
+        [LABELS.taskId]: taskName,
       },
       ownerReferences: [
         {

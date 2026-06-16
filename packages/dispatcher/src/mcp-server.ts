@@ -1,7 +1,8 @@
 // mcp-server.ts — MCP (Model Context Protocol) HTTP server for run-pod agents.
 //
-// Exposes tools: fail_run, complete_run, complete_plan, complete_merge, complete_review,
-//                get_status, create_task, search_code, write_plan, read_plan, read_session
+// Exposes tools: fail_run, complete_run, complete_plan, complete_merge,
+//                get_status, create_task, search_code, write_plan, read_plan, read_session,
+//                complete_review
 //
 // fail_run — the agent calls this to signal that it cannot complete its task.
 // The dispatcher detects the call and throws a "session error:" which causes

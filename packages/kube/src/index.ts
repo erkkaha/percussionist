@@ -1266,10 +1266,10 @@ export async function listNodeHostStats(nodeName: string): Promise<NodeHostStats
   const body = (await res.json()) as SummaryResponse;
   const result: NodeHostStats = {
     name: nodeName,
-    hostMemoryBytes: body.node.memory.usageBytes,
-    hostCpuNanoCores: body.node.cpu.usageNanoCores,
+    hostMemoryBytes: body.node?.memory?.usageBytes ?? 0,
+    hostCpuNanoCores: body.node?.cpu?.usageNanoCores ?? 0,
     // Populate filesystem fields defensively — kubelet may omit fs data on some runtimes.
-    ...(body.node.fs
+    ...(body.node?.fs
       ? {
           hostFsUsedBytes: body.node.fs.usedBytes ?? null,
           hostFsCapacityBytes: body.node.fs.capacityBytes ?? null,
