@@ -169,7 +169,7 @@ export async function buildWorkerRun(
       '- Your job is the TASK above. Stay on it.',
       '- If, while working, you notice a SEPARATE problem unrelated to your task — a security hole,',
       '  a real bug, a performance trap, or notable tech debt — report it ONCE with the',
-      '  `report_finding` tool, then continue your task. Do not investigate it further.',
+      '  `percussionist_dispatcher_report_finding` tool, then continue your task. Do not investigate it further.',
       '- Provide: a one-line title, a short description (what is wrong + why it matters +',
       '  suggested fix), severity (low/medium/high/critical), category',
       '  (bug/security/performance/debt/docs/other), and filePath/snippet when you have them.',
