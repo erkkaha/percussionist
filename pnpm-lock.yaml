@@ -13,7 +13,7 @@ importers:
         version: 2.4.16
       '@commitlint/cli':
         specifier: 21.0.2
-        version: 21.0.2(@types/node@24.0.0)(conventional-commits-parser@6.4.0)(typescript@5.6.3)
+        version: 21.0.2(@types/node@24.0.0)(conventional-commits-parser@6.4.0)(typescript@6.0.3)
       '@commitlint/config-conventional':
         specifier: 21.0.2
         version: 21.0.2
@@ -30,8 +30,8 @@ importers:
         specifier: 4.22.4
         version: 4.22.4
       typescript:
-        specifier: 5.6.3
-        version: 5.6.3
+        specifier: 6.0.3
+        version: 6.0.3
       yaml:
         specifier: 2.9.0
         version: 2.9.0
@@ -43,7 +43,7 @@ importers:
     devDependencies:
       vitepress:
         specifier: 1.6.4
-        version: 1.6.4(@algolia/client-search@5.53.0)(@types/node@24.12.2)(lightningcss@1.32.0)(postcss@8.5.15)(search-insights@2.17.3)(typescript@5.6.3)
+        version: 1.6.4(@algolia/client-search@5.53.0)(@types/node@24.12.2)(lightningcss@1.32.0)(postcss@8.5.15)(search-insights@2.17.3)(typescript@6.0.3)
 
   packages/api:
     dependencies:
@@ -4260,8 +4260,8 @@ packages:
     engines: {node: '>=18.0.0'}
     hasBin: true
 
-  typescript@5.6.3:
-    resolution: {integrity: sha512-hjcS1mhfuyi4WW8IWtjP7brDrG2cuDZukyrYrSauoXGNgx0S7zceP07adYkJycEr56BOUTNPzbInooiN3fn1qw==}
+  typescript@6.0.3:
+    resolution: {integrity: sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==}
     engines: {node: '>=14.17'}
     hasBin: true
 
@@ -4729,11 +4729,11 @@ snapshots:
 
   '@chevrotain/utils@12.0.0': {}
 
-  '@commitlint/cli@21.0.2(@types/node@24.0.0)(conventional-commits-parser@6.4.0)(typescript@5.6.3)':
+  '@commitlint/cli@21.0.2(@types/node@24.0.0)(conventional-commits-parser@6.4.0)(typescript@6.0.3)':
     dependencies:
       '@commitlint/format': 21.0.1
       '@commitlint/lint': 21.0.2
-      '@commitlint/load': 21.0.2(@types/node@24.0.0)(typescript@5.6.3)
+      '@commitlint/load': 21.0.2(@types/node@24.0.0)(typescript@6.0.3)
       '@commitlint/read': 21.0.2(conventional-commits-parser@6.4.0)
       '@commitlint/types': 21.0.1
       tinyexec: 1.1.2
@@ -4778,14 +4778,14 @@ snapshots:
       '@commitlint/rules': 21.0.2
       '@commitlint/types': 21.0.1
 
-  '@commitlint/load@21.0.2(@types/node@24.0.0)(typescript@5.6.3)':
+  '@commitlint/load@21.0.2(@types/node@24.0.0)(typescript@6.0.3)':
     dependencies:
       '@commitlint/config-validator': 21.0.1
       '@commitlint/execute-rule': 21.0.1
       '@commitlint/resolve-extends': 21.0.1
       '@commitlint/types': 21.0.1
-      cosmiconfig: 9.0.1(typescript@5.6.3)
-      cosmiconfig-typescript-loader: 6.3.0(@types/node@24.0.0)(cosmiconfig@9.0.1(typescript@5.6.3))(typescript@5.6.3)
+      cosmiconfig: 9.0.1(typescript@6.0.3)
+      cosmiconfig-typescript-loader: 6.3.0(@types/node@24.0.0)(cosmiconfig@9.0.1(typescript@6.0.3))(typescript@6.0.3)
       es-toolkit: 1.47.0
       is-plain-obj: 4.1.0
       picocolors: 1.1.1
@@ -6406,10 +6406,10 @@ snapshots:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.0.16(@types/node@24.12.2)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4)(yaml@2.9.0)
 
-  '@vitejs/plugin-vue@5.2.4(vite@5.4.21(@types/node@24.12.2)(lightningcss@1.32.0))(vue@3.5.35(typescript@5.6.3))':
+  '@vitejs/plugin-vue@5.2.4(vite@5.4.21(@types/node@24.12.2)(lightningcss@1.32.0))(vue@3.5.35(typescript@6.0.3))':
     dependencies:
       vite: 5.4.21(@types/node@24.12.2)(lightningcss@1.32.0)
-      vue: 3.5.35(typescript@5.6.3)
+      vue: 3.5.35(typescript@6.0.3)
 
   '@vue/compiler-core@3.5.35':
     dependencies:
@@ -6475,28 +6475,28 @@ snapshots:
       '@vue/shared': 3.5.35
       csstype: 3.2.3
 
-  '@vue/server-renderer@3.5.35(vue@3.5.35(typescript@5.6.3))':
+  '@vue/server-renderer@3.5.35(vue@3.5.35(typescript@6.0.3))':
     dependencies:
       '@vue/compiler-ssr': 3.5.35
       '@vue/shared': 3.5.35
-      vue: 3.5.35(typescript@5.6.3)
+      vue: 3.5.35(typescript@6.0.3)
 
   '@vue/shared@3.5.35': {}
 
-  '@vueuse/core@12.8.2(typescript@5.6.3)':
+  '@vueuse/core@12.8.2(typescript@6.0.3)':
     dependencies:
       '@types/web-bluetooth': 0.0.21
       '@vueuse/metadata': 12.8.2
-      '@vueuse/shared': 12.8.2(typescript@5.6.3)
-      vue: 3.5.35(typescript@5.6.3)
+      '@vueuse/shared': 12.8.2(typescript@6.0.3)
+      vue: 3.5.35(typescript@6.0.3)
     transitivePeerDependencies:
       - typescript
 
-  '@vueuse/integrations@12.8.2(focus-trap@7.8.0)(typescript@5.6.3)':
+  '@vueuse/integrations@12.8.2(focus-trap@7.8.0)(typescript@6.0.3)':
     dependencies:
-      '@vueuse/core': 12.8.2(typescript@5.6.3)
-      '@vueuse/shared': 12.8.2(typescript@5.6.3)
-      vue: 3.5.35(typescript@5.6.3)
+      '@vueuse/core': 12.8.2(typescript@6.0.3)
+      '@vueuse/shared': 12.8.2(typescript@6.0.3)
+      vue: 3.5.35(typescript@6.0.3)
     optionalDependencies:
       focus-trap: 7.8.0
     transitivePeerDependencies:
@@ -6504,9 +6504,9 @@ snapshots:
 
   '@vueuse/metadata@12.8.2': {}
 
-  '@vueuse/shared@12.8.2(typescript@5.6.3)':
+  '@vueuse/shared@12.8.2(typescript@6.0.3)':
     dependencies:
-      vue: 3.5.35(typescript@5.6.3)
+      vue: 3.5.35(typescript@6.0.3)
     transitivePeerDependencies:
       - typescript
 
@@ -6699,21 +6699,21 @@ snapshots:
     dependencies:
       layout-base: 2.0.1
 
-  cosmiconfig-typescript-loader@6.3.0(@types/node@24.0.0)(cosmiconfig@9.0.1(typescript@5.6.3))(typescript@5.6.3):
+  cosmiconfig-typescript-loader@6.3.0(@types/node@24.0.0)(cosmiconfig@9.0.1(typescript@6.0.3))(typescript@6.0.3):
     dependencies:
       '@types/node': 24.0.0
-      cosmiconfig: 9.0.1(typescript@5.6.3)
+      cosmiconfig: 9.0.1(typescript@6.0.3)
       jiti: 2.6.1
-      typescript: 5.6.3
+      typescript: 6.0.3
 
-  cosmiconfig@9.0.1(typescript@5.6.3):
+  cosmiconfig@9.0.1(typescript@6.0.3):
     dependencies:
       env-paths: 2.2.1
       import-fresh: 3.3.1
       js-yaml: 4.1.1
       parse-json: 5.2.0
     optionalDependencies:
-      typescript: 5.6.3
+      typescript: 6.0.3
 
   csstype@3.2.3: {}
 
@@ -8512,7 +8512,7 @@ snapshots:
     optionalDependencies:
       fsevents: 2.3.3
 
-  typescript@5.6.3: {}
+  typescript@6.0.3: {}
 
   undici-types@7.16.0: {}
 
@@ -8639,7 +8639,7 @@ snapshots:
       tsx: 4.22.4
       yaml: 2.9.0
 
-  vitepress@1.6.4(@algolia/client-search@5.53.0)(@types/node@24.12.2)(lightningcss@1.32.0)(postcss@8.5.15)(search-insights@2.17.3)(typescript@5.6.3):
+  vitepress@1.6.4(@algolia/client-search@5.53.0)(@types/node@24.12.2)(lightningcss@1.32.0)(postcss@8.5.15)(search-insights@2.17.3)(typescript@6.0.3):
     dependencies:
       '@docsearch/css': 3.8.2
       '@docsearch/js': 3.8.2(@algolia/client-search@5.53.0)(search-insights@2.17.3)
@@ -8648,17 +8648,17 @@ snapshots:
       '@shikijs/transformers': 2.5.0
       '@shikijs/types': 2.5.0
       '@types/markdown-it': 14.1.2
-      '@vitejs/plugin-vue': 5.2.4(vite@5.4.21(@types/node@24.12.2)(lightningcss@1.32.0))(vue@3.5.35(typescript@5.6.3))
+      '@vitejs/plugin-vue': 5.2.4(vite@5.4.21(@types/node@24.12.2)(lightningcss@1.32.0))(vue@3.5.35(typescript@6.0.3))
       '@vue/devtools-api': 7.7.9
       '@vue/shared': 3.5.35
-      '@vueuse/core': 12.8.2(typescript@5.6.3)
-      '@vueuse/integrations': 12.8.2(focus-trap@7.8.0)(typescript@5.6.3)
+      '@vueuse/core': 12.8.2(typescript@6.0.3)
+      '@vueuse/integrations': 12.8.2(focus-trap@7.8.0)(typescript@6.0.3)
       focus-trap: 7.8.0
       mark.js: 8.11.1
       minisearch: 7.2.0
       shiki: 2.5.0
       vite: 5.4.21(@types/node@24.12.2)(lightningcss@1.32.0)
-      vue: 3.5.35(typescript@5.6.3)
+      vue: 3.5.35(typescript@6.0.3)
     optionalDependencies:
       postcss: 8.5.15
     transitivePeerDependencies:
@@ -8705,15 +8705,15 @@ snapshots:
 
   vscode-uri@3.1.0: {}
 
-  vue@3.5.35(typescript@5.6.3):
+  vue@3.5.35(typescript@6.0.3):
     dependencies:
       '@vue/compiler-dom': 3.5.35
       '@vue/compiler-sfc': 3.5.35
       '@vue/runtime-dom': 3.5.35
-      '@vue/server-renderer': 3.5.35(vue@3.5.35(typescript@5.6.3))
+      '@vue/server-renderer': 3.5.35(vue@3.5.35(typescript@6.0.3))
       '@vue/shared': 3.5.35
     optionalDependencies:
-      typescript: 5.6.3
+      typescript: 6.0.3
 
   warning@4.0.3:
     dependencies:
