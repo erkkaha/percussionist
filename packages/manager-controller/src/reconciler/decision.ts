@@ -1,7 +1,7 @@
 // Pure decision engine — no side effects, no Kubernetes calls, no clock reads.
 
 import { createHash } from 'node:crypto';
-import type { Project, Run, Task, TaskPhase } from '@percussionist/api';
+import type { Project, Run, RunPhase, Task, TaskPhase } from '@percussionist/api';
 import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../branch-resolver.js';
 import { auxiliaryRunName, workerRunName } from '../worker-builder.js';
 import type { ReconcileEffect } from './effects.js';
@@ -73,6 +73,14 @@ export interface ReconcileDecision {
   statusPatch?: Record<string, unknown>;
   effects: ReconcileEffect[];
   events: AuditEvent[];
+}
+
+function getEffectiveRunPhase(run: Run | undefined): RunPhase | undefined {
+  const phase = run?.status?.phase;
+  if (!run?.status?.podPhase) return phase;
+  if (run.status.podPhase !== 'Failed') return phase;
+  if (phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled') return phase;
+  return 'Failed';
 }
 
 export function decide(input: ReconcileInput): ReconcileDecision {
@@ -286,7 +294,7 @@ function decideInitializing(input: ReconcileInput): ReconcileDecision {
     };
   }
 
-  const runPhase = run.status?.phase;
+  const runPhase = getEffectiveRunPhase(run);
   if (runPhase === 'Running' || runPhase === 'WaitingForInput') {
     return {
       taskName,
@@ -365,7 +373,7 @@ function decideRunning(input: ReconcileInput): ReconcileDecision {
     };
   }
 
-  const runPhase = run.status?.phase;
+  const runPhase = getEffectiveRunPhase(run);
 
   if (runPhase === 'Succeeded') {
     const effects: ReconcileEffect[] = [];
@@ -594,7 +602,9 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
-  if (reviewRun.status?.phase === 'Failed') {
+  const reviewPhase = getEffectiveRunPhase(reviewRun);
+
+  if (reviewPhase === 'Failed') {
     return {
       taskName,
       fromPhase,
@@ -605,7 +615,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
   }
 
   const staleThresholdMs = flow.timeouts.reviewStaleSeconds * 1000;
-  if (reviewRun.status?.phase === 'Running') {
+  if (reviewPhase === 'Running') {
     const lastEvent = reviewRun.status?.lastEventAt;
     if (lastEvent) {
       const elapsed = new Date(now).getTime() - new Date(lastEvent).getTime();
@@ -630,7 +640,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
-  if (reviewRun.status?.phase !== 'Succeeded') {
+  if (reviewPhase !== 'Succeeded') {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
@@ -941,7 +951,9 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
     };
   }
 
-  if (mergeRun.status?.phase === 'Succeeded') {
+  const mergePhase = getEffectiveRunPhase(mergeRun);
+
+  if (mergePhase === 'Succeeded') {
     const verdict = getMergeVerdict(mergeRun);
     const verdictMessage = [verdict?.diagnosis, verdict?.details].filter(Boolean).join('\n\n');
 
@@ -1042,7 +1054,7 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
     };
   }
 
-  if (mergeRun.status?.phase === 'Failed') {
+  if (mergePhase === 'Failed') {
     return {
       taskName,
       fromPhase,
@@ -1055,7 +1067,7 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
     };
   }
 
-  if (mergeRun.status?.phase === 'Running') {
+  if (mergePhase === 'Running') {
     const staleThresholdMs = flow.timeouts.mergeStaleSeconds * 1000;
     const lastEvent = mergeRun.status?.lastEventAt;
     if (lastEvent) {
@@ -1141,7 +1153,9 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
-  if (buildgenRun.status?.phase === 'Failed') {
+  const buildgenPhase = getEffectiveRunPhase(buildgenRun);
+
+  if (buildgenPhase === 'Failed') {
     return {
       taskName,
       fromPhase,
@@ -1152,7 +1166,7 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
     };
   }
 
-  if (buildgenRun.status?.phase !== 'Succeeded') {
+  if (buildgenPhase !== 'Succeeded') {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
@@ -1340,7 +1354,9 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
     };
   }
 
-  if (mergeRun.status?.phase === 'Succeeded') {
+  const mergePhase = getEffectiveRunPhase(mergeRun);
+
+  if (mergePhase === 'Succeeded') {
     const verdict = getMergeVerdict(mergeRun);
     const verdictMessage = [verdict?.diagnosis, verdict?.details].filter(Boolean).join('\n\n');
 
@@ -1425,7 +1441,7 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
     };
   }
 
-  if (mergeRun.status?.phase === 'Failed') {
+  if (mergePhase === 'Failed') {
     return {
       taskName,
       fromPhase,
@@ -1445,7 +1461,7 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
   }
 
   // Staleness check for running merge runs.
-  if (mergeRun.status?.phase === 'Running') {
+  if (mergePhase === 'Running') {
     const staleThresholdMs = flow.timeouts.mergeStaleSeconds * 1000;
     const lastEvent = mergeRun.status?.lastEventAt;
     if (lastEvent) {

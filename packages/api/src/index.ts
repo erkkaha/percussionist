@@ -608,6 +608,7 @@ export const RunStatusSchema = z
       RunPhase.Cancelled,
     ]),
     message: z.string().optional(),
+    podPhase: z.enum(['Pending', 'Running', 'Succeeded', 'Failed', 'Unknown']).optional(),
     podName: z.string().optional(),
     serviceName: z.string().optional(),
     sessionID: z.string().optional(),
