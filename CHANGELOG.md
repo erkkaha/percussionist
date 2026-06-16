@@ -1,6 +1,29 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.187] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Add findings panel to board view _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Update reviewer prompt with structured findings schema _(agents)_
+- Restore skipSanitization for trusted diff script in exec_in_workspace _(web)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add unit tests for schema, ConfigMap helpers, dedup, and dispatcher _(findings)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Regenerate CRD YAML with findings schema in board status
+## [v0.1.186] - 2026-06-16
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.186
 ## [v0.1.185] - 2026-06-16
 
 ### <!-- 0 -->🚀 Features
