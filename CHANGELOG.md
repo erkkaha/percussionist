@@ -1,11 +1,20 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.190] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Add list/update/create_task findings MCP tools + prompt awareness _(agent)_
 ## [v0.1.189] - 2026-06-16
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Restore skipSanitization support in exec_in_workspace handler _(manager)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.189
 ## [v0.1.188] - 2026-06-16
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
@@ -43,6 +52,7 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Align label keys and stale hygiene comments
 - Validate workspace command and package inputs _(manager)_
 - Lock mirror cleanup operations with flock _(manager)_
 - Validate external status patch inputs with zod _(board)_
