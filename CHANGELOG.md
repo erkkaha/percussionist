@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.189] - 2026-06-16
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Restore skipSanitization support in exec_in_workspace handler _(manager)_
+## [v0.1.188] - 2026-06-16
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.188
 ## [v0.1.187] - 2026-06-16
 
 ### <!-- 0 -->🚀 Features
