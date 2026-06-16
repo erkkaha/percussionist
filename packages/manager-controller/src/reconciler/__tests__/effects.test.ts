@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import type { Run, Task } from '@percussionist/api';
+import type { Project, Run, Task } from '@percussionist/api';
 import * as kube from '@percussionist/kube';
 import * as facilitator from '../../facilitator.js';
 import * as sessionSummarizer from '../../session-summarizer.js';
@@ -26,21 +26,11 @@ function call(
   toPhase?: string,
   effects: ReconcileEffect[] = [],
   statusPatch?: Record<string, unknown>,
-  project: Record<string, unknown> | null = {
-    metadata: { name: testProject.metadata.name, uid: testProject.metadata.uid },
-    spec: { ...testProject.spec },
-  },
+  project: Project | null = testProject,
 ) {
-  return executeEffects(
+  return executeEffects(task, toPhase as any, effects, statusPatch, namespace, project, flow, [
     task,
-    toPhase as any,
-    effects,
-    statusPatch,
-    namespace,
-    project as any,
-    flow,
-    [task],
-  );
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -515,8 +505,11 @@ describe('executeEffects — ClearProjectAnnotations', () => {
     const effect: ReconcileEffect = { type: 'ClearProjectAnnotations', keys: ['key-a'] };
 
     const result = await call(testTask, undefined, [effect], undefined, {
-      metadata: {},
-      spec: {},
+      ...testProject,
+      metadata: {
+        ...testProject.metadata,
+        name: '',
+      },
     });
 
     expect(result.applied).toBe(true);
