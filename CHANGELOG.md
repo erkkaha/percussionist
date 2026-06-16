@@ -14,6 +14,10 @@ All notable changes to Percussionist are documented here.
 - Validate external status patch inputs with zod _(board)_
 - Use session.idle for idle-triggered flushes _(dispatcher)_
 - Avoid clobbering run terminal phase _(operator)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.185
 ## [v0.1.184] - 2026-06-15
 
 ### <!-- 1 -->🐛 Bug Fixes
