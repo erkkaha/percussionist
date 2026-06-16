@@ -603,5 +603,86 @@ spec:
                           - message
                           - recommendation
                           - createdAt
+                    findings:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          title:
+                            type: string
+                            maxLength: 256
+                          description:
+                            type: string
+                            maxLength: 8192
+                          severity:
+                            type: string
+                            enum:
+                              - low
+                              - medium
+                              - high
+                              - critical
+                          category:
+                            type: string
+                            enum:
+                              - bug
+                              - security
+                              - performance
+                              - debt
+                              - docs
+                              - other
+                          source:
+                            type: object
+                            properties:
+                              project:
+                                type: string
+                              task:
+                                type: string
+                              run:
+                                type: string
+                              agent:
+                                type: string
+                            required:
+                              - project
+                          filePath:
+                            type: string
+                            maxLength: 1024
+                          snippet:
+                            type: string
+                            maxLength: 2048
+                          status:
+                            type: string
+                            enum:
+                              - new
+                              - triaged
+                              - in-progress
+                              - resolved
+                              - duplicate
+                              - wontfix
+                          dedupKey:
+                            type: string
+                          clusterId:
+                            type: string
+                          duplicateOf:
+                            type: string
+                          taskRef:
+                            type: string
+                          occurrences:
+                            type: integer
+                            minimum: 1
+                          createdAt:
+                            type: string
+                          triagedAt:
+                            type: string
+                        required:
+                          - id
+                          - title
+                          - description
+                          - severity
+                          - category
+                          - source
+                          - dedupKey
+                          - createdAt
           required:
             - spec

@@ -375,6 +375,16 @@ additional tools for package management:
 | `list_available_packages(project)` | Returns the packages declared for a project |
 | `install_packages(project, packages)` | Installs ad-hoc packages via a maintenance pod (not persistent across restarts) |
 
+### Finding Tools
+
+The manager MCP server also provides tools for managing agent-reported findings:
+
+| Tool | Purpose |
+|------|---------|
+| `list_findings(project, status?, severity?, category?, limit?)` | List findings with optional filters |
+| `update_finding(project, id, status?, severity?, category?)` | Update a finding's status, severity, or category |
+| `create_task_from_finding(project, id, agent?, priority?)` | Promote a finding to a Task CR |
+
 ### Base image
 
 Packages are installed on top of the runner image
@@ -389,6 +399,7 @@ includes git, openssh, node, npm, bash, curl, unzip, and github-cli.
 - Operator and Manager use `makeInformer` + in-memory work queue pattern
 - API group: `percussionist.dev/v1alpha1`
 - Tasks are first-class `Task` CRs (not embedded in project spec); task state is authoritative in `Task.status`; project `spec.agents`, `spec.maxParallel`, `spec.phase` are top-level (no `spec.board` key)
+- Findings are stored in `board.status.findings[]` (curated, deduped view) and the raw inbox in a per-project `{project}-findings` ConfigMap
 - `opencode-web` supports MCP servers via the `mcp` config key (not `mcpServers` — that was a legacy format); the manager's agent-config ConfigMap uses `mcp` with `type: "remote"` pointing at the in-process MCP server on :4097.
 
 ## Database (SQLite — `@percussionist/web`)
@@ -495,6 +506,9 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `get_reconcile_status` | Check whether the reconcile loop is paused and when it was last paused |
 | `list_available_packages` | List Alpine packages declared for a project's runner |
 | `install_packages` | Install ad-hoc Alpine packages via a maintenance pod |
+| `list_findings` | List agent-reported findings with optional status/severity/category filters |
+| `update_finding` | Update a finding's status, severity, or category for manual triage |
+| `create_task_from_finding` | Create a Task CR from a finding regardless of severity |
 | `store_memory` | Store a memory with semantic embedding for future context retrieval |
 | `query_memory` | Semantic search across stored memories, ranked by cosine distance |
 | `get_context` | Retrieve relevant context from past runs and memories, formatted for prompt injection |
@@ -577,12 +591,22 @@ but served within each run pod). These tools are available to agents during run 
 | `write_plan` | Persist a plan artifact to the project's plans ConfigMap |
 | `read_plan` | Read a plan artifact from the project's plans ConfigMap |
 | `read_session` | Read session messages from another run's ConfigMap snapshot |
+| `report_finding` | Report an off-task issue (bug, security, performance, debt) for manager triage |
 
 **`complete_plan`** vs **`complete_run`**:
 - PLAN agents should call `complete_plan` after committing their plan document to `.percussionist/plans/{task-id}.md`
 - BUILD agents should call `complete_run` after implementation is committed
 - `complete_plan` signals plan artifact completion (no code work expected)
 - `complete_run` signals implementation work is done
+
+**`report_finding`** — Off-task issue reporting:
+- Available to all run-pod agents (BUILD, PLAN, review runs; not merge runs)
+- Accepts: `title` (≤256 chars), `description` (≤8192 chars), `severity` (`low`/`medium`/`high`/`critical`), `category` (`bug`/`security`/`performance`/`debt`/`docs`/`other`), optional `filePath` and `snippet`
+- The dispatcher writes the finding to a per-project `{project}-findings` ConfigMap inbox key using merge-patch (conflict-free across concurrent agents)
+- The manager ingests findings on every reconcile cycle: deduplicates (exact key, file+snippet hash, optional semantic similarity via vector memory), triages, and updates `board.status.findings[]`
+- High/critical severity + bug/security category → auto-creates a Task CR with `percussionist.dev/finding-id` and `percussionist.dev/finding-cluster` annotations
+- Returns `{ id, status: "accepted" }` synchronously — dedup is asynchronous (within 60s resync)
+- The worker prompt includes an `OFF-TASK FINDINGS` block instructing agents to report issues once and continue their assigned task
 
 ## Dispatcher SSE Event Streaming
 

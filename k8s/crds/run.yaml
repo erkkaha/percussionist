@@ -335,6 +335,14 @@ spec:
                     - Cancelled
                 message:
                   type: string
+                podPhase:
+                  type: string
+                  enum:
+                    - Pending
+                    - Running
+                    - Succeeded
+                    - Failed
+                    - Unknown
                 podName:
                   type: string
                 serviceName:
