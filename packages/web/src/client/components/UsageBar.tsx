@@ -9,8 +9,10 @@ import {
   readTodayUsage,
 } from '../lib/usage-settings';
 import { UsageSettingsPopover } from './UsageSettingsPopover';
+import { useSidebar } from './ui/sidebar';
 
 const SEGMENT_ORDER: Category[] = ['reviewing', 'planning', 'other'];
+const VIEW_MODE_STORAGE_KEY = 'percussionist:usagebar:view-mode';
 const VIEW_MODE_LABEL: Record<ViewMode, string> = {
   compact: 'Compact usage tracker',
   expanded: 'Expanded usage tracker',
@@ -26,9 +28,17 @@ export function UsageBar() {
   const location = useLocation();
   const [usage, setUsage] = useState(readTodayUsage);
   const [server, setServer] = useState(getServerCache);
-  const [viewMode, setViewMode] = useState<ViewMode>('compact');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const stored = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    return stored === 'compact' || stored === 'expanded' ? stored : 'compact';
+  });
+  const { state: sidebarState, isMobile } = useSidebar();
   const activeCategory = categorizeUsageRoute(location.pathname);
   const activeCategoryLabel = humanizeCategory(activeCategory);
+
+  // Usage tracker mode (compact/expanded) is independent from sidebar collapse state.
+  const isSidebarIconCollapsed = !isMobile && sidebarState === 'collapsed';
+  const effectiveViewMode: ViewMode = isSidebarIconCollapsed ? 'compact' : viewMode;
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -38,6 +48,10 @@ export function UsageBar() {
 
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+  }, [viewMode]);
 
   // Merge local and server: take the max per category.
   const categoryTotals: Record<Category, number> = {
@@ -91,7 +105,7 @@ export function UsageBar() {
         : '';
 
   const nextViewMode: ViewMode = viewMode === 'compact' ? 'expanded' : 'compact';
-  const ToggleIcon: LucideIcon = viewMode === 'compact' ? ChevronsUpDown : ChevronsDownUp;
+  const ToggleIcon: LucideIcon = effectiveViewMode === 'compact' ? ChevronsUpDown : ChevronsDownUp;
 
   function rowValue(category: Category): string {
     if (showPercent) {
@@ -108,7 +122,7 @@ export function UsageBar() {
   return (
     <div className="flex flex-col gap-1.5 px-1 py-1 group-data-[collapsible=icon]:items-center">
       <div className="flex items-center gap-1.5">
-        {viewMode === 'compact' ? (
+        {effectiveViewMode === 'compact' ? (
           <div
             className={`flex-1 flex h-1.5 rounded-none overflow-hidden bg-sidebar-accent ${warningClass} ${isAtMax ? 'opacity-50' : ''}`}
           >
@@ -138,7 +152,7 @@ export function UsageBar() {
         <button
           type="button"
           onClick={() => setViewMode(nextViewMode)}
-          className="shrink-0 opacity-40 hover:opacity-80 transition-opacity outline-none ring-sidebar-ring focus-visible:ring-2"
+          className="shrink-0 rounded-sm opacity-40 hover:opacity-80 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
           title={`Switch to ${VIEW_MODE_LABEL[nextViewMode]}`}
           aria-label={`Switch to ${VIEW_MODE_LABEL[nextViewMode]}`}
         >
@@ -146,7 +160,7 @@ export function UsageBar() {
         </button>
         <UsageSettingsPopover />
       </div>
-      {viewMode === 'compact' ? (
+      {effectiveViewMode === 'compact' ? (
         <span className="text-caption-xs text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
           {label}
         </span>
