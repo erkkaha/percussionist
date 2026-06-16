@@ -1,6 +1,24 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.193] - 2026-06-16
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Add percussionist_dispatcher_ prefix to report_finding tool mention in prompt _(worker-builder)_
+- Configure tsconfig for bun module resolution _(memory-service)_
+- Exclude test files from tsc build _(dispatcher)_
+- Exclude src/*.test.ts from tsc build _(manager)_
+- Configure server tsconfig for bun module resolution _(web)_
+
+### <!-- 10 -->💼 Other
+
+- Update typescript 5.6.3 -> 6.0.3
+- Update zod from 3.23.8 to 4.4.3
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update lockfile with bun-types for web package
 ## [v0.1.192] - 2026-06-16
 
 ### <!-- 0 -->🚀 Features
@@ -15,6 +33,7 @@ All notable changes to Percussionist are documented here.
 
 - Remaining uncommitted changes across web UI, tests, and docs
 - Security sweep before going public
+- Release v0.1.192
 ## [v0.1.191] - 2026-06-16
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
@@ -75,6 +94,7 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Handle unhandled rejections and preserve transient settings errors
 - Align label keys and stale hygiene comments
 - Validate workspace command and package inputs _(manager)_
 - Lock mirror cleanup operations with flock _(manager)_
@@ -88,6 +108,7 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
+- Add dependency scanning and pin @types/bun _(security)_
 - Release v0.1.185
 ## [v0.1.184] - 2026-06-15
 
