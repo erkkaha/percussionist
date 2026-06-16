@@ -34,7 +34,7 @@ Percussionist uses a **four-layer testing model** to balance speed, confidence, 
 
 - Run via `pnpm e2e:core`.
 - Framework: Bun test with shared harness in `tests/e2e/helpers/`.
-- **Deterministic control points only**: tests use ClusterAgent fixtures that instruct the agent to call specific MCP tools (`complete_run`, `complete_plan`, `fail_run`) rather than relying on LLM-generated prose.
+- **Deterministic control points only**: tests use ClusterAgent fixtures that instruct the agent to call specific MCP tools (`complete_run`, `complete_plan`, `fail_run`, `report_finding`) rather than relying on LLM-generated prose.
 - Assertions are exclusively on CR status fields (`Run.status.phase`, `Task.status.phase`, board JSON columns) — never on model output text or summaries.
 
 **Current test suites:**
