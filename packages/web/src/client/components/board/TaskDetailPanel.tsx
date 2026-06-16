@@ -7,6 +7,7 @@ import {
   AlertCircle,
   ArrowRight,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -44,6 +45,7 @@ import {
   SEVERITY_BG_CLASS,
   SEVERITY_DOT_CLASS,
   SEVERITY_LABEL,
+  SEVERITY_RANK,
   sortFindings,
 } from '../../lib/diff-findings';
 import type {
@@ -56,8 +58,6 @@ import type {
 import { CodeBlock } from '../CodeBlock';
 import { FileDiff } from '../FileDiff';
 import StatusBadge from '../StatusBadge';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Switch } from '../ui/switch';
 import { Textarea } from '../ui/textarea';
@@ -66,14 +66,6 @@ import TaskEventsPanel from './TaskEventsPanel';
 import TaskRunsPanel from './TaskRunsPanel';
 
 const remarkPlugins = [remarkGfm];
-
-const SEVERITY_RANK: Record<DiffFinding['severity'], number> = {
-  critical: 4,
-  high: 3,
-  medium: 2,
-  low: 1,
-  info: 0,
-};
 
 function formatFindingForFeedback(finding: DiffFinding): string {
   const anchor = finding.anchors[0];
@@ -371,7 +363,7 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
       </div>
 
       {/* Findings summary panel */}
-      {hasFindings && (
+      {hasFindings ? (
         <div className="rounded border border-border-muted bg-surface px-3 py-2 space-y-2">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">
@@ -441,6 +433,13 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
             })}
           </div>
         </div>
+      ) : (
+        <div className="rounded border border-border-muted bg-surface px-3 py-2">
+          <div className="flex items-center gap-2 text-xs text-text-dim">
+            <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+            <span>No findings — reviewer produced no structured findings for this diff</span>
+          </div>
+        </div>
       )}
 
       {/* View toggle */}
@@ -479,15 +478,27 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
           )}
           {hasFiles && (
             <div className="space-y-2">
-              {data.files.map((file) => (
-                <FileDiff
-                  key={`${file.path}-${file.diff.length}`}
-                  filename={file.path}
-                  path={file.path}
-                  diff={file.diff}
-                  findings={findings}
-                />
-              ))}
+              {[...data.files]
+                .sort((a, b) => {
+                  const aFindings = findings.filter((f) =>
+                    f.anchors.some((an) => an.path === a.path),
+                  );
+                  const bFindings = findings.filter((f) =>
+                    f.anchors.some((an) => an.path === b.path),
+                  );
+                  const aMax = Math.max(...aFindings.map((f) => SEVERITY_RANK[f.severity]), -1);
+                  const bMax = Math.max(...bFindings.map((f) => SEVERITY_RANK[f.severity]), -1);
+                  return bMax - aMax;
+                })
+                .map((file) => (
+                  <FileDiff
+                    key={`${file.path}-${file.diff.length}`}
+                    filename={file.path}
+                    path={file.path}
+                    diff={file.diff}
+                    findings={findings}
+                  />
+                ))}
             </div>
           )}
         </>
