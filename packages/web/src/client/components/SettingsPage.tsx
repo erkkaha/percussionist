@@ -1,31 +1,39 @@
-import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Loader2, RefreshCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
-  fetchSettings,
-  saveSettings,
-  fetchOpencodeConfig,
-  listSecrets,
   createSecret,
-  updateSecret,
   deleteSecret,
+  fetchOpencodeConfig,
+  fetchSettings,
   fetchUpdateStatus,
+  listSecrets,
   postUpgradeApply,
+  saveSettings,
   type UpdateStatus,
   type UpgradeResult,
-} from "../lib/api";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./ui/card";
-import { Input } from "./ui/input";
-import { Textarea } from "./ui/textarea";
-import { Button } from "./ui/button";
-import { cn } from "../lib/utils";
-import { RefreshCw, Loader2 } from "lucide-react";
-import ModelSelector from "./ModelSelector";
-import ProjectsPage from "./ProjectsPage";
-import AgentsPage from "./AgentsPage";
-import NotificationsPanel from "./NotificationsPanel";
+  updateSecret,
+} from '../lib/api';
+import { cn } from '../lib/utils';
+import AgentsPage from './AgentsPage';
+import ModelSelector from './ModelSelector';
+import NotificationsPanel from './NotificationsPanel';
+import ProjectsPage from './ProjectsPage';
+import { Button } from './ui/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './ui/card';
+import { Input } from './ui/input';
+import { Textarea } from './ui/textarea';
 
-type Tab = "projects" | "agents" | "secrets" | "opencode" | "manager" | "runner" | "notifications" | "updates";
+type Tab =
+  | 'projects'
+  | 'agents'
+  | 'secrets'
+  | 'opencode'
+  | 'manager'
+  | 'runner'
+  | 'notifications'
+  | 'updates';
 type SettingsSpec = Record<string, unknown> & {
   runnerConfig?: Record<string, unknown>;
 };
@@ -33,30 +41,30 @@ type SettingsSpec = Record<string, unknown> & {
 export default function SettingsPage() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
-  const initialTab = (searchParams.get("tab") as Tab | null) ?? "projects";
+  const initialTab = (searchParams.get('tab') as Tab | null) ?? 'projects';
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
   const { data: settings, isLoading: settingsLoading } = useQuery({
-    queryKey: ["settings"],
+    queryKey: ['settings'],
     queryFn: fetchSettings,
   });
 
   const { data: opencodeConfig, isLoading: configLoading } = useQuery({
-    queryKey: ["opencode-config"],
+    queryKey: ['opencode-config'],
     queryFn: fetchOpencodeConfig,
   });
 
   const { data: secretsList } = useQuery({
-    queryKey: ["settings-secrets"],
+    queryKey: ['settings-secrets'],
     queryFn: listSecrets,
   });
 
   const saveMutation = useMutation({
     mutationFn: (spec: Record<string, unknown>) => saveSettings(spec),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["settings"] });
-      setSaveMsg("Settings saved.");
+      queryClient.invalidateQueries({ queryKey: ['settings'] });
+      setSaveMsg('Settings saved.');
       setTimeout(() => setSaveMsg(null), 3000);
     },
     onError: (e: unknown) => {
@@ -65,14 +73,18 @@ export default function SettingsPage() {
   });
 
   const secretMutation = useMutation({
-    mutationFn: (payload: { name: string; data: Record<string, string>; op: "create" | "update" | "delete" }) => {
-      if (payload.op === "delete") return deleteSecret(payload.name);
-      if (payload.op === "create") return createSecret(payload.name, payload.data);
+    mutationFn: (payload: {
+      name: string;
+      data: Record<string, string>;
+      op: 'create' | 'update' | 'delete';
+    }) => {
+      if (payload.op === 'delete') return deleteSecret(payload.name);
+      if (payload.op === 'create') return createSecret(payload.name, payload.data);
       return updateSecret(payload.name, payload.data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["settings-secrets"] });
-      setSaveMsg("Secret updated.");
+      queryClient.invalidateQueries({ queryKey: ['settings-secrets'] });
+      setSaveMsg('Secret updated.');
       setTimeout(() => setSaveMsg(null), 3000);
     },
     onError: (e: unknown) => {
@@ -82,20 +94,20 @@ export default function SettingsPage() {
 
   const spec = (settings?.spec ?? {}) as SettingsSpec;
   const { data: updateStatus } = useQuery<UpdateStatus>({
-    queryKey: ["update-status"],
+    queryKey: ['update-status'],
     queryFn: fetchUpdateStatus,
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
   const tabs: { id: Tab; label: string }[] = [
-    { id: "projects", label: "Projects" },
-    { id: "agents", label: "Agents" },
-    { id: "secrets", label: "Provider Secrets" },
-    { id: "opencode", label: "OpenCode Config" },
-    { id: "manager", label: "Manager Agent" },
-    { id: "runner", label: "Runner Defaults" },
-    { id: "notifications", label: "Notifications" },
-    { id: "updates", label: "Updates" },
+    { id: 'projects', label: 'Projects' },
+    { id: 'agents', label: 'Agents' },
+    { id: 'secrets', label: 'Provider Secrets' },
+    { id: 'opencode', label: 'OpenCode Config' },
+    { id: 'manager', label: 'Manager Agent' },
+    { id: 'runner', label: 'Runner Defaults' },
+    { id: 'notifications', label: 'Notifications' },
+    { id: 'updates', label: 'Updates' },
   ];
 
   return (
@@ -103,10 +115,14 @@ export default function SettingsPage() {
       <div className="flex items-center justify-between settings-header-mobile">
         <h1 className="text-xl font-semibold text-lg sm:text-xl">Settings</h1>
         {saveMsg && (
-          <span className={cn(
-            "text-sm",
-            saveMsg.startsWith("Error") ? "text-phase-failed" : "text-phase-succeeded"
-          )}>{saveMsg}</span>
+          <span
+            className={cn(
+              'text-sm',
+              saveMsg.startsWith('Error') ? 'text-phase-failed' : 'text-phase-succeeded',
+            )}
+          >
+            {saveMsg}
+          </span>
         )}
       </div>
 
@@ -117,16 +133,16 @@ export default function SettingsPage() {
             key={t.id}
             onClick={() => setActiveTab(t.id)}
             className={cn(
-              "px-4 py-2 text-sm font-medium transition-colors",
-              "border-b-2 -mb-px",
+              'px-4 py-2 text-sm font-medium transition-colors',
+              'border-b-2 -mb-px',
               activeTab === t.id
-                ? "border-accent text-accent"
-                : "border-transparent text-text-dim hover:text-text"
+                ? 'border-accent text-accent'
+                : 'border-transparent text-text-dim hover:text-text',
             )}
           >
             <span className="relative">
               {t.label}
-              {t.id === "updates" && updateStatus?.updateAvailable && (
+              {t.id === 'updates' && updateStatus?.updateAvailable && (
                 <span className="absolute -top-0.5 -right-2.5 w-2 h-2 rounded-full bg-accent" />
               )}
             </span>
@@ -134,15 +150,15 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {activeTab === "projects" && <ProjectsPage showHeader={false} />}
+      {activeTab === 'projects' && <ProjectsPage showHeader={false} />}
 
-      {activeTab === "agents" && <AgentsPage showHeader={false} />}
+      {activeTab === 'agents' && <AgentsPage showHeader={false} />}
 
-      {settingsLoading && activeTab !== "projects" && activeTab !== "agents" && (
+      {settingsLoading && activeTab !== 'projects' && activeTab !== 'agents' && (
         <p className="text-text-dim">Loading...</p>
       )}
 
-      {!settingsLoading && activeTab === "secrets" && (
+      {!settingsLoading && activeTab === 'secrets' && (
         <SecretsPanel
           spec={spec}
           secretsList={secretsList?.items ?? []}
@@ -152,21 +168,23 @@ export default function SettingsPage() {
         />
       )}
 
-      {!settingsLoading && activeTab === "opencode" && (
+      {!settingsLoading && activeTab === 'opencode' && (
         <OpencodePanel
-          config={(opencodeConfig as string) ?? ""}
-          onSave={(config) => saveMutation.mutate({ 
-            ...spec, 
-            runnerConfig: { 
-              ...(spec.runnerConfig as Record<string, unknown> | undefined), 
-              config 
-            } 
-          })}
+          config={(opencodeConfig as string) ?? ''}
+          onSave={(config) =>
+            saveMutation.mutate({
+              ...spec,
+              runnerConfig: {
+                ...(spec.runnerConfig as Record<string, unknown> | undefined),
+                config,
+              },
+            })
+          }
           saving={saveMutation.isPending}
         />
       )}
 
-      {!settingsLoading && activeTab === "manager" && (
+      {!settingsLoading && activeTab === 'manager' && (
         <ManagerPanel
           spec={spec}
           onSave={(newSpec) => saveMutation.mutate(newSpec)}
@@ -174,7 +192,7 @@ export default function SettingsPage() {
         />
       )}
 
-      {!settingsLoading && activeTab === "runner" && (
+      {!settingsLoading && activeTab === 'runner' && (
         <RunnerPanel
           spec={spec}
           onSave={(newSpec) => saveMutation.mutate(newSpec)}
@@ -182,9 +200,9 @@ export default function SettingsPage() {
         />
       )}
 
-      {activeTab === "notifications" && <NotificationsPanel />}
+      {activeTab === 'notifications' && <NotificationsPanel />}
 
-      {activeTab === "updates" && <UpdatesPanel />}
+      {activeTab === 'updates' && <UpdatesPanel />}
     </div>
   );
 }
@@ -196,16 +214,22 @@ interface SecretsPanelProps {
   spec: Record<string, unknown>;
   secretsList: Array<{ name: string; keys: string[] }>;
   onSave: (spec: Record<string, unknown>) => void;
-  onSecretOp: (name: string, data: Record<string, string>, op: "create" | "update" | "delete") => void;
+  onSecretOp: (
+    name: string,
+    data: Record<string, string>,
+    op: 'create' | 'update' | 'delete',
+  ) => void;
   saving: boolean;
 }
 
 function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: SecretsPanelProps) {
   const [llmKeysSecret, setLlmKeysSecret] = useState(
-    (spec.secrets as Record<string, unknown> | undefined)?.llmKeysSecret as string ?? "llm-keys"
+    ((spec.secrets as Record<string, unknown> | undefined)?.llmKeysSecret as string) ?? 'llm-keys',
   );
-  const authSecretObj = (spec.secrets as Record<string, unknown> | undefined)?.authSecret as { name?: string } | undefined;
-  const [authSecretName, setAuthSecretName] = useState(authSecretObj?.name ?? "");
+  const authSecretObj = (spec.secrets as Record<string, unknown> | undefined)?.authSecret as
+    | { name?: string }
+    | undefined;
+  const [authSecretName, setAuthSecretName] = useState(authSecretObj?.name ?? '');
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   // Pre-populate from cluster config
@@ -220,8 +244,8 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
       <CardHeader>
         <CardTitle>Provider API Keys</CardTitle>
         <CardDescription>
-          Store LLM provider API keys as a Kubernetes Secret. All keys are injected as
-          environment variables into every run pod (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.).
+          Store LLM provider API keys as a Kubernetes Secret. All keys are injected as environment
+          variables into every run pod (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.).
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -237,16 +261,16 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
             <Button
               variant="outline"
               onClick={() =>
-                onSecretOp(llmKeysSecret, llmSecretData, existingLlmSecret ? "update" : "create")
+                onSecretOp(llmKeysSecret, llmSecretData, existingLlmSecret ? 'update' : 'create')
               }
               disabled={saving || !llmKeysSecret.trim()}
             >
-              {existingLlmSecret ? "Update Secret" : "Create Secret"}
+              {existingLlmSecret ? 'Update Secret' : 'Create Secret'}
             </Button>
           </div>
           {existingLlmSecret && (
             <p className="text-xs text-text-dim mt-1">
-              Existing secret. Keys: {existingLlmSecret.keys.join(", ") || "(empty)"}
+              Existing secret. Keys: {existingLlmSecret.keys.join(', ') || '(empty)'}
             </p>
           )}
         </div>
@@ -263,16 +287,16 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
             <Button
               variant="outline"
               onClick={() =>
-                onSecretOp(authSecretName, authSecretData, existingAuthSecret ? "update" : "create")
+                onSecretOp(authSecretName, authSecretData, existingAuthSecret ? 'update' : 'create')
               }
               disabled={saving || !authSecretName.trim()}
             >
-              {existingAuthSecret ? "Update Secret" : "Create Secret"}
+              {existingAuthSecret ? 'Update Secret' : 'Create Secret'}
             </Button>
           </div>
           {existingAuthSecret && (
             <p className="text-xs text-text-dim mt-1">
-              Existing secret. Keys: {existingAuthSecret.keys.join(", ") || "(empty)"}
+              Existing secret. Keys: {existingAuthSecret.keys.join(', ') || '(empty)'}
             </p>
           )}
         </div>
@@ -280,7 +304,15 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
       <CardFooter className="sm:flex-row flex-col gap-2">
         <Button
           onClick={() =>
-            onSave({ ...spec, secrets: { llmKeysSecret: llmKeysSecret.trim() || undefined, authSecret: authSecretName.trim() ? { name: authSecretName.trim(), key: "auth.json" } : undefined } })
+            onSave({
+              ...spec,
+              secrets: {
+                llmKeysSecret: llmKeysSecret.trim() || undefined,
+                authSecret: authSecretName.trim()
+                  ? { name: authSecretName.trim(), key: 'auth.json' }
+                  : undefined,
+              },
+            })
           }
           disabled={saving}
           className="w-full sm:w-auto"
@@ -316,7 +348,7 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
       JSON.parse(raw);
       setJsonError(null);
     } catch {
-      setJsonError("Invalid JSON — check your syntax.");
+      setJsonError('Invalid JSON — check your syntax.');
     }
   }
 
@@ -325,10 +357,9 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
       <CardHeader>
         <CardTitle>OpenCode Configuration</CardTitle>
         <CardDescription>
-          Raw <code className="font-mono text-xs">opencode.json</code> content applied
-          cluster-wide. Stored in the <code className="font-mono text-xs">opencode-config</code>{" "}
-          ConfigMap by the operator. Supports providers, MCP servers, skills, and all other
-          opencode settings.
+          Raw <code className="font-mono text-xs">opencode.json</code> content applied cluster-wide.
+          Stored in the <code className="font-mono text-xs">opencode-config</code> ConfigMap by the
+          operator. Supports providers, MCP servers, skills, and all other opencode settings.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -345,7 +376,11 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
         )}
       </CardContent>
       <CardFooter className="sm:flex-row flex-col gap-2">
-        <Button onClick={() => onSave(value)} disabled={saving || !!jsonError} className="w-full sm:w-auto">
+        <Button
+          onClick={() => onSave(value)}
+          disabled={saving || !!jsonError}
+          className="w-full sm:w-auto"
+        >
           Save OpenCode Config
         </Button>
       </CardFooter>
@@ -364,17 +399,21 @@ interface ManagerPanelProps {
 
 function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
   const manager = (spec.manager as Record<string, unknown> | undefined) ?? {};
-  const [agentName, setAgentName] = useState((manager.agentName as string) ?? "manager-agent");
-  const [decisionAgentName, setDecisionAgentName] = useState((manager.decisionAgentName as string) ?? "manager-decision");
-  const [model, setModel] = useState((manager.model as string) ?? "");
-  const [timeoutSec, setTimeoutSec] = useState(String(Math.round(((manager.timeoutMs as number) ?? 30000) / 1000)));
+  const [agentName, setAgentName] = useState((manager.agentName as string) ?? 'manager-agent');
+  const [decisionAgentName, setDecisionAgentName] = useState(
+    (manager.decisionAgentName as string) ?? 'manager-decision',
+  );
+  const [model, setModel] = useState((manager.model as string) ?? '');
+  const [timeoutSec, setTimeoutSec] = useState(
+    String(Math.round(((manager.timeoutMs as number) ?? 30000) / 1000)),
+  );
   const [firstResponseTimeoutSec, setFirstResponseTimeoutSec] = useState(
     (manager.firstResponseTimeoutMs as number | undefined) != null
       ? String(Math.round((manager.firstResponseTimeoutMs as number) / 1000))
-      : ""
+      : '',
   );
   const [decisionAgentContent, setDecisionAgentContent] = useState(
-    (manager.decisionAgentContent as string) ?? ""
+    (manager.decisionAgentContent as string) ?? '',
   );
 
   return (
@@ -382,8 +421,8 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
       <CardHeader>
         <CardTitle>Manager Agent</CardTitle>
         <CardDescription>
-          Configuration for the manager's embedded agent that drives the kanban board,
-          facilitates failures, and provides interactive chat.
+          Configuration for the manager's embedded agent that drives the kanban board, facilitates
+          failures, and provides interactive chat.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -394,7 +433,10 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
           </div>
           <div>
             <label className="text-sm font-medium block mb-1">Decision Agent Name</label>
-            <Input value={decisionAgentName} onChange={(e) => setDecisionAgentName(e.target.value)} />
+            <Input
+              value={decisionAgentName}
+              onChange={(e) => setDecisionAgentName(e.target.value)}
+            />
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -417,7 +459,12 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
           </div>
         </div>
         <div>
-          <label className="text-sm font-medium block mb-1">First Response Timeout (seconds) <span className="text-text-dim font-normal">— empty = default (min of overall timeout, 60s)</span></label>
+          <label className="text-sm font-medium block mb-1">
+            First Response Timeout (seconds){' '}
+            <span className="text-text-dim font-normal">
+              — empty = default (min of overall timeout, 60s)
+            </span>
+          </label>
           <Input
             type="number"
             value={firstResponseTimeoutSec}
@@ -432,7 +479,9 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
             className="h-48 font-mono text-sm"
             value={decisionAgentContent}
             onChange={(e) => setDecisionAgentContent(e.target.value)}
-            placeholder={"---\ndescription: ...\nmode: subagent\npermission:\n  edit: allow\n  bash: allow\n---\n\nYou are the decision-making agent..."}
+            placeholder={
+              '---\ndescription: ...\nmode: subagent\npermission:\n  edit: allow\n  bash: allow\n---\n\nYou are the decision-making agent...'
+            }
             spellCheck={false}
           />
         </div>
@@ -454,7 +503,7 @@ function ManagerPanel({ spec, onSave, saving }: ManagerPanelProps) {
                 firstResponseTimeoutMs: frtVal || undefined,
                 decisionAgentContent: decisionAgentContent.trim() || undefined,
               },
-            })
+            });
           }}
           disabled={saving}
           className="w-full sm:w-auto"
@@ -477,25 +526,24 @@ interface RunnerPanelProps {
 
 function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
   const runner = (spec.runner as Record<string, unknown> | undefined) ?? {};
-  const [image, setImage] = useState((runner.image as string) ?? "percussionist/runner:dev");
+  const [image, setImage] = useState((runner.image as string) ?? 'percussionist/runner:dev');
   const [timeoutSeconds, setTimeoutSeconds] = useState(
-    String((runner.timeoutSeconds as number) ?? 3600)
+    String((runner.timeoutSeconds as number) ?? 3600),
   );
   const [cpuRequest, setCpuRequest] = useState(
-    ((runner.resources as Record<string, Record<string, string>> | undefined)?.requests?.cpu) ?? ""
+    (runner.resources as Record<string, Record<string, string>> | undefined)?.requests?.cpu ?? '',
   );
   const [memRequest, setMemRequest] = useState(
-    ((runner.resources as Record<string, Record<string, string>> | undefined)?.requests?.memory) ?? ""
+    (runner.resources as Record<string, Record<string, string>> | undefined)?.requests?.memory ??
+      '',
   );
   const [cpuLimit, setCpuLimit] = useState(
-    ((runner.resources as Record<string, Record<string, string>> | undefined)?.limits?.cpu) ?? ""
+    (runner.resources as Record<string, Record<string, string>> | undefined)?.limits?.cpu ?? '',
   );
   const [memLimit, setMemLimit] = useState(
-    ((runner.resources as Record<string, Record<string, string>> | undefined)?.limits?.memory) ?? ""
+    (runner.resources as Record<string, Record<string, string>> | undefined)?.limits?.memory ?? '',
   );
-  const [runTTLDays, setRunTTLDays] = useState(
-    String((spec.runTTLDays as number) ?? 7)
-  );
+  const [runTTLDays, setRunTTLDays] = useState(String((spec.runTTLDays as number) ?? 7));
 
   return (
     <Card>
@@ -526,11 +574,21 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-xs text-text-dim block mb-1">CPU request (e.g. 100m, 1)</label>
-              <Input value={cpuRequest} onChange={(e) => setCpuRequest(e.target.value)} placeholder="100m" />
+              <Input
+                value={cpuRequest}
+                onChange={(e) => setCpuRequest(e.target.value)}
+                placeholder="100m"
+              />
             </div>
             <div>
-              <label className="text-xs text-text-dim block mb-1">Memory request (e.g. 128Mi)</label>
-              <Input value={memRequest} onChange={(e) => setMemRequest(e.target.value)} placeholder="128Mi" />
+              <label className="text-xs text-text-dim block mb-1">
+                Memory request (e.g. 128Mi)
+              </label>
+              <Input
+                value={memRequest}
+                onChange={(e) => setMemRequest(e.target.value)}
+                placeholder="128Mi"
+              />
             </div>
           </div>
         </div>
@@ -539,11 +597,19 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-xs text-text-dim block mb-1">CPU limit (e.g. 500m, 1)</label>
-              <Input value={cpuLimit} onChange={(e) => setCpuLimit(e.target.value)} placeholder="500m" />
+              <Input
+                value={cpuLimit}
+                onChange={(e) => setCpuLimit(e.target.value)}
+                placeholder="500m"
+              />
             </div>
             <div>
               <label className="text-xs text-text-dim block mb-1">Memory limit (e.g. 512Mi)</label>
-              <Input value={memLimit} onChange={(e) => setMemLimit(e.target.value)} placeholder="512Mi" />
+              <Input
+                value={memLimit}
+                onChange={(e) => setMemLimit(e.target.value)}
+                placeholder="512Mi"
+              />
             </div>
           </div>
         </div>
@@ -606,7 +672,7 @@ function UpdatesPanel() {
   });
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<UpdateStatus>({
-    queryKey: ["update-status"],
+    queryKey: ['update-status'],
     queryFn: fetchUpdateStatus,
     staleTime: 5 * 60 * 1000,
     retry: 1,
@@ -615,17 +681,21 @@ function UpdatesPanel() {
       if (!upgradeMutation.isSuccess) return false;
       const target = upgradeMutation.data.targetTag;
       const cur = query.state.data?.current;
-      const done = [cur?.operator, cur?.manager, cur?.web].filter(Boolean).every((v) => v === target);
+      const done = [cur?.operator, cur?.manager, cur?.web]
+        .filter(Boolean)
+        .every((v) => v === target);
       return done ? false : 5_000;
     },
   });
 
   // Hide the success banner once the running versions have caught up to the target tag.
-  const upgradeComplete = upgradeMutation.isSuccess && (() => {
-    const target = upgradeMutation.data.targetTag;
-    const { operator, manager, web } = data?.current ?? {};
-    return [operator, manager, web].filter(Boolean).every((v) => v === target);
-  })();
+  const upgradeComplete =
+    upgradeMutation.isSuccess &&
+    (() => {
+      const target = upgradeMutation.data.targetTag;
+      const { operator, manager, web } = data?.current ?? {};
+      return [operator, manager, web].filter(Boolean).every((v) => v === target);
+    })();
 
   const hasReloaded = useRef(false);
   useEffect(() => {
@@ -637,16 +707,13 @@ function UpdatesPanel() {
   }, [upgradeComplete]);
 
   const currentTag =
-    data?.current?.operator ??
-    data?.current?.manager ??
-    data?.current?.web ??
-    null;
+    data?.current?.operator ?? data?.current?.manager ?? data?.current?.web ?? null;
 
   // Derive GitHub release URL from registryPrefix if available
   // e.g. "ghcr.io/erkkaha/percussionist" → "https://github.com/erkkaha/percussionist"
   const releaseUrl = (() => {
-    const prefix = data?.registryPrefix ?? "";
-    const parts = prefix.replace(/^[^/]+\//, ""); // strip registry host
+    const prefix = data?.registryPrefix ?? '';
+    const parts = prefix.replace(/^[^/]+\//, ''); // strip registry host
     if (!parts || !data?.latest) return null;
     return `https://github.com/${parts}/releases/tag/${data.latest}`;
   })();
@@ -669,14 +736,12 @@ function UpdatesPanel() {
             className="shrink-0 mt-0.5"
             title="Check for updates"
           >
-            <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
+            <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
           </Button>
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        {isLoading && (
-          <p className="text-text-dim text-sm">Checking for updates...</p>
-        )}
+        {isLoading && <p className="text-text-dim text-sm">Checking for updates...</p>}
 
         {isError && !upgradeMutation.isPending && !upgradeMutation.isSuccess && (
           <p className="text-phase-failed text-sm">
@@ -685,9 +750,7 @@ function UpdatesPanel() {
         )}
 
         {data?.error && !upgradeMutation.isPending && (
-          <p className="text-text-dim text-sm">
-            Registry check failed: {data.error}
-          </p>
+          <p className="text-text-dim text-sm">Registry check failed: {data.error}</p>
         )}
 
         {upgradeMutation.isError && (
@@ -703,7 +766,10 @@ function UpdatesPanel() {
               <span>Installing update — deployments are rolling out…</span>
             </div>
             <div className="h-1.5 w-full rounded-none bg-surface-raised overflow-hidden">
-              <div className="h-full bg-accent rounded-none animate-[progress-indeterminate_1.5s_ease-in-out_infinite]" style={{ width: "40%" }} />
+              <div
+                className="h-full bg-accent rounded-none animate-[progress-indeterminate_1.5s_ease-in-out_infinite]"
+                style={{ width: '40%' }}
+              />
             </div>
           </div>
         )}
@@ -714,15 +780,17 @@ function UpdatesPanel() {
               <p className="text-sm font-medium mb-1">Running versions</p>
               {(
                 [
-                  ["operator", data.current.operator],
-                  ["manager", data.current.manager],
-                  ["web", data.current.web],
-                  ["dispatcher", data.current.dispatcher],
+                  ['operator', data.current.operator],
+                  ['manager', data.current.manager],
+                  ['web', data.current.web],
+                  ['dispatcher', data.current.dispatcher],
                 ] as [string, string | null][]
               ).map(([name, tag]) => (
                 <div key={name} className="flex items-center gap-2 text-sm">
                   <span className="text-text-dim w-20">{name}</span>
-                  <span className="font-mono">{tag ?? <span className="text-text-dim italic">unknown</span>}</span>
+                  <span className="font-mono">
+                    {tag ?? <span className="text-text-dim italic">unknown</span>}
+                  </span>
                 </div>
               ))}
             </div>
@@ -736,7 +804,8 @@ function UpdatesPanel() {
                       Version <span className="font-mono">{data.latest}</span> is available
                       {currentTag && (
                         <span className="text-text-dim font-normal">
-                          {" "}(running <span className="font-mono">{currentTag}</span>)
+                          {' '}
+                          (running <span className="font-mono">{currentTag}</span>)
                         </span>
                       )}
                     </p>
@@ -748,7 +817,7 @@ function UpdatesPanel() {
                       onClick={() => upgradeMutation.mutate(data.latest!)}
                       disabled={upgradeMutation.isPending}
                     >
-                      {upgradeMutation.isPending ? "Upgrading..." : "Upgrade"}
+                      {upgradeMutation.isPending ? 'Upgrading...' : 'Upgrade'}
                     </Button>
                     {releaseUrl && (
                       <a
@@ -766,7 +835,7 @@ function UpdatesPanel() {
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-2 h-2 rounded-full bg-phase-succeeded shrink-0" />
                   <p className="text-sm">
-                    Up to date{" "}
+                    Up to date{' '}
                     <span className="text-text-dim font-normal">
                       (<span className="font-mono">{data.latest}</span>)
                     </span>

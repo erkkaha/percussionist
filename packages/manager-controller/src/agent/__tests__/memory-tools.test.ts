@@ -468,5 +468,3 @@ describe('deleteMemory', () => {
     );
   });
 });
-
-
