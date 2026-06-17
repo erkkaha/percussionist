@@ -15,10 +15,24 @@ import {
 import { getClusterAgent, getClusterSettings } from '@percussionist/kube';
 import { getContext } from './agent/memory-client.js';
 import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from './branch-resolver.js';
+import { getErrorStatusCode, isKubeNotFoundError } from './kube-errors.js';
 
 const MAX_RETRIES = 3;
 
 export { MAX_RETRIES };
+
+async function getOptionalClusterSettings(context: string) {
+  try {
+    return await getClusterSettings();
+  } catch (e) {
+    if (isKubeNotFoundError(e)) return undefined;
+    console.error(
+      `[worker-builder] getClusterSettings failed (${context}) status=${getErrorStatusCode(e) ?? 'unknown'}`,
+      e,
+    );
+    throw e;
+  }
+}
 
 /**
  * Builds a fully-resolved Run for an Task CR.
@@ -34,7 +48,7 @@ export async function buildWorkerRun(
   reworkFeedback?: string,
   allTasks?: Task[],
 ): Promise<Run> {
-  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const clusterSettings = await getOptionalClusterSettings('buildWorkerRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
       image: clusterSettings?.spec?.runner?.image,
@@ -148,6 +162,25 @@ export async function buildWorkerRun(
     );
   }
 
+  // Off-task finding reporting prompt — only for BUILD and PLAN runs, not merge.
+  if (task.spec.type !== 'BUILD' || !task.spec.description?.toLowerCase().includes('merge')) {
+    promptLines.push(
+      'OFF-TASK FINDINGS:',
+      '- Your job is the TASK above. Stay on it.',
+      '- If, while working, you notice a SEPARATE problem unrelated to your task — a security hole,',
+      '  a real bug, a performance trap, or notable tech debt — report it ONCE with the',
+      '  `percussionist_dispatcher_report_finding` tool, then continue your task. Do not investigate it further.',
+      '- Provide: a one-line title, a short description (what is wrong + why it matters +',
+      '  suggested fix), severity (low/medium/high/critical), category',
+      '  (bug/security/performance/debt/docs/other), and filePath/snippet when you have them.',
+      '- Do NOT report: style nits, things already covered by your task, speculative',
+      '  "could be better" ideas, or anything you are not fairly confident about.',
+      '- One finding per distinct issue. The manager de-duplicates, so do not worry about',
+      '  repeats — but do not spam.',
+      '',
+    );
+  }
+
   // Feature branching: override git ref with task's branch.
   if (project.spec.featureBranchingEnabled && resolved.source?.git) {
     const gitBranch = resolveTaskBranch(task, project, allTasks ?? []);
@@ -214,7 +247,7 @@ export async function buildMergeRun(
   allTasks?: Task[],
   mergeAgentName?: string,
 ): Promise<Run> {
-  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const clusterSettings = await getOptionalClusterSettings('buildMergeRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
       image: clusterSettings?.spec?.runner?.image,

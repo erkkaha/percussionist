@@ -1,5 +1,7 @@
 // BoardHeader.tsx — project info, metrics badge, and Add Task button.
 
+import type { Finding } from '@percussionist/api';
+import { Bug } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { ManagerMetrics } from '../../lib/types';
 import { Button } from '../ui/button';
@@ -23,6 +25,13 @@ function formatRelative(iso: string): string {
   return `${h}h ago`;
 }
 
+const SEVERITY_DOT: Record<string, string> = {
+  critical: 'bg-red-500',
+  high: 'bg-orange-500',
+  medium: 'bg-yellow-500',
+  low: 'bg-blue-500',
+};
+
 interface BoardHeaderProps {
   projectName: string;
   roster: string[];
@@ -30,8 +39,11 @@ interface BoardHeaderProps {
   phase: string | undefined;
   sseConnected: boolean;
   metrics: ManagerMetrics | undefined;
+  findings: Finding[] | undefined;
   onAddTask: () => void;
   showAddTask: boolean;
+  onToggleFindings: () => void;
+  showFindings: boolean;
 }
 
 export function BoardHeader({
@@ -41,8 +53,11 @@ export function BoardHeader({
   phase,
   sseConnected,
   metrics,
+  findings,
   onAddTask,
   showAddTask,
+  onToggleFindings,
+  showFindings,
 }: BoardHeaderProps) {
   return (
     <div className="flex items-start justify-between gap-4 shrink-0">
@@ -96,9 +111,20 @@ export function BoardHeader({
           </div>
         )}
       </div>
-      <Button onClick={onAddTask} variant="secondary" size="sm">
-        {showAddTask ? 'Cancel' : '+ Add Task'}
-      </Button>
+      <div className="flex items-center gap-2 shrink-0">
+        <Button
+          onClick={onToggleFindings}
+          variant={showFindings ? 'default' : 'secondary'}
+          size="sm"
+          className="gap-1.5"
+        >
+          <Bug className="h-3.5 w-3.5" />
+          Findings{findings && findings.length > 0 ? ` (${findings.length})` : ''}
+        </Button>
+        <Button onClick={onAddTask} variant="secondary" size="sm">
+          {showAddTask ? 'Cancel' : '+ Add Task'}
+        </Button>
+      </div>
     </div>
   );
 }

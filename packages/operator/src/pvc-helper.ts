@@ -32,7 +32,7 @@ export interface DataPVCOptions {
  * PVC already exists. Creates the PVC with:
  *   - Configurable access mode (default ReadWriteOnce for minikube compat)
  *   - Owner reference to the Project CR (auto-cleanup on project deletion)
- *   - 10Gi default size
+ *   - 50Gi default size
  *
  * @throws If PVC creation fails or project UID is invalid
  */

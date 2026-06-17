@@ -39,7 +39,7 @@ export const PLURAL_CLUSTER_SETTINGS = 'clustersettings';
 // Set as ClusterSettings.spec.runnerAdapter to override the opencode defaults.
 
 export interface RunnerImageSpec {
-  /** Container image. Defaults to ghcr.io/anomalyco/opencode:latest */
+  /** Container image for the runner adapter. Defaults to ghcr.io/anomalyco/opencode:latest. */
   image: string;
   /** HTTP port the runner listens on. Defaults to 4096. */
   port: number;
@@ -93,8 +93,8 @@ export const OPENCODE_RUNNER_DEFAULTS: RunnerImageSpec = {
 
 export const ResourceRequirementsSchema = z
   .object({
-    requests: z.record(z.string()).optional(),
-    limits: z.record(z.string()).optional(),
+    requests: z.record(z.string(), z.string()).optional(),
+    limits: z.record(z.string(), z.string()).optional(),
   })
   .partial();
 
@@ -344,8 +344,8 @@ export const ClusterAgentSchema = z.object({
       name: z.string(),
       uid: z.string().optional(),
       resourceVersion: z.string().optional(),
-      labels: z.record(z.string()).optional(),
-      annotations: z.record(z.string()).optional(),
+      labels: z.record(z.string(), z.string()).optional(),
+      annotations: z.record(z.string(), z.string()).optional(),
       creationTimestamp: z.string().optional(),
       deletionTimestamp: z.string().optional(),
     })
@@ -436,8 +436,8 @@ export const ClusterSettingsSchema = z.object({
       name: z.string(),
       uid: z.string().optional(),
       resourceVersion: z.string().optional(),
-      labels: z.record(z.string()).optional(),
-      annotations: z.record(z.string()).optional(),
+      labels: z.record(z.string(), z.string()).optional(),
+      annotations: z.record(z.string(), z.string()).optional(),
       creationTimestamp: z.string().optional(),
       deletionTimestamp: z.string().optional(),
     })
@@ -608,6 +608,7 @@ export const RunStatusSchema = z
       RunPhase.Cancelled,
     ]),
     message: z.string().optional(),
+    podPhase: z.enum(['Pending', 'Running', 'Succeeded', 'Failed', 'Unknown']).optional(),
     podName: z.string().optional(),
     serviceName: z.string().optional(),
     sessionID: z.string().optional(),
@@ -654,8 +655,8 @@ export const RunSchema = z.object({
       uid: z.string().optional(),
       resourceVersion: z.string().optional(),
       generation: z.number().optional(),
-      labels: z.record(z.string()).optional(),
-      annotations: z.record(z.string()).optional(),
+      labels: z.record(z.string(), z.string()).optional(),
+      annotations: z.record(z.string(), z.string()).optional(),
       creationTimestamp: z.string().optional(),
       deletionTimestamp: z.string().optional(),
       finalizers: z.array(z.string()).optional(),
@@ -815,6 +816,48 @@ export const ManagerMetricsSchema = z.object({
 
 export type ManagerMetrics = z.infer<typeof ManagerMetricsSchema>;
 
+// ---------------------------------------------------------------------------
+// Finding — off-task issue reported by run-pod agents, ingested and triaged
+// by the manager. Stored in the {project}-findings ConfigMap (inbox keys for
+// raw submissions, triaged keys for curated/deduped findings) and mirrored
+// into board.status.findings for UI consumption.
+
+export const FindingSeverity = z.enum(['low', 'medium', 'high', 'critical']);
+export const FindingCategory = z.enum(['bug', 'security', 'performance', 'debt', 'docs', 'other']);
+export const FindingStatus = z.enum([
+  'new',
+  'triaged',
+  'in-progress',
+  'resolved',
+  'duplicate',
+  'wontfix',
+]);
+
+export const FindingSchema = z.object({
+  id: z.string(),
+  title: z.string().max(256),
+  description: z.string().max(8192),
+  severity: FindingSeverity,
+  category: FindingCategory,
+  source: z.object({
+    project: z.string(),
+    task: z.string().optional(),
+    run: z.string().optional(),
+    agent: z.string().optional(),
+  }),
+  filePath: z.string().max(1024).optional(),
+  snippet: z.string().max(2048).optional(),
+  status: FindingStatus.default('new'),
+  dedupKey: z.string(),
+  clusterId: z.string().optional(),
+  duplicateOf: z.string().optional(),
+  taskRef: z.string().optional(),
+  occurrences: z.number().int().min(1).default(1),
+  createdAt: z.string(),
+  triagedAt: z.string().optional(),
+});
+export type Finding = z.infer<typeof FindingSchema>;
+
 // Project-level board status summary — only lightweight metrics remain here.
 // Full task state lives in Task CRs.
 export const SuggestionSchema = z.object({
@@ -838,6 +881,8 @@ export const BoardStatusSchema = z.object({
   managerMetrics: ManagerMetricsSchema.optional(),
   /** Tool gap analysis suggestions. */
   suggestions: SuggestionSchema.array().optional(),
+  /** Curated findings — manager-maintained, deduped view of agent-reported issues. */
+  findings: FindingSchema.array().optional(),
 });
 
 export type BoardStatus = z.infer<typeof BoardStatusSchema>;
@@ -1046,8 +1091,8 @@ export const ProjectSchema = z.object({
       uid: z.string().optional(),
       resourceVersion: z.string().optional(),
       generation: z.number().optional(),
-      labels: z.record(z.string()).optional(),
-      annotations: z.record(z.string()).optional(),
+      labels: z.record(z.string(), z.string()).optional(),
+      annotations: z.record(z.string(), z.string()).optional(),
       creationTimestamp: z.string().optional(),
       deletionTimestamp: z.string().optional(),
     })
@@ -1542,8 +1587,8 @@ export const TaskSchema = z.object({
       uid: z.string().optional(),
       resourceVersion: z.string().optional(),
       generation: z.number().optional(),
-      labels: z.record(z.string()).optional(),
-      annotations: z.record(z.string()).optional(),
+      labels: z.record(z.string(), z.string()).optional(),
+      annotations: z.record(z.string(), z.string()).optional(),
       creationTimestamp: z.string().optional(),
       deletionTimestamp: z.string().optional(),
       ownerReferences: z

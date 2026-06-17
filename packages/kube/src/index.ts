@@ -25,6 +25,7 @@ import {
   type BoardStatus,
   type ClusterAgent,
   type ClusterSettings,
+  type Finding,
   KIND_CLUSTER_AGENT,
   KIND_CLUSTER_SETTINGS,
   KIND_PROJECT,
@@ -105,6 +106,16 @@ export function loadFromKubeconfig(): {
     core: kc.makeApiClient(CoreV1Api),
     custom: kc.makeApiClient(CustomObjectsApi),
   };
+}
+
+function getErrorStatusCode(err: unknown): number | undefined {
+  return (
+    (err as { statusCode?: number; code?: number }).statusCode ?? (err as { code?: number }).code
+  );
+}
+
+function isNotFoundError(err: unknown): boolean {
+  return getErrorStatusCode(err) === 404;
 }
 
 // ---------------------------------------------------------------------------
@@ -366,7 +377,18 @@ export async function updateClusterSettings(
   spec: ClusterSettings['spec'],
   client = custom(),
 ): Promise<ClusterSettings> {
-  const existing = await getClusterSettings(name, client).catch(() => null);
+  let existing: ClusterSettings | null = null;
+  try {
+    existing = await getClusterSettings(name, client);
+  } catch (e) {
+    if (!isNotFoundError(e)) {
+      console.error(
+        `[kube ${new Date().toISOString()}] getClusterSettings(${name}) failed with status=${getErrorStatusCode(e) ?? 'unknown'}`,
+        e,
+      );
+      throw e;
+    }
+  }
   const body = {
     apiVersion: API_GROUP_VERSION,
     kind: KIND_CLUSTER_SETTINGS,
@@ -1135,6 +1157,183 @@ export async function readPlanFromConfigMap(
 }
 
 // ---------------------------------------------------------------------------
+// Findings ConfigMap helpers — per-project findings inbox and triage.
+// ConfigMap name: {project}-findings, data keys: inbox/<id>.json and triaged/<clusterId>.json
+//
+// IMPORTANT: appendFindingToConfigMap uses K8s strategic merge-patch on the data
+// field (setting only a single key) rather than read-modify-write, so concurrent
+// agents writing to the same project never clobber each other's findings.
+
+const FINDINGS_COMPONENT = 'findings';
+
+function findingsConfigMapName(project: string): string {
+  return `${project}-findings`;
+}
+
+/**
+ * Append a single finding to the project's findings ConfigMap using merge-patch.
+ * Sets only `data["inbox/<finding.id>.json"]` — conflict-free across concurrent agents.
+ * Creates the ConfigMap if it does not exist (404 → create).
+ */
+export async function appendFindingToConfigMap(
+  project: string,
+  finding: Finding,
+  ns: string = NAMESPACE,
+): Promise<{ written: true }> {
+  const cmName = findingsConfigMapName(project);
+  const key = `inbox/${finding.id}.json`;
+  const data = { [key]: JSON.stringify(finding) };
+
+  // Try merge-patch first (fast path for existing ConfigMap).
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error('No service account token available');
+
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
+  const url = `https://${host}:${port}/api/v1/namespaces/${ns}/configmaps/${cmName}`;
+
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/merge-patch+json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      metadata: {
+        labels: {
+          [LABELS.projectName]: project,
+          [LABELS.component ?? 'percussionist.dev/component']: FINDINGS_COMPONENT,
+        },
+      },
+      data,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (res.ok || res.status === 200) {
+    return { written: true };
+  }
+
+  if (res.status === 404) {
+    // ConfigMap does not exist — create it.
+    await core().createNamespacedConfigMap({
+      namespace: ns,
+      body: {
+        apiVersion: 'v1',
+        kind: 'ConfigMap',
+        metadata: {
+          name: cmName,
+          namespace: ns,
+          labels: {
+            [LABELS.projectName]: project,
+            [LABELS.component ?? 'percussionist.dev/component']: FINDINGS_COMPONENT,
+          },
+        },
+        data,
+      },
+    });
+    return { written: true };
+  }
+
+  const body = await res.text();
+  throw new Error(`Kubernetes API error ${res.status} patching findings ConfigMap: ${body}`);
+}
+
+/**
+ * Read the full findings ConfigMap. Returns null if it does not exist.
+ */
+export async function getFindingsConfigMap(
+  project: string,
+  ns: string = NAMESPACE,
+): Promise<Record<string, string> | null> {
+  try {
+    const cm = await core().readNamespacedConfigMap({
+      name: findingsConfigMapName(project),
+      namespace: ns,
+    });
+    return (cm.data as Record<string, string> | undefined) ?? null;
+  } catch (e: unknown) {
+    if (((e as { statusCode?: number }).statusCode ?? (e as { code?: number }).code) === 404) {
+      return null;
+    }
+    throw e;
+  }
+}
+
+/**
+ * Parse inbox findings from raw ConfigMap data.
+ * Returns findings sorted by createdAt ascending (oldest first).
+ */
+export function parseInboxFindings(data: Record<string, string>): Finding[] {
+  const findings: Finding[] = [];
+  for (const [key, value] of Object.entries(data)) {
+    if (!key.startsWith('inbox/') || !key.endsWith('.json')) continue;
+    try {
+      findings.push(JSON.parse(value) as Finding);
+    } catch {
+      // Skip malformed entries.
+    }
+  }
+  findings.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return findings;
+}
+
+/**
+ * Parse triaged findings from raw ConfigMap data.
+ * Returns findings keyed by clusterId.
+ */
+export function parseTriagedFindings(data: Record<string, string>): Map<string, Finding> {
+  const map = new Map<string, Finding>();
+  for (const [key, value] of Object.entries(data)) {
+    if (!key.startsWith('triaged/') || !key.endsWith('.json')) continue;
+    try {
+      const f = JSON.parse(value) as Finding;
+      if (f.clusterId) map.set(f.clusterId, f);
+    } catch {
+      // Skip malformed entries.
+    }
+  }
+  return map;
+}
+
+/**
+ * Merge-patch the findings ConfigMap to process inbox findings.
+ * Writes triaged entries and removes processed inbox entries in one atomic
+ * operation (single merge-patch). The manager (single-replica) is the only
+ * writer of triaged/* and the only deleter of inbox/*, so this is safe.
+ */
+export async function patchFindingsConfigMap(
+  project: string,
+  patch: Record<string, string | null>,
+  ns: string = NAMESPACE,
+): Promise<void> {
+  const cmName = findingsConfigMapName(project);
+  const token = readServiceAccountToken() ?? readKubeconfigToken();
+  if (!token) throw new Error('No service account token available');
+
+  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
+  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
+  const url = `https://${host}:${port}/api/v1/namespaces/${ns}/configmaps/${cmName}`;
+
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/merge-patch+json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({ data: patch }),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Kubernetes API error ${res.status} patching findings ConfigMap: ${body}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Utility functions
 
 // Deterministic hash of a git URL for mirror directory naming.
@@ -1266,10 +1465,10 @@ export async function listNodeHostStats(nodeName: string): Promise<NodeHostStats
   const body = (await res.json()) as SummaryResponse;
   const result: NodeHostStats = {
     name: nodeName,
-    hostMemoryBytes: body.node.memory.usageBytes,
-    hostCpuNanoCores: body.node.cpu.usageNanoCores,
+    hostMemoryBytes: body.node?.memory?.usageBytes ?? 0,
+    hostCpuNanoCores: body.node?.cpu?.usageNanoCores ?? 0,
     // Populate filesystem fields defensively — kubelet may omit fs data on some runtimes.
-    ...(body.node.fs
+    ...(body.node?.fs
       ? {
           hostFsUsedBytes: body.node.fs.usedBytes ?? null,
           hostFsCapacityBytes: body.node.fs.capacityBytes ?? null,

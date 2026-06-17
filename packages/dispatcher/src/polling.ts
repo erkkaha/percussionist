@@ -1,7 +1,7 @@
 // polling.ts — prompt-mode and interactive-mode polling loops.
 
 import http from 'node:http';
-import { RunPhase } from '@percussionist/api';
+import { LABELS, MANAGED_BY, RunPhase } from '@percussionist/api';
 import {
   BASE_URL,
   checkHealth,
@@ -222,8 +222,8 @@ export async function snapshotAllSessions(
     name: `${runName}-session`,
     namespace: runNamespace,
     labels: {
-      'app.kubernetes.io/managed-by': 'percussionist',
-      'percussionist.dev/run-name': runName,
+      [LABELS.managedBy]: MANAGED_BY,
+      [LABELS.runName]: runName,
       'percussionist.dev/component': 'session-snapshot',
     },
     ownerReferences: [
@@ -379,12 +379,11 @@ export async function runInteractive(
               continue;
             }
             logEvent(evt);
-            if (evt.type === 'session.status') {
+            if (evt.type === 'session.idle') {
               // Snapshot after the first assistant turn completes.
-              const p = evt.properties as { busy?: boolean } | undefined;
-              if (p?.busy === false && !hasSnapshotted) maybeSnapshot('first idle');
+              if (!hasSnapshotted) maybeSnapshot('first idle');
               // Incremental DB flush on each completed turn.
-              if (p?.busy === false && firstSessionID) {
+              if (firstSessionID) {
                 const sid = firstSessionID;
                 const totals = tokens.totals();
                 incrementalFlush(sid, interactiveStartedAt, totals, interactiveFlushCursor)
@@ -850,19 +849,16 @@ export async function runPrompt(
                 err('WaitingForInput snapshot failed:', (e as Error).message),
               );
             }
-            if (evt.type === 'session.status') {
+            if (evt.type === 'session.idle') {
               // Incremental DB flush after each completed assistant turn.
-              const p = evt.properties as { busy?: boolean } | undefined;
-              if (p?.busy === false) {
-                const totals = tokens.totals();
-                incrementalFlush(sessionID, runStartedAt, totals, promptFlushCursor)
-                  .then((newCursor) => {
-                    promptFlushCursor = newCursor;
-                  })
-                  .catch((e) =>
-                    err('prompt incrementalFlush failed (non-fatal):', (e as Error).message),
-                  );
-              }
+              const totals = tokens.totals();
+              incrementalFlush(sessionID, runStartedAt, totals, promptFlushCursor)
+                .then((newCursor) => {
+                  promptFlushCursor = newCursor;
+                })
+                .catch((e) =>
+                  err('prompt incrementalFlush failed (non-fatal):', (e as Error).message),
+                );
             }
             if (evt.type === 'message.updated') {
               const p = (evt.properties ?? {}) as {

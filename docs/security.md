@@ -46,7 +46,7 @@ Sensitive data is stored in Kubernetes Secrets:
 
 ### ConfigMaps
 
-Non-sensitive configuration is stored in ConfigMaps. Session data is truncated to fit ConfigMap size limits.
+Non-sensitive configuration is stored in ConfigMaps. Session data is truncated to fit ConfigMap size limits. Finding snippets (submitted via `report_finding`) are capped at 2048 characters and stored in `{project}-findings` ConfigMaps — they are not encrypted at rest.
 
 ## Network Topology
 
@@ -93,3 +93,4 @@ Non-sensitive configuration is stored in ConfigMaps. Session data is truncated t
 | Web auth is optional | Enable in production |
 | Manager is single-replica | No leader election race conditions |
 | Session data in ConfigMaps | Truncated to fit; not encrypted at rest |
+| Finding snippets in ConfigMaps | Capped at 2048 chars; not encrypted at rest |

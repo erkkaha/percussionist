@@ -19,7 +19,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as YAML from 'yaml';
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import * as z from 'zod';
 
 // Resolve paths.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -98,11 +98,13 @@ function _inlineRefs(obj, defs) {
 }
 
 function toOpenAPISchema(schema) {
-  // $refStrategy: "none" forces all schemas to be inlined — no $ref or $defs
-  // generated. This is required for Kubernetes CRD validation which forbids $ref.
-  const js = zodToJsonSchema(schema, { target: 'openApi3', $refStrategy: 'none' });
+  // Zod 4's built-in JSON Schema conversion with OpenAPI 3.0 target.
+  // Schemas are inlined by default (no $ref / $defs), which is required
+  // for Kubernetes CRD validation.
+  const js = z.toJSONSchema(schema, { target: 'openapi-3.0' });
+  // Drop keys that are not valid in Kubernetes CRD openAPIV3Schema.
   const { $schema, title, $defs, ...rest } = js;
-  void $defs; // should be empty with $refStrategy:"none" but drop anyway
+  void $defs;
   return stripAdditionalProperties(rest);
 }
 

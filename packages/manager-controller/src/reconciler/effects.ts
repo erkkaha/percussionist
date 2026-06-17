@@ -1,6 +1,6 @@
 // Effect types and executor — applies reconciler decisions to Kubernetes.
 
-import type { Run, Task, TaskPhase } from '@percussionist/api';
+import type { Project, Run, Task, TaskPhase } from '@percussionist/api';
 import {
   createRun,
   createTask,
@@ -50,7 +50,7 @@ export async function executeEffects(
   effects: ReconcileEffect[],
   statusPatch: Record<string, unknown> | undefined,
   namespace: string,
-  project: (Task['metadata'] & { spec: Record<string, unknown> }) | null,
+  project: Project | null,
   flow: ResolvedFlow,
   allTasks: Task[],
 ): Promise<ExecutionResult> {
@@ -108,9 +108,8 @@ export async function executeEffects(
           if (!project) {
             throw new Error('Project metadata required for ScheduleRun effect');
           }
-          const fullProject = project as unknown as import('@percussionist/api').Project;
           const run = await buildWorkerRun(
-            fullProject,
+            project,
             task,
             effect.runName,
             effect.retryCount,
@@ -130,7 +129,6 @@ export async function executeEffects(
           if (!project) {
             throw new Error('Project metadata required for ScheduleReviewRun effect');
           }
-          const fullProject = project as unknown as import('@percussionist/api').Project;
           const succeededRun = await getRun(effect.succeededRunName, namespace).catch(
             () => undefined,
           );
@@ -139,7 +137,7 @@ export async function executeEffects(
 
           const { buildReviewRun } = await import('../facilitator.js');
           const reviewRun = await buildReviewRun(
-            fullProject,
+            project,
             task,
             effect.succeededRunName,
             succeededStatus,
@@ -160,11 +158,9 @@ export async function executeEffects(
           if (!project) {
             throw new Error('Project metadata required for ScheduleBuildGenRun effect');
           }
-          const fullProject = project as unknown as import('@percussionist/api').Project;
-
           const { buildBuildTaskGeneratorRun } = await import('../facilitator.js');
           const buildgenRun = await buildBuildTaskGeneratorRun(
-            fullProject,
+            project,
             task,
             effect.succeededRunName,
             effect.buildgenRunName,
@@ -190,9 +186,8 @@ export async function executeEffects(
           if (!project) {
             throw new Error('Project metadata required for ScheduleMergeRun effect');
           }
-          const fullProject = project as unknown as import('@percussionist/api').Project;
           const mergeRun = await buildMergeRun(
-            fullProject,
+            project,
             task,
             effect.mergeRunName,
             allTasks,
@@ -266,12 +261,10 @@ export async function executeEffects(
             );
             break;
           }
-          const fullProject = project as unknown as import('@percussionist/api').Project;
-          const projectName = fullProject.metadata.name;
-          const gitUrl = (fullProject.spec.source as { git?: { url?: string } } | undefined)?.git
-            ?.url;
-          const runnerImage = (fullProject.spec.runner as { image?: string } | undefined)?.image;
-          const image = runnerImage ?? fullProject.spec.image ?? 'alpine/git';
+          const projectName = project.metadata.name;
+          const gitUrl = (project.spec.source as { git?: { url?: string } } | undefined)?.git?.url;
+          const runnerImage = (project.spec.runner as { image?: string } | undefined)?.image;
+          const image = runnerImage ?? project.spec.image ?? 'alpine/git';
           const { spawnWorktreeCleanupPod } = await import('../worktree-cleanup.js');
           spawnWorktreeCleanupPod({
             task: currentTask,
@@ -285,11 +278,25 @@ export async function executeEffects(
         }
         case 'SummarizeSession': {
           // Fire-and-forget — never blocks the reconcile cycle.
-          console.log(`[effects] SummarizeSession dispatch: project=${effect.project} runName=${effect.runName} sessionID=${effect.sessionID}`);
-          import("../session-summarizer.js").then(({ summarizeSession }) => {
-            summarizeSession(effect.project, effect.runName, effect.sessionID, namespace)
-              .catch((e: Error) => console.warn(`[effects] SummarizeSession failed: project=${effect.project} runName=${effect.runName} sessionID=${effect.sessionID}:`, e.message));
-          }).catch((e: Error) => console.warn(`[effects] SummarizeSession import failed: project=${effect.project} runName=${effect.runName} sessionID=${effect.sessionID}:`, e.message));
+          console.log(
+            `[effects] SummarizeSession dispatch: project=${effect.project} runName=${effect.runName} sessionID=${effect.sessionID}`,
+          );
+          import('../session-summarizer.js')
+            .then(({ summarizeSession }) => {
+              summarizeSession(effect.project, effect.runName, effect.sessionID, namespace).catch(
+                (e: Error) =>
+                  console.warn(
+                    `[effects] SummarizeSession failed: project=${effect.project} runName=${effect.runName} sessionID=${effect.sessionID}:`,
+                    e.message,
+                  ),
+              );
+            })
+            .catch((e: Error) =>
+              console.warn(
+                `[effects] SummarizeSession import failed: project=${effect.project} runName=${effect.runName} sessionID=${effect.sessionID}:`,
+                e.message,
+              ),
+            );
           break;
         }
         case 'CreateTask': {
@@ -319,7 +326,7 @@ export async function executeEffects(
       ...statusPatch,
       phase: toPhase ?? currentPhase,
     };
-    await patchTaskStatus(taskName, patch as never, namespace);
+    await patchTaskStatus(taskName, patch, namespace);
   }
 
   return {
@@ -341,12 +348,12 @@ function isAlreadyExists(e: unknown): boolean {
 
 async function clearProjectAnnotations(
   keys: string[],
-  projectObj: (Task['metadata'] & { spec: Record<string, unknown> }) | null,
+  projectObj: Project | null,
   namespace: string,
   taskName: string,
 ): Promise<void> {
   try {
-    const projectName = (projectObj as { metadata?: { name?: string } } | null)?.metadata?.name;
+    const projectName = projectObj?.metadata?.name;
     if (!projectName) {
       console.warn(`[effects] ClearProjectAnnotations: no project name for ${taskName}`);
       return;

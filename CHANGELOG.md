@@ -1,11 +1,147 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.194] - 2026-06-17
+
+### <!-- 6 -->🧪 Testing
+
+- Remove flaky localStorage legacy compatibility test _(web)_
+## [v0.1.193] - 2026-06-16
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Add percussionist_dispatcher_ prefix to report_finding tool mention in prompt _(worker-builder)_
+- Configure tsconfig for bun module resolution _(memory-service)_
+- Exclude test files from tsc build _(dispatcher)_
+- Exclude src/*.test.ts from tsc build _(manager)_
+- Configure server tsconfig for bun module resolution _(web)_
+
+### <!-- 10 -->💼 Other
+
+- Update typescript 5.6.3 -> 6.0.3
+- Update zod from 3.23.8 to 4.4.3
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update lockfile with bun-types for web package
+- Release v0.1.193
+## [v0.1.192] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Reframe findings as review-priority signals with inline widgets _(review)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Grant dispatcher clusteragent list permission for create_task tool _(rbac)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Remaining uncommitted changes across web UI, tests, and docs
+- Security sweep before going public
+- Release v0.1.192
+## [v0.1.191] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Add compact-expanded usage tracker modes _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Integrate usage tracker with sidebar collapse state _(web)_
+- Handle unhandled rejections and preserve transient settings errors
+
+### <!-- 2 -->🚜 Refactor
+
+- Tighten executeEffects project typing _(manager)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add usage tracker sidebar expand-collapse plan _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add verification tests for UsageBar expand/collapse modes _(web)_
+- Add focused component tests for UsageBar expand/collapse _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Add dependency scanning and pin @types/bun _(security)_
+- Release v0.1.191
+## [v0.1.190] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Add list/update/create_task findings MCP tools + prompt awareness _(agent)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.190
+## [v0.1.189] - 2026-06-16
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Restore skipSanitization support in exec_in_workspace handler _(manager)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.189
+## [v0.1.188] - 2026-06-16
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.188
+## [v0.1.187] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Add findings panel to board view _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Update reviewer prompt with structured findings schema _(agents)_
+- Restore skipSanitization for trusted diff script in exec_in_workspace _(web)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add unit tests for schema, ConfigMap helpers, dedup, and dispatcher _(findings)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Regenerate CRD YAML with findings schema in board status
+- Release v0.1.187
+## [v0.1.186] - 2026-06-16
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.186
+## [v0.1.185] - 2026-06-16
+
+### <!-- 0 -->🚀 Features
+
+- Add agent finding reporting, ingestion pipeline, and web API _(findings)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Align label keys and stale hygiene comments
+- Validate workspace command and package inputs _(manager)_
+- Lock mirror cleanup operations with flock _(manager)_
+- Validate external status patch inputs with zod _(board)_
+- Use session.idle for idle-triggered flushes _(dispatcher)_
+- Avoid clobbering run terminal phase _(operator)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.185
 ## [v0.1.184] - 2026-06-15
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Resolve empty git diff in task detail panel _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.184
 ## [v0.1.183] - 2026-06-15
 
 ### <!-- 0 -->🚀 Features

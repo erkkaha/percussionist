@@ -63,6 +63,7 @@ spec:
                               type: string
                           required:
                             - name
+                            - key
                         githubTokenSecret:
                           type: object
                           properties:
@@ -73,6 +74,7 @@ spec:
                               type: string
                           required:
                             - name
+                            - key
                         author:
                           type: object
                           properties:
@@ -101,8 +103,10 @@ spec:
                               type: string
                           required:
                             - name
+                            - key
                       required:
                         - url
+                        - sshHostKeyVerification
                     local:
                       type: boolean
                 secrets:
@@ -120,6 +124,7 @@ spec:
                           type: string
                       required:
                         - name
+                        - key
                     configMap:
                       type: object
                       properties:
@@ -130,6 +135,7 @@ spec:
                           type: string
                       required:
                         - name
+                        - key
                 model:
                   type: string
                 agent:
@@ -138,8 +144,9 @@ spec:
                   type: string
                 timeoutSeconds:
                   type: integer
-                  exclusiveMinimum: true
                   minimum: 0
+                  exclusiveMinimum: true
+                  maximum: 9007199254740991
                 resources:
                   type: object
                   properties:
@@ -150,6 +157,7 @@ spec:
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
                 sidecars:
+                  maxItems: 5
                   type: array
                   items:
                     type: object
@@ -162,6 +170,7 @@ spec:
                         type: string
                         minLength: 1
                       env:
+                        maxItems: 32
                         type: array
                         items:
                           type: object
@@ -174,14 +183,13 @@ spec:
                           required:
                             - name
                             - value
-                        maxItems: 32
                       ports:
+                        maxItems: 8
                         type: array
                         items:
                           type: integer
                           minimum: 1
                           maximum: 65535
-                        maxItems: 8
                       securityContext:
                         type: object
                         properties:
@@ -189,15 +197,19 @@ spec:
                             type: boolean
                           runAsUser:
                             type: integer
+                            minimum: -9007199254740991
+                            maximum: 9007199254740991
                           runAsGroup:
                             type: integer
+                            minimum: -9007199254740991
+                            maximum: 9007199254740991
                           allowPrivilegeEscalation:
                             type: boolean
                     required:
                       - name
                       - image
-                  maxItems: 5
                 injectFiles:
+                  maxItems: 20
                   type: array
                   items:
                     type: object
@@ -217,10 +229,10 @@ spec:
                             type: string
                         required:
                           - name
+                          - key
                     required:
                       - filename
                       - secretRef
-                  maxItems: 20
                 initScript:
                   type: string
                 maxParallel:
@@ -255,11 +267,15 @@ spec:
                       type: string
                     storageClass:
                       type: string
+                  required:
+                    - mountPath
                 gitCache:
                   type: object
                   properties:
                     worktreeReuse:
                       type: boolean
+                  required:
+                    - worktreeReuse
                 featureBranchingEnabled:
                   type: boolean
                 retryPolicy:
@@ -287,6 +303,13 @@ spec:
                       type: integer
                       minimum: 0
                       maximum: 300
+                  required:
+                    - enabled
+                    - maxAttempts
+                    - backoffSeconds
+                    - backoffMultiplier
+                    - maxBackoffSeconds
+                    - poisonPillThresholdSeconds
                 reviewPolicy:
                   type: object
                   properties:
@@ -299,6 +322,10 @@ spec:
                       type: integer
                       minimum: 1
                       maximum: 10
+                  required:
+                    - aiReviewerEnabled
+                    - aiReviewerAgent
+                    - maxAutoReworks
                 flow:
                   type: object
                   properties:
@@ -439,6 +466,8 @@ spec:
                           type: integer
                           minimum: 30
                           maximum: 86400
+                  required:
+                    - preset
                 codeServer:
                   type: object
                   properties:
@@ -455,6 +484,9 @@ spec:
                         limits:
                           type: object
                           x-kubernetes-preserve-unknown-fields: true
+                  required:
+                    - enabled
+                    - image
                 embedding:
                   type: object
                   properties:
@@ -464,6 +496,8 @@ spec:
                       type: string
                     dimensions:
                       type: integer
+                      minimum: -9007199254740991
+                      maximum: 9007199254740991
                     ollamaUrl:
                       type: string
                     resources:
@@ -475,19 +509,28 @@ spec:
                         limits:
                           type: object
                           x-kubernetes-preserve-unknown-fields: true
+                  required:
+                    - enabled
+                    - model
+                    - dimensions
                 runner:
                   type: object
                   properties:
                     packages:
+                      maxItems: 50
                       type: array
                       items:
                         type: string
-                      maxItems: 50
                 exec:
                   type: object
                   properties:
                     image:
                       type: string
+              required:
+                - timeoutSeconds
+                - maxParallel
+                - phase
+                - featureBranchingEnabled
             status:
               type: object
               properties:
@@ -497,6 +540,7 @@ spec:
                     activeWorkers:
                       type: integer
                       minimum: 0
+                      maximum: 9007199254740991
                     escalations:
                       type: array
                       items:
@@ -553,6 +597,7 @@ spec:
                         lastReconcileDurationMs:
                           type: integer
                           minimum: 0
+                          maximum: 9007199254740991
                         lastReconcileResult:
                           type: string
                           enum:
@@ -563,12 +608,19 @@ spec:
                         tasksPulled:
                           type: integer
                           minimum: 0
+                          maximum: 9007199254740991
                         workersMonitored:
                           type: integer
                           minimum: 0
+                          maximum: 9007199254740991
                         tasksReworked:
                           type: integer
                           minimum: 0
+                          maximum: 9007199254740991
+                      required:
+                        - tasksPulled
+                        - workersMonitored
+                        - tasksReworked
                     suggestions:
                       type: array
                       items:
@@ -603,5 +655,91 @@ spec:
                           - message
                           - recommendation
                           - createdAt
+                    findings:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          title:
+                            type: string
+                            maxLength: 256
+                          description:
+                            type: string
+                            maxLength: 8192
+                          severity:
+                            type: string
+                            enum:
+                              - low
+                              - medium
+                              - high
+                              - critical
+                          category:
+                            type: string
+                            enum:
+                              - bug
+                              - security
+                              - performance
+                              - debt
+                              - docs
+                              - other
+                          source:
+                            type: object
+                            properties:
+                              project:
+                                type: string
+                              task:
+                                type: string
+                              run:
+                                type: string
+                              agent:
+                                type: string
+                            required:
+                              - project
+                          filePath:
+                            type: string
+                            maxLength: 1024
+                          snippet:
+                            type: string
+                            maxLength: 2048
+                          status:
+                            type: string
+                            enum:
+                              - new
+                              - triaged
+                              - in-progress
+                              - resolved
+                              - duplicate
+                              - wontfix
+                          dedupKey:
+                            type: string
+                          clusterId:
+                            type: string
+                          duplicateOf:
+                            type: string
+                          taskRef:
+                            type: string
+                          occurrences:
+                            type: integer
+                            minimum: 1
+                            maximum: 9007199254740991
+                          createdAt:
+                            type: string
+                          triagedAt:
+                            type: string
+                        required:
+                          - id
+                          - title
+                          - description
+                          - severity
+                          - category
+                          - source
+                          - status
+                          - dedupKey
+                          - occurrences
+                          - createdAt
+                  required:
+                    - activeWorkers
           required:
             - spec

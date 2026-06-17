@@ -255,6 +255,12 @@ It returns the current phase, allowed transitions, resolved project
 flow, and expected next action, which helps avoid invalid
 set_task_state or force_retry calls.
 
+Workers can report off-task findings (bugs, security issues, tech debt)
+via the report_finding tool. The findings system auto-triages high/critical
+bugs and security issues into tasks. Use list_findings to see all reported
+findings, update_finding to change their status or severity, and
+create_task_from_finding to promote lower-severity issues to tasks manually.
+
 When chatting with operators, explain your reasoning clearly and
 offer to take corrective actions using your available tools.
 Do not use icons, emoji, or unnecessary special characters
@@ -548,11 +554,12 @@ export async function reconcile(run: Run): Promise<void> {
     }
   }
 
-  // Mirror pod phase into CR status.
-  const podPhase = pod?.status?.phase;
+  // Mirror pod phase into CR status (without owning terminal run phase).
+  const podPhase = normalizePodPhase(pod?.status?.phase);
   if (!currentPhase || currentPhase === RunPhase.Pending) {
     await patchStatus(run, {
       phase: RunPhase.Initializing,
+      podPhase,
       podName: podName(run),
       serviceName: serviceName(run),
       ...(shouldCreateIngress(run)
@@ -562,17 +569,15 @@ export async function reconcile(run: Run): Promise<void> {
     });
   }
 
-  if (podPhase === 'Succeeded' && currentPhase !== RunPhase.Succeeded) {
-    await patchStatus(run, {
-      phase: RunPhase.Succeeded,
-      completedAt: new Date().toISOString(),
-      message: 'pod succeeded',
-    });
+  if (podPhase && podPhase !== run.status?.podPhase) {
+    await patchStatus(run, { podPhase });
+  }
+
+  if (podPhase === 'Succeeded') {
     await cleanupChildResources(run, ns);
-  } else if (podPhase === 'Failed' && currentPhase !== RunPhase.Failed) {
+  } else if (podPhase === 'Failed') {
     await patchStatus(run, {
-      phase: RunPhase.Failed,
-      completedAt: new Date().toISOString(),
+      podPhase,
       message: summarizePodFailure(pod),
       containerExitCodes: collectContainerExitCodes(pod),
     });
@@ -637,6 +642,19 @@ function summarizePodFailure(pod?: V1Pod): string {
     })
     .filter(Boolean);
   return reasons.length ? reasons.join('; ') : (pod?.status?.reason ?? 'pod failed');
+}
+
+function normalizePodPhase(phase: string | undefined): RunStatus['podPhase'] {
+  if (
+    phase === 'Pending' ||
+    phase === 'Running' ||
+    phase === 'Succeeded' ||
+    phase === 'Failed' ||
+    phase === 'Unknown'
+  ) {
+    return phase;
+  }
+  return undefined;
 }
 
 function collectContainerExitCodes(

@@ -12,8 +12,13 @@
 // POST   /api/projects/:project/board/tasks/:taskName/request-changes
 
 import { randomBytes } from 'node:crypto';
-import type { Task, TaskPhase, TaskSpec } from '@percussionist/api';
-import { computeBoardColumn } from '@percussionist/api';
+import {
+  computeBoardColumn,
+  type Task,
+  type TaskPhase,
+  type TaskSpec,
+  TaskStatusSchema,
+} from '@percussionist/api';
 import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
 import { getDb, taskEvents } from '../db.js';
@@ -400,7 +405,17 @@ board.post('/:project/board/tasks/:taskName/move', adminAuth(), async (c) => {
       patch.worker = { retryCount: currentRetryCount + 1 };
     }
 
-    await patchTaskStatus(taskName, patch as never, ns);
+    const parsedPatch = TaskStatusSchema.partial().safeParse(patch);
+    if (!parsedPatch.success) {
+      return c.json(
+        {
+          error: `Invalid task status patch: ${parsedPatch.error.issues[0]?.message ?? 'unknown'}`,
+        },
+        400,
+      );
+    }
+
+    await patchTaskStatus(taskName, parsedPatch.data, ns);
     await appendTaskEvent(projectName, taskName, 'unknown', 'moved', { column });
     return c.json({ success: true });
   } catch (e) {
@@ -507,7 +522,17 @@ board.post('/:project/board/tasks/:taskName/retry-review', adminAuth(), async (c
         reviewFeedback: null,
       },
     };
-    await patchTaskStatus(taskName, patch as never, ns);
+    const parsedPatch = TaskStatusSchema.partial().safeParse(patch);
+    if (!parsedPatch.success) {
+      return c.json(
+        {
+          error: `Invalid task status patch: ${parsedPatch.error.issues[0]?.message ?? 'unknown'}`,
+        },
+        400,
+      );
+    }
+
+    await patchTaskStatus(taskName, parsedPatch.data, ns);
     await appendTaskEvent(projectName, taskName, 'BUILD', 'review-retry', {});
     return c.json({ success: true });
   } catch (e) {
