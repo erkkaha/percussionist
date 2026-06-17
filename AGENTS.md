@@ -100,9 +100,9 @@ See [`docs/testing-strategy.md`](docs/testing-strategy.md#adding-a-new-determini
   - `/data/git-mirrors/{url-hash}/` - bare git mirror (one per remote repo URL)
   - `/data/worktrees/{run-name}/` - per-run worktree checkout (remote git)
   - `/data/workspace/` - persistent local git workspace (`source.local: true`)
-- PVC size: 10Gi (default)
+- PVC size: 50Gi (default)
 - PVC lifecycle: Tied to Project (auto-deleted when project is deleted)
-- Storage: Uses cluster default storage class with ReadWriteMany access mode
+- Storage: Uses cluster default storage class with ReadWriteOnce access mode (default)
   - For RWX support on minikube/k3s, requires NFS or similar provisioner
   - Falls back gracefully if PVC creation fails
 - Override PVC name via `spec.data.pvcName` (optional)
