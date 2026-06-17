@@ -42,6 +42,16 @@ function SeverityBadge({ severity }: { severity: DiffFindingSeverity }) {
 export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
   const [expanded, setExpanded] = useState(false);
   const [viewType, setViewType] = useState<'unified' | 'split'>('unified');
+  const [hiddenWidgets, setHiddenWidgets] = useState<Set<string>>(new Set());
+
+  const toggleWidget = (key: string) => {
+    setHiddenWidgets((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const displayPath = path || filename;
 
@@ -83,12 +93,17 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
     );
   }, [findings, displayPath]);
 
-  const { markers, unmappedFindings } = useMemo(() => {
-    const markers = new Map<string, { severity: DiffFindingSeverity; titles: string[] }>();
+  const { markers, widgets, unmappedFindings } = useMemo(() => {
+    const markers = new Map<
+      string,
+      { severity: DiffFindingSeverity; titles: string[]; findings: TaskDiffFinding[] }
+    >();
+    const widgets: Record<string, React.ReactNode> = {};
     const unmapped: TaskDiffFinding[] = [];
+    const seenChangeKeys = new Map<string, boolean>();
 
     if (!fileData) {
-      return { markers, unmappedFindings: unmapped };
+      return { markers, widgets, unmappedFindings: unmapped };
     }
 
     for (const finding of fileFindings) {
@@ -111,16 +126,25 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
 
           if (change) {
             anyMapped = true;
-            const key = `${side}:${getChangeKey(change)}`;
-            const existing = markers.get(key);
+            const changeKey = getChangeKey(change);
+            const gutterKey = `${side}:${changeKey}`;
 
+            // Track unique change keys for widget rendering (avoid duplicates)
+            if (!seenChangeKeys.has(changeKey)) {
+              seenChangeKeys.set(changeKey, true);
+              widgets[changeKey] = null; // placeholder
+            }
+
+            const existing = markers.get(gutterKey);
             if (!existing || SEVERITY_RANK[finding.severity] > SEVERITY_RANK[existing.severity]) {
-              markers.set(key, {
+              markers.set(gutterKey, {
                 severity: finding.severity,
                 titles: existing ? [finding.title, ...existing.titles] : [finding.title],
+                findings: existing ? [finding, ...existing.findings] : [finding],
               });
             } else {
               existing.titles.push(finding.title);
+              existing.findings.push(finding);
             }
           }
         }
@@ -131,8 +155,42 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
       }
     }
 
-    return { markers, unmappedFindings: unmapped };
+    // Build widget content for each change key (collect findings from both sides)
+    for (const changeKey of Object.keys(widgets)) {
+      const sideMarkers = ['old', 'new'].map((side) => {
+        const m = markers.get(`${side}:${changeKey}`);
+        return m?.findings ?? [];
+      });
+      const allFindings = [...sideMarkers[0], ...sideMarkers[1]];
+      if (allFindings.length === 0) continue;
+
+      widgets[changeKey] = (
+        <div className="space-y-1 py-1">
+          {allFindings.map((f) => (
+            <div key={f.id} className="flex items-start text-xs leading-relaxed">
+              <div className="text-right shrink-0 pr-[1ch]" style={{ width: '14ch' }}>
+                <SeverityBadge severity={f.severity} />
+              </div>
+              <div className="min-w-0 flex-1 pl-[.5em]">
+                <span className="font-medium text-text">{f.title}</span>
+                <p className="text-text-dim mt-0.5">{f.comment}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    return { markers, widgets, unmappedFindings: unmapped };
   }, [fileData, fileFindings, displayPath]);
+
+  const visibleWidgets = useMemo(() => {
+    const result: Record<string, React.ReactNode> = {};
+    for (const [key, value] of Object.entries(widgets)) {
+      if (!hiddenWidgets.has(key)) result[key] = value;
+    }
+    return result;
+  }, [widgets, hiddenWidgets]);
 
   const severityCounts = useMemo(() => {
     return DIFF_FINDING_SEVERITIES.map((severity) => ({
@@ -142,16 +200,20 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
   }, [fileFindings]);
 
   const renderGutter = ({ change, side, renderDefault }: GutterOptions) => {
-    const key = `${side}:${getChangeKey(change as ChangeData)}`;
+    const changeKey = getChangeKey(change as ChangeData);
+    const key = `${side}:${changeKey}`;
     const marker = markers.get(key);
+    const hidden = hiddenWidgets.has(changeKey);
 
     return (
       <span className="flex items-center gap-1">
         {marker && (
-          <span
-            className={`inline-block rounded-full ${SEVERITY_DOT_CLASS[marker.severity]}`}
+          <button
+            type="button"
+            onClick={() => toggleWidget(changeKey)}
+            className={`inline-block rounded-full cursor-pointer ${SEVERITY_DOT_CLASS[marker.severity]} ${hidden ? 'opacity-30' : ''}`}
             style={{ width: 6, height: 6 }}
-            title={marker.titles.join('\n')}
+            title={`${hidden ? 'Show' : 'Hide'} finding: ${marker.titles.join('\n')}`}
           />
         )}
         {renderDefault()}
@@ -244,6 +306,7 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
                     diffType={file.type}
                     hunks={file.hunks}
                     renderGutter={renderGutter}
+                    widgets={visibleWidgets}
                   >
                     {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
                   </Diff>

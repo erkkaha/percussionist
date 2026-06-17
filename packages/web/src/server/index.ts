@@ -22,6 +22,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // In production:  dist/server/index.js -> ../client
 const clientDir = path.resolve(__dirname, '../client');
 
+process.on('unhandledRejection', (reason) => {
+  console.error(`[web ${new Date().toISOString()}] unhandledRejection:`, reason);
+  process.exit(1);
+});
+
 const app = createApp();
 
 // Return 404 for any /api/* path that wasn't matched by the registered routes.

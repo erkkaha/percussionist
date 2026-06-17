@@ -93,8 +93,8 @@ export const OPENCODE_RUNNER_DEFAULTS: RunnerImageSpec = {
 
 export const ResourceRequirementsSchema = z
   .object({
-    requests: z.record(z.string()).optional(),
-    limits: z.record(z.string()).optional(),
+    requests: z.record(z.string(), z.string()).optional(),
+    limits: z.record(z.string(), z.string()).optional(),
   })
   .partial();
 
@@ -344,8 +344,8 @@ export const ClusterAgentSchema = z.object({
       name: z.string(),
       uid: z.string().optional(),
       resourceVersion: z.string().optional(),
-      labels: z.record(z.string()).optional(),
-      annotations: z.record(z.string()).optional(),
+      labels: z.record(z.string(), z.string()).optional(),
+      annotations: z.record(z.string(), z.string()).optional(),
       creationTimestamp: z.string().optional(),
       deletionTimestamp: z.string().optional(),
     })
@@ -436,8 +436,8 @@ export const ClusterSettingsSchema = z.object({
       name: z.string(),
       uid: z.string().optional(),
       resourceVersion: z.string().optional(),
-      labels: z.record(z.string()).optional(),
-      annotations: z.record(z.string()).optional(),
+      labels: z.record(z.string(), z.string()).optional(),
+      annotations: z.record(z.string(), z.string()).optional(),
       creationTimestamp: z.string().optional(),
       deletionTimestamp: z.string().optional(),
     })
@@ -655,8 +655,8 @@ export const RunSchema = z.object({
       uid: z.string().optional(),
       resourceVersion: z.string().optional(),
       generation: z.number().optional(),
-      labels: z.record(z.string()).optional(),
-      annotations: z.record(z.string()).optional(),
+      labels: z.record(z.string(), z.string()).optional(),
+      annotations: z.record(z.string(), z.string()).optional(),
       creationTimestamp: z.string().optional(),
       deletionTimestamp: z.string().optional(),
       finalizers: z.array(z.string()).optional(),
@@ -1091,8 +1091,8 @@ export const ProjectSchema = z.object({
       uid: z.string().optional(),
       resourceVersion: z.string().optional(),
       generation: z.number().optional(),
-      labels: z.record(z.string()).optional(),
-      annotations: z.record(z.string()).optional(),
+      labels: z.record(z.string(), z.string()).optional(),
+      annotations: z.record(z.string(), z.string()).optional(),
       creationTimestamp: z.string().optional(),
       deletionTimestamp: z.string().optional(),
     })
@@ -1587,8 +1587,8 @@ export const TaskSchema = z.object({
       uid: z.string().optional(),
       resourceVersion: z.string().optional(),
       generation: z.number().optional(),
-      labels: z.record(z.string()).optional(),
-      annotations: z.record(z.string()).optional(),
+      labels: z.record(z.string(), z.string()).optional(),
+      annotations: z.record(z.string(), z.string()).optional(),
       creationTimestamp: z.string().optional(),
       deletionTimestamp: z.string().optional(),
       ownerReferences: z

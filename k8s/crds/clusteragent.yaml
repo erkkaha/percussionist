@@ -36,6 +36,7 @@ spec:
                 model:
                   type: string
                 capabilities:
+                  maxItems: 64
                   type: array
                   items:
                     type: string
@@ -49,7 +50,6 @@ spec:
                       - run.complete.plan
                       - run.complete.build
                       - run.complete.review
-                  maxItems: 64
               required:
                 - content
           required:

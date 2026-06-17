@@ -270,6 +270,28 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: percussionist-dispatcher
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: percussionist-dispatcher-${ns}
+rules:
+  - apiGroups: ["percussionist.dev"]
+    resources: ["clusteragents"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: percussionist-dispatcher-${ns}
+subjects:
+  - kind: ServiceAccount
+    name: percussionist-dispatcher
+    namespace: ${ns}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: percussionist-dispatcher-${ns}
 `);
   console.log(`    Dispatcher ServiceAccount + RBAC ready in ${ns}`);
 }
@@ -557,6 +579,19 @@ spec:
 export async function teardown(ns: string, options: SetupOptions = DEFAULT_OPTIONS): Promise<void> {
   console.log(`==> Teardown: deleting namespace ${ns}`);
   try {
+    // Clean up cluster-scoped dispatcher ClusterRole + ClusterRoleBinding first.
+    await kubectl([
+      'delete',
+      'clusterrole',
+      `percussionist-dispatcher-${ns}`,
+      '--ignore-not-found',
+    ]).catch(() => undefined);
+    await kubectl([
+      'delete',
+      'clusterrolebinding',
+      `percussionist-dispatcher-${ns}`,
+      '--ignore-not-found',
+    ]).catch(() => undefined);
     if (options.cleanupNamespace) {
       await deleteNamespace(ns);
     }

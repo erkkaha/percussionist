@@ -97,7 +97,7 @@ export async function reconcileProject(project: Project, namespace: string): Pro
         decision.effects,
         decision.statusPatch,
         namespace,
-        project as never,
+        project,
         input.flow,
         refreshedTasks,
       );

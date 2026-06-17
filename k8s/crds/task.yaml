@@ -91,6 +91,7 @@ spec:
                 - projectRef
                 - type
                 - title
+                - priority
                 - agent
             status:
               type: object
@@ -159,6 +160,7 @@ spec:
                     prNumber:
                       type: integer
                       minimum: 1
+                      maximum: 9007199254740991
                     startedAt:
                       type: string
                     completedAt:
@@ -166,9 +168,11 @@ spec:
                     retryCount:
                       type: integer
                       minimum: 0
+                      maximum: 9007199254740991
                     aiReworkCount:
                       type: integer
                       minimum: 0
+                      maximum: 9007199254740991
                     reviewRunName:
                       type: string
                     buildTasksFacilitatorRun:
@@ -193,6 +197,8 @@ spec:
                       maxLength: 4096
                   required:
                     - status
+                    - retryCount
+                    - aiReworkCount
                 reviews:
                   type: array
                   items:
@@ -217,6 +223,7 @@ spec:
                       attempt:
                         type: integer
                         minimum: 0
+                        maximum: 9007199254740991
                     required:
                       - action
                       - reviewedAt
@@ -248,6 +255,7 @@ spec:
                         - forkSha
                         - diffFingerprint
                     items:
+                      maxItems: 25
                       type: array
                       items:
                         type: object
@@ -283,6 +291,8 @@ spec:
                             type: string
                             maxLength: 64
                           anchors:
+                            minItems: 1
+                            maxItems: 3
                             type: array
                             items:
                               type: object
@@ -298,9 +308,11 @@ spec:
                                 line:
                                   type: integer
                                   minimum: 1
+                                  maximum: 9007199254740991
                                 endLine:
                                   type: integer
                                   minimum: 1
+                                  maximum: 9007199254740991
                                 hunkHeader:
                                   type: string
                                   maxLength: 256
@@ -308,8 +320,6 @@ spec:
                                 - path
                                 - side
                                 - line
-                            minItems: 1
-                            maxItems: 3
                           context:
                             type: object
                             properties:
@@ -344,7 +354,6 @@ spec:
                           - anchors
                           - context
                           - createdAt
-                      maxItems: 25
                     updatedAt:
                       type: string
                       minLength: 1

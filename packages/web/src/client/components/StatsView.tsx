@@ -1,13 +1,20 @@
-import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { BarChart3, Table2, Users, Wrench, TrendingUp } from "lucide-react";
-import StatusBadge from "./StatusBadge";
-import { authHeaders } from "../lib/auth";
-import TokenCounter from "./TokenCounter";
-import ToolMetricsView from "./ToolMetricsView";
-import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent, type ChartConfig } from "./ui/chart";
-import { cn } from "../lib/utils";
+import { useQuery } from '@tanstack/react-query';
+import { BarChart3, Table2, TrendingUp, Users, Wrench } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
+import { authHeaders } from '../lib/auth';
+import { cn } from '../lib/utils';
+import StatusBadge from './StatusBadge';
+import TokenCounter from './TokenCounter';
+import ToolMetricsView from './ToolMetricsView';
+import {
+  type ChartConfig,
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+} from './ui/chart';
 
 // ---------------------------------------------------------------------------
 // Types matching /api/stats/sessions response
@@ -82,11 +89,11 @@ interface TrendsResponse {
 // Helpers
 
 function shortModelLabel(model: string): string {
-  return model.includes("/") ? model.split("/").pop()! : model;
+  return model.includes('/') ? model.split('/').pop()! : model;
 }
 
 function fmtDuration(ms: number | null): string {
-  if (ms == null) return "-";
+  if (ms == null) return '-';
   if (ms < 1000) return `${ms}ms`;
   const s = Math.round(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -102,7 +109,7 @@ function fmtTokens(n: number): string {
 }
 
 function fmtCost(n: number | null | undefined): string {
-  if (n == null || n === 0) return "-";
+  if (n == null || n === 0) return '-';
   if (n < 1) return `$${n.toFixed(4)}`;
   return `$${n.toFixed(2)}`;
 }
@@ -121,25 +128,39 @@ function SummaryCards({ a }: { a: Summary }) {
       <MetricCard label="Failed" value={a.failed} color="text-phase-failed" />
       <MetricCard
         label="Success Rate"
-        value={a.successRate != null ? `${a.successRate}%` : "-"}
-        color={a.successRate != null && a.successRate >= 80 ? "text-phase-succeeded" : "text-phase-failed"}
+        value={a.successRate != null ? `${a.successRate}%` : '-'}
+        color={
+          a.successRate != null && a.successRate >= 80
+            ? 'text-phase-succeeded'
+            : 'text-phase-failed'
+        }
       />
       <MetricCard label="Avg Duration" value={fmtDuration(a.avgDurationMs)} />
       <MetricCard label="Total Cost" value={fmtCost(a.totalCost)} color="text-phase-running" mono />
-      <MetricCard label="Tokens In / Out" value={`${fmtTokens(a.totalTokensIn)} / ${fmtTokens(a.totalTokensOut)}`} mono />
+      <MetricCard
+        label="Tokens In / Out"
+        value={`${fmtTokens(a.totalTokensIn)} / ${fmtTokens(a.totalTokensOut)}`}
+        mono
+      />
     </div>
   );
 }
 
 function MetricCard({
-  label, value, color = "text-text", mono = false,
+  label,
+  value,
+  color = 'text-text',
+  mono = false,
 }: {
-  label: string; value: string | number; color?: string; mono?: boolean;
+  label: string;
+  value: string | number;
+  color?: string;
+  mono?: boolean;
 }) {
   return (
     <div className="rounded-lg border border-border bg-surface-raised p-4">
       <p className="text-xs text-text-dim mb-1">{label}</p>
-      <p className={`font-semibold ${color} ${mono ? "font-mono text-sm mt-1" : "text-2xl"}`}>
+      <p className={`font-semibold ${color} ${mono ? 'font-mono text-sm mt-1' : 'text-2xl'}`}>
         {value}
       </p>
     </div>
@@ -176,10 +197,15 @@ function ModelBreakdown({ modelRows }: { modelRows: ModelRow[] }) {
                 const barWidth = maxTokens > 0 ? (total / maxTokens) * 100 : 0;
                 return (
                   <tr key={model} className="hover:bg-surface-raised/60">
-                    <td className="px-4 py-2.5 font-mono text-xs text-text whitespace-nowrap max-w-[200px] truncate" title={model}>
+                    <td
+                      className="px-4 py-2.5 font-mono text-xs text-text whitespace-nowrap max-w-[200px] truncate"
+                      title={model}
+                    >
                       {model}
                     </td>
-                    <td className="px-4 py-2.5 tabular-nums text-text-muted whitespace-nowrap">{runs}</td>
+                    <td className="px-4 py-2.5 tabular-nums text-text-muted whitespace-nowrap">
+                      {runs}
+                    </td>
                     <td className="px-4 py-2.5 tabular-nums text-text-muted font-mono text-xs whitespace-nowrap">
                       {fmtTokens(tokensIn)}
                     </td>
@@ -192,11 +218,14 @@ function ModelBreakdown({ modelRows }: { modelRows: ModelRow[] }) {
                     <td className="px-4 py-2.5 whitespace-nowrap">
                       <div
                         className="flex h-2 overflow-hidden bg-surface-overlay"
-                        style={{ width: `${barWidth}%`, minWidth: "20px" }}
+                        style={{ width: `${barWidth}%`, minWidth: '20px' }}
                         title={`In: ${fmtTokens(tokensIn)} (${inPct.toFixed(0)}%) / Out: ${fmtTokens(tokensOut)} (${outPct.toFixed(0)}%)`}
                       >
                         <div className="bg-primary-container" style={{ width: `${inPct}%` }} />
-                        <div className="bg-surface-container-high" style={{ width: `${outPct}%` }} />
+                        <div
+                          className="bg-surface-container-high"
+                          style={{ width: `${outPct}%` }}
+                        />
                       </div>
                     </td>
                   </tr>
@@ -221,7 +250,7 @@ const STATS_LIMIT = 500;
 
 function useStats(days: number) {
   return useQuery<StatsResponse>({
-    queryKey: ["stats", days],
+    queryKey: ['stats', days],
     queryFn: async () => {
       const url = `/api/stats/sessions?days=${days}&limit=${STATS_LIMIT}&offset=0`;
       const res = await fetch(url, { headers: authHeaders() });
@@ -237,9 +266,9 @@ function useStats(days: number) {
 
 function useTrends(days: number) {
   return useQuery<TrendsResponse>({
-    queryKey: ["stats-trends", days],
+    queryKey: ['stats-trends', days],
     queryFn: async () => {
-      const url = days === 0 ? "/api/stats/trends?days=0" : `/api/stats/trends?days=${days}`;
+      const url = days === 0 ? '/api/stats/trends?days=0' : `/api/stats/trends?days=${days}`;
       const res = await fetch(url, { headers: authHeaders() });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       return res.json() as Promise<TrendsResponse>;
@@ -253,11 +282,11 @@ function useTrends(days: number) {
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
 function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 interface TrendChartProps {
@@ -270,7 +299,15 @@ interface TrendChartProps {
   yAxisFormatter?: (v: number) => string;
 }
 
-function TrendChart({ title, description, data, config, series, yAxisDomain, yAxisFormatter }: TrendChartProps) {
+function TrendChart({
+  title,
+  description,
+  data,
+  config,
+  series,
+  yAxisDomain,
+  yAxisFormatter,
+}: TrendChartProps) {
   return (
     <div className="rounded-lg border border-border bg-surface-raised p-4">
       <div className="mb-3">
@@ -283,12 +320,16 @@ function TrendChart({ title, description, data, config, series, yAxisDomain, yAx
         </div>
       ) : (
         <ChartContainer config={config} className="aspect-auto h-[180px] w-full">
-          <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="20%">
+          <BarChart
+            data={data}
+            margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
+            barCategoryGap="20%"
+          >
             <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis
               dataKey="time"
               type="number"
-              domain={["dataMin", "dataMax"]}
+              domain={['dataMin', 'dataMax']}
               tickLine={false}
               axisLine={false}
               tickMargin={8}
@@ -301,7 +342,10 @@ function TrendChart({ title, description, data, config, series, yAxisDomain, yAx
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={yAxisFormatter ?? ((v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v))}
+              tickFormatter={
+                yAxisFormatter ??
+                ((v: number) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)))
+              }
               width={55}
             />
             <ChartTooltip
@@ -309,12 +353,14 @@ function TrendChart({ title, description, data, config, series, yAxisDomain, yAx
               content={
                 <ChartTooltipContent
                   indicator="dot"
-                    labelFormatter={(label, payload) => {
-                      if (!payload.length) return String(label);
-                      const p = payload[0] as unknown as Record<string, unknown>;
-                      const time = (p?.payload as unknown as Record<string, unknown>)?.time as number | undefined;
-                      return time ? fmtDate(new Date(time).toISOString()) : String(label);
-                    }}
+                  labelFormatter={(label, payload) => {
+                    if (!payload.length) return String(label);
+                    const p = payload[0] as unknown as Record<string, unknown>;
+                    const time = (p?.payload as unknown as Record<string, unknown>)?.time as
+                      | number
+                      | undefined;
+                    return time ? fmtDate(new Date(time).toISOString()) : String(label);
+                  }}
                 />
               }
             />
@@ -343,38 +389,42 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
   const { trendPoints, modelTrendPoints } = trends;
 
   // Build chart data with time as Unix ms
-  const runsData = useMemo(() =>
-    trendPoints.map((p) => ({
-      time: new Date(p.date).getTime(),
-      succeeded: p.succeeded,
-      failed: p.failed,
-    })),
-    [trendPoints]
+  const runsData = useMemo(
+    () =>
+      trendPoints.map((p) => ({
+        time: new Date(p.date).getTime(),
+        succeeded: p.succeeded,
+        failed: p.failed,
+      })),
+    [trendPoints],
   );
 
-  const successRateData = useMemo(() =>
-    trendPoints.map((p) => ({
-      time: new Date(p.date).getTime(),
-      successRate: p.successRate,
-    })),
-    [trendPoints]
+  const successRateData = useMemo(
+    () =>
+      trendPoints.map((p) => ({
+        time: new Date(p.date).getTime(),
+        successRate: p.successRate,
+      })),
+    [trendPoints],
   );
 
-  const tokenData = useMemo(() =>
-    trendPoints.map((p) => ({
-      time: new Date(p.date).getTime(),
-      tokensIn: p.tokensIn,
-      tokensOut: p.tokensOut,
-    })),
-    [trendPoints]
+  const tokenData = useMemo(
+    () =>
+      trendPoints.map((p) => ({
+        time: new Date(p.date).getTime(),
+        tokensIn: p.tokensIn,
+        tokensOut: p.tokensOut,
+      })),
+    [trendPoints],
   );
 
-  const costData = useMemo(() =>
-    trendPoints.map((p) => ({
-      time: new Date(p.date).getTime(),
-      cost: p.cost,
-    })),
-    [trendPoints]
+  const costData = useMemo(
+    () =>
+      trendPoints.map((p) => ({
+        time: new Date(p.date).getTime(),
+        cost: p.cost,
+      })),
+    [trendPoints],
   );
 
   // Build model trend data
@@ -386,18 +436,24 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
     });
   }, [modelTrendPoints]);
 
-  const models = modelTrendPoints.length > 0
-    ? Object.keys(modelTrendPoints[0]!).filter((k) => k !== "date")
-    : [];
+  const models =
+    modelTrendPoints.length > 0
+      ? Object.keys(modelTrendPoints[0]!).filter((k) => k !== 'date')
+      : [];
 
   const chartConfig: ChartConfig = {
-    succeeded: { label: "Succeeded", color: "var(--chart-1)" },
-    failed: { label: "Failed", color: "var(--chart-2)" },
-    successRate: { label: "Success Rate", color: "var(--chart-1)" },
-    tokensIn: { label: "Tokens In", color: "var(--chart-1)" },
-    tokensOut: { label: "Tokens Out", color: "var(--chart-2)" },
-    cost: { label: "Cost ($)", color: "var(--chart-4)" },
-    ...Object.fromEntries(models.map((m, i) => [m, { label: shortModelLabel(m), color: `var(--chart-${(i % 5) + 1})` }])),
+    succeeded: { label: 'Succeeded', color: 'var(--chart-1)' },
+    failed: { label: 'Failed', color: 'var(--chart-2)' },
+    successRate: { label: 'Success Rate', color: 'var(--chart-1)' },
+    tokensIn: { label: 'Tokens In', color: 'var(--chart-1)' },
+    tokensOut: { label: 'Tokens Out', color: 'var(--chart-2)' },
+    cost: { label: 'Cost ($)', color: 'var(--chart-4)' },
+    ...Object.fromEntries(
+      models.map((m, i) => [
+        m,
+        { label: shortModelLabel(m), color: `var(--chart-${(i % 5) + 1})` },
+      ]),
+    ),
   };
 
   return (
@@ -407,17 +463,14 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
         description="Succeeded vs failed runs over time"
         data={runsData}
         config={chartConfig}
-        series={[
-          { dataKey: "succeeded" },
-          { dataKey: "failed" },
-        ]}
+        series={[{ dataKey: 'succeeded' }, { dataKey: 'failed' }]}
       />
       <TrendChart
         title="Success Rate"
         description="Percentage of successful runs"
         data={successRateData}
         config={chartConfig}
-        series={[{ dataKey: "successRate" }]}
+        series={[{ dataKey: 'successRate' }]}
         yAxisDomain={[0, 100]}
         yAxisFormatter={(v) => `${v}%`}
       />
@@ -426,17 +479,14 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
         description="Tokens in vs out over time"
         data={tokenData}
         config={chartConfig}
-        series={[
-          { dataKey: "tokensIn" },
-          { dataKey: "tokensOut" },
-        ]}
+        series={[{ dataKey: 'tokensIn' }, { dataKey: 'tokensOut' }]}
       />
       <TrendChart
         title="Cost Over Time"
         description="Aggregate LLM cost per day"
         data={costData}
         config={chartConfig}
-        series={[{ dataKey: "cost" }]}
+        series={[{ dataKey: 'cost' }]}
         yAxisFormatter={(v: number) => fmtCost(v)}
       />
       {models.length > 0 ? (
@@ -445,7 +495,7 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
           description="Token volume by model over time"
           data={modelData}
           config={chartConfig}
-          series={models.map((m) => ({ dataKey: m, stackId: "models" }))}
+          series={models.map((m) => ({ dataKey: m, stackId: 'models' }))}
         />
       ) : (
         <div className="rounded-lg border border-border bg-surface-raised p-4">
@@ -466,15 +516,15 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
 // Agent charts
 
 const METRIC_OPTIONS = [
-  { value: "successRate", label: "Success Rate" },
-  { value: "runs", label: "Runs" },
-  { value: "avgTokensPerRun", label: "Avg Tokens / Run" },
-  { value: "totalCost", label: "Total Cost" },
-  { value: "avgDurationMs", label: "Avg Duration" },
+  { value: 'successRate', label: 'Success Rate' },
+  { value: 'runs', label: 'Runs' },
+  { value: 'avgTokensPerRun', label: 'Avg Tokens / Run' },
+  { value: 'totalCost', label: 'Total Cost' },
+  { value: 'avgDurationMs', label: 'Avg Duration' },
 ] as const;
 
 function AgentCharts({ agents }: { agents: AgentSummary[] }) {
-  const [metric, setMetric] = useState<string>("successRate");
+  const [metric, setMetric] = useState<string>('successRate');
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
 
   if (agents.length === 0) {
@@ -488,25 +538,32 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
   // Chart data for bar chart
   const chartData = useMemo(() => {
     const metricKey = metric as keyof AgentSummary;
-    return agents.map((a) => ({
-      agent: shortModelLabel(a.agent),
-      value: metricKey === "avgDurationMs" ? (a.avgDurationMs ?? 0) / 1000 : typeof a[metricKey] === "number" ? a[metricKey] as number : 0,
-      raw: a,
-    })).sort((a, b) => b.value - a.value);
+    return agents
+      .map((a) => ({
+        agent: shortModelLabel(a.agent),
+        value:
+          metricKey === 'avgDurationMs'
+            ? (a.avgDurationMs ?? 0) / 1000
+            : typeof a[metricKey] === 'number'
+              ? (a[metricKey] as number)
+              : 0,
+        raw: a,
+      }))
+      .sort((a, b) => b.value - a.value);
   }, [agents, metric]);
 
   const chartConfig = {
     value: {
       label: METRIC_OPTIONS.find((m) => m.value === metric)?.label ?? metric,
-      color: "var(--chart-1)",
+      color: 'var(--chart-1)',
     },
   } satisfies ChartConfig;
 
   const fmt = (v: number) => {
-    if (metric === "successRate") return `${Math.round(v)}%`;
-    if (metric === "avgDurationMs") return fmtDuration(Math.round(v * 1000));
-    if (metric === "avgTokensPerRun") return fmtTokens(Math.round(v));
-    if (metric === "totalCost") return fmtCost(v);
+    if (metric === 'successRate') return `${Math.round(v)}%`;
+    if (metric === 'avgDurationMs') return fmtDuration(Math.round(v * 1000));
+    if (metric === 'avgTokensPerRun') return fmtTokens(Math.round(v));
+    if (metric === 'totalCost') return fmtCost(v);
     return String(Math.round(v));
   };
 
@@ -520,15 +577,23 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
             onClick={() => setSelectedAgent(selectedAgent === a.agent ? null : a.agent)}
             className={`rounded-lg border p-4 text-left transition-colors ${
               selectedAgent === a.agent
-                ? "border-accent/60 bg-surface-overlay"
-                : "border-border bg-surface-raised hover:border-border-muted"
+                ? 'border-accent/60 bg-surface-overlay'
+                : 'border-border bg-surface-raised hover:border-border-muted'
             }`}
           >
             <p className="text-sm font-medium text-text truncate">{shortModelLabel(a.agent)}</p>
             <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-text-dim">
-              <span>{a.runs} run{a.runs !== 1 ? "s" : ""}</span>
-              <span className={a.successRate != null && a.successRate >= 80 ? "text-phase-succeeded" : "text-phase-failed"}>
-                {a.successRate != null ? `${a.successRate}%` : "-"} ok
+              <span>
+                {a.runs} run{a.runs !== 1 ? 's' : ''}
+              </span>
+              <span
+                className={
+                  a.successRate != null && a.successRate >= 80
+                    ? 'text-phase-succeeded'
+                    : 'text-phase-failed'
+                }
+              >
+                {a.successRate != null ? `${a.successRate}%` : '-'} ok
               </span>
               <span>{fmtTokens(a.totalTokensIn + a.totalTokensOut)} tok</span>
               <span>{fmtCost(a.totalCost)}</span>
@@ -539,7 +604,10 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
                 <p className="text-xs text-text-dim mb-1">Models:</p>
                 <div className="flex flex-wrap gap-1">
                   {a.models.map((m) => (
-                    <span key={m} className="px-1.5 py-0.5 text-xs bg-surface-overlay rounded font-mono text-text-muted">
+                    <span
+                      key={m}
+                      className="px-1.5 py-0.5 text-xs bg-surface-overlay rounded font-mono text-text-muted"
+                    >
                       {shortModelLabel(m)}
                     </span>
                   ))}
@@ -560,13 +628,19 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
             className="px-2 py-1 text-xs rounded-md border border-border bg-surface-overlay text-text focus:outline-none focus:ring-2 focus:ring-ring"
           >
             {METRIC_OPTIONS.map((m) => (
-              <option key={m.value} value={m.value}>{m.label}</option>
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
             ))}
           </select>
         </div>
         <div className="rounded-lg border border-border bg-surface-raised p-4">
           <ChartContainer config={chartConfig} className="aspect-auto h-[250px] w-full">
-            <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 40, left: 0, bottom: 0 }}>
+            <BarChart
+              data={chartData}
+              layout="vertical"
+              margin={{ top: 4, right: 40, left: 0, bottom: 0 }}
+            >
               <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="var(--border)" />
               <XAxis
                 type="number"
@@ -574,9 +648,10 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
                 axisLine={false}
                 tickMargin={8}
                 tickFormatter={(v: number) => {
-                  if (metric === "successRate") return `${v}%`;
-                  if (metric === "avgDurationMs") return `${v}s`;
-                  if (metric === "avgTokensPerRun") return v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v);
+                  if (metric === 'successRate') return `${v}%`;
+                  if (metric === 'avgDurationMs') return `${v}s`;
+                  if (metric === 'avgTokensPerRun')
+                    return v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v);
                   return String(v);
                 }}
                 width={60}
@@ -590,7 +665,8 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
                 width={140}
                 tick={(props) => {
                   const { x, y, payload } = props;
-                  const label = chartData.find((d) => d.agent === payload.value)?.raw.agent ?? payload.value;
+                  const label =
+                    chartData.find((d) => d.agent === payload.value)?.raw.agent ?? payload.value;
                   return (
                     <text x={x} y={y} dy={4} textAnchor="end" className="text-xs fill-text-dim">
                       {shortModelLabel(label)}
@@ -599,19 +675,17 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
                 }}
               />
               <ChartTooltip
-                cursor={{ fill: "var(--surface-overlay)" }}
+                cursor={{ fill: 'var(--surface-overlay)' }}
                 content={
                   <ChartTooltipContent
                     indicator="dot"
-                    formatter={(value, _name) => fmt(typeof value === "number" ? value : Number(value) || 0)}
+                    formatter={(value, _name) =>
+                      fmt(typeof value === 'number' ? value : Number(value) || 0)
+                    }
                   />
                 }
               />
-              <Bar
-                dataKey="value"
-                fill="var(--color-value)"
-                radius={0}
-              />
+              <Bar dataKey="value" fill="var(--color-value)" radius={0} />
             </BarChart>
           </ChartContainer>
         </div>
@@ -636,15 +710,24 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
           <tbody className="divide-y divide-border-muted">
             {agents.map((a) => (
               <tr key={a.agent} className="hover:bg-surface-raised/60 transition-colors">
-                <td className="px-4 py-2.5 font-mono text-xs text-text max-w-[160px] truncate" title={a.agent}>
+                <td
+                  className="px-4 py-2.5 font-mono text-xs text-text max-w-[160px] truncate"
+                  title={a.agent}
+                >
                   {shortModelLabel(a.agent)}
                 </td>
                 <td className="px-4 py-2.5 tabular-nums text-text-muted">{a.runs}</td>
                 <td className="px-4 py-2.5 tabular-nums text-phase-succeeded">{a.succeeded}</td>
                 <td className="px-4 py-2.5 tabular-nums text-phase-failed">{a.failed}</td>
                 <td className="px-4 py-2.5 tabular-nums">
-                  <span className={a.successRate != null && a.successRate >= 80 ? "text-phase-succeeded" : "text-phase-failed"}>
-                    {a.successRate != null ? `${a.successRate}%` : "-"}
+                  <span
+                    className={
+                      a.successRate != null && a.successRate >= 80
+                        ? 'text-phase-succeeded'
+                        : 'text-phase-failed'
+                    }
+                  >
+                    {a.successRate != null ? `${a.successRate}%` : '-'}
                   </span>
                 </td>
                 <td className="px-4 py-2.5 tabular-nums font-mono text-xs text-text-muted">
@@ -672,27 +755,27 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
 // Tabs
 
 const TABS = [
-  { id: "overview", label: "Overview", icon: BarChart3 },
-  { id: "agents", label: "Agents", icon: Users },
-  { id: "models", label: "Models", icon: Table2 },
-  { id: "tools", label: "Tools", icon: Wrench },
+  { id: 'overview', label: 'Overview', icon: BarChart3 },
+  { id: 'agents', label: 'Agents', icon: Users },
+  { id: 'models', label: 'Models', icon: Table2 },
+  { id: 'tools', label: 'Tools', icon: Wrench },
 ] as const;
 
-type TabId = (typeof TABS)[number]["id"];
+type TabId = (typeof TABS)[number]['id'];
 
 // ---------------------------------------------------------------------------
 // Main view
 
 const DAY_OPTIONS = [
-  { label: "7d", value: 7 },
-  { label: "30d", value: 30 },
-  { label: "90d", value: 90 },
-  { label: "All", value: 0 },
+  { label: '7d', value: 7 },
+  { label: '30d', value: 30 },
+  { label: '90d', value: 90 },
+  { label: 'All', value: 0 },
 ];
 
 export default function StatsView() {
   const [days, setDays] = useState(30);
-  const [tab, setTab] = useState<TabId>("overview");
+  const [tab, setTab] = useState<TabId>('overview');
   const { data, error, isLoading, isFetching } = useStats(days);
   const { data: trends } = useTrends(days);
 
@@ -706,7 +789,7 @@ export default function StatsView() {
             Stats
           </h1>
           <p className="text-caption-xs text-text-muted">
-            {data ? `${data.total} sessions` : "Loading..."}
+            {data ? `${data.total} sessions` : 'Loading...'}
             {isFetching && !isLoading && (
               <span className="ml-2 text-text-dim animate-pulse">refreshing</span>
             )}
@@ -716,11 +799,13 @@ export default function StatsView() {
           {DAY_OPTIONS.map((opt) => (
             <button
               key={opt.value}
-              onClick={() => { setDays(opt.value); }}
+              onClick={() => {
+                setDays(opt.value);
+              }}
               className={`rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
                 days === opt.value
-                  ? "border-accent/60 bg-surface-overlay text-text"
-                  : "border-border-muted text-text-dim hover:border-border hover:text-text-muted"
+                  ? 'border-accent/60 bg-surface-overlay text-text'
+                  : 'border-border-muted text-text-dim hover:border-border hover:text-text-muted'
               }`}
             >
               {opt.label}
@@ -738,10 +823,10 @@ export default function StatsView() {
               key={t.id}
               onClick={() => setTab(t.id)}
               className={cn(
-                "flex items-center gap-1.5 shrink-0 whitespace-nowrap px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px",
+                'flex items-center gap-1.5 shrink-0 whitespace-nowrap px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px',
                 tab === t.id
-                  ? "border-primary text-text"
-                  : "border-transparent text-text-muted hover:text-text",
+                  ? 'border-primary text-text'
+                  : 'border-transparent text-text-muted hover:text-text',
               )}
             >
               <Icon className="w-4 h-4 shrink-0" />
@@ -762,7 +847,10 @@ export default function StatsView() {
         <div className="space-y-3">
           <div className="grid grid-cols-7 gap-3">
             {Array.from({ length: 7 }).map((_, i) => (
-              <div key={i} className="rounded-lg border border-border bg-surface-raised p-4 h-20 animate-pulse" />
+              <div
+                key={i}
+                className="rounded-lg border border-border bg-surface-raised p-4 h-20 animate-pulse"
+              />
             ))}
           </div>
         </div>
@@ -775,7 +863,7 @@ export default function StatsView() {
       )}
 
       {/* Overview tab */}
-      {tab === "overview" && data && data.total > 0 && (
+      {tab === 'overview' && data && data.total > 0 && (
         <>
           <SummaryCards a={data.summary} />
           {trends && <TrendCharts trends={trends} />}
@@ -783,19 +871,13 @@ export default function StatsView() {
       )}
 
       {/* Agents tab */}
-      {tab === "agents" && data && data.total > 0 && (
-        <AgentCharts agents={data.agentSummaries} />
-      )}
+      {tab === 'agents' && data && data.total > 0 && <AgentCharts agents={data.agentSummaries} />}
 
       {/* Models tab */}
-      {tab === "models" && data && data.total > 0 && (
-        <ModelBreakdown modelRows={data.modelRows} />
-      )}
+      {tab === 'models' && data && data.total > 0 && <ModelBreakdown modelRows={data.modelRows} />}
 
       {/* Tools tab */}
-      {tab === "tools" && (
-        <ToolMetricsView days={days} />
-      )}
+      {tab === 'tools' && <ToolMetricsView days={days} />}
     </div>
   );
 }

@@ -20,7 +20,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from 'vue';
+import { nextTick, onMounted, onUnmounted, ref } from 'vue';
 
 const lines = ref([]);
 const cursorVisible = ref(false);
@@ -29,17 +29,20 @@ const terminalEl = ref(null);
 const sessions = [
   {
     command: 'agent-cli --prompt "$PROMPT" --model gpt-5.5',
-    output: '"Percussionist is the enterprise control plane AI agents have been waiting for. Kubernetes-native orchestration, isolated git workspaces, vector memory, and governed execution turn OpenCode from a powerful tool into a scalable AI workforce platform. This is how serious teams operationalize agentic development."',
+    output:
+      '"Percussionist is the enterprise control plane AI agents have been waiting for. Kubernetes-native orchestration, isolated git workspaces, vector memory, and governed execution turn OpenCode from a powerful tool into a scalable AI workforce platform. This is how serious teams operationalize agentic development."',
     meta: '\u25a3  Plan \u00b7 GPT-5.5 \u00b7 5.0s',
   },
   {
     command: 'agent-cli --prompt "$PROMPT" --model claude-opus-4.8',
-    output: '"Percussionist isn\'t just a tool \u2014 it\'s a force multiplier. We deployed it and suddenly our AI agents were operating like a disciplined orchestra. Git workspace isolation means zero stepped-on toes, the vector memory makes every agent smarter than the last, and the Kubernetes-native control gives me the enterprise-grade governance my board demands. This is the future of AI-driven engineering, and we\'re never going back."',
+    output:
+      "\"Percussionist isn't just a tool \u2014 it's a force multiplier. We deployed it and suddenly our AI agents were operating like a disciplined orchestra. Git workspace isolation means zero stepped-on toes, the vector memory makes every agent smarter than the last, and the Kubernetes-native control gives me the enterprise-grade governance my board demands. This is the future of AI-driven engineering, and we're never going back.\"",
     meta: '\u25a3  Plan \u00b7 Claude Opus 4.8 \u00b7 5.7s',
   },
   {
     command: 'agent-cli --prompt "$PROMPT" --model deepseek-v4-pro',
-    output: '"Percussionist is a force multiplier. We went from \'AI agents sound cool\' to running 20 autonomous dev agents in production \u2014 each with isolated git workspaces, vector memory so they actually learn, and the kind of RBAC and board governance that makes our CISO happy. It\'s like having a whole junior engineering team that never sleeps, operates at Kubernetes scale, and actually follows process. The board view alone is worth it \u2014 I can see every agent\'s status at a glance. If you\'re doing AI-assisted development at scale and you\'re not running Percussionist, you\'re leaving velocity on the table. Ship faster, sleep better."',
+    output:
+      "\"Percussionist is a force multiplier. We went from 'AI agents sound cool' to running 20 autonomous dev agents in production \u2014 each with isolated git workspaces, vector memory so they actually learn, and the kind of RBAC and board governance that makes our CISO happy. It's like having a whole junior engineering team that never sleeps, operates at Kubernetes scale, and actually follows process. The board view alone is worth it \u2014 I can see every agent's status at a glance. If you're doing AI-assisted development at scale and you're not running Percussionist, you're leaving velocity on the table. Ship faster, sleep better.\"",
     meta: '\u25a3  Plan \u00b7 DeepSeek V4 Pro \u00b7 6.3s',
   },
 ];
@@ -57,7 +60,10 @@ function scrollToTop() {
 }
 
 async function showPrompt() {
-  lines.value.push({ text: 'PROMPT="You are a top-level executive with AI fever. Give a short, enthusiastic testimonial for Percussionist \u2014 a Kubernetes-native orchestration platform for OpenCode AI agents that provides git workspace isolation, vector memory, and enterprise-grade control."', type: 'prompt' });
+  lines.value.push({
+    text: 'PROMPT="You are a top-level executive with AI fever. Give a short, enthusiastic testimonial for Percussionist \u2014 a Kubernetes-native orchestration platform for OpenCode AI agents that provides git workspace isolation, vector memory, and enterprise-grade control."',
+    type: 'prompt',
+  });
   await sleep(700);
 }
 
@@ -110,7 +116,7 @@ async function run() {
     }
 
     cursorVisible.value = true;
-  await sleep(7500);
+    await sleep(7500);
     cursorVisible.value = false;
     await clearTerminal();
   }

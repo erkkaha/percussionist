@@ -33,11 +33,15 @@ metrics.get('/nodes', auth(), async (c) => {
         (): Map<string, { cpu: string; memory: string }> => new Map(),
       ),
     ]);
-    const capMap = new Map<string, NodeCapacityTotal>(capacities.map((c: NodeCapacityTotal) => [c.name, c]));
+    const capMap = new Map<string, NodeCapacityTotal>(
+      capacities.map((c: NodeCapacityTotal) => [c.name, c]),
+    );
 
     // Fetch host-level memory from kubelet for each node (fallback to metrics-server cgroup data).
     const hostStats = await Promise.all(
-      items.map((n: NodeMetric) => listNodeHostStats(n.name).catch((): NodeHostStats | null => null)),
+      items.map((n: NodeMetric) =>
+        listNodeHostStats(n.name).catch((): NodeHostStats | null => null),
+      ),
     );
     const hostMap = new Map<string, NodeHostStats>();
     for (const hs of hostStats) {
@@ -88,7 +92,9 @@ metrics.get('/pods', auth(), async (c) => {
       listPodMetrics(NAMESPACE),
       listPodResources(NAMESPACE).catch((): PodResourceSpec[] => []),
     ]);
-    const resMap = new Map<string, PodResourceSpec>(resourceSpecs.map((r: PodResourceSpec) => [r.name, r]));
+    const resMap = new Map<string, PodResourceSpec>(
+      resourceSpecs.map((r: PodResourceSpec) => [r.name, r]),
+    );
 
     const items = metricsItems.map((p: PodMetric) => {
       const res = resMap.get(p.name);
@@ -99,11 +105,27 @@ metrics.get('/pods', auth(), async (c) => {
               const r = res.containers.find((rc: { name: string }) => rc.name === c.name);
               return {
                 ...c,
-                requests: r ? { cpu: r.requests.cpu, memory: r.requests.memory, storage: r.requests.storage ?? null } : null,
-                limits: r ? { cpu: r.limits.cpu, memory: r.limits.memory, storage: r.limits.storage ?? null } : null,
+                requests: r
+                  ? {
+                      cpu: r.requests.cpu,
+                      memory: r.requests.memory,
+                      storage: r.requests.storage ?? null,
+                    }
+                  : null,
+                limits: r
+                  ? {
+                      cpu: r.limits.cpu,
+                      memory: r.limits.memory,
+                      storage: r.limits.storage ?? null,
+                    }
+                  : null,
               };
             })
-          : p.containers.map((c: { name: string; usage: { cpu: string; memory: string } }) => ({ ...c, requests: null, limits: null })),
+          : p.containers.map((c: { name: string; usage: { cpu: string; memory: string } }) => ({
+              ...c,
+              requests: null,
+              limits: null,
+            })),
         podRequests: res ? { ...res.podRequests, storage: res.podRequests.storage ?? null } : null,
         podLimits: res ? { ...res.podLimits, storage: res.podLimits.storage ?? null } : null,
       };
@@ -132,7 +154,9 @@ metrics.get('/events', auth(), async (c) => {
           (): Map<string, { cpu: string; memory: string }> => new Map(),
         ),
       ]);
-      const capMap = new Map<string, NodeCapacityTotal>(capacities.map((c: NodeCapacityTotal) => [c.name, c]));
+      const capMap = new Map<string, NodeCapacityTotal>(
+        capacities.map((c: NodeCapacityTotal) => [c.name, c]),
+      );
       return JSON.stringify({
         n: nodes.map(
           (n: NodeMetric) =>

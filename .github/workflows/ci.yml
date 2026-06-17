@@ -5,19 +5,43 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.1.2 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --config.strict-dep-builds=false
+
+      - name: Run dependency audit
+        run: pnpm audit --audit-level=high
+
   typecheck-and-build:
     name: Typecheck & Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
 
@@ -44,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
 
@@ -75,7 +99,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
 
@@ -93,7 +117,7 @@ jobs:
 
       # Setup Kind cluster (lightweight, CI-optimized)
       - name: Setup Kind
-        uses: helm/kind-action@v1.10.0
+        uses: helm/kind-action@v1.14.0
         with:
           cluster_name: percussionist-e2e
           version: v0.20.0
@@ -152,7 +176,7 @@ jobs:
 
       - name: Upload Diagnostics Artifact
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-core-diagnostics-${{ github.sha }}
           path: /tmp/diagnostics/
@@ -168,7 +192,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
 
@@ -186,7 +210,7 @@ jobs:
 
       # Setup Kind cluster for extended E2E
       - name: Setup Kind
-        uses: helm/kind-action@v1.10.0
+        uses: helm/kind-action@v1.14.0
         with:
           cluster_name: percussionist-e2e-extended
           version: v0.20.0
@@ -245,7 +269,7 @@ jobs:
 
       - name: Upload Diagnostics Artifact
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-extended-diagnostics-${{ github.sha }}
           path: /tmp/diagnostics/

@@ -54,6 +54,11 @@ const log = (...args: unknown[]) =>
 const err = (...args: unknown[]) =>
   console.error(`[dispatcher ${new Date().toISOString()}]`, ...args);
 
+process.on('unhandledRejection', (reason) => {
+  err('unhandledRejection:', reason);
+  process.exit(1);
+});
+
 // ---------------------------------------------------------------------------
 // Graceful shutdown
 

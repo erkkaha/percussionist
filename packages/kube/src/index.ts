@@ -108,6 +108,16 @@ export function loadFromKubeconfig(): {
   };
 }
 
+function getErrorStatusCode(err: unknown): number | undefined {
+  return (
+    (err as { statusCode?: number; code?: number }).statusCode ?? (err as { code?: number }).code
+  );
+}
+
+function isNotFoundError(err: unknown): boolean {
+  return getErrorStatusCode(err) === 404;
+}
+
 // ---------------------------------------------------------------------------
 // Run helpers
 
@@ -367,7 +377,18 @@ export async function updateClusterSettings(
   spec: ClusterSettings['spec'],
   client = custom(),
 ): Promise<ClusterSettings> {
-  const existing = await getClusterSettings(name, client).catch(() => null);
+  let existing: ClusterSettings | null = null;
+  try {
+    existing = await getClusterSettings(name, client);
+  } catch (e) {
+    if (!isNotFoundError(e)) {
+      console.error(
+        `[kube ${new Date().toISOString()}] getClusterSettings(${name}) failed with status=${getErrorStatusCode(e) ?? 'unknown'}`,
+        e,
+      );
+      throw e;
+    }
+  }
   const body = {
     apiVersion: API_GROUP_VERSION,
     kind: KIND_CLUSTER_SETTINGS,

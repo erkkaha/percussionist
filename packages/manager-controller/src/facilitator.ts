@@ -27,11 +27,25 @@ import {
   readPodLog,
 } from '@percussionist/kube';
 import { resolveParentBranch, resolveTaskBranch } from './branch-resolver.js';
+import { getErrorStatusCode, isKubeNotFoundError } from './kube-errors.js';
 import { truncateK8sName } from './worker-builder.js';
 
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
 
 const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
+
+async function getOptionalClusterSettings(context: string) {
+  try {
+    return await getClusterSettings();
+  } catch (e) {
+    if (isKubeNotFoundError(e)) return undefined;
+    console.error(
+      `[facilitator] getClusterSettings failed (${context}) status=${getErrorStatusCode(e) ?? 'unknown'}`,
+      e,
+    );
+    throw e;
+  }
+}
 
 // Resolve summary source precedence and log the selection.
 // Precedence: explicit arg → stored ConfigMap summary → none.
@@ -103,7 +117,7 @@ export async function buildFacilitationRun(
   facilitatorAgentName: string,
   allTasks: Task[] = [],
 ): Promise<Run> {
-  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const clusterSettings = await getOptionalClusterSettings('buildFacilitationRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
       image: clusterSettings?.spec?.runner?.image,
@@ -180,7 +194,7 @@ export async function buildSuccessReviewRun(
   branchName?: string,
   allTasks: Task[] = [],
 ): Promise<Run> {
-  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const clusterSettings = await getOptionalClusterSettings('buildSuccessReviewRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
       image: clusterSettings?.spec?.runner?.image,
@@ -263,7 +277,22 @@ export async function buildSuccessReviewRun(
     `Call the percussionist_dispatcher_complete_review MCP tool to submit your review verdict.`,
     `Use approved: true to approve, or approved: false to request changes.`,
     '',
-    'Payload schema:',
+    'Use findings to rank the diff by review importance.',
+    'Findings are review-priority signals — they tell the human which files need attention.',
+    'Files with findings get severity badges in the diff view; files without findings are safe to skip.',
+    'Only produce findings for changes that warrant human attention.',
+    'Trivial changes (whitespace, import reorder, dead code removal) should have zero findings — their silence signals they can be skipped.',
+    '',
+    'Severity = review priority:',
+    '- critical: must inspect before approving',
+    '- high: important area, careful review needed',
+    '- medium: meaningful change, standard review',
+    '- low: minor — glance at it',
+    '- info: context only, no action needed',
+    '',
+    'Category = change type (use one): logic, refactor, config, docs, test, style, dependency',
+    '',
+    'Payload format:',
     JSON.stringify({
       approved: true,
       diagnosis: '(1-2 sentences: did the worker actually complete the task?)',
@@ -276,7 +305,7 @@ export async function buildSuccessReviewRun(
           score: 85,
           title: '(max 160 chars) concise finding title',
           comment: '(max 2000 chars) detailed explanation and fix guidance',
-          category: '(optional, max 64 chars) e.g. correctness',
+          category: '(optional, max 64 chars) e.g. logic',
           anchors: [
             {
               path: 'src/index.ts',
@@ -309,7 +338,6 @@ export async function buildSuccessReviewRun(
     '- score: optional number 0-100',
     '',
     'Fill context.baseSha/headSha/forkSha/diffFingerprint from the current git state (use git rev-parse and git merge-base).',
-    'If you cannot provide accurate diff context, omit the findings field entirely rather than guessing.',
     '',
     `Use approved: false if implementation changes are needed before human approval.`,
     `If a different agent should redo the task, include "retry_alternative: <agent>" in the feedback field.`,
@@ -339,7 +367,7 @@ export async function buildBuildTaskGeneratorRun(
   allTasks: Task[] = [],
   defaultBuildAgent: string = 'builder',
 ): Promise<Run> {
-  const clusterSettings = await getClusterSettings().catch(() => undefined);
+  const clusterSettings = await getOptionalClusterSettings('buildBuildTaskGeneratorRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
       image: clusterSettings?.spec?.runner?.image,
