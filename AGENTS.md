@@ -460,7 +460,7 @@ the ConfigMap, verify the sidecar is connected:
 
 ```bash
 kubectl -n percussionist exec deployment/percussionist-manager -c opencode-web \
-  -- wget -qO- http://127.0.0.1:4096/mcp
+  -- wget -qO- http://127.0.0.1:4097/mcp
 # Expected: {"manager-agent":{"status":"connected"}}
 ```
 
