@@ -27,13 +27,13 @@ Certain web API routes require admin privileges, enforced via `adminAuth()` midd
 
 ### SSH Host Key Verification
 
-Runner pods that use git over SSH default to strict host key verification. Three modes are available:
+Runner pods that use git over SSH default to no host key verification (backward compatible default). Three modes are available:
 
 | Mode | Behavior |
 |------|----------|
-| `strict` (default) | Full host key verification against known_hosts |
-| `accept-new` | Accept on first connection, verify thereafter |
-| `off` | No verification (not recommended) |
+| `strict` | Full host key verification against known_hosts; reject unknown hosts |
+| `accept-new` | Accept and cache unknown host keys on first connect; reject changed keys |
+| `no` (default) | No verification (equivalent to `StrictHostKeyChecking=no`); not recommended for production |
 
 ## Data Protection
 

@@ -126,7 +126,7 @@ flow:
 
 ## Data PVC
 
-The data PVC is auto-created per project with a default 10Gi size and ReadWriteMany access mode.
+The data PVC is auto-created per project with a default 50Gi size and ReadWriteOnce access mode. ReadWriteMany (RWX) is available when your storage class supports it — override via the `data` fields in the Project CR.
 
 PVC layout:
 

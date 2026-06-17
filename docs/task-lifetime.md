@@ -53,7 +53,7 @@ with the task's feature branch. Patches `worker.runName`, `worker.status = "Runn
 
 ### `initializing`
 Manager waits for the operator. In parallel the operator:
-1. Creates the data PVC (`{project}-data`, ReadWriteMany) if it doesn't exist
+1. Creates the data PVC (`{project}-data`, ReadWriteOnce by default) if it doesn't exist
 2. Creates a ClusterIP Service
 3. Creates an agents ConfigMap with all ClusterAgent `.md` contents
 4. Creates the Pod — init container (`workspace-init`) runs first, doing git mirror fetch + worktree setup, then the `opencode` runner and `dispatcher` sidecar start
