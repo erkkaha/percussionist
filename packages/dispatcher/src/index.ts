@@ -29,6 +29,7 @@ import {
   setHeaderOptions,
 } from '@kubernetes/client-node';
 import { API_GROUP, API_VERSION, PLURAL_RUN, RunPhase, type RunStatus } from '@percussionist/api';
+import { makeNodeApiClient } from '@percussionist/kube';
 import { startMcpServer } from './mcp-server.js';
 import { runInteractive, runPrompt, snapshotAllSessions } from './polling.js';
 import { waitForHealthy } from './session.js';
@@ -88,8 +89,8 @@ function interruptibleSleep(ms: number): Promise<void> {
 
 const kc = new KubeConfig();
 kc.loadFromDefault();
-const k8s = kc.makeApiClient(CustomObjectsApi);
-const coreApi = kc.makeApiClient(CoreV1Api);
+const k8s = makeNodeApiClient(kc, CustomObjectsApi);
+const coreApi = makeNodeApiClient(kc, CoreV1Api);
 
 async function patchStatus(patch: RunStatus): Promise<void> {
   const body = { status: { ...patch, lastEventAt: new Date().toISOString() } };

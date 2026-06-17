@@ -2,7 +2,7 @@
 
 import { CustomObjectsApi, KubeConfig } from '@kubernetes/client-node';
 import { API_GROUP, API_VERSION, PLURAL_PROJECT, type Project } from '@percussionist/api';
-import { getProject, NAMESPACE } from '@percussionist/kube';
+import { getProject, makeNodeApiClient, NAMESPACE } from '@percussionist/kube';
 import { reconcileProject } from './reconciler/index.js';
 
 export { NAMESPACE };
@@ -14,7 +14,7 @@ try {
 } catch {
   kc.loadFromDefault();
 }
-export const k8s = kc.makeApiClient(CustomObjectsApi);
+export const k8s = makeNodeApiClient(kc, CustomObjectsApi);
 
 // Work queue: project names that need reconciliation.
 const queue = new Set<string>();

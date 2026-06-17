@@ -10,12 +10,21 @@
 // Single env var for namespace: PERCUSSIONIST_NAMESPACE (default: "percussionist")
 
 import fs from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
 import {
   AppsV1Api,
+  type Configuration,
   CoreV1Api,
   CustomObjectsApi,
+  createConfiguration,
+  type HttpLibrary,
   KubeConfig,
+  ResponseContext,
+  SelfDecodingBody,
+  ServerConfiguration,
   type V1Pod,
+  wrapHttpLibrary,
 } from '@kubernetes/client-node';
 import {
   type AgentCapability,
@@ -46,6 +55,120 @@ import {
 } from '@percussionist/api';
 
 // ---------------------------------------------------------------------------
+// Node-native HTTP library (bypasses node-fetch v2 TLS issues on Node 24)
+
+/**
+ * Build a native HttpLibrary that replaces IsomorphicFetchHttpLibrary.
+ * Uses `https.request()` / `http.request()` with the agent set by
+ * KubeConfig.applySecurityAuthentication (so TLS options, proxy, and
+ * auth flow through `createAgent` as before — no duplicate TLS logic).
+ */
+function nodeHttpApi(): HttpLibrary {
+  return wrapHttpLibrary({
+    async send(request) {
+      const url = new URL(request.getUrl());
+      const method = request.getHttpMethod().toString();
+      const body = request.getBody();
+      const signal = request.getSignal();
+      const agent = request.getAgent();
+
+      return new Promise<ResponseContext>((resolve, reject) => {
+        const headers: Record<string, string> = {};
+        for (const [k, v] of Object.entries(request.getHeaders())) {
+          headers[k] = v;
+        }
+
+        // Set Content-Length from the body when not already present (match
+        // isomorphic-fetch behaviour, avoid chunked encoding).
+        if (body !== undefined && !headers['content-length'] && !headers['Content-Length']) {
+          if (typeof body === 'string') {
+            headers['Content-Length'] = String(Buffer.byteLength(body));
+          }
+        }
+
+        const opts: http.RequestOptions = {
+          hostname: url.hostname,
+          ...(url.port ? { port: url.port } : {}),
+          path: url.pathname + url.search,
+          method,
+          headers,
+          agent: agent as http.Agent | undefined,
+        };
+
+        const mod = url.protocol === 'https:' ? https : http;
+        const req = mod.request(opts, (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => {
+            const buf = Buffer.concat(chunks);
+            const responseHeaders: Record<string, string> = {};
+            for (const [k, v] of Object.entries(res.headers)) {
+              if (Array.isArray(v)) {
+                responseHeaders[k] = v.join(', ');
+              } else if (v !== undefined) {
+                responseHeaders[k] = v;
+              }
+            }
+            resolve(
+              new ResponseContext(
+                res.statusCode ?? 0,
+                responseHeaders,
+                new SelfDecodingBody(Promise.resolve(buf)),
+              ),
+            );
+          });
+        });
+
+        req.on('error', reject);
+
+        if (signal) {
+          if (signal.aborted) {
+            req.destroy();
+            reject(new Error(signal.reason?.toString() ?? 'The operation was aborted'));
+            return;
+          }
+          const onAbort = () => {
+            req.destroy(
+              signal.reason
+                ? new Error(String(signal.reason))
+                : new Error('The operation was aborted'),
+            );
+          };
+          signal.addEventListener('abort', onAbort, { once: true });
+          req.on('close', () => signal.removeEventListener('abort', onAbort));
+        }
+
+        if (body !== undefined) {
+          if (typeof body === 'string') {
+            req.write(body);
+          } else {
+            // FormData / URLSearchParams — unlikely for K8s APIs, best-effort.
+            req.write(String(body));
+          }
+        }
+        req.end();
+      });
+    },
+  });
+}
+
+/**
+ * Build a K8s API client that uses the native node-http library instead of
+ * the default IsomorphicFetchHttpLibrary (node-fetch). Mirror of
+ * `KubeConfig.makeApiClient()` but with `httpApi` overridden.
+ */
+export function makeNodeApiClient<T>(kc: KubeConfig, apiCtor: new (config: Configuration) => T): T {
+  const cluster = kc.getCurrentCluster();
+  if (!cluster) throw new Error('No active cluster!');
+  const config = createConfiguration({
+    baseServer: new ServerConfiguration(cluster.server, {}),
+    httpApi: nodeHttpApi(),
+    authMethods: { default: kc },
+  });
+  return new apiCtor(config);
+}
+
+// ---------------------------------------------------------------------------
 // Namespace
 
 export const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
@@ -68,9 +191,9 @@ function init() {
   } catch {
     _kc.loadFromDefault();
   }
-  _core = _kc.makeApiClient(CoreV1Api);
-  _custom = _kc.makeApiClient(CustomObjectsApi);
-  _apps = _kc.makeApiClient(AppsV1Api);
+  _core = makeNodeApiClient(_kc, CoreV1Api);
+  _custom = makeNodeApiClient(_kc, CustomObjectsApi);
+  _apps = makeNodeApiClient(_kc, AppsV1Api);
 }
 
 export function kubeConfig(): KubeConfig {
@@ -103,8 +226,8 @@ export function loadFromKubeconfig(): {
   kc.loadFromDefault();
   return {
     kc,
-    core: kc.makeApiClient(CoreV1Api),
-    custom: kc.makeApiClient(CustomObjectsApi),
+    core: makeNodeApiClient(kc, CoreV1Api),
+    custom: makeNodeApiClient(kc, CustomObjectsApi),
   };
 }
 

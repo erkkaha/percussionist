@@ -1,6 +1,7 @@
 // Audit — persist reconciler decisions as Kubernetes Events.
 
 import { API_GROUP, API_VERSION, KIND_TASK } from '@percussionist/api';
+import { makeNodeApiClient } from '@percussionist/kube';
 import type { AuditEvent } from './decision.js';
 
 export async function persistEvent(
@@ -11,7 +12,8 @@ export async function persistEvent(
 ): Promise<void> {
   try {
     const { kc } = await import('../reconciler-bridge.js');
-    const coreApi = kc.makeApiClient(
+    const coreApi = makeNodeApiClient(
+      kc,
       await import('@kubernetes/client-node').then((m) => m.CoreV1Api),
     );
 

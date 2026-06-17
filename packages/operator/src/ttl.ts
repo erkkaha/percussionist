@@ -12,10 +12,10 @@ import {
   type Run,
   TERMINAL_PHASES,
 } from '@percussionist/api';
-import { gitUrlHash } from '@percussionist/kube';
+import { gitUrlHash, makeNodeApiClient } from '@percussionist/kube';
 import { co, kc, NAMESPACE } from './reconciler.js';
 
-const coreV1 = kc.makeApiClient(CoreV1Api);
+const coreV1 = makeNodeApiClient(kc, CoreV1Api);
 
 const log = (...args: unknown[]) => console.log(`[ttl ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) => console.error(`[ttl ${new Date().toISOString()}]`, ...args);

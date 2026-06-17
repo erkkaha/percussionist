@@ -23,6 +23,7 @@ import {
   type RunStatus,
   TERMINAL_PHASES,
 } from '@percussionist/api';
+import { makeNodeApiClient } from '@percussionist/kube';
 import { resolveRunnerSpec } from './adapters/opencode-config.js';
 import { resolveAgents } from './agent-resolver.js';
 import {
@@ -62,10 +63,10 @@ const err = (...args: unknown[]) =>
 
 const kc = new KubeConfig();
 kc.loadFromDefault();
-const core = kc.makeApiClient(CoreV1Api);
-const apps = kc.makeApiClient(AppsV1Api);
-const co = kc.makeApiClient(CustomObjectsApi);
-const networking = kc.makeApiClient(NetworkingV1Api);
+const core = makeNodeApiClient(kc, CoreV1Api);
+const apps = makeNodeApiClient(kc, AppsV1Api);
+const co = makeNodeApiClient(kc, CustomObjectsApi);
+const networking = makeNodeApiClient(kc, NetworkingV1Api);
 
 // ---------------------------------------------------------------------------
 // Status writer
