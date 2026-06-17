@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.194] - 2026-06-17
+
+### <!-- 6 -->🧪 Testing
+
+- Remove flaky localStorage legacy compatibility test _(web)_
 ## [v0.1.193] - 2026-06-16
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -19,6 +24,7 @@ All notable changes to Percussionist are documented here.
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Update lockfile with bun-types for web package
+- Release v0.1.193
 ## [v0.1.192] - 2026-06-16
 
 ### <!-- 0 -->🚀 Features
@@ -36,8 +42,31 @@ All notable changes to Percussionist are documented here.
 - Release v0.1.192
 ## [v0.1.191] - 2026-06-16
 
+### <!-- 0 -->🚀 Features
+
+- Add compact-expanded usage tracker modes _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Integrate usage tracker with sidebar collapse state _(web)_
+- Handle unhandled rejections and preserve transient settings errors
+
+### <!-- 2 -->🚜 Refactor
+
+- Tighten executeEffects project typing _(manager)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add usage tracker sidebar expand-collapse plan _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add verification tests for UsageBar expand/collapse modes _(web)_
+- Add focused component tests for UsageBar expand/collapse _(web)_
+
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
+- Add dependency scanning and pin @types/bun _(security)_
 - Release v0.1.191
 ## [v0.1.190] - 2026-06-16
 
@@ -94,7 +123,6 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 1 -->🐛 Bug Fixes
 
-- Handle unhandled rejections and preserve transient settings errors
 - Align label keys and stale hygiene comments
 - Validate workspace command and package inputs _(manager)_
 - Lock mirror cleanup operations with flock _(manager)_
@@ -102,13 +130,8 @@ All notable changes to Percussionist are documented here.
 - Use session.idle for idle-triggered flushes _(dispatcher)_
 - Avoid clobbering run terminal phase _(operator)_
 
-### <!-- 2 -->🚜 Refactor
-
-- Tighten executeEffects project typing _(manager)_
-
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
-- Add dependency scanning and pin @types/bun _(security)_
 - Release v0.1.185
 ## [v0.1.184] - 2026-06-15
 
