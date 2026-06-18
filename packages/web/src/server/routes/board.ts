@@ -401,8 +401,9 @@ board.post('/:project/board/tasks/:taskName/move', adminAuth(), async (c) => {
     const resetTargets = ['ready', 'pending', 'backlog'];
     if (resetTargets.includes(column)) {
       const task = await getTask(taskName, ns);
-      const currentRetryCount = task.status?.worker?.retryCount ?? 0;
-      patch.worker = { retryCount: currentRetryCount + 1 };
+      const currentWorker = task.status?.worker ?? {};
+      const currentRetryCount = currentWorker.retryCount ?? 0;
+      patch.worker = { ...currentWorker, retryCount: currentRetryCount + 1 };
     }
 
     const parsedPatch = TaskStatusSchema.partial().safeParse(patch);
@@ -513,13 +514,13 @@ board.post('/:project/board/tasks/:taskName/retry-review', adminAuth(), async (c
       return c.json({ error: 'Task has no reviewRunName to retry' }, 400);
     }
     const ns = task.metadata.namespace ?? NAMESPACE;
-    const currentAiReworkCount = task.status?.worker?.aiReworkCount ?? 0;
+    const currentWorker = task.status?.worker ?? {};
+    const currentAiReworkCount = currentWorker.aiReworkCount ?? 0;
     const patch: Record<string, unknown> = {
       phase: 'succeeded',
       worker: {
+        ...currentWorker,
         aiReworkCount: currentAiReworkCount + 1,
-        reviewRunName: null,
-        reviewFeedback: null,
       },
     };
     const parsedPatch = TaskStatusSchema.partial().safeParse(patch);
