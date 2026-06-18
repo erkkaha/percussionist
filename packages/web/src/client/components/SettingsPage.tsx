@@ -150,7 +150,7 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {activeTab === 'projects' && <ProjectsPage showHeader={false} />}
+      {activeTab === 'projects' && <ProjectsPage showHeader={false} showCreateAction />}
 
       {activeTab === 'agents' && <AgentsPage showHeader={false} />}
 

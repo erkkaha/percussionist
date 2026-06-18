@@ -77,7 +77,13 @@ function ProjectRow({ project }: { project: Project }) {
   );
 }
 
-export default function ProjectsPage({ showHeader = true }: { showHeader?: boolean }) {
+export default function ProjectsPage({
+  showHeader = true,
+  showCreateAction = true,
+}: {
+  showHeader?: boolean;
+  showCreateAction?: boolean;
+}) {
   const { connected: projectsSseConnected, eventTick } = useProjectsEvents();
   void eventTick;
   const {
@@ -114,6 +120,14 @@ export default function ProjectsPage({ showHeader = true }: { showHeader?: boole
           </div>
           <Link to="/projects/new">
             <Button>+ New Project</Button>
+          </Link>
+        </div>
+      )}
+
+      {!showHeader && showCreateAction && projects && projects.length > 0 && (
+        <div className="flex items-center justify-end">
+          <Link to="/projects/new">
+            <Button size="sm">+ New Project</Button>
           </Link>
         </div>
       )}
