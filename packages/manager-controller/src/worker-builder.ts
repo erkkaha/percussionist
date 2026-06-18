@@ -12,7 +12,7 @@ import {
   resolveRunConfig,
   type Task,
 } from '@percussionist/api';
-import { getClusterAgent, getClusterSettings } from '@percussionist/kube';
+import { getClusterAgent, getClusterSettings, validateModelAuth } from '@percussionist/kube';
 import { getContext } from './agent/memory-client.js';
 import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from './branch-resolver.js';
 import { getErrorStatusCode, isKubeNotFoundError } from './kube-errors.js';
@@ -74,6 +74,14 @@ export async function buildWorkerRun(
   const agentOverride = (project.spec.agents ?? []).find((a) => a.name === task.spec.agent);
   if (agentOverride?.model) {
     resolved.model = agentOverride.model;
+  }
+
+  // Validate that auth is configured for the resolved model.
+  const authValidation = validateModelAuth(resolved.model, resolved.secrets);
+  if (!authValidation.ok) {
+    throw new Error(
+      `Auth validation failed for task "${task.metadata.name}" (agent="${task.spec.agent}"): ${authValidation.error}`,
+    );
   }
 
   const taskName = task.metadata.name;
@@ -310,6 +318,14 @@ export async function buildMergeRun(
   const mergeAgentOverride = (project.spec.agents ?? []).find((a) => a.name === mergeAgent);
   if (mergeAgentOverride?.model) {
     resolved.model = mergeAgentOverride.model;
+  }
+
+  // Validate that auth is configured for the resolved model.
+  const authValidation = validateModelAuth(resolved.model, resolved.secrets);
+  if (!authValidation.ok) {
+    throw new Error(
+      `Auth validation failed for merge run of task "${task.metadata.name}" (agent="${mergeAgent}"): ${authValidation.error}`,
+    );
   }
 
   // Set git.ref so the init container checks out the source branch as a worktree.

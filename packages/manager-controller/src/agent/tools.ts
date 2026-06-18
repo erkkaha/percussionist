@@ -51,6 +51,7 @@ import {
   readPodLog,
   readSessionConfigMap,
   validateAgentTaskCapability,
+  validateModelAuth,
   writePlanToConfigMap,
 } from '@percussionist/kube';
 import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../branch-resolver.js';
@@ -1346,6 +1347,17 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
       if (modelOverride) workerRun.spec.model = modelOverride;
 
+      // Validate auth before creating the run.
+      const finalModel = workerRun.spec.model;
+      const finalSecrets = workerRun.spec.secrets ?? project.spec.secrets;
+      const authValidation = validateModelAuth(finalModel, finalSecrets);
+      if (!authValidation.ok) {
+        throw new Error(
+          `Cannot create run: ${authValidation.error} ` +
+            `(task="${taskName}", project="${projectName}")`,
+        );
+      }
+
       await patchTaskStatus(
         taskName,
         {
@@ -1494,6 +1506,17 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
         if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
         if (modelOverride) workerRun.spec.model = modelOverride;
+
+        // Validate auth after model overrides.
+        const finalModel = workerRun.spec.model;
+        const finalSecrets = workerRun.spec.secrets ?? project.spec.secrets;
+        const authValidation = validateModelAuth(finalModel, finalSecrets);
+        if (!authValidation.ok) {
+          throw new Error(
+            `Cannot force_retry: ${authValidation.error} ` +
+              `(task="${taskName}", project="${projectName}")`,
+          );
+        }
 
         await patchTaskStatus(
           taskName,

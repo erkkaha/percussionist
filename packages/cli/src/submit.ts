@@ -21,6 +21,7 @@ import {
   RunSchema,
   TERMINAL_PHASES,
 } from '@percussionist/api';
+import { validateModelAuth } from '@percussionist/kube';
 import YAML from 'yaml';
 import { runAttach } from './attach.js';
 import { createRun, DEFAULT_NAMESPACE, fatal, getProject, getRun, loadKube } from './kube.js';
@@ -255,6 +256,12 @@ export async function runSubmit(opts: SubmitOpts): Promise<void> {
   }
   run.metadata.namespace = run.metadata.namespace ?? ns;
   const runNs = run.metadata.namespace;
+
+  // Validate auth before creating the run.
+  const authValidation = validateModelAuth(run.spec.model, run.spec.secrets);
+  if (!authValidation.ok) {
+    fatal('auth validation failed', new Error(authValidation.error));
+  }
 
   const { custom } = loadKube();
   let createdName: string;

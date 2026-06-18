@@ -270,6 +270,7 @@ export async function fetchBoard(project: string): Promise<{
   columns: Record<string, Task[]>;
   approvals?: Record<string, { approved: boolean; requestChanges: boolean }>;
   status: BoardStatus;
+  authWarning?: string;
 }> {
   return fetchJSON(`/projects/${encodeURIComponent(project)}/board`);
 }

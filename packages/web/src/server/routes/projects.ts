@@ -4,6 +4,7 @@ import {
   KIND_PROJECT,
   ProjectSpecSchema,
 } from '@percussionist/api';
+import { validateModelAuth } from '@percussionist/kube';
 import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
 import {
@@ -142,7 +143,11 @@ async function readInjectFileContents(
 projects.get('/', auth(), async (c) => {
   try {
     const items = await listProjects();
-    return c.json({ items });
+    const enriched = items.map((p) => {
+      const authResult = validateModelAuth(p.spec.model, p.spec.secrets);
+      return { ...p, authWarning: authResult.ok ? undefined : authResult.error };
+    });
+    return c.json({ items: enriched });
   } catch (e: unknown) {
     const msg = (e as { body?: { message?: string } })?.body?.message ?? String(e);
     return c.json({ error: msg }, 500);
@@ -163,6 +168,7 @@ projects.get('/events', auth(), async (c) => {
           displayName: p.spec.displayName,
           model: p.spec.model,
           agent: p.spec.agent,
+          authWarning: validateModelAuth(p.spec.model, p.spec.secrets).ok,
           gitUrl: p.spec.source?.git?.url,
           gitRef: p.spec.source?.git?.ref,
         })),
@@ -218,7 +224,13 @@ projects.get('/:name', auth(), async (c) => {
     const injectFileContents = project.spec.injectFiles?.length
       ? await readInjectFileContents(project.spec.injectFiles)
       : [];
-    return c.json({ ...project, injectFileContents });
+    // Check whether the project's model requires auth but none is configured.
+    const authResult = validateModelAuth(project.spec.model, project.spec.secrets);
+    return c.json({
+      ...project,
+      injectFileContents,
+      authWarning: authResult.ok ? undefined : authResult.error,
+    });
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
     const status = anyE.statusCode === 404 ? 404 : 500;

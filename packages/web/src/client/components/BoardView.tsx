@@ -146,7 +146,7 @@ export default function BoardView() {
   if (error && !data) return <p className="text-sm text-phase-failed p-4">Failed to load board.</p>;
   if (!data) return <p className="text-sm text-phase-failed p-4">Failed to load board.</p>;
 
-  const { settings, columns, status } = data;
+  const { settings, columns, status, authWarning } = data;
   const roster = (settings.agents ?? []).map((a: { name: string }) => a.name);
 
   const selectedTask: Task | undefined = selectedTaskName
@@ -190,6 +190,7 @@ export default function BoardView() {
           showAddTask={showAddTaskDesktop || showAddTaskMobile}
           onToggleFindings={() => setShowFindings((f) => !f)}
           showFindings={showFindings}
+          authWarning={authWarning}
         />
       </div>
 

@@ -2035,3 +2035,101 @@ function readKubeconfigToken(): string | undefined {
     return undefined;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Auth validation — detect when a model requires authentication
+// but no auth is configured on the project/run.
+// ---------------------------------------------------------------------------
+
+// Known cloud providers that always require API key or OAuth authentication.
+const CLOUD_PROVIDERS = new Set([
+  'anthropic',
+  'openai',
+  'google',
+  'google-genai',
+  'github-copilot',
+  'azure',
+  'aws',
+  'bedrock',
+  'together',
+  'groq',
+  'mistral',
+  'cohere',
+  'deepseek',
+  'xai',
+  'perplexity',
+  'fireworks',
+]);
+
+// Providers that typically work without authentication (local models).
+const LOCAL_PROVIDERS = new Set(['ollama', 'lm-studio', 'local']);
+
+export interface AuthValidationSuccess {
+  ok: true;
+}
+
+export interface AuthValidationFailure {
+  ok: false;
+  error: string;
+}
+
+export type AuthValidationResult = AuthValidationSuccess | AuthValidationFailure;
+
+/**
+ * Check whether a model string references a provider that requires
+ * authentication.  Returns true for known cloud providers where the
+ * model name starts with a recognized cloud prefix.
+ */
+export function requiresCloudAuth(model: string): boolean {
+  const slashIdx = model.indexOf('/');
+  if (slashIdx === -1) return false;
+  const provider = model.slice(0, slashIdx).toLowerCase();
+  return CLOUD_PROVIDERS.has(provider);
+}
+
+/**
+ * Parse the provider prefix from a `providerID/modelID` model string.
+ */
+export function parseModelProvider(model: string): string | undefined {
+  const slashIdx = model.indexOf('/');
+  if (slashIdx === -1) return undefined;
+  return model.slice(0, slashIdx);
+}
+
+/**
+ * Validate that a resolved model has the necessary authentication configured.
+ *
+ * Returns `{ ok: true }` when:
+ *   - no model is set (opencode will use its own default)
+ *   - the model's provider is a local provider (ollama, lm-studio, local)
+ *   - the provider prefix is unrecognised (don't block unknown providers)
+ *   - the model's provider is a cloud provider AND auth secrets are present
+ *
+ * Returns `{ ok: false, error }` when:
+ *   - the model uses a known cloud provider AND neither authSecret nor
+ *     llmKeysSecret is configured
+ */
+export function validateModelAuth(
+  model: string | undefined,
+  secrets?: { authSecret?: unknown; llmKeysSecret?: string } | null,
+): AuthValidationResult {
+  if (!model) return { ok: true };
+
+  const provider = parseModelProvider(model);
+  if (!provider) return { ok: true };
+
+  const lowerProvider = provider.toLowerCase();
+  if (LOCAL_PROVIDERS.has(lowerProvider)) return { ok: true };
+  if (!CLOUD_PROVIDERS.has(lowerProvider)) return { ok: true };
+
+  if (secrets?.authSecret || secrets?.llmKeysSecret) return { ok: true };
+
+  return {
+    ok: false,
+    error:
+      `Model "${model}" uses provider "${provider}" which requires authentication, ` +
+      `but neither spec.secrets.authSecret nor spec.secrets.llmKeysSecret is configured. ` +
+      `Run \`beatctl auth import\` to import opencode auth, or set llmKeysSecret to a Secret ` +
+      `containing the provider's API key (e.g. ANTHROPIC_API_KEY).`,
+  };
+}

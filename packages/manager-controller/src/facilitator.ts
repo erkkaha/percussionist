@@ -25,6 +25,7 @@ import {
   listClusterAgents,
   readPlanFromConfigMap,
   readPodLog,
+  validateModelAuth,
 } from '@percussionist/kube';
 import { resolveParentBranch, resolveTaskBranch } from './branch-resolver.js';
 import { getErrorStatusCode, isKubeNotFoundError } from './kube-errors.js';
@@ -476,6 +477,14 @@ export async function buildBuildTaskGeneratorRun(
     `- Do NOT output JSON or prose — just call the tools.`,
   ].join('\n');
 
+  // Validate auth for the resolved model.
+  const authValidation = validateModelAuth(resolved.model, resolved.secrets);
+  if (!authValidation.ok) {
+    throw new Error(
+      `Auth validation failed for buildgen run (task="${planTask.metadata.name}"): ${authValidation.error}`,
+    );
+  }
+
   return await buildFacilitatorRun(
     project,
     planTask,
@@ -633,6 +642,14 @@ export async function buildReviewRun(
     sessionSummary: '',
     successReview: true,
   };
+
+  // Validate auth for the resolved model.
+  const authValidation = validateModelAuth(resolved.model, resolved.secrets);
+  if (!authValidation.ok) {
+    throw new Error(
+      `Auth validation failed for review run (task="${task.metadata.name}"): ${authValidation.error}`,
+    );
+  }
 
   return await buildFacilitatorRun(
     project,

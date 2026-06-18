@@ -44,6 +44,7 @@ interface BoardHeaderProps {
   showAddTask: boolean;
   onToggleFindings: () => void;
   showFindings: boolean;
+  authWarning?: string;
 }
 
 export function BoardHeader({
@@ -93,6 +94,14 @@ export function BoardHeader({
           <span>Parallel: {maxParallel ?? 2}</span>
           <span className="text-text-dim/50">·</span>
           <span>Phase: {phase ?? 'Active'}</span>
+          {authWarning && (
+            <>
+              <span className="text-text-dim/50">·</span>
+              <span className="text-phase-failed" title={authWarning}>
+                ⚠ Auth needed
+              </span>
+            </>
+          )}
         </p>
         <p className="text-xs text-text-dim mt-0.5">{sseConnected ? '● live' : '○ polling'}</p>
         {metrics && (

@@ -19,6 +19,7 @@ import {
   type TaskSpec,
   TaskStatusSchema,
 } from '@percussionist/api';
+import { validateModelAuth } from '@percussionist/kube';
 import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
 import { getDb, taskEvents } from '../db.js';
@@ -196,7 +197,14 @@ board.get('/:project/board', auth(), async (c) => {
       phase: project.spec.phase ?? 'Active',
     };
 
-    return c.json({ settings, columns, approvals, status: project.status?.board ?? {} });
+    const authResult = validateModelAuth(project.spec.model, project.spec.secrets);
+    return c.json({
+      settings,
+      columns,
+      approvals,
+      status: project.status?.board ?? {},
+      authWarning: authResult.ok ? undefined : authResult.error,
+    });
   } catch (e) {
     const ke = e as KubeError;
     return c.json({ error: errMsg(ke) }, errStatus(ke));

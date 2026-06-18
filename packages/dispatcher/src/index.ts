@@ -220,6 +220,21 @@ main().catch(async (e) => {
     process.exit(0);
   }
   const msg = String((e as Error).message ?? e);
+  // Enhance auth-related error messages with actionable guidance.
+  const AUTH_KEYWORDS = [
+    '401',
+    '403',
+    'unauthorized',
+    'unauthorised',
+    'auth',
+    'api key',
+    'api_key',
+  ];
+  const authAugment = AUTH_KEYWORDS.some((kw) => msg.toLowerCase().includes(kw))
+    ? ` Model "${process.env.RUN_MODEL ?? '(unknown)'}" may require authentication. ` +
+      `Configure a Secret with spec.secrets.authSecret (opencode auth) or ` +
+      `spec.secrets.llmKeysSecret (API key) on the project or run, then retry.`
+    : '';
   // Last-resort safety net: if an aborted-message error reaches here, keep
   // the run in Running phase instead of failing it — the abort was not a
   // run failure, just the user pressing "cancel".
@@ -281,7 +296,7 @@ main().catch(async (e) => {
         tokensCacheWrite: 0,
         cost: 0,
       },
-      msg,
+      `${msg}${authAugment}`,
     ).catch(() => {
       /* best effort */
     });
@@ -289,7 +304,7 @@ main().catch(async (e) => {
   try {
     await patchStatus({
       phase: RunPhase.Failed,
-      message: msg,
+      message: `${msg}${authAugment}`,
       completedAt,
     });
   } catch {

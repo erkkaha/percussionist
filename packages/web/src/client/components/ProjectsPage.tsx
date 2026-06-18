@@ -40,7 +40,17 @@ function ProjectRow({ project }: { project: Project }) {
         {project.spec.source?.git?.url ?? '-'}
       </td>
       <td className="px-4 py-3 text-text-muted text-xs">{project.spec.source?.git?.ref ?? '-'}</td>
-      <td className="px-4 py-3 text-text-muted font-mono text-xs">{project.spec.model ?? '-'}</td>
+      <td className="px-4 py-3 text-text-muted font-mono text-xs flex items-center gap-1">
+        {(project as { authWarning?: string }).authWarning && (
+          <span
+            className="text-phase-failed"
+            title={(project as { authWarning?: string }).authWarning}
+          >
+            ⚠
+          </span>
+        )}
+        {project.spec.model ?? '-'}
+      </td>
       <td className="px-4 py-3 text-text-muted font-mono text-xs">{project.spec.agent ?? '-'}</td>
       <td className="px-4 py-3 text-text-muted tabular-nums text-xs">
         {age(project.metadata.creationTimestamp)}
