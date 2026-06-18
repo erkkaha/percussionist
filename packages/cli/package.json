@@ -1,6 +1,6 @@
 {
   "name": "@percussionist/cli",
-  "version": "0.1.196",
+  "version": "0.1.197",
   "private": true,
   "type": "module",
   "description": "beatctl — CLI for percussionist",

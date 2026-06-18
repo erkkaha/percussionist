@@ -1,6 +1,19 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.197] - 2026-06-18
+
+### <!-- 0 -->🚀 Features
+
+- Move findings schema from task prompt to reviewer agent identity _(agent)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Destructure authWarning prop in BoardHeader, add w-full to projects table _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Remove dead buildSuccessReviewRun function
 ## [v0.1.196] - 2026-06-18
 
 ### <!-- 0 -->🚀 Features
@@ -14,6 +27,10 @@ All notable changes to Percussionist are documented here.
 - Wire ClusterSettings secrets into the resolution cascade
 - Avoid empty-object fallback widening WorkerStatus type in board move/retry _(web)_
 - Add missing useCallback import in CreateRunForm _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.196
 ## [v0.1.195] - 2026-06-18
 
 ### <!-- 1 -->🐛 Bug Fixes
