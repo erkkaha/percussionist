@@ -1,11 +1,28 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.195] - 2026-06-18
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Decouple create-action visibility from showHeader in ProjectsPage _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add plan for missing add project UI _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add regression tests for headerless add-project CTA _(web)_
 ## [v0.1.194] - 2026-06-17
 
 ### <!-- 6 -->🧪 Testing
 
 - Remove flaky localStorage legacy compatibility test _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.194
 ## [v0.1.193] - 2026-06-16
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -123,12 +140,20 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Update PVC defaults and SSH host-key modes to match implementation _(docs)_
 - Align label keys and stale hygiene comments
 - Validate workspace command and package inputs _(manager)_
 - Lock mirror cleanup operations with flock _(manager)_
 - Validate external status patch inputs with zod _(board)_
 - Use session.idle for idle-triggered flushes _(dispatcher)_
 - Avoid clobbering run terminal phase _(operator)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add docs accuracy sweep plan hsb8g _(plan)_
+- Fix docs accuracy for CRDs, board flags, and caching _(readme)_
+- Fix MCP verification port 4096 -> 4097 in AGENTS.md _(agents)_
+- Fix PVC defaults in AGENTS.md to match operator code _(agents)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
