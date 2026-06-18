@@ -300,6 +300,8 @@ metadata:
   labels:
     app.kubernetes.io/name: percussionist
     app.kubernetes.io/component: web
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
 spec:
   ingressClassName: nginx
   rules:

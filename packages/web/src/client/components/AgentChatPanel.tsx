@@ -292,6 +292,21 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
           body: JSON.stringify({ message: text }),
           signal: ac.signal,
         });
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          if (res.status === 504) {
+            addMessageIfNew({
+              role: 'system',
+              text: 'Request timed out. The agent may still be working — try again.',
+            });
+          } else {
+            addMessageIfNew({
+              role: 'system',
+              text: `Error (${res.status}): ${body.slice(0, 500)}`,
+            });
+          }
+          return;
+        }
         const data = await res.json();
         if (data.cancelled) {
           addMessageIfNew({ role: 'system', text: 'Request cancelled.' });
