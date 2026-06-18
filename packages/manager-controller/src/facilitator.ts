@@ -123,6 +123,7 @@ export async function buildFacilitationRun(
       image: clusterSettings?.spec?.runner?.image,
       resources: clusterSettings?.spec?.runner?.resources,
     },
+    secrets: clusterSettings?.spec?.secrets,
   });
 
   const facilitationSpec: FacilitationSpec = {
@@ -200,6 +201,7 @@ export async function buildSuccessReviewRun(
       image: clusterSettings?.spec?.runner?.image,
       resources: clusterSettings?.spec?.runner?.resources,
     },
+    secrets: clusterSettings?.spec?.secrets,
   });
 
   const completionMessage = succeededRunStatus.message ?? 'session completed';
@@ -373,6 +375,7 @@ export async function buildBuildTaskGeneratorRun(
       image: clusterSettings?.spec?.runner?.image,
       resources: clusterSettings?.spec?.runner?.resources,
     },
+    secrets: clusterSettings?.spec?.secrets,
   });
 
   // Prefer explicitly passed summary, then fall back to stored ConfigMap summary.
@@ -497,11 +500,13 @@ export async function buildReviewRun(
   facilitatorAgentName: string,
   allTasks: Task[] = [],
 ): Promise<Run> {
+  const clusterSettings = await getOptionalClusterSettings('buildReviewRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
       image: undefined,
       resources: undefined,
     },
+    secrets: clusterSettings?.spec?.secrets,
   });
 
   const completionMessage = succeededRunStatus.message ?? 'session completed';

@@ -87,9 +87,8 @@ export const OPENCODE_RUNNER_DEFAULTS: RunnerImageSpec = {
 // ---------------------------------------------------------------------------
 // Shared building blocks
 //
-// DEPRECATED: The secrets schema is kept for backwards compatibility.
-// All secrets are now managed at the cluster level via ClusterSettings.
-// Project-level secrets are ignored — use ClusterSettings instead.
+// Secrets can be specified at ClusterSettings, Project, or Run level.
+// They cascade: Run.spec.secrets >> Project.spec.secrets >> ClusterSettings.spec.secrets
 
 export const ResourceRequirementsSchema = z
   .object({
@@ -132,8 +131,7 @@ export const ExecSpecSchema = z.object({
 });
 export type ExecSpec = z.infer<typeof ExecSpecSchema>;
 
-// DEPRECATED — cluster-level secrets are managed via ClusterSettings.
-// This schema is kept for backwards compatibility only.
+// Secrets cascade: Run.spec.secrets >> Project.spec.secrets >> ClusterSettings.spec.secrets.
 export const SecretsRefSchema = z
   .object({
     // All keys in this Secret are exposed as environment variables verbatim

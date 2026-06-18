@@ -54,6 +54,7 @@ export async function buildWorkerRun(
       image: clusterSettings?.spec?.runner?.image,
       resources: clusterSettings?.spec?.runner?.resources,
     },
+    secrets: clusterSettings?.spec?.secrets,
   });
 
   // ClusterAgent model override (overrides project default, not per-agent).
@@ -253,6 +254,7 @@ export async function buildMergeRun(
       image: clusterSettings?.spec?.runner?.image,
       resources: clusterSettings?.spec?.runner?.resources,
     },
+    secrets: clusterSettings?.spec?.secrets,
   });
 
   const projectName = project.metadata.name;
