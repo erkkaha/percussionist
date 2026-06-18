@@ -59,6 +59,7 @@ export function BoardHeader({
   showAddTask,
   onToggleFindings,
   showFindings,
+  authWarning,
 }: BoardHeaderProps) {
   return (
     <div className="flex items-start justify-between gap-4 shrink-0">

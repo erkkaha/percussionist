@@ -164,8 +164,8 @@ export default function ProjectsPage({
           to save git URLs, secrets, and model defaults for reuse.
         </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-x-auto">
-          <table className="min-w-[720px] text-sm">
+        <div className="rounded-lg border border-border overflow-hidden settings-table-scroll">
+          <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
                 <th className="px-4 py-2.5 font-medium">Name</th>
