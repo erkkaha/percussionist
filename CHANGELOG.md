@@ -6,6 +6,10 @@ All notable changes to Percussionist are documented here.
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Handle nginx 504 in agent chat, add ingress timeout annotation _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.198
 ## [v0.1.197] - 2026-06-18
 
 ### <!-- 0 -->🚀 Features
