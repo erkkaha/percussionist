@@ -11,7 +11,7 @@
 # For k3s (no registry), import directly:
 #   docker save percussionist/runner:dev | sudo k3s ctr images import -
 
-ARG RUNNER_BASE=ghcr.io/anomalyco/opencode:1.15.6
+ARG RUNNER_BASE=ghcr.io/anomalyco/opencode:1.17.9
 FROM ${RUNNER_BASE}
 
 ARG BUN_VERSION=1.3.14
