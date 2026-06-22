@@ -21,6 +21,7 @@ const getClusterAgentMock = mock(async (name: string) => {
   if (name === 'builder') return mockClusterAgent('builder', ['run.complete.build']);
   if (name === 'planner')
     return mockClusterAgent('planner', ['task.plan.execute', 'run.complete.plan']);
+  if (name === 'reviewer') return mockClusterAgent('reviewer', ['run.complete.review']);
   return mockClusterAgent(name, []);
 });
 
@@ -201,6 +202,209 @@ describe('dispatcher MCP server — merge-worker context', () => {
     });
     expect(patchRunAnnotationsMock).toHaveBeenCalledTimes(0);
     expect(completedSummaries).toEqual([]);
+  });
+
+  it('rejects complete_merge with -32603 when annotation patch fails', async () => {
+    patchRunAnnotationsMock.mockImplementationOnce(async () => {
+      throw new Error('apiserver down');
+    });
+    const res = await postMcp(
+      server.port,
+      mcpCall('merge-4', 'complete_merge', {
+        outcome: 'merged',
+        diagnosis: 'Fast-forward merge succeeded',
+      }),
+    );
+    expect(res).toEqual({
+      jsonrpc: '2.0',
+      id: 'merge-4',
+      error: { code: -32603, message: expect.stringContaining('failed to persist merge verdict') },
+    });
+    expect(completedSummaries).toEqual([]);
+    expect(failureReasons).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review-worker context tests
+// ---------------------------------------------------------------------------
+
+describe('dispatcher MCP server — review-facilitator context', () => {
+  let server: McpServer;
+  const completedSummaries: string[] = [];
+  const completedPlans: string[] = [];
+  const failureReasons: string[] = [];
+
+  beforeEach(async () => {
+    process.env.RUN_NAME = 'test-review-run';
+    process.env.RUN_NAMESPACE = 'test-ns';
+    process.env.RUN_AGENT = 'reviewer';
+    process.env.RUN_CONTEXT = 'review-facilitator';
+    process.env.RUN_BOARD_TASK = 'test-task-1';
+    completedSummaries.length = 0;
+    completedPlans.length = 0;
+    failureReasons.length = 0;
+    patchRunAnnotationsMock.mockClear();
+    getClusterAgentMock.mockClear();
+
+    server = await startMcpServer(
+      (reason) => failureReasons.push(reason),
+      (summary) => completedSummaries.push(summary),
+      (summary) => completedPlans.push(summary),
+      () => ({ phase: 'running', session: 'session-1' }),
+      0,
+    );
+  });
+
+  afterEach(() => {
+    server.close();
+    delete process.env.RUN_NAME;
+    delete process.env.RUN_NAMESPACE;
+    delete process.env.RUN_AGENT;
+    delete process.env.RUN_CONTEXT;
+    delete process.env.RUN_BOARD_TASK;
+  });
+
+  it('lists complete_review as the only completion tool', async () => {
+    const res = (await postMcp(server.port, {
+      jsonrpc: '2.0',
+      id: 'list-1',
+      method: 'tools/list',
+    })) as { result?: { tools?: { name: string }[] } };
+    const names = res.result?.tools?.map((t) => t.name) ?? [];
+    expect(names).toContain('complete_review');
+    expect(names).not.toContain('complete_run');
+    expect(names).not.toContain('complete_plan');
+    expect(names).not.toContain('complete_merge');
+  });
+
+  it('approves a review and signals completion', async () => {
+    const res = await postMcp(
+      server.port,
+      mcpCall('review-1', 'complete_review', {
+        approved: true,
+        diagnosis: 'Code looks good, tests pass',
+        feedback: 'Minor nit: use const instead of let',
+      }),
+    );
+    expect(res).toEqual({
+      jsonrpc: '2.0',
+      id: 'review-1',
+      result: {
+        content: [
+          {
+            type: 'text',
+            text: 'Review submitted: approved. The orchestrator will process the verdict.',
+          },
+        ],
+      },
+    });
+    expect(completedSummaries).toEqual([
+      'reviewer approved test-task-1 — Code looks good, tests pass',
+    ]);
+    expect(completedPlans).toEqual([]);
+    expect(failureReasons).toEqual([]);
+
+    expect(patchRunAnnotationsMock).toHaveBeenCalledTimes(1);
+    expect(patchRunAnnotationsMock).toHaveBeenCalledWith(
+      'test-review-run',
+      expect.objectContaining({
+        'percussionist.dev/review-verdict': expect.stringContaining('"action":"approve"'),
+      }),
+      'test-ns',
+    );
+
+    const callArgs = patchRunAnnotationsMock.mock.calls[0] as unknown as [
+      string,
+      Record<string, string>,
+      string,
+    ];
+    const verdictRaw = callArgs[1]['percussionist.dev/review-verdict'];
+    if (!verdictRaw) throw new Error('missing review verdict annotation');
+    const verdict = JSON.parse(verdictRaw);
+    expect(verdict.action).toBe('approve');
+    expect(verdict.diagnosis).toBe('Code looks good, tests pass');
+    expect(verdict.feedback).toBe('Minor nit: use const instead of let');
+  });
+
+  it('rejects complete_review when diagnosis is missing', async () => {
+    const res = await postMcp(
+      server.port,
+      mcpCall('review-2', 'complete_review', { approved: true }),
+    );
+    expect(res).toEqual({
+      jsonrpc: '2.0',
+      id: 'review-2',
+      error: { code: -32602, message: 'diagnosis is required' },
+    });
+    expect(patchRunAnnotationsMock).toHaveBeenCalledTimes(0);
+    expect(completedSummaries).toEqual([]);
+  });
+
+  it('rejects complete_review with -32603 when annotation patch fails', async () => {
+    patchRunAnnotationsMock.mockImplementationOnce(async () => {
+      throw new Error('apiserver down');
+    });
+    const res = await postMcp(
+      server.port,
+      mcpCall('review-3', 'complete_review', {
+        approved: true,
+        diagnosis: 'Good work',
+      }),
+    );
+    expect(res).toEqual({
+      jsonrpc: '2.0',
+      id: 'review-3',
+      error: { code: -32603, message: expect.stringContaining('failed to persist review verdict') },
+    });
+    expect(completedSummaries).toEqual([]);
+    expect(failureReasons).toEqual([]);
+  });
+
+  it('handles request_changes verdict', async () => {
+    const res = await postMcp(
+      server.port,
+      mcpCall('review-4', 'complete_review', {
+        approved: false,
+        diagnosis: 'Need to fix the error handling',
+        feedback: 'Wrap the async call in try/catch',
+      }),
+    );
+    expect(res).toEqual({
+      jsonrpc: '2.0',
+      id: 'review-4',
+      result: {
+        content: [
+          {
+            type: 'text',
+            text: 'Review submitted: requested changes on. The orchestrator will process the verdict.',
+          },
+        ],
+      },
+    });
+    expect(completedSummaries).toEqual([
+      'reviewer requested changes on test-task-1 — Need to fix the error handling',
+    ]);
+    expect(patchRunAnnotationsMock).toHaveBeenCalledTimes(1);
+    expect(patchRunAnnotationsMock).toHaveBeenCalledWith(
+      'test-review-run',
+      expect.objectContaining({
+        'percussionist.dev/review-verdict': expect.stringContaining('"action":"request_changes"'),
+      }),
+      'test-ns',
+    );
+
+    const callArgs = patchRunAnnotationsMock.mock.calls[0] as unknown as [
+      string,
+      Record<string, string>,
+      string,
+    ];
+    const verdictRaw = callArgs[1]['percussionist.dev/review-verdict'];
+    if (!verdictRaw) throw new Error('missing review verdict annotation');
+    const verdict = JSON.parse(verdictRaw);
+    expect(verdict.action).toBe('request_changes');
+    expect(verdict.diagnosis).toBe('Need to fix the error handling');
+    expect(verdict.feedback).toBe('Wrap the async call in try/catch');
   });
 });
 

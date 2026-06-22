@@ -1211,7 +1211,10 @@ async function handleMcp(
         const runName = process.env.RUN_NAME ?? '';
         const namespace = process.env.RUN_NAMESPACE ?? 'percussionist';
 
-        // Best-effort annotation write — never block completion
+        // The verdict annotation is the orchestrator's only source of truth for
+        // this run — patchRunAnnotations retries internally. If it still fails,
+        // do NOT mark the run complete: a run that reports success with no
+        // verdict annotation silently strands the task (see complete_review).
         try {
           await patchRunAnnotations(
             runName,
@@ -1222,8 +1225,13 @@ async function handleMcp(
           );
         } catch (e) {
           console.error(
-            '[mcp-server] complete_merge: failed to patch annotations:',
+            '[mcp-server] complete_merge: failed to persist verdict annotation:',
             (e as Error).message,
+          );
+          return rpcError(
+            req.id,
+            -32603,
+            `failed to persist merge verdict: ${(e as Error).message}`,
           );
         }
 
@@ -1271,7 +1279,12 @@ async function handleMcp(
           return rpcError(req.id, -32602, 'invalid verdict payload');
         }
 
-        // Best-effort annotation write — never block completion
+        // The verdict annotation is the orchestrator's only source of truth for
+        // this review — the reconciler reads it to decide approve vs rework, and
+        // ignores the agent's prose. patchRunAnnotations retries internally; if
+        // it still fails, do NOT mark the run complete. A review that reports
+        // Succeeded with no verdict annotation falls through to the "no verdict"
+        // path and silently strands the task in awaiting-human.
         try {
           await patchRunAnnotations(
             runName,
@@ -1282,8 +1295,13 @@ async function handleMcp(
           );
         } catch (e) {
           console.error(
-            '[mcp-server] complete_review: failed to patch annotations:',
+            '[mcp-server] complete_review: failed to persist verdict annotation:',
             (e as Error).message,
+          );
+          return rpcError(
+            req.id,
+            -32603,
+            `failed to persist review verdict: ${(e as Error).message}`,
           );
         }
 

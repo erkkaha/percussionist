@@ -9,7 +9,11 @@ const state = {
 
 mock.module('@percussionist/kube', () => ({
   apps: () => ({}),
-  buildTask: (args: Record<string, unknown>) => ({ metadata: { name: args.name }, ...args }),
+  buildTask: (args: Record<string, unknown>) => ({
+    metadata: { name: args.name },
+    ...args,
+    status: { phase: 'pending' },
+  }),
   createRun: async () => ({}),
   createTask: async (task: Record<string, unknown>) => task,
   deleteRun: async () => undefined,

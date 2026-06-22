@@ -20,9 +20,11 @@ import {
   createConfiguration,
   type HttpLibrary,
   KubeConfig,
+  PatchStrategy,
   ResponseContext,
   SelfDecodingBody,
   ServerConfiguration,
+  setHeaderOptions,
   type V1Pod,
   wrapHttpLibrary,
 } from '@kubernetes/client-node';
@@ -241,6 +243,15 @@ function isNotFoundError(err: unknown): boolean {
   return getErrorStatusCode(err) === 404;
 }
 
+function isConflictError(err: unknown): boolean {
+  return getErrorStatusCode(err) === 409;
+}
+
+// Merge-patch header for all CRD/ConfigMap PATCH calls via the shared CA-aware
+// client (`custom()` / `core()`). TLS trust comes from the loaded KubeConfig
+// rather than an ambient NODE_EXTRA_CA_CERTS env var.
+const MERGE_PATCH = () => setHeaderOptions('Content-Type', PatchStrategy.MergePatch);
+
 // ---------------------------------------------------------------------------
 // Run helpers
 
@@ -298,37 +309,30 @@ export async function patchRunStatus(
   ns: string = NAMESPACE,
   maxRetries = 3,
 ): Promise<Run> {
-  const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error('No service account token available');
-
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
-  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_RUN}/${name}/status`;
-
-  let lastErr: Error | undefined;
+  let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
       await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
     }
-    const res = await fetch(url, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/merge-patch+json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({ status: statusPatch }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (res.ok) return res.json() as Promise<Run>;
-    const body = await res.text();
-    if (res.status === 409 && attempt < maxRetries) {
-      lastErr = new Error(`Kubernetes API conflict ${res.status}: ${body}`);
-      continue;
+    try {
+      return (await custom().patchNamespacedCustomObjectStatus(
+        {
+          group: API_GROUP,
+          version: API_VERSION,
+          namespace: ns,
+          plural: PLURAL_RUN,
+          name,
+          body: { status: statusPatch },
+        },
+        MERGE_PATCH(),
+      )) as Run;
+    } catch (e) {
+      lastErr = e;
+      if (isConflictError(e) && attempt < maxRetries) continue;
+      throw e;
     }
-    throw new Error(`Kubernetes API error ${res.status}: ${body}`);
   }
-  throw lastErr!;
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 // Patch annotations on a Run (metadata only, not status).
@@ -336,27 +340,32 @@ export async function patchRunAnnotations(
   name: string,
   annotations: Record<string, string | undefined>,
   ns: string = NAMESPACE,
+  maxRetries = 3,
 ): Promise<Run> {
-  const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error('No service account token available');
-
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
-  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_RUN}/${name}`;
-
-  const res = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/merge-patch+json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify({ metadata: { annotations } }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (res.ok) return res.json() as Promise<Run>;
-  const body = await res.text();
-  throw new Error(`Kubernetes API error ${res.status}: ${body}`);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
+    }
+    try {
+      return (await custom().patchNamespacedCustomObject(
+        {
+          group: API_GROUP,
+          version: API_VERSION,
+          namespace: ns,
+          plural: PLURAL_RUN,
+          name,
+          body: { metadata: { annotations } },
+        },
+        MERGE_PATCH(),
+      )) as Run;
+    } catch (e) {
+      lastErr = e;
+      if (isConflictError(e) && attempt < maxRetries) continue;
+      throw e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 // ---------------------------------------------------------------------------
@@ -612,24 +621,17 @@ export async function patchProjectSpec(
   specPatch: Partial<Project['spec']>,
   ns: string = NAMESPACE,
 ): Promise<Project> {
-  const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error('No service account token available');
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
-  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_PROJECT}/${name}`;
-  const res = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/merge-patch+json',
-      Accept: 'application/json',
+  return (await custom().patchNamespacedCustomObject(
+    {
+      group: API_GROUP,
+      version: API_VERSION,
+      namespace: ns,
+      plural: PLURAL_PROJECT,
+      name,
+      body: { spec: specPatch },
     },
-    body: JSON.stringify({ spec: specPatch }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (res.ok) return res.json() as Promise<Project>;
-  const body = await res.text();
-  throw new Error(`Kubernetes API error ${res.status}: ${body}`);
+    MERGE_PATCH(),
+  )) as Project;
 }
 
 export async function patchProject(
@@ -637,24 +639,17 @@ export async function patchProject(
   patch: { metadata?: Partial<Project['metadata']>; spec?: Partial<Project['spec']> },
   ns: string = NAMESPACE,
 ): Promise<Project> {
-  const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error('No service account token available');
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
-  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_PROJECT}/${name}`;
-  const res = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/merge-patch+json',
-      Accept: 'application/json',
+  return (await custom().patchNamespacedCustomObject(
+    {
+      group: API_GROUP,
+      version: API_VERSION,
+      namespace: ns,
+      plural: PLURAL_PROJECT,
+      name,
+      body: patch,
     },
-    body: JSON.stringify(patch),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (res.ok) return res.json() as Promise<Project>;
-  const body = await res.text();
-  throw new Error(`Kubernetes API error ${res.status}: ${body}`);
+    MERGE_PATCH(),
+  )) as Project;
 }
 
 export async function patchProjectStatus(
@@ -663,47 +658,30 @@ export async function patchProjectStatus(
   ns: string = NAMESPACE,
   maxRetries = 3,
 ): Promise<Project> {
-  // Use raw fetch with merge-patch content-type — the K8s client sends the
-  // wrong content-type for status subresources on some versions.
-  //
-  // Retry on HTTP 409 Conflict (optimistic concurrency violation). The status
-  // subresource ignores resourceVersion in the patch body, so K8s itself
-  // serialises writes at the apiserver — but two concurrent patch requests can
-  // still race if one is a full replace of the status object. We retry up to
-  // maxRetries times with exponential back-off.
-  const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error('No service account token available');
-
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
-  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_PROJECT}/${name}/status`;
-
-  let lastErr: Error | undefined;
+  let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      // Exponential back-off: 100ms, 200ms, 400ms
       await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
     }
-    const res = await fetch(url, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/merge-patch+json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({ status: statusPatch }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (res.ok) return res.json() as Promise<Project>;
-    const body = await res.text();
-    if (res.status === 409 && attempt < maxRetries) {
-      // Conflict — another writer raced us. Retry with fresh data.
-      lastErr = new Error(`Kubernetes API conflict ${res.status}: ${body}`);
-      continue;
+    try {
+      return (await custom().patchNamespacedCustomObjectStatus(
+        {
+          group: API_GROUP,
+          version: API_VERSION,
+          namespace: ns,
+          plural: PLURAL_PROJECT,
+          name,
+          body: { status: statusPatch },
+        },
+        MERGE_PATCH(),
+      )) as Project;
+    } catch (e) {
+      lastErr = e;
+      if (isConflictError(e) && attempt < maxRetries) continue;
+      throw e;
     }
-    throw new Error(`Kubernetes API error ${res.status}: ${body}`);
   }
-  throw lastErr!;
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 export async function deleteProject(
@@ -786,37 +764,30 @@ export async function patchTaskStatus(
   ns: string = NAMESPACE,
   maxRetries = 3,
 ): Promise<Task> {
-  const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error('No service account token available');
-
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
-  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_TASK}/${name}/status`;
-
-  let lastErr: Error | undefined;
+  let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
       await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
     }
-    const res = await fetch(url, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/merge-patch+json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({ status: statusPatch }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (res.ok) return res.json() as Promise<Task>;
-    const body = await res.text();
-    if (res.status === 409 && attempt < maxRetries) {
-      lastErr = new Error(`Kubernetes API conflict ${res.status}: ${body}`);
-      continue;
+    try {
+      return (await custom().patchNamespacedCustomObjectStatus(
+        {
+          group: API_GROUP,
+          version: API_VERSION,
+          namespace: ns,
+          plural: PLURAL_TASK,
+          name,
+          body: { status: statusPatch },
+        },
+        MERGE_PATCH(),
+      )) as Task;
+    } catch (e) {
+      lastErr = e;
+      if (isConflictError(e) && attempt < maxRetries) continue;
+      throw e;
     }
-    throw new Error(`Kubernetes API error ${res.status}: ${body}`);
   }
-  throw lastErr!;
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 // Patch a Task (metadata + spec, not status).
@@ -824,30 +795,19 @@ export async function patchTask(
   name: string,
   patch: Partial<Pick<Task, 'metadata' | 'spec'>>,
   ns: string = NAMESPACE,
-  _client = custom(),
+  client = custom(),
 ): Promise<Task> {
-  // Use fetch directly for merge-patch since the client doesn't support custom headers well.
-  const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error('No service account token available');
-
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
-  const url = `https://${host}:${port}/apis/${API_GROUP_VERSION}/namespaces/${ns}/${PLURAL_TASK}/${name}`;
-
-  const res = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/merge-patch+json',
-      Accept: 'application/json',
+  return (await client.patchNamespacedCustomObject(
+    {
+      group: API_GROUP,
+      version: API_VERSION,
+      namespace: ns,
+      plural: PLURAL_TASK,
+      name,
+      body: patch,
     },
-    body: JSON.stringify(patch),
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (res.ok) return res.json() as Promise<Task>;
-  const body = await res.text();
-  throw new Error(`Kubernetes API error ${res.status}: ${body}`);
+    MERGE_PATCH(),
+  )) as Task;
 }
 
 // Build a new Task object ready for createTask().
@@ -1306,61 +1266,34 @@ export async function appendFindingToConfigMap(
   const cmName = findingsConfigMapName(project);
   const key = `inbox/${finding.id}.json`;
   const data = { [key]: JSON.stringify(finding) };
+  const labels = {
+    [LABELS.projectName]: project,
+    [LABELS.component]: FINDINGS_COMPONENT,
+  };
 
-  // Try merge-patch first (fast path for existing ConfigMap).
-  const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error('No service account token available');
+  // Try merge-patch first (fast path for existing ConfigMap). Sets only the
+  // single inbox key — conflict-free across concurrent agents.
+  try {
+    await core().patchNamespacedConfigMap(
+      { name: cmName, namespace: ns, body: { metadata: { labels }, data } },
+      MERGE_PATCH(),
+    );
+    return { written: true };
+  } catch (e) {
+    if (!isNotFoundError(e)) throw e;
+  }
 
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
-  const url = `https://${host}:${port}/api/v1/namespaces/${ns}/configmaps/${cmName}`;
-
-  const res = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/merge-patch+json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify({
-      metadata: {
-        labels: {
-          [LABELS.projectName]: project,
-          [LABELS.component ?? 'percussionist.dev/component']: FINDINGS_COMPONENT,
-        },
-      },
+  // ConfigMap does not exist — create it.
+  await core().createNamespacedConfigMap({
+    namespace: ns,
+    body: {
+      apiVersion: 'v1',
+      kind: 'ConfigMap',
+      metadata: { name: cmName, namespace: ns, labels },
       data,
-    }),
-    signal: AbortSignal.timeout(15_000),
+    },
   });
-
-  if (res.ok || res.status === 200) {
-    return { written: true };
-  }
-
-  if (res.status === 404) {
-    // ConfigMap does not exist — create it.
-    await core().createNamespacedConfigMap({
-      namespace: ns,
-      body: {
-        apiVersion: 'v1',
-        kind: 'ConfigMap',
-        metadata: {
-          name: cmName,
-          namespace: ns,
-          labels: {
-            [LABELS.projectName]: project,
-            [LABELS.component ?? 'percussionist.dev/component']: FINDINGS_COMPONENT,
-          },
-        },
-        data,
-      },
-    });
-    return { written: true };
-  }
-
-  const body = await res.text();
-  throw new Error(`Kubernetes API error ${res.status} patching findings ConfigMap: ${body}`);
+  return { written: true };
 }
 
 /**
@@ -1432,28 +1365,10 @@ export async function patchFindingsConfigMap(
   ns: string = NAMESPACE,
 ): Promise<void> {
   const cmName = findingsConfigMapName(project);
-  const token = readServiceAccountToken() ?? readKubeconfigToken();
-  if (!token) throw new Error('No service account token available');
-
-  const host = process.env.KUBERNETES_SERVICE_HOST ?? 'kubernetes.default.svc';
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
-  const url = `https://${host}:${port}/api/v1/namespaces/${ns}/configmaps/${cmName}`;
-
-  const res = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/merge-patch+json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify({ data: patch }),
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Kubernetes API error ${res.status} patching findings ConfigMap: ${body}`);
-  }
+  await core().patchNamespacedConfigMap(
+    { name: cmName, namespace: ns, body: { data: patch } },
+    MERGE_PATCH(),
+  );
 }
 
 // ---------------------------------------------------------------------------
