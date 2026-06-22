@@ -40,6 +40,10 @@ importers:
         version: 4.4.3
 
   docs:
+    dependencies:
+      vue:
+        specifier: 3.5.35
+        version: 3.5.35(typescript@6.0.3)
     devDependencies:
       vitepress:
         specifier: 1.6.4
