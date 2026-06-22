@@ -334,13 +334,20 @@ interface OpencodePanelProps {
 }
 
 function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
-  const [value, setValue] = useState(config);
+  const [value, setValue] = useState('');
   const [jsonError, setJsonError] = useState<string | null>(null);
 
-  // Keep value in sync when config loads from query
-  if (config !== value && value === config) {
-    // already in sync
-  }
+  useEffect(() => {
+    if (!config) {
+      setValue('');
+      return;
+    }
+    try {
+      setValue(JSON.stringify(JSON.parse(config), null, 2));
+    } catch {
+      setValue(config);
+    }
+  }, [config]);
 
   function handleChange(raw: string) {
     setValue(raw);
@@ -349,6 +356,16 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
       setJsonError(null);
     } catch {
       setJsonError('Invalid JSON — check your syntax.');
+    }
+  }
+
+  function formatJson() {
+    try {
+      const formatted = JSON.stringify(JSON.parse(value), null, 2);
+      setValue(formatted);
+      setJsonError(null);
+    } catch {
+      setJsonError('Invalid JSON — cannot format.');
     }
   }
 
@@ -375,13 +392,21 @@ function OpencodePanel({ config, onSave, saving }: OpencodePanelProps) {
           <p className="text-xs text-phase-succeeded mt-1">Valid JSON</p>
         )}
       </CardContent>
-      <CardFooter className="sm:flex-row flex-col gap-2">
+      <CardFooter className="flex-col sm:flex-row gap-2">
+        <Button
+          variant="outline"
+          onClick={formatJson}
+          disabled={!value.trim()}
+          className="w-full sm:w-auto"
+        >
+          Format JSON
+        </Button>
         <Button
           onClick={() => onSave(value)}
           disabled={saving || !!jsonError}
           className="w-full sm:w-auto"
         >
-          Save OpenCode Config
+          Save
         </Button>
       </CardFooter>
     </Card>
