@@ -13,7 +13,13 @@
 //   - Both can coexist: the Ingress provides the actual route, the template
 //     tells the UI where the route is reachable from the browser.
 
-import type { V1Deployment, V1Ingress, V1Service } from '@kubernetes/client-node';
+import type {
+  V1Container,
+  V1Deployment,
+  V1EnvVar,
+  V1Ingress,
+  V1Service,
+} from '@kubernetes/client-node';
 import {
   API_GROUP_VERSION,
   CODE_SERVER_DEFAULT_IMAGE,
@@ -55,6 +61,16 @@ export function shouldReconcileCodeServer(project: Project): boolean {
 
 /**
  * Renders a Deployment for code-server.
+ *
+ * An init container writes default config files to the project's data PVC on
+ * first start so that code-server starts with a themed, pre-configured VS Code
+ * environment.  The init container shares the same image and volume mount as
+ * the main container.
+ *
+ * Injected files on the PVC (first-run only — customisations survive restarts):
+ *   - .code-server-config/config.yaml           — code-server server config
+ *   - .code-server-vscode/User/settings.json    — VS Code user settings
+ *   - .code-server-vscode/.gitconfig            — git safe.directory (scoped to code-server)
  */
 export function renderCodeServerDeployment(project: Project): V1Deployment {
   const name = project.metadata.name ?? '';
@@ -76,6 +92,85 @@ export function renderCodeServerDeployment(project: Project): V1Deployment {
     [LABELS.managedBy]: MANAGED_BY,
     [LABELS.projectName]: name,
     'percussionist.dev/component': 'code-server',
+  };
+
+  // Paths for config files on the shared data PVC
+  const configDir = `${mountPath}/.code-server-config`;
+  const vscodeDataDir = `${mountPath}/.code-server-vscode`;
+
+  // Init container command: seed default config files to the PVC (first-run only).
+  // Once the user customises any file via the editor, pod restarts preserve their changes
+  // because the `[ -f ... ] ||` guard skips overwrite.
+  const initScript = `
+set -e
+mkdir -p "${configDir}" "${vscodeDataDir}/User"
+
+[ -f "${configDir}/config.yaml" ] || cat > "${configDir}/config.yaml" << 'CODECD'
+bind-addr: 0.0.0.0:8080
+auth: none
+disable-telemetry: true
+disable-update-check: true
+disable-workspace-trust: true
+ignore-last-opened: true
+disable-getting-started-override: true
+app-name: "Percussionist"
+CODECD
+
+[ -f "${vscodeDataDir}/User/settings.json" ] || cat > "${vscodeDataDir}/User/settings.json" << 'VSCTX'
+{
+  "workbench.colorTheme": "Default Dark+",
+  "editor.fontFamily": "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
+  "editor.fontLigatures": true,
+  "editor.fontSize": 14,
+  "editor.lineHeight": 24,
+  "editor.smoothScrolling": true,
+  "editor.cursorBlinking": "smooth",
+  "editor.cursorSmoothCaretAnimation": "on",
+  "editor.bracketPairColorization.enabled": true,
+  "editor.guides.bracketPairs": true,
+  "editor.tabSize": 2,
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1000,
+  "workbench.startupEditor": "none",
+  "workbench.sideBar.location": "left",
+  "window.titleBarStyle": "custom",
+  "window.menuBarVisibility": "toggle",
+  "terminal.integrated.fontSize": 13,
+  "terminal.integrated.fontFamily": "'JetBrains Mono', 'Fira Code', monospace",
+  "terminal.integrated.fontLigatures": true,
+  "terminal.integrated.cursorBlinking": true,
+  "extensions.autoUpdate": false,
+  "extensions.ignoreRecommendations": true,
+  "telemetry.telemetryLevel": "off",
+  "update.mode": "none",
+  "workbench.enableExperiments": false,
+  "files.exclude": {
+    "**/.git": false
+  }
+}
+VSCTX
+
+# git config — scoped to this project's code-server only, not shared with runner pods
+[ -f "${vscodeDataDir}/.gitconfig" ] || cat > "${vscodeDataDir}/.gitconfig" << 'GITCFG'
+[safe]
+	directory = *
+GITCFG
+`;
+
+  const initContainer: V1Container = {
+    name: 'code-server-init',
+    image,
+    command: ['/bin/sh', '-c', initScript],
+    volumeMounts: [{ name: 'data', mountPath }],
+    resources: {
+      requests: { cpu: '50m', memory: '64Mi' },
+      limits: { memory: '128Mi' },
+    },
+  };
+
+  const gitConfigEnv: V1EnvVar = {
+    name: 'GIT_CONFIG_GLOBAL',
+    value: `${vscodeDataDir}/.gitconfig`,
   };
 
   return {
@@ -109,11 +204,22 @@ export function renderCodeServerDeployment(project: Project): V1Deployment {
           labels,
         },
         spec: {
+          securityContext: {
+            fsGroup: 1000,
+          },
+          initContainers: [initContainer],
           containers: [
             {
               name: 'code-server',
               image,
-              args: ['--bind-addr', '0.0.0.0:8080', '--auth', 'none', mountPath],
+              args: [
+                '--config',
+                `${configDir}/config.yaml`,
+                '--user-data-dir',
+                vscodeDataDir,
+                mountPath,
+              ],
+              env: [gitConfigEnv],
               ports: [
                 {
                   containerPort: CODE_SERVER_PORT,
