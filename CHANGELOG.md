@@ -1,11 +1,20 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.204] - 2026-06-23
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Run code-server as root to fix PVC permission issues _(operator)_
 ## [v0.1.203] - 2026-06-23
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Deduplicate multi-line diff finding widgets with continuation bar _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.203
 ## [v0.1.202] - 2026-06-23
 
 ### <!-- 0 -->🚀 Features
