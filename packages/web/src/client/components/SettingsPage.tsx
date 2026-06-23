@@ -569,9 +569,6 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
     (runner.resources as Record<string, Record<string, string>> | undefined)?.limits?.memory ?? '',
   );
   const [runTTLDays, setRunTTLDays] = useState(String((spec.runTTLDays as number) ?? 7));
-  const [codeServerUrlTemplate, setCodeServerUrlTemplate] = useState(
-    (spec.codeServerUrlTemplate as string) ?? '',
-  );
 
   return (
     <Card>
@@ -656,26 +653,6 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
             </p>
           </div>
         </div>
-        <div className="border-t border-border pt-4">
-          <p className="text-sm font-medium mb-2">Code-server</p>
-          <div>
-            <label className="text-xs text-text-dim block mb-1">
-              URL template{' '}
-              <span className="font-normal">
-                — <code className="font-mono">{'{project}'}</code> is replaced with the project name
-              </span>
-            </label>
-            <Input
-              value={codeServerUrlTemplate}
-              onChange={(e) => setCodeServerUrlTemplate(e.target.value)}
-              placeholder="http://code-{project}.192.168.49.2.nip.io:30443"
-            />
-            <p className="text-xs text-text-dim mt-1">
-              When set, projects with code-server enabled show a link in the sidebar and board
-              header. Leave empty to hide links.
-            </p>
-          </div>
-        </div>
       </CardContent>
       <CardFooter className="sm:flex-row flex-col gap-2">
         <Button
@@ -699,7 +676,6 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
                 timeoutSeconds: parseInt(timeoutSeconds, 10) || undefined,
                 ...(Object.keys(resources).length > 0 ? { resources } : {}),
               },
-              codeServerUrlTemplate: codeServerUrlTemplate.trim() || undefined,
             });
           }}
           disabled={saving}

@@ -34,12 +34,12 @@ import { INGRESS_ANNOTATIONS, INGRESS_BASE_URL, INGRESS_CLASS } from './config.j
 // ---------------------------------------------------------------------------
 // Naming helpers
 
-export function codeServerDeploymentName(project: Project): string {
-  return `code-server-${project.metadata.name}`;
+export function ideDeploymentName(project: Project): string {
+  return `ide-${project.metadata.name}`;
 }
 
-export function codeServerServiceName(project: Project): string {
-  return `code-server-${project.metadata.name}`;
+export function ideServiceName(project: Project): string {
+  return `ide-${project.metadata.name}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,7 +72,7 @@ export function shouldReconcileCodeServer(project: Project): boolean {
  *   - .code-server-vscode/User/settings.json    — VS Code user settings
  *   - .code-server-vscode/.gitconfig            — git safe.directory (scoped to code-server)
  */
-export function renderCodeServerDeployment(project: Project): V1Deployment {
+export function renderIdeDeployment(project: Project): V1Deployment {
   const name = project.metadata.name ?? '';
   const ns = project.metadata.namespace ?? '';
   const uid = project.metadata.uid ?? '';
@@ -342,7 +342,7 @@ GITCFG
     apiVersion: 'apps/v1',
     kind: 'Deployment',
     metadata: {
-      name: codeServerDeploymentName(project),
+      name: ideDeploymentName(project),
       namespace: ns,
       labels,
       ownerReferences: [
@@ -425,24 +425,24 @@ GITCFG
 // ---------------------------------------------------------------------------
 // Ingress
 
-export function codeServerIngressName(project: Project): string {
-  return `code-server-${project.metadata.name}`;
+export function ideIngressName(project: Project): string {
+  return `ide-${project.metadata.name}`;
 }
 
-export function codeServerURLFor(project: Project): string {
+export function ideURLFor(project: Project): string {
   const url = new URL(INGRESS_BASE_URL);
-  return `http://code-server-${project.metadata.name}.${url.host}`;
+  return `http://ide-${project.metadata.name}.${url.host}`;
 }
 
 /**
  * Renders an Ingress for code-server when INGRESS_BASE_URL is configured.
  */
-export function renderCodeServerIngress(project: Project): V1Ingress {
+export function renderIdeIngress(project: Project): V1Ingress {
   const name = project.metadata.name ?? '';
   const ns = project.metadata.namespace ?? '';
   const uid = project.metadata.uid ?? '';
   const host = new URL(INGRESS_BASE_URL).hostname;
-  const csHost = `code-server-${name}.${host}`;
+  const csHost = `ide-${name}.${host}`;
 
   const labels = {
     [LABELS.managedBy]: MANAGED_BY,
@@ -454,7 +454,7 @@ export function renderCodeServerIngress(project: Project): V1Ingress {
     apiVersion: 'networking.k8s.io/v1',
     kind: 'Ingress',
     metadata: {
-      name: codeServerIngressName(project),
+      name: ideIngressName(project),
       namespace: ns,
       labels,
       annotations: { ...INGRESS_ANNOTATIONS },
@@ -480,7 +480,7 @@ export function renderCodeServerIngress(project: Project): V1Ingress {
                 pathType: 'Prefix',
                 backend: {
                   service: {
-                    name: codeServerServiceName(project),
+                    name: ideServiceName(project),
                     port: { number: CODE_SERVER_PORT },
                   },
                 },
@@ -501,7 +501,7 @@ export function renderCodeServerIngress(project: Project): V1Ingress {
 /**
  * Renders a ClusterIP Service for code-server.
  */
-export function renderCodeServerService(project: Project): V1Service {
+export function renderIdeService(project: Project): V1Service {
   const name = project.metadata.name ?? '';
   const ns = project.metadata.namespace ?? '';
   const uid = project.metadata.uid ?? '';
@@ -516,7 +516,7 @@ export function renderCodeServerService(project: Project): V1Service {
     apiVersion: 'v1',
     kind: 'Service',
     metadata: {
-      name: codeServerServiceName(project),
+      name: ideServiceName(project),
       namespace: ns,
       labels,
       ownerReferences: [

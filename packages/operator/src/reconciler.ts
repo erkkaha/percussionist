@@ -27,13 +27,13 @@ import { makeNodeApiClient } from '@percussionist/kube';
 import { resolveRunnerSpec } from './adapters/opencode-config.js';
 import { resolveAgents } from './agent-resolver.js';
 import {
-  codeServerDeploymentName,
-  codeServerIngressName,
-  codeServerServiceName,
-  codeServerURLFor,
-  renderCodeServerDeployment,
-  renderCodeServerIngress,
-  renderCodeServerService,
+  ideDeploymentName,
+  ideIngressName,
+  ideServiceName,
+  ideURLFor,
+  renderIdeDeployment,
+  renderIdeIngress,
+  renderIdeService,
   shouldReconcileCodeServer,
 } from './code-server.js';
 import { INGRESS_BASE_URL, NAMESPACE, SELF_NAMESPACE } from './config.js';
@@ -807,7 +807,7 @@ export async function reconcileProject(project: Project): Promise<void> {
     }
 
     // Upsert Deployment
-    const deployName = codeServerDeploymentName(project);
+    const deployName = ideDeploymentName(project);
     try {
       await apps.readNamespacedDeployment({ name: deployName, namespace: ns });
       // Exists — patch it via SSA
@@ -815,7 +815,7 @@ export async function reconcileProject(project: Project): Promise<void> {
         {
           name: deployName,
           namespace: ns,
-          body: renderCodeServerDeployment(project),
+          body: renderIdeDeployment(project),
           fieldManager: 'percussionist-operator',
           force: true,
         },
@@ -826,7 +826,7 @@ export async function reconcileProject(project: Project): Promise<void> {
       if (isNotFound(e)) {
         await apps.createNamespacedDeployment({
           namespace: ns,
-          body: renderCodeServerDeployment(project),
+          body: renderIdeDeployment(project),
         });
         log(`${logPrefix} created deployment ${deployName}`);
       } else {
@@ -836,7 +836,7 @@ export async function reconcileProject(project: Project): Promise<void> {
     }
 
     // Upsert Service
-    const svcName = codeServerServiceName(project);
+    const svcName = ideServiceName(project);
     try {
       await core.readNamespacedService({ name: svcName, namespace: ns });
       // Exists — patch it via SSA
@@ -844,7 +844,7 @@ export async function reconcileProject(project: Project): Promise<void> {
         {
           name: svcName,
           namespace: ns,
-          body: renderCodeServerService(project),
+          body: renderIdeService(project),
           fieldManager: 'percussionist-operator',
           force: true,
         },
@@ -855,7 +855,7 @@ export async function reconcileProject(project: Project): Promise<void> {
       if (isNotFound(e)) {
         await core.createNamespacedService({
           namespace: ns,
-          body: renderCodeServerService(project),
+          body: renderIdeService(project),
         });
         log(`${logPrefix} created service ${svcName}`);
       } else {
@@ -865,7 +865,7 @@ export async function reconcileProject(project: Project): Promise<void> {
     }
 
     // Upsert Ingress (only when INGRESS_BASE_URL is set).
-    const ingressName = codeServerIngressName(project);
+    const ingressName = ideIngressName(project);
     if (INGRESS_BASE_URL) {
       try {
         await networking.readNamespacedIngress({ name: ingressName, namespace: ns });
@@ -875,9 +875,9 @@ export async function reconcileProject(project: Project): Promise<void> {
         if (isNotFound(e)) {
           await networking.createNamespacedIngress({
             namespace: ns,
-            body: renderCodeServerIngress(project),
+            body: renderIdeIngress(project),
           });
-          log(`${logPrefix} created ingress ${ingressName} → ${codeServerURLFor(project)}`);
+          log(`${logPrefix} created ingress ${ingressName} → ${ideURLFor(project)}`);
         } else {
           err(`${logPrefix} ingress error:`, (e as Error).message);
         }
@@ -984,7 +984,7 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
   const logPrefix = `[project/${ns}/${name}]`;
 
   // Delete Service (ignore 404)
-  const svcName = codeServerServiceName(project);
+  const svcName = ideServiceName(project);
   try {
     await core.deleteNamespacedService({ name: svcName, namespace: ns });
     log(`${logPrefix} deleted code-server service ${svcName}`);
@@ -995,7 +995,7 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
   }
 
   // Delete Deployment (ignore 404)
-  const deployName = codeServerDeploymentName(project);
+  const deployName = ideDeploymentName(project);
   try {
     await apps.deleteNamespacedDeployment({ name: deployName, namespace: ns });
     log(`${logPrefix} deleted code-server deployment ${deployName}`);
@@ -1006,7 +1006,7 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
   }
 
   // Delete Ingress (ignore 404)
-  const ingName = codeServerIngressName(project);
+  const ingName = ideIngressName(project);
   try {
     await networking.deleteNamespacedIngress({ name: ingName, namespace: ns });
     log(`${logPrefix} deleted code-server ingress ${ingName}`);

@@ -43,18 +43,9 @@ export { RunPhase, TERMINAL_PHASES } from '@percussionist/api';
 
 import type { Project as _Project, Task as _Task } from '@percussionist/api';
 
-/** GET /api/projects/:name augments the CR with inject file contents and codeServerUrl for UI pre-population. */
+/** GET /api/projects/:name augments the CR with inject file contents for UI pre-population. */
 export interface ProjectDetail extends _Project {
   injectFileContents?: Array<{ filename: string; content: string }>;
-  codeServerUrl?: string;
-}
-
-/**
- * GET /api/projects and GET /api/projects/:name may include a computed
- * codeServerUrl when ClusterSettings.spec.codeServerUrlTemplate is configured.
- */
-export interface ProjectWithCodeServerUrl extends _Project {
-  codeServerUrl?: string;
 }
 
 /** Tasks in board responses may include computed child progress for awaiting-children phase. */

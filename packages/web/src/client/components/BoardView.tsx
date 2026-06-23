@@ -11,6 +11,7 @@ import {
   requestChangesTask,
   retryEscalatedTask,
 } from '../lib/api';
+import { deriveIdeUrl } from '../lib/code-server-url';
 import type { ManagerMetrics, Task } from '../lib/types';
 import { AddTaskForm } from './board/AddTaskForm';
 import { BoardHeader } from './board/BoardHeader';
@@ -48,6 +49,7 @@ export default function BoardView() {
   const [mobileDefaultColumn, setMobileDefaultColumn] = useState('backlog');
   const [showFindings, setShowFindings] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const codeServerUrl = projectName ? deriveIdeUrl(projectName) : undefined;
   const selectedTaskName = searchParams.get('task') ?? null;
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -166,7 +168,7 @@ export default function BoardView() {
         col={selectedCol}
         projectName={projectName}
         approvals={approvals}
-        codeServerUrl={data?.codeServerUrl}
+        codeServerUrl={codeServerUrl}
         onDeleted={() => {
           setSearchParams({}, { replace: true });
           setSheetOpen(false);
@@ -192,7 +194,7 @@ export default function BoardView() {
           onToggleFindings={() => setShowFindings((f) => !f)}
           showFindings={showFindings}
           authWarning={authWarning}
-          codeServerUrl={data.codeServerUrl}
+          codeServerUrl={codeServerUrl}
         />
       </div>
 

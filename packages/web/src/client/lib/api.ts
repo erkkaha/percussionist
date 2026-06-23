@@ -17,7 +17,6 @@ import type {
   Project,
   ProjectDetail,
   ProjectMemory,
-  ProjectWithCodeServerUrl,
   Run,
   SessionResponse,
   Task,
@@ -151,7 +150,7 @@ export async function deleteRun(name: string): Promise<void> {
 // ---------------------------------------------------------------------------
 // Projects
 
-export async function fetchProjects(): Promise<ProjectWithCodeServerUrl[]> {
+export async function fetchProjects(): Promise<Project[]> {
   const data = await fetchJSON<{ items: ProjectWithCodeServerUrl[] }>('/projects');
   return data.items;
 }
@@ -272,7 +271,6 @@ export async function fetchBoard(project: string): Promise<{
   approvals?: Record<string, { approved: boolean; requestChanges: boolean }>;
   status: BoardStatus;
   authWarning?: string;
-  codeServerUrl?: string;
 }> {
   return fetchJSON(`/projects/${encodeURIComponent(project)}/board`);
 }

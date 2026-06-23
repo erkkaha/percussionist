@@ -15,6 +15,7 @@ import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useProjects } from '../hooks/useProjects';
 import { useProjectsEvents } from '../hooks/useProjectsEvents';
 import { fetchUpdateStatus } from '../lib/api';
+import { deriveIdeUrl } from '../lib/code-server-url';
 import { UsageBar } from './UsageBar';
 import {
   Sidebar,
@@ -168,7 +169,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                         <span>{p.spec.displayName || name}</span>
                       </NavLink>
                     </SidebarMenuButton>
-                    {p.codeServerUrl && (
+                    {deriveIdeUrl(name) && (
                       <Link
                         to={`/projects/${encodeURIComponent(name)}/code-server`}
                         onClick={(e) => e.stopPropagation()}
