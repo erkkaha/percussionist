@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
   BarChart3,
+  ExternalLink,
   Folder,
   MessageSquare,
   Plus,
@@ -153,16 +154,33 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
               const url = `/projects/${encodeURIComponent(name)}/board`;
               return (
                 <SidebarMenuItem key={name}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={location.pathname.startsWith(`/projects/${encodeURIComponent(name)}`)}
-                    tooltip={p.spec.displayName || name}
-                  >
-                    <NavLink to={url} onClick={handleNavClick}>
-                      <Folder />
-                      <span>{p.spec.displayName || name}</span>
-                    </NavLink>
-                  </SidebarMenuButton>
+                  <div className="flex items-center">
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname.startsWith(
+                        `/projects/${encodeURIComponent(name)}`,
+                      )}
+                      tooltip={p.spec.displayName || name}
+                      className="flex-1"
+                    >
+                      <NavLink to={url} onClick={handleNavClick}>
+                        <Folder />
+                        <span>{p.spec.displayName || name}</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                    {p.codeServerUrl && (
+                      <a
+                        href={p.codeServerUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title="Open code-server workspace"
+                        className="flex items-center justify-center w-8 h-8 shrink-0 text-text-dim hover:text-text transition-colors group-data-[collapsible=icon]:hidden"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    )}
+                  </div>
                 </SidebarMenuItem>
               );
             })

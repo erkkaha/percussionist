@@ -28,12 +28,15 @@ import { resolveRunnerSpec } from './adapters/opencode-config.js';
 import { resolveAgents } from './agent-resolver.js';
 import {
   codeServerDeploymentName,
+  codeServerIngressName,
   codeServerServiceName,
+  codeServerURLFor,
   renderCodeServerDeployment,
+  renderCodeServerIngress,
   renderCodeServerService,
   shouldReconcileCodeServer,
 } from './code-server.js';
-import { NAMESPACE, SELF_NAMESPACE } from './config.js';
+import { INGRESS_BASE_URL, NAMESPACE, SELF_NAMESPACE } from './config.js';
 import {
   memoryServiceDeploymentName,
   memoryServiceServiceName,
@@ -861,6 +864,26 @@ export async function reconcileProject(project: Project): Promise<void> {
       }
     }
 
+    // Upsert Ingress (only when INGRESS_BASE_URL is set).
+    const ingressName = codeServerIngressName(project);
+    if (INGRESS_BASE_URL) {
+      try {
+        await networking.readNamespacedIngress({ name: ingressName, namespace: ns });
+        // Exists — skip (SSA would reset infra-managed annotations).
+        // TODO: reconcile spec.rules on drift (INGRESS_CLASS, host pattern, port).
+      } catch (e) {
+        if (isNotFound(e)) {
+          await networking.createNamespacedIngress({
+            namespace: ns,
+            body: renderCodeServerIngress(project),
+          });
+          log(`${logPrefix} created ingress ${ingressName} → ${codeServerURLFor(project)}`);
+        } else {
+          err(`${logPrefix} ingress error:`, (e as Error).message);
+        }
+      }
+    }
+
     log(`${logPrefix} code-server resources reconciled`);
   } else {
     // codeServer disabled or no source — clean up if exists
@@ -979,6 +1002,17 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
   } catch (e) {
     if (!isNotFound(e)) {
       err(`${logPrefix} failed to delete deployment:`, (e as Error).message);
+    }
+  }
+
+  // Delete Ingress (ignore 404)
+  const ingName = codeServerIngressName(project);
+  try {
+    await networking.deleteNamespacedIngress({ name: ingName, namespace: ns });
+    log(`${logPrefix} deleted code-server ingress ${ingName}`);
+  } catch (e) {
+    if (!isNotFound(e)) {
+      err(`${logPrefix} failed to delete ingress:`, (e as Error).message);
     }
   }
 }

@@ -191,6 +191,7 @@ export default function BoardView() {
           onToggleFindings={() => setShowFindings((f) => !f)}
           showFindings={showFindings}
           authWarning={authWarning}
+          codeServerUrl={data.codeServerUrl}
         />
       </div>
 

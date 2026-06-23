@@ -1,7 +1,7 @@
-// BoardHeader.tsx — project info, metrics badge, and Add Task button.
+// BoardHeader.tsx — project info, metrics badge, code-server, findings, and Add Task button.
 
 import type { Finding } from '@percussionist/api';
-import { Bug } from 'lucide-react';
+import { Bug, ExternalLink } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { ManagerMetrics } from '../../lib/types';
 import { Button } from '../ui/button';
@@ -45,6 +45,7 @@ interface BoardHeaderProps {
   onToggleFindings: () => void;
   showFindings: boolean;
   authWarning?: string;
+  codeServerUrl?: string;
 }
 
 export function BoardHeader({
@@ -60,6 +61,7 @@ export function BoardHeader({
   onToggleFindings,
   showFindings,
   authWarning,
+  codeServerUrl,
 }: BoardHeaderProps) {
   return (
     <div className="flex items-start justify-between gap-4 shrink-0">
@@ -122,6 +124,18 @@ export function BoardHeader({
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
+        {codeServerUrl && (
+          <a
+            href={codeServerUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs text-text-dim hover:text-text transition-colors px-2 py-1 rounded-md hover:bg-accent"
+            title="Open code-server workspace"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Code
+          </a>
+        )}
         <Button
           onClick={onToggleFindings}
           variant={showFindings ? 'default' : 'secondary'}

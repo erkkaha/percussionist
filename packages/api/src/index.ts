@@ -29,6 +29,7 @@ export const KIND_CLUSTER_AGENT = 'ClusterAgent';
 export const PLURAL_CLUSTER_AGENT = 'clusteragents';
 export const KIND_CLUSTER_SETTINGS = 'ClusterSettings';
 export const PLURAL_CLUSTER_SETTINGS = 'clustersettings';
+export const DEFAULT_CLUSTER_SETTINGS_NAME = 'default';
 
 // ---------------------------------------------------------------------------
 // Runner adapter interface
@@ -422,6 +423,11 @@ export const ClusterSettingsSpecSchema = z.object({
       configMapKey: z.string().optional(),
     })
     .optional(),
+
+  // Template for code-server URLs. {project} is replaced with the project name.
+  // When set, projects with codeServer.enabled show a link in the sidebar and
+  // board header. Example: http://code-{project}.192.168.49.2.nip.io:30443
+  codeServerUrlTemplate: z.string().optional(),
 });
 
 export type ClusterSettingsSpec = z.infer<typeof ClusterSettingsSpecSchema>;

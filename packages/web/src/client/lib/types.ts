@@ -48,6 +48,14 @@ export interface ProjectDetail extends _Project {
   injectFileContents?: Array<{ filename: string; content: string }>;
 }
 
+/**
+ * GET /api/projects and GET /api/projects/:name may include a computed
+ * codeServerUrl when ClusterSettings.spec.codeServerUrlTemplate is configured.
+ */
+export interface ProjectWithCodeServerUrl extends _Project {
+  codeServerUrl?: string;
+}
+
 /** Tasks in board responses may include computed child progress for awaiting-children phase. */
 export interface Task extends _Task {
   displayRefs?: {

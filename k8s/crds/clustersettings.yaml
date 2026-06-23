@@ -131,5 +131,8 @@ spec:
                   minimum: 1
                   default: 7
                   description: How many days to keep completed Run CRs before automatic cleanup.
+                codeServerUrlTemplate:
+                  type: string
+                  description: Template for code-server URLs. {project} is replaced with the project name. When set, projects with codeServer.enabled show a link in the sidebar and board header.
           required:
             - spec

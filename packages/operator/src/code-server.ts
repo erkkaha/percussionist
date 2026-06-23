@@ -1,12 +1,19 @@
-// code-server.ts — Renders Deployment and Service for per-project code-server instances.
+// code-server.ts — Renders Deployment, Service, and Ingress for per-project code-server instances.
 //
 // Code-server provides interactive VS Code access to the project's data PVC,
 // allowing operators to browse worktrees, git mirrors, and caches.
 //
-// Ingress/exposure is infrastructure-managed (not part of core Percussionist).
-// Access via kubectl port-forward on vanilla K8s.
+// URL mechanism:
+//   - The operator creates an Ingress (hostname only — K8s Ingress rules do not
+//     include ports) and a ClusterIP Service (port 8080) for internal routing when
+//     PERCUSSIONIST_INGRESS_BASE_URL is configured.
+//   - The web UI computes external links using ClusterSettings.spec.codeServerUrlTemplate
+//     (template with {project}, may include port). This template is authoritative
+//     for the sidebar and board header links shown to users.
+//   - Both can coexist: the Ingress provides the actual route, the template
+//     tells the UI where the route is reachable from the browser.
 
-import type { V1Deployment, V1Service } from '@kubernetes/client-node';
+import type { V1Deployment, V1Ingress, V1Service } from '@kubernetes/client-node';
 import {
   API_GROUP_VERSION,
   CODE_SERVER_DEFAULT_IMAGE,
@@ -16,6 +23,7 @@ import {
   MANAGED_BY,
   type Project,
 } from '@percussionist/api';
+import { INGRESS_ANNOTATIONS, INGRESS_BASE_URL, INGRESS_CLASS } from './config.js';
 
 // ---------------------------------------------------------------------------
 // Naming helpers
@@ -144,6 +152,82 @@ export function renderCodeServerDeployment(project: Project): V1Deployment {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Ingress
+
+export function codeServerIngressName(project: Project): string {
+  return `code-server-${project.metadata.name}`;
+}
+
+export function codeServerURLFor(project: Project): string {
+  const url = new URL(INGRESS_BASE_URL);
+  return `http://code-server-${project.metadata.name}.${url.host}`;
+}
+
+/**
+ * Renders an Ingress for code-server when INGRESS_BASE_URL is configured.
+ */
+export function renderCodeServerIngress(project: Project): V1Ingress {
+  const name = project.metadata.name ?? '';
+  const ns = project.metadata.namespace ?? '';
+  const uid = project.metadata.uid ?? '';
+  const host = new URL(INGRESS_BASE_URL).hostname;
+  const csHost = `code-server-${name}.${host}`;
+
+  const labels = {
+    [LABELS.managedBy]: MANAGED_BY,
+    [LABELS.projectName]: name,
+    'percussionist.dev/component': 'code-server',
+  };
+
+  const ingress: V1Ingress = {
+    apiVersion: 'networking.k8s.io/v1',
+    kind: 'Ingress',
+    metadata: {
+      name: codeServerIngressName(project),
+      namespace: ns,
+      labels,
+      annotations: { ...INGRESS_ANNOTATIONS },
+      ownerReferences: [
+        {
+          apiVersion: API_GROUP_VERSION,
+          kind: KIND_PROJECT,
+          name,
+          uid,
+          controller: true,
+          blockOwnerDeletion: true,
+        },
+      ],
+    },
+    spec: {
+      rules: [
+        {
+          host: csHost,
+          http: {
+            paths: [
+              {
+                path: '/',
+                pathType: 'Prefix',
+                backend: {
+                  service: {
+                    name: codeServerServiceName(project),
+                    port: { number: CODE_SERVER_PORT },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  };
+  if (INGRESS_CLASS && ingress.spec) ingress.spec.ingressClassName = INGRESS_CLASS;
+  return ingress;
+}
+
+// ---------------------------------------------------------------------------
+// Service
 
 /**
  * Renders a ClusterIP Service for code-server.

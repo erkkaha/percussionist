@@ -23,6 +23,7 @@ import { validateModelAuth } from '@percussionist/kube';
 import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
 import { getDb, taskEvents } from '../db.js';
+
 import {
   buildTask,
   createTask,
@@ -36,6 +37,7 @@ import {
   patchTaskStatus,
   validateAgentTaskCapability,
 } from '../kube.js';
+import { codeServerUrlFor, fetchCodeServerUrlTemplate } from '../lib/code-server.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
 const board = new Hono();
@@ -106,7 +108,11 @@ export async function appendTaskEvent(
 board.get('/:project/board', auth(), async (c) => {
   const name = c.req.param('project');
   try {
-    const [project, tasks] = await Promise.all([getProject(name), listTasks(name)]);
+    const [project, tasks, codeServerTemplate] = await Promise.all([
+      getProject(name),
+      listTasks(name),
+      fetchCodeServerUrlTemplate(),
+    ]);
     const tasksByName = new Map(tasks.map((task) => [task.metadata.name, task]));
     const titleCounts = new Map<string, number>();
     for (const task of tasks) {
@@ -204,6 +210,7 @@ board.get('/:project/board', auth(), async (c) => {
       approvals,
       status: project.status?.board ?? {},
       authWarning: authResult.ok ? undefined : authResult.error,
+      codeServerUrl: codeServerUrlFor(project, codeServerTemplate),
     });
   } catch (e) {
     const ke = e as KubeError;

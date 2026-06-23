@@ -1,4 +1,4 @@
-import { ClusterSettingsSpecSchema } from '@percussionist/api';
+import { ClusterSettingsSpecSchema, DEFAULT_CLUSTER_SETTINGS_NAME } from '@percussionist/api';
 import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
 import { core, getClusterSettings, NAMESPACE, updateClusterSettings } from '../kube.js';
@@ -42,12 +42,12 @@ async function deleteSecret(name: string): Promise<void> {
 
 settings.get('/', auth(), async (c) => {
   try {
-    const cs = await getClusterSettings('default');
+    const cs = await getClusterSettings(DEFAULT_CLUSTER_SETTINGS_NAME);
     return c.json(cs);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number };
     if ((anyE as { statusCode?: number }).statusCode === 404) {
-      return c.json({ metadata: { name: 'default' }, spec: {} }, 200);
+      return c.json({ metadata: { name: DEFAULT_CLUSTER_SETTINGS_NAME }, spec: {} }, 200);
     }
     return c.json({ error: String(e) }, 500);
   }
@@ -69,7 +69,7 @@ settings.put('/', adminAuth(), async (c) => {
   }
 
   try {
-    const updated = await updateClusterSettings('default', parsed.data);
+    const updated = await updateClusterSettings(DEFAULT_CLUSTER_SETTINGS_NAME, parsed.data);
     return c.json(updated);
   } catch (e: unknown) {
     return c.json({ error: String(e) }, 500);

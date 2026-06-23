@@ -16,6 +16,7 @@ import {
   NAMESPACE,
   updateProject,
 } from '../kube.js';
+import { codeServerUrlFor, fetchCodeServerUrlTemplate } from '../lib/code-server.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
 const projects = new Hono();
@@ -142,10 +143,17 @@ async function readInjectFileContents(
 // GET /api/projects
 projects.get('/', auth(), async (c) => {
   try {
-    const items = await listProjects();
+    const [items, codeServerTemplate] = await Promise.all([
+      listProjects(),
+      fetchCodeServerUrlTemplate(),
+    ]);
     const enriched = items.map((p) => {
       const authResult = validateModelAuth(p.spec.model, p.spec.secrets);
-      return { ...p, authWarning: authResult.ok ? undefined : authResult.error };
+      return {
+        ...p,
+        authWarning: authResult.ok ? undefined : authResult.error,
+        codeServerUrl: codeServerUrlFor(p, codeServerTemplate),
+      };
     });
     return c.json({ items: enriched });
   } catch (e: unknown) {
@@ -219,7 +227,10 @@ projects.get('/:name/config', auth(), async (c) => {
 projects.get('/:name', auth(), async (c) => {
   const name = c.req.param('name');
   try {
-    const project = await getProject(name);
+    const [project, codeServerTemplate] = await Promise.all([
+      getProject(name),
+      fetchCodeServerUrlTemplate(),
+    ]);
     // Augment response with inject file contents so the UI can pre-populate.
     const injectFileContents = project.spec.injectFiles?.length
       ? await readInjectFileContents(project.spec.injectFiles)
@@ -230,6 +241,7 @@ projects.get('/:name', auth(), async (c) => {
       ...project,
       injectFileContents,
       authWarning: authResult.ok ? undefined : authResult.error,
+      codeServerUrl: codeServerUrlFor(project, codeServerTemplate),
     });
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
