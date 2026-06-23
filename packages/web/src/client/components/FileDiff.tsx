@@ -93,17 +93,18 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
     );
   }, [findings, displayPath]);
 
-  const { markers, widgets, unmappedFindings } = useMemo(() => {
+  const { markers, widgets, unmappedFindings, continuationMarkers } = useMemo(() => {
     const markers = new Map<
       string,
       { severity: DiffFindingSeverity; titles: string[]; findings: TaskDiffFinding[] }
     >();
+    const continuationMarkers = new Map<string, { severity: DiffFindingSeverity }>();
     const widgets: Record<string, React.ReactNode> = {};
     const unmapped: TaskDiffFinding[] = [];
     const seenChangeKeys = new Map<string, boolean>();
 
     if (!fileData) {
-      return { markers, widgets, unmappedFindings: unmapped };
+      return { markers, widgets, unmappedFindings: unmapped, continuationMarkers };
     }
 
     for (const finding of fileFindings) {
@@ -117,6 +118,7 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
         const side = anchor.side;
         const start = anchor.line;
         const end = anchor.endLine ?? start;
+        let markerPlacedForAnchor = false;
 
         for (let line = start; line <= end; line++) {
           const change =
@@ -129,22 +131,35 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
             const changeKey = getChangeKey(change);
             const gutterKey = `${side}:${changeKey}`;
 
-            // Track unique change keys for widget rendering (avoid duplicates)
             if (!seenChangeKeys.has(changeKey)) {
               seenChangeKeys.set(changeKey, true);
-              widgets[changeKey] = null; // placeholder
+              widgets[changeKey] = null;
             }
 
-            const existing = markers.get(gutterKey);
-            if (!existing || SEVERITY_RANK[finding.severity] > SEVERITY_RANK[existing.severity]) {
-              markers.set(gutterKey, {
-                severity: finding.severity,
-                titles: existing ? [finding.title, ...existing.titles] : [finding.title],
-                findings: existing ? [finding, ...existing.findings] : [finding],
-              });
+            if (!markerPlacedForAnchor) {
+              markerPlacedForAnchor = true;
+              const existing = markers.get(gutterKey);
+              if (!existing || SEVERITY_RANK[finding.severity] > SEVERITY_RANK[existing.severity]) {
+                markers.set(gutterKey, {
+                  severity: finding.severity,
+                  titles: existing ? [finding.title, ...existing.titles] : [finding.title],
+                  findings: existing ? [finding, ...existing.findings] : [finding],
+                });
+              } else {
+                existing.titles.push(finding.title);
+                existing.findings.push(finding);
+              }
             } else {
-              existing.titles.push(finding.title);
-              existing.findings.push(finding);
+              const existingPrimary = markers.get(gutterKey);
+              if (!existingPrimary) {
+                const existingCont = continuationMarkers.get(gutterKey);
+                if (
+                  !existingCont ||
+                  SEVERITY_RANK[finding.severity] > SEVERITY_RANK[existingCont.severity]
+                ) {
+                  continuationMarkers.set(gutterKey, { severity: finding.severity });
+                }
+              }
             }
           }
         }
@@ -166,22 +181,37 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
 
       widgets[changeKey] = (
         <div className="space-y-1 py-1">
-          {allFindings.map((f) => (
-            <div key={f.id} className="flex items-start text-xs leading-relaxed">
-              <div className="text-right shrink-0 pr-[1ch]" style={{ width: '14ch' }}>
-                <SeverityBadge severity={f.severity} />
+          {allFindings.map((f) => {
+            const fileAnchors = f.anchors.filter(
+              (a) => normalizeAnchorPath(a.path) === normalizeAnchorPath(displayPath),
+            );
+            const rangeStr = fileAnchors
+              .filter((a) => a.endLine != null && a.endLine > a.line)
+              .map((a) => `L${a.line}-${a.endLine}`)
+              .join(', ');
+
+            return (
+              <div key={f.id} className="flex items-start text-xs leading-relaxed">
+                <div className="text-right shrink-0 pr-[1ch]" style={{ width: '14ch' }}>
+                  <SeverityBadge severity={f.severity} />
+                </div>
+                <div className="min-w-0 flex-1 pl-[.5em]">
+                  <span className="font-medium text-text">
+                    {f.title}
+                    {rangeStr && (
+                      <span className="text-text-dim ml-1.5 font-normal">{rangeStr}</span>
+                    )}
+                  </span>
+                  <p className="text-text-dim mt-0.5">{f.comment}</p>
+                </div>
               </div>
-              <div className="min-w-0 flex-1 pl-[.5em]">
-                <span className="font-medium text-text">{f.title}</span>
-                <p className="text-text-dim mt-0.5">{f.comment}</p>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       );
     }
 
-    return { markers, widgets, unmappedFindings: unmapped };
+    return { markers, widgets, unmappedFindings: unmapped, continuationMarkers };
   }, [fileData, fileFindings, displayPath]);
 
   const visibleWidgets = useMemo(() => {
@@ -203,6 +233,7 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
     const changeKey = getChangeKey(change as ChangeData);
     const key = `${side}:${changeKey}`;
     const marker = markers.get(key);
+    const continuation = continuationMarkers.get(key);
     const hidden = hiddenWidgets.has(changeKey);
 
     return (
@@ -214,6 +245,12 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
             className={`inline-block rounded-full cursor-pointer ${SEVERITY_DOT_CLASS[marker.severity]} ${hidden ? 'opacity-30' : ''}`}
             style={{ width: 6, height: 6 }}
             title={`${hidden ? 'Show' : 'Hide'} finding: ${marker.titles.join('\n')}`}
+          />
+        )}
+        {!marker && continuation && (
+          <span
+            className={`inline-block shrink-0 ${SEVERITY_BG_CLASS[continuation.severity]} ${hidden ? 'opacity-30' : ''}`}
+            style={{ width: 3, alignSelf: 'stretch', minHeight: '1.2em', borderRadius: 1 }}
           />
         )}
         {renderDefault()}
