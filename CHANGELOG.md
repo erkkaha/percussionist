@@ -1,6 +1,17 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.201] - 2026-06-23
+
+### <!-- 0 -->🚀 Features
+
+- Code-server sidebar links with settings UI _(web,operator)_
+- Show orphan findings outside the diff with HEAD context _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Move manager chat inside SidebarInset so top bar spans full width _(web)_
+- Add git cleanliness gate to complete_run with force escape hatch _(dispatcher)_
 ## [v0.1.200] - 2026-06-23
 
 ### <!-- 0 -->🚀 Features
@@ -19,6 +30,7 @@ All notable changes to Percussionist are documented here.
 
 - Update opencode runner to version 1.17.9
 - Drop native tailscale support
+- Release v0.1.200
 ## [v0.1.199] - 2026-06-22
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
