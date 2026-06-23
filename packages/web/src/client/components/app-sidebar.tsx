@@ -33,6 +33,7 @@ const topNavItems = [
 
 const bottomNavItems = [
   { title: 'Settings', url: '/settings', icon: Settings },
+  { title: 'Sessions', url: '/sessions', icon: MessageSquare },
   { title: 'Stats', url: '/stats', icon: TrendingUp },
   { title: 'Metrics', url: '/metrics', icon: BarChart3 },
 ];
@@ -179,7 +180,11 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
             <SidebarMenuItem key={item.title}>
               <SidebarMenuButton
                 asChild
-                isActive={location.pathname === item.url}
+                isActive={
+                  item.url === '/sessions'
+                    ? location.pathname.startsWith('/sessions')
+                    : location.pathname === item.url
+                }
                 tooltip={item.title}
               >
                 <NavLink to={item.url} end onClick={handleNavClick}>
@@ -192,18 +197,6 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
               </SidebarMenuButton>
             </SidebarMenuItem>
           ))}
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              asChild
-              isActive={location.pathname.startsWith('/sessions')}
-              tooltip="Sessions"
-            >
-              <NavLink to="/sessions" onClick={handleNavClick}>
-                <MessageSquare />
-                <span>Sessions</span>
-              </NavLink>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarContent>
       <SidebarFooter>

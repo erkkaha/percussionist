@@ -47,22 +47,24 @@ export default function Layout({
   return (
     <SidebarProvider>
       <AppSidebar playing={hasInProgress} managerAvailable={managerAvailable} />
-      <SidebarInset className="transition-all duration-300 ease-in-out">
+      <SidebarInset className="transition-all duration-300 ease-in-out max-h-svh overflow-hidden">
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-surface-raised px-4">
           <div className="flex items-center gap-2">
             <SidebarTrigger className="-ml-1 data-[state=open]:rotate-180" />
           </div>
           <NotificationBell />
         </header>
-        <main className="flex-1 min-w-0 overflow-x-hidden p-6">
-          <Outlet />
+        <main className="flex flex-1 min-h-0 min-w-0">
+          <div className="flex-1 min-w-0 overflow-y-auto p-6">
+            <Outlet />
+          </div>
+          <AgentChatPanel
+            open={chatOpen ?? false}
+            onOpenChange={onChatOpenChange}
+            onChatReady={onChatReady}
+          />
         </main>
       </SidebarInset>
-      <AgentChatPanel
-        open={chatOpen ?? false}
-        onOpenChange={onChatOpenChange}
-        onChatReady={onChatReady}
-      />
       <UsageLockOverlay />
     </SidebarProvider>
   );

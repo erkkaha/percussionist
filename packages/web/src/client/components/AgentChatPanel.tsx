@@ -365,7 +365,7 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
 
       {open && (
         <div
-          className={`${isMobile ? 'fixed inset-0 z-[60] flex flex-col bg-background' : 'w-96 flex-shrink-0 border-l border-border flex flex-col bg-background max-h-screen sticky top-0'}`}
+          className={`${isMobile ? 'fixed inset-0 z-[60] flex flex-col bg-background' : 'w-96 flex-shrink-0 border-l border-border flex flex-col bg-background h-full'}`}
         >
           {/* Header */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-surface-raised">
