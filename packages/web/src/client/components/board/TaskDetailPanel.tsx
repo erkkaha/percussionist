@@ -42,6 +42,7 @@ import type { DiffFindingSort } from '../../lib/diff-findings';
 import {
   countBySeverity,
   DIFF_FINDING_SEVERITIES,
+  normalizeAnchorPath,
   SEVERITY_BG_CLASS,
   SEVERITY_DOT_CLASS,
   SEVERITY_LABEL,
@@ -57,6 +58,7 @@ import type {
 } from '../../lib/types';
 import { CodeBlock } from '../CodeBlock';
 import { FileDiff } from '../FileDiff';
+import { OrphanFindings } from '../OrphanFindings';
 import StatusBadge from '../StatusBadge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Switch } from '../ui/switch';
@@ -333,6 +335,21 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
     [afterStale, severityFilter, sortBy],
   );
 
+  // Findings whose every anchor points at a file not present in the diff have
+  // no FileDiff to render under; surface them separately with HEAD context.
+  // Note: a finding with mixed anchors (some in diff, some orphan) will render
+  // under its diff-present anchor via FileDiff; the orphan-anchor side is not
+  // shown separately — acceptable for v1.
+  const diffPathSet = useMemo(
+    () => new Set((data?.files ?? []).map((f) => normalizeAnchorPath(f.path))),
+    [data?.files],
+  );
+  const orphanFindings = useMemo(
+    () =>
+      findings.filter((f) => f.anchors.every((a) => !diffPathSet.has(normalizeAnchorPath(a.path)))),
+    [findings, diffPathSet],
+  );
+
   if (isFirstLoad) return <p className="text-xs text-text-dim p-4">Loading diff...</p>;
   if (error)
     return (
@@ -508,6 +525,9 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
       {effectiveView === 'commits' && hasCommits && data.commits && (
         <CommitDiffList commits={data.commits} findings={findings} />
       )}
+
+      {/* Findings referencing files absent from the diff (shown in any view) */}
+      <OrphanFindings findings={orphanFindings} orphanFiles={data.orphanFiles} />
     </div>
   );
 }

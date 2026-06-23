@@ -433,8 +433,18 @@ export interface TaskDiffResponse {
   /** Stored findings with active/stale status against the current context. */
   findings: TaskDiffFinding[];
   commits?: DiffCommit[];
+  /** File contents (at HEAD) for findings whose file is absent from the diff. */
+  orphanFiles?: OrphanFindingFile[];
   empty: boolean;
   reason?: string;
+}
+
+/** Current contents of a file referenced by a finding but not present in the diff. */
+export interface OrphanFindingFile {
+  path: string;
+  /** 1-based line number of the first line in `content`. */
+  startLine: number;
+  content: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -1181,6 +1181,14 @@ export const DiffLineAnchorSchema = z
   });
 export type DiffLineAnchor = z.infer<typeof DiffLineAnchorSchema>;
 
+/**
+ * Strip leading `./` or `/` so anchor paths and diff paths compare equal.
+ * Mirrored by a same-named export in the web client's diff-findings lib.
+ */
+export function normalizeRepoPath(path: string): string {
+  return path.replace(/^\.\//, '').replace(/^\//, '');
+}
+
 export const DiffContextSchema = z.object({
   baseSha: z.string().min(1),
   headSha: z.string().min(1),

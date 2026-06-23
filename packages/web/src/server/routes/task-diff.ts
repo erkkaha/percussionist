@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DiffContext, DiffFinding } from '@percussionist/api';
+import { normalizeRepoPath } from '@percussionist/api';
 import { Hono } from 'hono';
 import { auth } from '../auth.js';
 import { getProject, getRun, getTask, gitUrlHash, NAMESPACE } from '../kube.js';
@@ -90,6 +91,70 @@ type ProjectedFinding = DiffFinding & {
   isActive: boolean;
   isStale: boolean;
 };
+
+/** Contents of a file referenced by a finding but absent from the diff. */
+type OrphanFile = {
+  path: string;
+  /** 1-based line number of the first line in `content`. */
+  startLine: number;
+  content: string;
+};
+
+type OrphanCandidate = { path: string; start: number; end: number };
+
+/** Lines of context to fetch on either side of a finding's anchored range. */
+const ORPHAN_CONTEXT_LINES = 20;
+/** Hard cap on fetched bytes per orphan file window. */
+const ORPHAN_MAX_BYTES = 65536;
+
+/**
+ * Collect the distinct files referenced by stored findings, with the union of
+ * their anchored line ranges widened by ORPHAN_CONTEXT_LINES. Used to fetch
+ * file context for findings whose file is not part of the diff.
+ */
+function collectOrphanCandidates(stored: { items: DiffFinding[] } | undefined): OrphanCandidate[] {
+  const byPath = new Map<string, { min: number; max: number }>();
+  for (const finding of stored?.items ?? []) {
+    for (const anchor of finding.anchors) {
+      const path = normalizeRepoPath(anchor.path);
+      const start = anchor.line;
+      const end = anchor.endLine ?? anchor.line;
+      const cur = byPath.get(path);
+      if (cur) {
+        cur.min = Math.min(cur.min, start);
+        cur.max = Math.max(cur.max, end);
+      } else {
+        byPath.set(path, { min: start, max: end });
+      }
+    }
+  }
+  const out: OrphanCandidate[] = [];
+  for (const [path, { min, max }] of byPath) {
+    out.push({
+      path,
+      start: Math.max(1, min - ORPHAN_CONTEXT_LINES),
+      end: max + ORPHAN_CONTEXT_LINES,
+    });
+  }
+  return out;
+}
+
+/** Parse the ___ORPHANCTX___ section: blocks of `>>>OIDX=N`, hex content, `>>>OEND`. */
+function parseOrphanSection(text: string, candidates: OrphanCandidate[]): OrphanFile[] {
+  const out: OrphanFile[] = [];
+  const blocks = text.split('>>>OIDX=').slice(1);
+  for (const block of blocks) {
+    const nl = block.indexOf('\n');
+    if (nl === -1) continue;
+    const idx = Number.parseInt(block.slice(0, nl).trim(), 10);
+    const cand = candidates[idx];
+    if (!cand) continue;
+    const endIdx = block.indexOf('>>>OEND');
+    const hex = block.slice(nl + 1, endIdx === -1 ? undefined : endIdx).replace(/\s/g, '');
+    out.push({ path: cand.path, startLine: cand.start, content: hexToString(hex) });
+  }
+  return out;
+}
 
 function parseMetaSection(text: string): Partial<DiffContext> {
   const result: Partial<DiffContext> = {};
@@ -302,7 +367,9 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
       );
     }
 
-    const cmd = [
+    const orphanCandidates = collectOrphanCandidates(task.status?.diffFindings);
+
+    const cmdLines = [
       `REPO=${quoteSh(repoPath)}`,
       `BASE=${quoteSh(baseRef)}`,
       `HEAD=${quoteSh(headRef)}`,
@@ -341,7 +408,23 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
       '  git -C "$REPO" diff-tree --no-color --find-renames --binary -r "$SHA" 2>/dev/null || true',
       "  echo '>>>ENDFILES'",
       'done',
-    ].join('\n');
+    ];
+
+    // Fetch current file contents (at HEAD) for every file referenced by a
+    // finding. The handler keeps only the ones absent from the diff, so a
+    // finding like "you failed to delete X" — whose file never appears in the
+    // diff — can still be shown with its actual source context.
+    cmdLines.push('echo "___ORPHANCTX___"');
+    orphanCandidates.forEach((cand, i) => {
+      cmdLines.push(`echo ">>>OIDX=${i}"`);
+      cmdLines.push(
+        `git -C "$REPO" show "$HEAD_REF:"${quoteSh(cand.path)} 2>/dev/null | sed -n '${cand.start},${cand.end}p' | head -c ${ORPHAN_MAX_BYTES} | od -A n -t x1 | tr -d ' \\n'`,
+      );
+      cmdLines.push("echo ''");
+      cmdLines.push('echo ">>>OEND"');
+    });
+
+    const cmd = cmdLines.join('\n');
 
     const result = await execInWorkspaceViaManager(projectName, cmd, 120_000);
     const output = result.stdout.trim();
@@ -369,14 +452,17 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
     let metaText = '';
     let unifiedDiff = '';
     let commitsText = '';
+    let orphanText = '';
 
     const metaMarker = '___META___\n';
     const unifiedMarker = '___UNIFIED___\n';
     const commitsMarker = '\n___COMMITS___\n';
+    const orphanMarker = '\n___ORPHANCTX___\n';
 
     const metaIdx = output.indexOf(metaMarker);
     const unifiedIdx = output.indexOf(unifiedMarker);
     const commitsIdx = output.indexOf(commitsMarker);
+    const orphanIdx = output.indexOf(orphanMarker);
 
     if (metaIdx !== -1 && unifiedIdx !== -1) {
       metaText = output.slice(metaIdx + metaMarker.length, unifiedIdx);
@@ -386,13 +472,20 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
       const afterUnified = output.slice(unifiedIdx + unifiedMarker.length);
       if (commitsIdx !== -1) {
         unifiedDiff = afterUnified.slice(0, afterUnified.indexOf(commitsMarker));
+      } else if (orphanIdx !== -1) {
+        unifiedDiff = afterUnified.slice(0, afterUnified.indexOf(orphanMarker));
       } else {
         unifiedDiff = afterUnified;
       }
     }
 
     if (commitsIdx !== -1) {
-      commitsText = output.slice(commitsIdx + commitsMarker.length);
+      const commitsEnd = orphanIdx !== -1 ? orphanIdx : output.length;
+      commitsText = output.slice(commitsIdx + commitsMarker.length, commitsEnd);
+    }
+
+    if (orphanIdx !== -1) {
+      orphanText = output.slice(orphanIdx + orphanMarker.length);
     }
 
     const meta = parseMetaSection(metaText);
@@ -406,6 +499,14 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
 
     const files = unifiedDiff.trim() ? splitDiffByFile(unifiedDiff.trim()) : [];
     const commits = parseCommitsSection(commitsText);
+
+    // Keep only fetched files that are absent from the diff and have content —
+    // these back the "findings outside the diff" view. Files present in the
+    // diff are already rendered inline by the client's FileDiff component.
+    const diffPathSet = new Set(files.map((f) => normalizeRepoPath(f.path)));
+    const orphanFiles = parseOrphanSection(orphanText, orphanCandidates).filter(
+      (o) => !diffPathSet.has(normalizeRepoPath(o.path)) && o.content.trim().length > 0,
+    );
 
     return c.json({
       project: projectName,
@@ -421,6 +522,7 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
       files,
       findings,
       commits,
+      orphanFiles,
       empty: files.length === 0 && commits.length === 0,
     });
   } catch (e) {

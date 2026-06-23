@@ -1,5 +1,6 @@
 // lib/diff-findings.ts — shared helpers for Task diff findings UI.
 
+import { normalizeRepoPath } from '@percussionist/api';
 import type { DiffFindingSeverity, TaskDiffFinding } from './types';
 
 export const DIFF_FINDING_SEVERITIES: DiffFindingSeverity[] = [
@@ -52,8 +53,12 @@ export const SEVERITY_BG_CLASS: Record<DiffFindingSeverity, string> = {
 
 export type DiffFindingSort = 'severity' | 'score' | 'path' | 'line';
 
+/**
+ * Kept as a named export for backwards compatibility with existing imports.
+ * Delegates to the canonical implementation in `@percussionist/api`.
+ */
 export function normalizeAnchorPath(path: string): string {
-  return path.replace(/^\.\//, '').replace(/^\//, '');
+  return normalizeRepoPath(path);
 }
 
 export function countBySeverity(findings: TaskDiffFinding[]): Record<DiffFindingSeverity, number> {

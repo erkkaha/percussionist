@@ -29,7 +29,7 @@ interface FileDiffProps {
   findings?: TaskDiffFinding[];
 }
 
-function SeverityBadge({ severity }: { severity: DiffFindingSeverity }) {
+export function SeverityBadge({ severity }: { severity: DiffFindingSeverity }) {
   return (
     <span
       className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase border ${SEVERITY_BG_CLASS[severity]}`}
