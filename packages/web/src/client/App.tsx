@@ -4,6 +4,7 @@ import AgentForm from './components/AgentForm';
 import AgentsPage from './components/AgentsPage';
 import AuthGuard from './components/AuthGuard';
 import BoardView from './components/BoardView';
+import CodeServerView from './components/CodeServerView';
 import CreateProjectForm from './components/CreateProjectForm';
 import CreateRunForm from './components/CreateRunForm';
 import EditProjectPage from './components/EditProjectPage';
@@ -65,6 +66,7 @@ export default function App() {
               <Route path="/projects/new" element={<CreateProjectForm />} />
               <Route path="/projects/:name/edit" element={<EditProjectPage />} />
               <Route path="/projects/:name/board" element={<BoardView />} />
+              <Route path="/projects/:name/code-server" element={<CodeServerView />} />
               <Route path="/projects/:name/plans/:taskId" element={<PlanView />} />
               <Route path="/agents" element={<AgentsPage />} />
               <Route path="/agents/new" element={<AgentForm />} />

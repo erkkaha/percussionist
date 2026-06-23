@@ -166,6 +166,7 @@ export default function BoardView() {
         col={selectedCol}
         projectName={projectName}
         approvals={approvals}
+        codeServerUrl={data?.codeServerUrl}
         onDeleted={() => {
           setSearchParams({}, { replace: true });
           setSheetOpen(false);

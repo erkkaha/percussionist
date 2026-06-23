@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Code2,
   ExternalLink,
   FileText,
   Flag,
@@ -98,6 +99,7 @@ interface TaskDetailPanelProps {
   col: string;
   projectName: string;
   approvals: Record<string, { approved: boolean; requestChanges: boolean }> | undefined;
+  codeServerUrl?: string;
   onDeleted: () => void;
 }
 
@@ -539,10 +541,12 @@ function OverviewContent({
   task,
   col,
   projectName,
+  codeServerUrl,
 }: {
   task: Task;
   col: string;
   projectName: string;
+  codeServerUrl?: string;
 }) {
   const worker = task.status?.worker;
   const { data: runsData } = useTaskRuns(task.metadata.name);
@@ -593,12 +597,23 @@ function OverviewContent({
         {worker?.gitBranch && (
           <div>
             <p className="text-label-md font-mono uppercase text-text-dim">Branch</p>
-            <span
-              className="inline-flex items-center rounded border border-border-muted bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text truncate max-w-full"
-              title={worker.gitBranch}
-            >
-              {worker.gitBranch}
-            </span>
+            {codeServerUrl && worker?.runName ? (
+              <Link
+                to={`/projects/${encodeURIComponent(projectName)}/code-server?folder=/data/worktrees/${encodeURIComponent(worker.runName)}/`}
+                className="inline-flex items-center gap-1 rounded border border-border-muted bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text truncate max-w-full hover:text-accent hover:border-accent/30 transition-colors"
+                title={`Open ${worker.gitBranch} in code-server`}
+              >
+                <Code2 className="h-3 w-3 shrink-0" />
+                {worker.gitBranch}
+              </Link>
+            ) : (
+              <span
+                className="inline-flex items-center rounded border border-border-muted bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text truncate max-w-full"
+                title={worker.gitBranch}
+              >
+                {worker.gitBranch}
+              </span>
+            )}
           </div>
         )}
         {worker?.reviewApproved !== undefined && (
@@ -885,6 +900,7 @@ function TaskDetailPanelInner({
   col,
   projectName,
   approvals,
+  codeServerUrl,
   onDeleted,
 }: TaskDetailPanelProps) {
   const queryClient = useQueryClient();
@@ -1174,7 +1190,12 @@ function TaskDetailPanelInner({
       {/* Tab content — scrollable */}
       <div className="flex-1 overflow-y-auto">
         {activeTab === 'overview' && (
-          <OverviewContent task={task} col={col} projectName={projectName} />
+          <OverviewContent
+            task={task}
+            col={col}
+            projectName={projectName}
+            codeServerUrl={codeServerUrl}
+          />
         )}
         {activeTab === 'runs' && <TaskRunsPanel projectName={projectName} taskName={taskName} />}
         {activeTab === 'events' && (

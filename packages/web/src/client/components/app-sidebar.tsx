@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
   BarChart3,
-  ExternalLink,
+  Code2,
   Folder,
   MessageSquare,
   Plus,
@@ -11,7 +11,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import React from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useProjects } from '../hooks/useProjects';
 import { useProjectsEvents } from '../hooks/useProjectsEvents';
 import { fetchUpdateStatus } from '../lib/api';
@@ -169,16 +169,14 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                       </NavLink>
                     </SidebarMenuButton>
                     {p.codeServerUrl && (
-                      <a
-                        href={p.codeServerUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <Link
+                        to={`/projects/${encodeURIComponent(name)}/code-server`}
                         onClick={(e) => e.stopPropagation()}
                         title="Open code-server workspace"
                         className="flex items-center justify-center w-8 h-8 shrink-0 text-text-dim hover:text-text transition-colors group-data-[collapsible=icon]:hidden"
                       >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
+                        <Code2 className="h-3.5 w-3.5" />
+                      </Link>
                     )}
                   </div>
                 </SidebarMenuItem>
