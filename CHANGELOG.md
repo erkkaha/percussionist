@@ -1,11 +1,24 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.205] - 2026-06-23
+
+### <!-- 0 -->🚀 Features
+
+- Add custom code-server image with bun, pnpm and configurable packages
+
+### <!-- 2 -->🚜 Refactor
+
+- Rename code-server ingress to ide, derive URL from window.location
 ## [v0.1.204] - 2026-06-23
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Run code-server as root to fix PVC permission issues _(operator)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.204
 ## [v0.1.203] - 2026-06-23
 
 ### <!-- 1 -->🐛 Bug Fixes
