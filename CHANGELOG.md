@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.206] - 2026-06-23
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Install nodejs, npm and fix pnpm version compat in code-server image
 ## [v0.1.205] - 2026-06-23
 
 ### <!-- 0 -->🚀 Features
@@ -10,6 +15,10 @@ All notable changes to Percussionist are documented here.
 ### <!-- 2 -->🚜 Refactor
 
 - Rename code-server ingress to ide, derive URL from window.location
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.205
 ## [v0.1.204] - 2026-06-23
 
 ### <!-- 1 -->🐛 Bug Fixes
