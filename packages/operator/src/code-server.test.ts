@@ -43,10 +43,18 @@ describe('renderCodeServerDeployment', () => {
     expect(gitEnv?.value).toMatch(/\/\.code-server-vscode\/\.gitconfig$/);
   });
 
-  it('should set fsGroup: 1000 on pod securityContext', () => {
+  it('should run main container as root (runAsUser: 0)', () => {
     const dep = renderCodeServerDeployment(makeProject());
-    const sc = dep.spec?.template.spec?.securityContext;
-    expect(sc?.fsGroup).toBe(1000);
+    const container = dep.spec?.template.spec?.containers?.find((c) => c.name === 'code-server');
+    expect(container?.securityContext?.runAsUser).toBe(0);
+  });
+
+  it('should run init container as root (runAsUser: 0)', () => {
+    const dep = renderCodeServerDeployment(makeProject());
+    const init = dep.spec?.template.spec?.initContainers?.find(
+      (c) => c.name === 'code-server-init',
+    );
+    expect(init?.securityContext?.runAsUser).toBe(0);
   });
 
   it('should not have --bind-addr or --auth in main container args', () => {

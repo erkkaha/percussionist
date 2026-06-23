@@ -330,6 +330,7 @@ GITCFG
       requests: { cpu: '50m', memory: '64Mi' },
       limits: { memory: '128Mi' },
     },
+    securityContext: { runAsUser: 0 },
   };
 
   const gitConfigEnv: V1EnvVar = {
@@ -368,14 +369,12 @@ GITCFG
           labels,
         },
         spec: {
-          securityContext: {
-            fsGroup: 1000,
-          },
           initContainers: [initContainer],
           containers: [
             {
               name: 'code-server',
               image,
+              securityContext: { runAsUser: 0 },
               args: [
                 '--config',
                 `${configDir}/config.yaml`,
