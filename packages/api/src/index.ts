@@ -108,6 +108,8 @@ export const CodeServerSpecSchema = z.object({
   image: z.string().default('codercom/code-server:4.96.4'),
   /** Pod resource requirements for code-server container. */
   resources: ResourceRequirementsSchema.optional(),
+  /** Alpine/APT packages to install in the code-server init container. */
+  packages: z.array(z.string()).max(50).optional(),
 });
 export type CodeServerSpec = z.infer<typeof CodeServerSpecSchema>;
 
@@ -1672,7 +1674,7 @@ export const DISPATCHER_CONTAINER = 'dispatcher';
 export const GIT_CLONE_CONTAINER = 'workspace-init';
 export const CODE_SERVER_CONTAINER = 'code-server';
 export const CODE_SERVER_PORT = 8080;
-export const CODE_SERVER_DEFAULT_IMAGE = 'codercom/code-server:4.96.4';
+export const CODE_SERVER_DEFAULT_IMAGE = 'ghcr.io/erkkaha/percussionist/code-server:latest';
 
 // ---------------------------------------------------------------------------
 // Config resolution helpers.

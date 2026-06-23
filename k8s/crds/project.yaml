@@ -484,6 +484,11 @@ spec:
                         limits:
                           type: object
                           x-kubernetes-preserve-unknown-fields: true
+                    packages:
+                      maxItems: 50
+                      type: array
+                      items:
+                        type: string
                   required:
                     - enabled
                     - image

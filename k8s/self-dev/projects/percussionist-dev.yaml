@@ -69,6 +69,10 @@ spec:
   data:
     storageClass: longhorn-rwx
 
+  # Per-project code-server for interactive workspace access.
+  codeServer:
+    enabled: true
+
   # Use a richer image for maintenance/exec pods (e.g. exec_in_workspace).
   # Falls back to alpine/git:v2.54.0 when unset.
   exec:

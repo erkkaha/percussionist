@@ -47,6 +47,9 @@ jobs:
           - image: memory
             dockerfile: images/memory/Dockerfile
             context: .
+          - image: code-server
+            dockerfile: images/code-server/Dockerfile
+            context: images/code-server
 
     steps:
       - uses: actions/checkout@v4

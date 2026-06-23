@@ -20,6 +20,10 @@ function makeProject(overrides: Partial<Project> = {}): Project {
   } as Project;
 }
 
+function getInitContainer(dep: ReturnType<typeof renderIdeDeployment>) {
+  return dep.spec?.template.spec?.initContainers?.find((c) => c.name === 'code-server-init');
+}
+
 describe('renderIdeDeployment', () => {
   it('should include an init container named code-server-init', () => {
     const dep = renderIdeDeployment(makeProject());
@@ -84,5 +88,44 @@ describe('renderIdeDeployment', () => {
     const init = dep.spec?.template.spec?.initContainers ?? [];
     const names = init.map((c) => c.name);
     expect(names).toContain('code-server-init');
+  });
+
+  it('should not set CODE_SERVER_PACKAGES env when no packages specified', () => {
+    const dep = renderIdeDeployment(makeProject());
+    const init = getInitContainer(dep);
+    const env = init?.env ?? [];
+    expect(env.find((e) => e.name === 'CODE_SERVER_PACKAGES')).toBeUndefined();
+  });
+
+  it('should set CODE_SERVER_PACKAGES env when packages are specified', () => {
+    const dep = renderIdeDeployment(
+      makeProject({
+        spec: {
+          source: { local: true },
+          codeServer: { enabled: true, packages: ['ripgrep', 'jq'] },
+        },
+      }),
+    );
+    const init = getInitContainer(dep);
+    const env = init?.env ?? [];
+    const pkgEnv = env.find((e) => e.name === 'CODE_SERVER_PACKAGES');
+    expect(pkgEnv?.value).toBe('ripgrep jq');
+  });
+
+  it('should include package install block in init script when packages given', () => {
+    const dep = renderIdeDeployment(
+      makeProject({
+        spec: {
+          source: { local: true },
+          codeServer: { enabled: true, packages: ['ripgrep'] },
+        },
+      }),
+    );
+    const init = getInitContainer(dep);
+    const cmd = init?.command?.[2] ?? '';
+    expect(cmd).toContain('# Install extra packages');
+    expect(cmd).toContain('CODE_SERVER_PACKAGES');
+    expect(cmd).toContain('apt-get');
+    expect(cmd).toContain('apk');
   });
 });

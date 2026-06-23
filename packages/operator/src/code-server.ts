@@ -98,12 +98,26 @@ export function renderIdeDeployment(project: Project): V1Deployment {
   const configDir = `${mountPath}/.code-server-config`;
   const vscodeDataDir = `${mountPath}/.code-server-vscode`;
 
+  // Packages to install in the init container.
+  const codeServerPackages = spec.codeServer?.packages;
+
   // Init container command: seed default config files to the PVC (first-run only).
   // Once the user customises any file via the editor, pod restarts preserve their changes
   // because the `[ -f ... ] ||` guard skips overwrite.
   const initScript = `
 set -e
 mkdir -p "${configDir}" "${vscodeDataDir}/User"
+
+# Install extra packages (per-project via spec.codeServer.packages)
+if [ -n "\${CODE_SERVER_PACKAGES}" ]; then
+  echo "[code-server-init] installing packages: $CODE_SERVER_PACKAGES"
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq && apt-get install -y -qq --no-install-recommends $CODE_SERVER_PACKAGES
+  elif command -v apk >/dev/null 2>&1; then
+    apk update --quiet && apk add --no-cache $CODE_SERVER_PACKAGES
+  fi
+fi
 
 [ -f "${configDir}/config.yaml" ] || cat > "${configDir}/config.yaml" << 'CODECD'
 bind-addr: 0.0.0.0:8080
@@ -321,10 +335,16 @@ VSCTX
 GITCFG
 `;
 
+  const initEnv: V1EnvVar[] = [];
+  if (codeServerPackages && codeServerPackages.length > 0) {
+    initEnv.push({ name: 'CODE_SERVER_PACKAGES', value: codeServerPackages.join(' ') });
+  }
+
   const initContainer: V1Container = {
     name: 'code-server-init',
     image,
     command: ['/bin/sh', '-c', initScript],
+    env: initEnv.length > 0 ? initEnv : undefined,
     volumeMounts: [{ name: 'data', mountPath }],
     resources: {
       requests: { cpu: '50m', memory: '64Mi' },

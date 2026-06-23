@@ -83,6 +83,9 @@ build_one() {
       docker build "${extra[@]}" -t "$tag" --build-arg PKG=manager-controller \
         -f "$REPO_ROOT/images/node/Dockerfile" "$REPO_ROOT"
       ;;
+    code-server)
+      docker build "${extra[@]}" -t "$tag" "$REPO_ROOT/images/code-server"
+      ;;
     *) echo "unknown image: $name" >&2; return 1 ;;
   esac
 }
@@ -299,6 +302,7 @@ OPERATOR_TAG="percussionist/operator:dev"
 DISPATCHER_TAG="percussionist/dispatcher:dev"
 WEB_TAG="percussionist/web:dev"
 MANAGER_TAG="percussionist/manager:dev"
+CODE_SERVER_TAG="percussionist/code-server:dev"
 
 RESTORE_OPERATOR=false
 RESTORE_WEB=false
@@ -311,7 +315,8 @@ if [[ -n "$ONLY" ]]; then
     dispatcher) process_one dispatcher "$DISPATCHER_TAG" ;;
     web)        process_one web        "$WEB_TAG"; $FORCE && RESTORE_WEB=true ;;
     manager)    process_one manager    "$MANAGER_TAG"; $FORCE && RESTORE_MANAGER=true ;;
-    *) echo "unknown --only value: $ONLY (runner|operator|dispatcher|web|manager)" >&2; exit 2 ;;
+    code-server) process_one code-server "$CODE_SERVER_TAG" ;;
+    *) echo "unknown --only value: $ONLY (runner|operator|dispatcher|web|manager|code-server)" >&2; exit 2 ;;
   esac
 else
   process_one runner     "$RUNNER_TAG"
@@ -319,6 +324,7 @@ else
   process_one dispatcher "$DISPATCHER_TAG"
   process_one web        "$WEB_TAG";        $FORCE && RESTORE_WEB=true
   process_one manager    "$MANAGER_TAG";    $FORCE && RESTORE_MANAGER=true
+  process_one code-server "$CODE_SERVER_TAG"
 fi
 
 # Bring scaled-down deployments back up.
@@ -327,7 +333,7 @@ if $RESTORE_WEB; then restore_web; fi
 if $RESTORE_MANAGER; then restore_manager; fi
 
 echo ">> Images present in minikube:"
-minikube image ls | grep -E 'percussionist/(runner|operator|dispatcher|web|manager)' || true
+minikube image ls | grep -E 'percussionist/(runner|operator|dispatcher|web|manager|code-server)' || true
 
 # ---------------------------------------------------------------------------
 # Pin the ingress-nginx HTTP NodePort to 30080 so the dashboard and per-run
