@@ -1,6 +1,6 @@
 {
   "name": "@percussionist/api",
-  "version": "0.1.202",
+  "version": "0.1.203",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",

@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.203] - 2026-06-23
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Deduplicate multi-line diff finding widgets with continuation bar _(web)_
 ## [v0.1.202] - 2026-06-23
 
 ### <!-- 0 -->🚀 Features
@@ -8,6 +13,10 @@ All notable changes to Percussionist are documented here.
 - Embed code-server in iframe with task-specific folder linking _(web)_
 - Seed code-server with themed defaults on first start _(operator)_
 - Add Percussionist theme to code-server settings _(operator)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.202
 ## [v0.1.201] - 2026-06-23
 
 ### <!-- 0 -->🚀 Features
