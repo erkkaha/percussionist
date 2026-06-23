@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.202] - 2026-06-23
+
+### <!-- 0 -->🚀 Features
+
+- Embed code-server in iframe with task-specific folder linking _(web)_
+- Seed code-server with themed defaults on first start _(operator)_
+- Add Percussionist theme to code-server settings _(operator)_
 ## [v0.1.201] - 2026-06-23
 
 ### <!-- 0 -->🚀 Features
@@ -12,6 +19,10 @@ All notable changes to Percussionist are documented here.
 
 - Move manager chat inside SidebarInset so top bar spans full width _(web)_
 - Add git cleanliness gate to complete_run with force escape hatch _(dispatcher)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.201
 ## [v0.1.200] - 2026-06-23
 
 ### <!-- 0 -->🚀 Features
