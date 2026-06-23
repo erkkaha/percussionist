@@ -105,6 +105,12 @@ const TOOL_COMPLETE_RUN = {
         type: 'string',
         description: 'Human-readable summary of what was accomplished.',
       },
+      force: {
+        type: 'boolean',
+        description:
+          'Bypass the git-status check. Use only if you have a legitimate reason not to commit ' +
+          '(e.g., no code changes were needed, git is unavailable, task is informational).',
+      },
     },
     required: ['summary'],
   },
@@ -443,6 +449,26 @@ function execCommand(
     );
   });
 }
+
+/**
+ * Check whether the working tree has uncommitted changes.
+ * Returns null if clean or if git is unavailable.
+ * Returns the `git status --porcelain` output if dirty.
+ * Exported as a mutable object property so tests can replace it
+ * without module-level mocking (ESM live bindings limitation).
+ */
+export const gitCheck = {
+  isClean: async (): Promise<string | null> => {
+    try {
+      const { stdout: status } = await execCommand('git', ['status', '--porcelain'], 10_000);
+      const trimmed = status.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    } catch {
+      // git unavailable or not a repo — treat as clean.
+      return null;
+    }
+  },
+};
 
 async function handleSearchCode(
   id: JsonRpcRequest['id'],
@@ -1118,8 +1144,10 @@ async function handleMcp(
 
     case 'tools/call': {
       const toolName = (req.params?.name as string | undefined) ?? '';
-      if (COMPLETION_TOOL_NAMES.has(toolName as CompletionToolName)) {
-        const completionAuth = await getCompletionAuth();
+      const completionAuth = COMPLETION_TOOL_NAMES.has(toolName as CompletionToolName)
+        ? await getCompletionAuth()
+        : undefined;
+      if (completionAuth) {
         if (!completionAuth.allowed) {
           return rpcError(
             req.id,
@@ -1154,6 +1182,30 @@ async function handleMcp(
           typeof args.summary === 'string'
             ? args.summary
             : 'agent called complete_run without a summary';
+        const force = args.force === true;
+
+        // Git cleanliness gate: only enforce for build-worker runs.
+        // If dirty, reject with an instructive message so the agent
+        // can commit and retry, or use force:true as an escape hatch.
+        if (completionAuth && !force && completionAuth.context === 'build-worker') {
+          try {
+            const dirty = await gitCheck.isClean();
+            if (dirty) {
+              const fileCount = dirty.split('\n').length;
+              return rpcError(
+                req.id,
+                -32602,
+                `Working tree has uncommitted changes (${fileCount} file(s)).\n` +
+                  `${dirty}\n` +
+                  `Stage and commit your work before calling complete_run.\n` +
+                  `If you have a legitimate reason not to commit, call complete_run with "force": true to bypass this check.`,
+              );
+            }
+          } catch {
+            // git unavailable or check failed — allow completion.
+          }
+        }
+
         onCompleteRun(summary);
         return ok(req.id, {
           content: [

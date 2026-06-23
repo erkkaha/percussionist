@@ -26,20 +26,24 @@ const getClusterAgentMock = mock(async (name: string) => {
 });
 
 mock.module('@percussionist/kube', () => ({
+  appendFindingToConfigMap: mock(async () => {}),
   buildTask: mock(() => ({}) as import('@percussionist/api').Task),
   createTask: mock(async () => ({}) as import('@percussionist/api').Task),
+  getClusterAgent: getClusterAgentMock,
   getProject: mock(
     async () => ({ spec: { agents: [] } }) as unknown as import('@percussionist/api').Project,
   ),
-  getClusterAgent: getClusterAgentMock,
+  getRun: mock(async () => ({ spec: { facilitation: undefined } })),
+  getTask: mock(async () => ({ spec: { type: 'BUILD' } })),
   patchRunAnnotations: patchRunAnnotationsMock,
   patchTaskStatus: mock(async () => ({}) as import('@percussionist/api').Task),
   readAllSessionsFromConfigMap: mock(async () => null),
   readPlanFromConfigMap: mock(async () => null),
+  validateAgentTaskCapability: mock(async () => ({ ok: true })),
   writePlanToConfigMap: mock(async () => ({}) as import('@kubernetes/client-node').V1ConfigMap),
 }));
 
-import { type McpServer, startMcpServer } from '../mcp-server.js';
+import { gitCheck, type McpServer, startMcpServer } from '../mcp-server.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -417,16 +421,19 @@ describe('dispatcher MCP server — build-worker context', () => {
   const completedSummaries: string[] = [];
   const completedPlans: string[] = [];
   const failureReasons: string[] = [];
+  const originalIsClean = gitCheck.isClean;
 
   beforeEach(async () => {
     process.env.RUN_NAME = 'test-run';
     process.env.RUN_NAMESPACE = 'test-ns';
     process.env.RUN_AGENT = 'builder';
+    process.env.RUN_CONTEXT = 'build-worker';
     completedSummaries.length = 0;
     completedPlans.length = 0;
     failureReasons.length = 0;
     patchRunAnnotationsMock.mockClear();
     getClusterAgentMock.mockClear();
+    gitCheck.isClean = originalIsClean;
 
     server = await startMcpServer(
       (reason) => failureReasons.push(reason),
@@ -442,6 +449,7 @@ describe('dispatcher MCP server — build-worker context', () => {
     delete process.env.RUN_NAME;
     delete process.env.RUN_NAMESPACE;
     delete process.env.RUN_AGENT;
+    delete process.env.RUN_CONTEXT;
   });
 
   it('lists complete_run as the only completion tool', async () => {
@@ -476,5 +484,67 @@ describe('dispatcher MCP server — build-worker context', () => {
     });
     expect(completedSummaries).toEqual(['Done with work']);
     expect(patchRunAnnotationsMock).toHaveBeenCalledTimes(0);
+  });
+
+  it('rejects complete_run when working tree has uncommitted changes', async () => {
+    gitCheck.isClean = async () => ' M src/foo.ts\n?? src/bar.ts\n';
+    const res = await postMcp(
+      server.port,
+      mcpCall('run-dirty-1', 'complete_run', { summary: 'Dirty work' }),
+    );
+    expect(res).toEqual({
+      jsonrpc: '2.0',
+      id: 'run-dirty-1',
+      error: {
+        code: -32602,
+        message: expect.stringContaining('uncommitted changes'),
+      },
+    });
+    expect(completedSummaries).toEqual([]);
+  });
+
+  it('accepts complete_run with force:true even when working tree is dirty', async () => {
+    gitCheck.isClean = async () => ' M src/foo.ts\n?? src/bar.ts\n';
+    const res = await postMcp(
+      server.port,
+      mcpCall('run-force-1', 'complete_run', {
+        summary: 'Forced completion',
+        force: true,
+      }),
+    );
+    expect(res).toEqual({
+      jsonrpc: '2.0',
+      id: 'run-force-1',
+      result: {
+        content: [
+          {
+            type: 'text',
+            text: expect.stringContaining('complete'),
+          },
+        ],
+      },
+    });
+    expect(completedSummaries).toEqual(['Forced completion']);
+  });
+
+  it('accepts complete_run when working tree is clean', async () => {
+    gitCheck.isClean = async () => null;
+    const res = await postMcp(
+      server.port,
+      mcpCall('run-clean-1', 'complete_run', { summary: 'Clean work' }),
+    );
+    expect(res).toEqual({
+      jsonrpc: '2.0',
+      id: 'run-clean-1',
+      result: {
+        content: [
+          {
+            type: 'text',
+            text: expect.stringContaining('complete'),
+          },
+        ],
+      },
+    });
+    expect(completedSummaries).toEqual(['Clean work']);
   });
 });

@@ -144,6 +144,16 @@ export async function buildWorkerRun(
     );
   }
 
+  if (task.spec.type === 'BUILD') {
+    promptLines.push(
+      'GIT COMMIT REQUIREMENTS:',
+      '- Stage and commit your changes before calling complete_run.',
+      '- The dispatcher will reject complete_run if the working tree has uncommitted changes.',
+      '- If no code changes are needed, call complete_run with "force": true to bypass this check.',
+      '',
+    );
+  }
+
   // Inject relevant memory context if vector memory is enabled.
   if (project.spec.embedding?.enabled) {
     try {
