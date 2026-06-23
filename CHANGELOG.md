@@ -1,6 +1,29 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.200] - 2026-06-23
+
+### <!-- 0 -->🚀 Features
+
+- Add JSON pretty-print and Format button to OpenCode config panel _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Add pinned vue dep to fix vitepress build _(docs)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add complete_review tests and failure paths _(dispatcher)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update opencode runner to version 1.17.9
+- Drop native tailscale support
+## [v0.1.199] - 2026-06-22
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.199
 ## [v0.1.198] - 2026-06-18
 
 ### <!-- 1 -->🐛 Bug Fixes
