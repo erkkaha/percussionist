@@ -11,7 +11,7 @@ The web dashboard API has **no built-in authentication** by default. This is an
 intentional design decision for single-tenant cluster deployments where network
 isolation provides sufficient protection. In shared or externally-facing
 deployments, operators should place the web service behind a reverse proxy with
-authentication (e.g., OAuth2-proxy, Keycloak, or Tailscale's access controls).
+authentication (e.g., OAuth2-proxy or Keycloak).
 
 **Sensitive endpoints** that require authentication in production:
 - `POST /api/runs` — run creation
@@ -143,8 +143,7 @@ Session messages are stored in ConfigMaps with size limits:
 ```
 
 All inter-component communication is **in-cluster only**. No component exposes a
-public-facing endpoint by default. The web dashboard can be exposed via Ingress or
-Tailscale for operator access.
+public-facing endpoint by default. The web dashboard can be exposed via Ingress for operator access.
 
 ### Recommended Network Policies
 

@@ -41,7 +41,6 @@ Runner pods that use git over SSH default to no host key verification (backward 
 
 Sensitive data is stored in Kubernetes Secrets:
 - `web-auth` — Web API token
-- `tailscale-auth` — Tailscale auth key
 - Provider API keys — Stored as Secrets, mounted as environment variables
 
 ### ConfigMaps
@@ -61,7 +60,7 @@ Non-sensitive configuration is stored in ConfigMaps. Session data is truncated t
 │  └────┬─────┘  └──────────┘             │
 │       │                                  │
 │  ┌────▼─────────────────────────────┐   │
-│  │  Ingress / Tailscale             │   │
+│  │  Ingress                         │   │
 │  │  (HTTPS only)                    │   │
 │  └──────────────────────────────────┘   │
 │                                          │
@@ -80,7 +79,7 @@ Non-sensitive configuration is stored in ConfigMaps. Session data is truncated t
 
 ### Recommended NetworkPolicies
 
-- Allow ingress to web pod only from ingress controller / Tailscale
+- Allow ingress to web pod only from ingress controller
 - Allow runner pods to reach manager MCP server
 - Allow manager to reach memory service pods
 - Deny all other inter-pod traffic by default

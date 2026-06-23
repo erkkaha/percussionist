@@ -4,7 +4,7 @@
 // allowing operators to browse worktrees, git mirrors, and caches.
 //
 // Ingress/exposure is infrastructure-managed (not part of core Percussionist).
-// Access via kubectl port-forward on vanilla K8s, or Tailscale Ingress on homelab.
+// Access via kubectl port-forward on vanilla K8s.
 
 import type { V1Deployment, V1Service } from '@kubernetes/client-node';
 import {

@@ -29,9 +29,6 @@ features:
   - title: Runner Package System
     details: Declare Alpine packages in project specs. Agents discover available tools automatically. Per-run overrides for ad-hoc dependencies.
     link: /features/runner-packages
-  - title: Mobile HTTPS Access
-    details: Tailscale sidecar provisions Let's Encrypt TLS certificates. Access the web dashboard from any device on your tailnet.
-    link: /features/tailscale
 ---
 
 <Testimonials />

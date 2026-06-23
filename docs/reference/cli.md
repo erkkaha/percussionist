@@ -152,14 +152,6 @@ Manage GitHub token Secrets for gh CLI auth in runners.
 beatctl github-token create [--token <token>]
 ```
 
-### tailscale-auth
-
-Manage Tailscale auth key Secrets for the web pod sidecar.
-
-```bash
-beatctl tailscale-auth create [--key <tskey-auth-xxxxx>]
-```
-
 ## Global Flags
 
 | Flag | Alias | Description |

@@ -71,7 +71,6 @@ export default defineConfig({
               text: 'Runner Packages',
               link: '/features/runner-packages',
             },
-            { text: 'Tailscale', link: '/features/tailscale' },
           ],
         },
       ],
