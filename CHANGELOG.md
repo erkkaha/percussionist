@@ -1,11 +1,20 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.207] - 2026-06-24
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Derive code-server URL from any subdomain, not just app _(web)_
 ## [v0.1.206] - 2026-06-23
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Install nodejs, npm and fix pnpm version compat in code-server image
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.206
 ## [v0.1.205] - 2026-06-23
 
 ### <!-- 0 -->🚀 Features
