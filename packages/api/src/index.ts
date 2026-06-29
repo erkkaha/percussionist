@@ -496,6 +496,18 @@ export type FacilitationResult = z.infer<typeof FacilitationResultSchema>;
 // ---------------------------------------------------------------------------
 // Run — the core CRD reconciled by the operator.
 
+// Run-completion context. Mirrors the dispatcher's RUN_CONTEXT env values.
+// Used by `RunSpec.runContext` and written to the pod by the operator.
+export const RUN_CONTEXT_VALUES = [
+  'plan-worker',
+  'build-worker',
+  'review-facilitator',
+  'merge-worker',
+  'facilitator',
+] as const;
+export type RunContextValue = (typeof RUN_CONTEXT_VALUES)[number];
+export const RunContextSchema = z.enum(RUN_CONTEXT_VALUES);
+
 export const RunSpecSchema = z
   .object({
     // Required: references an OpenCodeProject in the same namespace.
@@ -519,6 +531,13 @@ export const RunSpecSchema = z
 
     // Facilitation spec — set when this run is a facilitator analyzing a failed task.
     facilitation: FacilitationSpecSchema.optional(),
+
+    // Explicit run-completion context. When set, the dispatcher uses this to
+    // decide which completion tool (`complete_run` / `complete_plan` /
+    // `complete_review` / `complete_merge`) is advertised to the agent. When
+    // unset, the operator derives `RUN_CONTEXT` from `facilitation` for backward
+    // compatibility, and the dispatcher falls back to task-type inference.
+    runContext: RunContextSchema.optional(),
 
     // Inline agent defs for CLI escape hatch (--inline-agent). Not in UI.
     inlineAgents: AgentDefSchema.array().max(5).optional(),
@@ -1025,7 +1044,7 @@ export const ProjectSpecSchema = z.object({
         .optional(),
       integration: z
         .object({
-          mode: z.enum(['auto-merge', 'manual', 'disabled']).default('auto-merge').optional(),
+          mode: z.enum(['auto-merge', 'pr', 'manual', 'disabled']).default('auto-merge').optional(),
           agent: z.string().max(63).default('integrator').optional(),
         })
         .optional(),
@@ -1478,12 +1497,19 @@ export function normalizeReviewVerdict(
 export const MERGE_VERDICT_ANNOTATION = 'percussionist.dev/merge-verdict';
 
 export interface NormalizedMergeVerdict {
-  outcome: 'merged' | 'already-merged' | 'conflict' | 'push-failed' | 'transient-failure';
+  outcome:
+    | 'merged'
+    | 'already-merged'
+    | 'conflict'
+    | 'push-failed'
+    | 'transient-failure'
+    | 'pr-opened';
   diagnosis?: string;
   details?: string;
   sourceBranch?: string;
   targetBranch?: string;
   mergeCommitSha?: string;
+  prNumber?: number;
   requiresHuman: boolean;
 }
 
@@ -1493,6 +1519,7 @@ const MERGE_OUTCOMES = [
   'conflict',
   'push-failed',
   'transient-failure',
+  'pr-opened',
 ] as const;
 type MergeOutcome = (typeof MERGE_OUTCOMES)[number];
 
@@ -1537,6 +1564,11 @@ export function normalizeMergeVerdict(input: unknown): NormalizedMergeVerdict | 
   const sourceBranch = truncateString(obj.sourceBranch, 255);
   const targetBranch = truncateString(obj.targetBranch, 255);
   const mergeCommitSha = truncateString(obj.mergeCommitSha, 64);
+  const prNumberRaw = obj.prNumber;
+  const prNumber =
+    typeof prNumberRaw === 'number' && Number.isInteger(prNumberRaw) && prNumberRaw > 0
+      ? prNumberRaw
+      : undefined;
 
   let requiresHuman: boolean;
   if (typeof obj.requiresHuman === 'boolean') {
@@ -1555,6 +1587,7 @@ export function normalizeMergeVerdict(input: unknown): NormalizedMergeVerdict | 
   if (sourceBranch) verdict.sourceBranch = sourceBranch;
   if (targetBranch) verdict.targetBranch = targetBranch;
   if (mergeCommitSha) verdict.mergeCommitSha = mergeCommitSha;
+  if (prNumber !== undefined) verdict.prNumber = prNumber;
   return verdict;
 }
 

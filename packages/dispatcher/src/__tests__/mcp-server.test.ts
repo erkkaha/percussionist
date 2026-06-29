@@ -201,7 +201,7 @@ describe('dispatcher MCP server — merge-worker context', () => {
       error: {
         code: -32602,
         message:
-          'outcome must be one of merged, already-merged, conflict, push-failed, transient-failure',
+          'outcome must be one of merged, already-merged, conflict, push-failed, transient-failure, pr-opened',
       },
     });
     expect(patchRunAnnotationsMock).toHaveBeenCalledTimes(0);
@@ -226,6 +226,54 @@ describe('dispatcher MCP server — merge-worker context', () => {
     });
     expect(completedSummaries).toEqual([]);
     expect(failureReasons).toEqual([]);
+  });
+
+  it('writes pr-opened verdict with prNumber', async () => {
+    const res = await postMcp(
+      server.port,
+      mcpCall('merge-5', 'complete_merge', {
+        outcome: 'pr-opened',
+        diagnosis: 'Opened PR #42',
+        prNumber: 42,
+      }),
+    );
+    expect(res).toEqual({
+      jsonrpc: '2.0',
+      id: 'merge-5',
+      result: {
+        content: [
+          {
+            type: 'text',
+            text: 'Merge verdict submitted: pr-opened. The orchestrator will process the verdict.',
+          },
+        ],
+      },
+    });
+
+    const callArgs = patchRunAnnotationsMock.mock.calls[0] as unknown as [
+      string,
+      Record<string, string>,
+      string,
+    ];
+    const verdict = JSON.parse(callArgs[1]['percussionist.dev/merge-verdict'] ?? '{}');
+    expect(verdict.outcome).toBe('pr-opened');
+    expect(verdict.prNumber).toBe(42);
+  });
+
+  it('rejects pr-opened without prNumber', async () => {
+    const res = await postMcp(
+      server.port,
+      mcpCall('merge-6', 'complete_merge', {
+        outcome: 'pr-opened',
+        diagnosis: 'Opened a PR',
+      }),
+    );
+    expect(res).toEqual({
+      jsonrpc: '2.0',
+      id: 'merge-6',
+      error: { code: -32602, message: 'prNumber is required when outcome=pr-opened' },
+    });
+    expect(patchRunAnnotationsMock).toHaveBeenCalledTimes(0);
   });
 });
 

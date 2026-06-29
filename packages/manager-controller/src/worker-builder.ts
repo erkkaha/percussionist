@@ -431,6 +431,182 @@ export async function buildMergeRun(
       image: resolved.image,
       timeoutSeconds: resolved.timeoutSeconds,
       ttlSecondsAfterFinished: TTL_SECONDS,
+      runContext: 'merge-worker',
+      ...(resolved.resources ? { resources: resolved.resources } : {}),
+      ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
+      ...(resolved.source ? { source: resolved.source } : {}),
+      ...(resolved.sidecars?.length ? { sidecars: resolved.sidecars } : {}),
+      ...(resolved.initScript ? { initScript: resolved.initScript } : {}),
+      ...(resolved.injectFiles?.length ? { injectFiles: resolved.injectFiles } : {}),
+      ...(resolved.data ? { data: resolved.data } : {}),
+      ...(resolved.gitCache ? { gitCache: resolved.gitCache } : {}),
+    } as RunSpec,
+  };
+}
+
+/**
+ * Build a run that opens a GitHub pull request from the task's feature branch
+ * to the target branch. Used by `flow.integration.mode: 'pr'`.
+ *
+ * The run is short-lived: it creates the PR and exits. The reconciler then
+ * polls the PR state via `getPrState` and transitions the task to `done` once
+ * the PR is merged.
+ *
+ * Shares agent/source resolution with `buildMergeRun` but uses a PR-creation
+ * prompt and reports `outcome=pr-opened` with the PR number via `complete_merge`.
+ */
+export async function buildPrOpenRun(
+  project: Project,
+  task: Task,
+  runName: string,
+  allTasks?: Task[],
+  integrationAgentName?: string,
+): Promise<Run> {
+  const clusterSettings = await getOptionalClusterSettings('buildPrOpenRun');
+  const resolved = resolveRunConfig(project.spec, undefined, undefined, {
+    runner: {
+      image: clusterSettings?.spec?.runner?.image,
+      resources: clusterSettings?.spec?.runner?.resources,
+    },
+    secrets: clusterSettings?.spec?.secrets,
+  });
+
+  const projectName = project.metadata.name;
+  const taskName = task.metadata.name;
+
+  // Resolve source and target branches (PR-mode requires feature branching).
+  if (!project.spec.featureBranchingEnabled) {
+    throw new Error(
+      `PR-mode integration requires featureBranchingEnabled on project ${projectName}`,
+    );
+  }
+  const sourceBranch = resolveTaskBranch(task, project, allTasks ?? []);
+  const targetBranch = resolveMergeBranch(task, project, allTasks ?? []);
+  if (!sourceBranch) {
+    throw new Error(`Task ${taskName} has no git branch for PR-open run`);
+  }
+  if (!targetBranch) {
+    throw new Error(`Task ${taskName} has no target branch for PR-open run`);
+  }
+
+  // Agent resolution mirrors buildMergeRun.
+  const INTEGRATION_AGENT = process.env.MERGING_AGENT;
+  const integrationAgent =
+    integrationAgentName && (project.spec.agents ?? []).some((a) => a.name === integrationAgentName)
+      ? integrationAgentName
+      : INTEGRATION_AGENT && (project.spec.agents ?? []).some((a) => a.name === INTEGRATION_AGENT)
+        ? INTEGRATION_AGENT
+        : task.spec.agent;
+
+  try {
+    const agent = await getClusterAgent(integrationAgent);
+    if (agent.spec.model) {
+      resolved.model = agent.spec.model;
+    }
+  } catch {
+    // Agent CR not found — fall back to project/cluster defaults.
+  }
+  const agentOverride = (project.spec.agents ?? []).find((a) => a.name === integrationAgent);
+  if (agentOverride?.model) {
+    resolved.model = agentOverride.model;
+  }
+
+  const authValidation = validateModelAuth(resolved.model, resolved.secrets);
+  if (!authValidation.ok) {
+    throw new Error(
+      `Auth validation failed for PR-open run of task "${task.metadata.name}" (agent="${integrationAgent}"): ${authValidation.error}`,
+    );
+  }
+
+  // Checkout the source branch (the PR head).
+  if (resolved.source?.git) {
+    resolved.source.git.ref = sourceBranch;
+    resolved.source.git.parentRef = targetBranch;
+  }
+
+  const promptLines = [
+    `TASK: Open a pull request for ${taskName}`,
+    '',
+    `Task title: ${task.spec.title}`,
+    `Source (head) branch: ${sourceBranch}`,
+    `Target (base) branch: ${targetBranch}`,
+    '',
+    '## Pre-flight Check',
+    '',
+    'Ensure the worktree is at the latest remote source branch state:',
+    `    git fetch origin ${sourceBranch}`,
+    '    CURRENT=$(git rev-parse HEAD)',
+    `    LATEST=$(git rev-parse origin/${sourceBranch})`,
+    '    if [ "$CURRENT" != "$LATEST" ]; then',
+    `      echo "WARNING: HEAD stale, resetting to origin/${sourceBranch}"`,
+    '      git reset --hard "origin/${sourceBranch}"',
+    '    fi',
+    '',
+    '## Open the Pull Request',
+    '',
+    'Use the GitHub CLI (`gh`) to open a PR. The GITHUB_TOKEN env var is already set.',
+    'Run:',
+    `    gh pr create --base "${targetBranch}" --head "${sourceBranch}" \\`,
+    `      --title "${task.spec.title.replace(/"/g, '\\"')}" \\`,
+    '      --body "Automated PR opened by Percussionist integrator agent."',
+    '',
+    'Capture the PR number from the output or via:',
+    '    PR_NUMBER=$(gh pr list --head "${sourceBranch}" --base "${targetBranch}" --json number --jq ".[0].number")',
+    '    echo "PR number: $PR_NUMBER"',
+    '',
+    '## Rules',
+    '',
+    '- Do not merge the PR yourself.',
+    '- Do not modify code, run builds, or push additional commits.',
+    '- If `gh pr create` fails because a PR already exists for this head/base pair,',
+    '  look up the existing PR number with `gh pr list` and report that number.',
+    '- If `gh` is unavailable or GITHUB_TOKEN is not set, report outcome=`push-failed`.',
+    '',
+    '## Completion',
+    '',
+    'When the PR is open, call `percussionist_dispatcher_complete_merge` with:',
+    '- outcome=`pr-opened`',
+    '- prNumber=<the PR number>',
+    '- diagnosis: a brief one-line note (e.g. "Opened PR #42").',
+    '',
+    'On failure, use the standard outcome mapping:',
+    '- outcome=`push-failed` for auth/CLI errors.',
+    '- outcome=`transient-failure` for transient infra/network errors.',
+  ];
+
+  return {
+    apiVersion: API_GROUP_VERSION,
+    kind: KIND_RUN,
+    metadata: {
+      name: runName,
+      labels: {
+        [LABELS.managedBy]: MANAGED_BY,
+        [LABELS.projectName]: projectName,
+        [LABELS.taskId]: truncateK8sName(taskName, 63),
+      },
+      ownerReferences: [
+        {
+          apiVersion: API_GROUP_VERSION,
+          kind: 'Project',
+          name: projectName,
+          uid: project.metadata.uid ?? '',
+          controller: true,
+          blockOwnerDeletion: true,
+        },
+      ],
+    },
+    spec: {
+      project: projectName,
+      boardTask: taskName,
+      task: promptLines.join('\n'),
+      interactive: false,
+      agent: integrationAgent,
+      agents: (project.spec.agents ?? []).filter((a) => a.name !== integrationAgent),
+      model: resolved.model,
+      image: resolved.image,
+      timeoutSeconds: resolved.timeoutSeconds,
+      ttlSecondsAfterFinished: TTL_SECONDS,
+      runContext: 'merge-worker',
       ...(resolved.resources ? { resources: resolved.resources } : {}),
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),
       ...(resolved.source ? { source: resolved.source } : {}),

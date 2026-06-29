@@ -312,10 +312,27 @@ Each run gets its own worktree at `/data/worktrees/{run-name}/` checking out the
    - Reconciler blocks task from starting until predecessor is in `done` column AND has `mergedAt` timestamp
    - Ensures correct build order and that dependent tasks see predecessor's changes
 
-5. **Feature Branch Merge** (Manual)
-   - PLAN's `feature/{plan-id}` branch contains all merged BUILD changes
-   - Manual merge to `main` when feature is complete (workflow TBD)
-   - Feature branch kept indefinitely for now
+5. **Feature Branch Merge** (configurable via `flow.integration.mode`)
+
+   The PLAN's `feature/{plan-id}` branch contains all merged BUILD changes. The
+   mode controls how it lands on the target (`main` by default):
+
+   - **`auto-merge`** (default) — a merge run merges the feature branch directly
+     to the target branch. No human in the loop.
+   - **`pr`** — a short-lived run opens a GitHub PR from the feature branch to
+     the target. The manager polls the PR state (15-min cache interval) and
+     auto-transitions the task to `done` when the PR is merged. If the PR is
+     closed without merging, the task goes to `awaiting-human`. Requires
+     `source.git.githubTokenSecret` to be configured so the manager can read
+     the PR state via the GitHub API. Detection latency is up to 15 minutes
+     after merge (hardcoded cache TTL in `github-client.ts`).
+   - **`manual`** — the task parks in `awaiting-human`; a human merges the
+     feature branch to the target entirely outside the system, then marks the
+     task done in Percussionist.
+   - **`disabled`** — no integration merge; the task goes to `done` once all
+     BUILD children are done.
+
+   The feature branch is kept indefinitely in all modes.
 
 ### Benefits
 
@@ -583,6 +600,7 @@ but served within each run pod). These tools are available to agents during run 
 |------|---------|
 | `complete_run` | Signal successful BUILD task completion |
 | `complete_plan` | Signal successful PLAN task completion |
+| `complete_merge` | Submit a structured merge verdict for a merge run (outcome + optional prNumber for PR-mode) |
 | `fail_run` | Signal task failure with reason, triggering facilitator analysis |
 | `get_status` | Return current run state (phase, session ID, token usage) |
 | `create_task` | Create a new BUILD Task CR (runs in the same project) |
@@ -597,6 +615,12 @@ but served within each run pod). These tools are available to agents during run 
 - BUILD agents should call `complete_run` after implementation is committed
 - `complete_plan` signals plan artifact completion (no code work expected)
 - `complete_run` signals implementation work is done
+
+**`complete_merge`** — structured merge verdict (for integrator/merge runs):
+- Merge runs should call `complete_merge` (not `complete_run`) with a structured outcome
+- Outcomes: `merged`, `already-merged`, `conflict`, `push-failed`, `transient-failure`, `pr-opened`
+- For PR-mode integration: use `outcome=pr-opened` with `prNumber` to signal that a PR was opened
+- The reconciler reads the verdict annotation and routes: `merged`→done, `conflict`→awaiting-human, `pr-opened`→polls PR state
 
 **`report_finding`** — Off-task issue reporting:
 - Available to all run-pod agents (BUILD, PLAN, review runs; not merge runs)

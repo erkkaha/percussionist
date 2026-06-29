@@ -16,6 +16,7 @@ import { getRun } from '@percussionist/kube';
 import { isKubeNotFoundError } from '../kube-errors.js';
 import type { ManualActions, ObservedRuns, ReconcileInput } from './decision.js';
 import { resolveFlow } from './flow.js';
+import { getPrState, parseGitHubUrl, readProjectGithubToken } from './github-client.js';
 
 const TASK_ANNOTATION_KEYS = {
   approved: 'percussionist.dev/action-approved',
@@ -61,6 +62,23 @@ export async function observe(
   ]);
 
   const observed: ObservedRuns = { worker, review, merge, buildgen };
+
+  // PR-mode integration: when a PR has been opened (worker.prNumber set) and
+  // the PR-open run has completed (no active mergeRunName), poll GitHub for the
+  // PR state. The github-client caches per-PR for 15 min, so this is cheap
+  // even though observe() runs every reconcile cycle.
+  const prNumber = task.status?.worker?.prNumber;
+  if (prNumber && !mergeRunName) {
+    const gitUrl = project.spec.source?.git?.url;
+    const parsed = gitUrl ? parseGitHubUrl(gitUrl) : undefined;
+    if (parsed) {
+      const token = await readProjectGithubToken(project);
+      if (token) {
+        const prState = await getPrState(parsed.owner, parsed.repo, prNumber, token);
+        if (prState) observed.prState = prState;
+      }
+    }
+  }
 
   // Normalize manual actions from annotations.
   const manualActions = normalizeManualActions(task);

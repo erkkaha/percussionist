@@ -87,6 +87,14 @@ spec:
                     - failureReason
                     - sessionSummary
                     - successReview
+                runContext:
+                  type: string
+                  enum:
+                    - plan-worker
+                    - build-worker
+                    - review-facilitator
+                    - merge-worker
+                    - facilitator
                 inlineAgents:
                   maxItems: 5
                   type: array

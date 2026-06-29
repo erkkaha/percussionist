@@ -405,6 +405,7 @@ spec:
                           type: string
                           enum:
                             - auto-merge
+                            - pr
                             - manual
                             - disabled
                         agent:

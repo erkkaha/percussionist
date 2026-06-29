@@ -29,7 +29,7 @@ export interface ResolvedFlow {
     maxAutoReworks: number;
   };
   integration: {
-    mode: 'auto-merge' | 'manual' | 'disabled';
+    mode: 'auto-merge' | 'pr' | 'manual' | 'disabled';
     agent: string;
   };
   retry: {

@@ -34,6 +34,7 @@ function makeInput(
       review?: ReturnType<typeof makeRun>;
       merge?: ReturnType<typeof makeRun>;
       buildgen?: ReturnType<typeof makeRun>;
+      prState?: { state: 'open' | 'closed'; mergedAt: string | null };
     };
     manualActions?: {
       approved?: boolean;
@@ -44,6 +45,7 @@ function makeInput(
     };
     capacity?: { activeCount: number; maxParallel: number };
     allTasks?: ReturnType<typeof makeTask>[];
+    flow?: ReturnType<typeof resolveFlow>;
   },
 ) {
   return {
@@ -52,7 +54,7 @@ function makeInput(
     allTasks: overrides?.allTasks ?? [task],
     observed: overrides?.observed ?? {},
     manualActions: overrides?.manualActions ?? {},
-    flow,
+    flow: overrides?.flow ?? flow,
     capacity: overrides?.capacity ?? { activeCount: 0, maxParallel: 2 },
     now,
   };
@@ -707,6 +709,35 @@ describe('decide — awaiting-children', () => {
     });
     expect(result.toPhase).toBe('done');
   });
+
+  it('all BUILD children done + pr integration mode → awaiting-feature-merge + SchedulePrOpenRun', () => {
+    const prProject = makeProject('test-project', { featureBranchingEnabled: true });
+    prProject.spec.flow = { ...prProject.spec.flow, integration: { mode: 'pr' } };
+    const prFlow = resolveFlow(prProject);
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-children',
+      type: 'PLAN',
+    });
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      mergedAt: '2026-05-29T00:00:00.000Z',
+    });
+    const result = decide({
+      task: planTask,
+      project: prProject,
+      allTasks: [planTask, buildA],
+      observed: {},
+      manualActions: {},
+      flow: prFlow,
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe('awaiting-feature-merge');
+    expect(result.effects.some((e) => e.type === 'SchedulePrOpenRun')).toBe(true);
+    expect((result.statusPatch?.worker as any).mergeRunName).toBeDefined();
+  });
 });
 
 describe('decide — awaiting-feature-merge', () => {
@@ -855,6 +886,98 @@ describe('decide — awaiting-feature-merge', () => {
     const result = decide(makeInput(task, { observed: {} }));
     expect(result.toPhase).toBe('failed');
     expect((result.statusPatch?.worker as any).mergeError).toBe('Merge run disappeared');
+  });
+
+  it('pr-open run succeeded + pr-opened verdict → stores prNumber + clears mergeRunName + stays', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { mergeRunName: 'pr-open-1' };
+    const mergeRun = withMergeVerdict(makeRun('pr-open-1', { phase: 'Succeeded' }), {
+      outcome: 'pr-opened',
+      diagnosis: 'Opened PR #42',
+      prNumber: 42,
+    });
+    const result = decide(makeInput(task, { observed: { merge: mergeRun } }));
+    expect(result.toPhase).toBeUndefined();
+    expect((result.statusPatch?.worker as any).prNumber).toBe(42);
+    expect((result.statusPatch?.worker as any).mergeRunName).toBeNull();
+    expect(result.effects.some((e) => e.type === 'CleanupWorktree')).toBe(true);
+    expect(result.events[0]?.reason).toBe('PullRequestOpened');
+  });
+
+  it('pr-open run succeeded + pr-opened verdict without prNumber → awaiting-human', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { mergeRunName: 'pr-open-1' };
+    const mergeRun = withMergeVerdict(makeRun('pr-open-1', { phase: 'Succeeded' }), {
+      outcome: 'pr-opened',
+      diagnosis: 'Opened a PR',
+    });
+    const result = decide(makeInput(task, { observed: { merge: mergeRun } }));
+    expect(result.toPhase).toBe('awaiting-human');
+    expect((result.statusPatch?.worker as any).mergeError).toContain('no prNumber');
+  });
+
+  it('prNumber set + prState closed+merged → done with mergedAt', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { prNumber: 42 };
+    const result = decide(
+      makeInput(task, {
+        observed: { prState: { state: 'closed', mergedAt: '2026-05-29T12:00:00.000Z' } },
+      }),
+    );
+    expect(result.toPhase).toBe('done');
+    expect((result.statusPatch?.worker as any).mergedAt).toBe('2026-05-29T12:00:00.000Z');
+    expect(result.events[0]?.reason).toBe('PullRequestMerged');
+  });
+
+  it('prNumber set + prState closed without mergedAt → awaiting-human', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { prNumber: 42 };
+    const result = decide(
+      makeInput(task, {
+        observed: { prState: { state: 'closed', mergedAt: null } },
+      }),
+    );
+    expect(result.toPhase).toBe('awaiting-human');
+    expect((result.statusPatch?.worker as any).mergeError).toContain('closed without merging');
+    expect(result.events[0]?.reason).toBe('PullRequestClosedWithoutMerge');
+  });
+
+  it('prNumber set + prState open → no-op (keep polling)', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { prNumber: 42 };
+    const result = decide(
+      makeInput(task, {
+        observed: { prState: { state: 'open', mergedAt: null } },
+      }),
+    );
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects).toEqual([]);
+  });
+
+  it('prNumber set + no prState (fetch failed/missing) → no-op (keep waiting)', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { prNumber: 42 };
+    const result = decide(makeInput(task, { observed: {} }));
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects).toEqual([]);
   });
 });
 

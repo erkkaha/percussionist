@@ -12,7 +12,7 @@ import {
   patchTaskStatus,
 } from '@percussionist/kube';
 import { isKubeNotFoundError } from '../kube-errors.js';
-import { buildMergeRun, buildWorkerRun } from '../worker-builder.js';
+import { buildMergeRun, buildPrOpenRun, buildWorkerRun } from '../worker-builder.js';
 import type { AuditEvent } from './decision.js';
 import type { ResolvedFlow } from './flow.js';
 import { validateTransition } from './transitions.js';
@@ -27,6 +27,7 @@ export type ReconcileEffect =
     }
   | { type: 'ScheduleBuildGenRun'; buildgenRunName: string; succeededRunName: string }
   | { type: 'ScheduleMergeRun'; mergeRunName: string }
+  | { type: 'SchedulePrOpenRun'; prOpenRunName: string }
   | { type: 'CreateRun'; run: Run }
   | { type: 'DeleteRun'; name: string; reason: string }
   | { type: 'PatchTaskStatus'; patch: Record<string, unknown> }
@@ -195,6 +196,25 @@ export async function executeEffects(
           );
           try {
             await createRun(mergeRun, namespace);
+          } catch (e: unknown) {
+            const msg = (e as Error).message;
+            if (!/already exists/i.test(msg)) throw e;
+          }
+          break;
+        }
+        case 'SchedulePrOpenRun': {
+          if (!project) {
+            throw new Error('Project metadata required for SchedulePrOpenRun effect');
+          }
+          const prRun = await buildPrOpenRun(
+            project,
+            task,
+            effect.prOpenRunName,
+            allTasks,
+            flow.integration.agent,
+          );
+          try {
+            await createRun(prRun, namespace);
           } catch (e: unknown) {
             const msg = (e as Error).message;
             if (!/already exists/i.test(msg)) throw e;

@@ -140,13 +140,22 @@ const TOOL_COMPLETE_MERGE = {
   description:
     'Submit a structured merge verdict for a merge run and mark the run as complete. ' +
     'Call this from an integrator agent run instead of complete_run. ' +
-    'Writes the verdict to the Run annotations so the orchestrator can act on it.',
+    'Writes the verdict to the Run annotations so the orchestrator can act on it. ' +
+    'For PR-mode integration, use outcome=`pr-opened` with a prNumber to signal that ' +
+    'a pull request was opened and the orchestrator should poll for its merge.',
   inputSchema: {
     type: 'object',
     properties: {
       outcome: {
         type: 'string',
-        enum: ['merged', 'already-merged', 'conflict', 'push-failed', 'transient-failure'],
+        enum: [
+          'merged',
+          'already-merged',
+          'conflict',
+          'push-failed',
+          'transient-failure',
+          'pr-opened',
+        ],
         description: 'Deterministic merge outcome',
       },
       diagnosis: {
@@ -168,6 +177,12 @@ const TOOL_COMPLETE_MERGE = {
       mergeCommitSha: {
         type: 'string',
         description: 'Optional merge commit SHA',
+      },
+      prNumber: {
+        type: 'number',
+        description:
+          'Pull request number — required when outcome=`pr-opened`. ' +
+          'The orchestrator stores this and polls the PR state on subsequent cycles.',
       },
       requiresHuman: {
         type: 'boolean',
@@ -1241,6 +1256,12 @@ async function handleMcp(
           return rpcError(req.id, -32602, 'diagnosis is required');
         }
 
+        const prNumberRaw = args.prNumber;
+        const prNumber =
+          typeof prNumberRaw === 'number' && Number.isInteger(prNumberRaw) && prNumberRaw > 0
+            ? prNumberRaw
+            : undefined;
+
         const rawVerdict = {
           outcome: args.outcome,
           diagnosis,
@@ -1248,6 +1269,7 @@ async function handleMcp(
           sourceBranch: typeof args.sourceBranch === 'string' ? args.sourceBranch : undefined,
           targetBranch: typeof args.targetBranch === 'string' ? args.targetBranch : undefined,
           mergeCommitSha: typeof args.mergeCommitSha === 'string' ? args.mergeCommitSha : undefined,
+          prNumber,
           requiresHuman: typeof args.requiresHuman === 'boolean' ? args.requiresHuman : undefined,
         };
 
@@ -1256,8 +1278,12 @@ async function handleMcp(
           return rpcError(
             req.id,
             -32602,
-            'outcome must be one of merged, already-merged, conflict, push-failed, transient-failure',
+            'outcome must be one of merged, already-merged, conflict, push-failed, transient-failure, pr-opened',
           );
+        }
+
+        if (verdict.outcome === 'pr-opened' && !verdict.prNumber) {
+          return rpcError(req.id, -32602, 'prNumber is required when outcome=pr-opened');
         }
 
         const runName = process.env.RUN_NAME ?? '';

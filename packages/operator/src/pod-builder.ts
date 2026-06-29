@@ -907,6 +907,7 @@ export function renderPod(
                   },
                 ]
               : []),
+            ...(spec.runContext ? [{ name: 'RUN_CONTEXT', value: spec.runContext }] : []),
             { name: 'RUN_PROJECT', value: spec.project },
             ...(spec.boardTask ? [{ name: 'RUN_BOARD_TASK', value: spec.boardTask }] : []),
             { name: 'RUN_TIMEOUT_SECONDS', value: String(spec.timeoutSeconds ?? 3600) },

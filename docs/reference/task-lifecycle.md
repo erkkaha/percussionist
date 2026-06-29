@@ -36,7 +36,7 @@ Tasks in Percussionist follow a defined state machine with 16 phases.
 | `succeeded` | `reviewing`, `awaiting-human`, `done` |
 | `reviewing` | `awaiting-human`, `rework-requested` |
 | `awaiting-human` | `awaiting-merge`, `generating-builds`, `awaiting-feature-merge`, `rework-requested`, `done`, `failed` |
-| `awaiting-merge` | `done`, `failed` |
+| `awaiting-merge` | `done`, `awaiting-human`, `failed` |
 | `rework-requested` | `scheduled` |
 | `generating-builds` | `awaiting-children`, `awaiting-human`, `failed` |
 | `awaiting-children` | `awaiting-feature-merge`, `awaiting-human`, `done`, `failed` |

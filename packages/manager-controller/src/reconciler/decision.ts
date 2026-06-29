@@ -6,6 +6,7 @@ import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../b
 import { auxiliaryRunName, workerRunName } from '../worker-builder.js';
 import type { ReconcileEffect } from './effects.js';
 import type { ResolvedFlow } from './flow.js';
+import type { PrState } from './github-client.js';
 import { getConsumedAnnotationKeys, getMergeVerdict, getReviewVerdict } from './observations.js';
 import { isValidTransition } from './transitions.js';
 
@@ -28,6 +29,8 @@ export interface ObservedRuns {
   review?: Run;
   merge?: Run;
   buildgen?: Run;
+  /** GitHub PR state — populated for PR-mode integration when worker.prNumber is set. */
+  prState?: PrState;
 }
 
 export interface ManualActions {
@@ -1289,6 +1292,33 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
     };
   }
 
+  if (flow.integration.mode === 'pr') {
+    // PR mode — schedule a short-lived run to open a GitHub PR from the feature
+    // branch to the target. The reconciler then polls the PR state and
+    // transitions to done once it is merged (see decideAwaitingFeatureMerge).
+    const prSuffix = createHash('sha256')
+      .update(`${input.project.metadata.name}:${taskName}:pr-open`)
+      .digest('hex')
+      .slice(0, 10);
+    const prOpenRunName = auxiliaryRunName(input.project.metadata.name, 'pr', taskName, prSuffix);
+    return {
+      taskName,
+      fromPhase,
+      toPhase: 'awaiting-feature-merge',
+      statusPatch: { worker: { mergeRunName: prOpenRunName } },
+      effects: [{ type: 'SchedulePrOpenRun', prOpenRunName }],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'awaiting-feature-merge',
+          'OpeningPullRequest',
+          'Scheduled run to open a GitHub PR from the feature branch to the target',
+        ),
+      ],
+    };
+  }
+
   // auto-merge mode — schedule merge run for feature branch → target.
   const mergeSuffix = createHash('sha256')
     .update(`${input.project.metadata.name}:${taskName}:merge`)
@@ -1324,9 +1354,15 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
   const taskName = task.metadata.name;
   const fromPhase = 'awaiting-feature-merge' as TaskPhase;
   const mergeRunName = task.status?.worker?.mergeRunName;
+  const prNumber = task.status?.worker?.prNumber;
 
   if (!mergeRunName) {
-    // Create merge run if not yet assigned.
+    // PR-mode polling: a PR was already opened (worker.prNumber set) and the
+    // PR-open run has completed. Poll GitHub for the PR state.
+    if (prNumber) {
+      return decidePrStateOutcome(input, prNumber, fromPhase, taskName);
+    }
+    // No PR open — schedule a merge run (legacy auto-merge recovery).
     const suffix = createHash('sha256')
       .update(`${input.project.metadata.name}:${taskName}:merge`)
       .digest('hex')
@@ -1361,6 +1397,49 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
     const verdictMessage = [verdict?.diagnosis, verdict?.details].filter(Boolean).join('\n\n');
 
     if (verdict) {
+      if (verdict.outcome === 'pr-opened') {
+        // PR-open run completed. Record the PR number, clear the run name so
+        // future cycles poll the PR state, and stay in awaiting-feature-merge.
+        if (!verdict.prNumber) {
+          return {
+            taskName,
+            fromPhase,
+            toPhase: 'awaiting-human',
+            statusPatch: {
+              worker: { mergeError: 'PR-open run succeeded but reported no prNumber' },
+            },
+            effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
+            events: [
+              makeEvent(
+                input,
+                fromPhase,
+                'awaiting-human',
+                'PrOpenRunMissingNumber',
+                'complete_merge returned outcome=pr-opened without a prNumber',
+              ),
+            ],
+          };
+        }
+        return {
+          taskName,
+          fromPhase,
+          toPhase: undefined,
+          statusPatch: {
+            worker: { prNumber: verdict.prNumber, mergeRunName: null },
+          },
+          effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
+          events: [
+            makeEvent(
+              input,
+              fromPhase,
+              'awaiting-feature-merge',
+              'PullRequestOpened',
+              `PR #${verdict.prNumber} opened; polling for merge`,
+            ),
+          ],
+        };
+      }
+
       if (
         (verdict.outcome === 'merged' || verdict.outcome === 'already-merged') &&
         !verdict.requiresHuman
@@ -1488,6 +1567,72 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
   }
 
   // Still running or unknown — wait.
+  return { taskName, fromPhase, effects: [], events: [] };
+}
+
+/**
+ * Decide the outcome of a PR-mode integration by reading the polled GitHub PR
+ * state. Called when `worker.prNumber` is set and no `mergeRunName` is active.
+ *
+ * - closed + mergedAt → done (feature branch landed on target via PR merge)
+ * - closed + no mergedAt → awaiting-human (PR was closed without merging)
+ * - open or prState missing → stay in awaiting-feature-merge (keep polling)
+ */
+function decidePrStateOutcome(
+  input: ReconcileInput,
+  prNumber: number,
+  fromPhase: TaskPhase,
+  taskName: string,
+): ReconcileDecision {
+  const { observed } = input;
+  const prState = observed.prState;
+
+  if (!prState) {
+    // No state yet (cache miss, fetch error, or missing token/URL). Keep
+    // waiting; observe() will retry on the next reconcile cycle.
+    return { taskName, fromPhase, effects: [], events: [] };
+  }
+
+  if (prState.state === 'closed') {
+    if (prState.mergedAt) {
+      return {
+        taskName,
+        fromPhase,
+        toPhase: 'done',
+        statusPatch: { worker: { mergedAt: prState.mergedAt } },
+        effects: [],
+        events: [
+          makeEvent(
+            input,
+            fromPhase,
+            'done',
+            'PullRequestMerged',
+            `PR #${prNumber} was merged at ${prState.mergedAt}`,
+          ),
+        ],
+      };
+    }
+    return {
+      taskName,
+      fromPhase,
+      toPhase: 'awaiting-human',
+      statusPatch: {
+        worker: { mergeError: `PR #${prNumber} was closed without merging` },
+      },
+      effects: [],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'awaiting-human',
+          'PullRequestClosedWithoutMerge',
+          `PR #${prNumber} was closed without being merged`,
+        ),
+      ],
+    };
+  }
+
+  // PR still open — keep polling.
   return { taskName, fromPhase, effects: [], events: [] };
 }
 

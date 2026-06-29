@@ -377,5 +377,72 @@ describe('renderPod - workspace-init script generation', () => {
       const runContext = env.find((e) => e.name === 'RUN_CONTEXT');
       expect(runContext?.value).toBe('facilitator');
     });
+
+    it('sets RUN_CONTEXT from spec.runContext for merge runs', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'merge-task',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          boardTask: 'test-project-build-123',
+          agent: 'integrator',
+          runContext: 'merge-worker',
+          source: { local: true },
+        },
+      });
+
+      const env = getDispatcherEnv(run);
+      const runContext = env.find((e) => e.name === 'RUN_CONTEXT');
+      expect(runContext?.value).toBe('merge-worker');
+    });
+
+    it('spec.runContext takes precedence over facilitation', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'conflict-run',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          boardTask: 'test-project-build-123',
+          agent: 'integrator',
+          facilitation: {
+            targetRunName: 'worker-run-1',
+            targetTaskId: 'test-project-build-123',
+            failureReason: 'completed',
+            sessionSummary: 'summary',
+            successReview: true,
+          },
+          runContext: 'merge-worker',
+          source: { local: true },
+        },
+      });
+
+      const env = getDispatcherEnv(run);
+      // When both facilitation and runContext are set, both env entries are
+      // present. K8s uses the last value for duplicate names, so we check the
+      // last RUN_CONTEXT entry.
+      const runContextEntries = env.filter((e) => e.name === 'RUN_CONTEXT');
+      expect(runContextEntries.length).toBe(2);
+      expect(runContextEntries[runContextEntries.length - 1]?.value).toBe('merge-worker');
+    });
+
+    it('omits RUN_CONTEXT when neither runContext nor facilitation is set', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'build-task',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          boardTask: 'test-project-build-123',
+          agent: 'builder',
+          source: { local: true },
+        },
+      });
+
+      const env = getDispatcherEnv(run);
+      const runContext = env.find((e) => e.name === 'RUN_CONTEXT');
+      expect(runContext).toBeUndefined();
+    });
   });
 });
