@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.209] - 2026-06-29
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Use opencode serve (headless) as main process, shell for terminal attach
 ## [v0.1.208] - 2026-06-29
 
 ### <!-- 0 -->🚀 Features
@@ -11,6 +16,10 @@ All notable changes to Percussionist are documented here.
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Add kubeConfig re-export and fix ws type resolution for server build _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.208
 ## [v0.1.207] - 2026-06-24
 
 ### <!-- 1 -->🐛 Bug Fixes
