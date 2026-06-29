@@ -27,6 +27,7 @@ export {
   getRun,
   getTask,
   gitUrlHash,
+  kubeConfig,
   // ClusterAgent helpers
   listClusterAgents,
   listNodeAllocated,

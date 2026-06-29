@@ -17,6 +17,12 @@ import { RUNNER_CONTAINER, type Run, RunPhase } from '@percussionist/api';
 import { isValidToken } from './auth.js';
 import { getRun, kubeConfig, NAMESPACE } from './kube.js';
 
+// Minimal interface for the exec WebSocket (ws package is a transitive dep).
+interface ExecWs {
+  close(): void;
+  on(event: string, handler: (...args: unknown[]) => void): void;
+}
+
 // ---------------------------------------------------------------------------
 // Resizable stream — the k8s Exec class checks for `columns`/`rows` props
 // and a `resize()` method to drive the TerminalSizeQueue, which sends resize
@@ -84,7 +90,7 @@ interface WsData {
   runName: string;
   stdin?: PassThrough;
   stdout?: ResizablePassThrough;
-  execWs?: import('ws').WebSocket;
+  execWs?: ExecWs;
   closed: boolean;
 }
 
@@ -124,7 +130,7 @@ export const attachWsHandlers = {
         true, // tty
         statusCallback,
       )
-      .then((execWs: import('ws').WebSocket) => {
+      .then((execWs: ExecWs) => {
         data.execWs = execWs;
         execWs.on('close', () => {
           if (!data.closed) {
@@ -155,14 +161,14 @@ export const attachWsHandlers = {
           typeof ctrl.cols === 'number' &&
           typeof ctrl.rows === 'number'
         ) {
-          data.stdout.resize(ctrl.cols, ctrl.rows);
+          data.stdout!.resize(ctrl.cols, ctrl.rows);
         }
       } catch {
         // Ignore malformed control messages.
       }
     } else {
       // Binary frame — raw stdin bytes.
-      data.stdin.write(msg);
+      data.stdin!.write(msg);
     }
   },
 
