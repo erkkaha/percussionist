@@ -1,11 +1,25 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.208] - 2026-06-29
+
+### <!-- 0 -->🚀 Features
+
+- Add PR-mode feature branch merge gate _(manager-controller)_
+- Replace opencode web with tmux-wrapped TUI and web terminal attach
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Add kubeConfig re-export and fix ws type resolution for server build _(web)_
 ## [v0.1.207] - 2026-06-24
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Derive code-server URL from any subdomain, not just app _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.207
 ## [v0.1.206] - 2026-06-23
 
 ### <!-- 1 -->🐛 Bug Fixes
