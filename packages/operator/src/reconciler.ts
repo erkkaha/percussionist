@@ -45,15 +45,11 @@ import {
   shouldReconcileMemoryService,
 } from './memory-service.js';
 import {
-  ingressName,
   podName,
   renderAgentsConfigMap,
-  renderIngress,
   renderPod,
   renderService,
   serviceName,
-  shouldCreateIngress,
-  webURLFor,
 } from './pod-builder.js';
 import { ensureDataPVC } from './pvc-helper.js';
 
@@ -436,32 +432,6 @@ export async function reconcile(run: Run): Promise<void> {
     }
   }
 
-  // Ensure Ingress.
-  if (shouldCreateIngress(run)) {
-    try {
-      await networking.readNamespacedIngress({
-        name: ingressName(run),
-        namespace: ns,
-      });
-    } catch {
-      try {
-        await networking.createNamespacedIngress({
-          namespace: ns,
-          body: renderIngress(run, runnerSpec),
-        });
-        log(`created ingress ${ns}/${ingressName(run)} → ${webURLFor(run)}`);
-      } catch (e) {
-        if (!/already exists/i.test((e as Error).message)) throw e;
-      }
-    }
-    if (!run.status?.webURL) {
-      await patchStatus(run, {
-        ingressName: ingressName(run),
-        webURL: webURLFor(run),
-      });
-    }
-  }
-
   // Ensure agents ConfigMap.
   await ensureOpencodeConfig(ns);
   if (resolvedAgents.length > 0) {
@@ -540,9 +510,6 @@ export async function reconcile(run: Run): Promise<void> {
         phase: RunPhase.Initializing,
         podName: podName(run),
         serviceName: serviceName(run),
-        ...(shouldCreateIngress(run)
-          ? { ingressName: ingressName(run), webURL: webURLFor(run) }
-          : {}),
         message: 'pod created',
       });
     } catch (e) {
@@ -566,9 +533,6 @@ export async function reconcile(run: Run): Promise<void> {
       podPhase,
       podName: podName(run),
       serviceName: serviceName(run),
-      ...(shouldCreateIngress(run)
-        ? { ingressName: ingressName(run), webURL: webURLFor(run) }
-        : {}),
       message: `pod phase: ${podPhase ?? 'Unknown'}`,
     });
   }
@@ -614,15 +578,6 @@ async function cleanupChildResources(run: Run, ns: string): Promise<void> {
   } catch (e: unknown) {
     if (!isNotFound(e)) {
       err(`delete service ${ns}/${name}:`, (e as Error).message);
-    }
-  }
-  // Delete Ingress (best-effort).
-  try {
-    await networking.deleteNamespacedIngress({ name, namespace: ns });
-    log(`deleted ingress ${ns}/${name}`);
-  } catch (e: unknown) {
-    if (!isNotFound(e)) {
-      err(`delete ingress ${ns}/${name}:`, (e as Error).message);
     }
   }
 }

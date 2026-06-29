@@ -6,65 +6,14 @@ import { useRunEvents } from '../hooks/useRunEvents';
 import { deleteRun } from '../lib/api';
 import { TERMINAL_PHASES } from '../lib/types';
 import LogViewer from './LogViewer';
-import OpenOpencodeButton from './OpenOpencodeButton';
 import SessionView from './SessionView';
 import StatusBadge from './StatusBadge';
+import TerminalTab from './TerminalTab';
 import TokenCounter from './TokenCounter';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 
 const WORKSPACE_INIT_CONTAINER = 'workspace-init';
-const DEFAULT_NAMESPACE = 'percussionist';
-
-function attachCommand(name: string, namespace: string | undefined): string {
-  const ns = namespace ?? DEFAULT_NAMESPACE;
-  return ns === DEFAULT_NAMESPACE ? `beatctl attach ${name}` : `beatctl attach ${name} -n ${ns}`;
-}
-
-function AttachButton({ name, namespace }: { name: string; namespace?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  function handleCopy() {
-    const cmd = attachCommand(name, namespace);
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(cmd).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      });
-    } else {
-      const ta = document.createElement('textarea');
-      ta.value = cmd;
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand('copy');
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {
-        /* ignore */
-      }
-      document.body.removeChild(ta);
-    }
-  }
-
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      onClick={handleCopy}
-      title={`Copy: ${attachCommand(name, namespace)}`}
-      className={`${
-        copied
-          ? 'border-phase-succeeded/40 text-phase-succeeded bg-phase-succeeded/10'
-          : 'border-border-muted text-text-muted hover:border-border hover:text-text'
-      }`}
-    >
-      {copied ? 'Copied!' : 'Attach'}
-    </Button>
-  );
-}
 
 function formatTime(iso: string | undefined): string {
   if (!iso) return '-';
@@ -161,8 +110,6 @@ export default function RunDetail() {
         </div>
         <div className="flex items-center gap-3">
           <TokenCounter tokensIn={run.status?.tokensIn} tokensOut={run.status?.tokensOut} />
-          {isActive && name && <AttachButton name={name} namespace={run.metadata.namespace} />}
-          {run && <OpenOpencodeButton run={run} />}
           <Link to={`/runs/new?copyFrom=${encodeURIComponent(name ?? '')}`}>
             <Button variant="outline" size="sm">
               Copy
@@ -225,19 +172,6 @@ export default function RunDetail() {
             <Field label="Session ID" value={run.status?.sessionID} mono />
             <Field label="Pod" value={run.status?.podName} mono />
             <Field label="Service" value={run.status?.serviceName} mono />
-            {run.status?.webURL && (
-              <div className="flex items-baseline gap-3 text-sm">
-                <span className="text-text-dim w-36 shrink-0">Web UI</span>
-                <a
-                  href={run.status.webURL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-text font-mono text-xs break-all hover:underline"
-                >
-                  {run.status.webURL}
-                </a>
-              </div>
-            )}
             <Field label="Created" value={formatTime(run.metadata.creationTimestamp)} />
             <Field label="Started" value={formatTime(run.status?.startedAt)} />
             <Field label="Completed" value={formatTime(run.status?.completedAt)} />
@@ -373,6 +307,18 @@ export default function RunDetail() {
           />
         </CardContent>
       </Card>
+
+      {/* Interactive terminal — attach to the opencode TUI inside the pod */}
+      {isActive && run.status?.podName && (
+        <Card>
+          <CardHeader className="border-b border-border-muted">
+            <CardTitle className="text-sm font-medium text-text-muted">Terminal</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <TerminalTab runName={name} active={isActive} />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Logs */}
       <Card>

@@ -4,8 +4,6 @@ import { Link } from 'react-router-dom';
 import { useRunsEvents } from '../hooks/useRunsEvents';
 import { fetchRunsPaginated } from '../lib/api';
 import type { Run, RunPhase } from '../lib/types';
-import { TERMINAL_PHASES } from '../lib/types';
-import OpenOpencodeButton from './OpenOpencodeButton';
 import StatusBadge from './StatusBadge';
 import TokenCounter from './TokenCounter';
 import { Button } from './ui/button';
@@ -207,7 +205,6 @@ export default function RunList() {
 
 function RunRow({ run }: { run: Run }) {
   const phase = run.status?.phase;
-  const isActive = !phase || !TERMINAL_PHASES.has(phase);
   const isFailed = phase === 'Failed';
   const errorMsg = isFailed ? run.status?.message : undefined;
   return (
@@ -244,8 +241,6 @@ function RunRow({ run }: { run: Run }) {
       </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-1.5">
-          {isActive && <AttachButton name={run.metadata.name} namespace={run.metadata.namespace} />}
-          <OpenOpencodeButton run={run} compact />
           <Link to={`/runs/new?copyFrom=${encodeURIComponent(run.metadata.name)}`}>
             <Button variant="outline" size="sm">
               Copy
@@ -307,57 +302,6 @@ function TableSkeleton() {
         ))}
       </div>
     </div>
-  );
-}
-
-const DEFAULT_NAMESPACE = 'percussionist';
-
-function attachCommand(name: string, namespace: string | undefined): string {
-  const ns = namespace ?? DEFAULT_NAMESPACE;
-  return ns === DEFAULT_NAMESPACE ? `beatctl attach ${name}` : `beatctl attach ${name} -n ${ns}`;
-}
-
-function AttachButton({ name, namespace }: { name: string; namespace?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  function handleCopy() {
-    const cmd = attachCommand(name, namespace);
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(cmd).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      });
-    } else {
-      const ta = document.createElement('textarea');
-      ta.value = cmd;
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand('copy');
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {
-        /* ignore */
-      }
-      document.body.removeChild(ta);
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      title={`Copy: ${attachCommand(name, namespace)}`}
-      className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
-        copied
-          ? 'border-phase-succeeded/40 text-phase-succeeded bg-phase-succeeded/10'
-          : 'border-border-muted text-text-dim hover:border-border hover:text-text-muted'
-      }`}
-    >
-      {copied ? 'Copied!' : 'Attach'}
-    </button>
   );
 }
 

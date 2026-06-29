@@ -140,10 +140,8 @@ program
 // attach --------------------------------------------------------------------
 program
   .command('attach <name>')
-  .description('port-forward to the run and launch `opencode attach`')
+  .description('exec into the run pod and attach to the opencode tmux session')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
-  .option('--local-port <port>', 'local port to bind (default: random free port)')
-  .option('-c, --continue', 'continue the last session (passed through to opencode attach)')
   .action((name: string, opts) => runAttach(name, opts));
 
 // chat ----------------------------------------------------------------------

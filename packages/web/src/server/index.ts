@@ -10,6 +10,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './app.js';
+import { attachWsHandlers, isAttachAuthorized, resolveAttachTarget } from './attach-ws.js';
 import { getDb } from './db.js';
 import { NAMESPACE } from './kube.js';
 import { startMetricsCollector } from './metrics-collector.js';
@@ -102,7 +103,45 @@ console.log(`percussionist-web listening on :${port}  (namespace=${NAMESPACE})`)
 console.log(`serving client from ${clientDir}`);
 
 if (isBun) {
-  Bun.serve({ fetch: app.fetch, port });
+  Bun.serve({
+    fetch: async (req, server) => {
+      // Intercept WebSocket upgrade requests for /api/runs/:name/attach.
+      const url = new URL(req.url);
+      if (
+        req.headers.get('upgrade') === 'websocket' &&
+        url.pathname.match(/^\/api\/runs\/[^/]+\/attach$/)
+      ) {
+        if (!isAttachAuthorized(url)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const runName = decodeURIComponent(
+          url.pathname.match(/^\/api\/runs\/([^/]+)\/attach$/)?.[1] ?? '',
+        );
+        const target = await resolveAttachTarget(runName);
+        if ('error' in target) {
+          return new Response(target.error, { status: target.status });
+        }
+        if (
+          server.upgrade(req, {
+            data: {
+              podName: target.podName,
+              namespace: target.namespace,
+              runName: target.runName,
+              stdin: undefined,
+              stdout: undefined,
+              closed: false,
+            },
+          })
+        ) {
+          return undefined;
+        }
+        return new Response('WebSocket upgrade failed', { status: 500 });
+      }
+      return app.fetch(req);
+    },
+    websocket: attachWsHandlers,
+    port,
+  });
 } else {
   const { serve } = await import('@hono/node-server');
   serve({ fetch: app.fetch, port });

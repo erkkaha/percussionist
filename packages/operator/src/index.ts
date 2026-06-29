@@ -11,7 +11,6 @@ import {
   type Project,
   type Run,
 } from '@percussionist/api';
-import { INGRESS_BASE_URL, INGRESS_CLASS } from './config.js';
 import {
   cleanupCodeServer,
   cleanupMemoryService,
@@ -38,13 +37,6 @@ process.on('unhandledRejection', (reason) => {
 
 async function main(): Promise<void> {
   log(`watching ${API_GROUP}/${API_VERSION}/${PLURAL_RUN} in namespace=${NAMESPACE}`);
-  if (INGRESS_BASE_URL) {
-    log(
-      `ingress base URL: ${INGRESS_BASE_URL}${INGRESS_CLASS ? ` (class: ${INGRESS_CLASS})` : ''}`,
-    );
-  } else {
-    log('no PERCUSSIONIST_INGRESS_BASE_URL set — per-run ingress disabled');
-  }
 
   // Watch Run CRs.
   const runPath = `/apis/${API_GROUP}/${API_VERSION}/namespaces/${NAMESPACE}/${PLURAL_RUN}`;

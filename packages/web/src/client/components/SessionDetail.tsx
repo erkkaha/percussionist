@@ -142,19 +142,6 @@ export default function SessionDetail() {
             {run.status?.serviceName && (
               <Field label="Service" value={run.status.serviceName} mono />
             )}
-            {run.status?.webURL && (
-              <div className="flex items-baseline gap-3 text-sm">
-                <span className="text-text-dim w-36 shrink-0">Web UI</span>
-                <a
-                  href={run.status.webURL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-text font-mono text-xs break-all hover:underline"
-                >
-                  {run.status.webURL}
-                </a>
-              </div>
-            )}
             <Field label="Created" value={formatTime(run.metadata.creationTimestamp)} />
             <Field label="Started" value={formatTime(run.status?.startedAt)} />
             <Field label="Completed" value={formatTime(run.status?.completedAt)} />

@@ -1,90 +1,21 @@
-// `beatctl attach <name>` — drop into the live opencode TUI for a run.
+// `beatctl attach <name>` — attach to the live opencode TUI inside a run pod.
 //
-// Flow:
-//   1. Look up the run so we know which Service to forward to.
-//   2. Pick a free local port (or honour --local-port).
-//   3. Start `kubectl port-forward svc/<svc> <local>:4096` as a child.
-//      Wait for the "Forwarding from" line on stderr (that's when it's
-//      actually listening; connecting before that sometimes 500s).
-//   4. Exec `opencode attach http://localhost:<local>`.
-//   5. Whatever happens after, kill the port-forward on exit.
+// The runner pod runs the opencode TUI inside a detached tmux session named
+// "opencode" (see images/runner/opencode-tmux.sh). Attaching is a direct
+// `kubectl exec -it` into that tmux session — no port-forward, no local
+// `opencode` binary required.
 //
-// We shell out to kubectl port-forward rather than using the client-node
-// PortForward helper because (a) it's the reference implementation users
-// already trust, and (b) it handles reconnection logic that we'd otherwise
-// have to reproduce.
+// Multiple concurrent attachers (CLI + web dashboard Terminal tab) can join
+// the same tmux session for pair programming. Disconnecting (Ctrl-b d or
+// closing the terminal) does NOT kill the TUI — the tmux session persists.
 
-import { type ChildProcess, spawn } from 'node:child_process';
-import { createServer } from 'node:net';
+import { spawn } from 'node:child_process';
 import type { Run } from '@percussionist/api';
-import { CONTAINER_PORT, RunPhase } from '@percussionist/api';
+import { RunPhase } from '@percussionist/api';
 import { DEFAULT_NAMESPACE, fatal, getRun, loadKube } from './kube.js';
 
 export interface AttachOpts {
   namespace?: string;
-  localPort?: string;
-  continue?: boolean;
-}
-
-async function pickFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.unref();
-    srv.on('error', reject);
-    srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address();
-      if (addr && typeof addr === 'object') {
-        const port = addr.port;
-        srv.close(() => resolve(port));
-      } else {
-        srv.close();
-        reject(new Error('could not determine free port'));
-      }
-    });
-  });
-}
-
-async function startPortForward(
-  namespace: string,
-  serviceName: string,
-  localPort: number,
-): Promise<ChildProcess> {
-  return new Promise((resolve, reject) => {
-    const args = [
-      'port-forward',
-      '-n',
-      namespace,
-      `svc/${serviceName}`,
-      `${localPort}:${CONTAINER_PORT}`,
-    ];
-    const child = spawn('kubectl', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let ready = false;
-    const onReady = () => {
-      if (ready) return;
-      ready = true;
-      resolve(child);
-    };
-
-    const onChunk = (buf: Buffer) => {
-      const s = buf.toString();
-      // kubectl prints this on stdout when the forward is live.
-      if (s.includes('Forwarding from')) onReady();
-      // Don't swallow errors — echo to stderr so the user sees auth/RBAC/etc.
-      process.stderr.write(s);
-    };
-    child.stdout?.on('data', onChunk);
-    child.stderr?.on('data', onChunk);
-
-    child.on('exit', (code) => {
-      if (!ready) {
-        reject(new Error(`kubectl port-forward exited with code ${code}`));
-      }
-    });
-    child.on('error', reject);
-  });
 }
 
 export async function runAttach(name: string, opts: AttachOpts): Promise<void> {
@@ -98,10 +29,8 @@ export async function runAttach(name: string, opts: AttachOpts): Promise<void> {
     fatal(`resolve ${name}`, e);
   }
 
-  // Guard against attaching to a run that's already finished. The Service
-  // may still exist briefly but the runner pod is gone; surfacing a clear
-  // message beats a cryptic connection-refused. Interactive runs reach
-  // terminal phase only via cancel or timeout, so this still applies there.
+  // Guard against attaching to a run that's already finished. The pod is gone
+  // so kubectl exec would hang or fail with a cryptic error.
   const terminal = [RunPhase.Succeeded, RunPhase.Failed, RunPhase.Cancelled];
   const phase = run.status?.phase;
   if (phase && (terminal as string[]).includes(phase)) {
@@ -109,55 +38,38 @@ export async function runAttach(name: string, opts: AttachOpts): Promise<void> {
     process.exit(1);
   }
 
-  // For Pending/Initializing runs, the Service might not have endpoints yet.
-  // kubectl port-forward will wait on the Service, so we don't block here —
-  // but warn so the user knows why it might take a few extra seconds.
+  const podName = run.status?.podName ?? run.metadata.name;
+
   if (!phase || phase === RunPhase.Pending || phase === RunPhase.Initializing) {
     console.log(
-      `beatctl: run is ${phase ?? 'Pending'}; port-forward may take a few seconds to settle.`,
+      `beatctl: run is ${phase ?? 'Pending'}; pod may still be starting — exec may take a few seconds.`,
     );
   }
 
-  const serviceName = run.status?.serviceName ?? run.metadata.name;
+  console.log(`beatctl: attaching to tmux session "opencode" in pod ${podName} (ns ${ns})…`);
 
-  const localPort = opts.localPort ? Number(opts.localPort) : await pickFreePort();
-
-  console.log(`beatctl: port-forwarding svc/${serviceName} -> localhost:${localPort}`);
-
-  let pf: ChildProcess;
-  try {
-    pf = await startPortForward(ns, serviceName, localPort);
-  } catch (e) {
-    fatal('port-forward failed', e);
-  }
-
-  // Clean teardown no matter how the attach exits (ctrl-c, opencode exit, ...)
-  const kill = () => {
-    if (!pf.killed) pf.kill('SIGTERM');
-  };
-  process.on('exit', kill);
-  process.on('SIGINT', () => {
-    kill();
-    process.exit(130);
-  });
-  process.on('SIGTERM', () => {
-    kill();
-    process.exit(143);
-  });
-
-  console.log(`beatctl: launching opencode attach...`);
-  const opencodeArgs = ['attach', `http://localhost:${localPort}`];
-  if (opts.continue) opencodeArgs.push('--continue');
-  const attach = spawn('opencode', opencodeArgs, {
+  const args = [
+    'exec',
+    '-it',
+    `pod/${podName}`,
+    '-c',
+    'opencode',
+    '-n',
+    ns,
+    '--',
+    'tmux',
+    'attach',
+    '-t',
+    'opencode',
+  ];
+  const attach = spawn('kubectl', args, {
     stdio: 'inherit',
     env: { ...process.env },
   });
   attach.on('exit', (code) => {
-    kill();
     process.exit(code ?? 0);
   });
   attach.on('error', (e) => {
-    kill();
-    fatal('failed to spawn opencode', e);
+    fatal('failed to spawn kubectl exec', e);
   });
 }

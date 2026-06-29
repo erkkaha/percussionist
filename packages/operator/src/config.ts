@@ -12,7 +12,8 @@ const DISPATCHER_SERVICE_ACCOUNT =
 const WEB_STATS_URL =
   process.env.WEB_STATS_URL ?? `http://percussionist-web.${NAMESPACE}.svc.cluster.local:8080`;
 
-// Ingress — disabled when BASE_URL is unset.
+// Ingress — used by code-server (per-project IDE Ingress). Per-run Ingress
+// was removed when `opencode web` was replaced by tmux-wrapped `opencode` TUI.
 const _rawBaseURL = process.env.PERCUSSIONIST_INGRESS_BASE_URL ?? '';
 const _legacyDomain = process.env.PERCUSSIONIST_INGRESS_BASE_DOMAIN ?? '';
 const INGRESS_BASE_URL: string = _rawBaseURL
@@ -28,7 +29,6 @@ try {
 } catch {
   // ignore malformed value
 }
-const EXPOSE_WEB_DEFAULT = process.env.PERCUSSIONIST_EXPOSE_WEB_DEFAULT !== 'false';
 
 // Memory / embedding service defaults.
 const MEMORY_SERVICE_IMAGE =
@@ -60,7 +60,6 @@ export {
   DEFAULT_STORAGE_SIZE,
   DISPATCHER_IMAGE,
   DISPATCHER_SERVICE_ACCOUNT,
-  EXPOSE_WEB_DEFAULT,
   INGRESS_ANNOTATIONS,
   INGRESS_BASE_URL,
   INGRESS_CLASS,

@@ -1,6 +1,6 @@
-// pod-builder.ts — renders the Pod, Service, and Ingress for an Run.
+// pod-builder.ts — renders the Pod and Service for an Run.
 
-import type { V1Ingress, V1Pod, V1Service } from '@kubernetes/client-node';
+import type { V1Pod, V1Service } from '@kubernetes/client-node';
 import {
   type AgentDef,
   API_GROUP_VERSION,
@@ -19,10 +19,6 @@ import { gitUrlHash } from '@percussionist/kube';
 import {
   DISPATCHER_IMAGE,
   DISPATCHER_SERVICE_ACCOUNT,
-  EXPOSE_WEB_DEFAULT,
-  INGRESS_ANNOTATIONS,
-  INGRESS_BASE_URL,
-  INGRESS_CLASS,
   RUNNER_IMAGE_DEFAULT,
   WEB_AUTH_TOKEN,
   WEB_STATS_URL,
@@ -64,7 +60,6 @@ function parentBaselineResolve(git: { ref?: string; parentRef?: string }): strin
 
 export const serviceName = (run: Run) => run.metadata.name;
 export const podName = (run: Run) => run.metadata.name;
-export const ingressName = (run: Run) => run.metadata.name;
 export const agentsConfigMapName = (run: Run) => `${run.metadata.name}-agents`;
 
 // ---------------------------------------------------------------------------
@@ -92,22 +87,6 @@ const commonLabels = (run: Run) => ({
   [LABELS.runName]: run.metadata.name,
   ...(run.spec.project ? { [LABELS.projectName]: run.spec.project } : {}),
 });
-
-// ---------------------------------------------------------------------------
-// Ingress helpers
-
-export function shouldCreateIngress(run: Run): boolean {
-  if (!INGRESS_BASE_URL) return false;
-  const exposeWeb = run.spec?.expose?.web;
-  return exposeWeb === undefined ? EXPOSE_WEB_DEFAULT : exposeWeb;
-}
-
-export function webURLFor(run: Run): string {
-  const url = new URL(INGRESS_BASE_URL);
-  url.hostname = `${run.metadata.name}.${url.hostname}`;
-  url.pathname = '/';
-  return url.toString();
-}
 
 // ---------------------------------------------------------------------------
 // Renderers
@@ -139,49 +118,6 @@ export function renderService(
       ],
     },
   };
-}
-
-export function renderIngress(
-  run: Run,
-  runner: RunnerImageSpec = OPENCODE_RUNNER_DEFAULTS,
-): V1Ingress {
-  const containerPort = runner.port;
-  const host = new URL(INGRESS_BASE_URL).hostname;
-  const runHost = `${run.metadata.name}.${host}`;
-  const ingress: V1Ingress = {
-    apiVersion: 'networking.k8s.io/v1',
-    kind: 'Ingress',
-    metadata: {
-      name: ingressName(run),
-      namespace: run.metadata.namespace ?? '',
-      labels: { ...commonLabels(run), [LABELS.component]: 'opencode-web' },
-      annotations: { ...INGRESS_ANNOTATIONS },
-      ownerReferences: ownerRefsFor(run),
-    },
-    spec: {
-      rules: [
-        {
-          host: runHost,
-          http: {
-            paths: [
-              {
-                path: '/',
-                pathType: 'Prefix',
-                backend: {
-                  service: {
-                    name: serviceName(run),
-                    port: { number: containerPort },
-                  },
-                },
-              },
-            ],
-          },
-        },
-      ],
-    },
-  };
-  if (INGRESS_CLASS && ingress.spec) ingress.spec.ingressClassName = INGRESS_CLASS;
-  return ingress;
 }
 
 export function renderAgentsConfigMap(run: Run, agents: AgentDef[]): object {
@@ -739,22 +675,16 @@ export function renderPod(
             ? {
                 command: ['/bin/sh', '-c'],
                 args: [
-                  `${waitScript}exec ${(runner.command ?? [`opencode`, `web`, `--hostname`, `0.0.0.0`, `--port`, String(containerPort)]).join(' ')}`,
+                  `${waitScript}exec ${(runner.command ?? ['/usr/local/bin/opencode-tmux.sh']).join(' ')}`,
                 ],
               }
             : {
-                command: runner.command ?? [
-                  'opencode',
-                  'web',
-                  '--hostname',
-                  '0.0.0.0',
-                  '--port',
-                  String(containerPort),
-                ],
+                command: runner.command ?? ['/usr/local/bin/opencode-tmux.sh'],
               }),
           ports: [{ name: 'http', containerPort }],
           env: [
             { name: 'NODE_OPTIONS', value: `--max-old-space-size=${nodeHeapMb}` },
+            { name: 'OPENCODE_PORT', value: String(containerPort) },
             // Package manager cache configuration
             { name: 'PNPM_HOME', value: `${dataMountPath}/cache/pnpm` },
             { name: 'pnpm_config_store_dir', value: `${dataMountPath}/cache/pnpm-store` },

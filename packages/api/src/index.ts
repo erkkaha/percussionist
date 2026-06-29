@@ -235,12 +235,6 @@ export const SourceSchema = z
     message: 'source.git and source.local are mutually exclusive',
   });
 
-export const ExposeSchema = z
-  .object({
-    web: z.boolean().default(true),
-  })
-  .partial();
-
 // A sidecar container that runs alongside the opencode runner in every pod for
 // a given project. Useful for services the agent needs during its task, e.g. a
 // test database. The agent reaches them via localhost.
@@ -571,7 +565,6 @@ export const RunSpecSchema = z
       .int()
       .nonnegative()
       .default(7 * 86400),
-    expose: ExposeSchema.optional(),
 
     // Data PVC configuration — backs package manager caches, git mirrors,
     // worktrees, and local workspaces for the project.
@@ -642,8 +635,6 @@ export const RunStatusSchema = z
     lastEventAt: z.string().optional(),
     tokensIn: z.number().int().nonnegative().optional(),
     tokensOut: z.number().int().nonnegative().optional(),
-    webURL: z.string().optional(),
-    ingressName: z.string().optional(),
     conditions: z
       .array(
         z.object({
