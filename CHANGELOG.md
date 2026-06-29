@@ -1,11 +1,21 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.211] - 2026-06-29
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Use opencode web instead of serve for runner process
+- Use opencode serve directly as pod command, no wrapper script
 ## [v0.1.210] - 2026-06-29
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Prevent SQLite WAL corruption on unclean shutdown _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.210
 ## [v0.1.209] - 2026-06-29
 
 ### <!-- 1 -->🐛 Bug Fixes
