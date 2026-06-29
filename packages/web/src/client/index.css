@@ -331,6 +331,12 @@
 }
 
 @media (max-width: 768px) {
+  /*
+   * NOTE: settings-table-scroll is now only used by AgentsPage.tsx.
+   * ProjectsPage.tsx uses always-on overflow-x-auto (Tailwind utility)
+   * matching the RunList.tsx pattern, so it does not rely on this
+   * breakpoint-gated rule.
+   */
   .settings-table-scroll {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
