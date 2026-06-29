@@ -675,11 +675,18 @@ export function renderPod(
             ? {
                 command: ['/bin/sh', '-c'],
                 args: [
-                  `${waitScript}exec ${(runner.command ?? ['/usr/local/bin/opencode-tmux.sh']).join(' ')}`,
+                  `${waitScript}exec ${(runner.command ?? [`opencode`, `serve`, `--hostname`, `0.0.0.0`, `--port`, String(containerPort)]).join(' ')}`,
                 ],
               }
             : {
-                command: runner.command ?? ['/usr/local/bin/opencode-tmux.sh'],
+                command: runner.command ?? [
+                  'opencode',
+                  'serve',
+                  '--hostname',
+                  '0.0.0.0',
+                  '--port',
+                  String(containerPort),
+                ],
               }),
           ports: [{ name: 'http', containerPort }],
           env: [
