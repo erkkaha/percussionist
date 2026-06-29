@@ -1,17 +1,14 @@
-// attach-ws.ts — WebSocket handler that bridges the browser to a live tmux
-// session inside a run pod via the Kubernetes exec API.
+// attach-ws.ts — WebSocket handler that bridges the browser to a shell
+// inside a run pod via the Kubernetes exec API.
 //
 // Flow:
-//   Browser (xterm.js) ←WS→ Bun server ←k8s exec WS→ pod: tmux attach -t opencode
+//   Browser (xterm.js) ←WS→ Bun server ←k8s exec WS→ pod: sh
 //
-// The runner pod runs the opencode TUI inside a detached tmux session named
-// "opencode" (see images/runner/opencode-tmux.sh). This handler execs into
-// that session with TTY=true, piping stdin/stdout bidirectionally.
-//
-// Multiple concurrent attachers (CLI + web) can join the same tmux session.
-// WS disconnect does NOT kill the TUI — the tmux session persists in the pod.
+// The runner pod runs `opencode serve` (headless HTTP API server). This
+// handler execs into the pod and gives a shell. Users can run
+// `opencode attach http://127.0.0.1:4096` from the shell to open the TUI.
 
-import { PassThrough } from 'node:stream';
+import { PassThrough, Writable } from 'node:stream';
 import { Exec, type KubeConfig, type V1Status } from '@kubernetes/client-node';
 import { RUNNER_CONTAINER, type Run, RunPhase } from '@percussionist/api';
 import { isValidToken } from './auth.js';
@@ -109,6 +106,13 @@ export const attachWsHandlers = {
       if (!data.closed) ws.send(buf);
     });
 
+    // No-op writable for stderr — with TTY everything comes through stdout.
+    const stderr = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+
     const statusCallback = (status: V1Status) => {
       if (status?.status === 'Failure' || (status?.code !== undefined && status.code !== 0)) {
         const msg = status.message ?? `exec failed (code ${status.code})`;
@@ -123,11 +127,11 @@ export const attachWsHandlers = {
         data.namespace,
         data.podName,
         RUNNER_CONTAINER,
-        ['tmux', 'attach', '-t', 'opencode'],
+        ['sh'],
         data.stdout,
-        null, // stderr — merge into stdout
+        stderr,
         data.stdin,
-        true, // tty
+        true,
         statusCallback,
       )
       .then((execWs: ExecWs) => {

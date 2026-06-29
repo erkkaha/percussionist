@@ -115,17 +115,18 @@ COPY content/ /root/.config/opencode/
 
 WORKDIR /workspace
 
-# The opencode TUI starts an HTTP API on 0.0.0.0:4096 (overridable via
-# OPENCODE_PORT). The tmux wrapper script makes it attachable via
-# `kubectl exec -it pod/<pod> -- tmux attach -t opencode` or the web
-# dashboard's Terminal tab (WebSocket-bridged k8s exec).
+# The opencode HTTP API is available on 0.0.0.0:4096 (overridable via
+# OPENCODE_PORT). The wrapper script runs `opencode serve` (headless
+# HTTP API server, same API as `opencode web` but without the web UI).
+# Interactive attach is a shell (via `beatctl attach` or the web dashboard
+# Terminal tab); run `opencode attach http://127.0.0.1:<port>` from the
+# shell to open the opencode TUI.
 EXPOSE 4096
 
 # Default tmux config — mouse on, 256-color, large scrollback.
 COPY .tmux.conf /root/.tmux.conf
 
-# Wrapper script: starts opencode TUI in a detached tmux session and
-# waits for it to exit so tini's PID 1 stays alive for the pod's lifetime.
+# Wrapper script: runs `opencode serve` (headless HTTP API server).
 COPY opencode-tmux.sh /usr/local/bin/opencode-tmux.sh
 RUN chmod +x /usr/local/bin/opencode-tmux.sh
 
