@@ -1,12 +1,11 @@
 #!/bin/sh
-# opencode-tmux.sh — start the opencode headless server.
+# opencode-tmux.sh — start the opencode server.
 #
-# Runs `opencode serve` which starts the same HTTP API as `opencode web`
-# but without the web UI. The dispatcher sidecar and web dashboard talk
-# to it via the HTTP API on 0.0.0.0:$OPENCODE_PORT.
+# The opencode HTTP API is available on 0.0.0.0:$OPENCODE_PORT.
+# The dispatcher sidecar and web dashboard talk to it via this API.
 #
-# Interactive attach is a shell inside the pod (via `beatctl attach` or
-# the web dashboard's Terminal tab). From the shell, run:
+# Interactive attach is a shell (via `beatctl attach` or the web
+# dashboard's Terminal tab). From the shell, run:
 #
 #   opencode attach http://127.0.0.1:$PORT
 #
@@ -15,4 +14,4 @@ set -eu
 
 PORT="${OPENCODE_PORT:-4096}"
 
-exec opencode serve --hostname 0.0.0.0 --port "${PORT}"
+exec opencode web --hostname 0.0.0.0 --port "${PORT}"
