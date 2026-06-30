@@ -1,11 +1,20 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.213] - 2026-06-30
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Skip session/events proxy for terminal-phase runs _(web)_
 ## [v0.1.212] - 2026-06-30
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Use Bun native WebSocket for k8s exec to avoid 'Expected 101' error _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.212
 ## [v0.1.211] - 2026-06-29
 
 ### <!-- 1 -->🐛 Bug Fixes

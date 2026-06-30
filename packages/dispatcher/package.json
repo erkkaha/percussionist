@@ -1,6 +1,6 @@
 {
   "name": "@percussionist/dispatcher",
-  "version": "0.1.212",
+  "version": "0.1.213",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
