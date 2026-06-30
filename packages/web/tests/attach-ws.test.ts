@@ -6,7 +6,10 @@
 //     rich error surfacing on failed connections
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { BunWsWrapper, buildTlsOptions } from '../src/server/attach-ws.js';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { BunWsWrapper, buildTlsOptions, resolveBearerToken } from '../src/server/attach-ws.js';
 
 // ---------------------------------------------------------------------------
 // buildTlsOptions — pure function tests
@@ -55,6 +58,36 @@ describe('buildTlsOptions', () => {
     expect(result!.cert!.toString()).toBe(cert);
     expect(result!.key).toBeInstanceOf(Buffer);
     expect(result!.key!.toString()).toBe(key);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveBearerToken — KubeConfig token + in-cluster fallback
+// ---------------------------------------------------------------------------
+
+describe('resolveBearerToken', () => {
+  it('uses KubeConfig user token when present', () => {
+    const kc = { getCurrentUser: () => ({ token: ' kubeconfig-token\n' }) };
+    expect(resolveBearerToken(kc as any, '/no/such/file')).toBe('kubeconfig-token');
+  });
+
+  it('falls back to service-account token file when KubeConfig token is absent', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'percussionist-token-'));
+    const tokenPath = join(dir, 'token');
+    try {
+      writeFileSync(tokenPath, 'service-account-token\n');
+      const kc = { getCurrentUser: () => ({}) };
+      expect(resolveBearerToken(kc as any, tokenPath)).toBe('service-account-token');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws when no token is available', () => {
+    const kc = { getCurrentUser: () => ({}) };
+    expect(() => resolveBearerToken(kc as any, '/no/such/file')).toThrow(
+      'No Kubernetes bearer token available',
+    );
   });
 });
 

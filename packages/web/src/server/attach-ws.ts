@@ -30,6 +30,25 @@ const K8S_CHANNEL_PROTOCOLS = [
   'channel.k8s.io',
 ];
 
+const SERVICE_ACCOUNT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token';
+
+export function resolveBearerToken(
+  kc: Pick<KubeConfig, 'getCurrentUser'>,
+  tokenPath = SERVICE_ACCOUNT_TOKEN_PATH,
+): string {
+  const kubeconfigToken = kc.getCurrentUser()?.token?.trim();
+  if (kubeconfigToken) return kubeconfigToken;
+
+  try {
+    const token = fs.readFileSync(tokenPath, 'utf8').trim();
+    if (token) return token;
+  } catch {
+    // fall through
+  }
+
+  throw new Error('No Kubernetes bearer token available for exec WebSocket');
+}
+
 // Minimal shape for the object the Exec class uses after connect returns.
 interface ExecWebSocket {
   on(event: string, handler: (...args: unknown[]) => void): void;
@@ -231,8 +250,7 @@ class BunExecHandler {
     const proto = ssl ? 'wss' : 'ws';
     const uri = `${proto}://${target}${path}`;
 
-    const user = this.kc.getCurrentUser();
-    const token = user?.token ?? '';
+    const token = resolveBearerToken(this.kc);
 
     const tlsOptions = ssl ? buildTlsOptions(cluster) : undefined;
     const wsCompat = new BunWsWrapper(uri, token, tlsOptions);
