@@ -268,9 +268,6 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
             Reconnect
           </Button>
         )}
-        <span className="text-xs text-text-dim">
-          Shell into the pod's <kbd className="font-mono">opencode</kbd> container
-        </span>
       </div>
 
       {/* Terminal */}
