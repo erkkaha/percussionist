@@ -80,6 +80,22 @@ class BunWsWrapper {
     this.listeners.get(event)!.add(handler);
   }
 
+  off(event: string, handler: (...args: unknown[]) => void): void {
+    const handlers = this.listeners.get(event);
+    if (handlers) {
+      handlers.delete(handler);
+      if (handlers.size === 0) this.listeners.delete(event);
+    }
+  }
+
+  removeAllListeners(event?: string): void {
+    if (event) {
+      this.listeners.delete(event);
+    } else {
+      this.listeners.clear();
+    }
+  }
+
   send(data: Buffer | string): void {
     this.ws.send(data as any);
   }

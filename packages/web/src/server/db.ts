@@ -114,12 +114,13 @@ function registerShutdown(sqlite: Database): void {
   }, 60_000);
   interval.unref();
 
-  // Graceful shutdown: checkpoint the WAL before closing, then let Bun
-  // handle process exit naturally (no process.exit() — that would abort
-  // in-flight requests and cause corruption).
+  // Graceful shutdown: checkpoint the WAL before closing, then exit so
+  // the process doesn't hang for the entire terminationGracePeriodSeconds
+  // waiting for SIGKILL. The TRUNCATE checkpoint flushes all WAL pages
+  // to the main DB so data is safe even on forced exit.
   process.on('SIGTERM', () => {
-    interval.unref();
     clearInterval(interval);
+    interval.unref();
     try {
       sqlite.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     } catch {
@@ -130,6 +131,7 @@ function registerShutdown(sqlite: Database): void {
     } catch {
       // ignore close errors
     }
+    process.exit(0);
   });
 }
 

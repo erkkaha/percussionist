@@ -1,4 +1,4 @@
-import { OPENCODE_RUNNER_DEFAULTS, RunPhase, TERMINAL_PHASES } from '@percussionist/api';
+import { OPENCODE_RUNNER_DEFAULTS, type RunPhase, TERMINAL_PHASES } from '@percussionist/api';
 import { Hono } from 'hono';
 import { auth } from '../auth.js';
 import { fetchSessionMessages, getRun, readSessionConfigMap } from '../kube.js';
