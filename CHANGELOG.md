@@ -1,11 +1,22 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.216] - 2026-06-30
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Replace misleading TUI tip with shell description
+- Remove terminal tip text
+- Send exec channel protocol and grant get pods exec _(web)_
 ## [v0.1.215] - 2026-06-30
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Plumb cluster CA into terminal exec WebSocket, add auto-reconnect _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.215
 ## [v0.1.214] - 2026-06-30
 
 ### <!-- 1 -->🐛 Bug Fixes
