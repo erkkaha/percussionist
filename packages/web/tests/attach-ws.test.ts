@@ -136,7 +136,11 @@ describe('BunWsWrapper', () => {
     expect(mock.url).toBe('wss://k8s.example.com/exec');
 
     const opts = mock.options as Record<string, unknown>;
-    expect(opts.headers).toEqual({ Authorization: 'Bearer my-token' });
+    expect(opts.headers).toEqual({
+      Authorization: 'Bearer my-token',
+      'Sec-WebSocket-Protocol':
+        'v5.channel.k8s.io, v4.channel.k8s.io, v3.channel.k8s.io, v2.channel.k8s.io, channel.k8s.io',
+    });
     expect(opts.tls).toBeDefined();
     const tls = opts.tls as Record<string, unknown>;
     expect(tls.ca).toBe(ca);
@@ -148,7 +152,11 @@ describe('BunWsWrapper', () => {
 
     const mock = wsRef(wrapper);
     const opts = mock.options as Record<string, unknown>;
-    expect(opts.headers).toEqual({ Authorization: 'Bearer my-token' });
+    expect(opts.headers).toEqual({
+      Authorization: 'Bearer my-token',
+      'Sec-WebSocket-Protocol':
+        'v5.channel.k8s.io, v4.channel.k8s.io, v3.channel.k8s.io, v2.channel.k8s.io, channel.k8s.io',
+    });
     expect(opts.tls).toBeUndefined();
   });
 

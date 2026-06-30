@@ -22,6 +22,14 @@ interface BunWebSocketTlsOptions {
   rejectUnauthorized?: boolean;
 }
 
+const K8S_CHANNEL_PROTOCOLS = [
+  'v5.channel.k8s.io',
+  'v4.channel.k8s.io',
+  'v3.channel.k8s.io',
+  'v2.channel.k8s.io',
+  'channel.k8s.io',
+];
+
 // Minimal shape for the object the Exec class uses after connect returns.
 interface ExecWebSocket {
   on(event: string, handler: (...args: unknown[]) => void): void;
@@ -57,7 +65,12 @@ export class BunWsWrapper {
   private closeFired = false;
 
   constructor(url: string, token: string, tlsOptions?: BunWebSocketTlsOptions) {
-    const opts: Record<string, unknown> = { headers: { Authorization: `Bearer ${token}` } };
+    const opts: Record<string, unknown> = {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Sec-WebSocket-Protocol': K8S_CHANNEL_PROTOCOLS.join(', '),
+      },
+    };
     if (tlsOptions) opts.tls = tlsOptions;
     this.ws = new WebSocket(url, opts as unknown as string[]);
 

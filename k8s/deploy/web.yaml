@@ -70,7 +70,7 @@ rules:
   # Exec into runner pods (web terminal attach via WebSocket-bridged k8s exec).
   - apiGroups: [""]
     resources: ["pods/exec"]
-    verbs: ["create"]
+    verbs: ["get", "create"]
   # Read + write secrets (list for settings UI; get for auth; create/update/patch/delete for inject-file secrets).
   - apiGroups: [""]
     resources: ["secrets"]
