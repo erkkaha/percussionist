@@ -1,11 +1,20 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.214] - 2026-06-30
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Prevent OOM from listener leak, dangling SIGTERM, and missing idleTimeout _(web)_
 ## [v0.1.213] - 2026-06-30
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Skip session/events proxy for terminal-phase runs _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.213
 ## [v0.1.212] - 2026-06-30
 
 ### <!-- 1 -->🐛 Bug Fixes
