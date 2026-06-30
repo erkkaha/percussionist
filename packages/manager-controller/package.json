@@ -1,6 +1,6 @@
 {
   "name": "@percussionist/manager",
-  "version": "0.1.217",
+  "version": "0.1.218",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
