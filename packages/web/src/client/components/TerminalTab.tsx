@@ -27,6 +27,25 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
   const fitRef = useRef<FitAddon | null>(null);
   const termDivRef = useRef<HTMLDivElement | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCountRef = useRef(0);
+  const mountedRef = useRef(false);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current !== null) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
 
   const sendResize = useCallback(() => {
     const term = termRef.current;
@@ -35,8 +54,45 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
     ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
   }, []);
 
+  const scheduleRetry = useCallback(
+    (retryConnect: () => void) => {
+      if (!activeRef.current) return;
+      clearRetryTimer();
+      const delay = Math.min(500 * 2 ** retryCountRef.current, 10_000);
+      retryCountRef.current++;
+      const jitter = Math.random() * 500;
+      retryTimerRef.current = setTimeout(() => {
+        if (mountedRef.current && activeRef.current) {
+          retryConnect();
+        }
+      }, delay + jitter);
+    },
+    [clearRetryTimer],
+  );
+
   const connect = useCallback(() => {
-    if (!active) return;
+    if (!activeRef.current) return;
+
+    // Close any existing connection and detach handlers to prevent orphaned
+    // WS callbacks from clobbering the new connection's state.
+    const prev = wsRef.current;
+    if (prev) {
+      prev.onopen = null;
+      prev.onmessage = null;
+      prev.onerror = null;
+      prev.onclose = null;
+      if (prev.readyState === WebSocket.OPEN || prev.readyState === WebSocket.CONNECTING) {
+        try {
+          prev.close();
+        } catch {
+          // ignore
+        }
+      }
+      wsRef.current = null;
+    }
+
+    clearRetryTimer();
+    retryCountRef.current = 0;
     setError(null);
     setClosed(false);
 
@@ -150,8 +206,9 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
     ws.onclose = () => {
       setConnected(false);
       setClosed(true);
+      scheduleRetry(connect);
     };
-  }, [runName, active, sendResize]);
+  }, [runName, sendResize, scheduleRetry, clearRetryTimer]);
 
   // Connect on mount, disconnect on unmount or when run becomes inactive.
   useEffect(() => {
@@ -159,12 +216,25 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
       connect();
     }
     return () => {
-      wsRef.current?.close();
+      clearRetryTimer();
+      retryCountRef.current = 0;
+      const ws = wsRef.current;
+      if (ws) {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      }
       wsRef.current = null;
       cleanupRef.current?.();
       cleanupRef.current = null;
     };
-  }, [active, connect]);
+  }, [active, connect, clearRetryTimer]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -181,12 +251,20 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
             }`}
           />
           <span className="text-xs text-text-muted">
-            {connected ? 'Connected' : closed ? 'Disconnected' : 'Connecting…'}
+            {connected ? 'Connected' : closed ? 'Disconnected' : 'Connecting\u2026'}
           </span>
         </div>
         {error && <span className="text-xs text-phase-failed">{error}</span>}
         {closed && (
-          <Button variant="outline" size="sm" onClick={connect}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              clearRetryTimer();
+              retryCountRef.current = 0;
+              connect();
+            }}
+          >
             Reconnect
           </Button>
         )}

@@ -8,11 +8,19 @@
 // Flow:
 //   Browser (xterm.js) ←WS→ Bun server ←Bun WebSocket→ K8s exec API → pod: sh
 
+import fs from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { Exec, type KubeConfig, type V1Status } from '@kubernetes/client-node';
 import { RUNNER_CONTAINER, type Run, RunPhase } from '@percussionist/api';
 import { isValidToken } from './auth.js';
-import { getRun, kubeConfig, NAMESPACE } from './kube.js';
+import { getPod, getRun, kubeConfig, NAMESPACE } from './kube.js';
+
+interface BunWebSocketTlsOptions {
+  ca?: Buffer;
+  cert?: Buffer;
+  key?: Buffer;
+  rejectUnauthorized?: boolean;
+}
 
 // Minimal shape for the object the Exec class uses after connect returns.
 interface ExecWebSocket {
@@ -41,23 +49,38 @@ class ResizablePassThrough extends PassThrough {
 // Wraps Bun's native WebSocket to match the ws-package event interface
 // (`.on(event, handler)`) that the Exec class's WebSocketHandler uses.
 
-class BunWsWrapper {
+export class BunWsWrapper {
   private ws: WebSocket;
   private listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   readyState: number = WebSocket.CONNECTING;
+  private opened = false;
+  private closeFired = false;
 
-  constructor(url: string, token: string) {
-    this.ws = new WebSocket(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    } as unknown as string[]);
+  constructor(url: string, token: string, tlsOptions?: BunWebSocketTlsOptions) {
+    const opts: Record<string, unknown> = { headers: { Authorization: `Bearer ${token}` } };
+    if (tlsOptions) opts.tls = tlsOptions;
+    this.ws = new WebSocket(url, opts as unknown as string[]);
 
     this.ws.onopen = () => {
+      this.opened = true;
       this.readyState = WebSocket.OPEN;
       this.emit('open');
     };
     this.ws.onclose = (e) => {
+      this.closeFired = true;
       this.readyState = WebSocket.CLOSED;
-      this.emit('close', e.code, e.reason);
+      if (!this.opened) {
+        // Connection never opened — onerror carries no detail, but onclose
+        // provides code + reason. Emit error with a rich message.
+        const reason = e.reason || 'no reason';
+        let message = `exec WebSocket connection failed (close ${e.code}: ${reason})`;
+        if (e.code === 1006) {
+          message += ' \u2014 TLS/handshake error; check cluster CA configuration';
+        }
+        this.emit('error', new Error(message));
+      } else {
+        this.emit('close', e.code, e.reason);
+      }
     };
     this.ws.onmessage = (e) => {
       if (typeof e.data === 'string') {
@@ -71,7 +94,19 @@ class BunWsWrapper {
       }
     };
     this.ws.onerror = () => {
-      this.emit('error', new Error('WebSocket error'));
+      // Bun's onerror carries no useful detail. onclose always follows with
+      // code + reason and emits the actual error. This is a fallback in the
+      // unlikely case onclose never fires.
+      if (!this.opened) {
+        setTimeout(() => {
+          if (!this.opened && !this.closeFired) {
+            this.emit(
+              'error',
+              new Error('exec WebSocket connection failed (unknown transport error)'),
+            );
+          }
+        }, 0);
+      }
     };
   }
 
@@ -113,6 +148,55 @@ class BunWsWrapper {
 }
 
 // ---------------------------------------------------------------------------
+// Extract TLS options from the KubeConfig cluster for Bun's WebSocket.
+// In-cluster config loads the CA from /var/run/secrets/.../ca.crt into
+// `caData` (base64). Kubeconfig files may use `caData` or `caFile`.
+
+export function buildTlsOptions(cluster: {
+  caData?: string;
+  caFile?: string;
+  certData?: string;
+  keyData?: string;
+  certFile?: string;
+  keyFile?: string;
+  skipTLSVerify?: boolean;
+}): BunWebSocketTlsOptions | undefined {
+  let ca: Buffer | undefined;
+  if (cluster.caData) {
+    ca = Buffer.from(cluster.caData, 'base64');
+  } else if (cluster.caFile) {
+    try {
+      ca = fs.readFileSync(cluster.caFile);
+    } catch {
+      // File not readable — fall through to system CA
+    }
+  }
+
+  let cert: Buffer | undefined;
+  let key: Buffer | undefined;
+  if (cluster.certData && cluster.keyData) {
+    cert = Buffer.from(cluster.certData, 'base64');
+    key = Buffer.from(cluster.keyData, 'base64');
+  } else if (cluster.certFile && cluster.keyFile) {
+    try {
+      cert = fs.readFileSync(cluster.certFile);
+      key = fs.readFileSync(cluster.keyFile);
+    } catch {
+      // fall through
+    }
+  }
+
+  if (!ca && !cert && !cluster.skipTLSVerify) return undefined;
+
+  return {
+    ...(ca ? { ca } : {}),
+    ...(cert ? { cert } : {}),
+    ...(key ? { key } : {}),
+    ...(cluster.skipTLSVerify ? { rejectUnauthorized: false } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Custom handler passed as the wsInterface argument to the Exec constructor.
 // Uses Bun's native WebSocket instead of the ws package, avoiding the
 // "Expected 101 status code" error from Bun's HTTP client.
@@ -137,7 +221,8 @@ class BunExecHandler {
     const user = this.kc.getCurrentUser();
     const token = user?.token ?? '';
 
-    const wsCompat = new BunWsWrapper(uri, token);
+    const tlsOptions = ssl ? buildTlsOptions(cluster) : undefined;
+    const wsCompat = new BunWsWrapper(uri, token, tlsOptions);
 
     return await new Promise<ExecWebSocket>((resolve, reject) => {
       wsCompat.on('open', () => resolve(wsCompat));
@@ -205,6 +290,39 @@ export async function resolveAttachTarget(
 
   const podName = run.status?.podName ?? run.metadata.name;
   const namespace = run.metadata.namespace ?? NAMESPACE;
+
+  // Pre-flight pod check — verify the pod actually exists and the target
+  // container is ready before attempting exec.
+  try {
+    const pod = await getPod(podName, namespace);
+    const podPhase = pod.status?.phase;
+    if (podPhase !== 'Running') {
+      return { error: `pod phase is ${podPhase ?? 'unknown'}; must be Running`, status: 400 };
+    }
+    const containerReady = pod.status?.containerStatuses?.find(
+      (c: { name: string; ready?: boolean }) => c.name === RUNNER_CONTAINER,
+    )?.ready;
+    if (!containerReady) {
+      return {
+        error: `container "${RUNNER_CONTAINER}" is not ready; try again shortly`,
+        status: 400,
+      };
+    }
+  } catch (e: unknown) {
+    const code =
+      (e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code;
+    if (code === 404) {
+      return {
+        error: `pod "${podName}" not found (likely restarted or garbage-collected)`,
+        status: 404,
+      };
+    }
+    return {
+      error: `failed to verify pod state: ${(e as Error).message ?? String(e)}`,
+      status: 500,
+    };
+  }
+
   return { podName, namespace, runName };
 }
 
