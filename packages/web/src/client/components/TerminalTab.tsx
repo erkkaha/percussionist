@@ -269,7 +269,7 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
           </Button>
         )}
         <span className="text-xs text-text-dim">
-          Run <kbd className="font-mono">opencode attach http://127.0.0.1:4096</kbd> for the TUI
+          Shell into the pod's <kbd className="font-mono">opencode</kbd> container
         </span>
       </div>
 
