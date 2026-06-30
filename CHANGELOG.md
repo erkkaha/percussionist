@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.217] - 2026-06-30
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Read service account token for terminal exec _(web)_
 ## [v0.1.216] - 2026-06-30
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -8,6 +13,10 @@ All notable changes to Percussionist are documented here.
 - Replace misleading TUI tip with shell description
 - Remove terminal tip text
 - Send exec channel protocol and grant get pods exec _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.216
 ## [v0.1.215] - 2026-06-30
 
 ### <!-- 1 -->🐛 Bug Fixes
