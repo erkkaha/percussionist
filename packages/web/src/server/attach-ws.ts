@@ -51,6 +51,7 @@ export function resolveBearerToken(
 
 // Minimal shape for the object the Exec class uses after connect returns.
 interface ExecWebSocket {
+  protocol?: string;
   on(event: string, handler: (...args: unknown[]) => void): void;
   send(data: Buffer | string): void;
   close(): void;
@@ -80,6 +81,7 @@ export class BunWsWrapper {
   private ws: WebSocket;
   private listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   readyState: number = WebSocket.CONNECTING;
+  protocol = '';
   private opened = false;
   private closeFired = false;
 
@@ -96,6 +98,7 @@ export class BunWsWrapper {
     this.ws.onopen = () => {
       this.opened = true;
       this.readyState = WebSocket.OPEN;
+      this.protocol = this.ws.protocol;
       this.emit('open');
     };
     this.ws.onclose = (e) => {
@@ -117,6 +120,14 @@ export class BunWsWrapper {
     this.ws.onmessage = (e) => {
       if (typeof e.data === 'string') {
         this.emit('message', e.data, false);
+      } else if (Buffer.isBuffer(e.data)) {
+        this.emit('message', e.data, true);
+      } else if (e.data instanceof Uint8Array) {
+        this.emit(
+          'message',
+          Buffer.from(e.data.buffer, e.data.byteOffset, e.data.byteLength),
+          true,
+        );
       } else if (e.data instanceof ArrayBuffer) {
         this.emit('message', Buffer.from(e.data as ArrayBuffer), true);
       } else if (e.data instanceof Blob) {

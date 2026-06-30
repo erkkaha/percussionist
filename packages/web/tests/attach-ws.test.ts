@@ -102,6 +102,7 @@ describe('BunWsWrapper', () => {
     readonly url: string;
     readonly options: unknown;
     readyState = 0; // CONNECTING
+    protocol = 'v5.channel.k8s.io';
     private handlers: Record<string, ((...args: unknown[]) => void) | null> = {
       open: null,
       close: null,
@@ -245,5 +246,46 @@ describe('BunWsWrapper', () => {
 
     // Should not have emitted any errors
     expect(errors).toHaveLength(0);
+  });
+
+  it('captures the negotiated protocol on open', () => {
+    const wrapper = new BunWsWrapper('wss://k8s.example.com/exec', 'my-token');
+
+    const mock = wsRef(wrapper);
+    mock.onopen!(new Event('open'));
+
+    expect(wrapper.protocol).toBe('v5.channel.k8s.io');
+  });
+
+  it('emits Buffer websocket frames as binary messages', async () => {
+    const wrapper = new BunWsWrapper('wss://k8s.example.com/exec', 'my-token');
+    const messagePromise = new Promise<Buffer>((resolve) => {
+      wrapper.on('message', (data: unknown, binary: unknown) => {
+        expect(binary).toBe(true);
+        resolve(data as Buffer);
+      });
+    });
+
+    const frame = Buffer.from([1, 65, 66, 67]);
+    const mock = wsRef(wrapper);
+    mock.onmessage!({ data: frame } as any);
+
+    expect(await messagePromise).toBe(frame);
+  });
+
+  it('emits Uint8Array websocket frames as binary messages', async () => {
+    const wrapper = new BunWsWrapper('wss://k8s.example.com/exec', 'my-token');
+    const messagePromise = new Promise<Buffer>((resolve) => {
+      wrapper.on('message', (data: unknown, binary: unknown) => {
+        expect(binary).toBe(true);
+        resolve(data as Buffer);
+      });
+    });
+
+    const frame = new Uint8Array([1, 65, 66, 67]);
+    const mock = wsRef(wrapper);
+    mock.onmessage!({ data: frame } as any);
+
+    expect((await messagePromise).toString('utf8')).toBe('\u0001ABC');
   });
 });
