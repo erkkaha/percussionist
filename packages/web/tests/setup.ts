@@ -74,6 +74,11 @@ Object.defineProperty(globalThis, 'innerHeight', {
 // matchMedia
 globalThis.matchMedia = window.matchMedia.bind(window) as unknown as typeof matchMedia;
 
+// getComputedStyle (used by Radix UI @radix-ui/react-presence layout effects)
+globalThis.getComputedStyle = window.getComputedStyle.bind(
+  window,
+) as unknown as typeof getComputedStyle;
+
 // requestAnimationFrame / cancelAnimationFrame (happy-dom has these)
 globalThis.requestAnimationFrame = window.requestAnimationFrame.bind(window);
 globalThis.cancelAnimationFrame = window.cancelAnimationFrame.bind(window);
