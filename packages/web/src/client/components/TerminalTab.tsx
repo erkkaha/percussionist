@@ -18,6 +18,17 @@ function wsUrlFor(runName: string): string {
   return `${proto}//${host}/api/runs/${encodeURIComponent(runName)}/attach${tokenQuery}`;
 }
 
+function isReadinessError(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('not yet created') ||
+    lower.includes('must be running') ||
+    lower.includes('not ready') ||
+    lower.includes('not found') ||
+    lower.includes('pod phase is')
+  );
+}
+
 export default function TerminalTab({ runName, active }: TerminalTabProps) {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +42,7 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
   const retryCountRef = useRef(0);
   const mountedRef = useRef(false);
   const activeRef = useRef(active);
+  const readinessRef = useRef(false);
   activeRef.current = active;
 
   useEffect(() => {
@@ -55,12 +67,12 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
   }, []);
 
   const scheduleRetry = useCallback(
-    (retryConnect: () => void) => {
+    (retryConnect: () => void, isReadinessRetry: boolean) => {
       if (!activeRef.current) return;
       clearRetryTimer();
-      const delay = Math.min(500 * 2 ** retryCountRef.current, 10_000);
-      retryCountRef.current++;
-      const jitter = Math.random() * 500;
+      const delay = isReadinessRetry ? 15_000 : Math.min(500 * 2 ** retryCountRef.current, 10_000);
+      if (!isReadinessRetry) retryCountRef.current++;
+      const jitter = isReadinessRetry ? 0 : Math.random() * 500;
       retryTimerRef.current = setTimeout(() => {
         if (mountedRef.current && activeRef.current) {
           retryConnect();
@@ -72,6 +84,9 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
 
   const connect = useCallback(() => {
     if (!activeRef.current) return;
+
+    // Readiness flag is reset on each fresh connect attempt.
+    readinessRef.current = false;
 
     // Close any existing connection and detach handlers to prevent orphaned
     // WS callbacks from clobbering the new connection's state.
@@ -167,6 +182,7 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
     wsRef.current = ws;
 
     ws.onopen = () => {
+      readinessRef.current = false;
       setConnected(true);
       setError(null);
       // Send initial terminal size.
@@ -185,6 +201,9 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
           const ctrl = JSON.parse(e.data) as { type?: string; message?: string; exitCode?: number };
           if (ctrl.type === 'error' && ctrl.message) {
             setError(ctrl.message);
+            if (isReadinessError(ctrl.message)) {
+              readinessRef.current = true;
+            }
           } else if (ctrl.type === 'status') {
             setClosed(true);
             setConnected(false);
@@ -206,7 +225,7 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
     ws.onclose = () => {
       setConnected(false);
       setClosed(true);
-      scheduleRetry(connect);
+      scheduleRetry(connect, readinessRef.current);
     };
   }, [runName, sendResize, scheduleRetry, clearRetryTimer]);
 
