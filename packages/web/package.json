@@ -17,7 +17,7 @@
     "test": "bun test --preload ./tests/setup.ts tests/"
   },
   "dependencies": {
-    "@hono/node-server": "2.0.4",
+    "@hono/node-server": "2.0.6",
     "@kubernetes/client-node": "1.4.0",
     "@percussionist/api": "workspace:*",
     "@percussionist/kube": "workspace:*",
