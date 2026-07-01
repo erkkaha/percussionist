@@ -130,3 +130,53 @@ describe('ProjectsPage create-CTA visibility', () => {
     expect(screen.queryByText('+ New Project')).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Overflow behavior — regression tests for table wrapper scroll classes
+// ---------------------------------------------------------------------------
+
+describe('Projects table horizontal overflow behavior', () => {
+  beforeEach(resetMocks);
+  afterEach(cleanup);
+
+  it('headerless mode (showHeader=false) renders wrapper with overflow-x-auto', async () => {
+    projectsMock.data = [MOCK_PROJECT];
+    const { default: ProjectsPage } = await import('../src/client/components/ProjectsPage');
+
+    await renderWithProviders(React.createElement(ProjectsPage, { showHeader: false }));
+
+    const wrapper = screen.getByTestId('projects-table-wrapper');
+    expect(wrapper.className).toContain('overflow-x-auto');
+  });
+
+  it('header mode (showHeader=true) also includes overflow-x-auto on wrapper', async () => {
+    projectsMock.data = [MOCK_PROJECT];
+    const { default: ProjectsPage } = await import('../src/client/components/ProjectsPage');
+
+    await renderWithProviders(React.createElement(ProjectsPage, { showHeader: true }));
+
+    const wrapper = screen.getByTestId('projects-table-wrapper');
+    expect(wrapper.className).toContain('overflow-x-auto');
+  });
+
+  it('headerless mode wrapper retains overflow-hidden for vertical clipping', async () => {
+    projectsMock.data = [MOCK_PROJECT];
+    const { default: ProjectsPage } = await import('../src/client/components/ProjectsPage');
+
+    await renderWithProviders(React.createElement(ProjectsPage, { showHeader: false }));
+
+    const wrapper = screen.getByTestId('projects-table-wrapper');
+    expect(wrapper.className).toContain('overflow-hidden');
+  });
+
+  it('empty projects list does not render a table wrapper', async () => {
+    projectsMock.data = [];
+    const { default: ProjectsPage } = await import('../src/client/components/ProjectsPage');
+
+    const { container } = await renderWithProviders(
+      React.createElement(ProjectsPage, { showHeader: false }),
+    );
+
+    expect(container.querySelector('[data-testid="projects-table-wrapper"]')).toBeNull();
+  });
+});
