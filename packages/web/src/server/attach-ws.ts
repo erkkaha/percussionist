@@ -409,7 +409,7 @@ export const attachWsHandlers = {
         data.namespace,
         data.podName,
         RUNNER_CONTAINER,
-        ['sh'],
+        ['opencode', 'attach', 'http://127.0.0.1:4096'],
         data.stdout,
         null,
         data.stdin,

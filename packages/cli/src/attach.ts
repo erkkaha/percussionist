@@ -1,12 +1,12 @@
-// `beatctl attach <name>` — exec into the run pod and open a shell.
+// `beatctl attach <name>` — exec into the run pod and attach to the
+// opencode agent session via the opencode TUI.
 //
 // The runner pod runs `opencode serve` (headless HTTP API server). This
-// command execs into the pod and opens a shell. Run `opencode attach
-// http://127.0.0.1:4096` from the shell if you want the opencode TUI.
+// command execs into the pod and opens `opencode attach` which connects to
+// the opencode agent session with a full TUI.
 
 import { spawn } from 'node:child_process';
-import type { Run } from '@percussionist/api';
-import { RunPhase } from '@percussionist/api';
+import { OPENCODE_RUNNER_DEFAULTS, type Run, RunPhase } from '@percussionist/api';
 import { DEFAULT_NAMESPACE, fatal, getRun, loadKube } from './kube.js';
 
 export interface AttachOpts {
@@ -41,7 +41,20 @@ export async function runAttach(name: string, opts: AttachOpts): Promise<void> {
 
   console.log(`beatctl: opening shell in pod ${podName} (ns ${ns})…`);
 
-  const args = ['exec', '-it', `pod/${podName}`, '-c', 'opencode', '-n', ns, '--', 'sh'];
+  const tuiUrl = `http://127.0.0.1:${OPENCODE_RUNNER_DEFAULTS.port}`;
+  const args = [
+    'exec',
+    '-it',
+    `pod/${podName}`,
+    '-c',
+    'opencode',
+    '-n',
+    ns,
+    '--',
+    'opencode',
+    'attach',
+    tuiUrl,
+  ];
   const attach = spawn('kubectl', args, {
     stdio: 'inherit',
     env: { ...process.env },
