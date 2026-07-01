@@ -18,6 +18,17 @@ function wsUrlFor(runName: string): string {
   return `${proto}//${host}/api/runs/${encodeURIComponent(runName)}/attach${tokenQuery}`;
 }
 
+function isReadinessError(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('not yet created') ||
+    lower.includes('must be running') ||
+    lower.includes('not ready') ||
+    lower.includes('not found') ||
+    lower.includes('pod phase is')
+  );
+}
+
 export default function TerminalTab({ runName, active }: TerminalTabProps) {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,6 +38,26 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
   const fitRef = useRef<FitAddon | null>(null);
   const termDivRef = useRef<HTMLDivElement | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCountRef = useRef(0);
+  const mountedRef = useRef(false);
+  const activeRef = useRef(active);
+  const readinessRef = useRef(false);
+  activeRef.current = active;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current !== null) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
 
   const sendResize = useCallback(() => {
     const term = termRef.current;
@@ -35,8 +66,48 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
     ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
   }, []);
 
+  const scheduleRetry = useCallback(
+    (retryConnect: () => void, isReadinessRetry: boolean) => {
+      if (!activeRef.current) return;
+      clearRetryTimer();
+      const delay = isReadinessRetry ? 15_000 : Math.min(500 * 2 ** retryCountRef.current, 10_000);
+      if (!isReadinessRetry) retryCountRef.current++;
+      const jitter = isReadinessRetry ? 0 : Math.random() * 500;
+      retryTimerRef.current = setTimeout(() => {
+        if (mountedRef.current && activeRef.current) {
+          retryConnect();
+        }
+      }, delay + jitter);
+    },
+    [clearRetryTimer],
+  );
+
   const connect = useCallback(() => {
-    if (!active) return;
+    if (!activeRef.current) return;
+
+    // Readiness flag is reset on each fresh connect attempt.
+    readinessRef.current = false;
+
+    // Close any existing connection and detach handlers to prevent orphaned
+    // WS callbacks from clobbering the new connection's state.
+    const prev = wsRef.current;
+    if (prev) {
+      prev.onopen = null;
+      prev.onmessage = null;
+      prev.onerror = null;
+      prev.onclose = null;
+      if (prev.readyState === WebSocket.OPEN || prev.readyState === WebSocket.CONNECTING) {
+        try {
+          prev.close();
+        } catch {
+          // ignore
+        }
+      }
+      wsRef.current = null;
+    }
+
+    clearRetryTimer();
+    retryCountRef.current = 0;
     setError(null);
     setClosed(false);
 
@@ -111,6 +182,7 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
     wsRef.current = ws;
 
     ws.onopen = () => {
+      readinessRef.current = false;
       setConnected(true);
       setError(null);
       // Send initial terminal size.
@@ -129,6 +201,9 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
           const ctrl = JSON.parse(e.data) as { type?: string; message?: string; exitCode?: number };
           if (ctrl.type === 'error' && ctrl.message) {
             setError(ctrl.message);
+            if (isReadinessError(ctrl.message)) {
+              readinessRef.current = true;
+            }
           } else if (ctrl.type === 'status') {
             setClosed(true);
             setConnected(false);
@@ -150,8 +225,9 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
     ws.onclose = () => {
       setConnected(false);
       setClosed(true);
+      scheduleRetry(connect, readinessRef.current);
     };
-  }, [runName, active, sendResize]);
+  }, [runName, sendResize, scheduleRetry, clearRetryTimer]);
 
   // Connect on mount, disconnect on unmount or when run becomes inactive.
   useEffect(() => {
@@ -159,12 +235,25 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
       connect();
     }
     return () => {
-      wsRef.current?.close();
+      clearRetryTimer();
+      retryCountRef.current = 0;
+      const ws = wsRef.current;
+      if (ws) {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      }
       wsRef.current = null;
       cleanupRef.current?.();
       cleanupRef.current = null;
     };
-  }, [active, connect]);
+  }, [active, connect, clearRetryTimer]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -181,19 +270,23 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
             }`}
           />
           <span className="text-xs text-text-muted">
-            {connected ? 'Connected' : closed ? 'Disconnected' : 'Connecting…'}
+            {connected ? 'Connected' : closed ? 'Disconnected' : 'Connecting\u2026'}
           </span>
         </div>
         {error && <span className="text-xs text-phase-failed">{error}</span>}
         {closed && (
-          <Button variant="outline" size="sm" onClick={connect}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              clearRetryTimer();
+              retryCountRef.current = 0;
+              connect();
+            }}
+          >
             Reconnect
           </Button>
         )}
-        <span className="text-xs text-text-dim">
-          Tip: detach with <kbd className="font-mono">Ctrl-b</kbd> then{' '}
-          <kbd className="font-mono">d</kbd>
-        </span>
       </div>
 
       {/* Terminal */}

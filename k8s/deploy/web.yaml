@@ -70,7 +70,7 @@ rules:
   # Exec into runner pods (web terminal attach via WebSocket-bridged k8s exec).
   - apiGroups: [""]
     resources: ["pods/exec"]
-    verbs: ["create"]
+    verbs: ["get", "create"]
   # Read + write secrets (list for settings UI; get for auth; create/update/patch/delete for inject-file secrets).
   - apiGroups: [""]
     resources: ["secrets"]
@@ -228,7 +228,7 @@ spec:
               value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
           resources:
             requests: { cpu: 50m, memory: 128Mi }
-            limits: { cpu: 500m, memory: 512Mi }
+            limits: { cpu: 500m, memory: 1Gi }
           volumeMounts:
             - name: percussionist-db
               mountPath: /app/data

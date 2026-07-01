@@ -140,7 +140,7 @@ program
 // attach --------------------------------------------------------------------
 program
   .command('attach <name>')
-  .description('exec into the run pod and attach to the opencode tmux session')
+  .description('exec into the run pod and open a shell')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
   .action((name: string, opts) => runAttach(name, opts));
 

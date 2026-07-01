@@ -23,6 +23,7 @@ export {
   // ClusterSettings helpers
   getClusterSettings,
   getFindingsConfigMap,
+  getPod,
   getProject,
   getRun,
   getTask,

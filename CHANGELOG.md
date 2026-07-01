@@ -1,6 +1,105 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.219] - 2026-07-01
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Open opencode attach TUI in terminal instead of plain sh
+- Gate terminal mount on pod running, slow readiness retry _(web)_
+## [v0.1.218] - 2026-06-30
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Forward Bun exec websocket buffer frames _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.218
+## [v0.1.217] - 2026-06-30
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Read service account token for terminal exec _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.217
+## [v0.1.216] - 2026-06-30
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Replace misleading TUI tip with shell description
+- Remove terminal tip text
+- Send exec channel protocol and grant get pods exec _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.216
+## [v0.1.215] - 2026-06-30
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Plumb cluster CA into terminal exec WebSocket, add auto-reconnect _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.215
+## [v0.1.214] - 2026-06-30
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Prevent OOM from listener leak, dangling SIGTERM, and missing idleTimeout _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.214
+## [v0.1.213] - 2026-06-30
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Skip session/events proxy for terminal-phase runs _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.213
+## [v0.1.212] - 2026-06-30
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Use Bun native WebSocket for k8s exec to avoid 'Expected 101' error _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.212
+## [v0.1.211] - 2026-06-29
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Use opencode web instead of serve for runner process
+- Use opencode serve directly as pod command, no wrapper script
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.211
+## [v0.1.210] - 2026-06-29
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Prevent SQLite WAL corruption on unclean shutdown _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.210
+## [v0.1.209] - 2026-06-29
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Use opencode serve (headless) as main process, shell for terminal attach
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.209
 ## [v0.1.208] - 2026-06-29
 
 ### <!-- 0 -->🚀 Features
@@ -11,6 +110,10 @@ All notable changes to Percussionist are documented here.
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Add kubeConfig re-export and fix ws type resolution for server build _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.208
 ## [v0.1.207] - 2026-06-24
 
 ### <!-- 1 -->🐛 Bug Fixes

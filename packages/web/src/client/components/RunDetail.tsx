@@ -309,7 +309,7 @@ export default function RunDetail() {
       </Card>
 
       {/* Interactive terminal — attach to the opencode TUI inside the pod */}
-      {isActive && run.status?.podName && (
+      {isActive && run.status?.podName && run.status?.podPhase === 'Running' && (
         <Card>
           <CardHeader className="border-b border-border-muted">
             <CardTitle className="text-sm font-medium text-text-muted">Terminal</CardTitle>

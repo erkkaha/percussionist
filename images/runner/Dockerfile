@@ -26,9 +26,8 @@ ENV LANG=C.UTF-8 \
 # Tools the agent will need at runtime.
 #  - git, openssh-client: clone repos, push branches, SSH auth
 #  - ca-certificates: HTTPS to LLM providers and git hosts
-#  - tini: clean PID 1 / signal forwarding for the tmux wrapper
-#  - tmux: persistent PTY for the opencode TUI; enables concurrent
-#          CLI + web attach via `tmux attach`
+#  - tini: clean PID 1 / signal forwarding for the opencode server
+#  - tmux: optional terminal multiplexer for debugging in the pod shell
 #  - nodejs, npm: agents that need node/npm at runtime (24.x from Alpine repos)
 #  - bash, curl, unzip: required by common repo scripts and runtime installers
 #  - github-cli: create PRs, manage issues from the CLI
@@ -115,19 +114,10 @@ COPY content/ /root/.config/opencode/
 
 WORKDIR /workspace
 
-# The opencode TUI starts an HTTP API on 0.0.0.0:4096 (overridable via
-# OPENCODE_PORT). The tmux wrapper script makes it attachable via
-# `kubectl exec -it pod/<pod> -- tmux attach -t opencode` or the web
-# dashboard's Terminal tab (WebSocket-bridged k8s exec).
+# The opencode HTTP API is available on 0.0.0.0:4096 (overridable via
+# OPENCODE_PORT). The pod-builder runs `opencode serve` directly
+# (headless HTTP API server — no web UI).
 EXPOSE 4096
 
-# Default tmux config — mouse on, 256-color, large scrollback.
-COPY .tmux.conf /root/.tmux.conf
-
-# Wrapper script: starts opencode TUI in a detached tmux session and
-# waits for it to exit so tini's PID 1 stays alive for the pod's lifetime.
-COPY opencode-tmux.sh /usr/local/bin/opencode-tmux.sh
-RUN chmod +x /usr/local/bin/opencode-tmux.sh
-
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["/usr/local/bin/opencode-tmux.sh"]
+CMD ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096"]

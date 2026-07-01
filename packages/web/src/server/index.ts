@@ -141,6 +141,10 @@ if (isBun) {
     },
     websocket: attachWsHandlers,
     port,
+    // Prevent Bun's default 10s keep-alive timeout (10s is too short for
+    // SSE streams that may have gaps between keepalive pings). 120s gives
+    // plenty of headroom while still cleaning up truly dead connections.
+    idleTimeout: 120,
   });
 } else {
   const { serve } = await import('@hono/node-server');

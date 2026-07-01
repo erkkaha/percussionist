@@ -1,4 +1,4 @@
-import { OPENCODE_RUNNER_DEFAULTS } from '@percussionist/api';
+import { OPENCODE_RUNNER_DEFAULTS, type RunPhase, TERMINAL_PHASES } from '@percussionist/api';
 import { Hono } from 'hono';
 import { auth } from '../auth.js';
 import { fetchSessionMessages, getRun, readSessionConfigMap } from '../kube.js';
@@ -67,14 +67,26 @@ session.get('/:name/session/events', auth(), async (c) => {
 
   let serviceName: string;
   let ns: string;
+  let phase: string | undefined;
+  let sessionID: string | undefined;
   try {
     const run = await getRun(name);
     serviceName = run.status?.serviceName ?? name;
     ns = run.metadata.namespace ?? 'percussionist';
+    phase = run.status?.phase;
+    sessionID = run.status?.sessionID;
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
     const status = anyE.statusCode === 404 ? 404 : 500;
     return c.json({ error: anyE.body?.message ?? anyE.message ?? String(e) }, status);
+  }
+
+  if (phase && TERMINAL_PHASES.has(phase as RunPhase)) {
+    return c.json({ error: `Run ${name} is ${phase}; no active event stream` }, 404);
+  }
+
+  if (!sessionID) {
+    return c.json({ error: 'No active session for this run' }, 404);
   }
 
   const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/event`;
