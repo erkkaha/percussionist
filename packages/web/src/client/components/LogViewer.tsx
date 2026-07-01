@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import { useLogs } from '../hooks/useLogs';
 import { Button } from './ui/button';
+import { Checkbox } from './ui/checkbox';
 
 interface LogViewerProps {
   name: string;
@@ -242,11 +243,9 @@ export default function LogViewer({
 
         {/* Auto-scroll toggle */}
         <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={autoScroll}
-            onChange={(e) => setAutoScroll(e.target.checked)}
-            className="rounded border-border"
+            onCheckedChange={(value) => setAutoScroll(value === true)}
           />
           auto-scroll
         </label>
