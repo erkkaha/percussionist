@@ -1,6 +1,6 @@
 {
   "name": "percussionist",
-  "version": "0.1.218",
+  "version": "0.1.219",
   "private": true,
   "description": "Kubernetes-native orchestration for OpenCode agents",
   "packageManager": "pnpm@11.1.2",
