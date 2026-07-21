@@ -159,7 +159,7 @@ spec:
         - name: opencode-web
           image: ghcr.io/anomalyco/opencode:1.17.9
           imagePullPolicy: IfNotPresent
-          args: ["web", "--hostname", "0.0.0.0", "--port", "4096"]
+          args: ["serve", "--hostname", "0.0.0.0", "--port", "4096"]
           env:
             - name: OPENCODE_CONFIG_CONTENT
               valueFrom:
