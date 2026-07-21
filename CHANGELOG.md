@@ -1,12 +1,21 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.1.220] - 2026-07-21
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Detect stale chat sessions and use headless opencode serve _(manager)_
 ## [v0.1.219] - 2026-07-01
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Open opencode attach TUI in terminal instead of plain sh
 - Gate terminal mount on pod running, slow readiness retry _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.219
 ## [v0.1.218] - 2026-06-30
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -95,7 +104,16 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Replace breakpoint-gated scroll with always-on overflow-x-auto in ProjectsPage _(web)_
 - Use opencode serve (headless) as main process, shell for terminal attach
+
+### <!-- 3 -->📚 Documentation
+
+- Add be3785 settings projects table scroll plan _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add regression tests for Projects table overflow behavior _(web)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
