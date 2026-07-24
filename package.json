@@ -28,7 +28,7 @@
     "husky": "9.1.7",
     "lint-staged": "^17.0.7",
     "tsx": "4.22.4",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "yaml": "2.9.0",
     "zod": "4.4.3"
   },
