@@ -123,7 +123,7 @@ async function ensureSession(): Promise<string> {
   if (currentSessionId) {
     try {
       const msgs = await getMessages(currentSessionId);
-      if (msgs) return currentSessionId;
+      if (msgs && msgs.length > 0) return currentSessionId;
     } catch {
       // Session gone — create new one
     }
