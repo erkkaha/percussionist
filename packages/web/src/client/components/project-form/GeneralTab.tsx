@@ -1,3 +1,4 @@
+import ModelSelector from '../ModelSelector';
 import { Input } from '../ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Switch } from '../ui/switch';
@@ -103,12 +104,11 @@ export default function GeneralTab({ form, isEdit }: GeneralTabProps) {
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-muted">Default Model</label>
-          <Input
-            type="text"
+          <ModelSelector
             value={form.model}
-            onChange={(e) => form.setModel(e.target.value)}
-            placeholder="anthropic/claude-sonnet-4-20250514"
-            className="font-mono"
+            onChange={form.setModel}
+            placeholder="e.g. anthropic/claude-sonnet-4-20250514"
+            inputClassName="font-mono"
           />
         </div>
         <div className="space-y-1.5">
