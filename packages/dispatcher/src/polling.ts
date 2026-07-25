@@ -581,6 +581,12 @@ export async function runPrompt(
 
   let sawBusy = false; // set true only when poll loop sees first assistant message
   let waitingForInput = false;
+  // Last value of `waitingForInput` published to the CR. The dispatcher is the
+  // only component that can observe an agent pausing for clarification, so if
+  // it doesn't write RunPhase.WaitingForInput nobody does — the manager's
+  // handling of that phase would be unreachable and the run would simply look
+  // Running until the idle timeout recorded it as Failed.
+  let publishedWaiting = false;
   let terminate = false;
   let promptFlushCursor = 0;
   let completingSince: number | undefined;
@@ -787,6 +793,16 @@ export async function runPrompt(
           }
         } else {
           idleSince = undefined;
+        }
+
+        // --- publish WaitingForInput <-> Running transitions to the CR ---
+        // Done here rather than at each mutation site so it also picks up flips
+        // made by the SSE handler, which runs outside this loop.
+        if (waitingForInput !== publishedWaiting) {
+          publishedWaiting = waitingForInput;
+          const phase = waitingForInput ? RunPhase.WaitingForInput : RunPhase.Running;
+          log(`phase -> ${phase}`);
+          await patchStatus({ phase });
         }
       } catch (e) {
         if (terminate) return;

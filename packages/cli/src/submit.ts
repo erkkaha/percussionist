@@ -16,6 +16,8 @@ import { readFileSync } from 'node:fs';
 import {
   API_GROUP_VERSION,
   KIND_RUN,
+  LABELS,
+  MANAGED_BY,
   type Run,
   RunPhase,
   RunSchema,
@@ -60,7 +62,7 @@ function generateName(): string {
   return `run-${Date.now().toString(16)}`;
 }
 
-function buildRunFromFlags(
+export function buildRunFromFlags(
   opts: SubmitOpts,
   projectDefaults?: import('@percussionist/api').ProjectSpec,
 ): Run {
@@ -123,7 +125,7 @@ function buildRunFromFlags(
   const raw: unknown = {
     apiVersion: API_GROUP_VERSION,
     kind: KIND_RUN,
-    metadata: { name, namespace: ns },
+    metadata: withProjectLabels({ name, namespace: ns }, opts.project ?? ''),
     spec: {
       project: opts.project,
       ...(opts.task ? { task: opts.task } : {}),
@@ -179,13 +181,40 @@ function buildRunFromFlags(
   return RunSchema.parse(raw);
 }
 
-function buildRunFromFile(path: string, opts: SubmitOpts): Run {
+/**
+ * Ensure the Run carries the project label the operator requires.
+ *
+ * renderPod() throws "missing required label: percussionist.dev/project" without
+ * it, because the label is how the data PVC is resolved. The operator started
+ * requiring it when PVC-based caching landed, but submit was never updated, so
+ * every `beatctl submit` produced a Run that failed at pod creation. The manager
+ * sets the same pair on the worker runs it creates.
+ *
+ * Existing labels win: a user who set the label in their YAML keeps their value.
+ */
+export function withProjectLabels(meta: Record<string, unknown> | undefined, project: string) {
+  const existing = (meta?.labels ?? {}) as Record<string, string>;
+  return {
+    ...(meta ?? {}),
+    labels: {
+      [LABELS.managedBy]: MANAGED_BY,
+      ...(project ? { [LABELS.projectName]: project } : {}),
+      ...existing,
+    },
+  };
+}
+
+export function buildRunFromFile(path: string, opts: SubmitOpts): Run {
   const doc = YAML.parse(readFileSync(path, 'utf8'));
   // Let a user override the name/namespace at the CLI without editing the file.
   if (opts.name) doc.metadata = { ...(doc.metadata ?? {}), name: opts.name };
   if (opts.namespace) {
     doc.metadata = { ...(doc.metadata ?? {}), namespace: opts.namespace };
   }
+  // The project may only be present in the file (spec.project), so read it back
+  // rather than relying on --project being passed alongside -f.
+  const project = String(opts.project ?? doc?.spec?.project ?? '');
+  doc.metadata = withProjectLabels(doc.metadata, project);
   return RunSchema.parse(doc);
 }
 

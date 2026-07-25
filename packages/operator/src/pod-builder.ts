@@ -751,6 +751,20 @@ export function renderPod(
           image,
           imagePullPolicy: 'IfNotPresent',
           workingDir: '/workspace',
+          // This container executes untrusted, AI-generated code. Drop every
+          // capability and block setuid escalation. It still runs as UID 0
+          // (the opencode base image is root-only: HOME=/root, and the agent
+          // config mounts land under /root/.config), but root without
+          // capabilities cannot chown, mknod, or load modules.
+          //
+          // Deliberately NOT applied to the init container, which needs root
+          // and capabilities for `apk add` when spec.runner.packages is set.
+          // Ad-hoc `apk add` from inside the agent session no longer works —
+          // use spec.runner.packages or the install_packages tool instead.
+          securityContext: {
+            allowPrivilegeEscalation: false,
+            capabilities: { drop: ['ALL'] },
+          },
           ...(hasSidecars
             ? {
                 command: ['/bin/sh', '-c'],
@@ -902,6 +916,13 @@ export function renderPod(
           name: DISPATCHER_CONTAINER,
           image: dispatcherImage ?? DISPATCHER_IMAGE,
           imagePullPolicy: 'IfNotPresent',
+          // The dispatcher holds the ServiceAccount token, so it is the most
+          // valuable container in the pod to compromise. It only makes HTTP
+          // calls and writes the session snapshot — no capabilities needed.
+          securityContext: {
+            allowPrivilegeEscalation: false,
+            capabilities: { drop: ['ALL'] },
+          },
           env: [
             { name: 'RUN_NAME', value: run.metadata.name },
             { name: 'RUN_NAMESPACE', value: run.metadata.namespace ?? '' },

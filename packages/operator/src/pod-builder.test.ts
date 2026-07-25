@@ -474,6 +474,26 @@ describe('renderPod - security hardening', () => {
     expect(pod.spec?.securityContext?.seccompProfile?.type).toBe('RuntimeDefault');
   });
 
+  it('drops all capabilities and blocks escalation on the runner and dispatcher', () => {
+    const pod = renderPod(makeRun(), []);
+    for (const name of ['opencode', 'dispatcher']) {
+      const c = pod.spec?.containers?.find((x) => x.name === name);
+      expect(c?.securityContext?.allowPrivilegeEscalation).toBe(false);
+      expect(c?.securityContext?.capabilities?.drop).toEqual(['ALL']);
+    }
+  });
+
+  it('leaves the init container privileged enough to run apk add', () => {
+    const run = makeRun();
+    (run.spec as { runner?: { packages?: string[] } }).runner = { packages: ['jq'] };
+    const pod = renderPod(run, []);
+    const init = pod.spec?.initContainers?.find((c) => c.name === 'workspace-init');
+    // Installing Alpine packages needs root + capabilities; the hardening above
+    // must not be applied here or package installation breaks.
+    expect(init).toBeDefined();
+    expect(init?.securityContext?.capabilities?.drop).toBeUndefined();
+  });
+
   it('defaults activeDeadlineSeconds to 3600 when timeoutSeconds is omitted', () => {
     const run = makeRun();
     delete (run.spec as { timeoutSeconds?: number }).timeoutSeconds;
