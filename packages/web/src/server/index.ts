@@ -14,6 +14,7 @@ import { attachWsHandlers, isAttachAuthorized, resolveAttachTarget } from './att
 import { getDb } from './db.js';
 import { NAMESPACE } from './kube.js';
 import { bootstrapAgentKeys, pruneExpiredRunKeys } from './lib/agent-keys.js';
+import { startPushTriggers } from './lib/push-triggers.js';
 import { startMetricsCollector } from './metrics-collector.js';
 import stats, { RETENTION_DAYS, runRetentionCleanup } from './routes/stats.js';
 
@@ -120,6 +121,12 @@ if (process.env.AUTH_DISABLED !== '1') {
 // Metrics snapshot collector — starts only if metrics-server is available.
 
 void startMetricsCollector();
+
+// ---------------------------------------------------------------------------
+// Web Push triggers — pushes run/task transitions that need a human to every
+// subscribed device. Idle (no K8s polling) while nobody is subscribed.
+
+startPushTriggers();
 
 // ---------------------------------------------------------------------------
 // Start server
