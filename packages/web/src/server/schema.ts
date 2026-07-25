@@ -289,3 +289,43 @@ export const deviceCode = sqliteTable('device_code', {
   clientId: text('client_id'),
   scope: text('scope'),
 });
+
+// ===========================================================================
+// Web Push
+//
+// See lib/push.ts. Both tables live in the same DB as the better-auth users
+// they reference, so keys, subscriptions, and identities share one lifecycle:
+// wiping the data dir invalidates all three together, never one without the
+// others.
+
+// The cluster's VAPID keypair, generated on first use. A single row (id = 1).
+// Rotating it (deleting the row) orphans every subscription — browsers reject
+// pushes signed by an unknown key — so clients must then re-subscribe.
+export const pushVapid = sqliteTable('push_vapid', {
+  id: integer('id').primaryKey().default(1),
+  publicKey: text('public_key').notNull(),
+  privateKey: text('private_key').notNull(),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+});
+
+// One row per browser/device a user enabled push on. `endpoint` is the push
+// service URL and is globally unique by construction; `p256dh`/`auth` are the
+// client keys that end-to-end encrypt payloads (RFC 8291). Rows are removed
+// when the push service reports the subscription gone (404/410) or the user
+// disables push on that device.
+export const pushSubscription = sqliteTable(
+  'push_subscription',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    endpoint: text('endpoint').notNull().unique(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    // Which browser/device this is, for a future "manage devices" UI.
+    userAgent: text('user_agent'),
+    createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [index('idx_push_subscription_user').on(table.userId)],
+);

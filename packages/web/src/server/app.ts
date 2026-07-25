@@ -21,6 +21,7 @@ import plans from './routes/plans.js';
 import projectMemories from './routes/project-memories.js';
 import projects from './routes/projects.js';
 import providers from './routes/providers.js';
+import pushRoute from './routes/push.js';
 import runKeys from './routes/run-keys.js';
 import runs from './routes/runs.js';
 import session from './routes/session.js';
@@ -69,6 +70,7 @@ export function createApp() {
   app.route('/api/projects', projectMemories);
   app.route('/api/upgrade', upgrade);
   app.route('/api/providers', providers);
+  app.route('/api/push', pushRoute);
   app.route('/api/internal/run-keys', runKeys);
   app.route('/api/internal/agent-keys', agentKeys);
 

@@ -43,6 +43,8 @@ export type AuthSubject = 'human' | 'agent' | 'legacy';
 export type AuthContext = {
   role: 'user' | 'admin';
   subject: AuthSubject;
+  /** better-auth user id, when the caller holds a human session. */
+  userId?: string;
   /** API key id, when the caller authenticated with a key. */
   keyId?: string;
   /** Scopes the key carries, for audit logging. */
@@ -108,14 +110,14 @@ function hasNoCredential(c: Context): boolean {
   return !c.req.header('Cookie') && getAuthValue(c) === null;
 }
 
-/** Resolve a human session from the request cookies, or null. */
-async function humanSession(c: Context): Promise<boolean> {
+/** Resolve a human session's user id from the request cookies, or null. */
+async function humanSession(c: Context): Promise<string | null> {
   try {
     const session = await getAuth().api.getSession({ headers: c.req.raw.headers });
-    return session !== null;
+    return session?.user.id ?? null;
   } catch (e) {
     console.error('[auth] session lookup failed:', (e as Error).message);
-    return false;
+    return null;
   }
 }
 
@@ -176,8 +178,9 @@ export function auth(): MiddlewareHandler {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    if (await humanSession(c)) {
-      c.set('auth', { role: 'admin', subject: 'human' });
+    const sessionUserId = await humanSession(c);
+    if (sessionUserId) {
+      c.set('auth', { role: 'admin', subject: 'human', userId: sessionUserId });
       await next();
       return;
     }
@@ -221,8 +224,9 @@ export function adminAuth(): MiddlewareHandler {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    if (await humanSession(c)) {
-      c.set('auth', { role: 'admin', subject: 'human' });
+    const sessionUserId = await humanSession(c);
+    if (sessionUserId) {
+      c.set('auth', { role: 'admin', subject: 'human', userId: sessionUserId });
       await next();
       return;
     }
@@ -287,8 +291,9 @@ export function scoped(resource: PermissionResource, action: string): Middleware
     }
 
     // The operator may always do by hand whatever an agent does.
-    if (await humanSession(c)) {
-      c.set('auth', { role: 'admin', subject: 'human' });
+    const sessionUserId = await humanSession(c);
+    if (sessionUserId) {
+      c.set('auth', { role: 'admin', subject: 'human', userId: sessionUserId });
       await next();
       return;
     }
