@@ -43,13 +43,17 @@ const bottomNavItems = [
 ];
 
 export function DrumLogo({ playing, size = 24 }: { playing: boolean; size?: number }) {
+  // Gradient/clip ids must be unique per instance — several logos can share a page.
+  const uid = React.useId().replace(/:/g, '');
+  const shadeId = `drum-shade-${uid}`;
+  const clipId = `drum-clip-${uid}`;
   return (
     <>
       <style>{`
         @keyframes drum-left{0%,15%,100%{transform:rotate(0)}7%{transform:rotate(-25deg)}}
         @keyframes drum-right{0%,15%,100%{transform:rotate(0)}7%{transform:rotate(25deg)}}
-        .drum-left{transform-origin:14px 48px;animation:none}
-        .drum-right{transform-origin:50px 48px;animation:none}
+        .drum-left{transform-origin:15px 14px;animation:none}
+        .drum-right{transform-origin:49px 14px;animation:none}
         .playing .drum-left{animation:drum-left .5s ease-in infinite}
         .playing .drum-right{animation:drum-right .5s ease-in infinite .25s}
       `}</style>
@@ -61,32 +65,59 @@ export function DrumLogo({ playing, size = 24 }: { playing: boolean; size?: numb
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
+        <defs>
+          <linearGradient id={shadeId} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#a34a0e" />
+            <stop offset="0.45" stopColor="#8a380b" />
+            <stop offset="1" stopColor="#5e2208" />
+          </linearGradient>
+          <clipPath id={clipId}>
+            <path d="M12 35 H52 V47 A20 7.5 0 0 1 12 47 Z" />
+          </clipPath>
+        </defs>
+
         <rect width="64" height="64" rx="12" fill="#fbbf24" />
-        <ellipse cx="32" cy="38" rx="20" ry="14" fill="#92400e" stroke="#78350f" strokeWidth="2" />
-        <ellipse cx="32" cy="38" rx="16" ry="10" fill="#b45309" />
-        <ellipse cx="32" cy="28" rx="20" ry="8" fill="#e8a852" stroke="#b45309" strokeWidth="1.5" />
-        <ellipse cx="32" cy="28" rx="16" ry="5" fill="#fbbf24" />
-        <g className="drum-left">
-          <line
-            x1="14"
-            y1="48"
-            x2="28"
-            y2="20"
-            stroke="#451a03"
-            strokeWidth="3"
-            strokeLinecap="round"
-          />
+
+        {/* shell, with tension rods and bottom hoop trimmed to the cylinder */}
+        <g clipPath={`url(#${clipId})`}>
+          <rect x="10" y="30" width="44" height="28" fill={`url(#${shadeId})`} />
+          <g stroke="#c26a10" strokeWidth="1.6">
+            <path d="M18.5 32 V56" />
+            <path d="M27.5 32 V56" />
+            <path d="M36.5 32 V56" />
+            <path d="M45.5 32 V56" />
+          </g>
+          <path d="M12 44 A20 7.5 0 0 0 52 44 V60 H12 Z" fill="#d97706" />
         </g>
-        <g className="drum-right">
-          <line
-            x1="50"
-            y1="48"
-            x2="36"
-            y2="20"
-            stroke="#451a03"
-            strokeWidth="3"
-            strokeLinecap="round"
-          />
+        <path
+          d="M12 35 H52 V47 A20 7.5 0 0 1 12 47 Z"
+          fill="none"
+          stroke="#4a1a06"
+          strokeWidth="1.5"
+        />
+
+        {/* batter head */}
+        <ellipse
+          cx="32"
+          cy="35"
+          rx="20"
+          ry="7.5"
+          fill="#d97706"
+          stroke="#4a1a06"
+          strokeWidth="1.5"
+        />
+        <ellipse cx="32" cy="35" rx="15.5" ry="5" fill="#fef3c7" />
+
+        {/* sticks — each pivots on its butt end so the tip lifts off the head */}
+        <g stroke="#451a03" strokeWidth="2.8" strokeLinecap="round" fill="#451a03">
+          <g className="drum-left">
+            <path d="M15 14 L40 32" />
+            <circle cx="40" cy="32" r="2.2" stroke="none" />
+          </g>
+          <g className="drum-right">
+            <path d="M49 14 L24 32" />
+            <circle cx="24" cy="32" r="2.2" stroke="none" />
+          </g>
         </g>
       </svg>
     </>
