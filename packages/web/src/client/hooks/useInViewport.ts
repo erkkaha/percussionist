@@ -11,7 +11,7 @@ export function useInViewport<T extends HTMLElement>(options: UseInViewportOptio
   const [isInView, setIsInView] = useState(false);
   const elementRef = useRef<T | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const element = elementRef.current;

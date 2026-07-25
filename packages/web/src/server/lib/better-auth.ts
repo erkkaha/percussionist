@@ -81,6 +81,28 @@ function allowedGithubLogins(): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Throw unless this GitHub login may sign in.
+ *
+ * Without this the GitHub callback accepts any GitHub account on the internet,
+ * so an empty allowlist has to mean "nobody", never "everybody".
+ */
+function assertGithubLoginAllowed(login: string | undefined): void {
+  const allowed = allowedGithubLogins();
+  if (allowed.length === 0) {
+    throw new APIError('FORBIDDEN', {
+      message:
+        'Sign-in is closed: no GitHub logins are allowlisted. Set one with `beatctl auth github allow <login>`.',
+    });
+  }
+  const normalized = (login ?? '').trim().toLowerCase();
+  if (!normalized || !allowed.includes(normalized)) {
+    throw new APIError('FORBIDDEN', {
+      message: `GitHub account '${login ?? 'unknown'}' is not permitted to sign in.`,
+    });
+  }
+}
+
 function buildAuth() {
   const baseURL = process.env.WEB_BASE_URL ?? 'http://localhost:8080';
 
@@ -102,43 +124,101 @@ function buildAuth() {
     // No SMTP in this deployment — GitHub is the only way in.
     emailAndPassword: { enabled: false },
 
+    onAPIError: {
+      // Send failures back to our own login page instead of better-auth's
+      // standalone error page. LoginPage already reads ?error= and renders it,
+      // so a failed sign-in leaves you somewhere you can retry rather than on a
+      // dead end showing "Something went wrong / CODE: email_not_found".
+      errorURL: '/login',
+
+      // Auth failures are security-relevant and were previously only visible by
+      // tailing the pod. Log them explicitly.
+      onError: (error) => {
+        const message =
+          error instanceof Error
+            ? error.message
+            : typeof error === 'string'
+              ? error
+              : JSON.stringify(error);
+        console.error(`[auth] API error: ${message}`);
+      },
+
+      // Fallback styling for anything that still reaches the built-in page
+      // (visit /api/auth/error to preview). Values mirror the dashboard theme
+      // in src/client/index.css so it doesn't look like a different product.
+      customizeDefaultErrorPage: {
+        colors: {
+          background: '#111317',
+          cardBackground: '#111317',
+          foreground: '#e2e2e8',
+          mutedForeground: '#9a9aa2',
+          primary: '#e8a852',
+          primaryForeground: '#111317',
+          border: '#514537',
+          destructive: '#ffb4ab',
+          titleColor: '#e2e2e8',
+        },
+        font: {
+          defaultFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+          monoFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        },
+        disableBackgroundGrid: true,
+        disableCornerDecorations: true,
+      },
+    },
+
     socialProviders: {
       github: {
         clientId: process.env.GITHUB_CLIENT_ID ?? '',
         clientSecret: process.env.GITHUB_CLIENT_SECRET ?? '',
-        // Carry the GitHub login through so the allowlist hook below can see
-        // it — the default profile mapping only keeps name/email/image.
-        mapProfileToUser: (profile) => ({ githubLogin: profile.login }),
+        // The allowlist is enforced here, on the profile GitHub just returned,
+        // because this runs on EVERY sign-in — not only when the user row is
+        // first created. Removing a login from the allowlist therefore blocks
+        // their next sign-in, rather than only preventing initial sign-up.
+        //
+        // Also carries the login through to `githubLogin` for reference; the
+        // default profile mapping keeps only name/email/image.
+        mapProfileToUser: (profile) => {
+          assertGithubLoginAllowed(profile.login);
+          return {
+            githubLogin: profile.login,
+            // Synthesize an address when GitHub gives us none, which happens
+            // when the account's email is private and the App lacks the
+            // "Email addresses" account permission. The user table requires a
+            // non-null unique email, and there is no SMTP in this deployment —
+            // nothing ever sends to this address, it only has to exist. Using
+            // GitHub's own reserved noreply domain keeps it unroutable.
+            //
+            // By this point better-auth has already tried /user/emails and
+            // written any result back onto profile.email, so an empty value
+            // here means there genuinely is nothing to use.
+            ...(profile.email ? {} : { email: `${profile.login}@users.noreply.github.com` }),
+          };
+        },
       },
     },
 
     user: {
       additionalFields: {
-        githubLogin: { type: 'string', required: false, input: false },
+        // `input: true` is required, not a looseness: better-auth drops any
+        // additional field marked `input: false` when mapping a provider
+        // profile (see parseAdditionalUserInputFromProviderProfile), so
+        // `input: false` would silently discard the value mapped above.
+        // Safe here because there is no client-driven sign-up to inject
+        // through — emailAndPassword is disabled and GitHub is the only path.
+        githubLogin: { type: 'string', required: false, input: true },
       },
     },
 
     databaseHooks: {
       user: {
         create: {
-          // The GitHub callback is otherwise open to every GitHub account on
-          // the internet. Only allowlisted logins may create the (single)
-          // user; subsequent sign-ins match the existing account row and never
-          // reach this hook.
+          // Backstop for the check in mapProfileToUser: refuse to create a user
+          // row for a login that is not allowlisted, whatever path got here.
           before: async (user) => {
-            const allowed = allowedGithubLogins();
-            const login = String(user.githubLogin ?? '').toLowerCase();
-            if (allowed.length === 0) {
-              throw new APIError('FORBIDDEN', {
-                message:
-                  'Sign-up is closed: GITHUB_ALLOWED_LOGINS is empty. Set it with `beatctl auth github set-allowed <login>`.',
-              });
-            }
-            if (!login || !allowed.includes(login)) {
-              throw new APIError('FORBIDDEN', {
-                message: `GitHub account '${user.githubLogin ?? 'unknown'}' is not permitted to sign in.`,
-              });
-            }
+            assertGithubLoginAllowed(
+              typeof user.githubLogin === 'string' ? user.githubLogin : undefined,
+            );
           },
         },
       },

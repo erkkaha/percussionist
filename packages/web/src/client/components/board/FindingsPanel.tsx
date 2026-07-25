@@ -137,7 +137,7 @@ export function FindingsPanel({ findings, projectName, onClose }: FindingsPanelP
             All {findings.length}
           </button>
           {FINDING_SEVERITIES.map((sev) =>
-            counts[sev] > 0 ? (
+            (counts[sev] ?? 0) > 0 ? (
               <button
                 key={sev}
                 onClick={() => setSeverityFilter(severityFilter === sev ? 'all' : sev)}

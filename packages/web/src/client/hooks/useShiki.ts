@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Highlighter } from 'shiki';
+import type { BundledLanguage, Highlighter } from 'shiki';
 
 // Module-scoped cache for the highlighter instance
 let highlighterCache: Highlighter | null = null;
@@ -77,10 +77,10 @@ export function useShiki() {
 
       // Check if language is loaded
       const loadedLangs = h.getLoadedLanguages();
-      if (!loadedLangs.includes(lang as string)) {
+      if (!loadedLangs.includes(lang)) {
         // Try to load the language
         try {
-          await h.loadLanguage(lang as string);
+          await h.loadLanguage(lang as BundledLanguage);
         } catch {
           // Language not available, fall back to plain text
           return `<pre><code>${escapeHtml(code)}</code></pre>`;

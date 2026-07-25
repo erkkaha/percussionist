@@ -4,6 +4,30 @@ import { DrumLogo } from '../components/app-sidebar';
 import { useAuth } from '../lib/auth';
 
 /**
+ * Turn better-auth's error codes into something actionable.
+ *
+ * Codes arrive as a query parameter with spaces replaced by underscores, so a
+ * thrown message like "GitHub account 'x' is not permitted to sign in." shows up
+ * as `GitHub_account_'x'_is_not_permitted_to_sign_in.`
+ */
+function friendlyAuthError(raw: string | null): string | null {
+  if (!raw) return null;
+
+  switch (raw) {
+    case 'email_not_found':
+      return 'GitHub did not return an email address for your account. Grant the GitHub App the "Email addresses" account permission (Account permissions → Email addresses → Read-only), then re-authorize it.';
+    case 'unable_to_create_user':
+      return 'Could not create the user record. Check the web server logs.';
+    case 'state_mismatch':
+    case 'please_restart_the_process':
+      return 'The sign-in attempt expired or was replayed. Try again.';
+    default:
+      // Unknown code, or a full message that was underscore-escaped.
+      return raw.replace(/_/g, ' ');
+  }
+}
+
+/**
  * Sign-in page. GitHub is the only identity provider — there is no SMTP in this
  * deployment, so email/password and password reset are not available, and only
  * the GitHub logins in GITHUB_ALLOWED_LOGINS may sign in.
@@ -16,8 +40,9 @@ export default function LoginPage() {
   const navigate = useNavigate();
 
   // better-auth redirects back here with ?error=... when the callback is
-  // rejected — most often because the GitHub account is not allowlisted.
-  const callbackError = params.get('error');
+  // rejected (see onAPIError.errorURL) — most often because the GitHub account
+  // is not allowlisted.
+  const callbackError = friendlyAuthError(params.get('error'));
 
   useEffect(() => {
     if (!isPending && isAuthenticated) {

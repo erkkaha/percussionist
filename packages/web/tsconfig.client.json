@@ -12,9 +12,8 @@
     "isolatedModules": true,
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/client/*"]
+      "@/*": ["./src/client/*"]
     }
   },
   "include": ["src/client/**/*"]

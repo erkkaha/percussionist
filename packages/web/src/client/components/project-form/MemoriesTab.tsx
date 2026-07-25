@@ -309,7 +309,7 @@ function MemoryCard({ memory, onEdit, onDelete }: MemoryCardProps) {
       {/* Footer */}
       <div className="flex items-center gap-2 flex-wrap">
         {memory.metadata && Object.keys(memory.metadata).length > 0 && (
-          <Badge variant="secondary" className="text-xs font-normal">
+          <Badge variant="outline" className="text-xs font-normal">
             {Object.keys(memory.metadata).join(', ')}
           </Badge>
         )}

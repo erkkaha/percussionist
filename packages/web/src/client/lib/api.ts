@@ -151,7 +151,7 @@ export async function deleteRun(name: string): Promise<void> {
 // Projects
 
 export async function fetchProjects(): Promise<Project[]> {
-  const data = await fetchJSON<{ items: ProjectWithCodeServerUrl[] }>('/projects');
+  const data = await fetchJSON<{ items: Project[] }>('/projects');
   return data.items;
 }
 
