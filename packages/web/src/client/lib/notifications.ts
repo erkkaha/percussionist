@@ -276,7 +276,7 @@ export function notify(opts: NotifyOptions): void {
     const n = new Notification(opts.title, {
       body: opts.body,
       tag: opts.key,
-      icon: '/favicon.ico',
+      icon: '/icon-192.png',
     });
     // Auto-close after 6 s.
     setTimeout(() => n.close(), 6_000);

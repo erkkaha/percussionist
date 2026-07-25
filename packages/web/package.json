@@ -13,6 +13,7 @@
     "start": "node dist/server/index.js",
     "typecheck": "tsc -p tsconfig.server.json && tsc -p tsconfig.client.json --noEmit",
     "db:generate": "drizzle-kit generate",
+    "gen:icons": "node scripts/gen-icons.mjs",
     "db:migrate": "bun src/server/migrate.ts",
     "test": "bun test --preload ./tests/setup.ts tests/"
   },
@@ -61,6 +62,7 @@
     "zustand": "5.0.14"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "4.3.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
