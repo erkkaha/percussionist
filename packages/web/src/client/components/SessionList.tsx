@@ -3,6 +3,7 @@ import { ListFilter } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { authHeaders } from '../lib/auth';
+import { skeletonKeys } from '../lib/utils';
 import StatusBadge from './StatusBadge';
 import TokenCounter from './TokenCounter';
 
@@ -211,9 +212,9 @@ export default function SessionList() {
       {/* Loading state */}
       {isLoading && (
         <div className="space-y-3">
-          {Array.from({ length: 5 }).map((_, i) => (
+          {skeletonKeys(5).map((key) => (
             <div
-              key={i}
+              key={key}
               className="h-14 rounded-lg border border-border bg-surface-raised animate-pulse"
             />
           ))}

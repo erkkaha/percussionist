@@ -14,6 +14,7 @@ import { Exec, type KubeConfig, type V1Status } from '@kubernetes/client-node';
 import { RUNNER_CONTAINER, type Run, RunPhase } from '@percussionist/api';
 import { isValidToken } from './auth.js';
 import { getPod, getRun, kubeConfig, NAMESPACE } from './kube.js';
+import { isKubeNotFound, kubeStatusCode } from './lib/kube-errors.js';
 
 interface BunWebSocketTlsOptions {
   ca?: Buffer;
@@ -312,7 +313,7 @@ export async function resolveAttachTarget(
     run = await getRun(runName);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = anyE.statusCode === 404 ? 404 : 500;
+    const status = isKubeNotFound(e) ? 404 : 500;
     return { error: anyE.body?.message ?? anyE.message ?? String(e), status };
   }
 
@@ -351,8 +352,7 @@ export async function resolveAttachTarget(
       };
     }
   } catch (e: unknown) {
-    const code =
-      (e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code;
+    const code = kubeStatusCode(e);
     if (code === 404) {
       return {
         error: `pod "${podName}" not found (likely restarted or garbage-collected)`,

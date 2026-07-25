@@ -7,7 +7,7 @@
 // in its config (deployed as the agent-config ConfigMap).
 // Note: uses `mcp` key (not `mcpServers` — that was a legacy format).
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { setHeaderOptions } from '@kubernetes/client-node';
 import {
@@ -60,7 +60,7 @@ import { inspectTaskFlow, type ObservedRuns } from '../reconciler/flow-introspec
 import { isValidTransition, TRANSITION_TABLE } from '../reconciler/transitions.js';
 import { getPauseStatus, setPaused } from '../reconciler-bridge.js';
 import { buildWorkerRun, workerRunName } from '../worker-builder.js';
-import { MANAGER_NAMESPACE, MCP_PORT, OPENCODE_URL } from './config.js';
+import { MANAGER_NAMESPACE, MCP_PORT, OPENCODE_URL, WEB_AUTH_TOKEN } from './config.js';
 import {
   deleteMemory,
   getContext,
@@ -522,11 +522,6 @@ const TOOLS = [
         namespace: {
           type: 'string',
           description: 'Namespace (optional, defaults to percussionist)',
-        },
-        skipSanitization: {
-          type: 'boolean',
-          description:
-            'Skip shell injection sanitization (default: false). Only set to true for trusted backend-generated scripts.',
         },
       },
       required: ['project', 'command'],
@@ -1953,19 +1948,17 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const mountPath = args.mountPath ? String(args.mountPath) : '/data';
       const timeoutMs = args.timeoutSeconds ? Number(args.timeoutSeconds) * 1000 : 120_000;
       const resourceNs = String(args.namespace ?? ns);
-      const skipSanitization = args.skipSanitization === true;
 
       if (!command) throw new Error('command is required');
 
-      if (!skipSanitization) {
-        const commandValidation = sanitizeCommand(command);
-        if (commandValidation) {
-          logSecurityEvent('exec_in_workspace.rejected', {
-            project: projectName,
-            reason: commandValidation,
-          });
-          throw new Error(commandValidation);
-        }
+      // Sanitization is always enforced — there is no caller-controlled bypass.
+      const commandValidation = sanitizeCommand(command);
+      if (commandValidation) {
+        logSecurityEvent('exec_in_workspace.rejected', {
+          project: projectName,
+          reason: commandValidation,
+        });
+        throw new Error(commandValidation);
       }
 
       const result = await execInWorkspace(projectName, command, mountPath, timeoutMs, resourceNs);
@@ -2720,12 +2713,40 @@ export interface McpServer {
   close(): void;
 }
 
+/** Constant-time bearer-token check for a non-loopback MCP caller. */
+function isAuthorizedMcpRequest(req: IncomingMessage): boolean {
+  // Same-pod callers (the opencode-web sidecar via 127.0.0.1) are always
+  // allowed — the token is only meaningful across the pod boundary.
+  const remote = req.socket.remoteAddress ?? '';
+  if (remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1') {
+    return true;
+  }
+  // No token configured → the whole deployment is in no-auth dev mode (same
+  // semantics as the web dashboard's AUTH_SECRET); don't block cross-pod calls.
+  if (!WEB_AUTH_TOKEN) return true;
+
+  const header = req.headers.authorization ?? '';
+  const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
+  const a = Buffer.from(provided);
+  const b = Buffer.from(WEB_AUTH_TOKEN);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 export function startMcpServer(): Promise<McpServer> {
   return new Promise((resolve, reject) => {
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       if (req.method !== 'POST' || req.url !== '/mcp') {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'not found' }));
+        return;
+      }
+
+      // Reject cross-pod callers that don't present the shared bearer token.
+      // This stops an untrusted runner pod from invoking destructive tools
+      // (exec_in_workspace, apply_upgrade, delete_run) over the network.
+      if (!isAuthorizedMcpRequest(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unauthorized' }));
         return;
       }
 

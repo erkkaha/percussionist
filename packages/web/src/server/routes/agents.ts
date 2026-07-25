@@ -8,6 +8,7 @@ import {
   listClusterAgents,
   updateClusterAgent,
 } from '../kube.js';
+import { isKubeNotFound, kubeStatusCode } from '../lib/kube-errors.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
 const agents = new Hono();
@@ -61,7 +62,7 @@ agents.get('/:name', auth(), async (c) => {
     return c.json(agent);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = anyE.statusCode === 404 ? 404 : 500;
+    const status = isKubeNotFound(e) ? 404 : 500;
     return c.json({ error: anyE.body?.message ?? anyE.message ?? String(e) }, status);
   }
 });
@@ -94,7 +95,7 @@ agents.post('/', adminAuth(), async (c) => {
     return c.json(created, 201);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = (anyE.statusCode ?? 500) as 400 | 409 | 500;
+    const status = (kubeStatusCode(e) ?? 500) as 400 | 409 | 500;
     return c.json({ error: anyE.body?.message ?? anyE.message ?? String(e) }, status);
   }
 });
@@ -119,7 +120,7 @@ agents.put('/:name', adminAuth(), async (c) => {
     return c.json(updated);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = anyE.statusCode === 404 ? 404 : 500;
+    const status = isKubeNotFound(e) ? 404 : 500;
     return c.json({ error: anyE.body?.message ?? anyE.message ?? String(e) }, status);
   }
 });
@@ -134,7 +135,7 @@ agents.delete('/:name', adminAuth(), async (c) => {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
     return c.json(
       { error: anyE.body?.message ?? anyE.message ?? String(e) },
-      (anyE.statusCode ?? 500) as 400 | 404 | 500,
+      (kubeStatusCode(e) ?? 500) as 400 | 404 | 500,
     );
   }
 });

@@ -4,6 +4,7 @@ import { normalizeRepoPath } from '@percussionist/api';
 import { Hono } from 'hono';
 import { auth } from '../auth.js';
 import { getProject, getRun, getTask, gitUrlHash, NAMESPACE } from '../kube.js';
+import { managerMcpHeaders } from '../lib/manager-mcp.js';
 
 type DiffFile = {
   path: string;
@@ -251,7 +252,7 @@ async function execInWorkspaceViaManager(
 
   const res = await fetch(MCP_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: managerMcpHeaders(),
     body: JSON.stringify(mcpRequest),
     signal: AbortSignal.timeout(timeoutMs + 5_000),
   });

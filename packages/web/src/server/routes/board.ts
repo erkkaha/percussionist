@@ -37,14 +37,14 @@ import {
   patchTaskStatus,
   validateAgentTaskCapability,
 } from '../kube.js';
-
+import { isKubeNotFound } from '../lib/kube-errors.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
 const board = new Hono();
 
 type KubeError = { statusCode?: number; body?: { message?: string }; message?: string };
 function errStatus(e: KubeError) {
-  return e.statusCode === 404 ? 404 : 500;
+  return isKubeNotFound(e) ? 404 : 500;
 }
 function errMsg(e: KubeError) {
   return e.body?.message ?? e.message ?? String(e);

@@ -36,7 +36,12 @@ import {
   renderIdeService,
   shouldReconcileCodeServer,
 } from './code-server.js';
-import { INGRESS_BASE_URL, NAMESPACE, SELF_NAMESPACE } from './config.js';
+import {
+  ALLOW_PRIVILEGED_SIDECARS,
+  INGRESS_BASE_URL,
+  NAMESPACE,
+  SELF_NAMESPACE,
+} from './config.js';
 import {
   memoryServiceDeploymentName,
   memoryServiceServiceName,
@@ -503,7 +508,14 @@ export async function reconcile(run: Run): Promise<void> {
     try {
       pod = await core.createNamespacedPod({
         namespace: ns,
-        body: renderPod(run, resolvedAgents, run.spec.sidecars ?? [], runnerSpec, dispatcherImage),
+        body: renderPod(
+          run,
+          resolvedAgents,
+          run.spec.sidecars ?? [],
+          runnerSpec,
+          dispatcherImage,
+          ALLOW_PRIVILEGED_SIDECARS,
+        ),
       });
       log(`created pod ${ns}/${podName(run)}`);
       await patchStatus(run, {
@@ -544,7 +556,17 @@ export async function reconcile(run: Run): Promise<void> {
   if (podPhase === 'Succeeded') {
     await cleanupChildResources(run, ns);
   } else if (podPhase === 'Failed') {
+    // Terminal-phase fallback. The dispatcher normally owns the terminal run
+    // phase (it patches Succeeded/Failed before exiting). But if the dispatcher
+    // crashed/OOMed before patching, the run phase is still non-terminal — and
+    // because we clean up (delete) the failed pod below, the next resync would
+    // 404 on the pod, recreate it, and re-run the whole task forever, burning
+    // tokens. A Failed pod (restartPolicy: Never) will never make progress, so
+    // claim the terminal Failed phase here. The reconcile guard then short-
+    // circuits future passes, and the manager's retry/escalation logic (for
+    // board runs) picks up from the Failed status as usual.
     await patchStatus(run, {
+      phase: RunPhase.Failed,
       podPhase,
       message: summarizePodFailure(pod),
       containerExitCodes: collectContainerExitCodes(pod),

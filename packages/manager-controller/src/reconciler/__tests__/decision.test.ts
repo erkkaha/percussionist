@@ -517,7 +517,7 @@ describe('decide — awaiting-merge', () => {
     expect(result.events[0]?.reason).toBe('MergeSucceeded');
   });
 
-  it('awaiting-merge + Succeeded merge + no verdict → done (legacy fallback)', () => {
+  it('awaiting-merge + Succeeded merge + no verdict → awaiting-human (cannot confirm merge)', () => {
     const task = makeTask('t1', 'test-project', { phase: 'awaiting-merge' });
     (task.status as any).worker = { mergeRunName: 'merge-1' };
     const result = decide(
@@ -525,8 +525,9 @@ describe('decide — awaiting-merge', () => {
         observed: { merge: makeRun('merge-1', { phase: 'Succeeded' }) },
       }),
     );
-    expect(result.toPhase).toBe('done');
-    expect(result.events[0]?.reason).toBe('MergeSucceededUnstructured');
+    expect(result.toPhase).toBe('awaiting-human');
+    expect((result.statusPatch?.worker as any).mergedAt).toBeUndefined();
+    expect(result.events[0]?.reason).toBe('MergeVerdictMissing');
   });
 
   it('awaiting-merge + conflict verdict → awaiting-human with mergeError', () => {
@@ -784,7 +785,7 @@ describe('decide — awaiting-feature-merge', () => {
     expect(result.events[0]?.reason).toBe('FeatureBranchMerged');
   });
 
-  it('merge run succeeded + no verdict → done with legacy fallback event', () => {
+  it('merge run succeeded + no verdict → awaiting-human (cannot confirm merge)', () => {
     const task = makeTask('t1', 'test-project', {
       phase: 'awaiting-feature-merge',
       type: 'PLAN',
@@ -796,8 +797,9 @@ describe('decide — awaiting-feature-merge', () => {
         observed: { merge: mergeRun },
       }),
     );
-    expect(result.toPhase).toBe('done');
-    expect(result.events[0]?.reason).toBe('FeatureBranchMergedUnstructured');
+    expect(result.toPhase).toBe('awaiting-human');
+    expect((result.statusPatch?.worker as any).mergedAt).toBeUndefined();
+    expect(result.events[0]?.reason).toBe('FeatureBranchMergeVerdictMissing');
   });
 
   it('merge run succeeded + conflict verdict → awaiting-human', () => {

@@ -407,13 +407,26 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     clusterAgentCrd: resolveManifest(repoRoot, 'k8s/crds/clusteragent.yaml'),
     clusterSettingsCrd: resolveManifest(repoRoot, 'k8s/crds/clustersettings.yaml'),
     operator: resolveManifest(repoRoot, 'k8s/deploy/operator.yaml'),
+    // The manager mounts this ConfigMap (agent-skills volume) and reads
+    // OPENCODE_CONFIG_CONTENT from it with optional: false, so it must be
+    // applied before the manager Deployment or the pod hangs in
+    // ContainerCreating with "configmap agent-config not found".
+    agentConfig: resolveManifest(repoRoot, 'k8s/deploy/agent-config.yaml'),
     managerController: resolveManifest(repoRoot, 'k8s/deploy/manager-controller.yaml'),
     web: resolveManifest(repoRoot, 'k8s/deploy/web.yaml'),
+    networkPolicy: resolveManifest(repoRoot, 'k8s/deploy/networkpolicy.yaml'),
   };
 
   if (opts.down) {
     try {
       console.log('beatctl: deleting web + operator + manager deployments/RBAC...');
+      await runKubectl([
+        'delete',
+        '-f',
+        manifests.networkPolicy,
+        '--ignore-not-found',
+        '--wait=false',
+      ]);
       await runKubectl(['delete', '-f', manifests.web, '--ignore-not-found', '--wait=false']);
       await runKubectl([
         'delete',
@@ -423,6 +436,13 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
         '--wait=false',
       ]);
       await runKubectl(['delete', '-f', manifests.operator, '--ignore-not-found', '--wait=false']);
+      await runKubectl([
+        'delete',
+        '-f',
+        manifests.agentConfig,
+        '--ignore-not-found',
+        '--wait=false',
+      ]);
 
       console.log('beatctl: deleting CRDs...');
       await runKubectl([
@@ -506,8 +526,10 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
 
     console.log('beatctl: applying operator, manager controller and web manifests...');
     await runKubectl(['apply', '-f', patchedOperator]);
+    await runKubectl(['apply', '-f', manifests.agentConfig]);
     await runKubectl(['apply', '-f', manifests.managerController]);
     await runKubectl(['apply', '-f', manifests.web]);
+    await runKubectl(['apply', '-f', manifests.networkPolicy]);
 
     if (opts.wait !== false) {
       console.log(`beatctl: waiting for rollouts in namespace ${ns}...`);

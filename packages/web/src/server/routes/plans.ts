@@ -6,6 +6,7 @@
 import { Hono } from 'hono';
 import { auth } from '../auth.js';
 import { NAMESPACE } from '../kube.js';
+import { managerMcpHeaders } from '../lib/manager-mcp.js';
 
 const router = new Hono();
 
@@ -45,7 +46,7 @@ router.get('/:project/plans/:taskId', auth(), async (c) => {
 
     const res = await fetch(MCP_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: managerMcpHeaders(),
       body: JSON.stringify(mcpRequest),
       signal: AbortSignal.timeout(30_000),
     });

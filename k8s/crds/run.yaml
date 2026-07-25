@@ -47,6 +47,7 @@ spec:
                   type: string
                   minLength: 1
                 interactive:
+                  default: false
                   type: boolean
                 agent:
                   type: string
@@ -80,6 +81,7 @@ spec:
                       type: string
                       maxLength: 32768
                     successReview:
+                      default: false
                       type: boolean
                   required:
                     - targetRunName
@@ -114,6 +116,7 @@ spec:
                 model:
                   type: string
                 image:
+                  default: ghcr.io/erkkaha/percussionist/runner:latest
                   type: string
                 dispatcher:
                   type: object
@@ -141,6 +144,7 @@ spec:
                           type: string
                           minLength: 1
                         key:
+                          default: auth.json
                           type: string
                       required:
                         - name
@@ -152,6 +156,7 @@ spec:
                           type: string
                           minLength: 1
                         key:
+                          default: opencode.json
                           type: string
                       required:
                         - name
@@ -176,6 +181,7 @@ spec:
                               type: string
                               minLength: 1
                             key:
+                              default: ssh-privatekey
                               type: string
                           required:
                             - name
@@ -187,6 +193,7 @@ spec:
                               type: string
                               minLength: 1
                             key:
+                              default: token
                               type: string
                           required:
                             - name
@@ -204,6 +211,7 @@ spec:
                             - name
                             - email
                         sshHostKeyVerification:
+                          default: "no"
                           type: string
                           enum:
                             - strict
@@ -216,6 +224,7 @@ spec:
                               type: string
                               minLength: 1
                             key:
+                              default: known_hosts
                               type: string
                           required:
                             - name
@@ -295,6 +304,7 @@ spec:
                             type: string
                             minLength: 1
                           key:
+                            default: content
                             type: string
                         required:
                           - name
@@ -305,25 +315,23 @@ spec:
                 initScript:
                   type: string
                 timeoutSeconds:
+                  default: 3600
                   type: integer
                   minimum: 0
                   exclusiveMinimum: true
                   maximum: 9007199254740991
                 ttlSecondsAfterFinished:
+                  default: 604800
                   type: integer
                   minimum: 0
                   maximum: 9007199254740991
-                expose:
-                  type: object
-                  properties:
-                    web:
-                      type: boolean
                 data:
                   type: object
                   properties:
                     pvcName:
                       type: string
                     mountPath:
+                      default: /data
                       type: string
                     storageClass:
                       type: string
@@ -333,6 +341,7 @@ spec:
                   type: object
                   properties:
                     worktreeReuse:
+                      default: true
                       type: boolean
                   required:
                     - worktreeReuse
@@ -393,10 +402,6 @@ spec:
                   type: integer
                   minimum: 0
                   maximum: 9007199254740991
-                webURL:
-                  type: string
-                ingressName:
-                  type: string
                 conditions:
                   type: array
                   items:

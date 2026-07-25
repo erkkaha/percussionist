@@ -209,6 +209,12 @@ spec:
               value: "ReadWriteOnce"
             - name: DEFAULT_STORAGE_SIZE
               value: "50Gi"
+            # Allow user-supplied sidecar securityContext (privileged, runAsUser: 0,
+            # allowPrivilegeEscalation). OFF by default — a privileged sidecar is a
+            # container-escape primitive and specs are dashboard-editable. Enable
+            # ONLY on trusted single-tenant clusters that need it (e.g. self-dev DinD).
+            # - name: PERCUSSIONIST_ALLOW_PRIVILEGED_SIDECARS
+            #   value: "true"
             # Enable per-run Ingresses that expose the opencode web UI at
             # <run-name>.<baseURL-without-scheme>/.
             # Format: scheme://host[:port]  (no trailing slash)

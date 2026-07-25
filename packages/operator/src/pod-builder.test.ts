@@ -446,3 +446,61 @@ describe('renderPod - workspace-init script generation', () => {
     });
   });
 });
+
+describe('renderPod - security hardening', () => {
+  it('does not auto-mount the ServiceAccount token pod-wide', () => {
+    const pod = renderPod(makeRun(), []);
+    expect(pod.spec?.automountServiceAccountToken).toBe(false);
+  });
+
+  it('projects the SA token into the dispatcher container ONLY, not the runner', () => {
+    const pod = renderPod(makeRun(), []);
+    const runner = pod.spec?.containers?.find((c) => c.name === 'opencode');
+    const dispatcher = pod.spec?.containers?.find((c) => c.name === 'dispatcher');
+
+    const runnerMounts = (runner?.volumeMounts ?? []).map((m) => m.name);
+    const dispatcherMounts = (dispatcher?.volumeMounts ?? []).map((m) => m.name);
+
+    expect(runnerMounts).not.toContain('kube-api-access');
+    expect(dispatcherMounts).toContain('kube-api-access');
+
+    // The projected token volume must exist at the pod level.
+    const volNames = (pod.spec?.volumes ?? []).map((v) => v.name);
+    expect(volNames).toContain('kube-api-access');
+  });
+
+  it('sets a seccomp RuntimeDefault profile on the pod', () => {
+    const pod = renderPod(makeRun(), []);
+    expect(pod.spec?.securityContext?.seccompProfile?.type).toBe('RuntimeDefault');
+  });
+
+  it('defaults activeDeadlineSeconds to 3600 when timeoutSeconds is omitted', () => {
+    const run = makeRun();
+    delete (run.spec as { timeoutSeconds?: number }).timeoutSeconds;
+    const pod = renderPod(run, []);
+    expect(pod.spec?.activeDeadlineSeconds).toBe(3600);
+  });
+
+  it('strips a privileged sidecar securityContext by default', () => {
+    const sidecars = [
+      {
+        name: 'dind',
+        image: 'docker:dind',
+        securityContext: { privileged: true, runAsUser: 0, allowPrivilegeEscalation: true },
+      },
+    ];
+    const pod = renderPod(makeRun(), [], sidecars);
+    const dind = pod.spec?.containers?.find((c) => c.name === 'dind');
+    // All dangerous fields dropped → no securityContext left at all.
+    expect(dind?.securityContext).toBeUndefined();
+  });
+
+  it('honors a privileged sidecar when explicitly allowed', () => {
+    const sidecars = [
+      { name: 'dind', image: 'docker:dind', securityContext: { privileged: true } },
+    ];
+    const pod = renderPod(makeRun(), [], sidecars, undefined, undefined, true);
+    const dind = pod.spec?.containers?.find((c) => c.name === 'dind');
+    expect(dind?.securityContext?.privileged).toBe(true);
+  });
+});

@@ -43,6 +43,7 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { resolve as resolvePath } from 'node:path';
 import {
   type AgentCapability,
   DISPATCHER_MCP_PORT,
@@ -496,7 +497,23 @@ async function handleSearchCode(
     });
   }
 
-  const searchPath = String(args.path ?? '/workspace');
+  // Constrain the search path to the workspace. `path` may be relative (resolved
+  // against /workspace) or an absolute path, but must never escape /workspace —
+  // otherwise an agent could point search_code at /var/run/secrets/... and
+  // exfiltrate the mounted ServiceAccount token or other secrets.
+  const WORKSPACE_ROOT = '/workspace';
+  const requestedPath = String(args.path ?? WORKSPACE_ROOT);
+  const searchPath = resolvePath(WORKSPACE_ROOT, requestedPath);
+  if (searchPath !== WORKSPACE_ROOT && !searchPath.startsWith(`${WORKSPACE_ROOT}/`)) {
+    return ok(id, {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ error: `path must be within ${WORKSPACE_ROOT}` }),
+        },
+      ],
+    });
+  }
   const filePattern = args.filePattern ? String(args.filePattern) : undefined;
   const contextLines = Math.min(Math.max(Number(args.contextLines) || 2, 0), 10);
   const maxResults = Math.min(Math.max(Number(args.maxResults) || 50, 1), 200);

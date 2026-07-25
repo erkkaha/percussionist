@@ -1,0 +1,80 @@
+# NetworkPolicies restricting who may reach the control-plane services.
+#
+# These are ingress allowlists on the sensitive pods (manager MCP/chat and the
+# per-project memory services). They exist to stop an untrusted, AI-driven
+# runner pod from reaching the manager's destructive MCP tools or poisoning a
+# project's vector memory over the pod network — defense-in-depth alongside the
+# manager's bearer-token check.
+#
+# NOTE: enforcement requires a CNI that implements NetworkPolicy (Calico,
+# Cilium, etc.). The default kind/minikube CNI does NOT enforce them, in which
+# case these are documentation and the bearer token is the effective control.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: manager-ingress
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: manager
+spec:
+  # Target the manager pod (serves MCP :4097 and chat :4098).
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: percussionist
+      app.kubernetes.io/component: manager
+  policyTypes:
+    - Ingress
+  ingress:
+    # Restrict the MCP port (4097) — it carries the destructive tool surface
+    # (exec_in_workspace, apply_upgrade, delete_run). Only the web dashboard and
+    # the manager itself may reach it; runner pods
+    # (percussionist.dev/component: runner) are not selected, so they are denied.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: percussionist
+              app.kubernetes.io/component: web
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: percussionist
+              app.kubernetes.io/component: manager
+      ports:
+        - protocol: TCP
+          port: 4097
+    # The chat port (4098) is intentionally left open to all sources.
+    # `beatctl chat` reaches it via `kubectl port-forward`, whose traffic
+    # originates from the node/kubelet rather than an allowlisted pod — a
+    # pod-selector rule here would break the CLI on any CNI that enforces
+    # NetworkPolicy (e.g. k3s). Chat exposes a far smaller surface than MCP.
+    - ports:
+        - protocol: TCP
+          port: 4098
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: memory-service-ingress
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: memory-service
+spec:
+  # Target every per-project memory service pod (operator-created).
+  podSelector:
+    matchLabels:
+      percussionist.dev/component: memory-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # Only the manager reads/writes vector memory. Runner pods must not be able
+    # to store poisoned "context" that later gets injected into agent prompts.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: percussionist
+              app.kubernetes.io/component: manager
+      ports:
+        - protocol: TCP
+          port: 4100

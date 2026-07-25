@@ -2,6 +2,7 @@ import { OPENCODE_RUNNER_DEFAULTS, type RunPhase, TERMINAL_PHASES } from '@percu
 import { Hono } from 'hono';
 import { auth } from '../auth.js';
 import { fetchSessionMessages, getRun, readSessionConfigMap } from '../kube.js';
+import { isKubeNotFound } from '../lib/kube-errors.js';
 
 const session = new Hono();
 
@@ -28,7 +29,7 @@ session.get('/:name/session', auth(), async (c) => {
     }
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = anyE.statusCode === 404 ? 404 : 500;
+    const status = isKubeNotFound(e) ? 404 : 500;
     return c.json({ error: anyE.body?.message ?? anyE.message ?? String(e) }, status);
   }
 
@@ -77,7 +78,7 @@ session.get('/:name/session/events', auth(), async (c) => {
     sessionID = run.status?.sessionID;
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = anyE.statusCode === 404 ? 404 : 500;
+    const status = isKubeNotFound(e) ? 404 : 500;
     return c.json({ error: anyE.body?.message ?? anyE.message ?? String(e) }, status);
   }
 

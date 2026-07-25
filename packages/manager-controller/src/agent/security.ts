@@ -76,6 +76,11 @@ const INJECTION_PATTERNS: InjectionPattern[] = [
 
   // Path traversal attempts
   { pattern: /\.\.[/]/, name: 'path traversal attempt' },
+
+  // Newlines / carriage returns act as command separators for `sh -c`, so a
+  // payload like "git status\nrm -rf /data" would otherwise run both commands.
+  // Checked last so more specific constructs (here-docs, etc.) report first.
+  { pattern: /[\r\n]/, name: 'newline (command separator)' },
 ];
 
 /**

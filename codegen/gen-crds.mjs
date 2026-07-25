@@ -9,6 +9,7 @@
 //   k8s/crds/project.yaml
 //   k8s/crds/task.yaml
 //   k8s/crds/clusteragent.yaml
+//   k8s/crds/clustersettings.yaml
 //
 // Requires the api package to have been built first:
 //   pnpm --filter @percussionist/api build
@@ -50,8 +51,15 @@ function stripAdditionalProperties(obj) {
     return obj.map(stripAdditionalProperties);
   }
   if (obj !== null && typeof obj === 'object') {
-    const { additionalProperties, default: _default, ...rest } = obj;
-    void _default;
+    // NOTE: `default` is deliberately PRESERVED. Zod's toJSONSchema lists a
+    // defaulted field in `required` (its output type is non-optional), so
+    // stripping the default left the field mandatory with no way to satisfy it
+    // — the API server then rejected every manifest that omitted it
+    // (e.g. "spec.featureBranchingEnabled: Required value"). Kubernetes
+    // structural schemas have supported `default` since v1.17, and the API
+    // server applies defaults before validation, which satisfies `required`
+    // and makes the Zod defaults authoritative at admission time.
+    const { additionalProperties, ...rest } = obj;
     const result = {};
     for (const [k, v] of Object.entries(rest)) {
       result[k] = stripAdditionalProperties(v);
@@ -302,5 +310,27 @@ const taskYAML = makeCRD({
 
 writeFileSync(path.join(outDir, 'task.yaml'), taskYAML);
 console.log(`wrote ${path.join(outDir, 'task.yaml')}`);
+
+// ---------------------------------------------------------------------------
+// ClusterSettings CRD (cluster-scoped singleton, spec only — no status)
+
+const clusterSettingsYAML = makeCRD({
+  group: api.API_GROUP,
+  version: api.API_VERSION,
+  kind: api.KIND_CLUSTER_SETTINGS,
+  plural: api.PLURAL_CLUSTER_SETTINGS,
+  scope: 'Cluster',
+  specSchema: api.ClusterSettingsSpecSchema,
+  additionalPrinterColumns: [
+    {
+      name: 'Age',
+      type: 'date',
+      jsonPath: '.metadata.creationTimestamp',
+    },
+  ],
+});
+
+writeFileSync(path.join(outDir, 'clustersettings.yaml'), clusterSettingsYAML);
+console.log(`wrote ${path.join(outDir, 'clustersettings.yaml')}`);
 
 console.log('CRD codegen complete.');

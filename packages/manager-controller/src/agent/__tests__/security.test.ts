@@ -231,6 +231,12 @@ describe('sanitizeCommand', () => {
     expect(result).toMatch(/here-document/);
   });
 
+  it('rejects a bare newline used as a command separator', () => {
+    const result = sanitizeCommand('git status\nrm -rf /data');
+    expect(result).not.toBeNull();
+    expect(result).toMatch(/newline/);
+  });
+
   it('rejects brace expansion', () => {
     const result = sanitizeCommand('echo {1..10}');
     expect(result).not.toBeNull();

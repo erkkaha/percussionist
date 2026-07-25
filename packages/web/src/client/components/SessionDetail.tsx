@@ -2,6 +2,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useRun } from '../hooks/useRun';
 import { useRunEvents } from '../hooks/useRunEvents';
 import { TERMINAL_PHASES } from '../lib/types';
+import { skeletonKeys } from '../lib/utils';
 import SessionView from './SessionView';
 import StatusBadge from './StatusBadge';
 import TokenCounter from './TokenCounter';
@@ -60,13 +61,13 @@ function DetailSkeleton() {
       <div className="h-8 w-64 rounded bg-surface-overlay animate-pulse" />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-4 rounded bg-surface-overlay animate-pulse" />
+          {skeletonKeys(6).map((key) => (
+            <div key={key} className="h-4 rounded bg-surface-overlay animate-pulse" />
           ))}
         </div>
         <div className="rounded-lg border border-border bg-surface-raised p-4 space-y-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-4 rounded bg-surface-overlay animate-pulse" />
+          {skeletonKeys(6).map((key) => (
+            <div key={key} className="h-4 rounded bg-surface-overlay animate-pulse" />
           ))}
         </div>
       </div>
@@ -164,9 +165,9 @@ export default function SessionDetail() {
               <div className="flex items-baseline gap-3 text-sm">
                 <span className="text-text-dim w-36 shrink-0">Inline Agents</span>
                 <div className="flex flex-wrap gap-1.5">
-                  {run.spec.agents.map((a, i) => (
+                  {run.spec.agents.map((a) => (
                     <span
-                      key={i}
+                      key={a.name}
                       className="inline-flex items-center rounded bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text-muted"
                     >
                       {a.name}

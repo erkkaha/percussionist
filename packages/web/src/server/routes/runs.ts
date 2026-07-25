@@ -3,6 +3,7 @@ import { API_GROUP_VERSION, KIND_RUN, RunSpecSchema } from '@percussionist/api';
 import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
 import { createRun, deleteRun, getRun, listRuns, postSessionMessage } from '../kube.js';
+import { isKubeNotFound, kubeStatusCode } from '../lib/kube-errors.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
 const runs = new Hono();
@@ -105,7 +106,7 @@ runs.get('/:name', auth(), async (c) => {
     return c.json(run);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = anyE.statusCode === 404 ? 404 : 500;
+    const status = isKubeNotFound(e) ? 404 : 500;
     const msg = anyE.body?.message ?? anyE.message ?? String(e);
     return c.json({ error: msg }, status);
   }
@@ -145,7 +146,7 @@ runs.post('/', adminAuth(), async (c) => {
     return c.json(created, 201);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = anyE.statusCode ?? 500;
+    const status = kubeStatusCode(e) ?? 500;
     const msg = anyE.body?.message ?? anyE.message ?? String(e);
     return c.json({ error: msg }, status as 400 | 409 | 500);
   }
@@ -159,7 +160,7 @@ runs.delete('/:name', adminAuth(), async (c) => {
     return c.body(null, 204);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = anyE.statusCode === 404 ? 404 : 500;
+    const status = isKubeNotFound(e) ? 404 : 500;
     const msg = anyE.body?.message ?? anyE.message ?? String(e);
     return c.json({ error: msg }, status);
   }

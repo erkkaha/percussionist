@@ -16,7 +16,7 @@ import {
   NAMESPACE,
   updateProject,
 } from '../kube.js';
-
+import { isKubeNotFound, kubeStatusCode } from '../lib/kube-errors.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
 const projects = new Hono();
@@ -237,7 +237,7 @@ projects.get('/:name', auth(), async (c) => {
     });
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = anyE.statusCode === 404 ? 404 : 500;
+    const status = isKubeNotFound(e) ? 404 : 500;
     const msg = anyE.body?.message ?? anyE.message ?? String(e);
     return c.json({ error: msg }, status);
   }
@@ -307,7 +307,7 @@ projects.post('/', adminAuth(), async (c) => {
     return c.json(created, 201);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = anyE.statusCode ?? 500;
+    const status = kubeStatusCode(e) ?? 500;
     const msg = anyE.body?.message ?? anyE.message ?? String(e);
     return c.json({ error: msg }, status as 400 | 409 | 500);
   }
@@ -411,7 +411,7 @@ projects.put('/:name', adminAuth(), async (c) => {
     return c.json(updated);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = anyE.statusCode === 404 ? 404 : 500;
+    const status = isKubeNotFound(e) ? 404 : 500;
     const msg = anyE.body?.message ?? anyE.message ?? String(e);
     return c.json({ error: msg }, status);
   }
@@ -443,7 +443,7 @@ projects.delete('/:name', adminAuth(), async (c) => {
     return c.body(null, 204);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-    const status = anyE.statusCode === 404 ? 404 : 500;
+    const status = isKubeNotFound(e) ? 404 : 500;
     const msg = anyE.body?.message ?? anyE.message ?? String(e);
     return c.json({ error: msg }, status);
   }

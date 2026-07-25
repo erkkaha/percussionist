@@ -2,6 +2,7 @@ import { DISPATCHER_CONTAINER, GIT_CLONE_CONTAINER, RUNNER_CONTAINER } from '@pe
 import { Hono } from 'hono';
 import { auth } from '../auth.js';
 import { core, getRun, readPodLog } from '../kube.js';
+import { isKubeNotFound, kubeStatusCode } from '../lib/kube-errors.js';
 
 const BOOTSTRAP_CONTAINER = 'bootstrap';
 const BOOTSTRAP_EXCLUDE = new Set([RUNNER_CONTAINER, DISPATCHER_CONTAINER]);
@@ -103,8 +104,7 @@ logs.get('/:name/logs', auth(), async (c) => {
     podName = run.status?.podName ?? name;
     ns = run.metadata.namespace ?? 'percussionist';
   } catch (e: unknown) {
-    const anyE = e as { statusCode?: number };
-    const status = anyE.statusCode === 404 ? 404 : 500;
+    const status = isKubeNotFound(e) ? 404 : 500;
     return c.json({ error: kubeErrMsg(e) }, status);
   }
 
@@ -133,16 +133,12 @@ logs.get('/:name/logs', auth(), async (c) => {
     const text = await readPodLog(podName, container, tailLines || undefined, ns);
     return c.json({ podName, container, lines: text });
   } catch (e: unknown) {
-    const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
-
     // If the main container was never started (init container failure) and
     // the caller didn't explicitly request a specific container, automatically
     // retry with the workspace-init init container — that's where the failure is.
     const errStr = kubeErrMsg(e);
     const isWaiting =
-      !explicitContainer &&
-      (anyE.statusCode === 400 || String(e).includes('400')) &&
-      errStr.includes('waiting to start');
+      !explicitContainer && kubeStatusCode(e) === 400 && errStr.includes('waiting to start');
 
     if (isWaiting) {
       try {
@@ -153,7 +149,7 @@ logs.get('/:name/logs', auth(), async (c) => {
       }
     }
 
-    const status = anyE.statusCode === 404 ? 404 : anyE.statusCode === 400 ? 400 : 500;
+    const status = kubeStatusCode(e) === 404 ? 404 : kubeStatusCode(e) === 400 ? 400 : 500;
     return c.json({ error: errStr }, status);
   }
 });

@@ -3,7 +3,7 @@ import { BarChart3, Table2, TrendingUp, Users, Wrench } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { authHeaders } from '../lib/auth';
-import { cn } from '../lib/utils';
+import { cn, skeletonKeys } from '../lib/utils';
 import StatusBadge from './StatusBadge';
 import TokenCounter from './TokenCounter';
 import ToolMetricsView from './ToolMetricsView';
@@ -527,15 +527,8 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
   const [metric, setMetric] = useState<string>('successRate');
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
 
-  if (agents.length === 0) {
-    return (
-      <div className="rounded-lg border border-border bg-surface-raised p-8 text-center text-text-dim">
-        No agent data available.
-      </div>
-    );
-  }
-
-  // Chart data for bar chart
+  // Chart data for bar chart. Kept above the empty-state early return so all
+  // hooks run unconditionally (Rules of Hooks).
   const chartData = useMemo(() => {
     const metricKey = metric as keyof AgentSummary;
     return agents
@@ -551,6 +544,14 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
       }))
       .sort((a, b) => b.value - a.value);
   }, [agents, metric]);
+
+  if (agents.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-surface-raised p-8 text-center text-text-dim">
+        No agent data available.
+      </div>
+    );
+  }
 
   const chartConfig = {
     value: {
@@ -846,9 +847,9 @@ export default function StatsView() {
       {isLoading && (
         <div className="space-y-3">
           <div className="grid grid-cols-7 gap-3">
-            {Array.from({ length: 7 }).map((_, i) => (
+            {skeletonKeys(7).map((key) => (
               <div
-                key={i}
+                key={key}
                 className="rounded-lg border border-border bg-surface-raised p-4 h-20 animate-pulse"
               />
             ))}

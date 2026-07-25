@@ -38,6 +38,14 @@ const OLLAMA_BASE_URL =
 
 const WEB_AUTH_TOKEN = process.env.WEB_AUTH_TOKEN ?? '';
 
+// ALLOW_PRIVILEGED_SIDECARS:
+//   When "true", user-supplied sidecar securityContext (privileged, runAsUser: 0,
+//   allowPrivilegeEscalation) is honored verbatim. Off by default because a
+//   privileged sidecar is a container-escape primitive and run/project specs are
+//   editable from the dashboard. Enable only on trusted single-tenant clusters
+//   that legitimately need it (e.g. the self-dev DinD sidecar).
+const ALLOW_PRIVILEGED_SIDECARS = process.env.PERCUSSIONIST_ALLOW_PRIVILEGED_SIDECARS === 'true';
+
 // Storage defaults — controls how the operator creates data PVCs.
 // DEFAULT_STORAGE_CLASS:
 //   StorageClass name for data PVCs. Defaults to "standard" (minikube-compatible).
@@ -55,6 +63,7 @@ const DEFAULT_STORAGE_ACCESS_MODE = process.env.DEFAULT_STORAGE_ACCESS_MODE ?? '
 const DEFAULT_STORAGE_SIZE = process.env.DEFAULT_STORAGE_SIZE ?? '50Gi';
 
 export {
+  ALLOW_PRIVILEGED_SIDECARS,
   DEFAULT_STORAGE_ACCESS_MODE,
   DEFAULT_STORAGE_CLASS,
   DEFAULT_STORAGE_SIZE,

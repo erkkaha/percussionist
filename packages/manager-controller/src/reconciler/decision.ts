@@ -1032,26 +1032,29 @@ function decideAwaitingMerge(input: ReconcileInput): ReconcileDecision {
       }
     }
 
-    const buildRunName = task.status?.worker?.runName;
-    const cleanupEffects: ReconcileEffect[] = [{ type: 'CleanupWorktree', runName: mergeRunName }];
-    if (buildRunName) {
-      cleanupEffects.push({ type: 'CleanupWorktree', runName: buildRunName });
-    }
+    // Merge run reported Succeeded but never submitted a structured verdict
+    // (crashed before complete_merge, or emitted an unparseable annotation). We
+    // cannot confirm the merge actually landed, so we must NOT record it as a
+    // successful merge — a false mergedAt would let successor BUILD tasks branch
+    // off a target that never received these commits. Escalate for a human.
     return {
       taskName,
       fromPhase,
-      toPhase: 'done',
+      toPhase: 'awaiting-human',
       statusPatch: {
-        worker: { status: 'Succeeded', mergedAt: now, completedAt: now },
+        worker: {
+          mergeError:
+            'Merge run finished without a structured verdict; cannot confirm the merge landed. Verify and resolve manually.',
+        },
       },
-      effects: cleanupEffects,
+      effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
       events: [
         makeEvent(
           input,
           fromPhase,
-          'done',
-          'MergeSucceededUnstructured',
-          'Merge run succeeded without structured merge verdict; falling back to legacy success behavior',
+          'awaiting-human',
+          'MergeVerdictMissing',
+          'Merge run succeeded but produced no structured merge verdict; escalating to human',
         ),
       ],
     };
@@ -1502,19 +1505,26 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
       }
     }
 
+    // No structured verdict — cannot confirm the feature branch actually merged.
+    // Escalate rather than falsely recording mergedAt (see MergeVerdictMissing).
     return {
       taskName,
       fromPhase,
-      toPhase: 'done',
-      statusPatch: { worker: { mergedAt: now } },
+      toPhase: 'awaiting-human',
+      statusPatch: {
+        worker: {
+          mergeError:
+            'Feature-branch merge run finished without a structured verdict; cannot confirm the merge landed. Verify and resolve manually.',
+        },
+      },
       effects: [{ type: 'CleanupWorktree', runName: mergeRunName }],
       events: [
         makeEvent(
           input,
           fromPhase,
-          'done',
-          'FeatureBranchMergedUnstructured',
-          'Merge run succeeded without structured merge verdict; falling back to legacy success behavior',
+          'awaiting-human',
+          'FeatureBranchMergeVerdictMissing',
+          'Feature-branch merge run succeeded but produced no structured merge verdict; escalating to human',
         ),
       ],
     };

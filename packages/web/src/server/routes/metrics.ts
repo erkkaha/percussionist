@@ -20,6 +20,7 @@ import {
   type PodMetric,
   type PodResourceSpec,
 } from '../kube.js';
+import { kubeStatusCode } from '../lib/kube-errors.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
 const metrics = new Hono();
@@ -76,7 +77,7 @@ metrics.get('/nodes', auth(), async (c) => {
     });
     return c.json({ items: nodes });
   } catch (e: unknown) {
-    const statusCode = (e as { statusCode?: number })?.statusCode;
+    const statusCode = kubeStatusCode(e);
     const msg =
       (e as { body?: { message?: string } })?.body?.message ?? (e as Error).message ?? String(e);
     if (statusCode === 404 || msg.includes('metrics.k8s.io')) {
@@ -132,7 +133,7 @@ metrics.get('/pods', auth(), async (c) => {
     });
     return c.json({ items });
   } catch (e: unknown) {
-    const statusCode = (e as { statusCode?: number })?.statusCode;
+    const statusCode = kubeStatusCode(e);
     const msg =
       (e as { body?: { message?: string } })?.body?.message ?? (e as Error).message ?? String(e);
     if (statusCode === 404 || msg.includes('metrics.k8s.io')) {

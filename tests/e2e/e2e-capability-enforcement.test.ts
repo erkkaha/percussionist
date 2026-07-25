@@ -43,11 +43,20 @@ async function findWorkerRun(ns: string, taskId: string): Promise<string | null>
 }
 
 async function createBoardTaskViaWeb(payload: Record<string, unknown>): Promise<string | null> {
-  const escaped = JSON.stringify(payload).replaceAll("'", `'"'"'`);
+  // Uses bun (the web image's runtime) rather than wget: this endpoint is
+  // expected to answer HTTP 400, and busybox wget both exits non-zero on 4xx
+  // (so kubectlExecSilent would return null) and discards the response body
+  // (so the capability message would be invisible). fetch gives us both the
+  // status line and the body regardless of status code.
+  const script = `const r = await fetch(${JSON.stringify(
+    `http://127.0.0.1:8080/api/projects/${PROJECT}/board/tasks`,
+  )}, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ${JSON.stringify(
+    JSON.stringify(payload),
+  )} }); const b = await r.text(); console.log('HTTP/1.1 ' + r.status); let m = b; try { m = JSON.parse(b).error ?? b; } catch {} console.log(m);`;
   return await kubectlExecSilent(NS, 'deployment/percussionist-web', undefined, [
-    'sh',
-    '-lc',
-    `wget -qS -O- --header='Content-Type: application/json' --post-data='${escaped}' http://127.0.0.1:8080/api/projects/${PROJECT}/board/tasks 2>&1`,
+    'bun',
+    '-e',
+    script,
   ]);
 }
 

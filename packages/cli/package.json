@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.json --noEmit",
     "bundle": "node scripts/bundle.mjs",
     "typecheck": "tsc -p tsconfig.json",
+    "test": "bun test test/",
     "start": "bun src/index.ts",
     "beatctl": "bun src/index.ts"
   },

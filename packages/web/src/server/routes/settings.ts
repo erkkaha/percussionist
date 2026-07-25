@@ -2,6 +2,7 @@ import { ClusterSettingsSpecSchema, DEFAULT_CLUSTER_SETTINGS_NAME } from '@percu
 import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
 import { core, getClusterSettings, NAMESPACE, updateClusterSettings } from '../kube.js';
+import { isKubeNotFound } from '../lib/kube-errors.js';
 
 const settings = new Hono();
 
@@ -45,8 +46,9 @@ settings.get('/', auth(), async (c) => {
     const cs = await getClusterSettings(DEFAULT_CLUSTER_SETTINGS_NAME);
     return c.json(cs);
   } catch (e: unknown) {
-    const anyE = e as { statusCode?: number };
-    if ((anyE as { statusCode?: number }).statusCode === 404) {
+    // A cluster with no ClusterSettings object yet is normal (fresh install) —
+    // answer with an empty settings document rather than a server error.
+    if (isKubeNotFound(e)) {
       return c.json({ metadata: { name: DEFAULT_CLUSTER_SETTINGS_NAME }, spec: {} }, 200);
     }
     return c.json({ error: String(e) }, 500);

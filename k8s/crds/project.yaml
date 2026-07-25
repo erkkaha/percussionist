@@ -60,6 +60,7 @@ spec:
                               type: string
                               minLength: 1
                             key:
+                              default: ssh-privatekey
                               type: string
                           required:
                             - name
@@ -71,6 +72,7 @@ spec:
                               type: string
                               minLength: 1
                             key:
+                              default: token
                               type: string
                           required:
                             - name
@@ -88,6 +90,7 @@ spec:
                             - name
                             - email
                         sshHostKeyVerification:
+                          default: "no"
                           type: string
                           enum:
                             - strict
@@ -100,6 +103,7 @@ spec:
                               type: string
                               minLength: 1
                             key:
+                              default: known_hosts
                               type: string
                           required:
                             - name
@@ -121,6 +125,7 @@ spec:
                           type: string
                           minLength: 1
                         key:
+                          default: auth.json
                           type: string
                       required:
                         - name
@@ -132,6 +137,7 @@ spec:
                           type: string
                           minLength: 1
                         key:
+                          default: opencode.json
                           type: string
                       required:
                         - name
@@ -143,6 +149,7 @@ spec:
                 image:
                   type: string
                 timeoutSeconds:
+                  default: 3600
                   type: integer
                   minimum: 0
                   exclusiveMinimum: true
@@ -226,6 +233,7 @@ spec:
                             type: string
                             minLength: 1
                           key:
+                            default: content
                             type: string
                         required:
                           - name
@@ -236,6 +244,7 @@ spec:
                 initScript:
                   type: string
                 maxParallel:
+                  default: 2
                   type: integer
                   minimum: 1
                   maximum: 20
@@ -253,6 +262,7 @@ spec:
                     required:
                       - name
                 phase:
+                  default: Active
                   type: string
                   enum:
                     - Active
@@ -264,6 +274,7 @@ spec:
                     pvcName:
                       type: string
                     mountPath:
+                      default: /data
                       type: string
                     storageClass:
                       type: string
@@ -273,33 +284,41 @@ spec:
                   type: object
                   properties:
                     worktreeReuse:
+                      default: true
                       type: boolean
                   required:
                     - worktreeReuse
                 featureBranchingEnabled:
+                  default: false
                   type: boolean
                 retryPolicy:
                   type: object
                   properties:
                     enabled:
+                      default: false
                       type: boolean
                     maxAttempts:
+                      default: 3
                       type: integer
                       minimum: 1
                       maximum: 10
                     backoffSeconds:
+                      default: 30
                       type: integer
                       minimum: 5
                       maximum: 600
                     backoffMultiplier:
+                      default: 2
                       type: number
                       minimum: 1
                       maximum: 5
                     maxBackoffSeconds:
+                      default: 300
                       type: integer
                       minimum: 5
                       maximum: 3600
                     poisonPillThresholdSeconds:
+                      default: 30
                       type: integer
                       minimum: 0
                       maximum: 300
@@ -314,11 +333,14 @@ spec:
                   type: object
                   properties:
                     aiReviewerEnabled:
+                      default: false
                       type: boolean
                     aiReviewerAgent:
+                      default: reviewer
                       type: string
                       maxLength: 63
                     maxAutoReworks:
+                      default: 2
                       type: integer
                       minimum: 1
                       maximum: 10
@@ -330,6 +352,7 @@ spec:
                   type: object
                   properties:
                     preset:
+                      default: plan-build-review-merge
                       type: string
                       enum:
                         - simple
@@ -340,11 +363,13 @@ spec:
                       type: object
                       properties:
                         plan:
+                          default: required
                           type: string
                           enum:
                             - required
                             - disabled
                         build:
+                          default: required
                           type: string
                           enum:
                             - required
@@ -353,55 +378,65 @@ spec:
                       type: object
                       properties:
                         onApprove:
+                          default: generate-builds
                           type: string
                           enum:
                             - generate-builds
                             - done
                         buildGeneration:
+                          default: ai
                           type: string
                           enum:
                             - ai
                             - manual
                             - disabled
                         buildGenerationAgent:
+                          default: buildgen
                           type: string
                           maxLength: 63
                         defaultAgent:
+                          default: planner
                           type: string
                           maxLength: 63
                     build:
                       type: object
                       properties:
                         onSuccess:
+                          default: human-review
                           type: string
                           enum:
                             - human-review
                             - ai-review
                             - done
                         onApprove:
+                          default: merge
                           type: string
                           enum:
                             - merge
                             - done
                         defaultAgent:
+                          default: builder
                           type: string
                           maxLength: 63
                     merge:
                       type: object
                       properties:
                         mode:
+                          default: auto
                           type: string
                           enum:
                             - auto
                             - manual
                             - disabled
                         agent:
+                          default: integrator
                           type: string
                           maxLength: 63
                     integration:
                       type: object
                       properties:
                         mode:
+                          default: auto-merge
                           type: string
                           enum:
                             - auto-merge
@@ -409,17 +444,21 @@ spec:
                             - manual
                             - disabled
                         agent:
+                          default: integrator
                           type: string
                           maxLength: 63
                     review:
                       type: object
                       properties:
                         aiReviewerEnabled:
+                          default: false
                           type: boolean
                         agent:
+                          default: reviewer
                           type: string
                           maxLength: 63
                         maxAutoReworks:
+                          default: 2
                           type: integer
                           minimum: 1
                           maximum: 10
@@ -427,24 +466,30 @@ spec:
                       type: object
                       properties:
                         enabled:
+                          default: false
                           type: boolean
                         maxAttempts:
+                          default: 3
                           type: integer
                           minimum: 1
                           maximum: 10
                         backoffSeconds:
+                          default: 30
                           type: integer
                           minimum: 5
                           maximum: 600
                         backoffMultiplier:
+                          default: 2
                           type: number
                           minimum: 1
                           maximum: 5
                         maxBackoffSeconds:
+                          default: 300
                           type: integer
                           minimum: 5
                           maximum: 3600
                         poisonPillThresholdSeconds:
+                          default: 30
                           type: integer
                           minimum: 0
                           maximum: 300
@@ -452,18 +497,22 @@ spec:
                       type: object
                       properties:
                         runningStaleSeconds:
+                          default: 1800
                           type: integer
                           minimum: 30
                           maximum: 86400
                         reviewStaleSeconds:
+                          default: 600
                           type: integer
                           minimum: 30
                           maximum: 86400
                         mergeStaleSeconds:
+                          default: 600
                           type: integer
                           minimum: 30
                           maximum: 86400
                         buildgenStaleSeconds:
+                          default: 600
                           type: integer
                           minimum: 30
                           maximum: 86400
@@ -473,8 +522,10 @@ spec:
                   type: object
                   properties:
                     enabled:
+                      default: false
                       type: boolean
                     image:
+                      default: codercom/code-server:4.96.4
                       type: string
                     resources:
                       type: object
@@ -497,10 +548,13 @@ spec:
                   type: object
                   properties:
                     enabled:
+                      default: false
                       type: boolean
                     model:
+                      default: nomic-embed-text
                       type: string
                     dimensions:
+                      default: 768
                       type: integer
                       minimum: -9007199254740991
                       maximum: 9007199254740991
@@ -544,6 +598,7 @@ spec:
                   type: object
                   properties:
                     activeWorkers:
+                      default: 0
                       type: integer
                       minimum: 0
                       maximum: 9007199254740991
@@ -612,14 +667,17 @@ spec:
                         lastError:
                           type: string
                         tasksPulled:
+                          default: 0
                           type: integer
                           minimum: 0
                           maximum: 9007199254740991
                         workersMonitored:
+                          default: 0
                           type: integer
                           minimum: 0
                           maximum: 9007199254740991
                         tasksReworked:
+                          default: 0
                           type: integer
                           minimum: 0
                           maximum: 9007199254740991
@@ -710,6 +768,7 @@ spec:
                             type: string
                             maxLength: 2048
                           status:
+                            default: new
                             type: string
                             enum:
                               - new
@@ -727,6 +786,7 @@ spec:
                           taskRef:
                             type: string
                           occurrences:
+                            default: 1
                             type: integer
                             minimum: 1
                             maximum: 9007199254740991

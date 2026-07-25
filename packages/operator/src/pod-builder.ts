@@ -88,6 +88,46 @@ const commonLabels = (run: Run) => ({
   ...(run.spec.project ? { [LABELS.projectName]: run.spec.project } : {}),
 });
 
+/**
+ * Strip dangerous fields from a user-supplied sidecar securityContext unless the
+ * cluster explicitly opts in. A privileged (or root, or escalation-allowed)
+ * sidecar shares the run pod's network/PID namespace and is a trivial node-root
+ * container-escape primitive — and run/project specs are editable from the web
+ * dashboard. When `allowPrivileged` is false we drop `privileged`,
+ * `allowPrivilegeEscalation`, and `runAsUser: 0`, keeping only benign fields.
+ */
+function sanitizeSidecarSecurityContext(
+  sc: SidecarSpec['securityContext'],
+  allowPrivileged: boolean,
+  sidecarName: string,
+): SidecarSpec['securityContext'] | undefined {
+  if (!sc) return undefined;
+  if (allowPrivileged) return sc;
+  const { privileged, allowPrivilegeEscalation, runAsUser, ...safe } = sc;
+
+  // Warn loudly: a stripped DinD sidecar fails at runtime in a way that gives
+  // no hint the operator caused it (this is why self-dev's Docker sidecar needs
+  // PERCUSSIONIST_ALLOW_PRIVILEGED_SIDECARS=true).
+  const dropped = [
+    privileged ? 'privileged' : undefined,
+    allowPrivilegeEscalation ? 'allowPrivilegeEscalation' : undefined,
+    runAsUser === 0 ? 'runAsUser: 0' : undefined,
+  ].filter(Boolean);
+  if (dropped.length > 0) {
+    console.warn(
+      `[operator ${new Date().toISOString()}] stripped ${dropped.join(', ')} from sidecar "${sidecarName}"; ` +
+        'set PERCUSSIONIST_ALLOW_PRIVILEGED_SIDECARS=true on the operator to allow it',
+    );
+  }
+
+  // Keep an explicit non-root runAsUser; drop a root (0) request.
+  const cleaned = {
+    ...safe,
+    ...(runAsUser !== undefined && runAsUser !== 0 ? { runAsUser } : {}),
+  };
+  return Object.keys(cleaned).length > 0 ? cleaned : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Renderers
 
@@ -144,6 +184,7 @@ export function renderPod(
   sidecars: SidecarSpec[] = [],
   runner: RunnerImageSpec = OPENCODE_RUNNER_DEFAULTS,
   dispatcherImage?: string,
+  allowPrivilegedSidecars = false,
 ): V1Pod {
   const spec = run.spec;
   const containerPort = runner.port;
@@ -587,6 +628,30 @@ export function renderPod(
     ...(workspaceSubPath ? [] : [{ name: 'workspace', emptyDir: {} }]),
     // Data PVC for caches, git mirrors, worktrees, and local workspace (RWX for parallel workers)
     { name: 'data', persistentVolumeClaim: { claimName: dataPvcName } },
+    // Projected ServiceAccount token, mounted into the dispatcher container ONLY
+    // (see automountServiceAccountToken: false above). Replicates the default
+    // in-cluster token/ca.crt/namespace so @kubernetes/client-node still works,
+    // while keeping the token out of the untrusted runner container.
+    {
+      name: 'kube-api-access',
+      projected: {
+        defaultMode: 0o420,
+        sources: [
+          { serviceAccountToken: { path: 'token', expirationSeconds: 3607 } },
+          {
+            configMap: {
+              name: 'kube-root-ca.crt',
+              items: [{ key: 'ca.crt', path: 'ca.crt' }],
+            },
+          },
+          {
+            downwardAPI: {
+              items: [{ path: 'namespace', fieldRef: { fieldPath: 'metadata.namespace' } }],
+            },
+          },
+        ],
+      },
+    },
     ...(sshSecret
       ? [
           {
@@ -655,6 +720,12 @@ export function renderPod(
     spec: {
       restartPolicy: 'Never',
       serviceAccountName: DISPATCHER_SERVICE_ACCOUNT,
+      // Do NOT auto-mount the ServiceAccount token into every container. The
+      // untrusted runner (opencode) container runs AI-generated code and must
+      // not be able to read a Kubernetes API token. The token is projected into
+      // the dispatcher container only (see the kube-api-access volume + mount).
+      automountServiceAccountToken: false,
+      securityContext: { seccompProfile: { type: 'RuntimeDefault' } },
       tolerations: [
         {
           key: 'percussionist.dev/workload',
@@ -663,7 +734,9 @@ export function renderPod(
           effect: 'NoExecute',
         },
       ],
-      activeDeadlineSeconds: spec.timeoutSeconds,
+      // Fall back to the 1-hour default so a spec without timeoutSeconds still
+      // gets a pod deadline (matches RUN_TIMEOUT_SECONDS below).
+      activeDeadlineSeconds: spec.timeoutSeconds ?? 3600,
       ...(initContainers ? { initContainers } : {}),
       containers: [
         {
@@ -831,6 +904,13 @@ export function renderPod(
               value: `http://127.0.0.1:${containerPort}`,
             },
             { name: 'WEB_STATS_URL', value: WEB_STATS_URL },
+            // Passed as a literal rather than a secretKeyRef on purpose: a
+            // secretKeyRef resolves in the RUN pod's namespace, which is not
+            // necessarily the operator's (PERCUSSIONIST_NAMESPACE vs
+            // PERCUSSIONIST_SELF_NAMESPACE; e2e runs in per-suite namespaces).
+            // A missing secret there would silently yield an empty token and
+            // drop stats reporting. Trade-off: the value is readable via
+            // `get pods` — see SECURITY.md.
             { name: 'WEB_AUTH_TOKEN', value: WEB_AUTH_TOKEN },
             ...(spec.task && !spec.interactive ? [{ name: 'RUN_TASK', value: spec.task }] : []),
             ...(spec.interactive ? [{ name: 'RUN_INTERACTIVE', value: '1' }] : []),
@@ -849,6 +929,16 @@ export function renderPod(
             ...(spec.boardTask ? [{ name: 'RUN_BOARD_TASK', value: spec.boardTask }] : []),
             { name: 'RUN_TIMEOUT_SECONDS', value: String(spec.timeoutSeconds ?? 3600) },
           ],
+          // The ServiceAccount token lives here (and only here — see
+          // automountServiceAccountToken: false) so the dispatcher can patch the
+          // Run status while the runner container has no cluster credentials.
+          volumeMounts: [
+            {
+              name: 'kube-api-access',
+              mountPath: '/var/run/secrets/kubernetes.io/serviceaccount',
+              readOnly: true,
+            },
+          ],
           resources: {
             requests: { cpu: '50m', memory: '128Mi' },
             limits: { cpu: '500m', memory: '512Mi' },
@@ -856,14 +946,21 @@ export function renderPod(
         },
         // Project-level sidecar containers (e.g. test databases).
         // They start alongside opencode; opencode waits for their ports.
-        ...sidecars.map((sc) => ({
-          name: sc.name,
-          image: sc.image,
-          imagePullPolicy: 'IfNotPresent' as const,
-          ...(sc.env ? { env: sc.env } : {}),
-          ...(sc.ports ? { ports: sc.ports.map((p) => ({ containerPort: p })) } : {}),
-          ...(sc.securityContext ? { securityContext: sc.securityContext } : {}),
-        })),
+        ...sidecars.map((sc) => {
+          const securityContext = sanitizeSidecarSecurityContext(
+            sc.securityContext,
+            allowPrivilegedSidecars,
+            sc.name,
+          );
+          return {
+            name: sc.name,
+            image: sc.image,
+            imagePullPolicy: 'IfNotPresent' as const,
+            ...(sc.env ? { env: sc.env } : {}),
+            ...(sc.ports ? { ports: sc.ports.map((p) => ({ containerPort: p })) } : {}),
+            ...(securityContext ? { securityContext } : {}),
+          };
+        }),
       ],
       volumes,
     },

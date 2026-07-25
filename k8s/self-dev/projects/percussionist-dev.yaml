@@ -54,6 +54,10 @@ spec:
   # Builder and planner tasks simply ignore the idle Docker daemon.
   # Privileged mode is required for DinD to load kernel modules, mount special
   # filesystems, and create network interfaces.
+  #
+  # NOTE: the operator strips privileged sidecar securityContext by default.
+  # This project only works when the operator runs with
+  # PERCUSSIONIST_ALLOW_PRIVILEGED_SIDECARS=true (see k8s/self-dev/README.md).
   sidecars:
     - name: docker
       image: docker:24-dind

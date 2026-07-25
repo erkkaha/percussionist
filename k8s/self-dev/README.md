@@ -15,8 +15,20 @@ development (dogfooding). **External users should NOT apply these manifests.**
 ### One-time setup
 
 1. Follow instructions in `secrets/README.md` to create required secrets
-2. Apply project: `kubectl apply -f k8s/self-dev/projects/`
-3. Verify: `beatctl project get percussionist-dev`
+2. Allow the privileged DinD sidecar. The operator strips `privileged`,
+   `allowPrivilegeEscalation`, and `runAsUser: 0` from sidecars by default
+   (a privileged sidecar shares the run pod's namespaces and is a container-escape
+   primitive). `percussionist-dev` needs DinD for image builds, so opt in:
+
+   ```bash
+   kubectl -n percussionist set env deploy/percussionist-operator \
+     PERCUSSIONIST_ALLOW_PRIVILEGED_SIDECARS=true
+   ```
+
+   Without this the Docker sidecar starts unprivileged and image builds fail;
+   the operator logs `stripped privileged ... from sidecar "docker"` when it happens.
+3. Apply project: `kubectl apply -f k8s/self-dev/projects/`
+4. Verify: `beatctl project get percussionist-dev`
 
 ### Adding tasks
 

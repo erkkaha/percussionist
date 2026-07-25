@@ -35,33 +35,35 @@ spec:
                   properties:
                     llmKeysSecret:
                       type: string
-                    opencodeAuthSecret:
+                    authSecret:
                       type: object
                       properties:
                         name:
                           type: string
                           minLength: 1
                         key:
+                          default: auth.json
                           type: string
                       required:
                         - name
-                    opencodeConfigMap:
+                        - key
+                    configMap:
                       type: object
                       properties:
                         name:
                           type: string
                           minLength: 1
                         key:
+                          default: opencode.json
                           type: string
                       required:
                         - name
-                  description: Cluster-wide secret references. Inherited by all projects and runs unless overridden.
+                        - key
                 runnerConfig:
                   type: object
                   properties:
                     config:
                       type: string
-                      description: Raw opencode.json content. When set, the operator generates the opencode-config ConfigMap from this string.
                     configMapRef:
                       type: object
                       properties:
@@ -69,45 +71,48 @@ spec:
                           type: string
                           minLength: 1
                         key:
+                          default: opencode.json
                           type: string
                       required:
                         - name
-                  description: OpenCode runtime configuration. Takes precedence over manually-managed opencode-config ConfigMap when set.
+                        - key
                 manager:
                   type: object
                   properties:
                     agentName:
-                      type: string
                       default: manager-agent
+                      type: string
                     model:
                       type: string
-                      description: Default model for manager decision sessions.
                     decisionAgentContent:
                       type: string
                       maxLength: 102400
-                      description: Full .md file contents (YAML front-matter + system prompt) for the decision agent role. Replaces manager-decision.md.
                     timeoutMs:
-                      type: integer
-                      exclusiveMinimum: true
-                      minimum: 1
                       default: 30000
+                      type: integer
+                      minimum: 0
+                      exclusiveMinimum: true
+                      maximum: 9007199254740991
                     firstResponseTimeoutMs:
                       type: integer
+                      minimum: 0
                       exclusiveMinimum: true
-                      minimum: 1
-                      description: Max ms to wait for the first assistant message before timing out. Defaults to min(timeoutMs, 60000) when unset.
-                  description: Manager agent configuration.
+                      maximum: 9007199254740991
+                  required:
+                    - agentName
+                    - timeoutMs
                 runner:
                   type: object
                   properties:
                     image:
-                      type: string
                       default: ghcr.io/erkkaha/percussionist/runner:latest
+                      type: string
                     timeoutSeconds:
-                      type: integer
-                      exclusiveMinimum: true
-                      minimum: 1
                       default: 3600
+                      type: integer
+                      minimum: 0
+                      exclusiveMinimum: true
+                      maximum: 9007199254740991
                     resources:
                       type: object
                       properties:
@@ -117,22 +122,48 @@ spec:
                         limits:
                           type: object
                           x-kubernetes-preserve-unknown-fields: true
-                  description: Default runner pod settings for all projects and runs.
+                  required:
+                    - image
+                    - timeoutSeconds
+                runTTLDays:
+                  default: 7
+                  type: integer
+                  minimum: 0
+                  exclusiveMinimum: true
+                  maximum: 9007199254740991
                 dispatcher:
                   type: object
                   properties:
                     image:
                       type: string
-                      description: Dispatcher sidecar image for run pods. When absent, the operator's DISPATCHER_IMAGE env var is used as fallback.
-                  description: Dispatcher sidecar configuration for run pods.
-                runTTLDays:
-                  type: integer
-                  exclusiveMinimum: true
-                  minimum: 1
-                  default: 7
-                  description: How many days to keep completed Run CRs before automatic cleanup.
+                runnerAdapter:
+                  type: object
+                  properties:
+                    image:
+                      type: string
+                    port:
+                      type: integer
+                      minimum: 1
+                      maximum: 65535
+                    command:
+                      type: array
+                      items:
+                        type: string
+                    authEnvVar:
+                      type: string
+                    configEnvVar:
+                      type: string
+                    baseUrlEnvVar:
+                      type: string
+                    configMountPath:
+                      type: string
+                    agentsDirRelative:
+                      type: string
+                    configMapKey:
+                      type: string
                 codeServerUrlTemplate:
                   type: string
-                  description: Template for code-server URLs. {project} is replaced with the project name. When set, projects with codeServer.enabled show a link in the sidebar and board header.
+              required:
+                - runTTLDays
           required:
             - spec

@@ -10,6 +10,7 @@ import {
   kubectl,
   kubectlApply,
   kubectlApplyFile,
+  kubectlGetJSONSilent,
   kubectlRolloutStatus,
   kubectlSetEnv,
   kubectlSilent,
@@ -19,6 +20,27 @@ import {
 export const REPO_ROOT = resolve(import.meta.dirname, '../../..');
 export const MANIFESTS = resolve(REPO_ROOT, 'k8s/tests');
 export const OPERATOR_NS = 'percussionist';
+
+/**
+ * Optional OAuth credential support for local runs.
+ *
+ * `createLLMSecret` only knows how to build a secret from API-key env vars
+ * (ANTHROPIC_API_KEY / OPENAI_API_KEY / GITHUB_TOKEN). Workstations that
+ * authenticate via a device-code flow instead (GitHub Copilot, Claude Pro,
+ * ChatGPT) keep their credential in the cluster's `opencode-auth` Secret,
+ * created by `beatctl auth import`.
+ *
+ * Set E2E_AUTH_SECRET=opencode-auth to make the harness copy that Secret into
+ * the test namespace and reference it from the generated Project, so runs
+ * authenticate via OPENCODE_AUTH_CONTENT. Unset (the CI default) changes
+ * nothing.
+ *
+ * Note the secrets cascade is a whole-object override
+ * (`run.secrets ?? project.secrets ?? clusterSettings.secrets`), so the
+ * authSecret must live on the same Project block as llmKeysSecret — supplying
+ * it via ClusterSettings would be shadowed.
+ */
+export const E2E_AUTH_SECRET = process.env.E2E_AUTH_SECRET ?? '';
 
 /** Known-safe kubectl contexts (local/homelab clusters). */
 const SAFE_CONTEXTS = ['k3s', 'kind', 'docker-desktop', 'homelab', 'minikube', 'rancher'];
@@ -318,6 +340,44 @@ export async function setupCluster(
   await setupNamespace(config.ns);
   await setupDispatcherRBAC(config.ns);
   await setupLLMSecret(config.ns, config.llmSecret);
+  await setupOpencodeAuthSecret(config.ns);
+}
+
+/**
+ * Copy the OAuth Secret named by E2E_AUTH_SECRET from the operator namespace
+ * into the test namespace. No-op unless E2E_AUTH_SECRET is set. Secrets are
+ * namespaced, so the run pod cannot reference the copy in `percussionist`.
+ */
+export async function setupOpencodeAuthSecret(ns: string): Promise<void> {
+  if (!E2E_AUTH_SECRET) return;
+  console.log(`==> Step 7: Copy OAuth secret ${E2E_AUTH_SECRET} into ${ns}`);
+  const src = await kubectlGetJSONSilent<{ data?: Record<string, string> }>(
+    'secret',
+    E2E_AUTH_SECRET,
+    OPERATOR_NS,
+  );
+  const data = src?.data;
+  if (!data || Object.keys(data).length === 0) {
+    console.warn(
+      `    WARNING: secret ${OPERATOR_NS}/${E2E_AUTH_SECRET} not found or empty — ` +
+        'runs will have no OAuth credential. Run `beatctl auth import` first.',
+    );
+    return;
+  }
+  const entries = Object.entries(data)
+    .map(([k, v]) => `  ${k}: ${v}`)
+    .join('\n');
+  await kubectlApply(`\
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${E2E_AUTH_SECRET}
+  namespace: ${ns}
+type: Opaque
+data:
+${entries}
+`);
+  console.log(`    Secret ${E2E_AUTH_SECRET} copied (${Object.keys(data).length} key(s))`);
 }
 
 /**
@@ -385,6 +445,7 @@ ${agentsBlock}\
 ${timeoutLine}\
   secrets:
     llmKeysSecret: "${opts.llmSecret}"
+${E2E_AUTH_SECRET ? `    authSecret:\n      name: "${E2E_AUTH_SECRET}"\n` : ''}\
 ${sourceLine}\
 ${flowLine}\
 `);
@@ -497,6 +558,32 @@ roleRef:
   kind: Role
   name: percussionist-web
 ---
+# ClusterAgents/ClusterSettings are cluster-scoped, so a namespaced Role cannot
+# grant them. The task-creation route calls validateAgentTaskCapability(), which
+# reads ClusterAgents — without this the call 403s and the route returns 500
+# instead of the expected 400 capability rejection. Mirrors k8s/deploy/web.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: percussionist-web-clusteragents-${ns}
+rules:
+  - apiGroups: ["percussionist.dev"]
+    resources: ["clusteragents", "clustersettings"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: percussionist-web-clusteragents-${ns}
+subjects:
+  - kind: ServiceAccount
+    name: percussionist-web
+    namespace: ${ns}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: percussionist-web-clusteragents-${ns}
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -590,6 +677,19 @@ export async function teardown(ns: string, options: SetupOptions = DEFAULT_OPTIO
       'delete',
       'clusterrolebinding',
       `percussionist-dispatcher-${ns}`,
+      '--ignore-not-found',
+    ]).catch(() => undefined);
+    // Same for the web ClusterAgent reader created by applyWebDeployment.
+    await kubectl([
+      'delete',
+      'clusterrole',
+      `percussionist-web-clusteragents-${ns}`,
+      '--ignore-not-found',
+    ]).catch(() => undefined);
+    await kubectl([
+      'delete',
+      'clusterrolebinding',
+      `percussionist-web-clusteragents-${ns}`,
       '--ignore-not-found',
     ]).catch(() => undefined);
     if (options.cleanupNamespace) {

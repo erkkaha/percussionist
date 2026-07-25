@@ -60,6 +60,7 @@ spec:
                   type: string
                   maxLength: 8192
                 priority:
+                  default: medium
                   type: string
                   enum:
                     - high
@@ -97,6 +98,7 @@ spec:
               type: object
               properties:
                 phase:
+                  default: pending
                   type: string
                   enum:
                     - idea
@@ -116,6 +118,7 @@ spec:
                     - done
                     - failed
                 blocked:
+                  default: false
                   type: boolean
                 blockedReason:
                   type: string
@@ -166,10 +169,12 @@ spec:
                     completedAt:
                       type: string
                     retryCount:
+                      default: 0
                       type: integer
                       minimum: 0
                       maximum: 9007199254740991
                     aiReworkCount:
+                      default: 0
                       type: integer
                       minimum: 0
                       maximum: 9007199254740991

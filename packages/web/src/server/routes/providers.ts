@@ -4,6 +4,7 @@
 import { Hono } from 'hono';
 import { auth } from '../auth.js';
 import { NAMESPACE } from '../kube.js';
+import { managerMcpHeaders } from '../lib/manager-mcp.js';
 
 const router = new Hono();
 
@@ -14,7 +15,7 @@ router.get('/', auth(), async (c) => {
   try {
     const res = await fetch(MANAGER_MCP_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: managerMcpHeaders(),
       body: JSON.stringify({
         jsonrpc: '2.0',
         id: 1,

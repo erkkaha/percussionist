@@ -25,6 +25,7 @@ import type {
   TextPart,
   ToolPart,
 } from '../lib/types';
+import { skeletonKeys } from '../lib/utils';
 import { CodeBlock } from './CodeBlock';
 import { FileDiff } from './FileDiff';
 import { TaskList } from './TaskList';
@@ -72,8 +73,8 @@ export default function SessionView({
   if (isLoading) {
     return (
       <div className="space-y-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="rounded-lg border border-border bg-surface p-4 animate-pulse">
+        {skeletonKeys(3).map((key) => (
+          <div key={key} className="rounded-lg border border-border bg-surface p-4 animate-pulse">
             <div className="h-4 w-24 rounded bg-surface-overlay mb-2" />
             <div className="h-4 w-full rounded bg-surface-overlay" />
           </div>
