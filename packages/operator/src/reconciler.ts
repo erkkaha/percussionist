@@ -57,6 +57,7 @@ import {
   serviceName,
 } from './pod-builder.js';
 import { ensureDataPVC } from './pvc-helper.js';
+import { mintRunKey, revokeRunKey } from './run-key-client.js';
 
 const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
@@ -377,6 +378,11 @@ export async function reconcile(run: Run): Promise<void> {
   const currentPhase = run.status?.phase;
 
   if (currentPhase && TERMINAL_PHASES.has(currentPhase)) {
+    // Revoke unconditionally, before the pod check: the run is over, so its
+    // stats key must die even if the pod is already gone (the common case).
+    // Keys carry an expiry too, so a missed revocation self-heals.
+    await revokeRunKey(name);
+
     // Run is terminal but the Pod may still be alive (dispatcher patched the
     // Run CR status before its process exited). Clean up any remaining child
     // resources so they don't hold resource reservations indefinitely.
@@ -505,6 +511,17 @@ export async function reconcile(run: Run): Promise<void> {
   try {
     pod = await core.readNamespacedPod({ name: podName(run), namespace: ns });
   } catch {
+    // Mint the run's stats key just before the pod is created, so its lifetime
+    // tracks the pod's as closely as possible. Returns null if the web server is
+    // unreachable or minting is not configured, in which case renderPod falls
+    // back to the shared token rather than failing the run.
+    const runApiKey = await mintRunKey({
+      runName: name,
+      runUid: run.metadata.uid,
+      project: run.spec.project,
+      timeoutSeconds: run.spec.timeoutSeconds,
+    });
+
     try {
       pod = await core.createNamespacedPod({
         namespace: ns,
@@ -515,6 +532,7 @@ export async function reconcile(run: Run): Promise<void> {
           runnerSpec,
           dispatcherImage,
           ALLOW_PRIVILEGED_SIDECARS,
+          runApiKey ?? undefined,
         ),
       });
       log(`created pod ${ns}/${podName(run)}`);
@@ -584,6 +602,9 @@ function isNotFound(e: unknown): boolean {
 
 async function cleanupChildResources(run: Run, ns: string): Promise<void> {
   const name = run.metadata.name;
+  // Revoke the run's stats key alongside its other child resources, so the pod
+  // failure paths don't wait for the next reconcile to invalidate it. Idempotent.
+  await revokeRunKey(name);
   // Delete Pod (best-effort).
   try {
     await core.deleteNamespacedPod({ name, namespace: ns });

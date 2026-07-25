@@ -6,6 +6,10 @@
 //   tool_calls    — every tool invocation with args, result, duration
 //   file_ops      — files read/written during a session
 //   task_events   — append-only audit log of Task state transitions
+//
+// The tables at the bottom of this file (user, session, account, verification,
+// apikey, deviceCode) are owned by better-auth — see the note there before
+// editing them.
 
 import { sql } from 'drizzle-orm';
 import { index, integer, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
@@ -155,3 +159,133 @@ export const taskEvents = sqliteTable(
     index('idx_task_events_project_created').on(table.project, table.createdAt),
   ],
 );
+
+// ===========================================================================
+// better-auth tables
+//
+// These mirror the schema better-auth derives from its options — the shape is
+// dictated by the library, not by us, so the exported binding names (`user`,
+// `session`, `apikey`, `deviceCode`, …) must match better-auth's model names
+// exactly: the drizzle adapter looks tables up as `schema[modelName]`.
+//
+// Regenerate the expected shape after a better-auth upgrade with
+// `getSchema()` from `better-auth/db` (see lib/better-auth.ts for the options
+// to pass) and reconcile any drift here, then `pnpm db:generate`.
+//
+// `date` fields are integer/timestamp because the adapter hands drizzle real
+// Date objects and re-wraps whatever comes back in `new Date(...)`.
+
+export const user = sqliteTable('user', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  email: text('email').notNull().unique(),
+  emailVerified: integer('email_verified', { mode: 'boolean' }).notNull().default(false),
+  image: text('image'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  // Custom field (see `user.additionalFields` in lib/better-auth.ts) — carries
+  // the GitHub login so the sign-in allowlist can be enforced.
+  githubLogin: text('github_login'),
+});
+
+export const session = sqliteTable(
+  'session',
+  {
+    id: text('id').primaryKey(),
+    expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+    token: text('token').notNull().unique(),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+    ipAddress: text('ip_address'),
+    userAgent: text('user_agent'),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+  },
+  (table) => [index('idx_session_user_id').on(table.userId)],
+);
+
+export const account = sqliteTable(
+  'account',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id').notNull(),
+    providerId: text('provider_id').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    accessToken: text('access_token'),
+    refreshToken: text('refresh_token'),
+    idToken: text('id_token'),
+    accessTokenExpiresAt: integer('access_token_expires_at', { mode: 'timestamp' }),
+    refreshTokenExpiresAt: integer('refresh_token_expires_at', { mode: 'timestamp' }),
+    scope: text('scope'),
+    password: text('password'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  },
+  (table) => [index('idx_account_user_id').on(table.userId)],
+);
+
+export const verification = sqliteTable(
+  'verification',
+  {
+    id: text('id').primaryKey(),
+    identifier: text('identifier').notNull(),
+    value: text('value').notNull(),
+    expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  },
+  (table) => [index('idx_verification_identifier').on(table.identifier)],
+);
+
+// API keys — the agent-facing credential. `permissions` holds the JSON scope
+// map that scoped() checks; `metadata` carries {runName, runUid, project} for
+// per-run keys so a key can be traced back to the run that held it.
+export const apikey = sqliteTable(
+  'apikey',
+  {
+    id: text('id').primaryKey(),
+    configId: text('config_id').notNull().default('default'),
+    name: text('name'),
+    start: text('start'),
+    referenceId: text('reference_id').notNull(),
+    prefix: text('prefix'),
+    key: text('key').notNull(),
+    refillInterval: integer('refill_interval'),
+    refillAmount: integer('refill_amount'),
+    lastRefillAt: integer('last_refill_at', { mode: 'timestamp' }),
+    enabled: integer('enabled', { mode: 'boolean' }).default(true),
+    rateLimitEnabled: integer('rate_limit_enabled', { mode: 'boolean' }).default(true),
+    rateLimitTimeWindow: integer('rate_limit_time_window'),
+    rateLimitMax: integer('rate_limit_max'),
+    requestCount: integer('request_count').default(0),
+    remaining: integer('remaining'),
+    lastRequest: integer('last_request', { mode: 'timestamp' }),
+    expiresAt: integer('expires_at', { mode: 'timestamp' }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+    permissions: text('permissions'),
+    metadata: text('metadata'),
+  },
+  (table) => [
+    index('idx_apikey_key').on(table.key),
+    index('idx_apikey_reference_id').on(table.referenceId),
+    index('idx_apikey_config_id').on(table.configId),
+  ],
+);
+
+// Device authorization grant (RFC 8628) — backs `beatctl auth login`.
+export const deviceCode = sqliteTable('device_code', {
+  id: text('id').primaryKey(),
+  deviceCode: text('device_code').notNull(),
+  userCode: text('user_code').notNull(),
+  userId: text('user_id'),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  status: text('status').notNull(),
+  lastPolledAt: integer('last_polled_at', { mode: 'timestamp' }),
+  pollingInterval: integer('polling_interval'),
+  clientId: text('client_id'),
+  scope: text('scope'),
+});

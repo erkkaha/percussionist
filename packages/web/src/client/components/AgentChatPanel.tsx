@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { parseOptionBlocks } from '@/lib/chat-utils';
 import type { Task } from '@/lib/types';
-import { authHeaders, getToken } from '../lib/auth';
+import { authHeaders } from '../lib/auth';
 import { DrumLogo } from './app-sidebar';
 import ChatOptionCard from './ChatOptionCard';
 
@@ -228,11 +228,7 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
   // SSE stream for real-time updates — only open after history is loaded to avoid race
   useEffect(() => {
     if (!open || !historyLoaded) return;
-    const token = getToken();
-    const streamUrl = token
-      ? `/api/agent/chat/stream?token=${encodeURIComponent(token)}`
-      : '/api/agent/chat/stream';
-    const es = new EventSource(streamUrl);
+    const es = new EventSource('/api/agent/chat/stream');
     eventSourceRef.current = es;
 
     es.onmessage = (e) => {

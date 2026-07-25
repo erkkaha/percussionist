@@ -4,6 +4,7 @@ import {
   BarChart3,
   Code2,
   Folder,
+  LogOut,
   MessageSquare,
   Plus,
   Settings,
@@ -15,6 +16,7 @@ import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useProjects } from '../hooks/useProjects';
 import { useProjectsEvents } from '../hooks/useProjectsEvents';
 import { fetchUpdateStatus } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { deriveIdeUrl } from '../lib/code-server-url';
 import { UsageBar } from './UsageBar';
 import {
@@ -98,6 +100,7 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
 
 export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarProps) {
   const location = useLocation();
+  const { isAuthenticated, user, logout } = useAuth();
   const { connected: projectsSseConnected, eventTick } = useProjectsEvents();
   void eventTick;
   const { data: projects } = useProjects(projectsSseConnected ? false : 10_000);
@@ -231,6 +234,17 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
           <span className="text-caption-xs text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
             v{__APP_VERSION__}
           </span>
+          {isAuthenticated && (
+            <button
+              type="button"
+              onClick={logout}
+              title={user?.email ? `Sign out (${user.email})` : 'Sign out'}
+              aria-label="Sign out"
+              className="ml-auto rounded p-1 text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors group-data-[collapsible=icon]:ml-0"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </SidebarFooter>
     </Sidebar>

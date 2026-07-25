@@ -2,7 +2,6 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
-import { getToken } from '../lib/auth';
 import { Button } from './ui/button';
 
 interface TerminalTabProps {
@@ -13,9 +12,9 @@ interface TerminalTabProps {
 function wsUrlFor(runName: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.host;
-  const token = getToken();
-  const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : '';
-  return `${proto}//${host}/api/runs/${encodeURIComponent(runName)}/attach${tokenQuery}`;
+  // Browsers cannot set headers on a WebSocket but do send cookies on a
+  // same-origin upgrade, which is what authorises this now.
+  return `${proto}//${host}/api/runs/${encodeURIComponent(runName)}/attach`;
 }
 
 function isReadinessError(msg: string): boolean {

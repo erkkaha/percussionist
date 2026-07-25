@@ -15,6 +15,15 @@ import {
   runWebTokenShow,
   runWebTokenToggle,
 } from './auth.js';
+import {
+  runAuthKeyList,
+  runAuthKeyRotate,
+  runGithubAllow,
+  runGithubSetApp,
+  runMcpTokenRotate,
+  runSessionSecretRotate,
+} from './auth-keys.js';
+import { runAuthLogin, runAuthLogout, runAuthWhoami } from './auth-login.js';
 import { runBoardGet, runBoardTaskAdd, runBoardTaskMove, runBoardTaskRemove } from './board.js';
 import { runCancel } from './cancel.js';
 import { runChat } from './chat.js';
@@ -268,6 +277,81 @@ webToken
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
   .option('--dry-run', "print what would be created; don't touch the cluster")
   .action((opts) => runWebTokenToggle({ ...opts, disable: false }));
+
+// auth login / logout / whoami ----------------------------------------------
+// OAuth 2.0 device grant (RFC 8628) — the `gh auth login` shape. Approve the
+// printed code in an already-signed-in browser; no token is pasted.
+auth
+  .command('login')
+  .description('sign in via the dashboard using a device code')
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .option('--no-browser', 'print the URL instead of opening a browser')
+  .action((opts) => runAuthLogin({ namespace: opts.namespace, noBrowser: !opts.browser }));
+
+auth
+  .command('logout')
+  .description('discard the locally stored session')
+  .action(() => runAuthLogout());
+
+auth
+  .command('whoami')
+  .description('print the signed-in identity')
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .action((opts) => runAuthWhoami(opts));
+
+// auth key ------------------------------------------------------------------
+// Scoped API keys held by agents (operator, manager-controller, per-run pods).
+const authKey = auth.command('key').description('manage scoped agent API keys');
+
+authKey
+  .command('list')
+  .alias('ls')
+  .description('list agent API keys with their scopes and usage')
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .option('--json', 'emit raw JSON')
+  .action((opts) => runAuthKeyList(opts));
+
+authKey
+  .command('rotate <component>')
+  .description('re-mint a standing component key (operator | manager)')
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .action((component: string, opts) => runAuthKeyRotate(component, opts));
+
+// auth github ---------------------------------------------------------------
+const authGithub = auth
+  .command('github')
+  .description('configure GitHub sign-in (GitHub App credentials + allowlist)');
+
+authGithub
+  .command('set-app <clientId> <clientSecret>')
+  .description('store the GitHub App client id and secret')
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .option('--dry-run', "print what would be created; don't touch the cluster")
+  .action((clientId: string, clientSecret: string, opts) =>
+    runGithubSetApp({ ...opts, clientId, clientSecret }),
+  );
+
+authGithub
+  .command('allow <logins...>')
+  .description('replace the allowlist of GitHub logins permitted to sign in')
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .option('--dry-run', "print what would be created; don't touch the cluster")
+  .action((logins: string[], opts) => runGithubAllow({ ...opts, logins }));
+
+// auth session-secret / mcp-token -------------------------------------------
+auth
+  .command('session-secret')
+  .description('rotate the session signing secret (signs out every browser)')
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .option('--dry-run', "print what would be created; don't touch the cluster")
+  .action((opts) => runSessionSecretRotate(opts));
+
+auth
+  .command('mcp-token')
+  .description("rotate the token gating the manager's MCP port")
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .option('--dry-run', "print what would be created; don't touch the cluster")
+  .action((opts) => runMcpTokenRotate(opts));
 
 // project -------------------------------------------------------------------
 // Subcommand group for managing reusable run templates.

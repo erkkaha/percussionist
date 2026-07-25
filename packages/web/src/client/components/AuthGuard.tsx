@@ -1,39 +1,36 @@
 import { useEffect, useState } from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
-import { clearToken, useAuth } from '../lib/auth';
+import { useAuth } from '../lib/auth';
 
+/**
+ * Gate that redirects to /login when there is no session.
+ *
+ * Dev mode (AUTH_DISABLED=1 on the server) is detected from /api/health, which
+ * reports it explicitly. This previously inferred it from a bare 200 on that
+ * endpoint — but /api/health is public, so the probe always succeeded and the
+ * guard never redirected: the login gate was effectively disabled in production.
+ */
 export default function AuthGuard() {
-  const { isAuthenticated } = useAuth();
-  const [authActive, setAuthActive] = useState(true);
-  const [checking, setChecking] = useState(!isAuthenticated);
+  const { isAuthenticated, isPending } = useAuth();
+  const [authDisabled, setAuthDisabled] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (isAuthenticated) {
-      setChecking(false);
-      return;
-    }
     let cancelled = false;
     fetch('/api/health')
-      .then((r) => {
-        if (cancelled) return;
-        if (r.ok) {
-          setAuthActive(false);
-        } else if (r.status === 401) {
-          setAuthActive(true);
-        }
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: { authDisabled?: boolean } | null) => {
+        if (!cancelled) setAuthDisabled(body?.authDisabled === true);
       })
       .catch(() => {
-        if (!cancelled) setAuthActive(true);
-      })
-      .finally(() => {
-        if (!cancelled) setChecking(false);
+        // Unreachable server — assume auth is enforced rather than opening up.
+        if (!cancelled) setAuthDisabled(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated]);
+  }, []);
 
-  if (checking) {
+  if (isPending || authDisabled === null) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <p className="text-sm text-text-dim">Loading...</p>
@@ -41,8 +38,7 @@ export default function AuthGuard() {
     );
   }
 
-  if (!isAuthenticated && authActive) {
-    clearToken();
+  if (!isAuthenticated && !authDisabled) {
     return <Navigate to="/login" replace />;
   }
 

@@ -59,8 +59,9 @@ import { resolveFlow } from '../reconciler/flow.js';
 import { inspectTaskFlow, type ObservedRuns } from '../reconciler/flow-introspection.js';
 import { isValidTransition, TRANSITION_TABLE } from '../reconciler/transitions.js';
 import { getPauseStatus, setPaused } from '../reconciler-bridge.js';
+import { webHeaders } from '../web-headers.js';
 import { buildWorkerRun, workerRunName } from '../worker-builder.js';
-import { MANAGER_NAMESPACE, MCP_PORT, OPENCODE_URL, WEB_AUTH_TOKEN } from './config.js';
+import { MANAGER_NAMESPACE, MCP_PORT, MCP_TOKEN, OPENCODE_URL } from './config.js';
 import {
   deleteMemory,
   getContext,
@@ -2330,7 +2331,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       if (taskFilter) {
         path = `/api/board/${encodeURIComponent(project)}/tasks/${encodeURIComponent(taskFilter)}/events?limit=${limit}`;
       }
-      const res = await fetch(`${webUrl}${path}`);
+      // This call previously sent no Authorization header at all, so it 401'd on
+      // any deployment with auth enabled.
+      const res = await fetch(`${webUrl}${path}`, { headers: webHeaders() });
       if (!res.ok) {
         throw new Error(`web server returned ${res.status}: ${res.statusText}`);
       }
@@ -2713,7 +2716,18 @@ export interface McpServer {
   close(): void;
 }
 
-/** Constant-time bearer-token check for a non-loopback MCP caller. */
+/**
+ * Constant-time bearer-token check for a non-loopback MCP caller.
+ *
+ * The token is MCP_TOKEN (manager-mcp-token Secret), shared only with the web
+ * pod. It used to be the same value as the web dashboard's credential, which
+ * meant it was also present in every run pod — so a runner that read its own
+ * environment held the key to the manager's destructive tool surface.
+ *
+ * Note the loopback exemption is not a security boundary against anyone with
+ * cluster access: `kubectl port-forward` traffic arrives on the pod's loopback
+ * interface (that is how `beatctl chat` reaches the chat port).
+ */
 function isAuthorizedMcpRequest(req: IncomingMessage): boolean {
   // Same-pod callers (the opencode-web sidecar via 127.0.0.1) are always
   // allowed — the token is only meaningful across the pod boundary.
@@ -2722,13 +2736,13 @@ function isAuthorizedMcpRequest(req: IncomingMessage): boolean {
     return true;
   }
   // No token configured → the whole deployment is in no-auth dev mode (same
-  // semantics as the web dashboard's AUTH_SECRET); don't block cross-pod calls.
-  if (!WEB_AUTH_TOKEN) return true;
+  // semantics as the web dashboard's AUTH_DISABLED); don't block cross-pod calls.
+  if (!MCP_TOKEN) return true;
 
   const header = req.headers.authorization ?? '';
   const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
   const a = Buffer.from(provided);
-  const b = Buffer.from(WEB_AUTH_TOKEN);
+  const b = Buffer.from(MCP_TOKEN);
   return a.length === b.length && timingSafeEqual(a, b);
 }
 

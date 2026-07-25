@@ -14,6 +14,7 @@ import { Exec, type KubeConfig, type V1Status } from '@kubernetes/client-node';
 import { RUNNER_CONTAINER, type Run, RunPhase } from '@percussionist/api';
 import { isValidToken } from './auth.js';
 import { getPod, getRun, kubeConfig, NAMESPACE } from './kube.js';
+import { getAuth } from './lib/better-auth.js';
 import { isKubeNotFound, kubeStatusCode } from './lib/kube-errors.js';
 
 interface BunWebSocketTlsOptions {
@@ -287,13 +288,32 @@ class BunExecHandler {
 }
 
 // ---------------------------------------------------------------------------
-// Auth check for WS upgrade (browsers can't set headers on WS, so we use
-// ?token= query param, which getAuthValue already supports).
+// Auth check for WS upgrade.
+//
+// Browsers cannot set headers on a WebSocket, but they DO send cookies on a
+// same-origin upgrade — so the session cookie is the credential here. This
+// replaced a ?token= query parameter that put the admin token into request
+// URLs, where Hono's logger middleware printed it.
+//
+// The legacy ?token= path is still honoured under LEGACY_TOKEN_AUTH=1 so a
+// rolling upgrade doesn't break an open terminal mid-session.
 
-export function isAttachAuthorized(url: URL): boolean {
+export async function isAttachAuthorized(req: Request): Promise<boolean> {
   if (process.env.AUTH_DISABLED === '1') return true;
-  const token = url.searchParams.get('token') ?? '';
-  return token !== '' && isValidToken(token);
+
+  try {
+    const session = await getAuth().api.getSession({ headers: req.headers });
+    if (session) return true;
+  } catch (e) {
+    console.error('[attach] session lookup failed:', (e as Error).message);
+  }
+
+  if (process.env.LEGACY_TOKEN_AUTH === '1') {
+    const token = new URL(req.url).searchParams.get('token') ?? '';
+    return token !== '' && isValidToken(token);
+  }
+
+  return false;
 }
 
 // ---------------------------------------------------------------------------

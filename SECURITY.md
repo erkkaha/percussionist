@@ -7,17 +7,47 @@ Percussionist — a Kubernetes-native orchestration system for AI agent runs.
 
 ### Web API (`packages/web`)
 
-The web dashboard API has **no built-in authentication** by default. This is an
-intentional design decision for single-tenant cluster deployments where network
-isolation provides sufficient protection. In shared or externally-facing
-deployments, operators should place the web service behind a reverse proxy with
-authentication (e.g., OAuth2-proxy or Keycloak).
+Every `/api/*` route requires authentication (`packages/web/src/server/auth.ts`).
+There are two kinds of caller, and they are deliberately not interchangeable:
 
-**Sensitive endpoints** that require authentication in production:
-- `POST /api/runs` — run creation
-- `DELETE /api/runs/:name` — run deletion
-- `PUT/POST /api/settings/secrets/*` — secret management
-- `POST /api/projects` — project lifecycle operations
+**Humans** sign in with GitHub via [better-auth] and hold an httpOnly session
+cookie. Only the GitHub logins listed in `GITHUB_ALLOWED_LOGINS` may sign in —
+the OAuth callback is otherwise open to every GitHub account on the internet. A
+session is implicitly admin. The session cookie is also what authorises SSE
+streams and the terminal WebSocket, so no credential appears in a URL.
+
+**Agents** hold API keys scoped to a narrow permission set, and a key is accepted
+*only* on routes marked with `scoped()`. A key can never satisfy `auth()` or
+`adminAuth()`, so it cannot read settings, manage secrets, delete projects or
+apply an upgrade — those need a session.
+
+| Holder | Scopes | Lifetime |
+|--------|--------|----------|
+| Run pods (dispatcher) | `stats:write` | Per run, expires ~10 min after the run's timeout, revoked when the run ends |
+| manager-controller | `stats:write`, `events:write`, `board:read` | Standing (`manager-api-key` Secret) |
+| operator | `runkeys:mint` | Standing (`operator-api-key` Secret) |
+
+Standing keys are minted by the web server on startup — it is the only component
+with database access — and written into per-component Secrets. Rotate with
+`beatctl auth key rotate <component>`, then restart that Deployment (values are
+resolved via `secretKeyRef` at pod start). Inspect with `beatctl auth key list`.
+
+The CLI authenticates via the OAuth 2.0 device grant (`beatctl auth login`),
+approving a code in an already-signed-in browser.
+
+**Escape hatches:**
+- `AUTH_DISABLED=1` skips all authentication. Intended for local development and
+  the e2e harness; no auth machinery is initialised at all in this mode.
+- `LEGACY_TOKEN_AUTH=1` additionally accepts the pre-better-auth shared secret in
+  `AUTH_SECRET`, so a rolling upgrade does not break agents mid-flight. Remove it
+  — and the `token` key from the `web-auth` Secret — once `beatctl auth key list`
+  shows every component holding a key.
+
+Note that the dashboard Ingress is plain HTTP by default, so the session cookie
+cannot be marked `Secure`. Terminate TLS in front of it for any deployment
+reachable beyond a trusted network.
+
+[better-auth]: https://www.better-auth.com
 
 ### Manager MCP Server (`packages/manager-controller`)
 
@@ -29,6 +59,15 @@ exec). It is designed for **in-cluster use only**:
   secure default that prevents external access.
 - The manager controller's MCP server can be configured via environment variable
   or cluster settings; operators should ensure it does not bind to `0.0.0.0`.
+- Cross-pod callers must present `MCP_TOKEN` (the `manager-mcp-token` Secret),
+  which is shared with the web pod only. It is deliberately *not* the dashboard
+  credential and is never injected into a run pod, so an agent reading its own
+  environment cannot reach the tools below.
+- The loopback exemption is not a boundary against anyone holding cluster access:
+  `kubectl port-forward` traffic arrives on the pod's loopback interface, which is
+  how `beatctl chat` reaches the chat port. A NetworkPolicy
+  (`k8s/deploy/networkpolicy.yaml`) restricts pod-network access to port 4097,
+  but requires a CNI that enforces NetworkPolicy.
 
 **High-risk tools** available through the MCP interface:
 | Tool | Risk Level | Description |
@@ -120,7 +159,13 @@ sidecars:
 - SSH private keys are mounted as read-only volumes with `defaultMode: 0o400`
 - GitHub tokens are mounted as read-only volumes with `defaultMode: 0o400`
 - LLM API keys are injected via environment variables from K8s Secrets (optional)
-- Auth secrets for the web dashboard reference a JSON file in a K8s Secret
+- The dashboard's GitHub App credentials, session secret and sign-in allowlist
+  live in the `web-auth` Secret; agent API keys live in per-component Secrets
+  (`operator-api-key`, `manager-api-key`) and in the web database (hashed)
+- A run pod's stats key is passed as a literal env var on the **dispatcher**
+  container only — not the runner container the agent executes in — so it is
+  visible via `get pods` but not in the agent's own environment. It is scoped to
+  `stats:write` and expires with the run either way
 
 ### Session Data
 
@@ -185,8 +230,38 @@ continue to operate without changes:
    migrate, add `sshHostKeyVerification: "accept-new"` or `"strict"` with a
    corresponding `known_hostsSecret` to your Run specs.
 
-2. **Web API authentication**: No automatic changes. If you need auth, deploy a
-   reverse proxy (e.g., OAuth2-proxy) in front of the web service.
+2. **Web API authentication**: authentication is now built in (see §1) — a reverse
+   proxy is no longer needed for it. Migrating an existing cluster:
+
+   ```sh
+   # 1. Register a GitHub App; callback http://<your-host>/api/auth/callback/github
+   #    (add http://127.0.0.1/api/auth/callback/github too — GitHub exempts
+   #    loopback from port matching, so `beatctl web` keeps working).
+   #    Account Permissions -> Email Addresses -> Read-Only, or sign-in fails
+   #    with email_not_found.
+   beatctl auth github set-app <client-id> <client-secret>
+   beatctl auth github allow <your-github-login>
+   beatctl auth session-secret
+   beatctl auth mcp-token
+
+   # 2. Keep the old shared token accepted while rolling out, by setting
+   #    legacy-token-auth=1 in the web-auth Secret. Restart web, then sign in.
+   kubectl -n percussionist rollout restart deploy/percussionist-web
+
+   # 3. Web mints the operator/manager keys on startup. Restart those two so
+   #    they pick the keys up, then confirm:
+   kubectl -n percussionist rollout restart deploy/percussionist-operator
+   kubectl -n percussionist rollout restart deploy/percussionist-manager
+   beatctl auth key list
+
+   # 4. Drop the legacy fallback: remove legacy-token-auth and the `token` key
+   #    from the web-auth Secret, then restart web.
+   ```
+
+   Order matters between steps 2 and 3: the operator resolves its key from a
+   Secret at pod start, so restarting it before the web server has created
+   `operator-api-key` leaves it without a credential (it logs a warning and run
+   pods lose stats reporting until the next restart).
 
 3. **Manager MCP exposure**: The dispatcher sidecar already binds loopback. Verify
    that the manager controller is not exposed via a ClusterIP or NodePort Service

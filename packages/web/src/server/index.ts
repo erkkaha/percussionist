@@ -13,6 +13,7 @@ import { createApp } from './app.js';
 import { attachWsHandlers, isAttachAuthorized, resolveAttachTarget } from './attach-ws.js';
 import { getDb } from './db.js';
 import { NAMESPACE } from './kube.js';
+import { bootstrapAgentKeys, pruneExpiredRunKeys } from './lib/agent-keys.js';
 import { startMetricsCollector } from './metrics-collector.js';
 import stats, { RETENTION_DAYS, runRetentionCleanup } from './routes/stats.js';
 
@@ -92,6 +93,30 @@ runRetentionCleanup();
 setInterval(runRetentionCleanup, 60 * 60 * 1000);
 
 // ---------------------------------------------------------------------------
+// Agent API keys.
+//
+// Web is the only component with database access, so it is the only one that
+// can mint keys — doing it here avoids a bootstrap deadlock where a credential
+// would be needed in order to create the first credential. Each standing
+// component (operator, manager-controller) gets a key written into its own
+// Secret; per-run keys are minted on demand by the operator.
+
+if (process.env.AUTH_DISABLED !== '1') {
+  void bootstrapAgentKeys();
+
+  // Expired run keys are refused by verification regardless; this only stops
+  // rows accumulating for runs whose pods died without presenting the key again.
+  void pruneExpiredRunKeys();
+  const pruneInterval = setInterval(
+    () => {
+      void pruneExpiredRunKeys();
+    },
+    60 * 60 * 1000,
+  );
+  pruneInterval.unref();
+}
+
+// ---------------------------------------------------------------------------
 // Metrics snapshot collector — starts only if metrics-server is available.
 
 void startMetricsCollector();
@@ -111,7 +136,7 @@ if (isBun) {
         req.headers.get('upgrade') === 'websocket' &&
         url.pathname.match(/^\/api\/runs\/[^/]+\/attach$/)
       ) {
-        if (!isAttachAuthorized(url)) {
+        if (!(await isAttachAuthorized(req))) {
           return new Response('Unauthorized', { status: 401 });
         }
         const runName = decodeURIComponent(

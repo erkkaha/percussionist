@@ -22,6 +22,7 @@ import { AuthProvider } from './lib/auth';
 import { ChatContext } from './lib/chat-context';
 import type { Task } from './lib/types';
 import ActivityPage from './pages/ActivityPage';
+import DevicePage from './pages/DevicePage';
 import LoginPage from './pages/LoginPage';
 
 export default function App() {
@@ -45,6 +46,9 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route element={<AuthGuard />}>
+            {/* Outside Layout: the device approval page is a standalone step in
+                the `beatctl auth login` flow, not part of the dashboard. */}
+            <Route path="/device" element={<DevicePage />} />
             <Route
               element={
                 <Layout

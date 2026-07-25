@@ -125,14 +125,51 @@ beatctl board task remove <project> --task-name <name>
 
 ### auth
 
-Manage OpenCode provider credentials.
+Manage OpenCode provider credentials, dashboard sign-in, and agent API keys.
 
 ```bash
 beatctl auth import                           # copy auth.json to cluster Secret
-beatctl auth web-token show                   # print web UI auth token
-beatctl auth web-token set <token>            # set web UI token
-beatctl auth web-token rotate                 # generate random token
-beatctl auth web-token disable                # bypass auth
+```
+
+Signing in. The CLI uses the OAuth 2.0 device grant: it prints a code, you
+approve it in an already-signed-in browser, and the CLI receives a session.
+
+```bash
+beatctl auth login                            # device-code sign-in
+beatctl auth login --no-browser                # print the URL instead of opening it
+beatctl auth whoami                           # show the signed-in identity
+beatctl auth logout                           # discard the local session
+```
+
+Dashboard sign-in is GitHub-only. Register a GitHub App with callback
+`http://<your-host>/api/auth/callback/github` (add
+`http://127.0.0.1/api/auth/callback/github` as well so `beatctl web`'s
+port-forward works — GitHub exempts loopback from port matching), and enable
+Account Permissions → Email Addresses → Read-Only.
+
+```bash
+beatctl auth github set-app <clientId> <clientSecret>
+beatctl auth github allow <login...>          # replace the sign-in allowlist
+beatctl auth session-secret                   # rotate session signing secret
+beatctl auth mcp-token                        # rotate the manager MCP token
+```
+
+Agent API keys. Each agent holds a key scoped to what it actually needs; run pods
+get a `stats:write` key that expires with the run.
+
+```bash
+beatctl auth key list                         # scopes, usage, expiry
+beatctl auth key rotate operator              # re-mint a standing component key
+beatctl auth key rotate manager
+```
+
+Legacy shared-token commands, kept for the migration window (see SECURITY.md §1):
+
+```bash
+beatctl auth web-token show                   # print the legacy shared token
+beatctl auth web-token set <token>            # set it
+beatctl auth web-token rotate                 # generate a random one
+beatctl auth web-token disable                # bypass auth entirely (dev)
 beatctl auth web-token enable                 # enforce auth
 ```
 

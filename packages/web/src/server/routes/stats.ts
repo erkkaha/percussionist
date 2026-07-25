@@ -20,7 +20,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { adminAuth, auth } from '../auth.js';
+import { auth, scoped } from '../auth.js';
 import { fileOps, getDb, messages, metricSnapshots, runs, toolCalls } from '../db.js';
 
 // ---------------------------------------------------------------------------
@@ -88,7 +88,8 @@ interface SessionPayload {
 const stats = new Hono();
 
 // POST /api/stats/session — ingest a completed session from the dispatcher.
-stats.post('/session', adminAuth(), async (c) => {
+// Written to by agent pods, so it takes a stats:write key rather than a session.
+stats.post('/session', scoped('stats', 'write'), async (c) => {
   let body: SessionPayload;
   try {
     body = (await c.req.json()) as SessionPayload;
@@ -207,7 +208,7 @@ stats.post('/session', adminAuth(), async (c) => {
 // Uses insert-or-ignore so concurrent/repeated calls are idempotent and never
 // overwrite a later full POST flush. The run row is created on first call so
 // in-progress sessions show up in the UI immediately.
-stats.patch('/session', adminAuth(), async (c) => {
+stats.patch('/session', scoped('stats', 'write'), async (c) => {
   let body: SessionPayload;
   try {
     body = (await c.req.json()) as SessionPayload;

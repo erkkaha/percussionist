@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { getToken } from '../lib/auth';
 
 interface UseSseSubscriptionOptions {
   url: string;
@@ -63,11 +62,9 @@ export function useSseSubscription({
       if (stopped) return;
       closeSource();
 
-      const token = getToken();
-      const srcUrl = token
-        ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
-        : url;
-      const src = new EventSource(srcUrl);
+      // No token in the URL: the session cookie is sent automatically on a
+      // same-origin EventSource, and query strings end up in server logs.
+      const src = new EventSource(url);
       sourceRef.current = src;
 
       src.onopen = () => {

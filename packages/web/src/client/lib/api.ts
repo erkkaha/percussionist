@@ -1,7 +1,7 @@
 // Thin fetch wrappers for the /api endpoints.
 
 import type { ClusterAgent, ClusterSettings } from '@percussionist/api';
-import { authHeaders, clearToken } from './auth';
+import { authHeaders } from './auth';
 import type {
   AgentCapability,
   BoardStatus,
@@ -30,7 +30,7 @@ const BASE = '/api';
 async function fetchJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
   if (res.status === 401) {
-    clearToken();
+    // The session cookie is gone or expired; the server has already cleared it.
     window.location.href = '/login';
     throw new Error('Unauthorized');
   }

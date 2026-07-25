@@ -21,7 +21,7 @@ import {
 } from '@percussionist/api';
 import { validateModelAuth } from '@percussionist/kube';
 import { Hono } from 'hono';
-import { adminAuth, auth } from '../auth.js';
+import { adminAuth, auth, scoped } from '../auth.js';
 import { getDb, taskEvents } from '../db.js';
 
 import {
@@ -619,7 +619,7 @@ board.post('/:project/board/tasks/:taskName/answer', adminAuth(), async (c) => {
 // manager controller to append task lifecycle events.
 // Body: { taskName, taskType, eventType, payload? }
 
-board.post('/:project/board/task-events', adminAuth(), async (c) => {
+board.post('/:project/board/task-events', scoped('events', 'write'), async (c) => {
   const project = c.req.param('project');
   let body: unknown;
   try {

@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from 'hono';
-import { getAuthValue, isValidToken } from './auth.js';
+import { getAuthValue } from './auth.js';
 
 /**
  * In-memory lock state, updated by /api/usage/* routes after each DB heartbeat.
@@ -20,7 +20,8 @@ export function isCachedLocked(): boolean {
  * Middleware that rejects authenticated requests with 423 Locked when the
  * daily usage limit has been reached and lockOnMax is enabled.
  *
- * Exempt routes: /api/usage/*, /api/health, /login, /api/settings (and static).
+ * Exempt routes: /api/usage/*, /api/auth/*, /api/health, /login, /api/settings
+ * (and static).
  */
 export function usageLockMiddleware(): MiddlewareHandler {
   return async (c, next) => {
@@ -28,6 +29,9 @@ export function usageLockMiddleware(): MiddlewareHandler {
 
     if (
       url.startsWith('/api/usage/') ||
+      // Signing in and refreshing a session must work while locked, otherwise
+      // the lock cannot be lifted from the UI.
+      url.startsWith('/api/auth/') ||
       url === '/api/health' ||
       url === '/login' ||
       url.startsWith('/api/settings')
@@ -36,10 +40,13 @@ export function usageLockMiddleware(): MiddlewareHandler {
       return;
     }
 
-    // Only enforce lock for authenticated requests.
+    // Only enforce the lock for requests that carry a credential — the auth
+    // middleware on the route itself is what rejects the rest. Validating the
+    // credential here as well would mean a second session/key lookup on every
+    // request, so we only check that one is present.
     if (process.env.AUTH_DISABLED !== '1') {
-      const token = getAuthValue(c);
-      if (!token || !isValidToken(token)) {
+      const hasCredential = c.req.header('Cookie') !== undefined || getAuthValue(c) !== null;
+      if (!hasCredential) {
         await next();
         return;
       }

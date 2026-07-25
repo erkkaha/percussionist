@@ -14,7 +14,16 @@ export const DECISION_AGENT_NAME = process.env.DECISION_AGENT_NAME ?? 'manager-d
 export const WEB_SERVICE_URL =
   process.env.WEB_SERVICE_URL ??
   `http://percussionist-web.${MANAGER_NAMESPACE}.svc.cluster.local:8080`;
+
+// Outbound credential for calling the web API — the manager's own scoped API key
+// (manager-api-key Secret). Prefer ../web-headers.ts over reading this directly.
 export const WEB_AUTH_TOKEN = process.env.WEB_AUTH_TOKEN ?? '';
+
+// Inbound credential for the MCP server: a token shared with the web pod only
+// (manager-mcp-token Secret), deliberately distinct from WEB_AUTH_TOKEN so the
+// manager's destructive tool surface is not gated by a credential that also
+// exists in run pods.
+export const MCP_TOKEN = process.env.MCP_TOKEN ?? '';
 
 export interface AgentDecision {
   action: 'retry_same' | 'retry_alternative' | 'skip' | 'escalate';

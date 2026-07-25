@@ -3,6 +3,12 @@
 // Verifies that sensitive endpoints reject unauthenticated requests with 401,
 // and that AUTH_DISABLED=1 provides a dev-mode bypass.
 //
+// Auth is session-based (better-auth + GitHub) with scoped API keys for agents;
+// see src/server/auth.ts. These tests run with LEGACY_TOKEN_AUTH=1 so the
+// shared-secret path — kept for the duration of the migration — is exercised
+// without needing a signed-in browser. Scope enforcement on real API keys is
+// covered by agent-keys.test.ts.
+//
 // Uses app.request() (no port binding) against the full Hono app built by
 // createApp(). The K8s client is lazy — it only initialises on the first
 // request that needs it.
@@ -21,6 +27,9 @@ process.env.DATA_DIR = TEST_DATA_DIR;
 
 // Use a known secret for testing.
 process.env.AUTH_SECRET = 'test-secret-token-12345';
+// Exercise the legacy shared-secret path; without this the token below is
+// (correctly) rejected in favour of sessions and API keys.
+process.env.LEGACY_TOKEN_AUTH = '1';
 // Ensure auth is not disabled (smoke test may have set it).
 delete process.env.AUTH_DISABLED;
 

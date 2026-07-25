@@ -504,3 +504,29 @@ describe('renderPod - security hardening', () => {
     expect(dind?.securityContext?.privileged).toBe(true);
   });
 });
+
+describe('renderPod - per-run stats key', () => {
+  function webAuthTokenOf(pod: ReturnType<typeof renderPod>): string | undefined {
+    const dispatcher = pod.spec?.containers?.find((c) => c.name === 'dispatcher');
+    return dispatcher?.env?.find((e) => e.name === 'WEB_AUTH_TOKEN')?.value;
+  }
+
+  it('passes the per-run key to the dispatcher as WEB_AUTH_TOKEN', () => {
+    const pod = renderPod(makeRun(), [], [], undefined, undefined, false, 'pcn_run_scoped_key');
+    expect(webAuthTokenOf(pod)).toBe('pcn_run_scoped_key');
+  });
+
+  it('falls back to the shared token when no per-run key was minted', () => {
+    // WEB_AUTH_TOKEN is unset in tests, so the fallback is the empty string —
+    // what matters is that omitting the key does not surface "undefined".
+    const pod = renderPod(makeRun(), []);
+    expect(webAuthTokenOf(pod)).toBe('');
+  });
+
+  it('never leaks the run key into the runner container', () => {
+    const pod = renderPod(makeRun(), [], [], undefined, undefined, false, 'pcn_run_scoped_key');
+    const runner = pod.spec?.containers?.find((c) => c.name === 'opencode');
+    const runnerEnv = (runner?.env ?? []).map((e) => e.value ?? '');
+    expect(runnerEnv).not.toContain('pcn_run_scoped_key');
+  });
+});

@@ -18,8 +18,8 @@ metadata:
     app.kubernetes.io/component: web
 spec:
   accessModes:
-    - ReadWriteMany
-  storageClassName: longhorn-rwx
+    - ReadWriteOnce
+  storageClassName: standard
   resources:
     requests:
       storage: 1Gi
@@ -205,9 +205,62 @@ spec:
             # Number of days to retain session stats (0 = keep forever).
             - name: RETENTION_DAYS
               value: "30"
-            # Web UI auth token. If the web-auth Secret does not exist or has
-            # no "token" key, auth is effectively disabled (no token passes
-            # validation). Manage with `beatctl auth web-token`.
+            # Public base URL. Must match the GitHub App's callback origin —
+            # GitHub matches the redirect URI on host and port — and is also used
+            # as the cookie/session origin. Change this and the GitHub App's
+            # callback URL together.
+            - name: WEB_BASE_URL
+              value: http://app.192.168.49.2.nip.io
+            # Session signing secret. Sessions are invalidated if this changes,
+            # so it is generated once and kept. Manage with
+            # `beatctl auth session-secret rotate`.
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: session-secret
+                  optional: true
+            # GitHub App credentials — the only way a human signs in.
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: github-client-id
+                  optional: true
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: github-client-secret
+                  optional: true
+            # Comma-separated GitHub logins permitted to sign in. Empty means
+            # nobody can: the OAuth callback is otherwise open to every GitHub
+            # account on the internet. Manage with `beatctl auth github allow`.
+            - name: GITHUB_ALLOWED_LOGINS
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: github-allowed-logins
+                  optional: true
+            # Bearer token for calling the manager's MCP server. Shared with the
+            # manager pod only.
+            - name: MCP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: manager-mcp-token
+                  key: token
+                  optional: true
+            # Legacy shared-secret auth. Accepted IN ADDITION to sessions and API
+            # keys while a cluster is mid-migration, so a rolling upgrade does not
+            # break agents that still hold the old shared token. Remove this and
+            # the "token" key from the web-auth Secret once every component has
+            # been issued a key (`beatctl auth key list` to check).
+            - name: LEGACY_TOKEN_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: web-auth
+                  key: legacy-token-auth
+                  optional: true
             - name: AUTH_SECRET
               valueFrom:
                 secretKeyRef:
@@ -268,8 +321,6 @@ metadata:
   labels:
     app.kubernetes.io/name: percussionist
     app.kubernetes.io/component: web
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
 spec:
   ingressClassName: nginx
   rules:

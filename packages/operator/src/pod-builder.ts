@@ -185,6 +185,13 @@ export function renderPod(
   runner: RunnerImageSpec = OPENCODE_RUNNER_DEFAULTS,
   dispatcherImage?: string,
   allowPrivilegedSidecars = false,
+  /**
+   * Per-run API key for reporting stats, minted by the reconciler.
+   *
+   * Falls back to the shared WEB_AUTH_TOKEN when absent (dev mode, or a cluster
+   * still mid-migration) so this stays optional for existing call sites.
+   */
+  runApiKey?: string,
 ): V1Pod {
   const spec = run.spec;
   const containerPort = runner.port;
@@ -909,9 +916,14 @@ export function renderPod(
             // necessarily the operator's (PERCUSSIONIST_NAMESPACE vs
             // PERCUSSIONIST_SELF_NAMESPACE; e2e runs in per-suite namespaces).
             // A missing secret there would silently yield an empty token and
-            // drop stats reporting. Trade-off: the value is readable via
-            // `get pods` — see SECURITY.md.
-            { name: 'WEB_AUTH_TOKEN', value: WEB_AUTH_TOKEN },
+            // drop stats reporting.
+            //
+            // The value is readable via `get pods` and by the agent itself, so
+            // it is a per-run API key scoped to stats:write and expiring shortly
+            // after this run's timeout — stealing it buys the ability to report
+            // stats for a run that is already over. The shared WEB_AUTH_TOKEN is
+            // only used as a fallback when key minting is unavailable.
+            { name: 'WEB_AUTH_TOKEN', value: runApiKey ?? WEB_AUTH_TOKEN },
             ...(spec.task && !spec.interactive ? [{ name: 'RUN_TASK', value: spec.task }] : []),
             ...(spec.interactive ? [{ name: 'RUN_INTERACTIVE', value: '1' }] : []),
             ...(spec.model ? [{ name: 'RUN_MODEL', value: spec.model }] : []),

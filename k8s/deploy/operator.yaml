@@ -55,7 +55,7 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
-  # Secrets — read web-auth token for passing to dispatcher pods.
+  # Secrets — read the operator's API key for minting per-run keys.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get"]
@@ -232,10 +232,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            # The operator's bootstrap key, scoped to runkeys:mint and nothing
+            # else. Used to mint a per-run stats key for each Run; it is never
+            # itself passed into a run pod. Created automatically by the web
+            # server on startup; rotate with `beatctl auth key rotate operator`.
             - name: WEB_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: web-auth
+                  name: operator-api-key
                   key: token
                   optional: true
             # - name: PERCUSSIONIST_INGRESS_CLASS

@@ -53,7 +53,7 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list", "create"]
-  # Secrets — read web-auth token for authenticating to the web API.
+  # Secrets — read the manager's API key and MCP token.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get"]
@@ -141,10 +141,22 @@ spec:
               value: ghcr.io/erkkaha/percussionist/runner:latest
             - name: MERGING_AGENT
               value: integrator
+            # Outbound: the manager's own scoped API key (stats:write,
+            # events:write, board:read). Created automatically by the web server
+            # on startup; rotate with `beatctl auth key rotate manager`.
             - name: WEB_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: web-auth
+                  name: manager-api-key
+                  key: token
+                  optional: true
+            # Inbound: gates the MCP port against cross-pod callers. Shared with
+            # the web pod only — deliberately NOT the dashboard credential, which
+            # is also present in every run pod.
+            - name: MCP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: manager-mcp-token
                   key: token
                   optional: true
             - name: NODE_EXTRA_CA_CERTS

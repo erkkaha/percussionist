@@ -7,8 +7,10 @@ import { Hono } from 'hono';
 import { compress } from 'hono/compress';
 import { logger } from 'hono/logger';
 import { NAMESPACE } from './kube.js';
+import { getAuth } from './lib/better-auth.js';
 import activity from './routes/activity.js';
 import agentChat from './routes/agent-chat.js';
+import agentKeys from './routes/agent-keys.js';
 import agents from './routes/agents.js';
 import board from './routes/board.js';
 import boardDb from './routes/board-db.js';
@@ -19,6 +21,7 @@ import plans from './routes/plans.js';
 import projectMemories from './routes/project-memories.js';
 import projects from './routes/projects.js';
 import providers from './routes/providers.js';
+import runKeys from './routes/run-keys.js';
 import runs from './routes/runs.js';
 import session from './routes/session.js';
 import settings from './routes/settings.js';
@@ -33,6 +36,14 @@ export function createApp() {
 
   app.use('*', logger());
   app.use('*', compress());
+
+  // better-auth owns /api/auth/* (GitHub OAuth callback, session, device grant,
+  // API key management). Registered before the lock middleware so signing in is
+  // still possible while the daily usage lock is engaged. Skipped entirely in
+  // dev mode, where no auth machinery is initialised at all.
+  if (process.env.AUTH_DISABLED !== '1') {
+    app.on(['POST', 'GET'], '/api/auth/*', (c) => getAuth().handler(c.req.raw));
+  }
 
   // Usage routes must be registered before the lock middleware applies.
   app.route('/api/usage', usage);
@@ -58,8 +69,19 @@ export function createApp() {
   app.route('/api/projects', projectMemories);
   app.route('/api/upgrade', upgrade);
   app.route('/api/providers', providers);
+  app.route('/api/internal/run-keys', runKeys);
+  app.route('/api/internal/agent-keys', agentKeys);
 
-  app.get('/api/health', (c) => c.json({ ok: true, namespace: NAMESPACE }));
+  // Public. `authDisabled` lets the SPA's AuthGuard skip the login gate in dev
+  // mode — it must not infer that from a bare 200, which is what previously
+  // made the guard a no-op in production.
+  app.get('/api/health', (c) =>
+    c.json({
+      ok: true,
+      namespace: NAMESPACE,
+      authDisabled: process.env.AUTH_DISABLED === '1',
+    }),
+  );
 
   return app;
 }
