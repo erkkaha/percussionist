@@ -141,11 +141,25 @@ beatctl auth whoami                           # show the signed-in identity
 beatctl auth logout                           # discard the local session
 ```
 
-Dashboard sign-in is GitHub-only. Register a GitHub App with callback
-`http://<your-host>/api/auth/callback/github` (add
-`http://127.0.0.1/api/auth/callback/github` as well so `beatctl web`'s
-port-forward works — GitHub exempts loopback from port matching), and enable
-Account Permissions → Email Addresses → Read-Only.
+Dashboard sign-in is GitHub-only. Register a GitHub App whose callback URL
+exactly matches `${WEB_BASE_URL}/api/auth/callback/github`, and grant Account
+Permissions → Email Addresses → Read-Only.
+
+Two GitHub App specifics worth knowing:
+
+- The callback must be an **exact** match. GitHub Apps allow no host-only or
+  subdirectory matching and no loopback port exception (that exception is for
+  classic OAuth Apps). Up to 10 callback URLs may be registered, so add one per
+  origin you sign in from. `redirect_uri` is derived from `WEB_BASE_URL` rather
+  than the browser's current URL, so sign-in always round-trips through that
+  origin — sign in via the Ingress; `beatctl web`'s port-forward is for viewing.
+  For local sign-in, run web with a fixed `WEB_BASE_URL` and register it too.
+- The email permission is **required**, not optional. GitHub Apps ignore the
+  OAuth `scope` parameter, so it is the only thing granting email access, and the
+  `user` table requires an email. Without it sign-in fails `email_not_found`.
+
+No repository permissions are needed, and the App does not need to be installed
+anywhere — the web flow authorizes without installation.
 
 ```bash
 beatctl auth github set-app <clientId> <clientSecret>

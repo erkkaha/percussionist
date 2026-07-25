@@ -89,9 +89,14 @@ function buildAuth() {
     secret: process.env.SESSION_SECRET ?? process.env.BETTER_AUTH_SECRET,
     database: drizzleAdapter(getDb(), { provider: 'sqlite', schema }),
 
-    // Accept the Ingress origin plus loopback, so `beatctl web`'s port-forward
-    // (which lands on a random localhost port) is usable too. GitHub exempts
-    // loopback redirect URIs from port matching for the same reason.
+    // Accept the canonical origin plus loopback, so a `beatctl web` port-forward
+    // (which lands on a random localhost port) can still call the API and run
+    // the device-approval flow.
+    //
+    // This does NOT make GitHub sign-in work from a port-forward: the OAuth
+    // redirect_uri is derived from baseURL, and a GitHub App requires the
+    // callback to match a registered URL exactly (no loopback port exception —
+    // that is a classic-OAuth-App behaviour). Sign in via the canonical origin.
     trustedOrigins: [baseURL, 'http://localhost:*', 'http://127.0.0.1:*'],
 
     // No SMTP in this deployment — GitHub is the only way in.

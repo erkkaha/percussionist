@@ -234,11 +234,15 @@ continue to operate without changes:
    proxy is no longer needed for it. Migrating an existing cluster:
 
    ```sh
-   # 1. Register a GitHub App; callback http://<your-host>/api/auth/callback/github
-   #    (add http://127.0.0.1/api/auth/callback/github too — GitHub exempts
-   #    loopback from port matching, so `beatctl web` keeps working).
-   #    Account Permissions -> Email Addresses -> Read-Only, or sign-in fails
-   #    with email_not_found.
+   # 1. Register a GitHub App. Callback URL must EXACTLY match
+   #    ${WEB_BASE_URL}/api/auth/callback/github — GitHub Apps require an exact
+   #    match (no host-only or subdirectory matching, and no loopback port
+   #    exception; that exception applies to classic OAuth Apps only). Up to 10
+   #    callback URLs are allowed, so register one per origin you sign in from.
+   #    Grant Account Permissions -> Email Addresses -> Read-Only, or sign-in
+   #    fails with email_not_found: GitHub Apps ignore the OAuth `scope`
+   #    parameter, so this permission is the only thing granting email access.
+   #    No repository permissions are needed, and the App need not be installed.
    beatctl auth github set-app <client-id> <client-secret>
    beatctl auth github allow <your-github-login>
    beatctl auth session-secret
