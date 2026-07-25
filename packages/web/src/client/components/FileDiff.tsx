@@ -172,11 +172,9 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
 
     // Build widget content for each change key (collect findings from both sides)
     for (const changeKey of Object.keys(widgets)) {
-      const sideMarkers = ['old', 'new'].map((side) => {
-        const m = markers.get(`${side}:${changeKey}`);
-        return m?.findings ?? [];
-      });
-      const allFindings = [...sideMarkers[0], ...sideMarkers[1]];
+      const allFindings = ['old', 'new'].flatMap(
+        (side) => markers.get(`${side}:${changeKey}`)?.findings ?? [],
+      );
       if (allFindings.length === 0) continue;
 
       widgets[changeKey] = (

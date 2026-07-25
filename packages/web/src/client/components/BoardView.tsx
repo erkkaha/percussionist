@@ -22,9 +22,11 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 
 export default function BoardView() {
   const { name } = useParams<{ name: string }>();
-  const projectName = name;
+  // Empty until the route param resolves; every consumer below is gated on the
+  // `if (!name) return null` guard, and the board query on `enabled`.
+  const projectName = name ?? '';
   const queryClient = useQueryClient();
-  const { connected: boardSseConnected, eventTick } = useBoardEvents(projectName ?? '', true);
+  const { connected: boardSseConnected, eventTick } = useBoardEvents(projectName, true);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['board', projectName],
@@ -92,8 +94,7 @@ export default function BoardView() {
 
   const allTasks: Task[] = data ? Object.values(data.columns).flat() : [];
 
-  const invalidateBoard = () =>
-    queryClient.invalidateQueries({ queryKey: ['board', projectName ?? ''] });
+  const invalidateBoard = () => queryClient.invalidateQueries({ queryKey: ['board', projectName] });
 
   const _deleteMutation = useMutation({
     mutationFn: (taskName: string) => deleteBoardTask(projectName, taskName),
@@ -120,7 +121,7 @@ export default function BoardView() {
     onSuccess: invalidateBoard,
   });
 
-  useBoardNotifications(projectName ?? '', allTasks);
+  useBoardNotifications(projectName, allTasks);
 
   const handleSelectTask = (name: string) => {
     setSearchParams({ task: name });

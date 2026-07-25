@@ -181,18 +181,20 @@ export default function CreateRunForm() {
     if (agent.trim()) req.agent = agent.trim();
     if (agents.length > 0) req.inlineAgents = agents;
     if (showGit && gitUrl.trim()) {
-      req.source = { git: { url: gitUrl.trim() } };
-      if (!req.source.git) req.source.git = {};
-      if (gitRef.trim()) req.source.git.ref = gitRef.trim();
-      if (gitSshSecret.trim()) req.source.git.sshSecret = { name: gitSshSecret.trim() };
+      const git: NonNullable<NonNullable<CreateRunRequest['source']>['git']> = {
+        url: gitUrl.trim(),
+      };
+      if (gitRef.trim()) git.ref = gitRef.trim();
+      if (gitSshSecret.trim()) git.sshSecret = { name: gitSshSecret.trim() };
       if (gitGithubTokenSecret.trim())
-        req.source.git.githubTokenSecret = { name: gitGithubTokenSecret.trim() };
+        git.githubTokenSecret = { name: gitGithubTokenSecret.trim() };
       if (gitAuthorName.trim() && gitAuthorEmail.trim()) {
-        req.source.git.author = {
+        git.author = {
           name: gitAuthorName.trim(),
           email: gitAuthorEmail.trim(),
         };
       }
+      req.source = { git };
     }
     if (llmKeysSecret.trim() || authSecretName.trim()) {
       req.secrets = {};

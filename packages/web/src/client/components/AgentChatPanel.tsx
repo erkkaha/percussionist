@@ -29,7 +29,7 @@ function formatTaskContext(task: Task, projectName: string): string {
   return lines.join('\n');
 }
 
-type SpeechRecognitionType = new () => {
+type SpeechRecognitionInstance = {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
@@ -40,6 +40,8 @@ type SpeechRecognitionType = new () => {
   start: () => void;
   stop: () => void;
 };
+
+type SpeechRecognitionType = new () => SpeechRecognitionInstance;
 
 const SpeechRecognitionAPI =
   typeof window !== 'undefined'
@@ -113,7 +115,7 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
   const speakEnabledRef = useRef(false);
   const speakAfterCreatedRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
-  const recognitionRef = useRef<object | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const sttSupported = !!SpeechRecognitionAPI;
 
   const speak = useCallback(
