@@ -142,8 +142,9 @@ beatctl auth logout                           # discard the local session
 ```
 
 Dashboard sign-in is GitHub-only. Register a GitHub App whose callback URL
-exactly matches `${WEB_BASE_URL}/api/auth/callback/github`, and grant Account
-Permissions → Email Addresses → Read-Only.
+exactly matches `${WEB_BASE_URL}/api/auth/callback/github`. **No permissions are
+required at all**, and the App does not need to be installed anywhere — the web
+flow authorizes without installation.
 
 Two GitHub App specifics worth knowing:
 
@@ -154,12 +155,14 @@ Two GitHub App specifics worth knowing:
   than the browser's current URL, so sign-in always round-trips through that
   origin — sign in via the Ingress; `beatctl web`'s port-forward is for viewing.
   For local sign-in, run web with a fixed `WEB_BASE_URL` and register it too.
-- The email permission is **required**, not optional. GitHub Apps ignore the
-  OAuth `scope` parameter, so it is the only thing granting email access, and the
-  `user` table requires an email. Without it sign-in fails `email_not_found`.
-
-No repository permissions are needed, and the App does not need to be installed
-anywhere — the web flow authorizes without installation.
+- **Email is optional.** GitHub Apps ignore the OAuth `scope` parameter, so an
+  account with a private email returns no address unless you grant Account
+  Permissions → Email Addresses → Read-only. The `user` table needs an email, so
+  when none is available one is synthesized as
+  `<login>@users.noreply.github.com` — unroutable, and nothing sends mail here.
+  Grant the permission only if you want your real address stored; note that
+  adding an account permission after authorizing requires re-authorizing the App
+  (GitHub does not prompt for account-permission changes on its own).
 
 ```bash
 beatctl auth github set-app <clientId> <clientSecret>

@@ -12,9 +12,17 @@ There are two kinds of caller, and they are deliberately not interchangeable:
 
 **Humans** sign in with GitHub via [better-auth] and hold an httpOnly session
 cookie. Only the GitHub logins listed in `GITHUB_ALLOWED_LOGINS` may sign in —
-the OAuth callback is otherwise open to every GitHub account on the internet. A
-session is implicitly admin. The session cookie is also what authorises SSE
-streams and the terminal WebSocket, so no credential appears in a URL.
+the OAuth callback is otherwise open to every GitHub account on the internet, so
+an empty allowlist means nobody, never everybody. The check runs on **every**
+sign-in rather than only at account creation, so removing a login blocks their
+next attempt instead of merely preventing initial sign-up. A session is implicitly
+admin. The session cookie is also what authorises SSE streams and the terminal
+WebSocket, so no credential appears in a URL.
+
+Sign-in needs no GitHub App permissions: when the account's email is private and
+the App cannot read it, an unroutable `<login>@users.noreply.github.com` is
+synthesized to satisfy the `user` table's non-null unique email. Nothing in this
+deployment sends mail.
 
 **Agents** hold API keys scoped to a narrow permission set, and a key is accepted
 *only* on routes marked with `scoped()`. A key can never satisfy `auth()` or
@@ -239,10 +247,12 @@ continue to operate without changes:
    #    match (no host-only or subdirectory matching, and no loopback port
    #    exception; that exception applies to classic OAuth Apps only). Up to 10
    #    callback URLs are allowed, so register one per origin you sign in from.
-   #    Grant Account Permissions -> Email Addresses -> Read-Only, or sign-in
-   #    fails with email_not_found: GitHub Apps ignore the OAuth `scope`
-   #    parameter, so this permission is the only thing granting email access.
-   #    No repository permissions are needed, and the App need not be installed.
+   #    NO permissions are required, and the App need not be installed. GitHub
+   #    Apps ignore the OAuth `scope` parameter, so an account with a private
+   #    email returns none — an unroutable <login>@users.noreply.github.com is
+   #    synthesized in that case. Grant Account Permissions -> Email Addresses ->
+   #    Read-only only if you want your real address stored (and re-authorize
+   #    afterwards; GitHub does not prompt for account-permission changes).
    beatctl auth github set-app <client-id> <client-secret>
    beatctl auth github allow <your-github-login>
    beatctl auth session-secret

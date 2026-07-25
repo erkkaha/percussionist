@@ -4,24 +4,79 @@ Percussionist's security model spans authentication, authorization, network isol
 
 ## Authentication & Authorization
 
-### Web API
+Every `/api/*` route requires authentication. There are two kinds of caller and
+they are deliberately not interchangeable — see
+[SECURITY.md](https://github.com/erkkaha/percussionist/blob/main/SECURITY.md) for
+the full model.
 
-The web dashboard API is secured with token-based authentication:
+### Humans — GitHub sign-in
+
+The dashboard uses [better-auth](https://www.better-auth.com) with GitHub as the
+only identity provider, and issues an httpOnly session cookie. There is no
+password and no SMTP. Only the GitHub logins on the allowlist may sign in; the
+OAuth callback is otherwise open to every GitHub account on the internet.
 
 ```bash
-kubectl create secret generic web-auth -n percussionist \
-  --from-literal=token=<your-secure-token>
+beatctl auth github set-app <client-id> <client-secret>
+beatctl auth github allow <your-github-login>
+beatctl auth session-secret
 ```
 
-If the `web-auth` secret is absent, authentication is disabled.
+The allowlist is checked on **every** sign-in, not only when the account is first
+created, so removing a login blocks their next attempt.
+
+The session cookie also authorizes SSE streams and the terminal WebSocket, so no
+credential appears in a URL.
+
+### Agents — scoped API keys
+
+Agents hold API keys limited to a small permission set. A key is accepted *only*
+on routes marked with the `scoped()` middleware, so it can never read settings,
+manage secrets, delete projects or apply an upgrade — those require a session.
+
+| Holder | Scopes | Lifetime |
+|--------|--------|----------|
+| Run pods (dispatcher) | `stats:write` | Per run; expires after the run's timeout and is revoked when it ends |
+| manager-controller | `stats:write`, `events:write`, `board:read` | Standing (`manager-api-key`) |
+| operator | `runkeys:mint` | Standing (`operator-api-key`) |
+
+Standing keys are minted by the web server on startup — it is the only component
+with database access — and written to per-component Secrets. Inspect and rotate
+them with `beatctl auth key list` and `beatctl auth key rotate <component>`;
+rotation requires restarting that Deployment, since values resolve via
+`secretKeyRef` at pod start.
+
+### CLI
+
+`beatctl auth login` uses the OAuth 2.0 device grant (RFC 8628): it prints a code
+you approve in an already-signed-in browser, then holds a real session. No token
+is pasted between the two.
 
 ### Manager MCP Server
 
-The manager's MCP server (port 4097) is cluster-internal only. No external authentication layer is needed — it relies on Kubernetes network policy for access control.
+The manager's MCP server (port 4097) is cluster-internal. Cross-pod callers must
+present `MCP_TOKEN` (the `manager-mcp-token` Secret), shared with the web pod only
+and never injected into a run pod — so an agent reading its own environment cannot
+reach the destructive tools. A NetworkPolicy restricts pod-network access to the
+port as defence in depth, but requires a CNI that enforces NetworkPolicy.
 
-### Admin Routes
+Same-pod callers on `127.0.0.1` are exempt from the token. That is not a boundary
+against anyone with cluster access: `kubectl port-forward` traffic arrives on the
+pod's loopback interface, which is how `beatctl chat` connects.
 
-Certain web API routes require admin privileges, enforced via `adminAuth()` middleware.
+### Escape hatches
+
+- `AUTH_DISABLED=1` skips all authentication — for local development and the e2e
+  harness. No auth machinery is initialised at all in this mode. Toggle with
+  `beatctl auth web-token disable` / `enable`; this is also the way back in if
+  GitHub sign-in ever misbehaves.
+- `LEGACY_TOKEN_AUTH=1` additionally accepts a pre-better-auth shared secret in
+  `AUTH_SECRET`, so a rolling upgrade does not break agents mid-flight. Remove it
+  once every component holds a key.
+
+The dashboard Ingress is plain HTTP by default, so the session cookie cannot be
+marked `Secure`. Terminate TLS in front of it for anything reachable beyond a
+trusted network.
 
 ## Secure Defaults
 
