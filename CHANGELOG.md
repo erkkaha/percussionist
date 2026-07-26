@@ -1,11 +1,48 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.0] - 2026-07-26
+
+### <!-- 0 -->🚀 Features
+
+- Replace plain text Input with ModelSelector in GeneralTab _(web)_
+- Migrate auto-scroll checkbox to shadcn Checkbox component _(web)_
+- Harden agent sandbox, fix CRD defaulting and Kubernetes 404 handling
+- Add better-auth with GitHub sign-in and scoped agent API keys _(auth)_
+- Add installable PWA shell with push-ready service worker _(web)_
+- Add Web Push subscription plumbing _(web)_
+- Push run/task transitions that need a human to subscribed devices _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Repair GitHub sign-in allowlist and handle missing provider email _(auth)_
+- Replace @commitlint/config-conventional with inline rules to resolve ESM/CJS incompatibility
+- Redraw the drum logo as a snare and fix the stick pivots _(web)_
+- Label submitted runs so the operator can create their pod _(cli)_
+- Fail the run when the poll loop hits an unrecoverable error _(dispatcher)_
+- Authenticate the memory service and stop wedging its writes _(memory)_
+- Stop the reconciler reverting concurrent Task status writes _(manager)_
+- Stop test DB lifecycle from leaking closed connections across test files _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add percussionist-dev-plan-0aedd7 _(plan)_
+- Add percussionist-dev-plan-83b6ae _(plan)_
+- Correct GitHub App callback matching rules _(auth)_
+- Bring auth docs in line with the deployed model _(auth)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add regression tests for LogViewer auto-scroll toggle _(web)_
 ## [v0.1.220] - 2026-07-21
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Detect stale chat sessions and use headless opencode serve _(manager)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.1.220
 ## [v0.1.219] - 2026-07-01
 
 ### <!-- 1 -->🐛 Bug Fixes
