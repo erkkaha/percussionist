@@ -602,12 +602,21 @@ export async function runPrompt(
   }
 
   let sawBusy = false; // set true only when poll loop sees first assistant message
+  // `waitingForInput` means "the session is parked" and drives the idle timeout
+  // and the don't-terminate-yet logic. It is set by session.idle, which fires
+  // after EVERY completed assistant turn — so it is not evidence that a human
+  // is needed.
   let waitingForInput = false;
-  // Last value of `waitingForInput` published to the CR. The dispatcher is the
+  // `needsHumanInput` is the narrower question: is the run actually blocked on a
+  // person? Only a permission prompt or a user-aborted message mean that. This
+  // is what gets published as RunPhase.WaitingForInput, because the manager
+  // fails any non-PLAN task that reports it ("BUILD tasks cannot wait for
+  // input"). Publishing on session.idle failed every BUILD task at the end of
+  // its first turn.
+  let needsHumanInput = false;
+  // Last value of `needsHumanInput` published to the CR. The dispatcher is the
   // only component that can observe an agent pausing for clarification, so if
-  // it doesn't write RunPhase.WaitingForInput nobody does — the manager's
-  // handling of that phase would be unreachable and the run would simply look
-  // Running until the idle timeout recorded it as Failed.
+  // it doesn't write RunPhase.WaitingForInput nobody does.
   let publishedWaiting = false;
   let terminate = false;
   let promptFlushCursor = 0;
@@ -772,6 +781,9 @@ export async function runPrompt(
                 log('assistant message aborted by user — waiting for input');
                 waitingForInput = true;
               }
+              // A user-cancelled message genuinely leaves the run blocked on a
+              // person deciding what to do next.
+              needsHumanInput = true;
             } else {
               throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
             }
@@ -784,6 +796,8 @@ export async function runPrompt(
               // message.  Only reset when a new non-aborted message arrives.
               if (!last.info.error && (totalTokens.tokensIn > 0 || totalTokens.tokensOut > 0)) {
                 waitingForInput = false;
+                // Work resumed, so whatever the human was needed for is done.
+                needsHumanInput = false;
               }
               // If still waiting (aborted or idle), fall through without
               // terminating — the poll loop keeps running.
@@ -820,9 +834,9 @@ export async function runPrompt(
         // --- publish WaitingForInput <-> Running transitions to the CR ---
         // Done here rather than at each mutation site so it also picks up flips
         // made by the SSE handler, which runs outside this loop.
-        if (waitingForInput !== publishedWaiting) {
-          publishedWaiting = waitingForInput;
-          const phase = waitingForInput ? RunPhase.WaitingForInput : RunPhase.Running;
+        if (needsHumanInput !== publishedWaiting) {
+          publishedWaiting = needsHumanInput;
+          const phase = needsHumanInput ? RunPhase.WaitingForInput : RunPhase.Running;
           log(`phase -> ${phase}`);
           await patchStatus({ phase });
         }
@@ -887,12 +901,18 @@ export async function runPrompt(
               !waitingForInput
             ) {
               waitingForInput = true;
-              // Snapshot sessions immediately when entering WaitingForInput so
-              // the manager can read the conversation context even if this pod
-              // is killed while waiting.
+              // Snapshot sessions immediately when parking so the manager can
+              // read the conversation context even if this pod is killed while
+              // waiting.
               snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
                 err('WaitingForInput snapshot failed:', (e as Error).message),
               );
+            }
+            // Only a permission prompt means a person has to act. session.idle
+            // fires after every completed turn (see the flush below), so it
+            // must not surface as RunPhase.WaitingForInput.
+            if (evt.type === 'permission.updated') {
+              needsHumanInput = true;
             }
             if (evt.type === 'session.idle') {
               // Incremental DB flush after each completed assistant turn.
