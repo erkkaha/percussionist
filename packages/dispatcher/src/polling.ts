@@ -16,6 +16,28 @@ const log = (...args: unknown[]) =>
 const err = (...args: unknown[]) =>
   console.error(`[dispatcher ${new Date().toISOString()}]`, ...args);
 
+/**
+ * An unrecoverable condition detected inside the poll loop.
+ *
+ * The loop's catch deliberately swallows errors so a transient blip (a failed
+ * fetchMessages, a momentary patch failure) doesn't kill a healthy run. But it
+ * used to swallow the loop's *own* fatal throws too — opencode failing its
+ * health check, never producing a first response, or returning an empty
+ * assistant message. Those conditions never resolve, so the run kept polling
+ * until the 65-minute hard timeout fired, exiting via a path that writes no
+ * snapshot, no stats and no Failed phase.
+ *
+ * Throwing this type instead marks an error as "stop now": the catch re-raises
+ * it, runPrompt rejects, and main()'s handler does the normal failure work
+ * (snapshot, stats, patch Failed).
+ */
+export class FatalRunError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'FatalRunError';
+  }
+}
+
 function isMessageAbortedError(error: unknown): boolean {
   if (typeof error === 'string') return error.includes('Abort') || error === 'MessageAbortedError';
   if (error && typeof error === 'object') {
@@ -703,7 +725,7 @@ export async function runPrompt(
           if (!healthy) {
             unhealthyCount++;
             if (unhealthyCount >= 3) {
-              throw new Error('opencode server unreachable: health check failed');
+              throw new FatalRunError('opencode server unreachable: health check failed');
             }
           } else {
             unhealthyCount = 0;
@@ -712,7 +734,7 @@ export async function runPrompt(
 
         const elapsedSinceStart = Date.now() - startedAt;
         if (!sawBusy && elapsedSinceStart > FIRST_RESPONSE_TIMEOUT_MS) {
-          throw new Error(
+          throw new FatalRunError(
             `opencode did not produce an assistant response within ${FIRST_RESPONSE_TIMEOUT_MS / 1000}s of dispatch`,
           );
         }
@@ -767,7 +789,7 @@ export async function runPrompt(
               // terminating — the poll loop keeps running.
             } else if (totalTokens.tokensIn === 0 && totalTokens.tokensOut === 0) {
               if (!sawBusy) {
-                throw new Error(
+                throw new FatalRunError(
                   'opencode produced an assistant response with zero token usage before any work was done',
                 );
               }
@@ -806,6 +828,13 @@ export async function runPrompt(
         }
       } catch (e) {
         if (terminate) return;
+        // Unrecoverable conditions must escape the loop so main() can snapshot,
+        // report stats and patch Failed. Everything else is treated as a
+        // transient blip and retried on the next tick.
+        if (e instanceof FatalRunError) {
+          err('pollStatus fatal:', e.message);
+          throw e;
+        }
         if ((e as Error).message?.startsWith('session error:')) throw e;
         err('pollStatus iter error:', (e as Error).message);
       }
