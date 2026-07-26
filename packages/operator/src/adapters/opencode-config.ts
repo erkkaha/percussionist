@@ -1,25 +1,56 @@
 // adapters/opencode-config.ts — resolves the effective RunnerImageSpec for a
-// reconcile cycle by merging OPENCODE_RUNNER_DEFAULTS with any override
-// supplied in ClusterSettings.spec.runnerAdapter.
+// reconcile cycle by merging the engine's defaults with any override supplied
+// in ClusterSettings.spec.runnerAdapter.
 
 import {
   type ClusterSettings,
-  OPENCODE_RUNNER_DEFAULTS,
+  type RunnerEngine,
   type RunnerImageSpec,
+  runnerDefaultsFor,
 } from '@percussionist/api';
 
 /**
- * Returns the effective RunnerImageSpec for this cluster.
- * If ClusterSettings is absent or has no runnerAdapter override, the default
- * opencode spec is returned as-is.
+ * Returns the effective RunnerImageSpec for this run.
+ *
+ * The baseline comes from the requested engine (opencode unless stated), then
+ * ClusterSettings.spec.runnerAdapter is layered on top. The override is
+ * engine-independent by design: a cluster that pins a custom runner image gets
+ * it whichever engine is selected, which is what lets air-gapped registries
+ * work without per-engine configuration.
  */
-export function resolveRunnerSpec(cs?: ClusterSettings): RunnerImageSpec {
+export function resolveRunnerSpec(cs?: ClusterSettings, engine?: RunnerEngine): RunnerImageSpec {
+  const defaults = runnerDefaultsFor(engine);
   const override = cs?.spec?.runnerAdapter;
-  if (!override) return OPENCODE_RUNNER_DEFAULTS;
+  if (!override) return defaults;
   return {
-    ...OPENCODE_RUNNER_DEFAULTS,
+    ...defaults,
     ...Object.fromEntries(
       Object.entries(override).filter(([, v]) => v !== undefined && v !== null),
     ),
   } as RunnerImageSpec;
+}
+
+/**
+ * Guards the one credential mistake that fails silently.
+ *
+ * `ANTHROPIC_API_KEY` overrides subscription auth unconditionally, and in
+ * non-interactive mode it is used whenever present — no prompt, no warning. A
+ * run configured with both an LLM-keys Secret and a subscription authSecret
+ * therefore bills per token while looking like it is on the subscription.
+ * Refuse the combination rather than let it run wrong.
+ */
+export function assertCredentialsUnambiguous(opts: {
+  engine?: RunnerEngine;
+  llmKeysSecret?: string;
+  authSecretName?: string;
+  runName: string;
+}): void {
+  if (opts.engine !== 'claude') return;
+  if (!opts.llmKeysSecret || !opts.authSecretName) return;
+  throw new Error(
+    `Run ${opts.runName}: engine "claude" has both spec.secrets.llmKeysSecret ` +
+      `(${opts.llmKeysSecret}) and spec.secrets.authSecret (${opts.authSecretName}) set. ` +
+      `ANTHROPIC_API_KEY silently overrides subscription auth, so this run would bill ` +
+      `per token while appearing to use the subscription. Remove one.`,
+  );
 }

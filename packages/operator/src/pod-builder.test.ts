@@ -14,7 +14,12 @@
  */
 
 import { describe, expect, it } from 'bun:test';
-import type { Run } from '@percussionist/api';
+import {
+  CLAUDE_RUNNER_DEFAULTS,
+  deriveEngine,
+  type Run,
+  runnerDefaultsFor,
+} from '@percussionist/api';
 import { renderPod } from './pod-builder.js';
 
 // Helper to create a minimal Run CR with all required fields
@@ -548,5 +553,80 @@ describe('renderPod - per-run stats key', () => {
     const runner = pod.spec?.containers?.find((c) => c.name === 'opencode');
     const runnerEnv = (runner?.env ?? []).map((e) => e.value ?? '');
     expect(runnerEnv).not.toContain('pcn_run_scoped_key');
+  });
+});
+
+// `spec.image` has a CRD-level default pointing at the opencode runner, so it is
+// never absent. Without an explicit override, `engine: claude` would silently run
+// the opencode image — which is exactly what happened the first time this was
+// deployed to minikube.
+describe('renderPod - engine image precedence', () => {
+  const CRD_DEFAULT = 'ghcr.io/erkkaha/percussionist/runner:latest';
+
+  function runnerImage(run: Run): string | undefined {
+    const pod = renderPod(run, [], [], runnerDefaultsFor(run.spec.engine));
+    return pod.spec?.containers?.find((c) => c.name !== 'dispatcher')?.image;
+  }
+
+  it('lets engine: claude win over the CRD-defaulted spec.image', () => {
+    const run = makeRun();
+    run.spec.engine = 'claude';
+    run.spec.image = CRD_DEFAULT;
+    expect(runnerImage(run)).toBe(CLAUDE_RUNNER_DEFAULTS.image);
+  });
+
+  it('keeps spec.image authoritative when no engine is set', () => {
+    const run = makeRun();
+    run.spec.image = CRD_DEFAULT;
+    expect(runnerImage(run)).toBe(CRD_DEFAULT);
+  });
+
+  it('treats engine: opencode like the default engine', () => {
+    const run = makeRun();
+    run.spec.engine = 'opencode';
+    run.spec.image = CRD_DEFAULT;
+    expect(runnerImage(run)).toBe(CRD_DEFAULT);
+  });
+});
+
+// Engine selection normally rides the model field, so the prefix must reach the
+// image choice — not just the `engine` field that few callers set.
+describe('renderPod - engine from model prefix', () => {
+  const CRD_DEFAULT = 'ghcr.io/erkkaha/percussionist/runner:latest';
+
+  function runnerImage(run: Run): string | undefined {
+    const pod = renderPod(run, [], [], runnerDefaultsFor(deriveEngine(run.spec)));
+    return pod.spec?.containers?.find((c) => c.name !== 'dispatcher')?.image;
+  }
+
+  it('a claude-code model selects the claude runner image', () => {
+    const run = makeRun();
+    run.spec.image = CRD_DEFAULT;
+    run.spec.model = 'claude-code/claude-opus-5';
+    expect(runnerImage(run)).toBe(CLAUDE_RUNNER_DEFAULTS.image);
+  });
+
+  it('another provider keeps the opencode image', () => {
+    const run = makeRun();
+    run.spec.image = CRD_DEFAULT;
+    run.spec.model = 'github-copilot/claude-sonnet-4.5';
+    expect(runnerImage(run)).toBe(CRD_DEFAULT);
+  });
+
+  it('a claude-code model injects the subscription token env var', () => {
+    const run = makeRun();
+    run.spec.model = 'claude-code/claude-opus-5';
+    run.spec.secrets = { authSecret: { name: 'claude-oat', key: 'CLAUDE_CODE_OAUTH_TOKEN' } };
+    const pod = renderPod(run, [], [], runnerDefaultsFor(deriveEngine(run.spec)));
+    const env = pod.spec?.containers?.find((c) => c.name !== 'dispatcher')?.env ?? [];
+    expect(env.some((e) => e.name === 'CLAUDE_CODE_OAUTH_TOKEN')).toBe(true);
+  });
+
+  it('an explicit engine still overrides the model prefix', () => {
+    const run = makeRun();
+    run.spec.image = CRD_DEFAULT;
+    run.spec.engine = 'opencode';
+    run.spec.model = 'claude-code/claude-opus-5';
+    expect(runnerImage(run)).toBe(CRD_DEFAULT);
   });
 });

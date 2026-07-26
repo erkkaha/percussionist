@@ -3,6 +3,7 @@
 #
 # Builds five images:
 #   percussionist/runner:dev       (opencode + git + ssh; used by every run pod)
+#   percussionist/runner-claude:dev (Claude Agent SDK runner; engine: claude)
 #   percussionist/operator:dev     (CRD reconciler Deployment)
 #   percussionist/dispatcher:dev   (sidecar that drives each run)
 #   percussionist/web:dev          (web dashboard)
@@ -63,6 +64,10 @@ build_one() {
   case "$name" in
     runner)
       docker build "${extra[@]}" -t "$tag" "$REPO_ROOT/images/runner"
+      ;;
+    runner-claude)
+      docker build "${extra[@]}" -t "$tag" \
+        -f "$REPO_ROOT/images/runner-claude/Dockerfile" "$REPO_ROOT"
       ;;
     operator)
       docker build "${extra[@]}" -t "$tag" --build-arg PKG=operator \
@@ -137,7 +142,7 @@ evict_for() {
           --timeout=60s 2>/dev/null || true
       fi
       ;;
-    runner|dispatcher)
+    runner|runner-claude|dispatcher)
       local runs
       runs="$(list_runs_with_pods)"
       if [[ -z "$runs" ]]; then return 0; fi
@@ -298,6 +303,7 @@ process_one() {
 # The M1 script supported `IMAGE=` to override a single image; keep that
 # behaviour for the runner for backward compat.
 RUNNER_TAG="${IMAGE:-percussionist/runner:dev}"
+RUNNER_CLAUDE_TAG="percussionist/runner-claude:dev"
 OPERATOR_TAG="percussionist/operator:dev"
 DISPATCHER_TAG="percussionist/dispatcher:dev"
 WEB_TAG="percussionist/web:dev"
@@ -311,15 +317,17 @@ RESTORE_MANAGER=false
 if [[ -n "$ONLY" ]]; then
   case "$ONLY" in
     runner)     process_one runner     "$RUNNER_TAG" ;;
+    runner-claude) process_one runner-claude "$RUNNER_CLAUDE_TAG" ;;
     operator)   process_one operator   "$OPERATOR_TAG"; $FORCE && RESTORE_OPERATOR=true ;;
     dispatcher) process_one dispatcher "$DISPATCHER_TAG" ;;
     web)        process_one web        "$WEB_TAG"; $FORCE && RESTORE_WEB=true ;;
     manager)    process_one manager    "$MANAGER_TAG"; $FORCE && RESTORE_MANAGER=true ;;
     code-server) process_one code-server "$CODE_SERVER_TAG" ;;
-    *) echo "unknown --only value: $ONLY (runner|operator|dispatcher|web|manager|code-server)" >&2; exit 2 ;;
+    *) echo "unknown --only value: $ONLY (runner|runner-claude|operator|dispatcher|web|manager|code-server)" >&2; exit 2 ;;
   esac
 else
   process_one runner     "$RUNNER_TAG"
+  process_one runner-claude "$RUNNER_CLAUDE_TAG"
   process_one operator   "$OPERATOR_TAG";   $FORCE && RESTORE_OPERATOR=true
   process_one dispatcher "$DISPATCHER_TAG"
   process_one web        "$WEB_TAG";        $FORCE && RESTORE_WEB=true
@@ -333,7 +341,7 @@ if $RESTORE_WEB; then restore_web; fi
 if $RESTORE_MANAGER; then restore_manager; fi
 
 echo ">> Images present in minikube:"
-minikube image ls | grep -E 'percussionist/(runner|operator|dispatcher|web|manager|code-server)' || true
+minikube image ls | grep -E 'percussionist/(runner|runner-claude|operator|dispatcher|web|manager|code-server)' || true
 
 # ---------------------------------------------------------------------------
 # Pin the ingress-nginx HTTP NodePort to 30080 so the dashboard and per-run

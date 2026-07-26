@@ -14,6 +14,7 @@ import {
   API_GROUP,
   API_VERSION,
   type ClusterSettings,
+  deriveEngine,
   PLURAL_CLUSTER_SETTINGS,
   PLURAL_PROJECT,
   PLURAL_RUN,
@@ -24,7 +25,7 @@ import {
   TERMINAL_PHASES,
 } from '@percussionist/api';
 import { makeNodeApiClient } from '@percussionist/kube';
-import { resolveRunnerSpec } from './adapters/opencode-config.js';
+import { assertCredentialsUnambiguous, resolveRunnerSpec } from './adapters/opencode-config.js';
 import { resolveAgents } from './agent-resolver.js';
 import {
   ideDeploymentName,
@@ -405,7 +406,14 @@ export async function reconcile(run: Run): Promise<void> {
     })
     .then((r) => r as ClusterSettings)
     .catch(() => undefined);
-  const runnerSpec = resolveRunnerSpec(cs);
+  const engine = deriveEngine(run.spec);
+  const runnerSpec = resolveRunnerSpec(cs, engine);
+  assertCredentialsUnambiguous({
+    engine,
+    llmKeysSecret: run.spec.secrets?.llmKeysSecret,
+    authSecretName: run.spec.secrets?.authSecret?.name,
+    runName: `${run.metadata.namespace}/${run.metadata.name}`,
+  });
   const dispatcherImage = run.spec.dispatcher?.image ?? cs?.spec?.dispatcher?.image;
 
   // Resolve agents from ClusterAgent CRs + inline escape hatch.

@@ -4,7 +4,9 @@ import type { V1Pod, V1Service } from '@kubernetes/client-node';
 import {
   type AgentDef,
   API_GROUP_VERSION,
+  DEFAULT_RUNNER_ENGINE,
   DISPATCHER_CONTAINER,
+  deriveEngine,
   KIND_RUN,
   LABELS,
   MANAGED_BY,
@@ -16,6 +18,11 @@ import {
   type SshHostKeyVerificationMode,
 } from '@percussionist/api';
 import { gitUrlHash } from '@percussionist/kube';
+import {
+  primaryAgentSystemPrompt,
+  renderClaudeAgentFile,
+  renderClaudeSettings,
+} from './adapters/claude-config.js';
 import {
   DISPATCHER_IMAGE,
   DISPATCHER_SERVICE_ACCOUNT,
@@ -162,8 +169,13 @@ export function renderService(
 
 export function renderAgentsConfigMap(run: Run, agents: AgentDef[]): object {
   const data: Record<string, string> = {};
+  // ClusterAgent content is written in opencode's agent-file format. The claude
+  // engine mounts this same ConfigMap at ~/.claude/agents, where Claude Code
+  // expects its own frontmatter and its own MCP tool names, so it has to be
+  // translated rather than copied through.
+  const forClaude = deriveEngine(run.spec) === 'claude';
   for (const a of agents) {
-    data[`${a.name}.md`] = a.content;
+    data[`${a.name}.md`] = forClaude ? renderClaudeAgentFile(a) : a.content;
   }
   return {
     apiVersion: 'v1',
@@ -205,7 +217,20 @@ export function renderPod(
   }
 
   const llmKeysSecret = spec.secrets?.llmKeysSecret;
-  const image = spec.image ?? runner.image ?? RUNNER_IMAGE_DEFAULT;
+  // Derived here rather than passed in so pod-builder and the reconciler cannot
+  // disagree about which engine a run uses — a mismatch would pair one engine's
+  // image with another's env and config.
+  const engine = deriveEngine(spec);
+  // `spec.image` carries a CRD-level default pointing at the opencode runner, so
+  // it is never actually absent and would always shadow the engine's image. When
+  // a non-default engine is requested the resolved runner image has to win, or
+  // `engine: claude` silently runs the opencode runner. Per-run image overrides
+  // for such an engine go through ClusterSettings.spec.runnerAdapter.image,
+  // which resolveRunnerSpec has already layered into `runner.image`.
+  const engineOverridesImage = engine !== DEFAULT_RUNNER_ENGINE;
+  const image = engineOverridesImage
+    ? (runner.image ?? spec.image ?? RUNNER_IMAGE_DEFAULT)
+    : (spec.image ?? runner.image ?? RUNNER_IMAGE_DEFAULT);
   const git = spec.source?.git;
   const localGit = spec.source?.local === true;
   const sshSecret = git?.sshSecret
@@ -814,19 +839,36 @@ export function renderPod(
                   },
                 ]
               : []),
-            // Always inject the cluster-wide runner config (providers, models, etc.)
-            // from the well-known "opencode-config" configmap.  Optional so pods start
-            // cleanly even if the configmap hasn't been created.
-            {
-              name: runner.configEnvVar,
-              valueFrom: {
-                configMapKeyRef: {
-                  name: 'opencode-config',
-                  key: runner.configMapKey,
-                  optional: true,
-                },
-              },
-            },
+            // Claude-engine configuration, derived from the resolved agents
+            // rather than from the cluster-wide opencode ConfigMap (whose
+            // contents are opencode's own schema and mean nothing to Claude Code).
+            ...(engine === 'claude'
+              ? [
+                  { name: runner.configEnvVar, value: renderClaudeSettings(resolvedAgents) },
+                  // A `mode: primary` agent describes how the session itself
+                  // should behave. Claude Code would only read a subagent file
+                  // when something invokes it via the Task tool, so the primary
+                  // agent's body has to arrive as a system-prompt append.
+                  ...(() => {
+                    const prompt = primaryAgentSystemPrompt(resolvedAgents, spec.agent);
+                    return prompt ? [{ name: 'CLAUDE_APPEND_SYSTEM_PROMPT', value: prompt }] : [];
+                  })(),
+                ]
+              : [
+                  // Always inject the cluster-wide runner config (providers, models, etc.)
+                  // from the well-known "opencode-config" configmap.  Optional so pods start
+                  // cleanly even if the configmap hasn't been created.
+                  {
+                    name: runner.configEnvVar,
+                    valueFrom: {
+                      configMapKeyRef: {
+                        name: 'opencode-config',
+                        key: runner.configMapKey,
+                        optional: true,
+                      },
+                    },
+                  },
+                ]),
             // Per-run override from spec.secrets.configMap (takes precedence).
             ...(spec.secrets?.configMap
               ? [
