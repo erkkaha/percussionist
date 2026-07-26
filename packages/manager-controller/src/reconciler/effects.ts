@@ -11,7 +11,7 @@ import {
   patchTask,
   patchTaskStatus,
 } from '@percussionist/kube';
-import { isKubeNotFoundError } from '../kube-errors.js';
+import { isKubeConflictError, isKubeNotFoundError } from '../kube-errors.js';
 import { buildMergeRun, buildPrOpenRun, buildWorkerRun } from '../worker-builder.js';
 import type { AuditEvent } from './decision.js';
 import type { ResolvedFlow } from './flow.js';
@@ -342,11 +342,57 @@ export async function executeEffects(
 
   // Apply final status patch (phase + worker + other fields in one patch).
   if (toPhase || statusPatch) {
+    // The phase guard above ran before the effects, which take seconds
+    // (creating runs, spawning cleanup pods). An MCP tool or a human annotation
+    // can move the task during that window, and this patch would silently
+    // revert it. Re-read immediately before writing, and make the write
+    // conditional on that read so anything landing in the remaining gap is a
+    // conflict rather than a lost update.
+    //
+    // The re-read also picks up our own metadata writes from the effects above
+    // (ClearTaskAnnotations), so those don't false-conflict.
+    let latest: Task;
+    try {
+      latest = await getTask(taskName, namespace);
+    } catch {
+      return {
+        applied: false,
+        transition: { from: fromPhase, to: toPhase },
+        effectsApplied,
+        events: [],
+        error: `Task ${taskName} not found when applying status`,
+      };
+    }
+
+    const latestPhase = (latest.status?.phase ?? 'pending') as TaskPhase;
+    if (latestPhase !== currentPhase) {
+      return {
+        applied: false,
+        transition: { from: fromPhase, to: toPhase },
+        effectsApplied,
+        events: [],
+        error: `Task ${taskName} moved to ${latestPhase} while effects were running; not overwriting with ${toPhase ?? currentPhase}`,
+      };
+    }
+
     const patch: Record<string, unknown> = {
       ...statusPatch,
       phase: toPhase ?? currentPhase,
     };
-    await patchTaskStatus(taskName, patch, namespace);
+    try {
+      await patchTaskStatus(taskName, patch, namespace, 3, latest.metadata.resourceVersion);
+    } catch (e) {
+      if (isKubeConflictError(e)) {
+        return {
+          applied: false,
+          transition: { from: fromPhase, to: toPhase },
+          effectsApplied,
+          events: [],
+          error: `Task ${taskName} changed concurrently while applying status; will re-reconcile`,
+        };
+      }
+      throw e;
+    }
   }
 
   return {

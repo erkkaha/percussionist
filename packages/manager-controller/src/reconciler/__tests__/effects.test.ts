@@ -17,6 +17,9 @@ const _NOW = '2026-05-29T00:00:00.000Z';
 const namespace = 'percussionist';
 
 const testTask = makeTask('test-task', 'test-project', { phase: 'pending' });
+// The final status write is conditional on the resourceVersion read immediately
+// before it, so the fixture needs one for the assertions below to be meaningful.
+testTask.metadata.resourceVersion = '1000';
 const testProject = makeProject('test-project');
 const flow = resolveFlow(testProject);
 
@@ -159,7 +162,13 @@ describe('executeEffects — happy path with no effects', () => {
     expect(result.applied).toBe(true);
     expect(result.transition).toEqual({ from: 'pending', to: 'scheduled' });
     expect(patchTaskStatusSpy).toHaveBeenCalledTimes(1);
-    expect(patchTaskStatusSpy).toHaveBeenCalledWith('test-task', { phase: 'scheduled' }, namespace);
+    expect(patchTaskStatusSpy).toHaveBeenCalledWith(
+      'test-task',
+      { phase: 'scheduled' },
+      namespace,
+      3,
+      '1000',
+    );
   });
 
   it('applies statusPatch only', async () => {
@@ -171,6 +180,8 @@ describe('executeEffects — happy path with no effects', () => {
       'test-task',
       { worker: { runName: 'r1' }, phase: 'pending' },
       namespace,
+      3,
+      '1000',
     );
   });
 
@@ -184,6 +195,8 @@ describe('executeEffects — happy path with no effects', () => {
       'test-task',
       { worker: { runName: 'r1', retryCount: 0 }, phase: 'scheduled' },
       namespace,
+      3,
+      '1000',
     );
   });
 
@@ -648,6 +661,57 @@ describe('executeEffects — status patch + effects', () => {
       'test-task',
       { worker: { runName: 'r1' }, phase: 'scheduled' },
       namespace,
+      3,
+      '1000',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Concurrent-modification safety
+//
+// The phase guard at the top of executeEffects runs before the effects, which
+// take seconds (creating runs, spawning cleanup pods). An MCP tool or a human
+// annotation can move the task during that window; the final merge-patch used
+// to be unconditional and silently reverted them.
+// ---------------------------------------------------------------------------
+
+describe('executeEffects — concurrent modification', () => {
+  it('does not overwrite a phase changed while effects were running', async () => {
+    const effects: ReconcileEffect[] = [{ type: 'DeleteRun', name: 'r1', reason: 'cleanup' }];
+
+    // First read (guard) sees the original phase; the re-read before the write
+    // sees a task someone else moved to failed.
+    const movedTask = makeTask('test-task', 'test-project', { phase: 'failed' });
+    movedTask.metadata.resourceVersion = '1001';
+    getTaskSpy.mockResolvedValueOnce(testTask).mockResolvedValueOnce(movedTask);
+
+    const result = await call(testTask, 'scheduled', effects, { worker: { runName: 'r1' } });
+
+    expect(result.applied).toBe(false);
+    expect(result.error).toMatch(/moved to failed while effects were running/);
+    // The critical assertion: we must not have written anything.
+    expect(patchTaskStatusSpy).not.toHaveBeenCalled();
+    // The effects themselves still ran and are reported.
+    expect(result.effectsApplied).toEqual(['DeleteRun']);
+  });
+
+  it('reports a conflict instead of throwing when the precondition fails', async () => {
+    const conflict = new Error('the object has been modified');
+    (conflict as unknown as { statusCode: number }).statusCode = 409;
+    patchTaskStatusSpy.mockRejectedValue(conflict);
+
+    const result = await call(testTask, 'scheduled');
+
+    expect(result.applied).toBe(false);
+    expect(result.error).toMatch(/changed concurrently/);
+  });
+
+  it('still propagates non-conflict write failures', async () => {
+    const boom = new Error('apiserver exploded');
+    (boom as unknown as { statusCode: number }).statusCode = 500;
+    patchTaskStatusSpy.mockRejectedValue(boom);
+
+    await expect(call(testTask, 'scheduled')).rejects.toThrow('apiserver exploded');
   });
 });

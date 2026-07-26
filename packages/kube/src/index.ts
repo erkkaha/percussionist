@@ -758,14 +758,33 @@ export async function deleteTask(
   });
 }
 
+/**
+ * Patch a Task's status subresource.
+ *
+ * `resourceVersion` makes the write conditional: including it in the patch body
+ * tells the API server to reject the request with 409 if the object changed
+ * since it was read. Without it a merge-patch is unconditional last-writer-wins,
+ * which is how the reconciler could silently revert a concurrent MCP tool or
+ * human annotation. (It also meant the conflict retry below was unreachable —
+ * an unconditional merge-patch never returns 409.)
+ *
+ * Retries are disabled when a precondition is supplied: replaying the same body
+ * carries the same stale resourceVersion and would fail identically. The caller
+ * must re-read and decide again.
+ */
 export async function patchTaskStatus(
   name: string,
   statusPatch: Partial<TaskStatus>,
   ns: string = NAMESPACE,
   maxRetries = 3,
+  resourceVersion?: string,
 ): Promise<Task> {
+  const attempts = resourceVersion ? 0 : maxRetries;
+  const body = resourceVersion
+    ? { metadata: { resourceVersion }, status: statusPatch }
+    : { status: statusPatch };
   let lastErr: unknown;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  for (let attempt = 0; attempt <= attempts; attempt++) {
     if (attempt > 0) {
       await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
     }
@@ -777,13 +796,13 @@ export async function patchTaskStatus(
           namespace: ns,
           plural: PLURAL_TASK,
           name,
-          body: { status: statusPatch },
+          body,
         },
         MERGE_PATCH(),
       )) as Task;
     } catch (e) {
       lastErr = e;
-      if (isConflictError(e) && attempt < maxRetries) continue;
+      if (isConflictError(e) && attempt < attempts) continue;
       throw e;
     }
   }

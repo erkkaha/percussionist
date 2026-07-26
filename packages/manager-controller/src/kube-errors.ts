@@ -41,6 +41,26 @@ export function getErrorStatusCode(err: unknown): number | undefined {
   return undefined;
 }
 
+/**
+ * True when the API server rejected a write because the object changed since it
+ * was read — i.e. an optimistic-concurrency precondition failed.
+ */
+export function isKubeConflictError(err: unknown): boolean {
+  if (getErrorStatusCode(err) === 409) return true;
+
+  const root = asRecord(err);
+  if (!root) return false;
+
+  const reason = root.reason;
+  if (typeof reason === 'string' && reason.toLowerCase() === 'conflict') return true;
+
+  const body = asRecord(root.body);
+  const bodyReason = body?.reason;
+  if (typeof bodyReason === 'string' && bodyReason.toLowerCase() === 'conflict') return true;
+
+  return false;
+}
+
 export function isKubeNotFoundError(err: unknown): boolean {
   if (getErrorStatusCode(err) === 404) return true;
 
