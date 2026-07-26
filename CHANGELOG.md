@@ -1,6 +1,22 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.1] - 2026-07-26
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Normalize SessionList table semantics and add min-width for mobile alignment _(web)_
+- Monochrome notification badge for the Android status bar _(web)_
+- Gate exec_in_workspace sanitization bypass on bearer-token trust _(manager)_
+- Only report WaitingForInput when a human is actually needed _(dispatcher)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add percussionist-dev-plan-6b0248 sessions table plan _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add session list table structure regression tests _(web)_
 ## [v0.2.0] - 2026-07-26
 
 ### <!-- 0 -->🚀 Features
@@ -34,6 +50,10 @@ All notable changes to Percussionist are documented here.
 ### <!-- 6 -->🧪 Testing
 
 - Add regression tests for LogViewer auto-scroll toggle _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.0
 ## [v0.1.220] - 2026-07-21
 
 ### <!-- 1 -->🐛 Bug Fixes
