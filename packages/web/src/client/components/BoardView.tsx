@@ -181,7 +181,10 @@ export default function BoardView() {
     // Pull out of the parent p-6 padding so the board can fill the viewport correctly.
     <div className="-m-6 flex flex-col" style={{ height: 'calc(100svh - 3.5rem)' }}>
       {/* Header */}
-      <div className="shrink-0 px-3 pt-2 pb-2 md:px-4 md:pt-4 md:pb-3 border-b border-border">
+      <div
+        data-testid="board-header-container"
+        className="shrink-0 px-3 pt-2 pb-2 md:px-4 md:pt-4 md:pb-3 border-b border-border"
+      >
         <BoardHeader
           projectName={projectName}
           roster={roster}

@@ -18,10 +18,16 @@ mock.module(path.resolve('src/client/components/ui/button'), () => ({
   Button: 'button',
 }));
 
-// Mock react-router-dom Link as a simple <a> to avoid Router context.
-// mock.module is file-scoped so other test files are unaffected.
+// Mock react-router-dom to avoid Router context. Include all exports that
+// sibling test files may need, because bun:test's mock.module can leak across
+// files when they share the same dependency in a single-runner process.
 mock.module('react-router-dom', () => ({
   Link: 'a',
+  useParams: () => ({ name: 'test-project' }),
+  useSearchParams: () => {
+    const sp = new URLSearchParams();
+    return [sp, () => {}];
+  },
   default: {},
 }));
 
@@ -91,6 +97,42 @@ describe('BoardHeader desktop mode', () => {
     expect(screen.getByText('Findings')).toBeTruthy();
     expect(screen.getByText('+ Add Task')).toBeTruthy();
   });
+
+  it('renders Code link when codeServerUrl is provided', async () => {
+    await renderHeader({ codeServerUrl: 'http://ide-test.example.com' });
+    expect(screen.getByText('Code')).toBeTruthy();
+  });
+
+  it('does NOT render Code link without codeServerUrl', async () => {
+    await renderHeader({ codeServerUrl: undefined });
+    expect(screen.queryByText('Code')).toBeNull();
+  });
+
+  it('renders metrics row when metrics are provided', async () => {
+    await renderHeader({
+      metrics: {
+        lastReconcileAt: new Date().toISOString(),
+        lastReconcileDurationMs: 1500,
+        lastReconcileResult: 'success',
+        tasksPulled: 5,
+        workersMonitored: 3,
+        tasksReworked: 0,
+      },
+    });
+    expect(screen.getByText(/Pulled: 5/)).toBeTruthy();
+    expect(screen.getByText(/Monitored: 3/)).toBeTruthy();
+    expect(screen.getByText(/Reconciled/)).toBeTruthy();
+  });
+
+  it('renders auth warning when authWarning is provided', async () => {
+    await renderHeader({ authWarning: 'GitHub token not configured' });
+    expect(screen.getByText('⚠ Auth needed')).toBeTruthy();
+  });
+
+  it('renders polling indicator when sseConnected is false', async () => {
+    await renderHeader({ sseConnected: false });
+    expect(screen.getByText('○ polling')).toBeTruthy();
+  });
 });
 
 describe('BoardHeader mobile compact mode', () => {
@@ -159,5 +201,39 @@ describe('BoardHeader mobile compact mode', () => {
     await renderHeader({ isMobile: true, showAddTask: true });
     expect(screen.getByText('Cancel')).toBeTruthy();
     expect(screen.queryByText('+ Add Task')).toBeNull();
+  });
+
+  it('does NOT render metrics row when metrics are provided', async () => {
+    await renderHeader({
+      isMobile: true,
+      metrics: {
+        lastReconcileAt: new Date().toISOString(),
+        lastReconcileDurationMs: 1500,
+        lastReconcileResult: 'success',
+        tasksPulled: 5,
+        workersMonitored: 3,
+        tasksReworked: 0,
+      },
+    });
+    expect(screen.queryByText(/Pulled:/)).toBeNull();
+    expect(screen.queryByText(/Monitored:/)).toBeNull();
+    expect(screen.queryByText(/Reconciled/)).toBeNull();
+  });
+
+  it('does NOT render auth warning', async () => {
+    await renderHeader({ isMobile: true, authWarning: 'GitHub token not configured' });
+    expect(screen.queryByText('⚠ Auth needed')).toBeNull();
+  });
+
+  it('renders Code icon-only link when codeServerUrl is provided', async () => {
+    await renderHeader({ isMobile: true, codeServerUrl: 'http://ide-test.example.com' });
+    const link = screen.getByTitle('Open code-server workspace');
+    expect(link).toBeTruthy();
+    expect(link.tagName).toBe('A');
+  });
+
+  it('does NOT render Code link when codeServerUrl is undefined', async () => {
+    await renderHeader({ isMobile: true, codeServerUrl: undefined });
+    expect(screen.queryByTitle('Open code-server workspace')).toBeNull();
   });
 });
