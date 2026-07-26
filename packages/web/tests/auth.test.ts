@@ -17,6 +17,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createApp } from '../src/server/app.js';
+import { closeDb } from '../src/server/db.js';
+import { resetAuth } from '../src/server/lib/better-auth.js';
 
 // ---------------------------------------------------------------------------
 // Test DB isolation
@@ -52,6 +54,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  closeDb();
+  resetAuth();
   rmSync(TEST_DATA_DIR, { recursive: true, force: true });
 });
 

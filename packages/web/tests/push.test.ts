@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { Hono } from 'hono';
 import type { WebPushError } from 'web-push';
 import { closeDb, getDb } from '../src/server/db.js';
+import { resetAuth } from '../src/server/lib/better-auth.js';
 import {
   _resetVapidCacheForTests,
   _setWebPushForTests,
@@ -57,6 +58,7 @@ function freshDb(): void {
   mkdirSync(dataDir, { recursive: true });
   process.env.DATA_DIR = dataDir;
   closeDb();
+  resetAuth();
   _resetVapidCacheForTests();
 }
 
@@ -83,6 +85,7 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb();
+  resetAuth();
   _resetVapidCacheForTests();
   _setWebPushForTests(null);
   delete process.env.DATA_DIR;

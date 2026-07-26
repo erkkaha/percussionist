@@ -3,6 +3,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Hono } from 'hono';
 import { closeDb } from '../src/server/db.js';
+import { resetAuth } from '../src/server/lib/better-auth.js';
 import usageRouter from '../src/server/routes/usage.js';
 
 const prevAuthDisabled = process.env.AUTH_DISABLED;
@@ -16,6 +17,7 @@ function makeTestClient() {
   mkdirSync(dataDir, { recursive: true });
   process.env.DATA_DIR = dataDir;
   closeDb();
+  resetAuth();
 
   const app = new Hono();
   app.route('/api/usage', usageRouter);
@@ -37,6 +39,7 @@ function makeTestClient() {
 
 afterEach(() => {
   closeDb();
+  resetAuth();
   delete process.env.DATA_DIR;
   for (const dir of dataDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -49,6 +52,8 @@ beforeEach(() => {
 });
 
 afterAll(() => {
+  closeDb();
+  resetAuth();
   if (prevAuthDisabled !== undefined) {
     process.env.AUTH_DISABLED = prevAuthDisabled;
   } else {
