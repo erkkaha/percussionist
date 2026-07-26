@@ -66,6 +66,14 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
     { name: 'OLLAMA_BASE_URL', value: embedding.ollamaUrl ?? OLLAMA_BASE_URL },
     { name: 'EMBEDDING_MODEL', value: embedding.model },
     { name: 'EMBEDDING_DIMENSIONS', value: String(embedding.dimensions ?? 768) },
+    // Shared control-plane token gating every route except /health. The manager
+    // is the only legitimate caller; this Secret is deliberately not projected
+    // into run pods, so an agent that reaches :4100 still cannot read or poison
+    // a project's memories. optional: true keeps dev clusters working.
+    {
+      name: 'MCP_TOKEN',
+      valueFrom: { secretKeyRef: { name: 'manager-mcp-token', key: 'token', optional: true } },
+    },
   ];
 
   const labels = {

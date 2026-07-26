@@ -13,6 +13,7 @@
 //   WARMUP_TIMEOUT_MS    — Max warmup time in ms (default 300000 = 5 min)
 //   WARMUP_MAX_RETRIES   — Retry count for transient failures (default 6)
 
+import { timingSafeEqual } from 'node:crypto';
 import { isModelReady, warmupModel } from './model-warmup.js';
 import {
   handleContext,
@@ -27,6 +28,8 @@ import {
 } from './routes.js';
 
 const PORT = parseInt(process.env.MEMORY_SERVICE_PORT ?? '4100', 10);
+// Shared control-plane token (manager-mcp-token Secret). Empty = dev mode.
+const MCP_TOKEN = process.env.MCP_TOKEN ?? '';
 
 process.on('unhandledRejection', (reason) => {
   console.error(`[memory] unhandledRejection:`, reason);
@@ -56,10 +59,39 @@ function parseBody(req: Request): Promise<Record<string, unknown>> {
   });
 }
 
+/**
+ * Bearer check for every route except /health.
+ *
+ * The service used to be completely unauthenticated on a flat pod network, so
+ * anything that could reach :4100 could read, poison or wipe a project's
+ * memories — and stored memories are injected verbatim into worker prompts as
+ * "RELEVANT PROJECT CONTEXT", making a write here prompt injection into the
+ * orchestration loop.
+ *
+ * MCP_TOKEN is the shared control-plane token (manager-mcp-token Secret). The
+ * manager is the only legitimate caller, and that Secret is deliberately not
+ * projected into run pods, so an agent cannot authenticate even if it reaches
+ * the port. When no token is configured the check is skipped, matching the
+ * dev-mode behaviour of the manager MCP server and the web dashboard.
+ */
+function isAuthorized(req: Request): boolean {
+  if (!MCP_TOKEN) return true;
+  const header = req.headers.get('authorization') ?? '';
+  const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
+  const a = Buffer.from(provided);
+  const b = Buffer.from(MCP_TOKEN);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 async function handler(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
   const method = req.method;
+
+  // /health stays open so kubelet probes work without wiring the token in.
+  if (path !== '/health' && !isAuthorized(req)) {
+    return json({ error: 'unauthorized' }, 401);
+  }
 
   try {
     // GET /health

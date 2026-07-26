@@ -26,6 +26,7 @@ const {
   handleGetMemory,
   handleUpdateMemory,
   handleDeleteMemory,
+  inTransaction,
 } = await import('../routes.js');
 const { getRawDb } = await import('../db.js');
 
@@ -526,5 +527,55 @@ describe('handleDeleteMemory', () => {
     const s2 = await handleSearch({ query: 'second', limit: 10 });
     expect(s2.length).toBeGreaterThanOrEqual(1);
     expect(s2[0]!.content).toBe('second');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Transaction safety
+//
+// Every write path used to BEGIN and COMMIT with no ROLLBACK. A failure in
+// between left the connection inside an open transaction, so the next BEGIN
+// threw "cannot start a transaction within a transaction" and all further
+// writes were wedged until the pod restarted. handleUpdateMemory made that
+// reachable in normal operation because it awaited the Ollama embedding call
+// while the transaction was open.
+
+describe('inTransaction', () => {
+  it('commits the work when the callback succeeds', async () => {
+    const raw = getRawDb();
+    const stored = await handleStoreMemory({ content: 'commit me' });
+    inTransaction(raw, () => {
+      raw.prepare('UPDATE memories SET content = ? WHERE id = ?').run('committed', stored.id);
+    });
+    const row = raw.prepare('SELECT content FROM memories WHERE id = ?').get(stored.id) as {
+      content: string;
+    };
+    expect(row.content).toBe('committed');
+  });
+
+  it('rolls back on failure and leaves the connection usable', async () => {
+    const raw = getRawDb();
+    const stored = await handleStoreMemory({ content: 'original' });
+
+    expect(() =>
+      inTransaction(raw, () => {
+        raw.prepare('UPDATE memories SET content = ? WHERE id = ?').run('half-written', stored.id);
+        throw new Error('embedding failed');
+      }),
+    ).toThrow('embedding failed');
+
+    // The partial write must be undone...
+    const row = raw.prepare('SELECT content FROM memories WHERE id = ?').get(stored.id) as {
+      content: string;
+    };
+    expect(row.content).toBe('original');
+
+    // ...and, critically, the connection must not be stuck mid-transaction:
+    // this is the assertion that fails if ROLLBACK is missing.
+    expect(() => inTransaction(raw, () => raw.prepare('SELECT 1').get())).not.toThrow();
+
+    // A normal write still works afterwards.
+    const after = await handleStoreMemory({ content: 'after rollback' });
+    expect(after.id).toBeTruthy();
   });
 });

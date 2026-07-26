@@ -5,8 +5,22 @@
 // running on port 4100.
 
 import { MEMORY_SERVICE_PORT } from '@percussionist/api';
+import { MCP_TOKEN } from './config.js';
 
 const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
+
+/**
+ * Headers for calls to a memory service.
+ *
+ * The service authenticates every route except /health against the shared
+ * control-plane token, so the manager must present it. Omitted when no token is
+ * configured, which the service treats as dev mode.
+ */
+function memoryHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (MCP_TOKEN) headers.Authorization = `Bearer ${MCP_TOKEN}`;
+  return headers;
+}
 
 function memoryServiceUrl(project: string): string {
   return `http://memory-${project}.${NAMESPACE}.svc.cluster.local:${MEMORY_SERVICE_PORT}`;
@@ -24,7 +38,7 @@ export async function storeMemory(
   const url = `${memoryServiceUrl(project)}/memory`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: memoryHeaders(),
     body: JSON.stringify({ content, metadata, agentRun }),
     signal: AbortSignal.timeout(30_000),
   });
@@ -56,7 +70,7 @@ export async function queryMemory(
   const url = `${memoryServiceUrl(project)}/search`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: memoryHeaders(),
     body: JSON.stringify({ query, limit: limit ?? 10 }),
     signal: AbortSignal.timeout(30_000),
   });
@@ -80,7 +94,7 @@ export async function getContext(
   const url = `${memoryServiceUrl(project)}/context`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: memoryHeaders(),
     body: JSON.stringify({ query, task }),
     signal: AbortSignal.timeout(30_000),
   });
@@ -114,7 +128,7 @@ export async function listMemories(
 
   const res = await fetch(url.toString(), {
     method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
+    headers: memoryHeaders(),
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
@@ -133,7 +147,7 @@ export async function getMemory(project: string, id: string): Promise<MemorySear
   const url = `${memoryServiceUrl(project)}/memory/${encodeURIComponent(id)}`;
   const res = await fetch(url, {
     method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
+    headers: memoryHeaders(),
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
@@ -161,7 +175,7 @@ export async function updateMemory(
   const url = `${memoryServiceUrl(project)}/memory/${encodeURIComponent(id)}`;
   const res = await fetch(url, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: memoryHeaders(),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(30_000),
   });
@@ -181,7 +195,7 @@ export async function deleteMemory(project: string, id: string): Promise<{ delet
   const url = `${memoryServiceUrl(project)}/memory/${encodeURIComponent(id)}`;
   const res = await fetch(url, {
     method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
+    headers: memoryHeaders(),
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {

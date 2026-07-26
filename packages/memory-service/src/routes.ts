@@ -2,6 +2,35 @@ import { randomUUID } from 'node:crypto';
 import { getDb, getRawDb } from './db.js';
 import { getEmbedding } from './embed.js';
 
+/**
+ * Run `fn` inside a SQLite transaction, rolling back if it throws.
+ *
+ * Every write path used to BEGIN and COMMIT with no ROLLBACK, so any failure
+ * in between left the connection inside an open transaction. The next BEGIN
+ * then failed with "cannot start a transaction within a transaction" and every
+ * subsequent write was wedged until the pod restarted.
+ *
+ * `fn` must be synchronous: SQLite holds the write lock for the life of the
+ * transaction, so awaiting anything here (an embedding call, say) blocks all
+ * other writers for the duration of that round-trip.
+ */
+export function inTransaction<T>(raw: ReturnType<typeof getRawDb>, fn: () => T): T {
+  raw.run('BEGIN TRANSACTION');
+  try {
+    const result = fn();
+    raw.run('COMMIT');
+    return result;
+  } catch (e) {
+    try {
+      raw.run('ROLLBACK');
+    } catch {
+      // Rolling back a transaction that already aborted is not itself fatal;
+      // surface the original error instead.
+    }
+    throw e;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Request / Response types
 
@@ -103,15 +132,15 @@ export async function handleStoreMemory(body: StoreMemoryRequest): Promise<Store
   // resets the memories rowid counter but not the vec_memories counter)
   // causes the two sequences to desync and search to silently return wrong
   // content.
-  raw.run('BEGIN TRANSACTION');
-  raw
-    .prepare('INSERT INTO memories (id, content, metadata, agent_run) VALUES (?, ?, ?, ?)')
-    .run(id, body.content, JSON.stringify(body.metadata ?? {}), body.agentRun ?? null);
-  const rid = (raw.prepare('SELECT last_insert_rowid() AS rid').get() as { rid: number }).rid;
-  raw
-    .prepare('INSERT INTO vec_memories (rowid, embedding) VALUES (?, ?)')
-    .run(rid, new Uint8Array(embedding.buffer));
-  raw.run('COMMIT');
+  inTransaction(raw, () => {
+    raw
+      .prepare('INSERT INTO memories (id, content, metadata, agent_run) VALUES (?, ?, ?, ?)')
+      .run(id, body.content, JSON.stringify(body.metadata ?? {}), body.agentRun ?? null);
+    const rid = (raw.prepare('SELECT last_insert_rowid() AS rid').get() as { rid: number }).rid;
+    raw
+      .prepare('INSERT INTO vec_memories (rowid, embedding) VALUES (?, ?)')
+      .run(rid, new Uint8Array(embedding.buffer));
+  });
 
   return { id };
 }
@@ -281,9 +310,14 @@ export async function handleUpdateMemory(
 
   const needsEmbeddingUpdate = body.content !== undefined && body.content !== existing.content;
 
-  raw.run('BEGIN TRANSACTION');
+  // Embed BEFORE opening the transaction. Doing it inside held the SQLite
+  // write lock across a network round-trip to Ollama (up to its 30s timeout),
+  // blocking every other writer for the duration — and a failure there left
+  // the transaction open.
+  const newEmbedding = needsEmbeddingUpdate
+    ? await getEmbedding(body.content as string)
+    : undefined;
 
-  // Update memories row
   const updates: string[] = [];
   const params: (string | number)[] = [];
 
@@ -296,20 +330,18 @@ export async function handleUpdateMemory(
     params.push(JSON.stringify(body.metadata));
   }
 
-  if (updates.length > 0) {
-    params.push(id);
-    raw.prepare(`UPDATE memories SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  }
-
-  // If content changed, update the embedding vector row by matched rowid
-  if (needsEmbeddingUpdate) {
-    const newEmbedding = await getEmbedding(body.content as string);
-    raw
-      .prepare('UPDATE vec_memories SET embedding = ? WHERE rowid = ?')
-      .run(new Uint8Array(newEmbedding.buffer), existing.rowid);
-  }
-
-  raw.run('COMMIT');
+  inTransaction(raw, () => {
+    if (updates.length > 0) {
+      params.push(id);
+      raw.prepare(`UPDATE memories SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    }
+    // If content changed, update the embedding vector row by matched rowid
+    if (newEmbedding) {
+      raw
+        .prepare('UPDATE vec_memories SET embedding = ? WHERE rowid = ?')
+        .run(new Uint8Array(newEmbedding.buffer), existing.rowid);
+    }
+  });
 
   // Re-read the updated row to return it
   const updatedRow = raw
@@ -347,10 +379,10 @@ export async function handleDeleteMemory(id: string): Promise<DeleteMemoryRespon
   }
 
   // Delete from both tables atomically using the resolved rowid
-  raw.run('BEGIN TRANSACTION');
-  raw.prepare('DELETE FROM vec_memories WHERE rowid = ?').run(existing.rowid);
-  raw.prepare('DELETE FROM memories WHERE id = ?').run(id);
-  raw.run('COMMIT');
+  inTransaction(raw, () => {
+    raw.prepare('DELETE FROM vec_memories WHERE rowid = ?').run(existing.rowid);
+    raw.prepare('DELETE FROM memories WHERE id = ?').run(id);
+  });
 
   return { deleted: true };
 }
