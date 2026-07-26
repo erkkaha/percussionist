@@ -6,7 +6,7 @@
 //
 //   pnpm --filter @percussionist/web gen:icons
 //
-// Two variants are produced:
+// Three variants are produced:
 //   - icon-{192,512}.png          — the favicon as-is (rounded rect, purpose "any")
 //   - icon-maskable-{192,512}.png — full-bleed background with the artwork
 //     scaled into the maskable safe zone (center 80%), for Android launchers
@@ -14,6 +14,11 @@
 //   - apple-touch-icon.png        — 180×180 full-bleed; iOS applies its own
 //     corner rounding and renders transparency as black, so the rounded-rect
 //     favicon can't be used directly
+//   - badge-96.png                — notification badge (Android status bar).
+//     Android uses ONLY the alpha channel — colors are discarded and opaque
+//     pixels become a flat silhouette — so this is the drum shapes alone,
+//     white on transparent. A colored/full-bleed icon here renders as a solid
+//     grey rectangle.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -35,6 +40,19 @@ const fullBleed = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <g transform="translate(6.4 6.4) scale(0.8)">${favicon.replace(/<\/?svg[^>]*>/g, '')}</g>
 </svg>`;
 
+// Silhouette for the notification badge, all white, no background — only the
+// alpha channel matters (see header note). Not the favicon geometry: at
+// status-bar size the favicon's drum and sticks merge into one blob, so this
+// uses a smaller drum with the sticks crossing prominently above it.
+const badge = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <ellipse cx="32" cy="44" rx="17" ry="11" fill="#fff"/>
+  <ellipse cx="32" cy="35" rx="17" ry="6" fill="#fff"/>
+  <line x1="19" y1="50" x2="41" y2="11" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+  <line x1="45" y1="50" x2="23" y2="11" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="41" cy="11" r="4.5" fill="#fff"/>
+  <circle cx="23" cy="11" r="4.5" fill="#fff"/>
+</svg>`;
+
 function render(svg, size, outFile) {
   const png = new Resvg(svg, { fitTo: { mode: 'width', value: size } }).render().asPng();
   writeFileSync(path.join(publicDir, outFile), png);
@@ -46,3 +64,4 @@ render(favicon, 512, 'icon-512.png');
 render(fullBleed, 192, 'icon-maskable-192.png');
 render(fullBleed, 512, 'icon-maskable-512.png');
 render(fullBleed, 180, 'apple-touch-icon.png');
+render(badge, 96, 'badge-96.png');

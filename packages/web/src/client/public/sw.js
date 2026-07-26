@@ -14,7 +14,7 @@
 //      (VAPID subscription + dispatch) lands separately; until then no push
 //      events ever arrive and the handlers are inert.
 
-// Version: 1 — bump this comment on behaviour changes; the browser re-installs
+// Version: 2 — bump this comment on behaviour changes; the browser re-installs
 // the worker whenever the file's bytes differ.
 
 self.addEventListener('install', () => {
@@ -49,7 +49,9 @@ self.addEventListener('push', (event) => {
       body,
       tag,
       icon: '/icon-192.png',
-      badge: '/icon-maskable-192.png',
+      // Android status-bar icon: alpha-only silhouette. A colored icon here
+      // masks to a solid grey rectangle.
+      badge: '/badge-96.png',
       data: { url },
     }),
   );
