@@ -82,39 +82,47 @@ mock.module(path.resolve('src/client/lib/code-server-url'), () => ({
 }));
 
 // Mock child components to avoid deep rendering and Radix/complex deps.
-// Each maps to a plain HTML element so the parent structure stays intact.
+// Each maps to a function component that discards props, so React does not
+// emit "Unknown event handler property" or "React does not recognize the X
+// prop on a DOM element" warnings.
 mock.module(path.resolve('src/client/components/board/BoardHeader'), () => ({
-  BoardHeader: 'div',
+  BoardHeader: () => React.createElement('div'),
   default: {},
 }));
 
 mock.module(path.resolve('src/client/components/board/FindingsPanel'), () => ({
-  default: 'div',
-  FindingsPanel: 'div',
+  default: () => React.createElement('div'),
+  FindingsPanel: () => React.createElement('div'),
 }));
 
 mock.module(path.resolve('src/client/components/board/TaskDetailPanel'), () => ({
-  TaskDetailPanel: 'div',
-  TaskDetailEmpty: 'div',
+  TaskDetailPanel: () => React.createElement('div'),
+  TaskDetailEmpty: () => React.createElement('div'),
 }));
 
 mock.module(path.resolve('src/client/components/board/TaskListPanel'), () => ({
-  default: 'div',
-  TaskListPanel: 'div',
+  default: () => React.createElement('div'),
+  TaskListPanel: () => React.createElement('div'),
 }));
 
 mock.module(path.resolve('src/client/components/board/AddTaskForm'), () => ({
-  AddTaskForm: 'div',
+  AddTaskForm: () => React.createElement('div'),
   default: {},
 }));
 
-// Mock Radix Sheet UI components as plain divs.
+// Mock Radix Sheet UI components as function components that render their
+// children (if any) and discard unknown props, avoiding React DOM warnings.
 mock.module(path.resolve('src/client/components/ui/sheet'), () => ({
-  Sheet: 'div',
-  SheetContent: 'div',
-  SheetDescription: 'div',
-  SheetHeader: 'div',
-  SheetTitle: 'div',
+  Sheet: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children),
+  SheetContent: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement('div', null, children),
+  SheetDescription: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement('div', null, children),
+  SheetHeader: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement('div', null, children),
+  SheetTitle: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement('div', null, children),
 }));
 
 // ---------------------------------------------------------------------------
