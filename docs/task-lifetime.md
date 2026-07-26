@@ -169,7 +169,7 @@ Terminal. Manager never touches it again. Task CR persists until the parent Proj
 
 ## Feature Branching
 
-When `Project.spec.featureBranchingEnabled: true`, every task gets its own branch. The workspace-init init container creates it from `parentRef` if it doesn't exist yet. A worktree is placed at `/data/worktrees/{run-name}/`. Retries reuse the branch — the agent picks up where it left off. When a BUILD task is approved, a merge run merges its branch into the parent PLAN branch and sets `worker.mergedAt`. The next BUILD in sequence only starts after `mergedAt` is set, so each BUILD sees its predecessor's committed code.
+When `Project.spec.featureBranchingEnabled: true`, every task gets its own branch. The workspace-init init container creates it from `parentRef` if it doesn't exist yet. A worktree is placed at `/data/worktrees/{run-name}/` and surfaced to the runner container as `/workspace` via a subPath mount, which is also the agent's working directory — agent prompts should say `/workspace`, not the `/data` path. Retries reuse the branch — the agent picks up where it left off. When a BUILD task is approved, a merge run merges its branch into the parent PLAN branch and sets `worker.mergedAt`. The next BUILD in sequence only starts after `mergedAt` is set, so each BUILD sees its predecessor's committed code.
 
 When all BUILD tasks under a PLAN are done, the PLAN transitions to `awaiting-feature-merge` (if `flow.integration.mode === "auto-merge"`). A merge run merges the PLAN's feature branch (`feature/{plan-id}`) into the project's default git ref (`project.spec.source.git.ref ?? "main"`). On success the PLAN reaches `done` with `worker.mergedAt` set.
 
