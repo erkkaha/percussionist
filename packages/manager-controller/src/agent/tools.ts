@@ -524,6 +524,11 @@ const TOOLS = [
           type: 'string',
           description: 'Namespace (optional, defaults to percussionist)',
         },
+        skipSanitization: {
+          type: 'boolean',
+          description:
+            'Skip shell injection sanitization (default: false). Only honored for callers authenticated with the MCP bearer token (the web backend); loopback/sidecar callers are always sanitized.',
+        },
       },
       required: ['project', 'command'],
     },
@@ -1060,7 +1065,25 @@ async function deleteRunsForTask(
   return deletedNames;
 }
 
-async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+/**
+ * Per-request trust context threaded from the HTTP layer into tool handlers.
+ *
+ * `trustedBearer` is true only when the caller presented the MCP bearer token
+ * (or the deployment runs in no-auth dev mode). The loopback exemption in
+ * isAuthorizedMcpRequest does NOT set it — the same-pod opencode sidecar runs
+ * AI-generated commands and must never bypass command sanitization.
+ */
+export interface McpCallContext {
+  trustedBearer: boolean;
+}
+
+const UNTRUSTED_CONTEXT: McpCallContext = { trustedBearer: false };
+
+async function callTool(
+  name: string,
+  args: Record<string, unknown>,
+  ctx: McpCallContext = UNTRUSTED_CONTEXT,
+): Promise<unknown> {
   switch (name) {
     case 'inspect_cr': {
       const kind = String(args.kind ?? '');
@@ -1952,14 +1975,36 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 
       if (!command) throw new Error('command is required');
 
-      // Sanitization is always enforced — there is no caller-controlled bypass.
-      const commandValidation = sanitizeCommand(command);
-      if (commandValidation) {
+      // The bypass exists for trusted backend-generated scripts (the web
+      // dashboard's task-diff route legitimately uses $(), pipes and newlines).
+      // It is honored only when the caller authenticated with the MCP bearer
+      // token; the loopback-exempt sidecar and unauthenticated callers are
+      // always sanitized.
+      const skipSanitization = args.skipSanitization === true;
+      if (skipSanitization && !ctx.trustedBearer) {
         logSecurityEvent('exec_in_workspace.rejected', {
           project: projectName,
-          reason: commandValidation,
+          reason: 'skipSanitization requires bearer-token authentication',
         });
-        throw new Error(commandValidation);
+        throw new Error(
+          'skipSanitization is only honored for callers authenticated with the MCP bearer token',
+        );
+      }
+
+      if (skipSanitization) {
+        logSecurityEvent('exec_in_workspace.sanitization_bypassed', {
+          project: projectName,
+          commandLength: command.length,
+        });
+      } else {
+        const commandValidation = sanitizeCommand(command);
+        if (commandValidation) {
+          logSecurityEvent('exec_in_workspace.rejected', {
+            project: projectName,
+            reason: commandValidation,
+          });
+          throw new Error(commandValidation);
+        }
       }
 
       const result = await execInWorkspace(projectName, command, mountPath, timeoutMs, resourceNs);
@@ -2661,7 +2706,10 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 // ---------------------------------------------------------------------------
 // MCP handler
 
-function handleMcp(req: JsonRpcRequest): JsonRpcResponse | Promise<JsonRpcResponse> {
+function handleMcp(
+  req: JsonRpcRequest,
+  ctx: McpCallContext = UNTRUSTED_CONTEXT,
+): JsonRpcResponse | Promise<JsonRpcResponse> {
   switch (req.method) {
     case 'initialize':
       return ok(req.id, {
@@ -2681,7 +2729,7 @@ function handleMcp(req: JsonRpcRequest): JsonRpcResponse | Promise<JsonRpcRespon
       const toolArgs = (req.params?.arguments ?? {}) as Record<string, unknown>;
       return (async () => {
         try {
-          const result = await callTool(toolName, toolArgs);
+          const result = await callTool(toolName, toolArgs, ctx);
           return ok(req.id, {
             content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
           });
@@ -2728,15 +2776,9 @@ export interface McpServer {
  * cluster access: `kubectl port-forward` traffic arrives on the pod's loopback
  * interface (that is how `beatctl chat` reaches the chat port).
  */
-function isAuthorizedMcpRequest(req: IncomingMessage): boolean {
-  // Same-pod callers (the opencode-web sidecar via 127.0.0.1) are always
-  // allowed — the token is only meaningful across the pod boundary.
-  const remote = req.socket.remoteAddress ?? '';
-  if (remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1') {
-    return true;
-  }
+function presentsValidMcpToken(req: IncomingMessage): boolean {
   // No token configured → the whole deployment is in no-auth dev mode (same
-  // semantics as the web dashboard's AUTH_DISABLED); don't block cross-pod calls.
+  // semantics as the web dashboard's AUTH_DISABLED); treat callers as trusted.
   if (!MCP_TOKEN) return true;
 
   const header = req.headers.authorization ?? '';
@@ -2744,6 +2786,16 @@ function isAuthorizedMcpRequest(req: IncomingMessage): boolean {
   const a = Buffer.from(provided);
   const b = Buffer.from(MCP_TOKEN);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function isAuthorizedMcpRequest(req: IncomingMessage): boolean {
+  // Same-pod callers (the opencode-web sidecar via 127.0.0.1) are always
+  // allowed — the token is only meaningful across the pod boundary.
+  const remote = req.socket.remoteAddress ?? '';
+  if (remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1') {
+    return true;
+  }
+  return presentsValidMcpToken(req);
 }
 
 export function startMcpServer(): Promise<McpServer> {
@@ -2764,6 +2816,11 @@ export function startMcpServer(): Promise<McpServer> {
         return;
       }
 
+      // Loopback callers are authorized above without a token, but only a
+      // presented bearer token (or no-auth dev mode) grants trusted status —
+      // trust gates the exec_in_workspace sanitization bypass.
+      const ctx: McpCallContext = { trustedBearer: presentsValidMcpToken(req) };
+
       readBody(req)
         .then(async (body) => {
           let rpc: JsonRpcRequest;
@@ -2776,13 +2833,13 @@ export function startMcpServer(): Promise<McpServer> {
           }
 
           if (rpc.id === undefined || rpc.id === null) {
-            handleMcp(rpc);
+            handleMcp(rpc, ctx);
             res.writeHead(202);
             res.end();
             return;
           }
 
-          const response = await Promise.resolve(handleMcp(rpc));
+          const response = await Promise.resolve(handleMcp(rpc, ctx));
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(response));
         })
