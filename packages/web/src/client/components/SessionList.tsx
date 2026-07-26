@@ -231,7 +231,10 @@ export default function SessionList() {
       {/* Sessions table */}
       {!isLoading && data && data.total > 0 && (
         <>
-          <div className="rounded-lg border border-border overflow-x-auto">
+          <div
+            className="rounded-lg border border-border overflow-x-auto"
+            data-testid="sessions-table-wrapper"
+          >
             <table className="w-full min-w-[640px] text-sm" aria-label="Session runs">
               <thead>
                 <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
