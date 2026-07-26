@@ -232,7 +232,7 @@ export default function SessionList() {
       {!isLoading && data && data.total > 0 && (
         <>
           <div className="rounded-lg border border-border overflow-x-auto">
-            <table className="w-full text-sm" aria-label="Session runs">
+            <table className="w-full min-w-[640px] text-sm" aria-label="Session runs">
               <thead>
                 <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
                   <th className="px-4 py-2.5 font-medium">Name</th>
@@ -246,48 +246,47 @@ export default function SessionList() {
               </thead>
               <tbody className="divide-y divide-border-muted">
                 {data.sessions.map((s) => (
-                  <Link
-                    key={s.id}
-                    to={`/sessions/${encodeURIComponent(s.name)}`}
-                    className="block hover:bg-surface-raised/60 transition-colors"
-                  >
-                    <tr className="focus:outline-none">
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-text flex items-center gap-2">
+                  <tr key={s.id} className="hover:bg-surface-raised/60 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-text flex items-center gap-2">
+                        <Link
+                          to={`/sessions/${encodeURIComponent(s.name)}`}
+                          className="hover:text-white underline-offset-2 hover:underline"
+                        >
                           {s.name}
+                        </Link>
+                      </div>
+                      {s.task && (
+                        <div
+                          className="text-xs text-text-dim mt-0.5 truncate max-w-xs"
+                          title={s.task}
+                        >
+                          {s.task}
                         </div>
-                        {s.task && (
-                          <div
-                            className="text-xs text-text-dim mt-0.5 truncate max-w-xs"
-                            title={s.task}
-                          >
-                            {s.task}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge phase={s.phase as string | undefined} />
-                      </td>
-                      <td
-                        className="px-4 py-3 text-text-muted font-mono text-xs max-w-[160px] truncate"
-                        title={resolveModel(s)}
-                      >
-                        {resolveModel(s)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <TokenCounter tokensIn={s.tokensIn} tokensOut={s.tokensOut} />
-                      </td>
-                      <td className="px-4 py-3 text-text-muted tabular-nums font-mono text-xs">
-                        {fmtCost(s.cost)}
-                      </td>
-                      <td className="px-4 py-3 text-text-muted tabular-nums">
-                        {fmtDuration(durationMs(s))}
-                      </td>
-                      <td className="px-4 py-3 text-text-muted tabular-nums">
-                        {fmtAge(s.startedAt)}
-                      </td>
-                    </tr>
-                  </Link>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge phase={s.phase as string | undefined} />
+                    </td>
+                    <td
+                      className="px-4 py-3 text-text-muted font-mono text-xs max-w-[160px] truncate"
+                      title={resolveModel(s)}
+                    >
+                      {resolveModel(s)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <TokenCounter tokensIn={s.tokensIn} tokensOut={s.tokensOut} />
+                    </td>
+                    <td className="px-4 py-3 text-text-muted tabular-nums font-mono text-xs">
+                      {fmtCost(s.cost)}
+                    </td>
+                    <td className="px-4 py-3 text-text-muted tabular-nums">
+                      {fmtDuration(durationMs(s))}
+                    </td>
+                    <td className="px-4 py-3 text-text-muted tabular-nums">
+                      {fmtAge(s.startedAt)}
+                    </td>
+                  </tr>
                 ))}
               </tbody>
             </table>
