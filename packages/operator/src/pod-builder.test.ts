@@ -17,10 +17,11 @@ import { describe, expect, it } from 'bun:test';
 import {
   CLAUDE_RUNNER_DEFAULTS,
   deriveEngine,
+  OPENCODE_RUNNER_DEFAULTS,
   type Run,
   runnerDefaultsFor,
 } from '@percussionist/api';
-import { renderPod } from './pod-builder.js';
+import { renderPod, resolveAuthSecretKey } from './pod-builder.js';
 
 // Helper to create a minimal Run CR with all required fields
 function makeRun(overrides: Partial<Run> = {}): Run {
@@ -628,5 +629,45 @@ describe('renderPod - engine from model prefix', () => {
     run.spec.engine = 'opencode';
     run.spec.model = 'claude-code/claude-opus-5';
     expect(runnerImage(run)).toBe(CRD_DEFAULT);
+  });
+});
+
+// authSecret.key is CRD-defaulted to opencode's `auth.json`, so it is never
+// absent. A claude Secret holds a raw token under CLAUDE_CODE_OAUTH_TOKEN, and
+// mounting `auth.json` fails the pod with CreateContainerConfigError — which is
+// exactly how the first board-dispatched claude run died.
+describe('resolveAuthSecretKey', () => {
+  it('keeps auth.json for the opencode engine', () => {
+    expect(resolveAuthSecretKey('auth.json', 'opencode', OPENCODE_RUNNER_DEFAULTS)).toBe(
+      'auth.json',
+    );
+    expect(resolveAuthSecretKey(undefined, 'opencode', OPENCODE_RUNNER_DEFAULTS)).toBe('auth.json');
+  });
+
+  it('replaces the CRD-defaulted auth.json with the engine auth env var', () => {
+    expect(resolveAuthSecretKey('auth.json', 'claude', CLAUDE_RUNNER_DEFAULTS)).toBe(
+      'CLAUDE_CODE_OAUTH_TOKEN',
+    );
+  });
+
+  it('uses the engine auth env var when no key is given', () => {
+    expect(resolveAuthSecretKey(undefined, 'claude', CLAUDE_RUNNER_DEFAULTS)).toBe(
+      'CLAUDE_CODE_OAUTH_TOKEN',
+    );
+  });
+
+  it('respects a genuinely custom key', () => {
+    expect(resolveAuthSecretKey('my-token', 'claude', CLAUDE_RUNNER_DEFAULTS)).toBe('my-token');
+  });
+
+  it('mounts the token key for a board-style run that never set one', () => {
+    const run = makeRun();
+    run.spec.model = 'claude-code/claude-opus-5';
+    // Shaped like what the manager writes: the CRD default fills in the key.
+    run.spec.secrets = { authSecret: { name: 'claude-oat', key: 'auth.json' } };
+    const pod = renderPod(run, [], [], runnerDefaultsFor(deriveEngine(run.spec)));
+    const env = pod.spec?.containers?.find((c) => c.name !== 'dispatcher')?.env ?? [];
+    const ref = env.find((e) => e.name === 'CLAUDE_CODE_OAUTH_TOKEN')?.valueFrom?.secretKeyRef;
+    expect(ref?.key).toBe('CLAUDE_CODE_OAUTH_TOKEN');
   });
 });

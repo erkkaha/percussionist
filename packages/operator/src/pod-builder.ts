@@ -13,6 +13,7 @@ import {
   OPENCODE_RUNNER_DEFAULTS,
   RUNNER_CONTAINER,
   type Run,
+  type RunnerEngine,
   type RunnerImageSpec,
   type SidecarSpec,
   type SshHostKeyVerificationMode,
@@ -165,6 +166,33 @@ export function renderService(
       ],
     },
   };
+}
+
+/** opencode's auth blob key, and the CRD-level default for `authSecret.key`. */
+const OPENCODE_AUTH_SECRET_KEY = 'auth.json';
+
+/**
+ * Resolve which key of the auth Secret to mount.
+ *
+ * This is the `spec.image` trap again: the CRD defaults `authSecret.key` to
+ * opencode's `auth.json`, so the field is never actually absent and the opencode
+ * key would always win — including on a Secret that holds a raw subscription
+ * token under `CLAUDE_CODE_OAUTH_TOKEN`. The pod then fails to start with
+ * "couldn't find key auth.json in Secret", and any write that omits the field
+ * (the dashboard's project editor, for one) silently reintroduces it.
+ *
+ * For a non-default engine, `auth.json` therefore cannot be meant literally: an
+ * opencode auth blob carries nothing that engine can use. Fall back to the
+ * engine's own auth env var, which is the key such a Secret is created under. A
+ * genuinely custom key is still respected.
+ */
+export function resolveAuthSecretKey(
+  key: string | undefined,
+  engine: RunnerEngine,
+  runner: RunnerImageSpec,
+): string {
+  if (engine === DEFAULT_RUNNER_ENGINE) return key ?? OPENCODE_AUTH_SECRET_KEY;
+  return !key || key === OPENCODE_AUTH_SECRET_KEY ? runner.authEnvVar : key;
 }
 
 export function renderAgentsConfigMap(run: Run, agents: AgentDef[]): object {
@@ -833,7 +861,7 @@ export function renderPod(
                     valueFrom: {
                       secretKeyRef: {
                         name: spec.secrets.authSecret.name,
-                        key: spec.secrets.authSecret.key ?? 'auth.json',
+                        key: resolveAuthSecretKey(spec.secrets.authSecret.key, engine, runner),
                       },
                     },
                   },
