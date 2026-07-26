@@ -1,7 +1,7 @@
 // BoardHeader.tsx — project info, metrics badge, code-server, findings, and Add Task button.
 
 import type { Finding } from '@percussionist/api';
-import { Bug, Code2 } from 'lucide-react';
+import { Bug, Code2, Plus, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { ManagerMetrics } from '../../lib/types';
 import { Button } from '../ui/button';
@@ -95,8 +95,9 @@ export function BoardHeader({
               Findings{findings && findings.length > 0 ? ` (${findings.length})` : ''}
             </span>
           </Button>
-          <Button onClick={onAddTask} variant="secondary" size="sm">
-            {showAddTask ? 'Cancel' : '+ Add Task'}
+          <Button onClick={onAddTask} variant="secondary" size="sm" className="gap-1">
+            {showAddTask ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+            <span className="hidden sm:inline">{showAddTask ? 'Cancel' : '+ Add Task'}</span>
           </Button>
         </div>
       </div>

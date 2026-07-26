@@ -236,4 +236,16 @@ describe('BoardHeader mobile compact mode', () => {
     await renderHeader({ isMobile: true, codeServerUrl: undefined });
     expect(screen.queryByTitle('Open code-server workspace')).toBeNull();
   });
+
+  it('renders Plus icon in Add Task button on mobile', async () => {
+    await renderHeader({ isMobile: true, showAddTask: false });
+    const btn = screen.getByText('+ Add Task').closest('button');
+    expect(btn?.querySelector('svg')).toBeTruthy();
+  });
+
+  it('renders X icon in Cancel button on mobile', async () => {
+    await renderHeader({ isMobile: true, showAddTask: true });
+    const btn = screen.getByText('Cancel').closest('button');
+    expect(btn?.querySelector('svg')).toBeTruthy();
+  });
 });
