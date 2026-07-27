@@ -177,8 +177,17 @@ export class TranscriptBuilder {
    */
   constructor(private sessionIdOverride?: string) {}
 
-  /** Feed one SDK message. Unknown/among-many control messages are ignored. */
-  push(raw: unknown): void {
+  /**
+   * Feed one SDK message. Unknown/among-many control messages are ignored.
+   *
+   * `suppressError` keeps an errored `result` out of `info.error` while its
+   * turn is being retried. polling.ts fails the run the moment it sees that
+   * field on the last message, so recording a transient error the session is
+   * about to recover from would kill the run from the transcript alone. The
+   * step-finish part, tokens and cost are still recorded — the attempt did
+   * happen and was billed.
+   */
+  push(raw: unknown, opts?: { suppressError?: boolean }): void {
     const msg = raw as SdkMessageLike;
     switch (msg.type) {
       case 'assistant':
@@ -188,7 +197,7 @@ export class TranscriptBuilder {
         this.pushUser(msg);
         break;
       case 'result':
-        this.pushResult(msg);
+        this.pushResult(msg, opts?.suppressError === true);
         break;
       default:
         // system/init, status, retry, hook and partial-message events carry no
@@ -334,7 +343,7 @@ export class TranscriptBuilder {
    * boundaries from `step-finish` parts, and the run's cost/token totals from
    * the assistant message's `info`, so both are filled here.
    */
-  private pushResult(msg: SdkMessageLike): void {
+  private pushResult(msg: SdkMessageLike, suppressError = false): void {
     const now = Date.now();
     const tokens = mapTokens(msg.usage);
 
@@ -370,7 +379,7 @@ export class TranscriptBuilder {
     if (tail && tail !== target) {
       tail.info.time = { ...tail.info.time, completed: now };
     }
-    if (msg.is_error) {
+    if (msg.is_error && !suppressError) {
       target.info.error = {
         message: msg.result ?? 'run failed',
         status: msg.api_error_status ?? undefined,

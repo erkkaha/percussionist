@@ -210,6 +210,54 @@ describe('TranscriptBuilder', () => {
     });
   });
 
+  // polling.ts fails a run the instant it sees info.error on the last message.
+  // A turn the session is about to retry must therefore leave that field alone,
+  // or a recoverable 529 kills the run from the transcript regardless of the
+  // retry succeeding.
+  test('suppressError keeps a retried turn out of info.error', () => {
+    const b = new TranscriptBuilder(SESSION);
+    b.push(assistant([{ type: 'text', text: 'partial' }]));
+    b.push(
+      {
+        type: 'result',
+        subtype: 'error_during_execution',
+        uuid: 'res-1',
+        session_id: 'x',
+        is_error: true,
+        result: 'API Error: 529 Overloaded',
+        api_error_status: 529,
+        stop_reason: null,
+        usage: { input_tokens: 3, output_tokens: 7 },
+        total_cost_usd: 0.02,
+      },
+      { suppressError: true },
+    );
+    const msg = b.snapshot()[0];
+    expect(msg?.info.error).toBeUndefined();
+    // The attempt still happened and was billed — cost and tokens are real.
+    expect(msg?.info.cost).toBe(0.02);
+    expect(msg?.info.tokens).toMatchObject({ input: 3, output: 7 });
+    expect(msg?.parts.some((p) => p.type === 'step-finish')).toBe(true);
+  });
+
+  test('records the error once retries are given up on', () => {
+    const b = new TranscriptBuilder(SESSION);
+    b.push(assistant([{ type: 'text', text: 'partial' }]));
+    b.push(
+      {
+        type: 'result',
+        uuid: 'res-1',
+        session_id: 'x',
+        is_error: true,
+        result: 'API Error: 529 Overloaded',
+        api_error_status: 529,
+        usage: {},
+      },
+      { suppressError: false },
+    );
+    expect(b.snapshot()[0]?.info.error).toMatchObject({ status: 529 });
+  });
+
   // A subagent's own turns must not steal the step-finish that belongs to the
   // main loop, or turn accounting attributes the run's totals to a subtask.
   test('does not anchor step-finish to a subagent message', () => {

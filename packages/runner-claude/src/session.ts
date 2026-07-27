@@ -16,7 +16,20 @@ import type {
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { isRetryableResultError, retryDelayMs } from './retryable.js';
 import { type MessageInfo, TranscriptBuilder, type TranscriptMessage } from './translate.js';
+
+/**
+ * How many times a turn that ended in a transient API error is re-driven
+ * before the run is allowed to fail. Overridable so a cluster seeing sustained
+ * capacity pressure can raise it without a rebuild.
+ */
+const MAX_TRANSIENT_RETRIES = Number(process.env.CLAUDE_MAX_TRANSIENT_RETRIES ?? 3);
+
+/** First backoff step; each later attempt quadruples it up to the cap. */
+const RETRY_BASE_MS = Number(process.env.CLAUDE_RETRY_BASE_MS ?? 5_000);
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** An async iterable that can be appended to after iteration has begun. */
 class PushableQueue<T> implements AsyncIterable<T> {
@@ -93,6 +106,8 @@ export class RunSession {
   private subscribers = new Set<Subscriber>();
   private pump: Promise<void> | undefined;
   private agent: string | undefined;
+  /** Transient-error retries spent so far, across the whole session. */
+  private attempt = 0;
 
   /**
    * `id` is the external session id handed to the dispatcher by POST /session.
@@ -181,15 +196,61 @@ export class RunSession {
     } as SDKUserMessage);
   }
 
+  /**
+   * Re-drive a turn that ended in a transient API error.
+   *
+   * The query is still alive at this point — an errored `result` closes the
+   * turn, not the loop — so recovery is just another user message on the same
+   * conversation, and the model keeps everything it had already established.
+   * A fresh instruction is sent rather than the original prompt because the
+   * original was already delivered and partially answered; re-sending it would
+   * have the agent redo work it may have completed.
+   *
+   * Returns false when the budget is spent, which lets the error land in the
+   * transcript and fail the run as before.
+   */
+  private retryTurn(msg: unknown): boolean {
+    if (this.attempt >= MAX_TRANSIENT_RETRIES) {
+      console.error(
+        `[session ${this.id}] transient API error, ${this.attempt} retries exhausted — failing`,
+      );
+      return false;
+    }
+    this.attempt++;
+    const detail = (msg as { result?: string }).result ?? 'unknown error';
+    const delay = retryDelayMs(this.attempt, RETRY_BASE_MS);
+    console.warn(
+      `[session ${this.id}] transient API error (${detail.slice(0, 120)}) — ` +
+        `retry ${this.attempt}/${MAX_TRANSIENT_RETRIES} in ${delay}ms`,
+    );
+    // Deliberately not awaited: consume() must keep draining the query, and the
+    // queue is what the SDK is blocked on. Sleeping here would deadlock it.
+    void sleep(delay).then(() => {
+      if (this.phase === 'failed' || this.phase === 'completed') return;
+      this.enqueue(
+        `The previous turn ended with a transient API error: ${detail}\n` +
+          'This was an infrastructure failure, not a problem with your work. ' +
+          'Continue the task from where you left off.',
+      );
+    });
+    return true;
+  }
+
   private async consume(q: Query): Promise<void> {
     this.phase = 'running';
     try {
       for await (const msg of q) {
         const m = msg as { session_id?: string; type?: string };
         if (!this.sdkSessionId && m.session_id) this.sdkSessionId = m.session_id;
-        this.builder.push(msg);
+
+        // Decided before the push so the error never reaches the transcript on
+        // a turn we are about to retry. Both run on the same tick, so no poll
+        // of /session/:id/message can observe the intermediate state.
+        const retrying = m.type === 'result' && isRetryableResultError(msg) && this.retryTurn(msg);
+
+        this.builder.push(msg, { suppressError: retrying });
         this.emit('message', msg);
-        if (m.type === 'result') {
+        if (m.type === 'result' && !retrying) {
           // The loop stays open for further turns pushed via startOrSend().
           this.phase = 'idle';
           this.emit('idle', { agent: this.agent });
