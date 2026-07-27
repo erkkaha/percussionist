@@ -104,11 +104,22 @@ host_image_id() {
 
 # Return the short image ID of $tag inside minikube, or empty. Parses
 # `minikube image ls --format table` (box-drawing separators).
+#
+# The name column is matched whole, not as a substring. `percussionist/web`
+# is also a substring of `ghcr.io/erkkaha/percussionist/web`, and both rows are
+# present in a cluster that has ever pulled a release image — so a substring
+# match plus `head -n1` returned whichever the table happened to list first.
+# When that was the ghcr row, a load that had in fact succeeded was reported as
+# an image-ID mismatch and the script aborted with the deployment still scaled
+# to zero. Observed on operator:dev, where the ghcr row sorts first.
 minikube_image_id() {
   local tag="$1" short_tag
   short_tag="${tag%:*}"
   minikube image ls --format table 2>/dev/null \
-    | awk -F'│' -v t="$short_tag" '$2 ~ t {gsub(/ /,"",$4); print $4}' \
+    | awk -F'│' -v t="$short_tag" '
+        { name = $2; gsub(/^[ \t]+|[ \t]+$/, "", name) }
+        name == t || name == "docker.io/" t { gsub(/ /, "", $4); print $4 }
+      ' \
     | head -n1 | cut -c1-12 || true
 }
 
@@ -314,31 +325,39 @@ RESTORE_OPERATOR=false
 RESTORE_WEB=false
 RESTORE_MANAGER=false
 
+# process_one scales a Deployment to 0 before swapping its image, so any exit
+# between there and the restore leaves the cluster a replica short. An operator
+# stuck at 0 stops reconciling every Run in the cluster and nothing says so.
+# Restoring from a trap covers the error paths as well as the happy one.
+restore_all() {
+  if $RESTORE_OPERATOR; then restore_operator; fi
+  if $RESTORE_WEB; then restore_web; fi
+  if $RESTORE_MANAGER; then restore_manager; fi
+}
+trap restore_all EXIT
+
 if [[ -n "$ONLY" ]]; then
   case "$ONLY" in
     runner)     process_one runner     "$RUNNER_TAG" ;;
     runner-claude) process_one runner-claude "$RUNNER_CLAUDE_TAG" ;;
-    operator)   process_one operator   "$OPERATOR_TAG"; $FORCE && RESTORE_OPERATOR=true ;;
+    operator)   if $FORCE; then RESTORE_OPERATOR=true; fi; process_one operator   "$OPERATOR_TAG" ;;
     dispatcher) process_one dispatcher "$DISPATCHER_TAG" ;;
-    web)        process_one web        "$WEB_TAG"; $FORCE && RESTORE_WEB=true ;;
-    manager)    process_one manager    "$MANAGER_TAG"; $FORCE && RESTORE_MANAGER=true ;;
+    web)        if $FORCE; then RESTORE_WEB=true; fi; process_one web        "$WEB_TAG" ;;
+    manager)    if $FORCE; then RESTORE_MANAGER=true; fi; process_one manager    "$MANAGER_TAG" ;;
     code-server) process_one code-server "$CODE_SERVER_TAG" ;;
     *) echo "unknown --only value: $ONLY (runner|runner-claude|operator|dispatcher|web|manager|code-server)" >&2; exit 2 ;;
   esac
 else
   process_one runner     "$RUNNER_TAG"
   process_one runner-claude "$RUNNER_CLAUDE_TAG"
-  process_one operator   "$OPERATOR_TAG";   $FORCE && RESTORE_OPERATOR=true
+  if $FORCE; then RESTORE_OPERATOR=true; fi; process_one operator   "$OPERATOR_TAG"
   process_one dispatcher "$DISPATCHER_TAG"
-  process_one web        "$WEB_TAG";        $FORCE && RESTORE_WEB=true
-  process_one manager    "$MANAGER_TAG";    $FORCE && RESTORE_MANAGER=true
+  if $FORCE; then RESTORE_WEB=true; fi;        process_one web        "$WEB_TAG"
+  if $FORCE; then RESTORE_MANAGER=true; fi;    process_one manager    "$MANAGER_TAG"
   process_one code-server "$CODE_SERVER_TAG"
 fi
 
-# Bring scaled-down deployments back up.
-if $RESTORE_OPERATOR; then restore_operator; fi
-if $RESTORE_WEB; then restore_web; fi
-if $RESTORE_MANAGER; then restore_manager; fi
+# Scaled-down deployments are brought back up by the EXIT trap.
 
 echo ">> Images present in minikube:"
 minikube image ls | grep -E 'percussionist/(runner|runner-claude|operator|dispatcher|web|manager|code-server)' || true
