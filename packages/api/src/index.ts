@@ -333,6 +333,28 @@ export const SourceSchema = z
     message: 'source.git and source.local are mutually exclusive',
   });
 
+export type Source = z.infer<typeof SourceSchema>;
+
+/**
+ * Fill in `source.local` for a spec that names neither a git remote nor a local
+ * workspace.
+ *
+ * The refinement above is a NAND, not an XOR, so an absent `source` validates
+ * happily — and then nothing downstream gives the run a workspace:
+ * pod-builder's `workspaceSubPath` is undefined for that case, so the agent
+ * lands in a bare /workspace with nothing to explore and nowhere to commit.
+ * Neither the dashboard's project form nor `beatctl project create` used to
+ * emit a source unless one was asked for, which made "forgot to pick a source"
+ * the easiest project to create and the only broken one.
+ *
+ * Applied where projects are *written* rather than read, so the resulting CR
+ * states the choice outright instead of leaving every reader to infer it.
+ */
+export function withDefaultLocalSource<T extends { source?: Source }>(spec: T): T {
+  if (spec.source?.git || spec.source?.local) return spec;
+  return { ...spec, source: { local: true } };
+}
+
 // A sidecar container that runs alongside the opencode runner in every pod for
 // a given project. Useful for services the agent needs during its task, e.g. a
 // test database. The agent reaches them via localhost.

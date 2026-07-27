@@ -6,7 +6,13 @@
 // so the user only has to specify the task.
 
 import { readFileSync } from 'node:fs';
-import { API_GROUP_VERSION, KIND_PROJECT, type Project, ProjectSchema } from '@percussionist/api';
+import {
+  API_GROUP_VERSION,
+  KIND_PROJECT,
+  type Project,
+  ProjectSchema,
+  withDefaultLocalSource,
+} from '@percussionist/api';
 import YAML from 'yaml';
 import {
   age,
@@ -97,7 +103,10 @@ function buildProjectFromFlags(opts: ProjectCreateOpts): Project {
         : {}),
     },
   };
-  return ProjectSchema.parse(raw);
+  // No --git-url means a local workspace, not "no workspace at all". A manifest
+  // passed with --file is left alone: it says what it says.
+  const project = ProjectSchema.parse(raw);
+  return { ...project, spec: withDefaultLocalSource(project.spec) };
 }
 
 function buildProjectFromFile(path: string, opts: ProjectCreateOpts): Project {
