@@ -18,7 +18,18 @@ interface LogViewerProps {
   eventTick: number;
 }
 
-const BASE_CONTAINERS = ['bootstrap', 'opencode', 'dispatcher'] as const;
+/**
+ * Log sources, as `{ container, label }`.
+ *
+ * The runner container is named `opencode` in the pod spec whichever engine is
+ * selected (RUNNER_CONTAINER), so `container` has to stay `opencode` for the
+ * logs API to resolve — only the label is engine-neutral.
+ */
+const BASE_CONTAINERS = [
+  { container: 'bootstrap', label: 'bootstrap' },
+  { container: 'opencode', label: 'engine' },
+  { container: 'dispatcher', label: 'dispatcher' },
+] as const;
 const TAIL_OPTIONS = [100, 500, 1000] as const;
 
 /** Convert a plain-text log string to xterm-safe output (CRLF line endings). */
@@ -208,19 +219,19 @@ export default function LogViewer({
       <div className="flex items-center gap-3 flex-wrap">
         {/* Container tabs */}
         <div className="flex rounded-md border border-border overflow-hidden">
-          {[...BASE_CONTAINERS].map((c) => (
+          {BASE_CONTAINERS.map((c) => (
             <Button
-              key={c}
-              variant={container === c ? 'secondary' : 'ghost'}
+              key={c.container}
+              variant={container === c.container ? 'secondary' : 'ghost'}
               size="sm"
-              onClick={() => setContainer(c)}
+              onClick={() => setContainer(c.container)}
               className={`rounded-none border-0 ${
-                container === c
+                container === c.container
                   ? 'bg-surface-overlay text-text'
                   : 'text-text-muted hover:text-text hover:bg-surface-overlay/50'
               }`}
             >
-              {c}
+              {c.label}
             </Button>
           ))}
         </div>
