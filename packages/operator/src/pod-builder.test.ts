@@ -671,3 +671,43 @@ describe('resolveAuthSecretKey', () => {
     expect(ref?.key).toBe('CLAUDE_CODE_OAUTH_TOKEN');
   });
 });
+
+// Claude Code reads one settings.json per pod, so the denial set has to be
+// attributed to the agent that actually drives the session. Rendering it from
+// every mounted agent let the reviewer's `edit: deny` reach the planner:
+// pp-hammer-plan-944605 logged "No `Write` tool is available in this run" and
+// wrote its 23KB plan artifact through a bash heredoc. The adapter's own unit
+// tests all passed — the mistake was in what pod-builder handed it, so the
+// assertion belongs at this seam.
+describe('renderPod - claude settings scope', () => {
+  const PLANNER = {
+    name: 'planner',
+    content: '---\nname: planner\nmode: primary\npermission:\n  edit: allow\n---\nplan things',
+  };
+  const REVIEWER = {
+    name: 'reviewer',
+    content:
+      '---\nname: reviewer\nmode: primary\npermission:\n  edit: deny\n  webfetch: deny\n---\nreview things',
+  };
+
+  function settingsFor(agentName: string | undefined, agents = [PLANNER, REVIEWER]) {
+    const run = makeRun();
+    run.spec.model = 'claude-code/claude-opus-5';
+    run.spec.agent = agentName;
+    const pod = renderPod(run, agents, [], runnerDefaultsFor(deriveEngine(run.spec)));
+    const env = pod.spec?.containers?.find((c) => c.name !== 'dispatcher')?.env ?? [];
+    return JSON.parse(env.find((e) => e.name === 'CLAUDE_SETTINGS_CONTENT')?.value ?? '{}');
+  }
+
+  it('does not deny the primary agent a tool only another mounted agent forbids', () => {
+    expect(settingsFor('planner')).toEqual({});
+  });
+
+  it('still applies the denials of the agent that is driving', () => {
+    expect(settingsFor('reviewer').permissions.deny).toEqual(['Edit', 'WebFetch', 'Write']);
+  });
+
+  it('writes no restrictions when the driving agent is ambiguous', () => {
+    expect(settingsFor(undefined)).toEqual({});
+  });
+});

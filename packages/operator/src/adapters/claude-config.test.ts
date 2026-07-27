@@ -149,7 +149,7 @@ describe('renderClaudeAgentFile', () => {
 
 describe('renderClaudeSettings', () => {
   test('an all-allow agent produces no restrictions', () => {
-    expect(renderClaudeSettings([BUILDER])).toBe('{}');
+    expect(renderClaudeSettings([BUILDER], 'builder')).toBe('{}');
   });
 
   test('a denied tool becomes a deny rule under its Claude Code name', () => {
@@ -157,7 +157,7 @@ describe('renderClaudeSettings', () => {
       name: 'reader',
       content: '---\nname: reader\npermission:\n  bash: deny\n  read: allow\n---\nbody',
     };
-    expect(JSON.parse(renderClaudeSettings([denied]))).toEqual({
+    expect(JSON.parse(renderClaudeSettings([denied], 'reader'))).toEqual({
       permissions: { deny: ['Bash'] },
     });
   });
@@ -168,7 +168,7 @@ describe('renderClaudeSettings', () => {
       name: 'a',
       content: '---\nname: a\npermission:\n  webfetch: ask\n---\nbody',
     };
-    expect(JSON.parse(renderClaudeSettings([asked]))).toEqual({
+    expect(JSON.parse(renderClaudeSettings([asked], 'a'))).toEqual({
       permissions: { deny: ['WebFetch'] },
     });
   });
@@ -178,16 +178,62 @@ describe('renderClaudeSettings', () => {
       name: 'a',
       content: '---\nname: a\npermission:\n  edit: deny\n---\nbody',
     };
-    expect(JSON.parse(renderClaudeSettings([denied])).permissions.deny).toEqual(['Edit', 'Write']);
+    expect(JSON.parse(renderClaudeSettings([denied], 'a')).permissions.deny).toEqual([
+      'Edit',
+      'Write',
+    ]);
   });
 
-  test('denials union across agents and stay deduplicated', () => {
-    const a: AgentDef = { name: 'a', content: '---\npermission:\n  bash: deny\n---\nb' };
-    const b: AgentDef = {
-      name: 'b',
-      content: '---\npermission:\n  bash: deny\n  read: deny\n---\nb',
+  // The regression this signature exists for. settings.json is pod-wide, so a
+  // union let the reviewer's `edit: deny` strip Write from the planner driving
+  // the session — which is exactly what happened in
+  // pp-hammer-plan-944605: "No `Write` tool is available in this run".
+  test('a mounted agent does not impose its denials on the primary', () => {
+    const planner: AgentDef = {
+      name: 'planner',
+      content: '---\nname: planner\npermission:\n  edit: allow\n  webfetch: allow\n---\nb',
     };
-    expect(JSON.parse(renderClaudeSettings([a, b])).permissions.deny).toEqual(['Bash', 'Read']);
+    const reviewer: AgentDef = {
+      name: 'reviewer',
+      content:
+        '---\nname: reviewer\npermission:\n  edit: deny\n  webfetch: deny\n  todowrite: deny\n---\nb',
+    };
+    expect(renderClaudeSettings([planner, reviewer], 'planner')).toBe('{}');
+  });
+
+  test('the primary agent still gets its own denials with others mounted', () => {
+    const planner: AgentDef = {
+      name: 'planner',
+      content: '---\nname: planner\npermission:\n  edit: allow\n---\nb',
+    };
+    const reviewer: AgentDef = {
+      name: 'reviewer',
+      content: '---\nname: reviewer\npermission:\n  edit: deny\n  webfetch: deny\n---\nb',
+    };
+    expect(
+      JSON.parse(renderClaudeSettings([planner, reviewer], 'reviewer')).permissions.deny,
+    ).toEqual(['Edit', 'WebFetch', 'Write']);
+  });
+
+  test('a lone mounted agent is used when no primary is named', () => {
+    const only: AgentDef = {
+      name: 'a',
+      content: '---\nname: a\npermission:\n  bash: deny\n---\nb',
+    };
+    expect(JSON.parse(renderClaudeSettings([only], undefined)).permissions.deny).toEqual(['Bash']);
+  });
+
+  // Ambiguous: applying one agent's rules to a session driven by another is the
+  // guess that caused the bug, so no restriction is written.
+  test('an unresolvable primary among several agents yields no restrictions', () => {
+    const a: AgentDef = { name: 'a', content: '---\nname: a\npermission:\n  bash: deny\n---\nb' };
+    const b: AgentDef = { name: 'b', content: '---\nname: b\npermission:\n  read: deny\n---\nb' };
+    expect(renderClaudeSettings([a, b], undefined)).toBe('{}');
+    expect(renderClaudeSettings([a, b], 'nonexistent')).toBe('{}');
+  });
+
+  test('no mounted agents yields no restrictions', () => {
+    expect(renderClaudeSettings([], 'planner')).toBe('{}');
   });
 
   // `list` has no Claude Code counterpart; guessing at one would deny a tool the
@@ -195,9 +241,9 @@ describe('renderClaudeSettings', () => {
   test('an unmapped opencode tool is ignored rather than guessed', () => {
     const denied: AgentDef = {
       name: 'a',
-      content: '---\npermission:\n  list: deny\n---\nbody',
+      content: '---\nname: a\npermission:\n  list: deny\n---\nbody',
     };
-    expect(renderClaudeSettings([denied])).toBe('{}');
+    expect(renderClaudeSettings([denied], 'a')).toBe('{}');
   });
 });
 

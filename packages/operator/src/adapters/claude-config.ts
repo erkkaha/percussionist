@@ -136,6 +136,23 @@ const TOOL_EQUIVALENTS: Record<string, string[]> = {
 };
 
 /**
+ * Pick the agent whose permissions settings.json should express.
+ *
+ * `primaryName` is `Run.spec.agent` — the agent that actually drives the
+ * session. When it is unset or names something not mounted, one mounted agent
+ * is still unambiguous; anything else is a guess, and guessing is what caused
+ * the bug this function exists to prevent (see renderClaudeSettings).
+ */
+function settingsSourceAgent(
+  agents: AgentDef[],
+  primaryName: string | undefined,
+): AgentDef | undefined {
+  const named = primaryName ? agents.find((a) => a.name === primaryName) : undefined;
+  if (named) return named;
+  return agents.length === 1 ? agents[0] : undefined;
+}
+
+/**
  * Build `.claude/settings.json` for a run.
  *
  * Only denials are translated. An opencode `allow` needs no counterpart because
@@ -143,11 +160,28 @@ const TOOL_EQUIVALENTS: Record<string, string[]> = {
  * pod, whereas a `deny` expresses real intent that would otherwise be lost. An
  * `ask` is treated as a deny: nothing in a run pod can answer a prompt, so
  * "ask" can only ever mean "do not proceed".
+ *
+ * Denials come from the *primary* agent alone. Claude Code reads one
+ * settings.json per pod, so unioning the mounted set applied every agent's
+ * restrictions to all of them: a planner run mounting `reviewer` alongside
+ * itself inherited that agent's `edit: deny` and lost Write and Edit, despite
+ * its own frontmatter allowing them. Observed directly — the planner announced
+ * "No `Write` tool is available in this run" and wrote a 23KB plan through a
+ * bash heredoc instead.
+ *
+ * The cost is that a subagent invoked via the Task tool runs under the primary
+ * agent's permissions rather than its own. That is a real gap, but it is the
+ * narrower one: Claude Code has no per-subagent permission file, and the only
+ * alternative — a `tools:` allowlist in each subagent .md — is an allowlist, so
+ * it would strip `mcp__dispatcher__*` and leave subagents unable to signal
+ * completion (see renderClaudeAgentFile). Restricting the agent in the loop
+ * beats disarming it.
  */
-export function renderClaudeSettings(agents: AgentDef[]): string {
+export function renderClaudeSettings(agents: AgentDef[], primaryName: string | undefined): string {
   const deny = new Set<string>();
-  for (const def of agents) {
-    const { permission } = parseOpencodeAgent(def.content);
+  const source = settingsSourceAgent(agents, primaryName);
+  if (source) {
+    const { permission } = parseOpencodeAgent(source.content);
     for (const [tool, decision] of Object.entries(permission)) {
       if (decision === 'allow') continue;
       for (const mapped of TOOL_EQUIVALENTS[tool] ?? []) deny.add(mapped);

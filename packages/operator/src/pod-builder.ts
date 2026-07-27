@@ -872,7 +872,10 @@ export function renderPod(
             // contents are opencode's own schema and mean nothing to Claude Code).
             ...(engine === 'claude'
               ? [
-                  { name: runner.configEnvVar, value: renderClaudeSettings(resolvedAgents) },
+                  {
+                    name: runner.configEnvVar,
+                    value: renderClaudeSettings(resolvedAgents, spec.agent),
+                  },
                   // A `mode: primary` agent describes how the session itself
                   // should behave. Claude Code would only read a subagent file
                   // when something invokes it via the Task tool, so the primary
