@@ -1260,7 +1260,8 @@ export async function readPlanFromConfigMap(
 
 // ---------------------------------------------------------------------------
 // Findings ConfigMap helpers — per-project findings inbox and triage.
-// ConfigMap name: {project}-findings, data keys: inbox/<id>.json and triaged/<clusterId>.json
+// ConfigMap name: {project}-findings, data keys: inbox.<id>.json and
+// triaged.<clusterId>.json
 //
 // IMPORTANT: appendFindingToConfigMap uses K8s strategic merge-patch on the data
 // field (setting only a single key) rather than read-modify-write, so concurrent
@@ -1268,13 +1269,48 @@ export async function readPlanFromConfigMap(
 
 const FINDINGS_COMPONENT = 'findings';
 
+/**
+ * A ConfigMap data key must match `[-._a-zA-Z0-9]+`. `/` is not in that set, so
+ * the original `inbox/<id>.json` layout was rejected by the API server with a
+ * 422 on every single write — no finding was ever stored, and `report_finding`
+ * returned an MCP error to every agent that called it. The parse helpers were
+ * unit-tested against hand-built maps, which is why nothing caught it: no test
+ * ever asked the API server to accept a key.
+ *
+ * Keys are built here and nowhere else, and `findingsDataKey` enforces the
+ * charset, so a key that cannot be written cannot be constructed.
+ */
+export const FINDINGS_INBOX_PREFIX = 'inbox.';
+export const FINDINGS_TRIAGED_PREFIX = 'triaged.';
+const FINDINGS_KEY_SUFFIX = '.json';
+const CONFIGMAP_KEY_DISALLOWED = /[^-._a-zA-Z0-9]+/g;
+
+function findingsDataKey(prefix: string, id: string): string {
+  // Finding ids and cluster ids are minted as `<epoch-ms>-<hex>`, so this
+  // replacement is a guard rather than a transformation of anything we
+  // currently generate. Substituting is deliberate: a finding written under a
+  // slightly mangled key is recoverable, whereas a rejected write loses the
+  // report outright — which is exactly the failure this replaced.
+  return `${prefix}${id.replace(CONFIGMAP_KEY_DISALLOWED, '_')}${FINDINGS_KEY_SUFFIX}`;
+}
+
+/** ConfigMap data key holding an untriaged finding. */
+export function inboxFindingKey(findingId: string): string {
+  return findingsDataKey(FINDINGS_INBOX_PREFIX, findingId);
+}
+
+/** ConfigMap data key holding a triaged finding cluster. */
+export function triagedFindingKey(clusterId: string): string {
+  return findingsDataKey(FINDINGS_TRIAGED_PREFIX, clusterId);
+}
+
 function findingsConfigMapName(project: string): string {
   return `${project}-findings`;
 }
 
 /**
  * Append a single finding to the project's findings ConfigMap using merge-patch.
- * Sets only `data["inbox/<finding.id>.json"]` — conflict-free across concurrent agents.
+ * Sets only `data["inbox.<finding.id>.json"]` — conflict-free across concurrent agents.
  * Creates the ConfigMap if it does not exist (404 → create).
  */
 export async function appendFindingToConfigMap(
@@ -1283,7 +1319,7 @@ export async function appendFindingToConfigMap(
   ns: string = NAMESPACE,
 ): Promise<{ written: true }> {
   const cmName = findingsConfigMapName(project);
-  const key = `inbox/${finding.id}.json`;
+  const key = inboxFindingKey(finding.id);
   const data = { [key]: JSON.stringify(finding) };
   const labels = {
     [LABELS.projectName]: project,
@@ -1343,7 +1379,7 @@ export async function getFindingsConfigMap(
 export function parseInboxFindings(data: Record<string, string>): Finding[] {
   const findings: Finding[] = [];
   for (const [key, value] of Object.entries(data)) {
-    if (!key.startsWith('inbox/') || !key.endsWith('.json')) continue;
+    if (!key.startsWith(FINDINGS_INBOX_PREFIX) || !key.endsWith(FINDINGS_KEY_SUFFIX)) continue;
     try {
       findings.push(JSON.parse(value) as Finding);
     } catch {
@@ -1361,7 +1397,7 @@ export function parseInboxFindings(data: Record<string, string>): Finding[] {
 export function parseTriagedFindings(data: Record<string, string>): Map<string, Finding> {
   const map = new Map<string, Finding>();
   for (const [key, value] of Object.entries(data)) {
-    if (!key.startsWith('triaged/') || !key.endsWith('.json')) continue;
+    if (!key.startsWith(FINDINGS_TRIAGED_PREFIX) || !key.endsWith(FINDINGS_KEY_SUFFIX)) continue;
     try {
       const f = JSON.parse(value) as Finding;
       if (f.clusterId) map.set(f.clusterId, f);
@@ -1376,7 +1412,7 @@ export function parseTriagedFindings(data: Record<string, string>): Map<string, 
  * Merge-patch the findings ConfigMap to process inbox findings.
  * Writes triaged entries and removes processed inbox entries in one atomic
  * operation (single merge-patch). The manager (single-replica) is the only
- * writer of triaged/* and the only deleter of inbox/*, so this is safe.
+ * writer of triaged.* and the only deleter of inbox.*, so this is safe.
  */
 export async function patchFindingsConfigMap(
   project: string,

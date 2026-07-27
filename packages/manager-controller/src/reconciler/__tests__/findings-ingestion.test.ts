@@ -103,17 +103,17 @@ afterEach(() => {
 function setupConfigMap(inbox: Finding[], triaged: Finding[] = []) {
   const data: Record<string, string> = {};
   for (const f of inbox) {
-    data[`inbox/${f.id}.json`] = JSON.stringify(f);
+    data[kube.inboxFindingKey(f.id)] = JSON.stringify(f);
   }
   for (const f of triaged) {
     const key = f.clusterId ?? f.id;
-    data[`triaged/${key}.json`] = JSON.stringify(f);
+    data[kube.triagedFindingKey(key)] = JSON.stringify(f);
   }
   getFindingsConfigMapSpy.mockResolvedValue(data);
   parseInboxFindingsSpy.mockImplementation((d: Record<string, string>) => {
     const findings: Finding[] = [];
     for (const [k, v] of Object.entries(d)) {
-      if (k.startsWith('inbox/') && k.endsWith('.json')) {
+      if (k.startsWith(kube.FINDINGS_INBOX_PREFIX) && k.endsWith('.json')) {
         try {
           findings.push(JSON.parse(v));
         } catch {
@@ -127,7 +127,7 @@ function setupConfigMap(inbox: Finding[], triaged: Finding[] = []) {
   parseTriagedFindingsSpy.mockImplementation((d: Record<string, string>) => {
     const map = new Map<string, Finding>();
     for (const [k, v] of Object.entries(d)) {
-      if (k.startsWith('triaged/') && k.endsWith('.json')) {
+      if (k.startsWith(kube.FINDINGS_TRIAGED_PREFIX) && k.endsWith('.json')) {
         try {
           const f = JSON.parse(v) as Finding;
           if (f.clusterId) map.set(f.clusterId, f);
@@ -166,10 +166,10 @@ describe('ingestFindings', () => {
 
     expect(patchFindingsConfigMapSpy).toHaveBeenCalledTimes(1);
     const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
-    expect(patchArg[`triaged/f1.json`]).toBeDefined();
-    expect(patchArg[`inbox/f1.json`]).toBeNull();
+    expect(patchArg[kube.triagedFindingKey('f1')]).toBeDefined();
+    expect(patchArg[kube.inboxFindingKey('f1')]).toBeNull();
 
-    const triaged = JSON.parse(patchArg[`triaged/f1.json`]!);
+    const triaged = JSON.parse(patchArg[kube.triagedFindingKey('f1')]!);
     expect(triaged.status).toBe('triaged');
     expect(triaged.clusterId).toBe('f1');
     expect(triaged.id).toBe('f1');
@@ -195,9 +195,9 @@ describe('ingestFindings', () => {
 
     expect(patchFindingsConfigMapSpy).toHaveBeenCalledTimes(1);
     const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
-    expect(patchArg[`inbox/f1.json`]).toBeNull();
-    expect(patchArg[`triaged/c0.json`]).toBeDefined();
-    const updatedTriaged = JSON.parse(patchArg[`triaged/c0.json`]!);
+    expect(patchArg[kube.inboxFindingKey('f1')]).toBeNull();
+    expect(patchArg[kube.triagedFindingKey('c0')]).toBeDefined();
+    const updatedTriaged = JSON.parse(patchArg[kube.triagedFindingKey('c0')]!);
     expect(updatedTriaged.occurrences).toBe(2);
   });
 
@@ -222,8 +222,8 @@ describe('ingestFindings', () => {
     await ingestFindings(project, namespace);
 
     const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
-    expect(patchArg[`inbox/f1.json`]).toBeNull();
-    const updatedTriaged = JSON.parse(patchArg[`triaged/c0.json`]!);
+    expect(patchArg[kube.inboxFindingKey('f1')]).toBeNull();
+    const updatedTriaged = JSON.parse(patchArg[kube.triagedFindingKey('c0')]!);
     expect(updatedTriaged.occurrences).toBe(2);
   });
 
@@ -249,8 +249,8 @@ describe('ingestFindings', () => {
     await ingestFindings(project, namespace);
 
     const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
-    expect(patchArg[`inbox/f1.json`]).toBeNull();
-    const updatedTriaged = JSON.parse(patchArg[`triaged/c0.json`]!);
+    expect(patchArg[kube.inboxFindingKey('f1')]).toBeNull();
+    const updatedTriaged = JSON.parse(patchArg[kube.triagedFindingKey('c0')]!);
     expect(updatedTriaged.occurrences).toBe(2);
   });
 
@@ -267,9 +267,9 @@ describe('ingestFindings', () => {
     await ingestFindings(project, namespace);
 
     const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
-    expect(patchArg[`triaged/f1.json`]).toBeDefined();
-    expect(patchArg[`inbox/f1.json`]).toBeNull();
-    const triaged = JSON.parse(patchArg[`triaged/f1.json`]!);
+    expect(patchArg[kube.triagedFindingKey('f1')]).toBeDefined();
+    expect(patchArg[kube.inboxFindingKey('f1')]).toBeNull();
+    const triaged = JSON.parse(patchArg[kube.triagedFindingKey('f1')]!);
     expect(triaged.status).toBe('triaged');
   });
 
@@ -288,7 +288,7 @@ describe('ingestFindings', () => {
     await ingestFindings(project, namespace);
 
     const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
-    expect(patchArg[`triaged/f1.json`]).toBeDefined();
+    expect(patchArg[kube.triagedFindingKey('f1')]).toBeDefined();
   });
 
   it('does not deduplicate when semantic distance is too high', async () => {
@@ -313,7 +313,7 @@ describe('ingestFindings', () => {
     await ingestFindings(project, namespace);
 
     const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
-    expect(patchArg[`triaged/f1.json`]).toBeDefined();
+    expect(patchArg[kube.triagedFindingKey('f1')]).toBeDefined();
   });
 
   it('auto-creates a BUILD task for high-severity bug findings', async () => {

@@ -28,6 +28,7 @@ export {
   getRun,
   getTask,
   gitUrlHash,
+  inboxFindingKey,
   kubeConfig,
   // ClusterAgent helpers
   listClusterAgents,
@@ -64,6 +65,7 @@ export {
   // Pod helpers
   readPodLog,
   readSessionConfigMap,
+  triagedFindingKey,
   updateClusterAgent,
   updateClusterSettings,
   updateProject,

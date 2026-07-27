@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import type { Finding } from '@percussionist/api';
-import { parseInboxFindings, parseTriagedFindings } from '../index.js';
+import {
+  inboxFindingKey,
+  parseInboxFindings,
+  parseTriagedFindings,
+  triagedFindingKey,
+} from '../index.js';
 
 const makeFinding = (overrides: Partial<Finding> & { id: string }): Finding => ({
   id: overrides.id,
@@ -32,12 +37,12 @@ describe('parseInboxFindings', () => {
   });
 
   it('returns empty array for data with no inbox keys', () => {
-    expect(parseInboxFindings({ 'triaged/c1.json': '{}' })).toEqual([]);
+    expect(parseInboxFindings({ [triagedFindingKey('c1')]: '{}' })).toEqual([]);
   });
 
   it('parses a single inbox finding', () => {
     const finding = makeFinding({ id: 'f1' });
-    const data = { 'inbox/f1.json': JSON.stringify(finding) };
+    const data = { [inboxFindingKey('f1')]: JSON.stringify(finding) };
     const result = parseInboxFindings(data);
     expect(result).toHaveLength(1);
     expect(result[0]!.id).toBe('f1');
@@ -48,9 +53,9 @@ describe('parseInboxFindings', () => {
     const f2 = makeFinding({ id: 'f2', createdAt: '2026-06-15T09:00:00.000Z' });
     const f3 = makeFinding({ id: 'f3', createdAt: '2026-06-15T11:00:00.000Z' });
     const data = {
-      'inbox/f1.json': JSON.stringify(f1),
-      'inbox/f2.json': JSON.stringify(f2),
-      'inbox/f3.json': JSON.stringify(f3),
+      [inboxFindingKey('f1')]: JSON.stringify(f1),
+      [inboxFindingKey('f2')]: JSON.stringify(f2),
+      [inboxFindingKey('f3')]: JSON.stringify(f3),
     };
     const result = parseInboxFindings(data);
     expect(result).toHaveLength(3);
@@ -62,9 +67,9 @@ describe('parseInboxFindings', () => {
   it('skips malformed JSON entries', () => {
     const valid = makeFinding({ id: 'f1' });
     const data = {
-      'inbox/f1.json': JSON.stringify(valid),
-      'inbox/bad.json': 'not json',
-      'inbox/bad2.json': '{invalid}',
+      [inboxFindingKey('f1')]: JSON.stringify(valid),
+      [inboxFindingKey('bad')]: 'not json',
+      [inboxFindingKey('bad2')]: '{invalid}',
     };
     const result = parseInboxFindings(data);
     expect(result).toHaveLength(1);
@@ -74,9 +79,9 @@ describe('parseInboxFindings', () => {
   it('ignores non-inbox keys', () => {
     const finding = makeFinding({ id: 'f1' });
     const data = {
-      'inbox/f1.json': JSON.stringify(finding),
+      [inboxFindingKey('f1')]: JSON.stringify(finding),
       'other/f1.json': JSON.stringify(finding),
-      'triaged/f1.json': JSON.stringify(finding),
+      [triagedFindingKey('f1')]: JSON.stringify(finding),
     };
     const result = parseInboxFindings(data);
     expect(result).toHaveLength(1);
@@ -85,8 +90,8 @@ describe('parseInboxFindings', () => {
   it('ignores inbox keys without .json suffix', () => {
     const finding = makeFinding({ id: 'f1' });
     const data = {
-      'inbox/f1.yaml': JSON.stringify(finding),
-      'inbox/f1.txt': JSON.stringify(finding),
+      'inbox.f1.yaml': JSON.stringify(finding),
+      'inbox.f1.txt': JSON.stringify(finding),
     };
     const result = parseInboxFindings(data);
     expect(result).toHaveLength(0);
@@ -100,13 +105,13 @@ describe('parseTriagedFindings', () => {
   });
 
   it('returns empty map for data with no triaged keys', () => {
-    const result = parseTriagedFindings({ 'inbox/f1.json': '{}' });
+    const result = parseTriagedFindings({ [inboxFindingKey('f1')]: '{}' });
     expect(result.size).toBe(0);
   });
 
   it('parses a single triaged finding keyed by clusterId', () => {
     const finding = makeFinding({ id: 'f1', clusterId: 'c1' });
-    const data = { 'triaged/c1.json': JSON.stringify(finding) };
+    const data = { [triagedFindingKey('c1')]: JSON.stringify(finding) };
     const result = parseTriagedFindings(data);
     expect(result.size).toBe(1);
     expect(result.get('c1')!.id).toBe('f1');
@@ -117,8 +122,8 @@ describe('parseTriagedFindings', () => {
     const f1 = makeFinding({ id: 'f1', clusterId: 'c1' });
     const f2 = makeFinding({ id: 'f2', clusterId: 'c2' });
     const data = {
-      'triaged/c1.json': JSON.stringify(f1),
-      'triaged/c2.json': JSON.stringify(f2),
+      [triagedFindingKey('c1')]: JSON.stringify(f1),
+      [triagedFindingKey('c2')]: JSON.stringify(f2),
     };
     const result = parseTriagedFindings(data);
     expect(result.size).toBe(2);
@@ -128,7 +133,7 @@ describe('parseTriagedFindings', () => {
 
   it('skips triaged findings without clusterId', () => {
     const finding = makeFinding({ id: 'f1' });
-    const data = { 'triaged/f1.json': JSON.stringify(finding) };
+    const data = { [triagedFindingKey('f1')]: JSON.stringify(finding) };
     const result = parseTriagedFindings(data);
     expect(result.size).toBe(0);
   });
@@ -136,8 +141,8 @@ describe('parseTriagedFindings', () => {
   it('skips malformed JSON entries', () => {
     const valid = makeFinding({ id: 'f1', clusterId: 'c1' });
     const data = {
-      'triaged/c1.json': JSON.stringify(valid),
-      'triaged/bad.json': 'not json',
+      [triagedFindingKey('c1')]: JSON.stringify(valid),
+      [triagedFindingKey('bad')]: 'not json',
     };
     const result = parseTriagedFindings(data);
     expect(result.size).toBe(1);
@@ -146,8 +151,8 @@ describe('parseTriagedFindings', () => {
   it('ignores non-triaged keys', () => {
     const finding = makeFinding({ id: 'f1', clusterId: 'c1' });
     const data = {
-      'triaged/c1.json': JSON.stringify(finding),
-      'inbox/f1.json': JSON.stringify(finding),
+      [triagedFindingKey('c1')]: JSON.stringify(finding),
+      [inboxFindingKey('f1')]: JSON.stringify(finding),
     };
     const result = parseTriagedFindings(data);
     expect(result.size).toBe(1);
@@ -156,9 +161,49 @@ describe('parseTriagedFindings', () => {
   it('ignores triaged keys without .json suffix', () => {
     const finding = makeFinding({ id: 'f1', clusterId: 'c1' });
     const data = {
-      'triaged/c1.yaml': JSON.stringify(finding),
+      'triaged.c1.yaml': JSON.stringify(finding),
     };
     const result = parseTriagedFindings(data);
     expect(result.size).toBe(0);
+  });
+});
+
+// The original layout was `inbox/<id>.json`. Every write of it was rejected by
+// the API server with a 422 — `/` is not in the ConfigMap data key charset — so
+// no finding was ever stored and `report_finding` failed for every agent that
+// called it. The parse tests above passed throughout, because they only ever
+// fed hand-built maps to a parser. This is the assertion that was missing.
+describe('findings ConfigMap data keys', () => {
+  // From the API server's own validation message.
+  const CONFIGMAP_KEY = /^[-._a-zA-Z0-9]+$/;
+
+  it('builds an inbox key the API server accepts', () => {
+    expect(inboxFindingKey('1785144009598-1232b4487768')).toMatch(CONFIGMAP_KEY);
+  });
+
+  it('builds a triaged key the API server accepts', () => {
+    expect(triagedFindingKey('1785144009598-1232b4487768')).toMatch(CONFIGMAP_KEY);
+  });
+
+  it('never emits a key containing a slash', () => {
+    expect(inboxFindingKey('a/b')).not.toContain('/');
+    expect(triagedFindingKey('a/b')).not.toContain('/');
+  });
+
+  it('substitutes any character outside the charset', () => {
+    for (const id of ['a/b', 'a b', 'a:b', 'a#b', 'ä', '../escape']) {
+      expect(inboxFindingKey(id)).toMatch(CONFIGMAP_KEY);
+      expect(triagedFindingKey(id)).toMatch(CONFIGMAP_KEY);
+    }
+  });
+
+  it('leaves an already-safe id untouched', () => {
+    expect(inboxFindingKey('f1')).toBe('inbox.f1.json');
+    expect(triagedFindingKey('c1')).toBe('triaged.c1.json');
+  });
+
+  it('keeps inbox and triaged keys distinguishable', () => {
+    expect(parseInboxFindings({ [triagedFindingKey('x')]: '{}' })).toEqual([]);
+    expect(parseTriagedFindings({ [inboxFindingKey('x')]: '{}' }).size).toBe(0);
   });
 });

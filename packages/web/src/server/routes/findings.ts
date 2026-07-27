@@ -15,12 +15,14 @@ import {
   createTask,
   getFindingsConfigMap,
   getProject,
+  inboxFindingKey,
   NAMESPACE,
   parseTriagedFindings,
   patchFindingsConfigMap,
   patchProjectStatus,
   patchTask,
   patchTaskStatus,
+  triagedFindingKey,
 } from '../kube.js';
 import { isKubeNotFound } from '../lib/kube-errors.js';
 
@@ -62,8 +64,8 @@ findings.get('/:project/findings/:id', auth(), async (c) => {
       return c.json({ error: 'findings configmap not found' }, 404);
     }
     // Search both triaged and inbox keys.
-    const triagedKey = `triaged/${findingId}.json`;
-    const inboxKey = `inbox/${findingId}.json`;
+    const triagedKey = triagedFindingKey(findingId);
+    const inboxKey = inboxFindingKey(findingId);
     if (data[triagedKey]) {
       return c.json({ finding: JSON.parse(data[triagedKey]) });
     }
@@ -115,7 +117,7 @@ findings.patch('/:project/findings/:id', adminAuth(), async (c) => {
     for (const [clusterId, f] of triagedMap.entries()) {
       if (f.id === findingId || f.clusterId === findingId) {
         target = f;
-        targetKey = `triaged/${clusterId}.json`;
+        targetKey = triagedFindingKey(clusterId);
         break;
       }
     }
@@ -176,7 +178,7 @@ findings.post('/:project/findings/:id/task', adminAuth(), async (c) => {
     for (const [clusterId, f] of triagedMap.entries()) {
       if (f.id === findingId || f.clusterId === findingId) {
         target = f;
-        targetKey = `triaged/${clusterId}.json`;
+        targetKey = triagedFindingKey(clusterId);
         break;
       }
     }
