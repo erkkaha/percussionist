@@ -16,6 +16,20 @@ function memoryServiceUrl(project: string): string {
   return `http://memory-${project}.${NAMESPACE}.svc.cluster.local:4100`;
 }
 
+// The memory service bearer-checks every route except /health against the
+// shared control-plane token (manager-mcp-token). These proxy routes sent no
+// Authorization header at all, so with the Secret present every memory call
+// from the dashboard came back 401 — read and write alike. The token is
+// optional so an unset value keeps dev mode working, matching the service's own
+// "no token configured means skip the check" behaviour.
+function memoryServiceHeaders(extra?: Record<string, string>): Record<string, string> {
+  const token = process.env.MCP_TOKEN;
+  return {
+    ...(extra ?? {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 // GET /api/projects/:name/memories — list memories (proxy to memory service)
 router.get('/:name/memories', auth(), async (c) => {
   const project = c.req.param('name');
@@ -30,6 +44,7 @@ router.get('/:name/memories', auth(), async (c) => {
 
   try {
     const res = await fetch(`${memoryServiceUrl(project)}/memories?${params}`, {
+      headers: memoryServiceHeaders(),
       signal: AbortSignal.timeout(30_000),
     });
 
@@ -52,6 +67,7 @@ router.get('/:name/memories/:id', auth(), async (c) => {
 
   try {
     const res = await fetch(`${memoryServiceUrl(project)}/memory/${encodeURIComponent(id)}`, {
+      headers: memoryServiceHeaders(),
       signal: AbortSignal.timeout(30_000),
     });
 
@@ -85,7 +101,7 @@ router.post('/:name/memories', adminAuth(), async (c) => {
   try {
     const res = await fetch(`${memoryServiceUrl(project)}/memory`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: memoryServiceHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         content: body.content,
         metadata: body.metadata as Record<string, unknown> | undefined,
@@ -126,7 +142,7 @@ router.patch('/:name/memories/:id', adminAuth(), async (c) => {
   try {
     const res = await fetch(`${memoryServiceUrl(project)}/memory/${encodeURIComponent(id)}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: memoryServiceHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         content: body.content as string | undefined,
         metadata: body.metadata as Record<string, unknown> | undefined,
@@ -154,6 +170,7 @@ router.delete('/:name/memories/:id', adminAuth(), async (c) => {
   try {
     const res = await fetch(`${memoryServiceUrl(project)}/memory/${encodeURIComponent(id)}`, {
       method: 'DELETE',
+      headers: memoryServiceHeaders(),
       signal: AbortSignal.timeout(30_000),
     });
 

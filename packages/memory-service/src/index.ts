@@ -97,7 +97,13 @@ async function handler(req: Request): Promise<Response> {
     // GET /health
     if (method === 'GET' && path === '/health') {
       const result = await handleHealth();
-      return json(result);
+      // handleHealth already reports ok:false when the embedding backend is
+      // unreachable or the model is absent, but returning 200 regardless meant
+      // the readiness probe — which only reads the status code — passed anyway.
+      // A service that cannot embed anything sat Ready while every /context and
+      // /memory call failed, so the feature contributed nothing and nothing
+      // said so. Fail the probe instead.
+      return json(result, result.ok ? 200 : 503);
     }
 
     // POST /memory — store memory
