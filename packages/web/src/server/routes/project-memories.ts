@@ -60,6 +60,35 @@ router.get('/:name/memories', auth(), async (c) => {
   }
 });
 
+// GET /api/projects/:name/memories/health — is the memory service usable?
+//
+// Registered before /:name/memories/:id so "health" is not swallowed as an id.
+//
+// Memory needs an embedding backend (Ollama) that is an opt-in add-on, not part
+// of the control plane — so a project can have memory enabled while nothing can
+// actually embed. This distinguishes the three states the UI has to explain:
+// service unreachable, service up but backend unusable, and healthy.
+router.get('/:name/memories/health', auth(), async (c) => {
+  const project = c.req.param('name');
+
+  try {
+    // /health is deliberately unauthenticated so kubelet probes work; sending
+    // the token anyway costs nothing and keeps every call here uniform.
+    const res = await fetch(`${memoryServiceUrl(project)}/health`, {
+      headers: memoryServiceHeaders(),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (res.ok) return c.json({ ok: true, reachable: true });
+
+    // 503 is the service telling us the embedding backend is missing or the
+    // model is absent — it is running, just unusable.
+    return c.json({ ok: false, reachable: true, status: res.status });
+  } catch (e) {
+    return c.json({ ok: false, reachable: false, error: (e as Error).message });
+  }
+});
+
 // GET /api/projects/:name/memories/:id — get single memory by ID
 router.get('/:name/memories/:id', auth(), async (c) => {
   const project = c.req.param('name');

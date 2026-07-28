@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createProjectMemory,
   deleteProjectMemory,
+  fetchMemoryHealth,
   fetchProjectMemories,
   updateProjectMemory,
 } from '../lib/api';
@@ -14,6 +15,24 @@ export function useProjectMemories(project: string | undefined) {
     queryKey: [...QUERY_KEY, project],
     queryFn: () => fetchProjectMemories(project!),
     enabled: !!project,
+  });
+}
+
+/**
+ * Whether the project's memory service can actually embed anything.
+ *
+ * Memory depends on Ollama, which is an opt-in add-on rather than part of the
+ * control plane — so memory can be enabled on a project while nothing is able
+ * to generate embeddings. Without this the dashboard showed an empty list and
+ * gave no hint that the feature was inert.
+ */
+export function useMemoryHealth(project: string | undefined) {
+  return useQuery({
+    queryKey: [...QUERY_KEY, project, 'health'],
+    queryFn: () => fetchMemoryHealth(project!),
+    enabled: !!project,
+    // Cheap, and the answer changes the moment the add-on is deployed.
+    refetchInterval: 30_000,
   });
 }
 
