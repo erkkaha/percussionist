@@ -16,6 +16,16 @@ try {
 }
 export const k8s = makeNodeApiClient(kc, CustomObjectsApi);
 
+// How long to wait after a genuine reconcile failure before letting the loop
+// pick the same project up again.
+const ERROR_BACKOFF_MS = 5_000;
+
+/** True for a Kubernetes 404 — the object is gone, so retrying cannot help. */
+function isNotFoundError(e: unknown): boolean {
+  const err = e as { statusCode?: number; code?: number; body?: { reason?: string } };
+  return (err.statusCode ?? err.code) === 404 || err.body?.reason === 'NotFound';
+}
+
 // Work queue: project names that need reconciliation.
 const queue = new Set<string>();
 let pausedUntil = 0;
@@ -88,9 +98,23 @@ export async function runWorker(): Promise<void> {
       }
       await reconcile(project);
     } catch (e) {
+      // A deleted project must be dropped, not retried. getProject throws a 404
+      // rather than returning undefined, so the `!project` guard above is
+      // unreachable and the throw landed here — where the key was re-enqueued
+      // unconditionally. With only the 100ms inter-project delay that became a
+      // hot loop: one deleted project logged thousands of identical stack
+      // traces per minute, burying real reconcile errors in noise. The periodic
+      // resync re-adds the project if it ever comes back, so forgetting it here
+      // costs nothing.
+      if (isNotFoundError(e)) {
+        console.log(`[runWorker] project ${key} is gone, dropping from queue`);
+        continue;
+      }
       console.error(`[runWorker] ${key} error:`, e);
-      // Re-enqueue on error.
+      // Genuine failure — retry, but back off so a persistently failing project
+      // cannot saturate the loop either.
       queue.add(key);
+      await new Promise((resolve) => setTimeout(resolve, ERROR_BACKOFF_MS));
     }
 
     // Small delay between projects.
