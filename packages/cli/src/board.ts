@@ -10,6 +10,7 @@
 //   task remove <project>          — delete the Task CR
 //   task approve <project>         — approve an awaiting-human task
 //   task request-changes <project> — send an awaiting-human task back for rework
+//   task retry <project>           — recover a failed task
 //   plan <project>                 — read a PLAN artifact from the plans ConfigMap
 
 import {
@@ -390,6 +391,67 @@ export async function runBoardTaskApprove(
     console.log(`task ${opts.taskName} approved — the manager will schedule the next step`);
   } catch (e) {
     fatal('approve failed', e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// board task retry
+//
+// Recovering a failed task had no CLI path at all, so a task that failed for a
+// reason unrelated to its work — the observed case is an agent completing 50k
+// tokens of committed work and then losing the API connection before it could
+// signal completion — stayed failed forever with retry disabled by default.
+//
+// The two useful moves are the ones the transition table already sanctions:
+//   failed -> pending         re-dispatch the worker, for when the work is lost
+//   failed -> awaiting-human  the work landed, it just needs a verdict
+//
+// Re-dispatching a task whose work is already committed is the expensive
+// mistake here, so the destination is explicit rather than guessed.
+
+export interface BoardTaskRetryOpts {
+  namespace?: string;
+  taskName: string;
+  /** Send straight to human review instead of re-running the worker. */
+  review?: boolean;
+}
+
+export async function runBoardTaskRetry(
+  projectName: string,
+  opts: BoardTaskRetryOpts,
+): Promise<void> {
+  const ns = opts.namespace ?? NAMESPACE;
+  void projectName;
+
+  let task: Task;
+  try {
+    task = await getTask(opts.taskName, ns);
+  } catch (e) {
+    fatal('get task failed', e);
+  }
+
+  const phase = task.status?.phase;
+  if (phase !== 'failed') {
+    console.error(`beatctl: cannot retry task ${opts.taskName} in phase "${phase ?? 'unknown'}".`);
+    console.error('  Only failed tasks can be retried.');
+    process.exit(1);
+  }
+
+  const target: TaskPhase = opts.review ? 'awaiting-human' : 'pending';
+
+  try {
+    await patchTaskStatus(opts.taskName, { phase: target }, ns);
+    if (opts.review) {
+      console.log(
+        `task ${opts.taskName} moved to awaiting-human — review the work it already committed`,
+      );
+    } else {
+      console.log(
+        `task ${opts.taskName} moved to pending — the manager will dispatch a fresh worker`,
+      );
+    }
+  } catch (e) {
+    fatal('retry failed', e);
   }
 }
 

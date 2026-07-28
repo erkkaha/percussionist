@@ -32,6 +32,7 @@ import {
   runBoardTaskMove,
   runBoardTaskRemove,
   runBoardTaskRequestChanges,
+  runBoardTaskRetry,
 } from './board.js';
 import { runCancel } from './cancel.js';
 import { runChat } from './chat.js';
@@ -561,6 +562,24 @@ boardTask
       namespace: opts.namespace,
       taskName: opts.taskName,
       feedback: opts.feedback,
+    });
+  });
+
+boardTask
+  .command('retry <project>')
+  .description('recover a failed task (re-run it, or send it straight to review)')
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .option('--task-name <name>', 'task CR name to retry (required)')
+  .option('--review', 'the work already landed — go to human review instead of re-running')
+  .action((projectName: string, opts) => {
+    if (!opts.taskName) {
+      console.error('beatctl: --task-name is required');
+      process.exit(1);
+    }
+    runBoardTaskRetry(projectName, {
+      namespace: opts.namespace,
+      taskName: opts.taskName,
+      review: opts.review,
     });
   });
 
