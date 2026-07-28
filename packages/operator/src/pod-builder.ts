@@ -614,6 +614,17 @@ export function renderPod(
                     `if [ ! -d "$WORKSPACE_DIR/.git" ]; then`,
                     `  echo "[workspace-init] initialising local git repo at $WORKSPACE_DIR"`,
                     `  git init "$WORKSPACE_DIR"`,
+                    // `git init` names the first branch after init.defaultBranch,
+                    // which is unset in the runner image and so falls back to
+                    // "master". Merge runs target "main" (worker-builder.ts) and
+                    // review runs compute their diff base against it, so leaving
+                    // the default put local workspaces on a branch the rest of
+                    // the platform does not look for: reviewers logged
+                    // "fatal: Not a valid object name main" and silently fell
+                    // back to a bare SHA. Point HEAD at main before the first
+                    // commit — this form works regardless of git version,
+                    // unlike `git init -b` (2.28+).
+                    `  git -C "$WORKSPACE_DIR" symbolic-ref HEAD refs/heads/main`,
                     `  git -C "$WORKSPACE_DIR" commit --allow-empty -m "Initial commit"`,
                     `else`,
                     `  echo "[workspace-init] resuming existing local workspace at $WORKSPACE_DIR"`,

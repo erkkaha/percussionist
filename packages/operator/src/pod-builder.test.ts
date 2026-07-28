@@ -230,6 +230,32 @@ describe('renderPod - workspace-init script generation', () => {
       expect(args).not.toContain('_PARENT_REMOTE_REF');
       expect(args).toContain('git init "$WORKSPACE_DIR"');
     });
+
+    // A bare `git init` names the first branch from init.defaultBranch, which is
+    // unset in the runner image and falls back to "master". Merge runs target
+    // "main" and review runs diff against it, so reviewers logged
+    // "fatal: Not a valid object name main" and fell back to a bare SHA — the
+    // review still ran, just against the wrong base, with no failure surfaced.
+    it('points HEAD at main before the first commit', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'build-task-1',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          source: { local: true },
+        },
+      });
+
+      const args = getWorkspaceInitArgs(run);
+
+      expect(args).toContain('symbolic-ref HEAD refs/heads/main');
+      // Ordering matters: renaming HEAD after the first commit would leave the
+      // commit on master and create an unborn main.
+      expect(args.indexOf('symbolic-ref HEAD refs/heads/main')).toBeLessThan(
+        args.indexOf('commit --allow-empty -m "Initial commit"'),
+      );
+    });
   });
 
   describe('both worktreeReuse and freshWorktree paths have identical parent-baseline logic', () => {
@@ -675,8 +701,8 @@ describe('resolveAuthSecretKey', () => {
 // Claude Code reads one settings.json per pod, so the denial set has to be
 // attributed to the agent that actually drives the session. Rendering it from
 // every mounted agent let the reviewer's `edit: deny` reach the planner:
-// pp-hammer-plan-944605 logged "No `Write` tool is available in this run" and
-// wrote its 23KB plan artifact through a bash heredoc. The adapter's own unit
+// an observed PLAN run logged "No `Write` tool is available in this run" and
+// wrote its plan artifact through a bash heredoc instead. The adapter's own unit
 // tests all passed — the mistake was in what pod-builder handed it, so the
 // assertion belongs at this seam.
 describe('renderPod - claude settings scope', () => {
