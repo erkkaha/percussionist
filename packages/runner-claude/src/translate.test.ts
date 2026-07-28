@@ -190,6 +190,78 @@ describe('TranscriptBuilder', () => {
     expect(step).toMatchObject({ type: 'step-finish', reason: 'end_turn', cost: 0.25 });
   });
 
+  // `usage` on the result message is one message's usage — the final turn —
+  // while `modelUsage` holds the run's cumulative totals. Reporting the former
+  // as the run total made every run look tiny: with prompt caching a closing
+  // turn's uncached input really is about 2 tokens, and no other transcript
+  // message carries usage to make up the difference.
+  test('takes run totals from modelUsage, not the final turn', () => {
+    const b = new TranscriptBuilder(SESSION);
+    b.push(assistant([{ type: 'text', text: 'done' }]));
+    b.push({
+      type: 'result',
+      subtype: 'success',
+      uuid: 'res-1',
+      session_id: 'x',
+      is_error: false,
+      stop_reason: 'end_turn',
+      total_cost_usd: 1.5,
+      usage: { input_tokens: 2, output_tokens: 68, cache_read_input_tokens: 40 },
+      modelUsage: {
+        'claude-sonnet-5': {
+          inputTokens: 120,
+          outputTokens: 48_000,
+          cacheReadInputTokens: 2_400_000,
+          cacheCreationInputTokens: 15_000,
+        },
+      },
+    });
+
+    expect(b.snapshot()[0]?.info.tokens).toEqual({
+      input: 120,
+      output: 48_000,
+      cache: { read: 2_400_000, write: 15_000 },
+    });
+  });
+
+  test('sums modelUsage across models', () => {
+    const b = new TranscriptBuilder(SESSION);
+    b.push(assistant([{ type: 'text', text: 'done' }]));
+    b.push({
+      type: 'result',
+      subtype: 'success',
+      uuid: 'res-1',
+      session_id: 'x',
+      is_error: false,
+      stop_reason: 'end_turn',
+      total_cost_usd: 1,
+      // Subagents run on a cheaper model, so a run's usage is split across two.
+      modelUsage: {
+        'claude-sonnet-5': { inputTokens: 100, outputTokens: 200 },
+        'claude-haiku-4-5': { inputTokens: 5, outputTokens: 30 },
+      },
+    });
+
+    expect(b.snapshot()[0]?.info.tokens).toMatchObject({ input: 105, output: 230 });
+  });
+
+  test('falls back to the final turn usage when modelUsage is absent', () => {
+    const b = new TranscriptBuilder(SESSION);
+    b.push(assistant([{ type: 'text', text: 'done' }]));
+    b.push({
+      type: 'result',
+      subtype: 'success',
+      uuid: 'res-1',
+      session_id: 'x',
+      is_error: false,
+      stop_reason: 'end_turn',
+      total_cost_usd: 1,
+      usage: { input_tokens: 7, output_tokens: 9 },
+    });
+
+    expect(b.snapshot()[0]?.info.tokens).toMatchObject({ input: 7, output: 9 });
+  });
+
   test('records an error on the assistant message when the run fails', () => {
     const b = new TranscriptBuilder(SESSION);
     b.push(assistant([{ type: 'text', text: 'partial' }]));

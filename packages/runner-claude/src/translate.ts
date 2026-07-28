@@ -82,6 +82,15 @@ type SdkUsage = {
   cache_creation_input_tokens?: number;
 };
 
+// Cumulative per-model totals on the result message. Note the camelCase — the
+// SDK spells this block differently from the snake_case per-message usage.
+type SdkModelUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+};
+
 type SdkMessageLike = {
   type?: string;
   uuid?: string;
@@ -99,12 +108,38 @@ type SdkMessageLike = {
   subtype?: string;
   total_cost_usd?: number;
   usage?: SdkUsage;
+  modelUsage?: Record<string, SdkModelUsage>;
   stop_reason?: string | null;
   is_error?: boolean;
   result?: string;
   api_error_status?: number | null;
   tool_use_result?: unknown;
 };
+
+// The result message carries two usage fields and they mean different things.
+// `usage` is a single message's usage — the last turn's — while `modelUsage`
+// holds the run's cumulative totals per model, which is what pairs with
+// total_cost_usd. Reporting `usage` as the run total made every run look tiny:
+// a build task that implemented a whole state machine reported 2 input and 68
+// output tokens, because with prompt caching a final turn's uncached input
+// really is about 2 and its output is just the closing message. The rest of the
+// transcript carries no usage at all, so nothing else made up the difference.
+function sumModelUsage(mu: Record<string, SdkModelUsage> | undefined): Tokens | undefined {
+  if (!mu) return undefined;
+  const entries = Object.values(mu);
+  if (entries.length === 0) return undefined;
+  let input = 0;
+  let output = 0;
+  let read = 0;
+  let write = 0;
+  for (const m of entries) {
+    input += m.inputTokens ?? 0;
+    output += m.outputTokens ?? 0;
+    read += m.cacheReadInputTokens ?? 0;
+    write += m.cacheCreationInputTokens ?? 0;
+  }
+  return { input, output, cache: { read, write } };
+}
 
 function mapTokens(u: SdkUsage | undefined): Tokens | undefined {
   if (!u) return undefined;
@@ -345,7 +380,9 @@ export class TranscriptBuilder {
    */
   private pushResult(msg: SdkMessageLike, suppressError = false): void {
     const now = Date.now();
-    const tokens = mapTokens(msg.usage);
+    // Prefer the cumulative per-model totals; fall back to the last turn's
+    // usage only when the SDK did not send them.
+    const tokens = sumModelUsage(msg.modelUsage) ?? mapTokens(msg.usage);
 
     // A run that produced no renderable assistant turn still has cost and token
     // totals worth reporting, so give them somewhere to land rather than
