@@ -30,6 +30,10 @@ packages/cli/bin/
 kubeconfig
 *.kubeconfig
 
+# Machine-specific kustomize overlay (hostnames, image tags, local tweaks).
+# Start from k8s/local.example/.
+/k8s/local/
+
 # Runtime data (SQLite stats DB, etc.)
 packages/web/data/
 

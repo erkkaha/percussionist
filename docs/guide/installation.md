@@ -70,6 +70,42 @@ is also the way back in if sign-in is ever misconfigured.
 
 See [Security](/security) for the full model.
 
+## Local overrides (kustomize)
+
+Anything machine-specific — the public hostname, locally built image tags —
+belongs in an overlay rather than in the checked-in manifests, so `git status`
+stays clean and `git pull` never conflicts with your cluster:
+
+```bash
+cp -r k8s/local.example k8s/local   # k8s/local is gitignored
+$EDITOR k8s/local/kustomization.yaml k8s/local/tailnet-ingress.yaml
+kubectl apply -k k8s/local
+```
+
+The overlay uses `k8s/deploy` as its base. `beatctl deploy` still applies
+`k8s/deploy/*.yaml` directly, so it reverts patches to those resources — re-run
+`kubectl apply -k k8s/local` afterwards. Resources the overlay *adds* have their
+own names and are never touched.
+
+### Tailnet access
+
+`k8s/local.example/` is a worked example of the most common override: serving the
+dashboard to every device on a [Tailscale](https://tailscale.com) tailnet over
+real HTTPS, which also gives you the secure context that browser notifications
+and the drum audio require. It combines an extra Ingress for the MagicDNS
+hostname (ingress-nginx routes by `Host`, and `tailscale serve` forwards the
+tailnet name) with a `WEB_BASE_URL` patch, plus:
+
+```bash
+sudo tailscale serve --bg --https=443 http://$(minikube ip):80
+```
+
+Register `https://<host>.<tailnet>.ts.net/api/auth/callback/github` with your
+GitHub App first — changing `WEB_BASE_URL` changes the OAuth `redirect_uri`, and
+the https origin makes session cookies `Secure`, so it becomes the only origin
+you can sign in from. See the comments in `k8s/local.example/tailnet-ingress.yaml`
+for the full walkthrough.
+
 ## Verifying
 
 ```bash

@@ -1,0 +1,34 @@
+# Base kustomization for the control plane.
+#
+# `beatctl deploy` does not use this — it applies each file below with
+# `kubectl apply -f` (and patches PERCUSSIONIST_INGRESS_BASE_URL in
+# operator.yaml on the way). This base exists so a local overlay can reference
+# the deploy manifests as a kustomize base and patch them without editing the
+# checked-in files, e.g. to expose the dashboard on a tailnet:
+#
+#   cp -r k8s/local.example k8s/local   # k8s/local is gitignored
+#   $EDITOR k8s/local/*.yaml
+#   kubectl apply -k k8s/local
+#
+# kustomize will not load a plain file above its own root, which is why this
+# file (rather than `../deploy/web.yaml`) is what an overlay points at.
+#
+# CRDs are deliberately not included: they are cluster-scoped, ordered before
+# everything else, and applied separately (`kubectl apply -f k8s/crds/`).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# No `namespace:` here — every namespaced resource already carries
+# `namespace: percussionist`, and setting it would also rewrite the
+# cluster-scoped ClusterRole/ClusterRoleBinding subjects.
+resources:
+  # agent-config must precede the manager: the manager pod mounts it as a
+  # volume with optional: false. kustomize emits ConfigMaps before Deployments,
+  # so the ordering below is honoured on apply.
+  - agent-config.yaml
+  - operator.yaml
+  - manager-controller.yaml
+  - web.yaml
+  - networkpolicy.yaml
+  # ollama.yaml is an opt-in local-inference add-on, not part of the control
+  # plane. Add it to your own overlay if you want it.
