@@ -8,6 +8,7 @@
 #   percussionist/dispatcher:dev   (sidecar that drives each run)
 #   percussionist/web:dev          (web dashboard)
 #   percussionist/manager:dev      (kanban board manager controller)
+#   percussionist/memory:dev       (per-project memory/embedding service)
 #
 # minikube cannot pull these from a registry (tags aren't pushed), so we build
 # on the host and use `minikube image load` to copy them into the node.
@@ -87,6 +88,10 @@ build_one() {
     manager)
       docker build "${extra[@]}" -t "$tag" --build-arg PKG=manager-controller \
         -f "$REPO_ROOT/images/node/Dockerfile" "$REPO_ROOT"
+      ;;
+    memory)
+      docker build "${extra[@]}" -t "$tag" \
+        -f "$REPO_ROOT/images/memory/Dockerfile" "$REPO_ROOT"
       ;;
     code-server)
       docker build "${extra[@]}" -t "$tag" "$REPO_ROOT/images/code-server"
@@ -319,6 +324,7 @@ OPERATOR_TAG="percussionist/operator:dev"
 DISPATCHER_TAG="percussionist/dispatcher:dev"
 WEB_TAG="percussionist/web:dev"
 MANAGER_TAG="percussionist/manager:dev"
+MEMORY_TAG="percussionist/memory:dev"
 CODE_SERVER_TAG="percussionist/code-server:dev"
 
 RESTORE_OPERATOR=false
@@ -344,8 +350,9 @@ if [[ -n "$ONLY" ]]; then
     dispatcher) process_one dispatcher "$DISPATCHER_TAG" ;;
     web)        if $FORCE; then RESTORE_WEB=true; fi; process_one web        "$WEB_TAG" ;;
     manager)    if $FORCE; then RESTORE_MANAGER=true; fi; process_one manager    "$MANAGER_TAG" ;;
+    memory)     process_one memory     "$MEMORY_TAG" ;;
     code-server) process_one code-server "$CODE_SERVER_TAG" ;;
-    *) echo "unknown --only value: $ONLY (runner|runner-claude|operator|dispatcher|web|manager|code-server)" >&2; exit 2 ;;
+    *) echo "unknown --only value: $ONLY (runner|runner-claude|operator|dispatcher|web|manager|memory|code-server)" >&2; exit 2 ;;
   esac
 else
   process_one runner     "$RUNNER_TAG"
@@ -354,13 +361,14 @@ else
   process_one dispatcher "$DISPATCHER_TAG"
   if $FORCE; then RESTORE_WEB=true; fi;        process_one web        "$WEB_TAG"
   if $FORCE; then RESTORE_MANAGER=true; fi;    process_one manager    "$MANAGER_TAG"
+  process_one memory     "$MEMORY_TAG"
   process_one code-server "$CODE_SERVER_TAG"
 fi
 
 # Scaled-down deployments are brought back up by the EXIT trap.
 
 echo ">> Images present in minikube:"
-minikube image ls | grep -E 'percussionist/(runner|runner-claude|operator|dispatcher|web|manager|code-server)' || true
+minikube image ls | grep -E 'percussionist/(runner|runner-claude|operator|dispatcher|web|manager|memory|code-server)' || true
 
 # ---------------------------------------------------------------------------
 # Pin the ingress-nginx HTTP NodePort to 30080 so the dashboard and per-run
