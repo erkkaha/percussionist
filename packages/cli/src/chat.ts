@@ -1,12 +1,16 @@
-// `beatctl chat` — interactive chat with the manager agent.
+// `beatctl chat` — chat with the manager agent.
 //
 // Flow:
 //   1. Start `kubectl port-forward svc/percussionist-manager <local>:4098`.
 //   2. Wait for "Forwarding from" on stderr.
-//   3. Provide a readline REPL that POSTs messages to localhost:<local>/chat.
+//   3. Provide a readline REPL that POSTs messages to localhost:<local>/chat,
+//      or with --message send exactly one and exit.
 //   4. Kill the port-forward on exit.
 //
 // This follows the same port-forward pattern as attach.ts.
+//
+// The reply goes to stdout and every diagnostic to stderr, so `--message` can be
+// piped or captured from CI without the port-forward chatter contaminating it.
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -19,6 +23,36 @@ const MANAGER_PORT = 4098;
 interface ChatOpts {
   namespace?: string;
   localPort?: string;
+  /** Send this one message, print the reply, exit. No REPL, no stdin. */
+  message?: string;
+}
+
+/**
+ * POST one message and print the reply. Returns false if the manager answered
+ * with an error, so one-shot mode can exit non-zero.
+ */
+async function sendMessage(base: string, message: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${base}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    });
+    const data = await res.json();
+    if (data.response) {
+      console.log(data.response);
+      return true;
+    }
+    if (data.error) {
+      console.error('Error:', data.error);
+      return false;
+    }
+    console.error('Unexpected response:', JSON.stringify(data));
+    return false;
+  } catch (e) {
+    console.error('Error:', (e as Error).message);
+    return false;
+  }
 }
 
 async function pickFreePort(): Promise<number> {
@@ -121,6 +155,20 @@ export async function runChat(opts: ChatOpts): Promise<void> {
     process.exit(1);
   }
 
+  // One-shot: send, print, exit. The explicit exit is required because the
+  // port-forward child would otherwise keep the event loop alive forever.
+  if (opts.message !== undefined) {
+    const message = opts.message.trim();
+    if (!message) {
+      console.error('beatctl: --message must not be empty');
+      kill();
+      process.exit(1);
+    }
+    const ok = await sendMessage(BASE, message);
+    kill();
+    process.exit(ok ? 0 : 1);
+  }
+
   console.error('beatctl: connected to manager agent. Type your messages (Ctrl+C to exit).\n');
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -148,23 +196,7 @@ export async function runChat(opts: ChatOpts): Promise<void> {
     if (!trimmed) continue;
 
     console.error(); // blank line before response
-    try {
-      const res = await fetch(`${BASE}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed }),
-      });
-      const data = await res.json();
-      if (data.response) {
-        console.log(data.response);
-      } else if (data.error) {
-        console.error('Error:', data.error);
-      } else {
-        console.error('Unexpected response:', JSON.stringify(data));
-      }
-    } catch (e) {
-      console.error('Error:', (e as Error).message);
-    }
+    await sendMessage(BASE, trimmed);
     console.log(); // trailing blank line
   }
 }

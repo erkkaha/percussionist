@@ -164,9 +164,10 @@ program
 // chat ----------------------------------------------------------------------
 program
   .command('chat')
-  .description('interactive chat with the manager agent')
+  .description('chat with the manager agent (REPL, or one-shot with --message)')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
   .option('--local-port <port>', 'local port to bind (default: random free port)')
+  .option('-m, --message <text>', 'send one message, print the reply, and exit')
   .action((opts) => runChat(opts));
 
 // cancel --------------------------------------------------------------------
