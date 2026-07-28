@@ -24,7 +24,15 @@ import {
   runSessionSecretRotate,
 } from './auth-keys.js';
 import { runAuthLogin, runAuthLogout, runAuthWhoami } from './auth-login.js';
-import { runBoardGet, runBoardTaskAdd, runBoardTaskMove, runBoardTaskRemove } from './board.js';
+import {
+  runBoardGet,
+  runBoardPlan,
+  runBoardTaskAdd,
+  runBoardTaskApprove,
+  runBoardTaskMove,
+  runBoardTaskRemove,
+  runBoardTaskRequestChanges,
+} from './board.js';
 import { runCancel } from './cancel.js';
 import { runChat } from './chat.js';
 import { runDeploy } from './deploy.js';
@@ -449,6 +457,15 @@ board
   .option('-o, --output <fmt>', 'output format (yaml|json)', 'default')
   .action((projectName: string, opts) => runBoardGet(projectName, opts));
 
+board
+  .command('plan <project>')
+  .description('read a PLAN artifact (omit --task to list stored plans)')
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .option('--task <name>', 'PLAN task name whose artifact to print')
+  .action((projectName: string, opts) =>
+    runBoardPlan(projectName, { namespace: opts.namespace, taskName: opts.task }),
+  );
+
 // board task ---------------------------------------------------------------
 const boardTask = board.command('task').description('manage tasks on the project board');
 
@@ -509,6 +526,40 @@ boardTask
     runBoardTaskRemove(projectName, {
       namespace: opts.namespace,
       taskName: opts.taskName,
+    });
+  });
+
+boardTask
+  .command('approve <project>')
+  .description('approve a task parked in awaiting-human')
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .option('--task-name <name>', 'task CR name to approve (required)')
+  .action((projectName: string, opts) => {
+    if (!opts.taskName) {
+      console.error('beatctl: --task-name is required');
+      process.exit(1);
+    }
+    runBoardTaskApprove(projectName, {
+      namespace: opts.namespace,
+      taskName: opts.taskName,
+    });
+  });
+
+boardTask
+  .command('request-changes <project>')
+  .description('send a task parked in awaiting-human back for rework')
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .option('--task-name <name>', 'task CR name to rework (required)')
+  .option('--feedback <text>', 'what needs to change — becomes the rework brief (required)')
+  .action((projectName: string, opts) => {
+    if (!opts.taskName || !opts.feedback) {
+      console.error('beatctl: --task-name and --feedback are required');
+      process.exit(1);
+    }
+    runBoardTaskRequestChanges(projectName, {
+      namespace: opts.namespace,
+      taskName: opts.taskName,
+      feedback: opts.feedback,
     });
   });
 
