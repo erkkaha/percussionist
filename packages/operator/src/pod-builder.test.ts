@@ -256,6 +256,37 @@ describe('renderPod - workspace-init script generation', () => {
         args.indexOf('commit --allow-empty -m "Initial commit"'),
       );
     });
+
+    // Local runs all share /data/workspace and its single branch — there is no
+    // per-run worktree isolating them. A run that dies before committing leaves
+    // its edits behind, and because the dispatcher refuses complete_run on a
+    // dirty tree, the next worker has to commit them to finish its own task.
+    // Observed live: 223 lines of one task's work landed on another task's
+    // branch, attributed to it, and reached review as if the second worker had
+    // written them.
+    it('stashes changes an earlier run left behind when resuming', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'build-task-1',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          source: { local: true },
+        },
+      });
+
+      const args = getWorkspaceInitArgs(run);
+
+      expect(args).toContain('stash push --include-untracked');
+      // Only on the resume path: a freshly initialised repo has nothing to
+      // reclaim, and the guard keeps the stash off the init branch.
+      expect(args.indexOf('stash push --include-untracked')).toBeGreaterThan(
+        args.indexOf('resuming existing local workspace'),
+      );
+      // set -e is in force, so an unguarded stash failure would abort the pod
+      // rather than let the run proceed on a dirty tree.
+      expect(args).toContain('|| echo "[workspace-init] warning: stash failed');
+    });
   });
 
   describe('both worktreeReuse and freshWorktree paths have identical parent-baseline logic', () => {

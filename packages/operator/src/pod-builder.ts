@@ -628,6 +628,22 @@ export function renderPod(
                     `  git -C "$WORKSPACE_DIR" commit --allow-empty -m "Initial commit"`,
                     `else`,
                     `  echo "[workspace-init] resuming existing local workspace at $WORKSPACE_DIR"`,
+                    // Unlike the remote-git path, every local run shares this one
+                    // directory and branch — there is no per-run worktree to
+                    // isolate them. A run that dies before committing therefore
+                    // leaves its edits in the tree, and the next run inherits
+                    // them. That is not cosmetic: the dispatcher refuses
+                    // complete_run on a dirty tree, so the next worker has to
+                    // commit the leftovers to finish its own task, and they land
+                    // on its branch attributed to it. Park them on a stash
+                    // instead. The pod is fresh, so anything uncommitted here
+                    // belongs to a run that has already ended — nothing in
+                    // flight can be lost, and the stash keeps it recoverable.
+                    `  if [ -n "$(git -C "$WORKSPACE_DIR" status --porcelain)" ]; then`,
+                    `    echo "[workspace-init] warning: uncommitted changes left by an earlier run — stashing them"`,
+                    `    git -C "$WORKSPACE_DIR" status --short`,
+                    `    git -C "$WORKSPACE_DIR" stash push --include-untracked -m "workspace-init: leftovers reclaimed before ${runName}" || echo "[workspace-init] warning: stash failed, continuing with a dirty tree"`,
+                    `  fi`,
                     `fi`,
                     '',
                     ...(initScript
