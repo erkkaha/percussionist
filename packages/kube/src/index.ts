@@ -188,8 +188,17 @@ let _apps: AppsV1Api | undefined;
 function init() {
   if (_kc) return;
   _kc = new KubeConfig();
+  // loadFromCluster() does not throw when there is no service account — it
+  // interpolates the missing env vars and yields a cluster at
+  // "https://undefined:undefined", so the catch below never fired and every
+  // request from a CLI context died with "Invalid URL". Decide on the env the
+  // kubelet injects instead of relying on a throw.
+  const inCluster = Boolean(
+    process.env.KUBERNETES_SERVICE_HOST && process.env.KUBERNETES_SERVICE_PORT,
+  );
   try {
-    _kc.loadFromCluster();
+    if (inCluster) _kc.loadFromCluster();
+    else _kc.loadFromDefault();
   } catch {
     _kc.loadFromDefault();
   }
