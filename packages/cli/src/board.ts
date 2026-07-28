@@ -20,6 +20,7 @@ import {
   type Task,
   type TaskColumn,
   type TaskPhase,
+  type TaskStatus,
 } from '@percussionist/api';
 import {
   buildTask,
@@ -439,8 +440,20 @@ export async function runBoardTaskRetry(
 
   const target: TaskPhase = opts.review ? 'awaiting-human' : 'pending';
 
+  // The worker run name is a hash of project, task, retryCount and
+  // aiReworkCount, so re-dispatching without bumping the counter asks for a run
+  // that already exists in phase Failed. The manager adopts that stale Run and
+  // marks the task failed again within a second — the retry looks like an
+  // instant init crash. Bumping the counter yields a fresh name. The review
+  // path needs no new run, so it leaves the counter alone.
+  const worker = task.status?.worker;
+  const statusPatch: Partial<TaskStatus> =
+    opts.review || !worker
+      ? { phase: target }
+      : { phase: target, worker: { ...worker, retryCount: (worker.retryCount ?? 0) + 1 } };
+
   try {
-    await patchTaskStatus(opts.taskName, { phase: target }, ns);
+    await patchTaskStatus(opts.taskName, statusPatch, ns);
     if (opts.review) {
       console.log(
         `task ${opts.taskName} moved to awaiting-human — review the work it already committed`,
