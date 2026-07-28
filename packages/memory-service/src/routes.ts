@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { getDb, getRawDb } from './db.js';
 import { getEmbedding } from './embed.js';
+import { normalizeModelName } from './model-warmup.js';
 
 /**
  * Run `fn` inside a SQLite transaction, rolling back if it throws.
@@ -403,7 +404,10 @@ export async function handleHealth(): Promise<{ ok: boolean }> {
       return { ok: false };
     }
     const data = (await res.json()) as { models?: Array<{ name: string }> };
-    const modelFound = (data.models ?? []).some((m) => m.name === EMBEDDING_MODEL);
+    // Match on the normalized tag: /api/tags reports "model:latest" while the
+    // configured name is usually untagged, and exact equality never matched.
+    const wanted = normalizeModelName(EMBEDDING_MODEL);
+    const modelFound = (data.models ?? []).some((m) => normalizeModelName(m.name) === wanted);
     if (!modelFound) {
       return { ok: false };
     }
