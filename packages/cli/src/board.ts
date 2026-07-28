@@ -16,6 +16,7 @@
 import {
   BoardColumn,
   computeBoardColumn,
+  type Finding,
   type Project,
   type Task,
   type TaskColumn,
@@ -27,6 +28,7 @@ import {
   createTask,
   deleteTask,
   fatal,
+  getFindingsConfigMap,
   getPlansConfigMap,
   getProject,
   getTask,
@@ -34,6 +36,8 @@ import {
   loadFromKubeconfig,
   NAMESPACE,
   padCols,
+  parseInboxFindings,
+  parseTriagedFindings,
   patchTask,
   patchTaskStatus,
 } from '@percussionist/kube';
@@ -261,6 +265,88 @@ export async function runBoardTaskRemove(
 export interface BoardPlanOpts {
   namespace?: string;
   taskName?: string;
+}
+
+// ---------------------------------------------------------------------------
+// board findings
+//
+// This is the off-task findings inbox: an agent's `report_finding` writes
+// `inbox.<id>.json` into the project's findings ConfigMap, the manager triages
+// those into `triaged.<clusterId>.json`, and only the triaged half reaches
+// `status.board.findings`. So the board can show nothing while reports are
+// sitting untriaged, or while writes are failing outright, and reading both
+// halves is the only way to tell those apart — it needed a throwaway script
+// until now.
+//
+// Do not confuse these with the diff findings a reviewer passes to
+// `complete_review`, which rank a diff by review priority and live on the task
+// at `status.diffFindings`. They share a name and nothing else, so a reviewer
+// writing "see findings" in its verdict means those, not this inbox.
+
+export interface BoardFindingsOpts {
+  namespace?: string;
+  all?: boolean;
+}
+
+function formatFinding(f: Finding, prefix: string): string {
+  const where = f.filePath ? ` ${f.filePath}` : '';
+  const task = f.source?.task ? ` from ${f.source.task}` : '';
+  const dup = f.occurrences > 1 ? ` (x${f.occurrences})` : '';
+  return `${prefix} [${f.severity}/${f.category}] ${f.title}${dup}\n      ${f.status}${task}${where}`;
+}
+
+export async function runBoardFindings(
+  projectName: string,
+  opts: BoardFindingsOpts,
+): Promise<void> {
+  const ns = opts.namespace ?? NAMESPACE;
+
+  let data: Record<string, string> | null;
+  try {
+    data = await getFindingsConfigMap(projectName, ns);
+  } catch (e) {
+    fatal('read findings failed', e);
+  }
+
+  const inbox = data ? parseInboxFindings(data) : [];
+  const triaged = data ? [...parseTriagedFindings(data).values()] : [];
+
+  if (inbox.length === 0 && triaged.length === 0) {
+    console.log(`No off-task findings recorded for ${projectName}.`);
+    console.log('  Agents report these with percussionist_dispatcher_report_finding, which is');
+    console.log('  deliberately optional and held to a high bar — an empty list is a normal');
+    console.log('  result, not evidence that reporting is broken.');
+    console.log();
+    console.log('  Note that reviewers also emit "findings" of a different kind: the diff');
+    console.log('  findings passed to complete_review, which rank a diff by review priority');
+    console.log('  and live on the task at status.diffFindings. Those are unrelated to this');
+    console.log('  inbox, so a reviewer can report findings while this list stays empty.');
+    return;
+  }
+
+  if (triaged.length > 0) {
+    console.log(`Triaged (${triaged.length}) — these appear on the board:`);
+    for (const f of triaged) console.log(formatFinding(f, '  •'));
+    console.log();
+  }
+
+  if (inbox.length > 0) {
+    console.log(`Inbox (${inbox.length}) — reported, not yet triaged by the manager:`);
+    for (const f of inbox) console.log(formatFinding(f, '  •'));
+    console.log();
+  }
+
+  if (opts.all) {
+    console.log('Descriptions:');
+    for (const f of [...triaged, ...inbox]) {
+      console.log(`  ${f.title}`);
+      console.log(`    ${f.description.replace(/\n/g, '\n    ')}`);
+      if (f.snippet) console.log(`    snippet: ${f.snippet.split('\n')[0]}`);
+      console.log();
+    }
+  } else {
+    console.log(`Full descriptions: beatctl board findings ${projectName} --all`);
+  }
 }
 
 export async function runBoardPlan(projectName: string, opts: BoardPlanOpts): Promise<void> {

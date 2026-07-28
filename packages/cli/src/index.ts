@@ -25,6 +25,7 @@ import {
 } from './auth-keys.js';
 import { runAuthLogin, runAuthLogout, runAuthWhoami } from './auth-login.js';
 import {
+  runBoardFindings,
   runBoardGet,
   runBoardPlan,
   runBoardTaskAdd,
@@ -466,6 +467,15 @@ board
   .option('--task <name>', 'PLAN task name whose artifact to print')
   .action((projectName: string, opts) =>
     runBoardPlan(projectName, { namespace: opts.namespace, taskName: opts.task }),
+  );
+
+board
+  .command('findings <project>')
+  .description('list findings agents reported, both triaged and still in the inbox')
+  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  .option('--all', 'include each finding’s full description')
+  .action((projectName: string, opts) =>
+    runBoardFindings(projectName, { namespace: opts.namespace, all: opts.all }),
   );
 
 // board task ---------------------------------------------------------------
