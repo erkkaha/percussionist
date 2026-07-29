@@ -332,6 +332,15 @@ describe('AUTH_DISABLED=1 bypass', () => {
     expect(res.status).not.toBe(401);
   });
 
+  // This sent a valid body, and on a machine with a reachable kubeconfig the
+  // route ran to completion: it mints `project-<hex timestamp>` when the body
+  // carries no name, so every run of this suite created a real Project CR in
+  // whatever cluster kubectl points at. The assertion is only "not 401", so it
+  // passed while leaking one project per run — 28 of them had accumulated.
+  //
+  // The route validates the spec before it mints a name or calls the API server,
+  // so an invalid spec still proves the bypass: reaching validation at all means
+  // auth did not reject the request.
   it('POST /api/projects is accessible without token when AUTH_DISABLED=1', async () => {
     process.env.AUTH_DISABLED = '1';
     const devApp = createApp();
@@ -339,9 +348,11 @@ describe('AUTH_DISABLED=1 bypass', () => {
     const res = await devApp.request('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ displayName: 'test' }),
+      body: JSON.stringify({ displayName: 'test', timeoutSeconds: -1 }),
     });
     expect(res.status).not.toBe(401);
+    // 400 from schema validation, which is as far as the request needs to get.
+    expect(res.status).toBe(400);
   });
 
   // Restore original env for other tests.
