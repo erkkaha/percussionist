@@ -179,14 +179,14 @@ export async function sendMessage(
 // and asks for nothing.
 const TOOL_PART_TYPES = new Set(['tool', 'tool-use', 'tool_use', 'tool-result', 'tool_result']);
 
-function findLastAssistant(messages: SessionMessage[]): SessionMessage | undefined {
+export function findLastAssistant(messages: SessionMessage[]): SessionMessage | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i]?.info?.role === 'assistant') return messages[i];
   }
   return undefined;
 }
 
-function collectText(msg: SessionMessage): string {
+export function collectText(msg: SessionMessage): string {
   let text = '';
   for (const part of msg.parts ?? []) {
     if (part && typeof part === 'object' && part.type === 'text' && 'text' in part && part.text) {
@@ -196,7 +196,19 @@ function collectText(msg: SessionMessage): string {
   return text;
 }
 
-function isFinalAnswer(msg: SessionMessage): boolean {
+/**
+ * A turn is the answer when it says something and asks for nothing.
+ *
+ * The narrowing this accepts: an agent that puts its answer in the *same* step
+ * as a tool call, and then produces a step with no text, never satisfies this,
+ * so waitForCompletion runs to the activity timeout instead of returning that
+ * text. Both engines emit one message per step with the final step text-only
+ * (see runner-claude's transcript builder), so that shape is not expected — and
+ * the alternative was worse: the old test accepted any completed turn with
+ * text, which returned an opening line of narration as the answer while the
+ * agent was still working.
+ */
+export function isFinalAnswer(msg: SessionMessage): boolean {
   if (!collectText(msg)) return false;
   return !(msg.parts ?? []).some(
     (part) => part && typeof part === 'object' && TOOL_PART_TYPES.has(part.type as string),
