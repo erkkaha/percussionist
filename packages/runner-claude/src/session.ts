@@ -264,12 +264,50 @@ export class RunSession {
         // Decided before the push so the error never reaches the transcript on
         // a turn we are about to retry. Both run on the same tick, so no poll
         // of /session/:id/message can observe the intermediate state.
-        if (m.type === 'assistant' && hasApiErrorBanner(msg)) this.turnTruncated = true;
+        if (m.type === 'assistant') {
+          if (hasApiErrorBanner(msg)) this.turnTruncated = true;
+          else {
+            // Same reason as the result diagnostic below: log the block shape of
+            // any assistant turn that mentions an API error anywhere but does not
+            // match the banner test, which is exactly the case being missed.
+            const content = (msg as { message?: { content?: unknown } })?.message?.content;
+            const blob = JSON.stringify(content ?? '');
+            if (blob.includes('API Error')) {
+              console.error(
+                `[session ${this.id}] assistant mentions API Error but banner test missed it; ` +
+                  `contentType=${Array.isArray(content) ? 'array' : typeof content} ` +
+                  `blocks=${Array.isArray(content) ? content.map((b) => (b as { type?: string })?.type).join(',') : '-'} ` +
+                  `head=${blob.slice(0, 300)}`,
+              );
+            }
+          }
+        }
 
         const retrying =
           m.type === 'result' &&
           (isRetryableResultError(msg) || this.turnTruncated) &&
           this.retryTurn(msg, this.turnTruncated ? TRUNCATED_DETAIL : undefined);
+
+        // Diagnostic for the failure this retry path exists to catch. Two
+        // attempts at classifying it from the stored transcript were wrong — the
+        // banner is not where the translated messages imply — and the snapshot
+        // holds translated output, not raw SDK messages, so the real shape can
+        // only be seen here. Logged only for a result that ends the turn without
+        // being retried, which is rare, so this is not chatty.
+        if (m.type === 'result' && !retrying) {
+          const r = msg as {
+            subtype?: string;
+            is_error?: boolean;
+            api_error_status?: number | null;
+            stop_reason?: string | null;
+            result?: string;
+          };
+          console.error(
+            `[session ${this.id}] result not retried: subtype=${r.subtype} is_error=${r.is_error} ` +
+              `status=${r.api_error_status} stop_reason=${r.stop_reason} ` +
+              `truncatedFlag=${this.turnTruncated} result=${JSON.stringify((r.result ?? '').slice(0, 200))}`,
+          );
+        }
 
         if (m.type === 'result') this.turnTruncated = false;
 
