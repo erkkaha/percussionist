@@ -76,6 +76,6 @@
     "drizzle-kit": "0.31.10",
     "happy-dom": "^20.10.6",
     "tailwindcss": "4.3.0",
-    "vite": "8.0.16"
+    "vite": "8.1.5"
   }
 }
