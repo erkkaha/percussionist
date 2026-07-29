@@ -37,6 +37,34 @@ const RETRYABLE_TEXT =
  */
 const API_ERROR_PREFIX = /^\s*API Error:/;
 
+/** Reason string for a turn cut short mid-response, for logs and the retry prompt. */
+export const TRUNCATED_DETAIL = 'the response was cut short mid-stream';
+
+/**
+ * True when an SDK `assistant` message is the harness's own error banner rather
+ * than the model talking.
+ *
+ * This is the only place a dropped connection is visible: the banner arrives as
+ * assistant text, and the `result` message that follows reports subtype success
+ * with is_error false and api_error_status null. Four runs failed with "session
+ * ended without completion signal" for want of this check, each having already
+ * produced 18k-47k output tokens of real work.
+ *
+ * Anchored at the start of the first text block so an agent that merely mentions
+ * an API error while summarising its work cannot trigger a retry.
+ */
+export function hasApiErrorBanner(raw: unknown): boolean {
+  const content = (raw as { message?: { content?: unknown } })?.message?.content;
+  if (typeof content === 'string') return API_ERROR_PREFIX.test(content);
+  if (!Array.isArray(content)) return false;
+  for (const block of content) {
+    const b = block as { type?: string; text?: string };
+    if (b?.type !== 'text' || typeof b.text !== 'string') continue;
+    return API_ERROR_PREFIX.test(b.text);
+  }
+  return false;
+}
+
 type ResultLike = {
   is_error?: boolean;
   result?: string;

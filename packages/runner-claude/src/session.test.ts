@@ -96,6 +96,86 @@ describe('RunSession transient retry', () => {
     expect(idle).toHaveLength(0);
   });
 
+  // The shape that actually broke four runs. A dropped connection puts the
+  // harness banner on the assistant message and then reports the result as a
+  // SUCCESS — is_error false, api_error_status null, stop_reason stop_sequence —
+  // so the result message carries no evidence and the classifier alone cannot
+  // see it. Each of those runs had already produced 18k-47k output tokens of
+  // committed work before failing with "session ended without completion
+  // signal".
+  it('re-drives a turn truncated mid-response despite a successful result', async () => {
+    scripted = [
+      assistantText('working'),
+      assistantText(
+        'API Error: Connection closed mid-response. The response above may be incomplete.',
+      ),
+      {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'r-trunc',
+        session_id: 'sdk-1',
+        is_error: false,
+        api_error_status: null,
+        stop_reason: 'stop_sequence',
+        result: '',
+        usage: {},
+      },
+    ];
+    const s = makeSession();
+    const idle: unknown[] = [];
+    s.subscribe((event, data) => {
+      if (event === 'idle') idle.push(data);
+    });
+
+    s.startOrSend('do the task');
+    await settle();
+
+    expect(enqueued).toHaveLength(2);
+    expect(enqueued[1]).toContain('cut short mid-stream');
+    // Settling here is what let the dispatcher call the run finished.
+    expect(idle).toHaveLength(0);
+  });
+
+  // The flag must not survive the turn it was raised on, or every later result
+  // in the session would be retried.
+  it('does not treat the next clean turn as truncated', async () => {
+    scripted = [
+      assistantText('API Error: Connection closed mid-response.'),
+      {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'r-trunc',
+        session_id: 'sdk-1',
+        is_error: false,
+        result: '',
+        usage: {},
+      },
+      assistantText('done properly'),
+      {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'r-ok',
+        session_id: 'sdk-1',
+        is_error: false,
+        result: 'all good',
+        usage: {},
+      },
+    ];
+    const s = makeSession();
+    const idle: unknown[] = [];
+    s.subscribe((event, data) => {
+      if (event === 'idle') idle.push(data);
+    });
+
+    s.startOrSend('do the task');
+    await settle();
+
+    // One continuation for the truncated turn, and none for the clean one.
+    expect(enqueued).toHaveLength(2);
+    // The clean result settles the session, as it must for the run to finish.
+    expect(idle).toHaveLength(1);
+  });
+
   it('records the error once the retry budget is spent', async () => {
     // Budget is 2, so a third failure has to be terminal.
     scripted = [assistantText('working'), overloaded('r1'), overloaded('r2'), overloaded('r3')];

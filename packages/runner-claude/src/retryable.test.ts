@@ -1,5 +1,65 @@
 import { describe, expect, it } from 'bun:test';
-import { isRetryableResultError, retryDelayMs } from './retryable.js';
+import { hasApiErrorBanner, isRetryableResultError, retryDelayMs } from './retryable.js';
+
+// A dropped connection is only visible on the assistant message: the harness
+// emits its banner as assistant text and the result that follows reports subtype
+// success, is_error false, api_error_status null. Verified against a stored
+// session for a run that failed with "session ended without completion signal"
+// after 18k output tokens of committed work — the result message carried no
+// evidence at all, which is why detection has to happen here.
+describe('hasApiErrorBanner', () => {
+  const assistant = (content: unknown) => ({ type: 'assistant', message: { content } });
+
+  it('detects the banner in a text block', () => {
+    expect(
+      hasApiErrorBanner(
+        assistant([
+          {
+            type: 'text',
+            text: 'API Error: Connection closed mid-response. The response above may be incomplete.',
+          },
+        ]),
+      ),
+    ).toBe(true);
+  });
+
+  it('detects the banner when content is a bare string', () => {
+    expect(hasApiErrorBanner(assistant('API Error: Connection closed mid-response.'))).toBe(true);
+  });
+
+  it('ignores an agent mentioning an API error mid-sentence', () => {
+    expect(
+      hasApiErrorBanner(
+        assistant([{ type: 'text', text: 'The retry path now handles API Error: 529 correctly.' }]),
+      ),
+    ).toBe(false);
+  });
+
+  it('ignores ordinary assistant prose', () => {
+    expect(hasApiErrorBanner(assistant([{ type: 'text', text: 'All 318 tests pass.' }]))).toBe(
+      false,
+    );
+  });
+
+  // Only the first text block counts: a later block cannot retroactively mark a
+  // turn that already produced real output as truncated.
+  it('only considers the first text block', () => {
+    expect(
+      hasApiErrorBanner(
+        assistant([
+          { type: 'text', text: 'Implemented doors.ts.' },
+          { type: 'text', text: 'API Error: Connection closed mid-response.' },
+        ]),
+      ),
+    ).toBe(false);
+  });
+
+  it('survives a tool-only turn and malformed input', () => {
+    expect(hasApiErrorBanner(assistant([{ type: 'tool_use', name: 'bash' }]))).toBe(false);
+    expect(hasApiErrorBanner(assistant(undefined))).toBe(false);
+    expect(hasApiErrorBanner(null)).toBe(false);
+  });
+});
 
 const result = (over: Record<string, unknown> = {}) => ({
   type: 'result',
