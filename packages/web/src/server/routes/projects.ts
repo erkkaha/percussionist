@@ -74,6 +74,42 @@ async function deleteProjectConfigCm(projectName: string): Promise<void> {
   }
 }
 
+async function readProjectConfig(project: Awaited<ReturnType<typeof getProject>>): Promise<string> {
+  const configMap = project.spec.secrets?.configMap;
+  if (!configMap) return '';
+  const cm = await core().readNamespacedConfigMap({
+    name: configMap.name,
+    namespace: NAMESPACE,
+  });
+  return cm.data?.[configMap.key] ?? '';
+}
+
+export function mergeProjectPatch(
+  existing: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = { ...existing };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete merged[key];
+    } else if (
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      typeof merged[key] === 'object' &&
+      merged[key] !== null &&
+      !Array.isArray(merged[key])
+    ) {
+      merged[key] = mergeProjectPatch(
+        merged[key] as Record<string, unknown>,
+        value as Record<string, unknown>,
+      );
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
 /**
  * Upsert a K8s Secret holding a single file's raw content.
  * Returns the InjectFileRef (secretRef) to store in spec.injectFiles.
@@ -234,6 +270,7 @@ projects.get('/:name', auth(), async (c) => {
     return c.json({
       ...project,
       injectFileContents,
+      opencodeConfig: await readProjectConfig(project),
       authWarning: authResult.ok ? undefined : authResult.error,
     });
   } catch (e: unknown) {
@@ -324,6 +361,7 @@ projects.put('/:name', adminAuth(), async (c) => {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
+  const hasOpencodeConfig = Object.hasOwn(body as object, 'opencodeConfig');
   const opencodeConfig = (body as { opencodeConfig?: string }).opencodeConfig ?? '';
   // Out-of-band inject files: [{ filename, content }]
   const rawInjectFiles =
@@ -353,40 +391,7 @@ projects.put('/:name', adminAuth(), async (c) => {
   // For sidecars: deep-merge by name so that fields the UI doesn't know about
   // (e.g. securityContext.privileged, resources) are preserved from the existing
   // spec when a matching sidecar name is found.
-  const mergedSpec = { ...existingSpec, ...specBody2 };
-  if (
-    typeof (specBody2 as Record<string, unknown>).flow === 'object' &&
-    (specBody2 as Record<string, unknown>).flow !== null &&
-    typeof (existingSpec as Record<string, unknown>).flow === 'object' &&
-    (existingSpec as Record<string, unknown>).flow !== null
-  ) {
-    const existingFlow = (existingSpec as Record<string, unknown>).flow as Record<string, unknown>;
-    const incomingFlow = (specBody2 as Record<string, unknown>).flow as Record<string, unknown>;
-    const mergedFlow = { ...existingFlow, ...incomingFlow };
-    for (const key of [
-      'humanApproval',
-      'plan',
-      'build',
-      'merge',
-      'integration',
-      'review',
-      'retry',
-      'timeouts',
-    ]) {
-      if (
-        typeof incomingFlow[key] === 'object' &&
-        incomingFlow[key] !== null &&
-        typeof existingFlow[key] === 'object' &&
-        existingFlow[key] !== null
-      ) {
-        mergedFlow[key] = {
-          ...(existingFlow[key] as Record<string, unknown>),
-          ...(incomingFlow[key] as Record<string, unknown>),
-        };
-      }
-    }
-    mergedSpec.flow = mergedFlow;
-  }
+  const mergedSpec = mergeProjectPatch(existingSpec, specBody2);
   if (
     Array.isArray((specBody2 as Record<string, unknown>).sidecars) &&
     Array.isArray((existingSpec as Record<string, unknown>).sidecars)
@@ -399,7 +404,21 @@ projects.put('/:name', adminAuth(), async (c) => {
     >;
     mergedSpec.sidecars = incomingSidecars.map((incoming) => {
       const existing = existingSidecars.find((e) => e.name === incoming.name);
-      return existing ? { ...existing, ...incoming } : incoming;
+      return existing ? mergeProjectPatch(existing, incoming) : incoming;
+    });
+  }
+  if (
+    Array.isArray((specBody2 as Record<string, unknown>).agents) &&
+    Array.isArray((existingSpec as Record<string, unknown>).agents)
+  ) {
+    const existingAgents = (existingSpec as Record<string, unknown>).agents as Array<
+      Record<string, unknown>
+    >;
+    mergedSpec.agents = (
+      (specBody2 as Record<string, unknown>).agents as Array<Record<string, unknown>>
+    ).map((incoming) => {
+      const existing = existingAgents.find((agent) => agent.name === incoming.name);
+      return existing ? mergeProjectPatch(existing, incoming) : incoming;
     });
   }
 
@@ -412,13 +431,13 @@ projects.put('/:name', adminAuth(), async (c) => {
   const spec = withDefaultLocalSource(parsed.data);
 
   // Manage per-project configmap.
-  if (opencodeConfig.trim()) {
+  if (hasOpencodeConfig && opencodeConfig.trim()) {
     await upsertProjectConfigCm(name, opencodeConfig.trim());
     spec.secrets = {
       ...spec.secrets,
       configMap: { name: projectConfigCmName(name), key: CONFIG_CM_KEY },
     };
-  } else {
+  } else if (hasOpencodeConfig) {
     // Clear: remove configmap and unset the field.
     await deleteProjectConfigCm(name);
     if (spec.secrets?.configMap) {
