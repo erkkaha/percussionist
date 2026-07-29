@@ -29,6 +29,9 @@ jobs:
           - image: runner
             dockerfile: images/runner/Dockerfile
             context: images/runner
+          - image: runner-claude
+            dockerfile: images/runner-claude/Dockerfile
+            context: .
           - image: operator
             dockerfile: images/node/Dockerfile
             context: .

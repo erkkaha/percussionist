@@ -111,7 +111,16 @@ export const DEFAULT_RUNNER_ENGINE: RunnerEngine = 'opencode';
  *     despite the name.
  */
 export const CLAUDE_RUNNER_DEFAULTS: RunnerImageSpec = {
-  image: 'percussionist/runner-claude:dev',
+  // A published registry reference, like OPENCODE_RUNNER_DEFAULTS and the
+  // memory service default. This was `percussionist/runner-claude:dev`, a tag
+  // that only exists on a machine that has run scripts/minikube-load.sh, and
+  // the image was not in the CI publish matrix either — so `engine: claude`
+  // worked on a dev box and was ImagePullBackOff everywhere else.
+  //
+  // Local development still wins over the registry: minikube-load.sh tags the
+  // build with this reference as well as the :dev one, so a locally built
+  // runner shadows the published image.
+  image: 'ghcr.io/erkkaha/percussionist/runner-claude:latest',
   port: 4096,
   // Required, not cosmetic: pod-builder falls back to `opencode serve ...` when
   // this is unset, and that binary does not exist in the runner-claude image —

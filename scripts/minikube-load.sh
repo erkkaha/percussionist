@@ -69,6 +69,15 @@ build_one() {
     runner-claude)
       docker build "${extra[@]}" -t "$tag" \
         -f "$REPO_ROOT/images/runner-claude/Dockerfile" "$REPO_ROOT"
+      # CLAUDE_RUNNER_DEFAULTS.image is the published registry reference, not
+      # this :dev tag, so without this alias a local build would be ignored and
+      # the pod would pull the last release instead. Tag both and load both
+      # below, so what you just built is what runs.
+      docker tag "$tag" "$RUNNER_CLAUDE_GHCR_TAG"
+      ;;
+    runner-claude-alias)
+      # The runner-claude pass already built and tagged this reference; this
+      # pass exists only to load the second tag into minikube.
       ;;
     operator)
       docker build "${extra[@]}" -t "$tag" --build-arg PKG=operator \
@@ -320,6 +329,9 @@ process_one() {
 # behaviour for the runner for backward compat.
 RUNNER_TAG="${IMAGE:-percussionist/runner:dev}"
 RUNNER_CLAUDE_TAG="percussionist/runner-claude:dev"
+# The reference CLAUDE_RUNNER_DEFAULTS.image actually resolves to. A local build
+# is tagged with both so it shadows the published image in-cluster.
+RUNNER_CLAUDE_GHCR_TAG="ghcr.io/erkkaha/percussionist/runner-claude:latest"
 OPERATOR_TAG="percussionist/operator:dev"
 DISPATCHER_TAG="percussionist/dispatcher:dev"
 WEB_TAG="percussionist/web:dev"
@@ -345,7 +357,8 @@ trap restore_all EXIT
 if [[ -n "$ONLY" ]]; then
   case "$ONLY" in
     runner)     process_one runner     "$RUNNER_TAG" ;;
-    runner-claude) process_one runner-claude "$RUNNER_CLAUDE_TAG" ;;
+    runner-claude) process_one runner-claude "$RUNNER_CLAUDE_TAG" \
+                   && process_one runner-claude-alias "$RUNNER_CLAUDE_GHCR_TAG" ;;
     operator)   if $FORCE; then RESTORE_OPERATOR=true; fi; process_one operator   "$OPERATOR_TAG" ;;
     dispatcher) process_one dispatcher "$DISPATCHER_TAG" ;;
     web)        if $FORCE; then RESTORE_WEB=true; fi; process_one web        "$WEB_TAG" ;;
@@ -357,6 +370,7 @@ if [[ -n "$ONLY" ]]; then
 else
   process_one runner     "$RUNNER_TAG"
   process_one runner-claude "$RUNNER_CLAUDE_TAG"
+  process_one runner-claude-alias "$RUNNER_CLAUDE_GHCR_TAG"
   if $FORCE; then RESTORE_OPERATOR=true; fi; process_one operator   "$OPERATOR_TAG"
   process_one dispatcher "$DISPATCHER_TAG"
   if $FORCE; then RESTORE_WEB=true; fi;        process_one web        "$WEB_TAG"
