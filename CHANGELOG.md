@@ -1,7 +1,35 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.2] - 2026-07-29
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Stop init from reverting a live run's uncommitted work _(operator)_
+
+### <!-- 6 -->🧪 Testing
+
+- Stop board-view's BoardHeader stub leaking into other suites _(web)_
+- Stop board-view's react-query stub leaking into other suites _(web)_
+- Give the board suites a real router instead of stubbing Link _(web)_
 ## [v0.2.1] - 2026-07-26
+
+### <!-- 0 -->🚀 Features
+
+- Add runner engine types and claude-code model prefix _(api)_
+- Add claude agent sdk runner _(runner-claude)_
+- Select runner engine from spec.engine or model prefix _(operator)_
+- Surface the claude engine in the runs ui _(web)_
+- Default a project with no git source to a local workspace _(api)_
+- Label the local-workspace toggle and describe the secret fields _(web)_
+- Add a kustomize base and local overlay for machine-specific config _(k8s)_
+- Add board approve, request-changes and plan commands _(cli)_
+- Audit the agents the flow dispatches by name _(cli)_
+- Add one-shot chat with --message _(cli)_
+- Surface when memory has no embedding backend _(web)_
+- Add board task retry for failed tasks _(cli)_
+- Add board findings to read the off-task findings inbox _(cli)_
+- Implement mobile compact BoardHeader and tighten BoardView spacing _(web)_
 
 ### <!-- 1 -->🐛 Bug Fixes
 
@@ -9,14 +37,48 @@ All notable changes to Percussionist are documented here.
 - Monochrome notification badge for the Android status bar _(web)_
 - Gate exec_in_workspace sanitization bypass on bearer-token trust _(manager)_
 - Only report WaitingForInput when a human is actually needed _(dispatcher)_
+- Point agent prompts at /workspace instead of /data _(agents)_
+- Mount the engine auth key instead of opencode's auth.json _(operator)_
+- Use a valid ConfigMap key for findings so report_finding works _(kube)_
+- Scope claude settings.json to the run's primary agent _(operator)_
+- Retry a turn that died on a transient API error _(runner-claude)_
+- Match minikube image rows exactly and always restore replicas _(scripts)_
+- Load kubeconfig when not running in a cluster _(kube)_
+- Initialise local workspaces on main, not master _(operator)_
+- Stop one bad task from freezing a whole project _(manager)_
+- Authenticate memory proxy calls and fail health when unusable _(web,memory)_
+- Match model names with the implicit :latest tag _(memory)_
+- Let the memory service run from a local image _(operator)_
+- Drop deleted projects from the reconcile queue _(manager)_
+- Give BUILD workers and reviewers the plan, not a dead path _(manager)_
+- Report a run's total tokens, not its largest message _(dispatcher)_
+- Stop a dead run's edits from landing on the next task _(operator)_
+- Wait for the agent's answer, not its opening line _(manager)_
+- Keep polling.ts a text file _(dispatcher)_
+- Make board task retry produce a run that can actually start _(cli)_
+- Report the run's token totals, not its last turn _(runner-claude)_
+- Stop beatctl get reporting the wrong runner image _(cli)_
+- Publish the runner-claude image and default to it _(ci)_
+- Accept the inline permission form the docs advertised _(operator)_
+- Polish mobile board header edge cases _(web)_
 
 ### <!-- 3 -->📚 Documentation
 
 - Add percussionist-dev-plan-6b0248 sessions table plan _(plan)_
+- Describe the observed runs generically in test comments
+- Add percussionist-dev-plan-aa67fb _(plan)_
 
 ### <!-- 6 -->🧪 Testing
 
 - Add session list table structure regression tests _(web)_
+- Stop two board route tests depending on having no cluster _(web)_
+- Cover the answer-finality predicate _(manager)_
+- Add responsive regression tests for BoardHeader and BoardView _(web)_
+- Fix React DOM prop warnings in board-view mocks _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.1
 ## [v0.2.0] - 2026-07-26
 
 ### <!-- 0 -->🚀 Features
