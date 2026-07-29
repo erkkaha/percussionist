@@ -630,19 +630,32 @@ export function renderPod(
                     `  echo "[workspace-init] resuming existing local workspace at $WORKSPACE_DIR"`,
                     // Unlike the remote-git path, every local run shares this one
                     // directory and branch — there is no per-run worktree to
-                    // isolate them. A run that dies before committing therefore
-                    // leaves its edits in the tree, and the next run inherits
-                    // them. That is not cosmetic: the dispatcher refuses
-                    // complete_run on a dirty tree, so the next worker has to
-                    // commit the leftovers to finish its own task, and they land
-                    // on its branch attributed to it. Park them on a stash
-                    // instead. The pod is fresh, so anything uncommitted here
-                    // belongs to a run that has already ended — nothing in
-                    // flight can be lost, and the stash keeps it recoverable.
+                    // isolate them. Two consequences, and only one of them can be
+                    // addressed from here.
+                    //
+                    // A run that dies before committing leaves its edits in the
+                    // tree, and because the dispatcher refuses complete_run on a
+                    // dirty tree the next worker has to commit them to finish its
+                    // own task; they then land on its branch attributed to it.
+                    // Report that, loudly, so it is at least diagnosable.
+                    //
+                    // Do NOT clean the tree here. This ran `git stash push -u`
+                    // for exactly that reason, on the assumption that a fresh pod
+                    // means any uncommitted work belongs to a run that has already
+                    // ended. That assumption is false: flow.maxParallel allows
+                    // concurrent runs and they all share this directory, so the
+                    // stash reverted a live worker's in-flight edits and its next
+                    // commit came out empty. Observed once, and it costs a whole
+                    // run's work.
+                    //
+                    // The real fix is per-run worktrees for local sources, the way
+                    // the remote path already works, which is more than an init
+                    // container should decide.
                     `  if [ -n "$(git -C "$WORKSPACE_DIR" status --porcelain)" ]; then`,
-                    `    echo "[workspace-init] warning: uncommitted changes left by an earlier run — stashing them"`,
+                    `    echo "[workspace-init] warning: workspace is dirty before ${runName} starts."`,
+                    `    echo "[workspace-init] warning: another run is either still working here or died before committing."`,
+                    `    echo "[workspace-init] warning: changes committed by this run may not be its own."`,
                     `    git -C "$WORKSPACE_DIR" status --short`,
-                    `    git -C "$WORKSPACE_DIR" stash push --include-untracked -m "workspace-init: leftovers reclaimed before ${runName}" || echo "[workspace-init] warning: stash failed, continuing with a dirty tree"`,
                     `  fi`,
                     `fi`,
                     '',

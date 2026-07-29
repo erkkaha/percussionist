@@ -264,7 +264,7 @@ describe('renderPod - workspace-init script generation', () => {
     // Observed live: 223 lines of one task's work landed on another task's
     // branch, attributed to it, and reached review as if the second worker had
     // written them.
-    it('stashes changes an earlier run left behind when resuming', () => {
+    it('reports a dirty workspace on resume without cleaning it', () => {
       const run = makeRun({
         spec: {
           project: 'test-project',
@@ -277,15 +277,36 @@ describe('renderPod - workspace-init script generation', () => {
 
       const args = getWorkspaceInitArgs(run);
 
-      expect(args).toContain('stash push --include-untracked');
-      // Only on the resume path: a freshly initialised repo has nothing to
-      // reclaim, and the guard keeps the stash off the init branch.
-      expect(args.indexOf('stash push --include-untracked')).toBeGreaterThan(
+      expect(args).toContain('warning: workspace is dirty before');
+      // Only on the resume path — a freshly initialised repo has nothing to warn
+      // about.
+      expect(args.indexOf('warning: workspace is dirty before')).toBeGreaterThan(
         args.indexOf('resuming existing local workspace'),
       );
-      // set -e is in force, so an unguarded stash failure would abort the pod
-      // rather than let the run proceed on a dirty tree.
-      expect(args).toContain('|| echo "[workspace-init] warning: stash failed');
+    });
+
+    // This briefly ran `git stash push -u` here to keep one run's leftovers off
+    // the next run's branch. maxParallel allows concurrent runs and they all
+    // share this one directory, so the stash reverted a live worker's in-flight
+    // edits and its next commit came out empty — a whole run's work, for a
+    // reporting improvement. Nothing may mutate the shared tree from here.
+    it('never mutates the shared workspace during init', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'build-task-1',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          source: { local: true },
+        },
+      });
+
+      const args = getWorkspaceInitArgs(run);
+
+      expect(args).not.toContain('stash');
+      expect(args).not.toContain('reset --hard');
+      expect(args).not.toContain('checkout --');
+      expect(args).not.toContain('clean -');
     });
   });
 
