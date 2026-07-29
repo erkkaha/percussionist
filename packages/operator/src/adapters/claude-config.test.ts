@@ -64,6 +64,40 @@ describe('parseOpencodeAgent', () => {
     expect(a.description).toBe('does a thing: carefully');
   });
 
+  // The inline flow map is the spelling this file's own header used to show
+  // while the parser threw the value away, leaving an empty permission map.
+  // Since every denial lives in that map, settings.json came out `{}` and every
+  // restriction was silently lost — a failure in the permissive direction.
+  test('reads the inline flow-map permission form', () => {
+    const a = parseOpencodeAgent(
+      '---\nname: r\npermission: { edit: deny, bash: allow, webfetch: ask }\n---\nbody',
+    );
+    expect(a.permission).toEqual({ edit: 'deny', bash: 'allow', webfetch: 'ask' });
+    expect(a.name).toBe('r');
+  });
+
+  test('an empty inline map yields no permissions and does not swallow later keys', () => {
+    const a = parseOpencodeAgent('---\npermission: {}\nmode: subagent\n---\nbody');
+    expect(a.permission).toEqual({});
+    expect(a.mode).toBe('subagent');
+  });
+
+  test('an inline map does not consume the indented lines after it', () => {
+    // A file mixing both forms is malformed, but the inline value must still
+    // win rather than the following block silently overwriting it.
+    const a = parseOpencodeAgent('---\npermission: { edit: deny }\n  bash: allow\nname: n\n---\nb');
+    expect(a.permission).toEqual({ edit: 'deny' });
+    expect(a.name).toBe('n');
+  });
+
+  test('a value that is not a flat map falls through to the block form', () => {
+    const a = parseOpencodeAgent(
+      '---\npermission: { edit: { level: deny } }\n  bash: allow\n---\nb',
+    );
+    // Refused rather than guessed at, so the indented line is still read.
+    expect(a.permission).toEqual({ bash: 'allow' });
+  });
+
   test('keys after the permission block are not swallowed by it', () => {
     const a = parseOpencodeAgent(
       '---\npermission:\n  bash: allow\nmode: subagent\nname: n\n---\nbody',

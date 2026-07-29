@@ -6,8 +6,16 @@
 //   ---
 //   name: builder
 //   mode: primary
-//   permission: { edit: allow, bash: allow, webfetch: allow }
+//   permission:
+//     edit: allow
+//     bash: allow
+//     webfetch: allow
 //   ---
+//
+// Every checked-in agent uses that block form. The inline flow-map spelling
+// (`permission: { edit: allow }`) is also accepted, because this header used to
+// show it while the parser dropped it.
+//
 //   <body, referencing percussionist_dispatcher_* tools>
 //
 // Claude Code wants `.claude/agents/<name>.md` with `name` + `description`
@@ -36,6 +44,32 @@ const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
  * not a YAML parser — pulling one in for two known shapes is not worth the
  * dependency, and unknown keys are dropped rather than mistranslated.
  */
+/**
+ * Read a YAML inline flow map — `{ edit: allow, bash: allow }` — into a plain
+ * record. Returns undefined when the value is not that shape, which is the
+ * signal to fall through to the indented block form.
+ *
+ * Deliberately shallow: the permission map is one level of string-to-string, so
+ * a value containing a nested brace is not this shape and is refused rather
+ * than guessed at.
+ */
+function parseInlinePermission(value: string): Record<string, string> | undefined {
+  if (!value.startsWith('{') || !value.endsWith('}')) return undefined;
+  const inner = value.slice(1, -1).trim();
+  if (inner === '') return {};
+  if (inner.includes('{') || inner.includes('}')) return undefined;
+
+  const out: Record<string, string> = {};
+  for (const entry of inner.split(',')) {
+    const idx = entry.indexOf(':');
+    if (idx === -1) continue;
+    const k = entry.slice(0, idx).trim();
+    const v = entry.slice(idx + 1).trim();
+    if (k && v) out[k] = v;
+  }
+  return out;
+}
+
 export function parseOpencodeAgent(content: string): OpencodeAgent {
   const match = FRONTMATTER.exec(content);
   if (!match) return { permission: {}, body: content.trim() };
@@ -63,7 +97,15 @@ export function parseOpencodeAgent(content: string): OpencodeAgent {
     const value = line.slice(idx + 1).trim();
 
     if (key === 'permission') {
-      inPermission = true;
+      // Both YAML spellings occur. The block form puts each entry on its own
+      // indented line and is handled by the branch above; the inline flow-map
+      // form puts them all here. Dropping the inline value used to yield an
+      // empty permission map, and since every denial lives in that map the
+      // resulting settings.json was `{}` — every restriction silently lost,
+      // which is the wrong direction to fail in.
+      const inline = parseInlinePermission(value);
+      if (inline) Object.assign(agent.permission, inline);
+      else inPermission = true;
       continue;
     }
     if (key === 'name') agent.name = value;
