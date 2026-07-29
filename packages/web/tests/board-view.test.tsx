@@ -50,17 +50,14 @@ mock.module(path.resolve('src/client/hooks/useBoardNotifications'), () => ({
   useBoardNotifications: () => {},
 }));
 
-// Mock react-router-dom to avoid Router context + route param parsing.
-// useSearchParams returns a tuple matching the real API.
-mock.module('react-router-dom', () => ({
-  useParams: () => ({ name: 'test-project' }),
-  useSearchParams: () => {
-    const sp = new URLSearchParams();
-    return [sp, () => {}];
-  },
-  Link: 'a',
-  default: {},
-}));
+// react-router-dom is deliberately NOT mocked — renderBoardView() mounts a real
+// MemoryRouter on a route that supplies the :name param BoardView reads.
+//
+// The stub here set `Link: 'a'`, and because `mock.module` is process-global and
+// Bun patches the provided keys onto the real module, every other file in the
+// run got that too. An anchor with `to` and no `href` has no implicit `link`
+// role, so session-list.test.tsx's findByRole('link') queries could never match
+// — CI-only failures that passed in isolation.
 
 // @tanstack/react-query is deliberately NOT mocked — a real QueryClient is
 // provided in renderBoardView() instead.
@@ -149,12 +146,27 @@ mock.module(path.resolve('src/client/components/ui/sheet'), () => ({
 
 async function renderBoardView() {
   const { default: BoardView } = await import('../src/client/components/BoardView');
+  const { MemoryRouter, Route, Routes } = await import('react-router-dom');
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // BoardView reads the project from useParams().name and gates its board query
+  // on it, so the route has to carry the param rather than the component being
+  // rendered bare.
   return render(
     React.createElement(
-      QueryClientProvider,
-      { client: queryClient },
-      React.createElement(BoardView),
+      MemoryRouter,
+      { initialEntries: ['/projects/test-project/board'] },
+      React.createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        React.createElement(
+          Routes,
+          null,
+          React.createElement(Route, {
+            path: '/projects/:name/board',
+            element: React.createElement(BoardView),
+          }),
+        ),
+      ),
     ),
   );
 }

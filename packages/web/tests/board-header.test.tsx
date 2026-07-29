@@ -1,8 +1,8 @@
 // board-header.test.tsx — Responsive behavior tests for BoardHeader.
 //
-// Uses @testing-library/react with happy-dom DOM environment. Mocks Button
-// and Link to avoid Radix Slot/router complexity, then asserts on rendered
-// text content for desktop vs mobile modes.
+// Uses @testing-library/react with happy-dom DOM environment. Mocks Button to
+// avoid Radix Slot/cva complexity and mounts a real MemoryRouter, then asserts
+// on rendered text content for desktop vs mobile modes.
 
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import path from 'node:path';
@@ -18,18 +18,20 @@ mock.module(path.resolve('src/client/components/ui/button'), () => ({
   Button: 'button',
 }));
 
-// Mock react-router-dom to avoid Router context. Include all exports that
-// sibling test files may need, because bun:test's mock.module can leak across
-// files when they share the same dependency in a single-runner process.
-mock.module('react-router-dom', () => ({
-  Link: 'a',
-  useParams: () => ({ name: 'test-project' }),
-  useSearchParams: () => {
-    const sp = new URLSearchParams();
-    return [sp, () => {}];
-  },
-  default: {},
-}));
+// react-router-dom is deliberately NOT mocked — renderHeader() supplies a real
+// MemoryRouter instead.
+//
+// The previous stub set `Link: 'a'`, and the leak it tried to accommodate is
+// real but cannot be papered over by listing more exports: `mock.module` is
+// process-global and Bun patches the provided keys onto the real module, so
+// every other file in the run also got `Link: 'a'`. That renders an anchor
+// carrying `to` and no `href`, and an anchor without href has no implicit
+// `link` role — so session-list.test.tsx's findByRole('link') queries could
+// never match, failing on CI while passing in isolation.
+//
+// BoardHeader takes projectName as a prop and needs nothing from the router but
+// Link, so a real router is both cheaper and more faithful: the rendered
+// anchors now carry real hrefs.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -37,22 +39,27 @@ mock.module('react-router-dom', () => ({
 
 async function renderHeader(overrides: Record<string, unknown> = {}) {
   const { BoardHeader } = await import('../src/client/components/board/BoardHeader');
+  const { MemoryRouter } = await import('react-router-dom');
   return render(
-    React.createElement(BoardHeader, {
-      projectName: 'test-project',
-      roster: ['agent-a', 'agent-b'],
-      maxParallel: 3,
-      phase: 'Active',
-      sseConnected: true,
-      metrics: undefined,
-      findings: [],
-      onAddTask: () => {},
-      showAddTask: false,
-      onToggleFindings: () => {},
-      showFindings: false,
-      isMobile: false,
-      ...overrides,
-    }),
+    React.createElement(
+      MemoryRouter,
+      null,
+      React.createElement(BoardHeader, {
+        projectName: 'test-project',
+        roster: ['agent-a', 'agent-b'],
+        maxParallel: 3,
+        phase: 'Active',
+        sseConnected: true,
+        metrics: undefined,
+        findings: [],
+        onAddTask: () => {},
+        showAddTask: false,
+        onToggleFindings: () => {},
+        showFindings: false,
+        isMobile: false,
+        ...overrides,
+      }),
+    ),
   );
 }
 
