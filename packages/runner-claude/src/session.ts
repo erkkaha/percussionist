@@ -16,7 +16,12 @@ import type {
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { isRetryableResultError, retryDelayMs } from './retryable.js';
+import {
+  hasApiErrorBanner,
+  isRetryableResultError,
+  retryDelayMs,
+  TRUNCATED_DETAIL,
+} from './retryable.js';
 import { type MessageInfo, TranscriptBuilder, type TranscriptMessage } from './translate.js';
 
 /**
@@ -108,6 +113,17 @@ export class RunSession {
   private agent: string | undefined;
   /** Transient-error retries spent so far, across the whole session. */
   private attempt = 0;
+  /**
+   * Set when the turn now closing was truncated mid-response.
+   *
+   * A dropped connection does not arrive on the `result` message at all: the
+   * harness emits its banner as the *assistant* message's text, and the result
+   * that follows says subtype success, is_error false, api_error_status null.
+   * The result message alone therefore carries no evidence, so the banner has to
+   * be noticed when the assistant message goes past and remembered until the
+   * result arrives.
+   */
+  private turnTruncated = false;
 
   /**
    * `id` is the external session id handed to the dispatcher by POST /session.
@@ -209,7 +225,7 @@ export class RunSession {
    * Returns false when the budget is spent, which lets the error land in the
    * transcript and fail the run as before.
    */
-  private retryTurn(msg: unknown): boolean {
+  private retryTurn(msg: unknown, detailOverride?: string): boolean {
     if (this.attempt >= MAX_TRANSIENT_RETRIES) {
       console.error(
         `[session ${this.id}] transient API error, ${this.attempt} retries exhausted — failing`,
@@ -217,7 +233,9 @@ export class RunSession {
       return false;
     }
     this.attempt++;
-    const detail = (msg as { result?: string }).result ?? 'unknown error';
+    // A truncated turn's result message carries no useful text, so the caller
+    // supplies the reason it detected on the assistant message instead.
+    const detail = detailOverride ?? (msg as { result?: string }).result ?? 'unknown error';
     const delay = retryDelayMs(this.attempt, RETRY_BASE_MS);
     console.warn(
       `[session ${this.id}] transient API error (${detail.slice(0, 120)}) — ` +
@@ -246,7 +264,52 @@ export class RunSession {
         // Decided before the push so the error never reaches the transcript on
         // a turn we are about to retry. Both run on the same tick, so no poll
         // of /session/:id/message can observe the intermediate state.
-        const retrying = m.type === 'result' && isRetryableResultError(msg) && this.retryTurn(msg);
+        if (m.type === 'assistant') {
+          if (hasApiErrorBanner(msg)) this.turnTruncated = true;
+          else {
+            // Same reason as the result diagnostic below: log the block shape of
+            // any assistant turn that mentions an API error anywhere but does not
+            // match the banner test, which is exactly the case being missed.
+            const content = (msg as { message?: { content?: unknown } })?.message?.content;
+            const blob = JSON.stringify(content ?? '');
+            if (blob.includes('API Error')) {
+              console.error(
+                `[session ${this.id}] assistant mentions API Error but banner test missed it; ` +
+                  `contentType=${Array.isArray(content) ? 'array' : typeof content} ` +
+                  `blocks=${Array.isArray(content) ? content.map((b) => (b as { type?: string })?.type).join(',') : '-'} ` +
+                  `head=${blob.slice(0, 300)}`,
+              );
+            }
+          }
+        }
+
+        const retrying =
+          m.type === 'result' &&
+          (isRetryableResultError(msg) || this.turnTruncated) &&
+          this.retryTurn(msg, this.turnTruncated ? TRUNCATED_DETAIL : undefined);
+
+        // Diagnostic for the failure this retry path exists to catch. Two
+        // attempts at classifying it from the stored transcript were wrong — the
+        // banner is not where the translated messages imply — and the snapshot
+        // holds translated output, not raw SDK messages, so the real shape can
+        // only be seen here. Logged only for a result that ends the turn without
+        // being retried, which is rare, so this is not chatty.
+        if (m.type === 'result' && !retrying) {
+          const r = msg as {
+            subtype?: string;
+            is_error?: boolean;
+            api_error_status?: number | null;
+            stop_reason?: string | null;
+            result?: string;
+          };
+          console.error(
+            `[session ${this.id}] result not retried: subtype=${r.subtype} is_error=${r.is_error} ` +
+              `status=${r.api_error_status} stop_reason=${r.stop_reason} ` +
+              `truncatedFlag=${this.turnTruncated} result=${JSON.stringify((r.result ?? '').slice(0, 200))}`,
+          );
+        }
+
+        if (m.type === 'result') this.turnTruncated = false;
 
         this.builder.push(msg, { suppressError: retrying });
         this.emit('message', msg);
