@@ -355,6 +355,39 @@ projects.put('/:name', adminAuth(), async (c) => {
   // spec when a matching sidecar name is found.
   const mergedSpec = { ...existingSpec, ...specBody2 };
   if (
+    typeof (specBody2 as Record<string, unknown>).flow === 'object' &&
+    (specBody2 as Record<string, unknown>).flow !== null &&
+    typeof (existingSpec as Record<string, unknown>).flow === 'object' &&
+    (existingSpec as Record<string, unknown>).flow !== null
+  ) {
+    const existingFlow = (existingSpec as Record<string, unknown>).flow as Record<string, unknown>;
+    const incomingFlow = (specBody2 as Record<string, unknown>).flow as Record<string, unknown>;
+    const mergedFlow = { ...existingFlow, ...incomingFlow };
+    for (const key of [
+      'humanApproval',
+      'plan',
+      'build',
+      'merge',
+      'integration',
+      'review',
+      'retry',
+      'timeouts',
+    ]) {
+      if (
+        typeof incomingFlow[key] === 'object' &&
+        incomingFlow[key] !== null &&
+        typeof existingFlow[key] === 'object' &&
+        existingFlow[key] !== null
+      ) {
+        mergedFlow[key] = {
+          ...(existingFlow[key] as Record<string, unknown>),
+          ...(incomingFlow[key] as Record<string, unknown>),
+        };
+      }
+    }
+    mergedSpec.flow = mergedFlow;
+  }
+  if (
     Array.isArray((specBody2 as Record<string, unknown>).sidecars) &&
     Array.isArray((existingSpec as Record<string, unknown>).sidecars)
   ) {

@@ -368,7 +368,7 @@ export function buildProjectRequest(
       ...(state.flowBuildOnApprove !== 'merge' ? { onApprove: state.flowBuildOnApprove } : {}),
     };
   }
-  if (state.flowMergeMode !== 'auto') {
+  if (isEdit || state.flowMergeMode !== 'auto') {
     flowOverrides.merge = { mode: state.flowMergeMode };
   }
   if (Object.keys(flowOverrides).length > 0) {
