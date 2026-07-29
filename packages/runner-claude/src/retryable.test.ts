@@ -18,7 +18,7 @@ describe('isRetryableResultError', () => {
     expect(isRetryableResultError(undefined)).toBe(false);
   });
 
-  // The 529 that killed pp-hammer-plan-944605's second run at 0 tokens.
+  // The 529 that killed an observed PLAN run's second attempt at 0 tokens.
   it('retries the observed 529 overload', () => {
     expect(
       isRetryableResultError(

@@ -186,8 +186,8 @@ describe('renderClaudeSettings', () => {
 
   // The regression this signature exists for. settings.json is pod-wide, so a
   // union let the reviewer's `edit: deny` strip Write from the planner driving
-  // the session — which is exactly what happened in
-  // pp-hammer-plan-944605: "No `Write` tool is available in this run".
+  // the session — an observed PLAN run failed with
+  // "No `Write` tool is available in this run".
   test('a mounted agent does not impose its denials on the primary', () => {
     const planner: AgentDef = {
       name: 'planner',
