@@ -539,6 +539,17 @@ export async function fetchProjectMemories(
   );
 }
 
+export interface MemoryHealth {
+  ok: boolean;
+  reachable: boolean;
+  status?: number;
+  error?: string;
+}
+
+export async function fetchMemoryHealth(project: string): Promise<MemoryHealth> {
+  return fetchJSON<MemoryHealth>(`/projects/${encodeURIComponent(project)}/memories/health`);
+}
+
 export async function fetchProjectMemory(project: string, id: string): Promise<ProjectMemory> {
   return fetchJSON<ProjectMemory>(
     `/projects/${encodeURIComponent(project)}/memories/${encodeURIComponent(id)}`,

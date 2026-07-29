@@ -54,8 +54,14 @@ const useLogsMock: {
   isFetching: false,
 };
 
+/** Records the container name LogViewer asks useLogs for. */
+let containerArgSpy = '';
+
 mock.module(path.resolve('src/client/hooks/useLogs'), () => ({
-  useLogs: () => useLogsMock,
+  useLogs: (_name: string, container: string) => {
+    containerArgSpy = container;
+    return useLogsMock;
+  },
 }));
 
 // ---------------------------------------------------------------------------
@@ -135,5 +141,35 @@ describe('LogViewer auto-scroll toggle', () => {
     // Click label text again to re-enable
     fireEvent.click(screen.getByText('auto-scroll'));
     expect(checkbox).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+// The runner container is named `opencode` in the pod spec whichever engine the
+// run uses, so the logs API needs that exact value while the button must not
+// name a specific engine.
+describe('LogViewer container labels', () => {
+  afterEach(cleanup);
+
+  it('labels the runner log source "engine", not "opencode"', async () => {
+    await renderLogViewer();
+
+    expect(screen.getByRole('button', { name: 'engine' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'opencode' })).toBeNull();
+  });
+
+  it('still offers the bootstrap and dispatcher sources', async () => {
+    await renderLogViewer();
+
+    expect(screen.getByRole('button', { name: 'bootstrap' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'dispatcher' })).toBeInTheDocument();
+  });
+
+  // The label is cosmetic; the value passed to the logs API must stay `opencode`
+  // or the container will not resolve.
+  it('requests the opencode container when the engine source is selected', async () => {
+    await renderLogViewer();
+
+    fireEvent.click(screen.getByRole('button', { name: 'engine' }));
+    expect(containerArgSpy).toBe('opencode');
   });
 });

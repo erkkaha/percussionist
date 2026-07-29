@@ -135,6 +135,91 @@ describe('auditAgentCapabilities', () => {
     expect(formattingFindings.some((finding) => finding.detail === 'duplicate')).toBeTrue();
     expect(formattingFindings.some((finding) => finding.detail === 'non-string')).toBeTrue();
   });
+
+  // A roster of planner/builder/reviewer with no buildgen and no integrator
+  // ClusterAgent in the cluster audits as zero errors, while every buildgen run
+  // dies with "session ended without completion signal" and merge runs cannot
+  // report an outcome — the flow dispatches those two by name, so nothing in the
+  // roster checks can see them.
+  it('reports a flow-dispatched agent that does not exist', () => {
+    const report = auditAgentCapabilities(
+      [makeAgent('planner', ['task.plan.execute']), makeAgent('builder', ['task.build.execute'])],
+      [makeProject('demo', 'ns', ['planner', 'builder'])],
+    );
+
+    expect(
+      report.findings.some(
+        (finding) =>
+          finding.code === AuditIssueCode.FlowAgentMissing &&
+          finding.agentName === 'buildgen' &&
+          finding.severity === 'error',
+      ),
+    ).toBeTrue();
+    expect(
+      report.findings.some(
+        (finding) =>
+          finding.code === AuditIssueCode.FlowAgentMissing && finding.agentName === 'integrator',
+      ),
+    ).toBeTrue();
+  });
+
+  it('reports a flow agent that exists but lacks the capability gating its completion tool', () => {
+    const project = makeProject('demo', 'ns', ['planner', 'builder']);
+    // Merge runs fall back to the builder agent, which has no task.merge.execute
+    // — so the dispatcher withholds complete_merge.
+    (project.spec as { flow?: unknown }).flow = { merge: { agent: 'builder' } };
+
+    const report = auditAgentCapabilities(
+      [
+        makeAgent('planner', ['task.plan.execute']),
+        makeAgent('builder', ['task.build.execute', 'run.complete.build']),
+        makeAgent('buildgen', ['task.build.generate', 'run.complete.build']),
+      ],
+      [project],
+    );
+
+    expect(
+      report.findings.some(
+        (finding) =>
+          finding.code === AuditIssueCode.FlowAgentMissingCapability &&
+          finding.agentName === 'builder' &&
+          finding.capability === 'task.merge.execute',
+      ),
+    ).toBeTrue();
+  });
+
+  it('does not fault a project for flow stages it has switched off', () => {
+    const project = makeProject('demo', 'ns', ['planner', 'builder']);
+    (project.spec as { flow?: unknown }).flow = {
+      plan: { buildGeneration: 'manual' },
+      merge: { mode: 'disabled' },
+    };
+
+    const report = auditAgentCapabilities(
+      [makeAgent('planner', ['task.plan.execute']), makeAgent('builder', ['task.build.execute'])],
+      [project],
+    );
+
+    expect(report.findings.some((f) => f.code === AuditIssueCode.FlowAgentMissing)).toBeFalse();
+  });
+
+  it('does not report a flow-dispatched agent as orphaned', () => {
+    const report = auditAgentCapabilities(
+      [
+        makeAgent('planner', ['task.plan.execute']),
+        makeAgent('builder', ['task.build.execute']),
+        makeAgent('buildgen', ['task.build.generate', 'run.complete.build']),
+      ],
+      [makeProject('demo', 'ns', ['planner', 'builder'])],
+    );
+
+    expect(
+      report.findings.some(
+        (finding) =>
+          finding.code === AuditIssueCode.AgentOrphaned && finding.agentName === 'buildgen',
+      ),
+    ).toBeFalse();
+  });
 });
 
 describe('runValidateAgents', () => {
@@ -159,6 +244,10 @@ describe('runValidateAgents', () => {
           clusterAgents: [
             makeAgent('planner', ['task.plan.execute']),
             makeAgent('builder', ['task.build.execute']),
+            // A clean audit needs the agents the flow dispatches by name, not
+            // just the roster: build generation and merge are on by default.
+            makeAgent('buildgen', ['task.build.generate', 'run.complete.build']),
+            makeAgent('integrator', ['task.merge.execute']),
           ],
           projects: [makeProject('demo', 'ns', ['planner', 'builder'])],
         }),
@@ -173,6 +262,8 @@ describe('runValidateAgents', () => {
     expect(lines).toContain('  Missing ClusterAgent references: 0');
     expect(lines).toContain('  Missing PLAN capability coverage: 0');
     expect(lines).toContain('  Missing BUILD capability coverage: 0');
+    expect(lines).toContain('  Missing flow agents: 0');
+    expect(lines).toContain('  Flow agents missing capabilities: 0');
     expect(lines).toContain('No issues found.');
   });
 

@@ -42,13 +42,15 @@ export default function SourceAuthTab({ form }: SourceAuthTabProps) {
         <legend className="px-1 text-sm font-medium text-text-muted">Git source</legend>
 
         {/* Local workspace toggle */}
-        <Switch checked={form.sourceLocal} onCheckedChange={(v) => form.setSourceLocal(v)} />
-        {form.sourceLocal && (
-          <p className="text-xs text-text-dim">
-            Local workspace — no remote repository will be cloned. Changes persist across runs at
-            /data/workspace/.
-          </p>
-        )}
+        <label className="flex items-center gap-2 text-sm font-medium text-text-muted">
+          <Switch checked={form.sourceLocal} onCheckedChange={(v) => form.setSourceLocal(v)} />
+          Local workspace (no git remote)
+        </label>
+        <p className="text-xs text-text-dim">
+          {form.sourceLocal
+            ? 'No remote repository is cloned. The workspace is created with git init on first use and persists across runs at /data/workspace/.'
+            : 'Clone a remote repository into a per-run worktree. Leave this on instead if the project has no remote — a project with neither is created as a local workspace.'}
+        </p>
 
         {!form.sourceLocal && (
           <>
@@ -131,6 +133,10 @@ export default function SourceAuthTab({ form }: SourceAuthTabProps) {
       {/* Secrets */}
       <fieldset className="space-y-3 rounded-md border border-border p-4">
         <legend className="px-1 text-sm font-medium text-text-muted">Secrets</legend>
+        <p className="text-xs text-text-dim">
+          Both name a Secret in the <code className="font-mono">percussionist</code> namespace. The
+          values are never read here — the operator mounts them into the run pod.
+        </p>
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">LLM Keys Secret</label>
@@ -141,6 +147,12 @@ export default function SourceAuthTab({ form }: SourceAuthTabProps) {
               placeholder="llm-keys"
               className="font-mono"
             />
+            <p className="text-xs text-text-dim">
+              Every key in this Secret becomes an environment variable of the same name in the
+              runner — <code className="font-mono">ANTHROPIC_API_KEY</code>,{' '}
+              <code className="font-mono">OPENAI_API_KEY</code>, and so on. Use it for pay-as-you-go
+              API keys.
+            </p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-muted">Auth Secret</label>
@@ -151,6 +163,16 @@ export default function SourceAuthTab({ form }: SourceAuthTabProps) {
               placeholder="opencode-auth"
               className="font-mono"
             />
+            <p className="text-xs text-text-dim">
+              Subscription credentials for the agent engine. OpenCode models want a Secret holding{' '}
+              <code className="font-mono">auth.json</code>;{' '}
+              <code className="font-mono">claude-code/*</code> models want one holding a{' '}
+              <code className="font-mono">claude setup-token</code> under{' '}
+              <code className="font-mono">CLAUDE_CODE_OAUTH_TOKEN</code>. The right key is picked
+              per engine, so only the Secret name goes here. Without it a{' '}
+              <code className="font-mono">claude-code/*</code> run fails immediately with “Not
+              logged in”.
+            </p>
           </div>
         </div>
       </fieldset>

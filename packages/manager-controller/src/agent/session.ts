@@ -171,6 +171,50 @@ export async function sendMessage(
   }
 }
 
+// A turn that calls tools is marked completed the moment the model stops
+// talking, before the tools have run. If that turn also opened with a line of
+// narration — "I'll look that up first" — the old finality test (completed and
+// has text) matched it and returned the narration as the agent's answer while
+// the agent was still working. A turn is only the answer when it says something
+// and asks for nothing.
+const TOOL_PART_TYPES = new Set(['tool', 'tool-use', 'tool_use', 'tool-result', 'tool_result']);
+
+export function findLastAssistant(messages: SessionMessage[]): SessionMessage | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.info?.role === 'assistant') return messages[i];
+  }
+  return undefined;
+}
+
+export function collectText(msg: SessionMessage): string {
+  let text = '';
+  for (const part of msg.parts ?? []) {
+    if (part && typeof part === 'object' && part.type === 'text' && 'text' in part && part.text) {
+      text += String(part.text);
+    }
+  }
+  return text;
+}
+
+/**
+ * A turn is the answer when it says something and asks for nothing.
+ *
+ * The narrowing this accepts: an agent that puts its answer in the *same* step
+ * as a tool call, and then produces a step with no text, never satisfies this,
+ * so waitForCompletion runs to the activity timeout instead of returning that
+ * text. Both engines emit one message per step with the final step text-only
+ * (see runner-claude's transcript builder), so that shape is not expected — and
+ * the alternative was worse: the old test accepted any completed turn with
+ * text, which returned an opening line of narration as the answer while the
+ * agent was still working.
+ */
+export function isFinalAnswer(msg: SessionMessage): boolean {
+  if (!collectText(msg)) return false;
+  return !(msg.parts ?? []).some(
+    (part) => part && typeof part === 'object' && TOOL_PART_TYPES.has(part.type as string),
+  );
+}
+
 function sawAgentActivity(messages: SessionMessage[]): boolean {
   return messages.some((msg) => {
     if (msg.info?.role !== 'assistant') return false;
@@ -238,34 +282,13 @@ export async function waitForCompletion(
     // Incremental flush: send delta to web stats after each polling iteration.
     fromIdx = await incrementalFlushManagerSession(sessionId, startedAtIso, fromIdx);
 
-    // Check if the last assistant message has completed
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      if (msg?.info?.role !== 'assistant') continue;
-      if (msg.info?.time?.completed) {
-        let text = '';
-        for (const part of msg.parts ?? []) {
-          if (
-            part &&
-            typeof part === 'object' &&
-            'type' in part &&
-            (part.type as string) === 'text' &&
-            'text' in part &&
-            part.text
-          ) {
-            text += String(part.text);
-          }
-        }
-        // Final flush on success path
-        await sendManagerSessionStats(
-          sessionId,
-          'Succeeded',
-          startedAtIso,
-          new Date().toISOString(),
-        );
-        if (text) return text;
-        // Tool-call-only intermediate completion — keep polling
-      }
+    // Only the newest assistant message can be the answer. The old loop kept
+    // scanning backwards when the newest turn was not final, which could return
+    // an earlier turn's text as though it were the reply.
+    const last = findLastAssistant(messages);
+    if (last?.info?.time?.completed && isFinalAnswer(last)) {
+      await sendManagerSessionStats(sessionId, 'Succeeded', startedAtIso, new Date().toISOString());
+      return collectText(last);
     }
 
     // Activity timeout. We care that the agent started working, not that it

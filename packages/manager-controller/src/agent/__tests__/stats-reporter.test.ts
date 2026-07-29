@@ -779,6 +779,55 @@ describe('waitForCompletion flush integration', () => {
     }
   });
 
+  // A turn that calls tools is marked completed as soon as the model stops
+  // talking, before the tools run. When such a turn opens with narration, the
+  // old finality test (completed and has text) returned that narration as the
+  // answer and the caller hung up while the agent was still working — asking
+  // the manager a question over the chat endpoint replied "I'll find the
+  // running run for that task first." and nothing else.
+  it('keeps polling past a completed turn that is still calling tools', async () => {
+    let pollCount = 0;
+
+    globalThis.fetch = async (url: any) => {
+      const urlString = typeof url === 'string' ? url : url.toString();
+
+      if (urlString.includes('/session/session-abc/message') && !urlString.includes('stats')) {
+        pollCount++;
+        const narrating = {
+          info: { role: 'assistant', tokens: { output: 8 }, time: { completed: Date.now() } },
+          parts: [
+            { type: 'text', text: "I'll look that up first." },
+            { type: 'tool', tool: 'read_session_live', callID: 'c1' },
+          ],
+        };
+        if (pollCount <= 2) {
+          return new Response(JSON.stringify([narrating]), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(
+          JSON.stringify([
+            narrating,
+            {
+              info: { role: 'assistant', tokens: { output: 40 }, time: { completed: Date.now() } },
+              parts: [{ type: 'text', text: 'The run is clean.' }],
+            },
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    };
+
+    const { waitForCompletion } = await import('../session.js');
+    const result = await waitForCompletion('session-abc', 10000);
+
+    expect(result).toBe('The run is clean.');
+    expect(pollCount).toBeGreaterThan(2);
+  });
+
   it('should call final flush with Failed phase on timeout', async () => {
     const postCalls: Record<string, unknown>[] = [];
 

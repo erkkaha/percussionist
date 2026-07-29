@@ -115,7 +115,13 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
             {
               name: 'memory',
               image,
-              imagePullPolicy: 'Always',
+              // Every other operator-managed pod uses IfNotPresent (runner,
+              // dispatcher, workspace-init, ttl). Memory was the lone Always,
+              // which meant a locally built image could never be used: kubelet
+              // ignored the loaded image and went to the registry every time.
+              // Since the operator server-side-applies this Deployment with
+              // force, a manual patch could not work around it either.
+              imagePullPolicy: 'IfNotPresent',
               env,
               ports: [
                 {

@@ -1,0 +1,60 @@
+# Extra Ingress that answers on a Tailscale hostname, so the dashboard is
+# reachable from every device on your tailnet over real HTTPS — no port-forward,
+# no public exposure, and a secure browsing context (which is what browser
+# notifications and the drum audio need).
+#
+# This is a *second* Ingress rather than a patch of `percussionist-web`, so the
+# stock nip.io rule keeps working and `beatctl deploy` never overwrites it.
+#
+# Why it is needed at all: `tailscale serve` forwards the request with the
+# tailnet hostname in the Host header, and ingress-nginx routes strictly by
+# Host — without a rule for that name every request lands on the default
+# backend as a 404.
+#
+# Setup, once the manifests are applied:
+#
+#   1. Find your node's tailnet name and confirm HTTPS certs are enabled:
+#        tailscale status --json | grep -A2 CertDomains
+#      An empty list means you still need to enable HTTPS for the tailnet in
+#      the admin console (Settings -> Features -> HTTPS Certificates).
+#
+#   2. Register the callback with your GitHub App (Settings -> Developer
+#      settings -> GitHub Apps -> your app -> Callback URL; several are allowed):
+#        https://YOUR-HOST.YOUR-TAILNET.ts.net/api/auth/callback/github
+#
+#   3. Proxy the tailnet HTTPS port at the cluster's ingress. `serve` only
+#      accepts targets on the local machine, so use whichever address your
+#      ingress controller answers on from this host — for minikube that is the
+#      node IP (`minikube ip`), for a port-80 local cluster it is localhost:
+#        sudo tailscale serve --bg --https=443 http://192.168.49.2:80
+#        tailscale serve status
+#
+#   4. Browse https://YOUR-HOST.YOUR-TAILNET.ts.net/ — from this machine too.
+#      MagicDNS resolves the name locally, and the http:// nip.io origin can no
+#      longer hold a session once WEB_BASE_URL is https (Secure cookies).
+#
+# To undo: `sudo tailscale serve reset`, drop the WEB_BASE_URL patch, and
+# `kubectl -n percussionist delete ingress percussionist-web-tailnet`.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: percussionist-web-tailnet
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: web
+spec:
+  ingressClassName: nginx
+  rules:
+    # Must be the node's full MagicDNS name, exactly as `tailscale status`
+    # reports it (minus the trailing dot).
+    - host: YOUR-HOST.YOUR-TAILNET.ts.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: percussionist-web
+                port:
+                  number: 8080

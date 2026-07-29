@@ -8,6 +8,8 @@ export const AuditIssueCode = {
   ProjectRosterMissingAgent: 'PROJECT_ROSTER_MISSING_AGENT',
   ProjectRosterMissingPlanCoverage: 'PROJECT_ROSTER_MISSING_PLAN_COVERAGE',
   ProjectRosterMissingBuildCoverage: 'PROJECT_ROSTER_MISSING_BUILD_COVERAGE',
+  FlowAgentMissing: 'FLOW_AGENT_MISSING',
+  FlowAgentMissingCapability: 'FLOW_AGENT_MISSING_CAPABILITY',
   AgentOrphaned: 'AGENT_ORPHANED',
 } as const;
 
@@ -43,6 +45,54 @@ const CANONICAL_ROLE_EXPECTATIONS: ReadonlyArray<{ token: string; capability: st
 
 const REQUIRED_PLAN_CAPABILITY = 'task.plan.execute';
 const REQUIRED_BUILD_CAPABILITY = 'task.build.execute';
+
+/**
+ * Auxiliary agents the flow dispatches by name — buildgen, merge and AI-review
+ * runs. These never appear in `spec.agents`, so the roster checks above cannot
+ * see them: a project whose roster audits clean can still be structurally
+ * unable to generate BUILD tasks or merge an approved one, because the agent the
+ * flow names does not exist or lacks the capability that gates its completion
+ * tool. When that happens the run does its work and then dies with
+ * "session ended without completion signal", since the dispatcher withholds the
+ * completion tool the prompt told the agent to call.
+ *
+ * `enabled` mirrors the flow settings that switch each stage off, so a project
+ * is not faulted for an agent it will never dispatch. Defaults match the
+ * `.default(...)` values on the flow schema in @percussionist/api.
+ */
+const FLOW_AGENT_ROLES: ReadonlyArray<{
+  role: string;
+  resolve: (project: Project) => string;
+  enabled: (project: Project) => boolean;
+  capabilities: readonly string[];
+}> = [
+  {
+    role: 'build generation',
+    resolve: (p) => p.spec.flow?.plan?.buildGenerationAgent ?? 'buildgen',
+    enabled: (p) => (p.spec.flow?.plan?.buildGeneration ?? 'ai') === 'ai',
+    capabilities: ['task.build.generate', 'run.complete.build'],
+  },
+  {
+    role: 'merge',
+    resolve: (p) => p.spec.flow?.merge?.agent ?? 'integrator',
+    enabled: (p) =>
+      (p.spec.flow?.merge?.mode ?? 'auto') !== 'disabled' &&
+      (p.spec.flow?.build?.onApprove ?? 'merge') !== 'done',
+    capabilities: ['task.merge.execute'],
+  },
+  {
+    role: 'AI review',
+    // `reviewPolicy` is the legacy spelling of `flow.review`; resolveFlow in the
+    // manager folds it in, so the audit has to honour both.
+    resolve: (p) =>
+      p.spec.flow?.review?.agent ?? p.spec.reviewPolicy?.aiReviewerAgent ?? 'reviewer',
+    enabled: (p) =>
+      (p.spec.flow?.review?.aiReviewerEnabled ??
+        p.spec.reviewPolicy?.aiReviewerEnabled ??
+        false) === true,
+    capabilities: ['task.review.evaluate', 'run.complete.review'],
+  },
+];
 
 interface AgentAuditState {
   normalizedCapabilities: Set<string>;
@@ -86,6 +136,16 @@ const ISSUE_SECTIONS: ReadonlyArray<{
     code: AuditIssueCode.ProjectRosterMissingBuildCoverage,
     title: 'Missing BUILD capability coverage',
     description: 'Project rosters with no agent providing task.build.execute.',
+  },
+  {
+    code: AuditIssueCode.FlowAgentMissing,
+    title: 'Missing flow agents',
+    description: 'Agents the flow dispatches by name (buildgen/merge/review) that do not exist.',
+  },
+  {
+    code: AuditIssueCode.FlowAgentMissingCapability,
+    title: 'Flow agents missing capabilities',
+    description: 'Flow-dispatched agents lacking a capability that gates their completion tool.',
   },
   {
     code: AuditIssueCode.AgentConventionCapabilityMismatch,
@@ -323,6 +383,41 @@ export function auditAgentCapabilities(
         projectNamespace,
         capability: REQUIRED_BUILD_CAPABILITY,
       });
+    }
+
+    for (const flowRole of FLOW_AGENT_ROLES) {
+      if (!flowRole.enabled(project)) continue;
+      const agentName = flowRole.resolve(project);
+
+      // Flow agents are dispatched by name, so referencing one is what keeps it
+      // from being reported as orphaned further down.
+      referencedAgents.add(agentName);
+
+      const state = agentStateByName.get(agentName);
+      if (!state) {
+        findings.push({
+          code: AuditIssueCode.FlowAgentMissing,
+          severity: 'error',
+          message: `Project "${projectNamespace}/${projectName}" dispatches ${flowRole.role} runs to ClusterAgent "${agentName}", which does not exist.`,
+          projectName,
+          projectNamespace,
+          agentName,
+        });
+        continue;
+      }
+
+      for (const capability of flowRole.capabilities) {
+        if (state.normalizedCapabilities.has(capability)) continue;
+        findings.push({
+          code: AuditIssueCode.FlowAgentMissingCapability,
+          severity: 'error',
+          message: `Project "${projectNamespace}/${projectName}" ${flowRole.role} agent "${agentName}" is missing capability "${capability}".`,
+          projectName,
+          projectNamespace,
+          agentName,
+          capability,
+        });
+      }
     }
   }
 

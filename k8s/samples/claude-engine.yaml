@@ -1,0 +1,89 @@
+# Sample Project + Run using the Claude Agent SDK runner (engine: claude).
+#
+# Prerequisite — mint a long-lived subscription token and store it:
+#
+#   claude setup-token
+#   kubectl -n percussionist create secret generic claude-oat \
+#     --from-literal=CLAUDE_CODE_OAUTH_TOKEN='sk-ant-oat01-...'
+#
+# Note there is deliberately NO llmKeysSecret here. ANTHROPIC_API_KEY overrides
+# subscription auth unconditionally and is used without prompting in
+# non-interactive mode, so setting both would bill per token while looking like
+# it is on the subscription. The operator rejects the combination for this
+# engine rather than let it run wrong.
+apiVersion: percussionist.dev/v1alpha1
+kind: Project
+metadata:
+  name: claude-demo
+  namespace: percussionist
+spec:
+  displayName: Claude Engine Demo
+  # The `claude-code/` provider prefix is what selects the Claude Agent SDK
+  # runner. Engine selection rides the existing model field, so it inherits that
+  # field's per-run / per-board-task / per-project precedence.
+  model: claude-code/claude-sonnet-5
+
+  source:
+    git:
+      url: https://github.com/octocat/Hello-World.git
+      ref: master
+
+  secrets:
+    authSecret:
+      name: claude-oat
+      key: CLAUDE_CODE_OAUTH_TOKEN
+
+  # Keep subscription-backed fan-out low: a single seat running many
+  # simultaneous agents is the traffic shape that trips abuse filters, and rate
+  # limits bind well before the CRD ceiling of 20.
+  maxParallel: 2
+---
+apiVersion: percussionist.dev/v1alpha1
+kind: Run
+metadata:
+  name: claude-hello
+  namespace: percussionist
+  labels:
+    percussionist.dev/project: claude-demo
+spec:
+  project: claude-demo
+  # No `engine:` field here on purpose — the `claude-code/` provider prefix on the
+  # model selects the runner. `spec.engine` still exists as an explicit override
+  # and wins when set, which is the escape hatch for a run whose model is unset.
+  #
+  # The operator does not merge Project defaults, so the model has to be repeated
+  # here for a raw `kubectl apply`; board-dispatched runs get a concrete model
+  # stamped on by the manager and need nothing.
+  model: claude-code/claude-sonnet-5
+  # The dispatcher only advertises complete_run to an agent holding the
+  # run.complete.build capability (mcp-server.ts gates it). Without an agent the
+  # tool is absent and the run can only ever end "without completion signal".
+  agent: builder
+  # Project defaults are merged by `beatctl submit`, not by the operator, so a
+  # raw `kubectl apply` has to repeat git and secrets here explicitly. Without
+  # source.git there is no repo in /workspace, and the builder agent — whose
+  # workflow ends in a commit — has nothing to commit to.
+  source:
+    git:
+      url: https://github.com/octocat/Hello-World.git
+      ref: master
+  secrets:
+    authSecret:
+      name: claude-oat
+      key: CLAUDE_CODE_OAUTH_TOKEN
+  # Deliberately says nothing about how to signal completion. The builder agent's
+  # own body carries that instruction, and the operator delivers it as the
+  # session's system prompt with the dispatcher tool names rewritten from
+  # opencode's `percussionist_dispatcher_*` to Claude Code's `mcp__dispatcher__*`.
+  # If that translation is broken, this run ends "without completion signal".
+  #
+  # The task ends in a commit on purpose: the builder agent's completion
+  # instruction is conditional on the work being committed, so a task that says
+  # "no commit needed" makes it genuinely ambiguous whether to call complete_run
+  # and the run succeeds only about half the time.
+  task: |
+    Create a file named engine-check.txt in the repository root containing
+    exactly the text: runner-claude ok
+    Read it back to confirm the contents, then commit it.
+  timeoutSeconds: 600
+  ttlSecondsAfterFinished: 3600

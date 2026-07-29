@@ -43,6 +43,17 @@ spec:
                   minLength: 1
                 boardTask:
                   type: string
+                engine:
+                  description: >-
+                    Agent runtime for this run. "opencode" (default) uses the
+                    opencode runner; "claude" uses the runner-claude image,
+                    which serves the same runner HTTP contract backed by the
+                    Claude Agent SDK and authenticates via
+                    spec.secrets.authSecret holding a CLAUDE_CODE_OAUTH_TOKEN.
+                  enum:
+                    - opencode
+                    - claude
+                  type: string
                 task:
                   type: string
                   minLength: 1

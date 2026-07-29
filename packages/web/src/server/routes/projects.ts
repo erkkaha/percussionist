@@ -3,6 +3,7 @@ import {
   type InjectFileRef,
   KIND_PROJECT,
   ProjectSpecSchema,
+  withDefaultLocalSource,
 } from '@percussionist/api';
 import { validateModelAuth } from '@percussionist/kube';
 import { Hono } from 'hono';
@@ -272,7 +273,7 @@ projects.post('/', adminAuth(), async (c) => {
   if (!parsed.success) {
     return c.json({ error: parsed.error.issues.map((i) => i.message).join('; ') }, 400);
   }
-  const spec = parsed.data;
+  const spec = withDefaultLocalSource(parsed.data);
 
   const name = (body as { name?: string }).name ?? `project-${Date.now().toString(16)}`;
 
@@ -373,7 +374,9 @@ projects.put('/:name', adminAuth(), async (c) => {
   if (!parsed.success) {
     return c.json({ error: parsed.error.issues.map((i) => i.message).join('; ') }, 400);
   }
-  const spec = parsed.data;
+  // Also applied on edit: a project saved before this default existed still has
+  // no source, and every save is a chance to give it a workspace.
+  const spec = withDefaultLocalSource(parsed.data);
 
   // Manage per-project configmap.
   if (opencodeConfig.trim()) {

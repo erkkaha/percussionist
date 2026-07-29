@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import {
   useCreateMemory,
   useDeleteMemory,
+  useMemoryHealth,
   useProjectMemories,
   useUpdateMemory,
 } from '../../hooks/useProjectMemories';
@@ -376,6 +377,52 @@ function LoadingState() {
 // Error state
 // ---------------------------------------------------------------------------
 
+/**
+ * Memory silently does nothing unless an embedding backend is reachable.
+ *
+ * Ollama is an opt-in add-on rather than part of the control plane, so a project
+ * can have memory enabled while nothing can generate embeddings: stores fail,
+ * no RELEVANT PROJECT CONTEXT is ever injected into agent prompts, and the tab
+ * just looks empty. Say so, and say what to do about it.
+ */
+function EmbeddingBackendWarning({ reachable }: { reachable: boolean }) {
+  return (
+    <div className="rounded-md border border-warning/30 bg-warning-container px-4 py-3 text-sm text-on-warning-container">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="h-5 w-5 text-warning shrink-0 mt-0.5" />
+        <div className="space-y-1">
+          <p className="font-medium">
+            {reachable
+              ? 'Memory is enabled but cannot generate embeddings'
+              : 'Memory service is unreachable'}
+          </p>
+          {reachable ? (
+            <p className="text-xs leading-relaxed">
+              Memory requires Ollama, which is an opt-in add-on and is not deployed by default.
+              Until it is running with the embedding model pulled, storing a memory fails and no
+              context is injected into agent prompts — this tab will stay empty even though memory
+              is switched on.
+            </p>
+          ) : (
+            <p className="text-xs leading-relaxed">
+              The per-project memory service is not answering. It may still be starting, or memory
+              may not be enabled for this project in the{' '}
+              <span className="font-medium">Workspace &amp; Services</span> tab.
+            </p>
+          )}
+          <p className="text-xs leading-relaxed">
+            Deploy it with{' '}
+            <code className="rounded bg-surface px-1 py-0.5 font-mono text-[11px]">
+              kubectl apply -f k8s/deploy/ollama.yaml
+            </code>
+            . The memory service reports unready until the model responds.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ErrorState({ error, onRetry }: { error: string; onRetry: () => void }) {
   return (
     <div className="rounded-md border border-error/30 bg-error-container px-4 py-3 text-sm text-on-error-container">
@@ -438,6 +485,7 @@ export default function MemoriesTab({ isEdit, projectName }: MemoriesTabProps) {
 
   // Fetch memories (only in edit mode)
   const { data, isLoading, error, refetch } = useProjectMemories(isEdit ? projectName : undefined);
+  const { data: health } = useMemoryHealth(isEdit ? projectName : undefined);
 
   const memories = data?.memories ?? [];
   const total = data?.total ?? 0;
@@ -488,6 +536,10 @@ export default function MemoriesTab({ isEdit, projectName }: MemoriesTabProps) {
         {/* Edit mode: CRUD panel */}
         {isEdit && projectName && (
           <>
+            {/* Backend availability — shown above the toolbar so it is read
+                before the user tries to create a memory that cannot be stored. */}
+            {health && !health.ok ? <EmbeddingBackendWarning reachable={health.reachable} /> : null}
+
             {/* Toolbar */}
             <div className="flex items-center gap-2">
               <div className="relative flex-1">

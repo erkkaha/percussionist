@@ -86,6 +86,113 @@ export const OPENCODE_RUNNER_DEFAULTS: RunnerImageSpec = {
 };
 
 // ---------------------------------------------------------------------------
+// Runner engines
+//
+// Which agent runtime a run pod uses. `opencode` is the default and the
+// historical behaviour; `claude` swaps the runner container for
+// packages/runner-claude, which serves the same HTTP contract on the same port
+// backed by the Claude Agent SDK. Everything downstream — dispatcher polling,
+// stats, the dashboard — is engine-agnostic because that contract is identical.
+
+export const RUNNER_ENGINES = ['opencode', 'claude'] as const;
+export type RunnerEngine = (typeof RUNNER_ENGINES)[number];
+export const DEFAULT_RUNNER_ENGINE: RunnerEngine = 'opencode';
+
+/**
+ * Default RunnerImageSpec for the Claude Agent SDK runner.
+ *
+ * Two fields carry real weight:
+ *   - `authEnvVar: CLAUDE_CODE_OAUTH_TOKEN` means the existing
+ *     `spec.secrets.authSecret` injection in pod-builder delivers the
+ *     subscription token with no engine-specific plumbing. Point authSecret at
+ *     a Secret produced by `claude setup-token`.
+ *   - `baseUrlEnvVar` stays OPENCODE_BASE_URL: that is the variable the
+ *     dispatcher sidecar reads to find the runner, and it is engine-agnostic
+ *     despite the name.
+ */
+export const CLAUDE_RUNNER_DEFAULTS: RunnerImageSpec = {
+  // A published registry reference, like OPENCODE_RUNNER_DEFAULTS and the
+  // memory service default. This was `percussionist/runner-claude:dev`, a tag
+  // that only exists on a machine that has run scripts/minikube-load.sh, and
+  // the image was not in the CI publish matrix either — so `engine: claude`
+  // worked on a dev box and was ImagePullBackOff everywhere else.
+  //
+  // Local development still wins over the registry: minikube-load.sh tags the
+  // build with this reference as well as the :dev one, so a locally built
+  // runner shadows the published image.
+  image: 'ghcr.io/erkkaha/percussionist/runner-claude:latest',
+  port: 4096,
+  // Required, not cosmetic: pod-builder falls back to `opencode serve ...` when
+  // this is unset, and that binary does not exist in the runner-claude image —
+  // the container would fail to exec and the run would die on the runner health
+  // check with a bare "fetch failed".
+  command: ['node', '/app/packages/runner-claude/dist/index.js'],
+  authEnvVar: 'CLAUDE_CODE_OAUTH_TOKEN',
+  configEnvVar: 'CLAUDE_SETTINGS_CONTENT',
+  baseUrlEnvVar: 'OPENCODE_BASE_URL',
+  configMountPath: '/root/.claude',
+  agentsDirRelative: 'agents',
+  configMapKey: 'settings.json',
+};
+
+/** Baseline RunnerImageSpec for an engine, before ClusterSettings overrides. */
+export function runnerDefaultsFor(engine: RunnerEngine | undefined): RunnerImageSpec {
+  return engine === 'claude' ? CLAUDE_RUNNER_DEFAULTS : OPENCODE_RUNNER_DEFAULTS;
+}
+
+/**
+ * Provider ID in a `model` reference that selects the Claude Agent SDK runner,
+ * e.g. `claude-code/claude-opus-5`.
+ *
+ * Deliberately not `anthropic`: opencode has its own `anthropic` provider driven
+ * by an API key, so that string cannot distinguish "run on the Claude Code
+ * harness" from "reach Anthropic's API through opencode". This names the
+ * runtime, not the vendor.
+ */
+export const CLAUDE_ENGINE_PROVIDER_ID = 'claude-code';
+
+/**
+ * Split a `model` reference into provider and model parts.
+ *
+ * Mirrors the dispatcher's parsing exactly (see the MODEL handling in
+ * dispatcher/src/polling.ts): split on the *first* slash only, and treat a
+ * slash-free value as a bare model ID with no provider. Model IDs themselves may
+ * contain slashes, which is why this is not a plain `split('/')`.
+ */
+export function parseModelRef(model: string | undefined): {
+  providerID?: string;
+  modelID?: string;
+} {
+  if (!model) return {};
+  const idx = model.indexOf('/');
+  if (idx === -1) return { modelID: model };
+  return { providerID: model.slice(0, idx), modelID: model.slice(idx + 1) };
+}
+
+/**
+ * Decide which runner engine a run should use.
+ *
+ * Precedence:
+ *   1. An explicit `spec.engine` always wins — the escape hatch for a run whose
+ *      model is unset or whose engine must be pinned independently.
+ *   2. Otherwise a `claude-code/…` model reference selects the claude engine.
+ *      This is the intended everyday path: engine selection rides the existing
+ *      model field, so it inherits that field's per-run / per-board-task /
+ *      per-project precedence with no additional plumbing.
+ *   3. Otherwise the historical default, opencode.
+ *
+ * Note this reads only the Run's own spec. The operator does not merge Project
+ * defaults, so a hand-written Run with no model resolves to opencode even when
+ * its Project names a claude-code model — board-dispatched runs are unaffected
+ * because the manager stamps a concrete model onto each Run it creates.
+ */
+export function deriveEngine(spec: { engine?: RunnerEngine; model?: string }): RunnerEngine {
+  if (spec.engine) return spec.engine;
+  if (parseModelRef(spec.model).providerID === CLAUDE_ENGINE_PROVIDER_ID) return 'claude';
+  return DEFAULT_RUNNER_ENGINE;
+}
+
+// ---------------------------------------------------------------------------
 // Shared building blocks
 //
 // Secrets can be specified at ClusterSettings, Project, or Run level.
@@ -234,6 +341,28 @@ export const SourceSchema = z
   .refine((s) => !(s.git && s.local), {
     message: 'source.git and source.local are mutually exclusive',
   });
+
+export type Source = z.infer<typeof SourceSchema>;
+
+/**
+ * Fill in `source.local` for a spec that names neither a git remote nor a local
+ * workspace.
+ *
+ * The refinement above is a NAND, not an XOR, so an absent `source` validates
+ * happily — and then nothing downstream gives the run a workspace:
+ * pod-builder's `workspaceSubPath` is undefined for that case, so the agent
+ * lands in a bare /workspace with nothing to explore and nowhere to commit.
+ * Neither the dashboard's project form nor `beatctl project create` used to
+ * emit a source unless one was asked for, which made "forgot to pick a source"
+ * the easiest project to create and the only broken one.
+ *
+ * Applied where projects are *written* rather than read, so the resulting CR
+ * states the choice outright instead of leaving every reader to infer it.
+ */
+export function withDefaultLocalSource<T extends { source?: Source }>(spec: T): T {
+  if (spec.source?.git || spec.source?.local) return spec;
+  return { ...spec, source: { local: true } };
+}
 
 // A sidecar container that runs alongside the opencode runner in every pod for
 // a given project. Useful for services the agent needs during its task, e.g. a
@@ -510,6 +639,11 @@ export const RunSpecSchema = z
 
     // Set by manager-controller when this run was spawned by a board task.
     boardTask: z.string().optional(),
+
+    // Which agent runtime serves this run. Defaults to opencode; `claude` swaps
+    // in the runner-claude image, which speaks the same runner HTTP contract
+    // backed by the Claude Agent SDK.
+    engine: z.enum(RUNNER_ENGINES).optional(),
 
     // What the agent should do. Required unless interactive: true.
     task: z.string().min(1).optional(),

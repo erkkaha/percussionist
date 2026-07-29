@@ -14,8 +14,14 @@
  */
 
 import { describe, expect, it } from 'bun:test';
-import type { Run } from '@percussionist/api';
-import { renderPod } from './pod-builder.js';
+import {
+  CLAUDE_RUNNER_DEFAULTS,
+  deriveEngine,
+  OPENCODE_RUNNER_DEFAULTS,
+  type Run,
+  runnerDefaultsFor,
+} from '@percussionist/api';
+import { renderPod, resolveAuthSecretKey } from './pod-builder.js';
 
 // Helper to create a minimal Run CR with all required fields
 function makeRun(overrides: Partial<Run> = {}): Run {
@@ -223,6 +229,84 @@ describe('renderPod - workspace-init script generation', () => {
       expect(args).not.toContain('refs/remotes/origin/');
       expect(args).not.toContain('_PARENT_REMOTE_REF');
       expect(args).toContain('git init "$WORKSPACE_DIR"');
+    });
+
+    // A bare `git init` names the first branch from init.defaultBranch, which is
+    // unset in the runner image and falls back to "master". Merge runs target
+    // "main" and review runs diff against it, so reviewers logged
+    // "fatal: Not a valid object name main" and fell back to a bare SHA — the
+    // review still ran, just against the wrong base, with no failure surfaced.
+    it('points HEAD at main before the first commit', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'build-task-1',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          source: { local: true },
+        },
+      });
+
+      const args = getWorkspaceInitArgs(run);
+
+      expect(args).toContain('symbolic-ref HEAD refs/heads/main');
+      // Ordering matters: renaming HEAD after the first commit would leave the
+      // commit on master and create an unborn main.
+      expect(args.indexOf('symbolic-ref HEAD refs/heads/main')).toBeLessThan(
+        args.indexOf('commit --allow-empty -m "Initial commit"'),
+      );
+    });
+
+    // Local runs all share /data/workspace and its single branch — there is no
+    // per-run worktree isolating them. A run that dies before committing leaves
+    // its edits behind, and because the dispatcher refuses complete_run on a
+    // dirty tree, the next worker has to commit them to finish its own task.
+    // Observed live: 223 lines of one task's work landed on another task's
+    // branch, attributed to it, and reached review as if the second worker had
+    // written them.
+    it('reports a dirty workspace on resume without cleaning it', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'build-task-1',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          source: { local: true },
+        },
+      });
+
+      const args = getWorkspaceInitArgs(run);
+
+      expect(args).toContain('warning: workspace is dirty before');
+      // Only on the resume path — a freshly initialised repo has nothing to warn
+      // about.
+      expect(args.indexOf('warning: workspace is dirty before')).toBeGreaterThan(
+        args.indexOf('resuming existing local workspace'),
+      );
+    });
+
+    // This briefly ran `git stash push -u` here to keep one run's leftovers off
+    // the next run's branch. maxParallel allows concurrent runs and they all
+    // share this one directory, so the stash reverted a live worker's in-flight
+    // edits and its next commit came out empty — a whole run's work, for a
+    // reporting improvement. Nothing may mutate the shared tree from here.
+    it('never mutates the shared workspace during init', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'build-task-1',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          source: { local: true },
+        },
+      });
+
+      const args = getWorkspaceInitArgs(run);
+
+      expect(args).not.toContain('stash');
+      expect(args).not.toContain('reset --hard');
+      expect(args).not.toContain('checkout --');
+      expect(args).not.toContain('clean -');
     });
   });
 
@@ -548,5 +632,160 @@ describe('renderPod - per-run stats key', () => {
     const runner = pod.spec?.containers?.find((c) => c.name === 'opencode');
     const runnerEnv = (runner?.env ?? []).map((e) => e.value ?? '');
     expect(runnerEnv).not.toContain('pcn_run_scoped_key');
+  });
+});
+
+// `spec.image` has a CRD-level default pointing at the opencode runner, so it is
+// never absent. Without an explicit override, `engine: claude` would silently run
+// the opencode image — which is exactly what happened the first time this was
+// deployed to minikube.
+describe('renderPod - engine image precedence', () => {
+  const CRD_DEFAULT = 'ghcr.io/erkkaha/percussionist/runner:latest';
+
+  function runnerImage(run: Run): string | undefined {
+    const pod = renderPod(run, [], [], runnerDefaultsFor(run.spec.engine));
+    return pod.spec?.containers?.find((c) => c.name !== 'dispatcher')?.image;
+  }
+
+  it('lets engine: claude win over the CRD-defaulted spec.image', () => {
+    const run = makeRun();
+    run.spec.engine = 'claude';
+    run.spec.image = CRD_DEFAULT;
+    expect(runnerImage(run)).toBe(CLAUDE_RUNNER_DEFAULTS.image);
+  });
+
+  it('keeps spec.image authoritative when no engine is set', () => {
+    const run = makeRun();
+    run.spec.image = CRD_DEFAULT;
+    expect(runnerImage(run)).toBe(CRD_DEFAULT);
+  });
+
+  it('treats engine: opencode like the default engine', () => {
+    const run = makeRun();
+    run.spec.engine = 'opencode';
+    run.spec.image = CRD_DEFAULT;
+    expect(runnerImage(run)).toBe(CRD_DEFAULT);
+  });
+});
+
+// Engine selection normally rides the model field, so the prefix must reach the
+// image choice — not just the `engine` field that few callers set.
+describe('renderPod - engine from model prefix', () => {
+  const CRD_DEFAULT = 'ghcr.io/erkkaha/percussionist/runner:latest';
+
+  function runnerImage(run: Run): string | undefined {
+    const pod = renderPod(run, [], [], runnerDefaultsFor(deriveEngine(run.spec)));
+    return pod.spec?.containers?.find((c) => c.name !== 'dispatcher')?.image;
+  }
+
+  it('a claude-code model selects the claude runner image', () => {
+    const run = makeRun();
+    run.spec.image = CRD_DEFAULT;
+    run.spec.model = 'claude-code/claude-opus-5';
+    expect(runnerImage(run)).toBe(CLAUDE_RUNNER_DEFAULTS.image);
+  });
+
+  it('another provider keeps the opencode image', () => {
+    const run = makeRun();
+    run.spec.image = CRD_DEFAULT;
+    run.spec.model = 'github-copilot/claude-sonnet-4.5';
+    expect(runnerImage(run)).toBe(CRD_DEFAULT);
+  });
+
+  it('a claude-code model injects the subscription token env var', () => {
+    const run = makeRun();
+    run.spec.model = 'claude-code/claude-opus-5';
+    run.spec.secrets = { authSecret: { name: 'claude-oat', key: 'CLAUDE_CODE_OAUTH_TOKEN' } };
+    const pod = renderPod(run, [], [], runnerDefaultsFor(deriveEngine(run.spec)));
+    const env = pod.spec?.containers?.find((c) => c.name !== 'dispatcher')?.env ?? [];
+    expect(env.some((e) => e.name === 'CLAUDE_CODE_OAUTH_TOKEN')).toBe(true);
+  });
+
+  it('an explicit engine still overrides the model prefix', () => {
+    const run = makeRun();
+    run.spec.image = CRD_DEFAULT;
+    run.spec.engine = 'opencode';
+    run.spec.model = 'claude-code/claude-opus-5';
+    expect(runnerImage(run)).toBe(CRD_DEFAULT);
+  });
+});
+
+// authSecret.key is CRD-defaulted to opencode's `auth.json`, so it is never
+// absent. A claude Secret holds a raw token under CLAUDE_CODE_OAUTH_TOKEN, and
+// mounting `auth.json` fails the pod with CreateContainerConfigError — which is
+// exactly how the first board-dispatched claude run died.
+describe('resolveAuthSecretKey', () => {
+  it('keeps auth.json for the opencode engine', () => {
+    expect(resolveAuthSecretKey('auth.json', 'opencode', OPENCODE_RUNNER_DEFAULTS)).toBe(
+      'auth.json',
+    );
+    expect(resolveAuthSecretKey(undefined, 'opencode', OPENCODE_RUNNER_DEFAULTS)).toBe('auth.json');
+  });
+
+  it('replaces the CRD-defaulted auth.json with the engine auth env var', () => {
+    expect(resolveAuthSecretKey('auth.json', 'claude', CLAUDE_RUNNER_DEFAULTS)).toBe(
+      'CLAUDE_CODE_OAUTH_TOKEN',
+    );
+  });
+
+  it('uses the engine auth env var when no key is given', () => {
+    expect(resolveAuthSecretKey(undefined, 'claude', CLAUDE_RUNNER_DEFAULTS)).toBe(
+      'CLAUDE_CODE_OAUTH_TOKEN',
+    );
+  });
+
+  it('respects a genuinely custom key', () => {
+    expect(resolveAuthSecretKey('my-token', 'claude', CLAUDE_RUNNER_DEFAULTS)).toBe('my-token');
+  });
+
+  it('mounts the token key for a board-style run that never set one', () => {
+    const run = makeRun();
+    run.spec.model = 'claude-code/claude-opus-5';
+    // Shaped like what the manager writes: the CRD default fills in the key.
+    run.spec.secrets = { authSecret: { name: 'claude-oat', key: 'auth.json' } };
+    const pod = renderPod(run, [], [], runnerDefaultsFor(deriveEngine(run.spec)));
+    const env = pod.spec?.containers?.find((c) => c.name !== 'dispatcher')?.env ?? [];
+    const ref = env.find((e) => e.name === 'CLAUDE_CODE_OAUTH_TOKEN')?.valueFrom?.secretKeyRef;
+    expect(ref?.key).toBe('CLAUDE_CODE_OAUTH_TOKEN');
+  });
+});
+
+// Claude Code reads one settings.json per pod, so the denial set has to be
+// attributed to the agent that actually drives the session. Rendering it from
+// every mounted agent let the reviewer's `edit: deny` reach the planner:
+// an observed PLAN run logged "No `Write` tool is available in this run" and
+// wrote its plan artifact through a bash heredoc instead. The adapter's own unit
+// tests all passed — the mistake was in what pod-builder handed it, so the
+// assertion belongs at this seam.
+describe('renderPod - claude settings scope', () => {
+  const PLANNER = {
+    name: 'planner',
+    content: '---\nname: planner\nmode: primary\npermission:\n  edit: allow\n---\nplan things',
+  };
+  const REVIEWER = {
+    name: 'reviewer',
+    content:
+      '---\nname: reviewer\nmode: primary\npermission:\n  edit: deny\n  webfetch: deny\n---\nreview things',
+  };
+
+  function settingsFor(agentName: string | undefined, agents = [PLANNER, REVIEWER]) {
+    const run = makeRun();
+    run.spec.model = 'claude-code/claude-opus-5';
+    run.spec.agent = agentName;
+    const pod = renderPod(run, agents, [], runnerDefaultsFor(deriveEngine(run.spec)));
+    const env = pod.spec?.containers?.find((c) => c.name !== 'dispatcher')?.env ?? [];
+    return JSON.parse(env.find((e) => e.name === 'CLAUDE_SETTINGS_CONTENT')?.value ?? '{}');
+  }
+
+  it('does not deny the primary agent a tool only another mounted agent forbids', () => {
+    expect(settingsFor('planner')).toEqual({});
+  });
+
+  it('still applies the denials of the agent that is driving', () => {
+    expect(settingsFor('reviewer').permissions.deny).toEqual(['Edit', 'WebFetch', 'Write']);
+  });
+
+  it('writes no restrictions when the driving agent is ambiguous', () => {
+    expect(settingsFor(undefined)).toEqual({});
   });
 });

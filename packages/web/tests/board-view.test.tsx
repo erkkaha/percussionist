@@ -1,8 +1,9 @@
 // board-view.test.tsx — BoardView header container responsive spacing tests.
 //
 // Uses @testing-library/react with happy-dom DOM environment. Mocks heavy
-// dependencies (react-router-dom, @tanstack/react-query, hooks, child
-// components) to isolate the header container class assertion.
+// dependencies (react-router-dom, hooks, child components) to isolate the
+// header container class assertion. Query plumbing and BoardHeader are real —
+// see the notes below on why stubbing either of those broke other suites.
 //
 // Regression guard: the header wrapper must always carry both mobile and
 // desktop Tailwind responsive spacing classes so the compact mobile header
@@ -10,6 +11,7 @@
 
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import path from 'node:path';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import React from 'react';
 
@@ -48,24 +50,29 @@ mock.module(path.resolve('src/client/hooks/useBoardNotifications'), () => ({
   useBoardNotifications: () => {},
 }));
 
-// Mock react-router-dom to avoid Router context + route param parsing.
-// useSearchParams returns a tuple matching the real API.
-mock.module('react-router-dom', () => ({
-  useParams: () => ({ name: 'test-project' }),
-  useSearchParams: () => {
-    const sp = new URLSearchParams();
-    return [sp, () => {}];
-  },
-  Link: 'a',
-  default: {},
-}));
+// react-router-dom is deliberately NOT mocked — renderBoardView() mounts a real
+// MemoryRouter on a route that supplies the :name param BoardView reads.
+//
+// The stub here set `Link: 'a'`, and because `mock.module` is process-global and
+// Bun patches the provided keys onto the real module, every other file in the
+// run got that too. An anchor with `to` and no `href` has no implicit `link`
+// role, so session-list.test.tsx's findByRole('link') queries could never match
+// — CI-only failures that passed in isolation.
 
-// Mock @tanstack/react-query to avoid real query infrastructure.
-mock.module('@tanstack/react-query', () => ({
-  useQuery: () => ({ data: mockBoardData, isLoading: false, error: null }),
-  useMutation: () => ({ mutate: () => {}, mutateAsync: async () => {} }),
-  useQueryClient: () => ({ invalidateQueries: () => {} }),
-}));
+// @tanstack/react-query is deliberately NOT mocked — a real QueryClient is
+// provided in renderBoardView() instead.
+//
+// `mock.module` is process-global, and Bun patches only the keys the factory
+// returns onto the real module, so stubbing `useQuery` here replaced it for
+// every other file in the run while leaving QueryClient/QueryClientProvider
+// real. session-list.test.tsx then built a real QueryClient, rendered a
+// component whose useQuery was this stub, and got `data` = mockBoardData: no
+// `.total` ("undefined sessions"), no `.sessions` (no rows), its queryFn never
+// called, and nothing in its own client's cache. Its 4 tests failed on CI while
+// passing locally and in every local reproduction attempt.
+//
+// The data still comes from the lib/api mock below, so nothing here depends on
+// real network access — only on real query plumbing.
 
 // Mock API functions so no real network calls are attempted.
 mock.module(path.resolve('src/client/lib/api'), () => ({
@@ -81,15 +88,23 @@ mock.module(path.resolve('src/client/lib/code-server-url'), () => ({
   deriveIdeUrl: () => undefined,
 }));
 
-// Mock child components to avoid deep rendering and Radix/complex deps.
-// Each maps to a function component that discards props, so React does not
-// emit "Unknown event handler property" or "React does not recognize the X
-// prop on a DOM element" warnings.
-mock.module(path.resolve('src/client/components/board/BoardHeader'), () => ({
-  BoardHeader: () => React.createElement('div'),
-  default: {},
-}));
+// BoardHeader is deliberately NOT mocked here.
+//
+// `mock.module` is process-global and rebinds a module that is already
+// imported, so a stub registered in this file also replaces BoardHeader for
+// every other file in the run — including board-header.test.tsx, whose whole
+// subject it is. That test then asserts against an empty <div> and all 18 of
+// its cases fail, in either file order, while each file passes alone.
+//
+// The assertions below only read classes on BoardView's own
+// board-header-container wrapper, so the real component can render: it costs a
+// little depth and buys back a suite that does not depend on file ordering.
 
+// Mock the remaining child components to avoid deep rendering and Radix/complex
+// deps. Each maps to a function component that discards props, so React does
+// not emit "Unknown event handler property" or "React does not recognize the X
+// prop on a DOM element" warnings. None of these is the subject of another
+// suite; if that ever changes, the note above applies to it too.
 mock.module(path.resolve('src/client/components/board/FindingsPanel'), () => ({
   default: () => React.createElement('div'),
   FindingsPanel: () => React.createElement('div'),
@@ -131,7 +146,29 @@ mock.module(path.resolve('src/client/components/ui/sheet'), () => ({
 
 async function renderBoardView() {
   const { default: BoardView } = await import('../src/client/components/BoardView');
-  return render(React.createElement(BoardView));
+  const { MemoryRouter, Route, Routes } = await import('react-router-dom');
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // BoardView reads the project from useParams().name and gates its board query
+  // on it, so the route has to carry the param rather than the component being
+  // rendered bare.
+  return render(
+    React.createElement(
+      MemoryRouter,
+      { initialEntries: ['/projects/test-project/board'] },
+      React.createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        React.createElement(
+          Routes,
+          null,
+          React.createElement(Route, {
+            path: '/projects/:name/board',
+            element: React.createElement(BoardView),
+          }),
+        ),
+      ),
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +180,7 @@ describe('BoardView header container responsive classes', () => {
 
   it('renders mobile spacing classes (px-3 pt-2 pb-2)', async () => {
     await renderBoardView();
-    const container = screen.getByTestId('board-header-container');
+    const container = await screen.findByTestId('board-header-container');
     expect(container.className).toContain('px-3');
     expect(container.className).toContain('pt-2');
     expect(container.className).toContain('pb-2');
@@ -151,7 +188,7 @@ describe('BoardView header container responsive classes', () => {
 
   it('renders desktop responsive override classes (md:px-4 md:pt-4 md:pb-3)', async () => {
     await renderBoardView();
-    const container = screen.getByTestId('board-header-container');
+    const container = await screen.findByTestId('board-header-container');
     expect(container.className).toContain('md:px-4');
     expect(container.className).toContain('md:pt-4');
     expect(container.className).toContain('md:pb-3');
@@ -159,7 +196,7 @@ describe('BoardView header container responsive classes', () => {
 
   it('renders shrink-0 and border utilities on the wrapper', async () => {
     await renderBoardView();
-    const container = screen.getByTestId('board-header-container');
+    const container = await screen.findByTestId('board-header-container');
     expect(container.className).toContain('shrink-0');
     expect(container.className).toContain('border-b');
     expect(container.className).toContain('border-border');

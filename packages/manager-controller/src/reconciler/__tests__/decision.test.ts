@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { decide } from '../decision.js';
+import { capReviewFeedback, decide } from '../decision.js';
 import { resolveFlow } from '../flow.js';
 import { isValidTransition } from '../transitions.js';
 import { makeProject, makeRun, makeTask } from './fixtures.js';
@@ -1845,5 +1845,41 @@ describe('decide — AI request_changes end-to-end state machine', () => {
     const runNameAr2 = (resultAr2.statusPatch?.worker as any)?.runName;
 
     expect(runNameAr1).not.toBe(runNameAr2);
+  });
+});
+
+// The CRD caps status.worker.reviewFeedback at 4096 bytes. Reviewer verdicts and
+// human rework notes are free prose that routinely exceeds it, and the API
+// server then rejects the entire status patch with a 422. Because the failing
+// task was retried every reconcile pass and the loop rethrew, one oversized
+// verdict froze a whole board: every task after it in iteration order was never
+// looked at again.
+describe('capReviewFeedback', () => {
+  const LIMIT = 4096;
+  const bytes = (s: string) => new TextEncoder().encode(s).length;
+
+  it('leaves feedback within the limit untouched', () => {
+    const text = 'a'.repeat(LIMIT);
+    expect(capReviewFeedback(text)).toBe(text);
+  });
+
+  it('caps oversized feedback to within the CRD limit', () => {
+    const capped = capReviewFeedback('a'.repeat(LIMIT * 2));
+    expect(bytes(capped)).toBeLessThanOrEqual(LIMIT);
+    expect(capped.endsWith('[truncated]')).toBeTrue();
+  });
+
+  it('counts bytes rather than characters', () => {
+    // 3 bytes per character, so 2000 of them are 6000 bytes — over the limit
+    // despite being well under it by character count.
+    const capped = capReviewFeedback('あ'.repeat(2000));
+    expect(bytes(capped)).toBeLessThanOrEqual(LIMIT);
+  });
+
+  it('does not split a multi-byte character or emit replacement chars', () => {
+    // Pad so the cut lands mid-sequence rather than on a boundary.
+    const capped = capReviewFeedback(`${'a'.repeat(2)}${'あ'.repeat(2000)}`);
+    expect(bytes(capped)).toBeLessThanOrEqual(LIMIT);
+    expect(capped).not.toInclude('�');
   });
 });

@@ -129,8 +129,13 @@ export async function reconcileProject(project: Project, namespace: string): Pro
       }
       // active-to-active or inactive-to-inactive: no change to activeCount.
     } catch (e) {
+      // Isolate the failing task instead of aborting the project. Rethrowing
+      // here starved every task after this one in the iteration order, along
+      // with findings ingestion below, on every single pass — one task whose
+      // status patch could not validate silently froze a whole board, with the
+      // remaining tasks simply never being looked at. A poison task must not
+      // take the project down with it.
       console.error(`[reconcile] ${task.metadata.name} handler error:`, e);
-      throw e;
     }
   }
 

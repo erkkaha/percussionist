@@ -137,9 +137,21 @@ export async function buildWorkerRun(
     const planPathForParent = `.percussionist/plans/${task.spec.parentTaskRef}.md`;
     promptLines.push(
       'PLAN CONTEXT:',
-      `- Read ${planPathForParent} before implementing.`,
+      // The ConfigMap is the reliable source. complete_plan does not enforce
+      // that the planner committed the artifact, so the file is frequently
+      // absent — agents were sent to cat a path that did not exist, burned a
+      // turn on ENOENT, and only recovered if they thought to reach for the
+      // tool. Name the tool first and demote the file to a fallback.
+      `- Read the PLAN before implementing: call percussionist_dispatcher_read_plan(project="${projectName}", task="${task.spec.parentTaskRef}").`,
+      `- If that returns no content, fall back to ${planPathForParent} in the repo.`,
       '- Treat that PLAN artifact as the full feature context, even if this BUILD task covers only one slice.',
       "- Keep your changes aligned with the plan's acceptance criteria and sequencing notes.",
+      // The task description is a condensed brief, so a plan constraint that
+      // was not restated in it is invisible to both the ACCEPTANCE list and the
+      // reviewer. Ask for the conflict to be surfaced rather than silently
+      // resolved in favour of the shorter document.
+      '- If the plan requires something this task description does not mention, or the two conflict, say so',
+      '  explicitly in your completion summary rather than silently following only the task description.',
       '',
     );
   }

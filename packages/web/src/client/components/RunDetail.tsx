@@ -308,14 +308,26 @@ export default function RunDetail() {
         </CardContent>
       </Card>
 
-      {/* Interactive terminal — attach to the opencode TUI inside the pod */}
+      {/* Interactive terminal — attaches to the runner's TUI inside the pod.
+          Only the opencode engine has one: attach execs `opencode attach`, and the
+          claude engine's runner is a headless HTTP server with no TUI to connect
+          to, so the terminal would retry and flicker forever. Explain the absence
+          rather than silently dropping the section. */}
       {isActive && run.status?.podName && run.status?.podPhase === 'Running' && (
         <Card>
           <CardHeader className="border-b border-border-muted">
             <CardTitle className="text-sm font-medium text-text-muted">Terminal</CardTitle>
           </CardHeader>
           <CardContent>
-            <TerminalTab runName={name} active={isActive} />
+            {run.spec.engine === 'claude' ? (
+              <p className="text-sm text-text-dim">
+                Interactive attach is not available for the{' '}
+                <code className="font-mono text-xs">claude</code> engine — its runner is a headless
+                server with no terminal session. Use the Session and Logs sections below.
+              </p>
+            ) : (
+              <TerminalTab runName={name} active={isActive} />
+            )}
           </CardContent>
         </Card>
       )}

@@ -448,7 +448,10 @@ export function createInitialState(
     gitGithubTokenSecret: spec.source?.git?.githubTokenSecret?.name ?? '',
     gitAuthorName: spec.source?.git?.author?.name ?? '',
     gitAuthorEmail: spec.source?.git?.author?.email ?? '',
-    sourceLocal: spec.source?.local ?? false,
+    // Anything that is not a git project is a local one — which makes the
+    // toggle default to on for a new project, and shows the truth for an older
+    // project saved with no source at all.
+    sourceLocal: spec.source?.local ?? !spec.source?.git,
     llmKeysSecret: spec.secrets?.llmKeysSecret ?? '',
     authSecret: spec.secrets?.authSecret?.name ?? '',
     opencodeConfig: '',

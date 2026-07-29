@@ -80,13 +80,26 @@ describe('health', () => {
 
 const PROJECT = 'smoke-test-proj';
 
+// What these two assert is that the route is registered — that the request
+// reaches a handler instead of falling through to the catch-all. Asserting a
+// literal 500 tied that to the absence of a kubeconfig: on a machine with a
+// reachable cluster the API server answers 404 for the missing Project and both
+// tests failed. The catch-all returns exactly `{ error: 'Not Found' }`
+// (server/index.ts) and other misses answer with plain text, so a handler can be
+// told from a miss without pinning a status: a miss either carries that exact
+// error string or is not JSON at all, and both fail this check.
+async function expectHandledNotRouterMiss(res: Response): Promise<void> {
+  expect(res.status).toBeGreaterThanOrEqual(400);
+  const body = (await res.json()) as Record<string, unknown>;
+  expect(body.error).toBeDefined();
+  expect(body.error).not.toBe('Not Found');
+}
+
 describe('board routes', () => {
-  // The board-overview route requires K8s, so it returns 500 (not 404).
-  it('GET /api/projects/:project/board → 500 (K8s unavailable, not 404)', async () => {
-    const res = await req(`/api/projects/${PROJECT}/board`);
-    expect(res.status).toBe(500);
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBeDefined();
+  // Backed by K8s: without a cluster this fails to connect, with one it reports
+  // the missing Project. Either way a handler answered.
+  it('GET /api/projects/:project/board reaches its handler', async () => {
+    await expectHandledNotRouterMiss(await req(`/api/projects/${PROJECT}/board`));
   });
 
   it('POST /api/projects/:project/board/tasks missing fields → 400', async () => {
@@ -105,14 +118,30 @@ describe('board routes', () => {
     expect(res.status).toBe(400);
   });
 
-  it('POST /api/projects/:project/board/tasks with valid type/title/agent → 500 (K8s)', async () => {
-    const res = await json(`/api/projects/${PROJECT}/board/tasks`, {
-      type: 'BUILD',
-      title: 'test task',
-      agent: 'builder',
-    });
-    // Route is wired — returns 500 from K8s failure, not 404.
-    expect([400, 500]).toContain(res.status);
+  it('POST /api/projects/:project/board/tasks reaches its handler', async () => {
+    await expectHandledNotRouterMiss(
+      await json(`/api/projects/${PROJECT}/board/tasks`, {
+        type: 'BUILD',
+        title: 'test task',
+        agent: 'builder',
+      }),
+    );
+  });
+
+  // Guards the check itself. Without this, a route that stopped being registered
+  // would still satisfy the two tests above if a miss happened to look like a
+  // handler error.
+  it('the wiring check rejects an unregistered /api path', async () => {
+    const res = await req('/api/projects/no-such-route-xyz/definitely-not-a-route');
+    expect(res.status).toBe(404);
+
+    let rejected = false;
+    try {
+      await expectHandledNotRouterMiss(res);
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
   });
 
   it('POST /api/projects/:project/board/tasks/:taskName/move missing column → 400', async () => {

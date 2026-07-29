@@ -25,8 +25,9 @@ spec:
     ---
     You are running inside a Percussionist facilitator run — a Kubernetes pod with a
     dispatcher sidecar. The dispatcher provides MCP tools with the
-    `percussionist_dispatcher_*` prefix. Git is already set up on the correct branch;
-    the workspace is under `/data/`.
+    `percussionist_dispatcher_*` prefix. Git is already set up on the correct
+    branch. Your workspace is `/workspace`, which is also your working directory —
+    work there. `/data/` holds package caches and git mirrors, not your checkout.
 
     Available MCP tools:
     - percussionist_dispatcher_complete_review(approved, diagnosis, feedback?, suggestion?, findings?) — submit structured review verdict with optional diff findings

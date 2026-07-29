@@ -1,0 +1,87 @@
+# Example local overlay — copy to `k8s/local/` (gitignored) and edit.
+#
+#   cp -r k8s/local.example k8s/local
+#   $EDITOR k8s/local/kustomization.yaml k8s/local/tailnet-ingress.yaml
+#   kubectl apply -k k8s/local
+#
+# The point of an overlay is that machine-specific values (your hostname, your
+# image tags) never touch the checked-in manifests, so `git status` stays clean
+# and a `git pull` never conflicts with your cluster.
+#
+# Caveat: `beatctl deploy` applies k8s/deploy/web.yaml directly, so it reverts
+# the Deployment patch below. Re-run `kubectl apply -k k8s/local` afterwards.
+# Resources this overlay *adds* (tailnet-ingress.yaml) have their own names and
+# are never touched by `beatctl deploy`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../deploy
+  - tailnet-ingress.yaml
+
+patches:
+  # Point the dashboard at the public origin you actually browse.
+  #
+  # WEB_BASE_URL is not cosmetic: better-auth derives the OAuth `redirect_uri`
+  # and the session cookie origin from it (packages/web/src/server/lib/
+  # better-auth.ts). It must match the GitHub App callback URL exactly, and an
+  # https:// value means cookies are marked Secure — so once you set an https
+  # origin here, that origin is the only one you can sign in from.
+  #
+  # `env` merges by name, so this patch owns WEB_BASE_URL and leaves every
+  # other variable in web.yaml alone.
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: percussionist-web
+        namespace: percussionist
+      spec:
+        template:
+          spec:
+            containers:
+              - name: web
+                env:
+                  - name: WEB_BASE_URL
+                    value: https://YOUR-HOST.YOUR-TAILNET.ts.net
+
+  # Locally built images. Uncomment if you run `./scripts/minikube-load.sh`
+  # rather than the published ghcr.io images — it saves re-pinning the tags by
+  # hand after every apply.
+  #
+  # - patch: |
+  #     apiVersion: apps/v1
+  #     kind: Deployment
+  #     metadata:
+  #       name: percussionist-web
+  #       namespace: percussionist
+  #     spec:
+  #       template:
+  #         spec:
+  #           containers:
+  #             - name: web
+  #               image: percussionist/web:dev
+  # - patch: |
+  #     apiVersion: apps/v1
+  #     kind: Deployment
+  #     metadata:
+  #       name: percussionist-operator
+  #       namespace: percussionist
+  #     spec:
+  #       template:
+  #         spec:
+  #           containers:
+  #             - name: operator
+  #               image: percussionist/operator:dev
+  # - patch: |
+  #     apiVersion: apps/v1
+  #     kind: Deployment
+  #     metadata:
+  #       name: percussionist-manager
+  #       namespace: percussionist
+  #     spec:
+  #       template:
+  #         spec:
+  #           containers:
+  #             - name: manager
+  #               image: percussionist/manager:dev

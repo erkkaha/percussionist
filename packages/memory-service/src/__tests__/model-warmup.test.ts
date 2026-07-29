@@ -202,3 +202,29 @@ describe('state accessors', () => {
     expect(mod.getModelError()).toBeNull();
   });
 });
+
+// Ollama resolves an untagged model reference to `:latest` and /api/tags always
+// reports the resolved tag. Comparing exactly meant the configured
+// "nomic-embed-text" never matched the reported "nomic-embed-text:latest", so
+// warmup pulled the model and then declared "pull reported success but model not
+// found in tags" — the service stayed permanently unready with the model present
+// and every /memory, /context and /search call failed.
+describe('normalizeModelName', () => {
+  it('adds the implicit :latest tag', async () => {
+    const { normalizeModelName } = await import('../model-warmup.js');
+    expect(normalizeModelName('nomic-embed-text')).toBe('nomic-embed-text:latest');
+  });
+
+  it('leaves an explicit tag alone', async () => {
+    const { normalizeModelName } = await import('../model-warmup.js');
+    expect(normalizeModelName('nomic-embed-text:v1.5')).toBe('nomic-embed-text:v1.5');
+    expect(normalizeModelName('nomic-embed-text:latest')).toBe('nomic-embed-text:latest');
+  });
+
+  it('makes an untagged config match a tagged tags entry', async () => {
+    const { normalizeModelName } = await import('../model-warmup.js');
+    expect(normalizeModelName('nomic-embed-text')).toBe(
+      normalizeModelName('nomic-embed-text:latest'),
+    );
+  });
+});

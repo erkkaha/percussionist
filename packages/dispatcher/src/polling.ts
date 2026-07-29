@@ -116,7 +116,9 @@ const IDLE_TIMEOUT_MS = 900_000;
 // Token aggregator
 
 export class TokenAggregator {
-  private bySession = new Map<
+  // Per message, so repeated deliveries of the same message do not double-count
+  // and distinct messages are summed rather than collapsed to the largest.
+  private byMessage = new Map<
     string,
     {
       input: number;
@@ -129,8 +131,24 @@ export class TokenAggregator {
   >();
   private lastWrite = 0;
 
+  /**
+   * Record one message's usage.
+   *
+   * Keyed by message id, not just session: the poller re-reads the whole
+   * message list every tick and streaming updates re-deliver a message before
+   * it settles, so the same message arrives many times. Taking the max within
+   * an id absorbs those repeats (a message's counts only grow as it streams),
+   * while totals() sums across distinct ids.
+   *
+   * This previously took the max across the entire session, which reported the
+   * single largest message instead of the run: a build run that emitted 172
+   * output tokens over 16 messages was recorded as 59, and because prompt
+   * caching leaves each message's uncached `input` at 2, every run in the list
+   * showed "2" for input regardless of size.
+   */
   update(
     sessionID: string,
+    messageID: string,
     input: number,
     output: number,
     reasoning?: number,
@@ -138,7 +156,8 @@ export class TokenAggregator {
     cacheWrite?: number,
     cost?: number,
   ): void {
-    const prev = this.bySession.get(sessionID) ?? {
+    const key = `${sessionID}\u0000${messageID}`;
+    const prev = this.byMessage.get(key) ?? {
       input: 0,
       output: 0,
       reasoning: 0,
@@ -146,7 +165,7 @@ export class TokenAggregator {
       cacheWrite: 0,
       cost: 0,
     };
-    this.bySession.set(sessionID, {
+    this.byMessage.set(key, {
       input: Math.max(prev.input, input),
       output: Math.max(prev.output, output),
       reasoning: Math.max(prev.reasoning, reasoning ?? 0),
@@ -177,7 +196,7 @@ export class TokenAggregator {
       cacheRead,
       cacheWrite,
       cost: c,
-    } of this.bySession.values()) {
+    } of this.byMessage.values()) {
       tokensIn += input;
       tokensOut += output;
       tokensReasoning += reasoning;
@@ -347,6 +366,7 @@ export async function runInteractive(
           if (t?.input || t?.output || cost > 0)
             tokens.update(
               sessionID,
+              msg.info?.id ?? `${sessionID}-idx`,
               t?.input ?? 0,
               t?.output ?? 0,
               t?.reasoning,
@@ -421,6 +441,7 @@ export async function runInteractive(
               const p = (evt.properties ?? {}) as {
                 info?: {
                   sessionID?: string;
+                  id?: string;
                   tokens?: {
                     input?: number;
                     output?: number;
@@ -442,6 +463,7 @@ export async function runInteractive(
                 if (typeof p.info?.tokens?.input === 'number' || typeof p.info?.cost === 'number')
                   tokens.update(
                     sid,
+                    p.info.id ?? `${sid}-live`,
                     p.info.tokens?.input ?? 0,
                     p.info.tokens?.output ?? 0,
                     p.info.tokens?.reasoning,
@@ -673,6 +695,7 @@ export async function runPrompt(
         if (syncTokensIn > 0 || syncTokensOut > 0 || syncCost > 0) {
           tokens.update(
             sessionID,
+            (syncData.info?.id as string | undefined) ?? `${sessionID}-sync`,
             syncTokensIn,
             syncTokensOut,
             syncTokensReasoning,
@@ -763,6 +786,7 @@ export async function runPrompt(
           if (t?.input || t?.output || cost > 0)
             tokens.update(
               sessionID,
+              last.info.id ?? `${sessionID}-last`,
               t?.input ?? 0,
               t?.output ?? 0,
               t?.reasoning,
@@ -929,6 +953,7 @@ export async function runPrompt(
               const p = (evt.properties ?? {}) as {
                 info?: {
                   sessionID?: string;
+                  id?: string;
                   tokens?: {
                     input?: number;
                     output?: number;
@@ -942,6 +967,7 @@ export async function runPrompt(
                 if (typeof p.info.tokens?.input === 'number' || typeof p.info.cost === 'number')
                   tokens.update(
                     sessionID,
+                    p.info.id ?? `${sessionID}-live`,
                     p.info.tokens?.input ?? 0,
                     p.info.tokens?.output ?? 0,
                     p.info.tokens?.reasoning,

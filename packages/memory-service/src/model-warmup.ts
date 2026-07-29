@@ -74,8 +74,25 @@ async function getTags(baseUrl: string): Promise<OllamaTagEntry[]> {
   return data.models ?? [];
 }
 
+/**
+ * Ollama treats an untagged model reference as implicitly `:latest`, but
+ * /api/tags always reports the resolved tag. Comparing exactly meant a config
+ * of "nomic-embed-text" never matched the reported "nomic-embed-text:latest",
+ * so warmup pulled the model, immediately failed to find it, and logged
+ * "pull reported success but model not found in tags" — leaving the service
+ * permanently unready with the model sitting right there.
+ */
+export function normalizeModelName(name: string): string {
+  return name.includes(':') ? name : `${name}:latest`;
+}
+
 function modelExists(models: OllamaTagEntry[], name: string): boolean {
-  return models.some((m) => m.name === name || m.model === name);
+  const wanted = normalizeModelName(name);
+  return models.some(
+    (m) =>
+      (m.name !== undefined && normalizeModelName(m.name) === wanted) ||
+      (m.model !== undefined && normalizeModelName(m.model) === wanted),
+  );
 }
 
 interface PullStreamEvent {

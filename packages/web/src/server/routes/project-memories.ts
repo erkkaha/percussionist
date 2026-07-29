@@ -16,6 +16,20 @@ function memoryServiceUrl(project: string): string {
   return `http://memory-${project}.${NAMESPACE}.svc.cluster.local:4100`;
 }
 
+// The memory service bearer-checks every route except /health against the
+// shared control-plane token (manager-mcp-token). These proxy routes sent no
+// Authorization header at all, so with the Secret present every memory call
+// from the dashboard came back 401 — read and write alike. The token is
+// optional so an unset value keeps dev mode working, matching the service's own
+// "no token configured means skip the check" behaviour.
+function memoryServiceHeaders(extra?: Record<string, string>): Record<string, string> {
+  const token = process.env.MCP_TOKEN;
+  return {
+    ...(extra ?? {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 // GET /api/projects/:name/memories — list memories (proxy to memory service)
 router.get('/:name/memories', auth(), async (c) => {
   const project = c.req.param('name');
@@ -30,6 +44,7 @@ router.get('/:name/memories', auth(), async (c) => {
 
   try {
     const res = await fetch(`${memoryServiceUrl(project)}/memories?${params}`, {
+      headers: memoryServiceHeaders(),
       signal: AbortSignal.timeout(30_000),
     });
 
@@ -45,6 +60,35 @@ router.get('/:name/memories', auth(), async (c) => {
   }
 });
 
+// GET /api/projects/:name/memories/health — is the memory service usable?
+//
+// Registered before /:name/memories/:id so "health" is not swallowed as an id.
+//
+// Memory needs an embedding backend (Ollama) that is an opt-in add-on, not part
+// of the control plane — so a project can have memory enabled while nothing can
+// actually embed. This distinguishes the three states the UI has to explain:
+// service unreachable, service up but backend unusable, and healthy.
+router.get('/:name/memories/health', auth(), async (c) => {
+  const project = c.req.param('name');
+
+  try {
+    // /health is deliberately unauthenticated so kubelet probes work; sending
+    // the token anyway costs nothing and keeps every call here uniform.
+    const res = await fetch(`${memoryServiceUrl(project)}/health`, {
+      headers: memoryServiceHeaders(),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (res.ok) return c.json({ ok: true, reachable: true });
+
+    // 503 is the service telling us the embedding backend is missing or the
+    // model is absent — it is running, just unusable.
+    return c.json({ ok: false, reachable: true, status: res.status });
+  } catch (e) {
+    return c.json({ ok: false, reachable: false, error: (e as Error).message });
+  }
+});
+
 // GET /api/projects/:name/memories/:id — get single memory by ID
 router.get('/:name/memories/:id', auth(), async (c) => {
   const project = c.req.param('name');
@@ -52,6 +96,7 @@ router.get('/:name/memories/:id', auth(), async (c) => {
 
   try {
     const res = await fetch(`${memoryServiceUrl(project)}/memory/${encodeURIComponent(id)}`, {
+      headers: memoryServiceHeaders(),
       signal: AbortSignal.timeout(30_000),
     });
 
@@ -85,7 +130,7 @@ router.post('/:name/memories', adminAuth(), async (c) => {
   try {
     const res = await fetch(`${memoryServiceUrl(project)}/memory`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: memoryServiceHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         content: body.content,
         metadata: body.metadata as Record<string, unknown> | undefined,
@@ -126,7 +171,7 @@ router.patch('/:name/memories/:id', adminAuth(), async (c) => {
   try {
     const res = await fetch(`${memoryServiceUrl(project)}/memory/${encodeURIComponent(id)}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: memoryServiceHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         content: body.content as string | undefined,
         metadata: body.metadata as Record<string, unknown> | undefined,
@@ -154,6 +199,7 @@ router.delete('/:name/memories/:id', adminAuth(), async (c) => {
   try {
     const res = await fetch(`${memoryServiceUrl(project)}/memory/${encodeURIComponent(id)}`, {
       method: 'DELETE',
+      headers: memoryServiceHeaders(),
       signal: AbortSignal.timeout(30_000),
     });
 

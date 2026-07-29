@@ -4,18 +4,26 @@ import type { V1Pod, V1Service } from '@kubernetes/client-node';
 import {
   type AgentDef,
   API_GROUP_VERSION,
+  DEFAULT_RUNNER_ENGINE,
   DISPATCHER_CONTAINER,
+  deriveEngine,
   KIND_RUN,
   LABELS,
   MANAGED_BY,
   OPENCODE_RUNNER_DEFAULTS,
   RUNNER_CONTAINER,
   type Run,
+  type RunnerEngine,
   type RunnerImageSpec,
   type SidecarSpec,
   type SshHostKeyVerificationMode,
 } from '@percussionist/api';
 import { gitUrlHash } from '@percussionist/kube';
+import {
+  primaryAgentSystemPrompt,
+  renderClaudeAgentFile,
+  renderClaudeSettings,
+} from './adapters/claude-config.js';
 import {
   DISPATCHER_IMAGE,
   DISPATCHER_SERVICE_ACCOUNT,
@@ -160,10 +168,42 @@ export function renderService(
   };
 }
 
+/** opencode's auth blob key, and the CRD-level default for `authSecret.key`. */
+const OPENCODE_AUTH_SECRET_KEY = 'auth.json';
+
+/**
+ * Resolve which key of the auth Secret to mount.
+ *
+ * This is the `spec.image` trap again: the CRD defaults `authSecret.key` to
+ * opencode's `auth.json`, so the field is never actually absent and the opencode
+ * key would always win — including on a Secret that holds a raw subscription
+ * token under `CLAUDE_CODE_OAUTH_TOKEN`. The pod then fails to start with
+ * "couldn't find key auth.json in Secret", and any write that omits the field
+ * (the dashboard's project editor, for one) silently reintroduces it.
+ *
+ * For a non-default engine, `auth.json` therefore cannot be meant literally: an
+ * opencode auth blob carries nothing that engine can use. Fall back to the
+ * engine's own auth env var, which is the key such a Secret is created under. A
+ * genuinely custom key is still respected.
+ */
+export function resolveAuthSecretKey(
+  key: string | undefined,
+  engine: RunnerEngine,
+  runner: RunnerImageSpec,
+): string {
+  if (engine === DEFAULT_RUNNER_ENGINE) return key ?? OPENCODE_AUTH_SECRET_KEY;
+  return !key || key === OPENCODE_AUTH_SECRET_KEY ? runner.authEnvVar : key;
+}
+
 export function renderAgentsConfigMap(run: Run, agents: AgentDef[]): object {
   const data: Record<string, string> = {};
+  // ClusterAgent content is written in opencode's agent-file format. The claude
+  // engine mounts this same ConfigMap at ~/.claude/agents, where Claude Code
+  // expects its own frontmatter and its own MCP tool names, so it has to be
+  // translated rather than copied through.
+  const forClaude = deriveEngine(run.spec) === 'claude';
   for (const a of agents) {
-    data[`${a.name}.md`] = a.content;
+    data[`${a.name}.md`] = forClaude ? renderClaudeAgentFile(a) : a.content;
   }
   return {
     apiVersion: 'v1',
@@ -205,7 +245,20 @@ export function renderPod(
   }
 
   const llmKeysSecret = spec.secrets?.llmKeysSecret;
-  const image = spec.image ?? runner.image ?? RUNNER_IMAGE_DEFAULT;
+  // Derived here rather than passed in so pod-builder and the reconciler cannot
+  // disagree about which engine a run uses — a mismatch would pair one engine's
+  // image with another's env and config.
+  const engine = deriveEngine(spec);
+  // `spec.image` carries a CRD-level default pointing at the opencode runner, so
+  // it is never actually absent and would always shadow the engine's image. When
+  // a non-default engine is requested the resolved runner image has to win, or
+  // `engine: claude` silently runs the opencode runner. Per-run image overrides
+  // for such an engine go through ClusterSettings.spec.runnerAdapter.image,
+  // which resolveRunnerSpec has already layered into `runner.image`.
+  const engineOverridesImage = engine !== DEFAULT_RUNNER_ENGINE;
+  const image = engineOverridesImage
+    ? (runner.image ?? spec.image ?? RUNNER_IMAGE_DEFAULT)
+    : (spec.image ?? runner.image ?? RUNNER_IMAGE_DEFAULT);
   const git = spec.source?.git;
   const localGit = spec.source?.local === true;
   const sshSecret = git?.sshSecret
@@ -561,9 +614,49 @@ export function renderPod(
                     `if [ ! -d "$WORKSPACE_DIR/.git" ]; then`,
                     `  echo "[workspace-init] initialising local git repo at $WORKSPACE_DIR"`,
                     `  git init "$WORKSPACE_DIR"`,
+                    // `git init` names the first branch after init.defaultBranch,
+                    // which is unset in the runner image and so falls back to
+                    // "master". Merge runs target "main" (worker-builder.ts) and
+                    // review runs compute their diff base against it, so leaving
+                    // the default put local workspaces on a branch the rest of
+                    // the platform does not look for: reviewers logged
+                    // "fatal: Not a valid object name main" and silently fell
+                    // back to a bare SHA. Point HEAD at main before the first
+                    // commit — this form works regardless of git version,
+                    // unlike `git init -b` (2.28+).
+                    `  git -C "$WORKSPACE_DIR" symbolic-ref HEAD refs/heads/main`,
                     `  git -C "$WORKSPACE_DIR" commit --allow-empty -m "Initial commit"`,
                     `else`,
                     `  echo "[workspace-init] resuming existing local workspace at $WORKSPACE_DIR"`,
+                    // Unlike the remote-git path, every local run shares this one
+                    // directory and branch — there is no per-run worktree to
+                    // isolate them. Two consequences, and only one of them can be
+                    // addressed from here.
+                    //
+                    // A run that dies before committing leaves its edits in the
+                    // tree, and because the dispatcher refuses complete_run on a
+                    // dirty tree the next worker has to commit them to finish its
+                    // own task; they then land on its branch attributed to it.
+                    // Report that, loudly, so it is at least diagnosable.
+                    //
+                    // Do NOT clean the tree here. This ran `git stash push -u`
+                    // for exactly that reason, on the assumption that a fresh pod
+                    // means any uncommitted work belongs to a run that has already
+                    // ended. That assumption is false: flow.maxParallel allows
+                    // concurrent runs and they all share this directory, so the
+                    // stash reverted a live worker's in-flight edits and its next
+                    // commit came out empty. Observed once, and it costs a whole
+                    // run's work.
+                    //
+                    // The real fix is per-run worktrees for local sources, the way
+                    // the remote path already works, which is more than an init
+                    // container should decide.
+                    `  if [ -n "$(git -C "$WORKSPACE_DIR" status --porcelain)" ]; then`,
+                    `    echo "[workspace-init] warning: workspace is dirty before ${runName} starts."`,
+                    `    echo "[workspace-init] warning: another run is either still working here or died before committing."`,
+                    `    echo "[workspace-init] warning: changes committed by this run may not be its own."`,
+                    `    git -C "$WORKSPACE_DIR" status --short`,
+                    `  fi`,
                     `fi`,
                     '',
                     ...(initScript
@@ -808,25 +901,45 @@ export function renderPod(
                     valueFrom: {
                       secretKeyRef: {
                         name: spec.secrets.authSecret.name,
-                        key: spec.secrets.authSecret.key ?? 'auth.json',
+                        key: resolveAuthSecretKey(spec.secrets.authSecret.key, engine, runner),
                       },
                     },
                   },
                 ]
               : []),
-            // Always inject the cluster-wide runner config (providers, models, etc.)
-            // from the well-known "opencode-config" configmap.  Optional so pods start
-            // cleanly even if the configmap hasn't been created.
-            {
-              name: runner.configEnvVar,
-              valueFrom: {
-                configMapKeyRef: {
-                  name: 'opencode-config',
-                  key: runner.configMapKey,
-                  optional: true,
-                },
-              },
-            },
+            // Claude-engine configuration, derived from the resolved agents
+            // rather than from the cluster-wide opencode ConfigMap (whose
+            // contents are opencode's own schema and mean nothing to Claude Code).
+            ...(engine === 'claude'
+              ? [
+                  {
+                    name: runner.configEnvVar,
+                    value: renderClaudeSettings(resolvedAgents, spec.agent),
+                  },
+                  // A `mode: primary` agent describes how the session itself
+                  // should behave. Claude Code would only read a subagent file
+                  // when something invokes it via the Task tool, so the primary
+                  // agent's body has to arrive as a system-prompt append.
+                  ...(() => {
+                    const prompt = primaryAgentSystemPrompt(resolvedAgents, spec.agent);
+                    return prompt ? [{ name: 'CLAUDE_APPEND_SYSTEM_PROMPT', value: prompt }] : [];
+                  })(),
+                ]
+              : [
+                  // Always inject the cluster-wide runner config (providers, models, etc.)
+                  // from the well-known "opencode-config" configmap.  Optional so pods start
+                  // cleanly even if the configmap hasn't been created.
+                  {
+                    name: runner.configEnvVar,
+                    valueFrom: {
+                      configMapKeyRef: {
+                        name: 'opencode-config',
+                        key: runner.configMapKey,
+                        optional: true,
+                      },
+                    },
+                  },
+                ]),
             // Per-run override from spec.secrets.configMap (takes precedence).
             ...(spec.secrets?.configMap
               ? [

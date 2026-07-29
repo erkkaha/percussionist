@@ -11,12 +11,14 @@ import {
   buildTask,
   createTask,
   getFindingsConfigMap,
+  inboxFindingKey,
   parseInboxFindings,
   parseTriagedFindings,
   patchFindingsConfigMap,
   patchProjectStatus,
   patchTask,
   patchTaskStatus,
+  triagedFindingKey,
 } from '@percussionist/kube';
 import { queryMemory, storeMemory } from '../agent/memory-client.js';
 import { emitEvent } from '../events.js';
@@ -75,10 +77,10 @@ export async function ingestFindings(project: Project, ns: string = NAMESPACE): 
         canonical.occurrences = (canonical.occurrences ?? 1) + 1;
         canonical.triagedAt = new Date().toISOString();
 
-        patchData[`triaged/${canonical.clusterId ?? canonical.id}.json`] =
+        patchData[triagedFindingKey(canonical.clusterId ?? canonical.id)] =
           JSON.stringify(canonical);
 
-        patchData[`inbox/${finding.id}.json`] = null;
+        patchData[inboxFindingKey(finding.id)] = null;
         // Don't write the duplicate back to triaged — it's just marked duplicate.
         hasChanges = true;
 
@@ -108,9 +110,9 @@ export async function ingestFindings(project: Project, ns: string = NAMESPACE): 
         if (canonical) {
           canonical.occurrences = (canonical.occurrences ?? 1) + 1;
           canonical.triagedAt = new Date().toISOString();
-          patchData[`triaged/${canonical.clusterId ?? canonical.id}.json`] =
+          patchData[triagedFindingKey(canonical.clusterId ?? canonical.id)] =
             JSON.stringify(canonical);
-          patchData[`inbox/${finding.id}.json`] = null;
+          patchData[inboxFindingKey(finding.id)] = null;
           hasChanges = true;
 
           emitEvent(
@@ -146,9 +148,9 @@ export async function ingestFindings(project: Project, ns: string = NAMESPACE): 
             if (canonical) {
               canonical.occurrences = (canonical.occurrences ?? 1) + 1;
               canonical.triagedAt = new Date().toISOString();
-              patchData[`triaged/${canonical.clusterId ?? canonical.id}.json`] =
+              patchData[triagedFindingKey(canonical.clusterId ?? canonical.id)] =
                 JSON.stringify(canonical);
-              patchData[`inbox/${finding.id}.json`] = null;
+              patchData[inboxFindingKey(finding.id)] = null;
               hasChanges = true;
 
               emitEvent(
@@ -186,8 +188,8 @@ export async function ingestFindings(project: Project, ns: string = NAMESPACE): 
       const hash = computeSnippetHash(triaged.snippet);
       if (hash) fileSnippetIndex.set(`${normalize(triaged.filePath)}:${hash}`, clusterId);
     }
-    patchData[`triaged/${clusterId}.json`] = JSON.stringify(triaged);
-    patchData[`inbox/${finding.id}.json`] = null;
+    patchData[triagedFindingKey(clusterId)] = JSON.stringify(triaged);
+    patchData[inboxFindingKey(finding.id)] = null;
     hasChanges = true;
 
     emitEvent(
@@ -262,7 +264,7 @@ export async function ingestFindings(project: Project, ns: string = NAMESPACE): 
 
         triaged.taskRef = taskName;
         triaged.status = 'in-progress';
-        patchData[`triaged/${clusterId}.json`] = JSON.stringify(triaged);
+        patchData[triagedFindingKey(clusterId)] = JSON.stringify(triaged);
 
         emitEvent(
           projectName,

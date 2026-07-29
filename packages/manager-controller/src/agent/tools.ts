@@ -50,6 +50,7 @@ import {
   readPlanFromConfigMap,
   readPodLog,
   readSessionConfigMap,
+  triagedFindingKey,
   validateAgentTaskCapability,
   validateModelAuth,
   writePlanToConfigMap,
@@ -2550,7 +2551,7 @@ async function callTool(
       }
 
       const patchDataUF: Record<string, string | null> = {};
-      patchDataUF[`triaged/${clusterIdUF}.json`] = JSON.stringify(updatedUF);
+      patchDataUF[triagedFindingKey(clusterIdUF)] = JSON.stringify(updatedUF);
 
       await patchFindingsConfigMap(projectNameUF, patchDataUF, resourceNsUF);
 
@@ -2667,7 +2668,7 @@ async function callTool(
           triagedCT.status = 'in-progress';
           const clusterIdCT = triagedCT.clusterId!;
           const patchDataCT: Record<string, string | null> = {};
-          patchDataCT[`triaged/${clusterIdCT}.json`] = JSON.stringify(triagedCT);
+          patchDataCT[triagedFindingKey(clusterIdCT)] = JSON.stringify(triagedCT);
           await patchFindingsConfigMap(projectNameCT, patchDataCT, resourceNsCT).catch(() => {
             /* best effort */
           });

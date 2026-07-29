@@ -10,6 +10,30 @@ import type { PrState } from './github-client.js';
 import { getConsumedAnnotationKeys, getMergeVerdict, getReviewVerdict } from './observations.js';
 import { isValidTransition } from './transitions.js';
 
+// `status.worker.reviewFeedback` is capped at 4096 bytes by the CRD. Reviewer
+// verdicts and human rework notes are free prose and routinely run longer, and
+// the API server rejects the whole status patch with a 422 when they do — which
+// wedged a project indefinitely, because the failing task was retried on every
+// reconcile pass and never got past validation.
+//
+// The cap is in bytes, not characters, so a naive slice can split a multi-byte
+// sequence and still exceed the limit once re-encoded. Trim by bytes and drop
+// any partial trailing sequence.
+const REVIEW_FEEDBACK_MAX_BYTES = 4096;
+const FEEDBACK_TRUNCATION_MARKER = '\n\n[truncated]';
+
+export function capReviewFeedback(text: string): string {
+  const encoded = new TextEncoder().encode(text);
+  if (encoded.length <= REVIEW_FEEDBACK_MAX_BYTES) return text;
+
+  const markerBytes = new TextEncoder().encode(FEEDBACK_TRUNCATION_MARKER).length;
+  const keep = encoded.subarray(0, REVIEW_FEEDBACK_MAX_BYTES - markerBytes);
+  // fatal: false makes the decoder drop a trailing partial code point rather
+  // than emit a replacement character.
+  const head = new TextDecoder('utf-8', { fatal: false }).decode(keep).replace(/�+$/, '');
+  return head + FEEDBACK_TRUNCATION_MARKER;
+}
+
 function summarizeEffect(input: ReconcileInput, run: Run): ReconcileEffect | undefined {
   // ConfigMap summary generation is independent of vector-memory storage.
   // The summarizer writes `summary-{sessionID}` to the run's session ConfigMap
@@ -653,7 +677,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
     if (feedback) {
       result += (result ? '\n\n' : '') + feedback;
     }
-    return result;
+    return capReviewFeedback(result);
   }
 
   // Review succeeded — check for structured verdict annotation.
@@ -734,7 +758,8 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
           statusPatch: {
             worker: {
               aiReworkCount: aiCount,
-              reviewFeedback: `${feedback}\n\n(AI rework ceiling reached)`,
+              // `feedback` is already capped, so re-cap after appending the suffix.
+              reviewFeedback: capReviewFeedback(`${feedback}\n\n(AI rework ceiling reached)`),
             },
             reviews: [...existingReviews, escalatedRecord],
             ...(verdict.diffFindings ? { diffFindings: verdict.diffFindings } : {}),
@@ -808,7 +833,9 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
       toPhase: 'rework-requested',
       statusPatch: {
         worker: {
-          reviewFeedback: manualActions.reworkFeedback ?? 'No feedback provided',
+          // Human rework notes arrive via an annotation, which allows far more
+          // than this field does — cap here too, not just on the reviewer path.
+          reviewFeedback: capReviewFeedback(manualActions.reworkFeedback ?? 'No feedback provided'),
           retryCount: (task.status?.worker?.retryCount ?? 0) + 1,
           aiReworkCount: 0,
         },

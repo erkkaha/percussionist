@@ -3,10 +3,12 @@
 #
 # Builds five images:
 #   percussionist/runner:dev       (opencode + git + ssh; used by every run pod)
+#   percussionist/runner-claude:dev (Claude Agent SDK runner; engine: claude)
 #   percussionist/operator:dev     (CRD reconciler Deployment)
 #   percussionist/dispatcher:dev   (sidecar that drives each run)
 #   percussionist/web:dev          (web dashboard)
 #   percussionist/manager:dev      (kanban board manager controller)
+#   percussionist/memory:dev       (per-project memory/embedding service)
 #
 # minikube cannot pull these from a registry (tags aren't pushed), so we build
 # on the host and use `minikube image load` to copy them into the node.
@@ -64,6 +66,19 @@ build_one() {
     runner)
       docker build "${extra[@]}" -t "$tag" "$REPO_ROOT/images/runner"
       ;;
+    runner-claude)
+      docker build "${extra[@]}" -t "$tag" \
+        -f "$REPO_ROOT/images/runner-claude/Dockerfile" "$REPO_ROOT"
+      # CLAUDE_RUNNER_DEFAULTS.image is the published registry reference, not
+      # this :dev tag, so without this alias a local build would be ignored and
+      # the pod would pull the last release instead. Tag both and load both
+      # below, so what you just built is what runs.
+      docker tag "$tag" "$RUNNER_CLAUDE_GHCR_TAG"
+      ;;
+    runner-claude-alias)
+      # The runner-claude pass already built and tagged this reference; this
+      # pass exists only to load the second tag into minikube.
+      ;;
     operator)
       docker build "${extra[@]}" -t "$tag" --build-arg PKG=operator \
         -f "$REPO_ROOT/images/node/Dockerfile" "$REPO_ROOT"
@@ -83,6 +98,10 @@ build_one() {
       docker build "${extra[@]}" -t "$tag" --build-arg PKG=manager-controller \
         -f "$REPO_ROOT/images/node/Dockerfile" "$REPO_ROOT"
       ;;
+    memory)
+      docker build "${extra[@]}" -t "$tag" \
+        -f "$REPO_ROOT/images/memory/Dockerfile" "$REPO_ROOT"
+      ;;
     code-server)
       docker build "${extra[@]}" -t "$tag" "$REPO_ROOT/images/code-server"
       ;;
@@ -99,11 +118,22 @@ host_image_id() {
 
 # Return the short image ID of $tag inside minikube, or empty. Parses
 # `minikube image ls --format table` (box-drawing separators).
+#
+# The name column is matched whole, not as a substring. `percussionist/web`
+# is also a substring of `ghcr.io/erkkaha/percussionist/web`, and both rows are
+# present in a cluster that has ever pulled a release image — so a substring
+# match plus `head -n1` returned whichever the table happened to list first.
+# When that was the ghcr row, a load that had in fact succeeded was reported as
+# an image-ID mismatch and the script aborted with the deployment still scaled
+# to zero. Observed on operator:dev, where the ghcr row sorts first.
 minikube_image_id() {
   local tag="$1" short_tag
   short_tag="${tag%:*}"
   minikube image ls --format table 2>/dev/null \
-    | awk -F'│' -v t="$short_tag" '$2 ~ t {gsub(/ /,"",$4); print $4}' \
+    | awk -F'│' -v t="$short_tag" '
+        { name = $2; gsub(/^[ \t]+|[ \t]+$/, "", name) }
+        name == t || name == "docker.io/" t { gsub(/ /, "", $4); print $4 }
+      ' \
     | head -n1 | cut -c1-12 || true
 }
 
@@ -137,7 +167,7 @@ evict_for() {
           --timeout=60s 2>/dev/null || true
       fi
       ;;
-    runner|dispatcher)
+    runner|runner-claude|dispatcher)
       local runs
       runs="$(list_runs_with_pods)"
       if [[ -z "$runs" ]]; then return 0; fi
@@ -298,42 +328,61 @@ process_one() {
 # The M1 script supported `IMAGE=` to override a single image; keep that
 # behaviour for the runner for backward compat.
 RUNNER_TAG="${IMAGE:-percussionist/runner:dev}"
+RUNNER_CLAUDE_TAG="percussionist/runner-claude:dev"
+# The reference CLAUDE_RUNNER_DEFAULTS.image actually resolves to. A local build
+# is tagged with both so it shadows the published image in-cluster.
+RUNNER_CLAUDE_GHCR_TAG="ghcr.io/erkkaha/percussionist/runner-claude:latest"
 OPERATOR_TAG="percussionist/operator:dev"
 DISPATCHER_TAG="percussionist/dispatcher:dev"
 WEB_TAG="percussionist/web:dev"
 MANAGER_TAG="percussionist/manager:dev"
+MEMORY_TAG="percussionist/memory:dev"
 CODE_SERVER_TAG="percussionist/code-server:dev"
 
 RESTORE_OPERATOR=false
 RESTORE_WEB=false
 RESTORE_MANAGER=false
 
+# process_one scales a Deployment to 0 before swapping its image, so any exit
+# between there and the restore leaves the cluster a replica short. An operator
+# stuck at 0 stops reconciling every Run in the cluster and nothing says so.
+# Restoring from a trap covers the error paths as well as the happy one.
+restore_all() {
+  if $RESTORE_OPERATOR; then restore_operator; fi
+  if $RESTORE_WEB; then restore_web; fi
+  if $RESTORE_MANAGER; then restore_manager; fi
+}
+trap restore_all EXIT
+
 if [[ -n "$ONLY" ]]; then
   case "$ONLY" in
     runner)     process_one runner     "$RUNNER_TAG" ;;
-    operator)   process_one operator   "$OPERATOR_TAG"; $FORCE && RESTORE_OPERATOR=true ;;
+    runner-claude) process_one runner-claude "$RUNNER_CLAUDE_TAG" \
+                   && process_one runner-claude-alias "$RUNNER_CLAUDE_GHCR_TAG" ;;
+    operator)   if $FORCE; then RESTORE_OPERATOR=true; fi; process_one operator   "$OPERATOR_TAG" ;;
     dispatcher) process_one dispatcher "$DISPATCHER_TAG" ;;
-    web)        process_one web        "$WEB_TAG"; $FORCE && RESTORE_WEB=true ;;
-    manager)    process_one manager    "$MANAGER_TAG"; $FORCE && RESTORE_MANAGER=true ;;
+    web)        if $FORCE; then RESTORE_WEB=true; fi; process_one web        "$WEB_TAG" ;;
+    manager)    if $FORCE; then RESTORE_MANAGER=true; fi; process_one manager    "$MANAGER_TAG" ;;
+    memory)     process_one memory     "$MEMORY_TAG" ;;
     code-server) process_one code-server "$CODE_SERVER_TAG" ;;
-    *) echo "unknown --only value: $ONLY (runner|operator|dispatcher|web|manager|code-server)" >&2; exit 2 ;;
+    *) echo "unknown --only value: $ONLY (runner|runner-claude|operator|dispatcher|web|manager|memory|code-server)" >&2; exit 2 ;;
   esac
 else
   process_one runner     "$RUNNER_TAG"
-  process_one operator   "$OPERATOR_TAG";   $FORCE && RESTORE_OPERATOR=true
+  process_one runner-claude "$RUNNER_CLAUDE_TAG"
+  process_one runner-claude-alias "$RUNNER_CLAUDE_GHCR_TAG"
+  if $FORCE; then RESTORE_OPERATOR=true; fi; process_one operator   "$OPERATOR_TAG"
   process_one dispatcher "$DISPATCHER_TAG"
-  process_one web        "$WEB_TAG";        $FORCE && RESTORE_WEB=true
-  process_one manager    "$MANAGER_TAG";    $FORCE && RESTORE_MANAGER=true
+  if $FORCE; then RESTORE_WEB=true; fi;        process_one web        "$WEB_TAG"
+  if $FORCE; then RESTORE_MANAGER=true; fi;    process_one manager    "$MANAGER_TAG"
+  process_one memory     "$MEMORY_TAG"
   process_one code-server "$CODE_SERVER_TAG"
 fi
 
-# Bring scaled-down deployments back up.
-if $RESTORE_OPERATOR; then restore_operator; fi
-if $RESTORE_WEB; then restore_web; fi
-if $RESTORE_MANAGER; then restore_manager; fi
+# Scaled-down deployments are brought back up by the EXIT trap.
 
 echo ">> Images present in minikube:"
-minikube image ls | grep -E 'percussionist/(runner|operator|dispatcher|web|manager|code-server)' || true
+minikube image ls | grep -E 'percussionist/(runner|runner-claude|operator|dispatcher|web|manager|memory|code-server)' || true
 
 # ---------------------------------------------------------------------------
 # Pin the ingress-nginx HTTP NodePort to 30080 so the dashboard and per-run

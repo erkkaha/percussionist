@@ -1,7 +1,30 @@
 // `beatctl ls` / `beatctl get` — read-only views of Run resources.
 
-import type { Run } from '@percussionist/api';
+import {
+  DEFAULT_RUNNER_ENGINE,
+  deriveEngine,
+  type Run,
+  runnerDefaultsFor,
+} from '@percussionist/api';
 import { age, DEFAULT_NAMESPACE, fatal, getRun, listRuns, loadKube, padCols } from './kube.js';
+
+/**
+ * `spec.image` carries a CRD-level default pointing at the opencode runner, so
+ * it is populated on every Run and reading it as "the image this ran on" is
+ * wrong whenever the engine is not opencode: pod-builder lets the engine's
+ * image win precisely so `engine: claude` cannot silently run the opencode
+ * runner. Printing the raw field made a claude-engine run look like an opencode
+ * one, which is a difference worth several hours to anyone debugging it.
+ *
+ * The exact image can still come from ClusterSettings.spec.runnerAdapter.image,
+ * which this read does not fetch — so name the engine default and say that it
+ * is the engine's, rather than claiming to know the final value.
+ */
+function describeImage(spec: Run['spec']): string {
+  const engine = deriveEngine(spec);
+  if (engine === DEFAULT_RUNNER_ENGINE) return spec.image ?? '-';
+  return `${runnerDefaultsFor(engine).image}  (${engine} engine default; spec.image ${spec.image ?? '-'} is overridden)`;
+}
 
 export interface LsOpts {
   namespace?: string;
@@ -83,7 +106,8 @@ export async function runGet(name: string, opts: GetOpts): Promise<void> {
     ``,
     `Spec:`,
     `  Task:      ${run.spec.task}`,
-    `  Image:     ${run.spec.image ?? '-'}`,
+    `  Image:     ${describeImage(run.spec)}`,
+    `  Engine:    ${deriveEngine(run.spec)}`,
     `  Agent:     ${run.spec.agent ?? '-'}`,
     `  Model:     ${run.spec.model ?? '-'}`,
     `  Timeout:   ${run.spec.timeoutSeconds ?? '-'}s`,

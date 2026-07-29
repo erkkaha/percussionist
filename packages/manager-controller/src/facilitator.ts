@@ -401,6 +401,22 @@ export async function buildReviewRun(
           '',
         ]
       : []),
+    // A BUILD task description is a condensed brief of one plan slice, and the
+    // reviewer was given only that brief. So the brief's ACCEPTANCE list became
+    // the entire de facto spec: a plan requirement buildgen did not restate was
+    // unenforced by the gate, even when the worker had read the plan itself.
+    // Give the reviewer the same source of truth the worker has.
+    ...(isBuildTask && task.spec.parentTaskRef
+      ? [
+          `PARENT PLAN: ${task.spec.parentTaskRef} (artifact path: ${`.percussionist/plans/${task.spec.parentTaskRef}.md`})`,
+          `Call percussionist_dispatcher_read_plan(project="${project.metadata.name}", task="${task.spec.parentTaskRef}") to read it.`,
+          `The TASK DESCRIPTION above is a condensed brief of one slice of that plan, so treat the plan as the`,
+          `authority on intent. Judge the work against the task's stated acceptance criteria, but if the plan`,
+          `requires something for this slice that the description omits — or the two contradict — call that out`,
+          `in your feedback instead of approving against the shorter document alone.`,
+          '',
+        ]
+      : []),
     '',
     ...(alternativeAgents.length > 0
       ? [`AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(', ')}`, '']
