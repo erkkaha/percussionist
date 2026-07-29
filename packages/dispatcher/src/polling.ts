@@ -215,6 +215,54 @@ export class TokenAggregator {
   }
 }
 
+/**
+ * Feed every assistant message's usage into the aggregator.
+ *
+ * Safe to call on every poll with the whole transcript: the aggregator keys on
+ * message id and keeps the max within an id, so repeats converge on each
+ * message's final counts rather than adding up.
+ *
+ * A message with no usage and no cost is skipped so it cannot mint an entry that
+ * contributes nothing but occupies an id.
+ */
+export function recordUsage(
+  tokens: TokenAggregator,
+  sessionID: string,
+  msgs: readonly {
+    info?: {
+      id?: string;
+      role?: string;
+      cost?: number;
+      tokens?: {
+        input?: number;
+        output?: number;
+        reasoning?: number;
+        cache?: { read?: number; write?: number };
+      };
+    };
+  }[],
+): void {
+  for (let i = 0; i < msgs.length; i++) {
+    const info = msgs[i]?.info;
+    if (info?.role !== 'assistant') continue;
+    const t = info.tokens;
+    const cost = info.cost ?? 0;
+    if (!t?.input && !t?.output && !t?.cache?.read && !t?.cache?.write && cost <= 0) continue;
+    // Index is the fallback id so two usage-bearing messages without ids stay
+    // distinct instead of collapsing into one entry.
+    tokens.update(
+      sessionID,
+      info.id ?? `${sessionID}-idx-${i}`,
+      t?.input ?? 0,
+      t?.output ?? 0,
+      t?.reasoning,
+      t?.cache?.read,
+      t?.cache?.write,
+      cost,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Session snapshot
 
@@ -781,19 +829,20 @@ export async function runPrompt(
 
         if (last?.info?.role === 'assistant') {
           sawBusy = true;
-          const t = last.info.tokens;
-          const cost = (last.info as { cost?: number }).cost ?? 0;
-          if (t?.input || t?.output || cost > 0)
-            tokens.update(
-              sessionID,
-              last.info.id ?? `${sessionID}-last`,
-              t?.input ?? 0,
-              t?.output ?? 0,
-              t?.reasoning,
-              t?.cache?.read,
-              t?.cache?.write,
-              cost,
-            );
+          // Record every message, not just the newest. This used to sample only
+          // the tail, so a run's reported usage depended on how many distinct
+          // messages happened to be last at a poll boundary: anything that
+          // arrived and was superseded inside one 2s tick was never counted at
+          // all. A build task that finished quickly reported 2 in / 56 out
+          // because the tail was sampled about once, while a long one that
+          // failed reported 1457 / 22943 from the same code — the difference was
+          // poll cadence, not usage.
+          //
+          // Idempotent to repeat: the aggregator keys on message id and takes
+          // the max within an id, so re-reading the whole list every tick
+          // converges on each message's final counts instead of accumulating
+          // them.
+          recordUsage(tokens, sessionID, msgs);
           await tokens.flush(patchStatus);
 
           // Check for errors regardless of time.completed — OpenCode may set
