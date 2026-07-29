@@ -81,15 +81,23 @@ mock.module(path.resolve('src/client/lib/code-server-url'), () => ({
   deriveIdeUrl: () => undefined,
 }));
 
-// Mock child components to avoid deep rendering and Radix/complex deps.
-// Each maps to a function component that discards props, so React does not
-// emit "Unknown event handler property" or "React does not recognize the X
-// prop on a DOM element" warnings.
-mock.module(path.resolve('src/client/components/board/BoardHeader'), () => ({
-  BoardHeader: () => React.createElement('div'),
-  default: {},
-}));
+// BoardHeader is deliberately NOT mocked here.
+//
+// `mock.module` is process-global and rebinds a module that is already
+// imported, so a stub registered in this file also replaces BoardHeader for
+// every other file in the run — including board-header.test.tsx, whose whole
+// subject it is. That test then asserts against an empty <div> and all 18 of
+// its cases fail, in either file order, while each file passes alone.
+//
+// The assertions below only read classes on BoardView's own
+// board-header-container wrapper, so the real component can render: it costs a
+// little depth and buys back a suite that does not depend on file ordering.
 
+// Mock the remaining child components to avoid deep rendering and Radix/complex
+// deps. Each maps to a function component that discards props, so React does
+// not emit "Unknown event handler property" or "React does not recognize the X
+// prop on a DOM element" warnings. None of these is the subject of another
+// suite; if that ever changes, the note above applies to it too.
 mock.module(path.resolve('src/client/components/board/FindingsPanel'), () => ({
   default: () => React.createElement('div'),
   FindingsPanel: () => React.createElement('div'),
