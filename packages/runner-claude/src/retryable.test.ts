@@ -18,6 +18,50 @@ describe('isRetryableResultError', () => {
     expect(isRetryableResultError(undefined)).toBe(false);
   });
 
+  // A dropped connection arrives as a *successful* result whose text is the
+  // apology: is_error false, api_error_status null, stop_reason "stop_sequence".
+  // Four runs failed this way with "session ended without completion signal",
+  // each having already produced 20k-47k output tokens of committed work, because
+  // the is_error gate rejected them before any retry could happen.
+  it('retries a truncated turn that reports itself as successful', () => {
+    expect(
+      isRetryableResultError({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        api_error_status: null,
+        stop_reason: 'stop_sequence',
+        result: 'API Error: Connection closed mid-response. The response above may be incomplete.',
+      }),
+    ).toBe(true);
+  });
+
+  // The prefix is what distinguishes the harness's own banner from an agent
+  // writing about a connection error in its summary. Without this, a run that
+  // merely discussed the failure would be retried.
+  it('does not retry an agent discussing a connection error in its own summary', () => {
+    expect(
+      isRetryableResultError({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result:
+          'I fixed the reconnect path so a connection closed mid-stream no longer loses the buffer.',
+      }),
+    ).toBe(false);
+  });
+
+  it('still ignores an ordinary successful result', () => {
+    expect(
+      isRetryableResultError({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: 'Implemented doors.ts and added tests. All 289 pass.',
+      }),
+    ).toBe(false);
+  });
+
   // The 529 that killed an observed PLAN run's second attempt at 0 tokens.
   it('retries the observed 529 overload', () => {
     expect(
