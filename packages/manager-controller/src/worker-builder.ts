@@ -166,6 +166,25 @@ export async function buildWorkerRun(
     );
   }
 
+  // A run is a single session that ends when the agent signals completion.
+  // Observed: an agent finished its turn with "I'll pause here and wait for the
+  // background install or the scheduled wakeup to resume" and never called
+  // complete_run, so the dispatcher settled the run as
+  // "session ended without completion signal" — 47k output tokens of finished
+  // work reported as a failure. The agent was reasoning from a harness that has
+  // wakeups and durable background tasks; this one has neither.
+  promptLines.push(
+    'THIS RUN ENDS WHEN YOU SIGNAL COMPLETION:',
+    '- There is no scheduled wakeup, no resume, and no one polling on your behalf.',
+    '  Ending a turn to "wait" ends the run, and the work is recorded as a failure.',
+    '- Do not background a command and yield expecting to be woken. If you need a',
+    '  long-running command, wait for it in the foreground.',
+    '- If something genuinely cannot finish inside this run, call fail_run with the',
+    '  reason, or complete_run describing what is incomplete. Either is far better',
+    '  than yielding silently.',
+    '',
+  );
+
   // Inject relevant memory context if vector memory is enabled.
   if (project.spec.embedding?.enabled) {
     try {
