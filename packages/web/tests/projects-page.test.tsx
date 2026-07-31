@@ -135,6 +135,34 @@ describe('ProjectsPage create-CTA visibility', () => {
 // Overflow behavior — regression tests for table wrapper scroll classes
 // ---------------------------------------------------------------------------
 
+/**
+ * Assert the wrapper carries the shared both-axis table-scroll contract and
+ * none of the classes that would reintroduce the vertical-scroll regression
+ * (a breakpoint-gated class or overflow-hidden vertical clipping).
+ *
+ * .table-scroll (see src/client/index.css) sets overflow: auto on both axes
+ * plus a responsive max-height so vertical overflow can actually occur. The
+ * old settings-table-scroll class only applied inside a (max-width: 768px)
+ * media query and only set horizontal overflow, so on medium+ widths only
+ * overflow-hidden applied and long row sets were clipped — never scrollable.
+ */
+function expectScrollableTableWrapper(wrapper: HTMLElement) {
+  // Both-axis overflow + bounded max-height come from the shared utility.
+  expect(wrapper.className).toContain('table-scroll');
+  // No reliance on the removed breakpoint-gated class.
+  expect(wrapper.className).not.toContain('settings-table-scroll');
+  // No Tailwind breakpoint variants on the wrapper: scroll behavior must not
+  // be gated to a viewport range.
+  expect(wrapper.className).not.toMatch(/(^|\s)(sm|md|lg|xl|2xl):/);
+  // Vertical overflow must be scrollable, not clipped — overflow-hidden would
+  // hide rows that exceed the wrapper height.
+  expect(wrapper.className).not.toContain('overflow-hidden');
+  // The inner table keeps its min-width so narrow widths still pan horizontally.
+  const table = wrapper.querySelector('table');
+  expect(table).not.toBeNull();
+  expect(table?.className ?? '').toMatch(/\bmin-w-/);
+}
+
 describe('Projects table scroll wrapper behavior', () => {
   beforeEach(resetMocks);
   afterEach(cleanup);
@@ -146,8 +174,7 @@ describe('Projects table scroll wrapper behavior', () => {
     await renderWithProviders(React.createElement(ProjectsPage, { showHeader: false }));
 
     const wrapper = screen.getByTestId('projects-table-wrapper');
-    // .table-scroll provides both-axis overflow (horizontal + bounded vertical).
-    expect(wrapper.className).toContain('table-scroll');
+    expectScrollableTableWrapper(wrapper);
   });
 
   it('header mode (showHeader=true) also includes table-scroll on wrapper', async () => {
@@ -157,7 +184,7 @@ describe('Projects table scroll wrapper behavior', () => {
     await renderWithProviders(React.createElement(ProjectsPage, { showHeader: true }));
 
     const wrapper = screen.getByTestId('projects-table-wrapper');
-    expect(wrapper.className).toContain('table-scroll');
+    expectScrollableTableWrapper(wrapper);
   });
 
   it('headerless mode wrapper does not rely on overflow-hidden vertical clipping', async () => {
@@ -167,9 +194,9 @@ describe('Projects table scroll wrapper behavior', () => {
     await renderWithProviders(React.createElement(ProjectsPage, { showHeader: false }));
 
     const wrapper = screen.getByTestId('projects-table-wrapper');
-    // Vertical overflow must be scrollable, not clipped — the old overflow-hidden
-    // pattern would hide rows that exceed the wrapper height.
-    expect(wrapper.className).toContain('table-scroll');
+    expectScrollableTableWrapper(wrapper);
+    // Explicit: vertical overflow must be scrollable, not clipped — the old
+    // overflow-hidden pattern would hide rows that exceed the wrapper height.
     expect(wrapper.className).not.toContain('overflow-hidden');
   });
 
