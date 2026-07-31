@@ -128,6 +128,7 @@ export default function CreateProjectForm({
     form: {
       name: form.name,
       displayName: form.displayName,
+      color: form.color,
       model: form.model,
       agent: form.agent,
       maxParallel: form.maxParallel,
@@ -136,6 +137,7 @@ export default function CreateProjectForm({
       phase: form.phase,
       setName: form.setName,
       setDisplayName: form.setDisplayName,
+      setColor: form.setColor,
       setModel: form.setModel,
       setAgent: form.setAgent,
       setMaxParallel: form.setMaxParallel,

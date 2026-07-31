@@ -12,6 +12,7 @@ import {
   retryEscalatedTask,
 } from '../lib/api';
 import { deriveIdeUrl } from '../lib/code-server-url';
+import { projectColor } from '../lib/project-color';
 import type { ManagerMetrics, Task } from '../lib/types';
 import { AddTaskForm } from './board/AddTaskForm';
 import { BoardHeader } from './board/BoardHeader';
@@ -151,6 +152,7 @@ export default function BoardView() {
 
   const { settings, columns, status, authWarning } = data;
   const roster = (settings.agents ?? []).map((a: { name: string }) => a.name);
+  const color = projectColor(projectName, settings.color);
 
   const selectedTask: Task | undefined = selectedTaskName
     ? allTasks.find((t) => t.metadata.name === selectedTaskName)
@@ -180,6 +182,12 @@ export default function BoardView() {
   return (
     // Pull out of the parent p-6 padding so the board can fill the viewport correctly.
     <div className="-m-6 flex flex-col" style={{ height: 'calc(100svh - 3.5rem)' }}>
+      <div
+        data-testid="board-color-strip"
+        className="h-0.5 shrink-0"
+        style={{ backgroundColor: color }}
+        aria-hidden
+      />
       {/* Header */}
       <div
         data-testid="board-header-container"
