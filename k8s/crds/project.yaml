@@ -40,6 +40,9 @@ spec:
               properties:
                 displayName:
                   type: string
+                color:
+                  type: string
+                  pattern: ^#[0-9a-fA-F]{6}$
                 source:
                   type: object
                   properties:

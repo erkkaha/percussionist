@@ -197,6 +197,8 @@ board.get('/:project/board', auth(), async (c) => {
       maxParallel: project.spec.maxParallel ?? 2,
       agents: project.spec.agents ?? [],
       phase: project.spec.phase ?? 'Active',
+      displayName: project.spec.displayName,
+      color: project.spec.color,
     };
 
     const authResult = validateModelAuth(project.spec.model, project.spec.secrets);
