@@ -8,10 +8,11 @@ interface Todo {
 }
 
 interface TaskListProps {
-  todos: Todo[];
+  /** Optional because session parts arrive as unvalidated JSON from the runner. */
+  todos?: Todo[];
 }
 
-export function TaskList({ todos }: TaskListProps) {
+export function TaskList({ todos = [] }: TaskListProps) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
     new Set(['in_progress', 'pending']),
   );

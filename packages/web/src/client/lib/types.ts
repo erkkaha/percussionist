@@ -317,15 +317,22 @@ export interface StepFinishPart {
   cost?: number;
 }
 
+// Two engines synthesise `subtask` parts with different payloads: opencode
+// carries a todo checklist, while the claude runner describes the spawned
+// subagent (see runner-claude/src/translate.ts). Every field is optional so a
+// part from either engine type-checks — and so the renderer is forced to guard.
 export interface SubtaskPart {
-  id: string;
-  messageID: string;
+  /** Absent when the claude runner's SDK tool call carried no id. */
+  id?: string;
+  messageID?: string;
   type: 'subtask';
-  todos: Array<{
+  todos?: Array<{
     content: string;
     status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
     priority: 'high' | 'medium' | 'low';
   }>;
+  description?: string;
+  agentType?: string;
 }
 
 export interface FilePart {
