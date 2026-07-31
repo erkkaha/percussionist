@@ -62,6 +62,29 @@ Percussionist uses a four-layer testing model. See [`docs/testing-strategy.md`](
 | **Core E2E** | `pnpm e2e:core` | Before merging feature branches; CI on every PR | < 10 min |
 | **Extended E2E** | `pnpm e2e:extended` | Before releases; manual trigger for complex paths | < 20 min |
 
+### `bun test --isolate` in `@percussionist/web`
+
+The web suite runs with `--isolate`, which gives every test file a fresh global
+object and module registry. This is not optional tidiness — `mock.module` is
+**process-global**, and Bun patches the supplied keys onto the real module for
+every importer that comes later in the run. Without isolation, a stub in one
+file silently replaces the real component in every file that happens to run
+afterwards:
+
+- `run-detail-terminal.test.tsx` stubs `LogViewer` as `<div>LOGS</div>`, which
+  made all 7 of `log-viewer.test.tsx`'s assertions fail
+- an earlier `react-router` stub set `Link: 'a'`, breaking
+  `session-list.test.tsx`'s `findByRole('link')` queries (see the comment in
+  `board-header.test.tsx`)
+
+Both failed **only on CI** and passed locally, because test file order comes
+from filesystem enumeration and differs between a fresh clone and a working
+tree. Adding an unrelated test file is enough to flip the order and surface it.
+
+`--isolate` requires bun 1.3.14 (what CI pins); 1.3.12 does not have the flag.
+Keep the `bun-version` pins in `.github/workflows/ci.yml` and `release.yml` in
+step with it.
+
 ### Deterministic Principles (always apply)
 
 - **Never trust model prose for pass/fail.** Assert only on CR status fields (`Run.status.phase`, `Task.status.phase`) and board JSON columns — never on LLM-generated text.

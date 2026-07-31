@@ -15,7 +15,7 @@
     "db:generate": "drizzle-kit generate",
     "gen:icons": "node scripts/gen-icons.mjs",
     "db:migrate": "bun src/server/migrate.ts",
-    "test": "bun test --preload ./tests/setup.ts tests/"
+    "test": "bun test --isolate --preload ./tests/setup.ts tests/"
   },
   "dependencies": {
     "@better-auth/api-key": "1.6.23",
