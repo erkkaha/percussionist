@@ -69,14 +69,16 @@ function extractTimelineItems(messages: SessionMessage[]): TimelineItem[] {
 
     // Add subtask parts
     const subtaskParts = msg.parts.filter((p): p is SubtaskPart => p.type === 'subtask');
-    for (const subtask of subtaskParts) {
+    for (const [i, subtask] of subtaskParts.entries()) {
       const completed = subtask.todos?.filter((t) => t.status === 'completed').length || 0;
       const total = subtask.todos?.length || 0;
       items.push({
-        id: subtask.id,
+        // The claude runner may leave `id` unset; fall back to position.
+        id: subtask.id ?? `${msg.info.id}-subtask-${i}`,
         type: 'subtask',
         timestamp,
-        summary: `${completed}/${total} tasks done`,
+        // Without todos the part describes a spawned subagent, not a checklist.
+        summary: total > 0 ? `${completed}/${total} tasks done` : (subtask.agentType ?? 'subagent'),
       });
     }
   }

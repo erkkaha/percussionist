@@ -1,6 +1,42 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.6] - 2026-07-31
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Fail with the missing parent branch instead of a bare exit 128 _(operator)_
+- Tell reviewers where findings go, rename report_finding _(agents)_
+- Survive a missing sqlite-vec instead of failing every test _(memory-service)_
+- Merge from the local source branch instead of origin/<source> _(manager)_
+- Promote ideas to the backlog without a worker status _(web)_
+## [v0.2.5] - 2026-07-31
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Load jest-dom after happy-dom installs document _(web)_
+- Install bun and pnpm so agents and initScripts can build _(runner-claude)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.5
+## [v0.2.4] - 2026-07-31
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Make project edits resettable _(web)_
+- Mount known_hosts outside the read-only git-ssh secret _(operator)_
+- Render task diffs when the project pins a git-less exec image _(web)_
+- Render claude-engine subtask parts without crashing _(web)_
+
+### <!-- 6 -->🧪 Testing
+
+- Isolate test files so module mocks stop leaking across them _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update bun to 1.3.14 in CI workflow
+- Release v0.2.4
 ## [v0.2.3] - 2026-07-29
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -10,6 +46,8 @@ All notable changes to Percussionist are documented here.
 - Retry a truncated turn that reports itself successful _(runner-claude)_
 - Load run-pod images under the reference the cluster asks for _(scripts)_
 - Detect a truncated turn on the assistant message _(runner-claude)_
+- Keep a retried turn from settling the run _(runner-claude)_
+- Tell workers the run ends when they stop _(manager)_
 
 ### <!-- 3 -->📚 Documentation
 
@@ -22,6 +60,7 @@ All notable changes to Percussionist are documented here.
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Log the shape of a turn that ends without retrying _(runner-claude)_
+- Release v0.2.3
 ## [v0.2.2] - 2026-07-29
 
 ### <!-- 1 -->🐛 Bug Fixes

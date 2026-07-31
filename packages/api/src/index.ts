@@ -1839,6 +1839,15 @@ export const GIT_CLONE_CONTAINER = 'workspace-init';
 export const CODE_SERVER_CONTAINER = 'code-server';
 export const CODE_SERVER_PORT = 8080;
 export const CODE_SERVER_DEFAULT_IMAGE = 'ghcr.io/erkkaha/percussionist/code-server:latest';
+/**
+ * Image for maintenance/exec pods when `Project.spec.exec.image` is unset.
+ *
+ * Also the image backend-generated git scripts must pin explicitly: a project
+ * may override `spec.exec.image` with something that has no git at all (plain
+ * `ubuntu:24.04` does not), which would otherwise make every git command in
+ * those scripts silently fail.
+ */
+export const DEFAULT_EXEC_IMAGE = 'alpine/git:v2.54.0';
 
 // ---------------------------------------------------------------------------
 // Config resolution helpers.

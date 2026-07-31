@@ -1,7 +1,7 @@
 // board/FindingsPanel.tsx — board-level findings panel.
 //
 // Displays agent-reported findings (bugs, security, performance, debt) surfaced
-// via the report_finding MCP tool. Shows severity badges, categories, and action buttons.
+// via the report_unrelated_issue MCP tool. Shows severity badges, categories, and action buttons.
 
 import {
   BookOpen,
@@ -162,8 +162,11 @@ export function FindingsPanel({ findings, projectName, onClose }: FindingsPanelP
             <Bug className="h-8 w-8 mx-auto text-text-dim/30 mb-2" />
             <p className="text-sm text-text-dim">No findings reported yet.</p>
             <p className="text-xs text-text-dim/60 mt-1">
-              Agents report off-task issues via the{' '}
-              <code className="text-xs bg-surface-overlay px-1 rounded">report_finding</code> tool.
+              Agents report issues outside their own task via the{' '}
+              <code className="text-xs bg-surface-overlay px-1 rounded">
+                report_unrelated_issue
+              </code>{' '}
+              tool. Comments a reviewer left on a diff are not here — they are on the task.
             </p>
           </div>
         ) : filtered.length === 0 ? (

@@ -18,6 +18,7 @@ import {
   CLAUDE_RUNNER_DEFAULTS,
   deriveEngine,
   OPENCODE_RUNNER_DEFAULTS,
+  RUNNER_CONTAINER,
   type Run,
   runnerDefaultsFor,
 } from '@percussionist/api';
@@ -787,5 +788,112 @@ describe('renderPod - claude settings scope', () => {
 
   it('writes no restrictions when the driving agent is ambiguous', () => {
     expect(settingsFor(undefined)).toEqual({});
+  });
+});
+
+describe('renderPod - SSH host key verification mounts', () => {
+  function sshRun(verification: 'no' | 'strict' | 'accept-new', withKnownHostsSecret = true): Run {
+    const run = makeRun();
+    run.spec.source = {
+      git: {
+        url: 'git@github.com:test/repo.git',
+        ref: 'main',
+        sshSecret: { name: 'git-ssh-key', key: 'ssh-privatekey' },
+        sshHostKeyVerification: verification,
+        ...(withKnownHostsSecret
+          ? { known_hostsSecret: { name: 'git-known-hosts', key: 'known_hosts' } }
+          : {}),
+      },
+    };
+    return run;
+  }
+
+  function mountsOf(run: Run, container: string) {
+    const pod = renderPod(run, []);
+    const all = [...(pod.spec?.initContainers ?? []), ...(pod.spec?.containers ?? [])];
+    return all.find((c) => c.name === container)?.volumeMounts ?? [];
+  }
+
+  // Regression: mounting known_hosts at /etc/git-ssh/known_hosts nests a subPath
+  // mount inside the read-only git-ssh secret tmpfs. runc cannot create the
+  // target file there, so the container dies at creation with exit 128
+  // ("error mounting ... not a directory").
+  for (const container of ['workspace-init', RUNNER_CONTAINER]) {
+    it(`does not nest the known_hosts mount inside /etc/git-ssh in ${container}`, () => {
+      const mounts = mountsOf(sshRun('accept-new'), container);
+      const knownHosts = mounts.find((m) => m.name === 'git-known-hosts');
+      expect(knownHosts).toBeDefined();
+      expect(knownHosts?.mountPath).toBe('/etc/git-known-hosts');
+      expect(knownHosts?.mountPath.startsWith('/etc/git-ssh/')).toBe(false);
+      expect(knownHosts?.subPath).toBeUndefined();
+    });
+  }
+
+  it('omits the known_hosts mount entirely when verification is disabled', () => {
+    for (const container of ['workspace-init', RUNNER_CONTAINER]) {
+      const mounts = mountsOf(sshRun('no'), container);
+      expect(mounts.find((m) => m.name === 'git-known-hosts')).toBeUndefined();
+    }
+  });
+
+  it('points UserKnownHostsFile at the standalone known_hosts path', () => {
+    const script = getWorkspaceInitArgs(sshRun('strict'));
+    expect(script).toContain('-o StrictHostKeyChecking=strict');
+    expect(script).toContain('-o UserKnownHostsFile=/etc/git-known-hosts/known_hosts');
+    expect(script).not.toContain('UserKnownHostsFile=/etc/git-ssh/known_hosts');
+  });
+
+  it('disables host key checking and discards known_hosts when verification is off', () => {
+    const script = getWorkspaceInitArgs(sshRun('no'));
+    expect(script).toContain('-o StrictHostKeyChecking=no');
+    expect(script).toContain('-o UserKnownHostsFile=/dev/null');
+  });
+
+  it('falls back to an emptyDir when verification is on but no secret is provided', () => {
+    const pod = renderPod(sshRun('accept-new', false), []);
+    const volume = pod.spec?.volumes?.find((v) => v.name === 'git-known-hosts');
+    expect(volume?.emptyDir).toBeDefined();
+    expect(volume?.secret).toBeUndefined();
+  });
+});
+
+describe('renderPod - parent baseline resolution failure', () => {
+  function branchingRun(): Run {
+    const run = makeRun();
+    run.spec.source = {
+      git: {
+        url: 'https://github.com/test/repo.git',
+        ref: 'feature/plan-1--build-2',
+        parentRef: 'feature/plan-1',
+      },
+    };
+    return run;
+  }
+
+  // Regression: the fallback baseline was used without checking it resolves. When
+  // neither the remote-tracking nor the local ref existed, `git worktree add -b`
+  // died on an unresolvable ref — a bare exit 128 naming nothing. This happens
+  // for real when source.git.url changes: the mirror path is derived from the
+  // URL, so runs move to a fresh clone and any branch that only lived in the old
+  // mirror is gone.
+  it('checks the local fallback ref before using it as a baseline', () => {
+    const script = getWorkspaceInitArgs(branchingRun());
+    expect(script).toContain('rev-parse "refs/heads/feature/plan-1"');
+  });
+
+  it('names the missing parent branch and the mirror instead of failing bare', () => {
+    const script = getWorkspaceInitArgs(branchingRun());
+    expect(script).toContain('parent branch feature/plan-1 not found in mirror');
+    expect(script).toContain('refs/remotes/origin/feature/plan-1');
+    expect(script).toContain('source.git.url changed');
+  });
+
+  it('exits non-zero rather than continuing to worktree add', () => {
+    const script = getWorkspaceInitArgs(branchingRun());
+    const errIdx = script.indexOf('not found in mirror');
+    const addIdx = script.indexOf('worktree add -b');
+    expect(errIdx).toBeGreaterThan(-1);
+    expect(addIdx).toBeGreaterThan(errIdx);
+    expect(script.slice(errIdx, addIdx)).toContain('exit 1');
   });
 });

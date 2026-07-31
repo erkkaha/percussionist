@@ -201,7 +201,7 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
               e.stopPropagation();
               injectTask(task, projectName);
             }}
-            className="opacity-70 group-hover:opacity-60 hover:opacity-100 transition-opacity p-0.5 rounded text-text-dim hover:text-accent md:opacity-0 md:group-hover:opacity-60 md:hover:opacity-100"
+            className="opacity-70 group-hover:opacity-60 hover:opacity-100 focus-visible:opacity-100 transition-opacity p-0.5 rounded text-text-dim hover:text-accent hover-capable:md:opacity-0 hover-capable:md:group-hover:opacity-60 hover-capable:md:hover:opacity-100"
             title="Inject task into chat"
             aria-label="Inject task into chat"
           >

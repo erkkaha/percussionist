@@ -36,6 +36,7 @@ import {
   type BoardStatus,
   type ClusterAgent,
   type ClusterSettings,
+  DEFAULT_EXEC_IMAGE,
   type Finding,
   KIND_CLUSTER_AGENT,
   KIND_CLUSTER_SETTINGS,
@@ -1281,7 +1282,7 @@ const FINDINGS_COMPONENT = 'findings';
 /**
  * A ConfigMap data key must match `[-._a-zA-Z0-9]+`. `/` is not in that set, so
  * the original `inbox/<id>.json` layout was rejected by the API server with a
- * 422 on every single write — no finding was ever stored, and `report_finding`
+ * 422 on every single write — no finding was ever stored, and `report_unrelated_issue`
  * returned an MCP error to every agent that called it. The parse helpers were
  * unit-tested against hand-built maps, which is why nothing caught it: no test
  * ever asked the API server to accept a key.
@@ -1831,15 +1832,19 @@ export async function execInWorkspace(
   mountPath = '/data',
   timeoutMs = 120_000,
   ns: string = NAMESPACE,
+  imageOverride?: string,
 ): Promise<WorkspaceExecResult> {
   const podName = `ws-exec-${projectName}-${Date.now()}`.slice(0, 63).replace(/[^a-z0-9-]/g, '-');
 
   // Resolve project-level overrides (image + PVC name) with safe fallbacks.
-  let execImage = 'alpine/git:v2.54.0';
+  // imageOverride wins over spec.exec.image: callers running a script with hard
+  // tool requirements (e.g. the dashboard's git-based task diff) must not be at
+  // the mercy of a project-configured image that may lack those tools.
+  let execImage = imageOverride ?? DEFAULT_EXEC_IMAGE;
   let pvcName = `${projectName}-data`;
   try {
     const project = await getProject(projectName, ns);
-    execImage = project.spec.exec?.image ?? 'alpine/git:v2.54.0';
+    execImage = imageOverride ?? project.spec.exec?.image ?? DEFAULT_EXEC_IMAGE;
     pvcName = project.spec.data?.pvcName ?? `${projectName}-data`;
   } catch {
     // Project not found or inaccessible — use defaults (backward compatible).
