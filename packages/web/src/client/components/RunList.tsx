@@ -144,7 +144,7 @@ export default function RunList() {
             : `No runs matching phase "${phaseFilter}" on this page.`}
         </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-hidden overflow-x-auto">
+        <div className="rounded-lg border border-border table-scroll">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-raised text-text-muted text-left">

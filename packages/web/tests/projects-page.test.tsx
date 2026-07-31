@@ -135,38 +135,42 @@ describe('ProjectsPage create-CTA visibility', () => {
 // Overflow behavior — regression tests for table wrapper scroll classes
 // ---------------------------------------------------------------------------
 
-describe('Projects table horizontal overflow behavior', () => {
+describe('Projects table scroll wrapper behavior', () => {
   beforeEach(resetMocks);
   afterEach(cleanup);
 
-  it('headerless mode (showHeader=false) renders wrapper with overflow-x-auto', async () => {
+  it('headerless mode (showHeader=false) renders wrapper with shared table-scroll pattern', async () => {
     projectsMock.data = [MOCK_PROJECT];
     const { default: ProjectsPage } = await import('../src/client/components/ProjectsPage');
 
     await renderWithProviders(React.createElement(ProjectsPage, { showHeader: false }));
 
     const wrapper = screen.getByTestId('projects-table-wrapper');
-    expect(wrapper.className).toContain('overflow-x-auto');
+    // .table-scroll provides both-axis overflow (horizontal + bounded vertical).
+    expect(wrapper.className).toContain('table-scroll');
   });
 
-  it('header mode (showHeader=true) also includes overflow-x-auto on wrapper', async () => {
+  it('header mode (showHeader=true) also includes table-scroll on wrapper', async () => {
     projectsMock.data = [MOCK_PROJECT];
     const { default: ProjectsPage } = await import('../src/client/components/ProjectsPage');
 
     await renderWithProviders(React.createElement(ProjectsPage, { showHeader: true }));
 
     const wrapper = screen.getByTestId('projects-table-wrapper');
-    expect(wrapper.className).toContain('overflow-x-auto');
+    expect(wrapper.className).toContain('table-scroll');
   });
 
-  it('headerless mode wrapper retains overflow-hidden for vertical clipping', async () => {
+  it('headerless mode wrapper does not rely on overflow-hidden vertical clipping', async () => {
     projectsMock.data = [MOCK_PROJECT];
     const { default: ProjectsPage } = await import('../src/client/components/ProjectsPage');
 
     await renderWithProviders(React.createElement(ProjectsPage, { showHeader: false }));
 
     const wrapper = screen.getByTestId('projects-table-wrapper');
-    expect(wrapper.className).toContain('overflow-hidden');
+    // Vertical overflow must be scrollable, not clipped — the old overflow-hidden
+    // pattern would hide rows that exceed the wrapper height.
+    expect(wrapper.className).toContain('table-scroll');
+    expect(wrapper.className).not.toContain('overflow-hidden');
   });
 
   it('empty projects list does not render a table wrapper', async () => {
