@@ -356,50 +356,96 @@ export async function buildMergeRun(
     resolved.source.git.ref = sourceBranch;
     resolved.source.git.parentRef = targetBranch;
   }
-  const promptLines = [
+  const promptLines = autoMergePromptLines(taskName, task.spec.title, sourceBranch, targetBranch);
+
+  return buildMergeRunSpec({
+    runName,
+    projectName,
+    taskName,
+    project,
+    mergeAgent,
+    resolved,
+    promptLines,
+  });
+}
+
+/**
+ * The auto-merge instructions, kept pure so the invariant below is testable.
+ *
+ * In auto-merge mode nothing ever publishes a build branch: the worker commits
+ * into the shared git mirror and `complete_run` only checks the tree is clean.
+ * That is deliberate — one remote branch per BUILD task would flood the remote —
+ * so the source branch usually exists ONLY locally and every step here works off
+ * the local tip rather than `origin/<source>`.
+ *
+ * The previous version referenced `origin/<source>` in its pre-flight, its
+ * fast-forward test and its verification, so all three failed on an unpublished
+ * branch. Merges only landed when the agent improvised a `git push origin
+ * HEAD:refs/heads/<source>` — which published a branch per task and, when the
+ * agent did not improvise, stranded the task with the work sitting in the mirror
+ * (percussionist-dev-build-15fc5e). Both outcomes are wrong; hence the explicit
+ * "do not push the source branch" rule.
+ */
+export function autoMergePromptLines(
+  taskName: string,
+  taskTitle: string,
+  sourceBranch: string,
+  targetBranch: string,
+): string[] {
+  return [
     `TASK: Merge approved changes for ${taskName}`,
     '',
-    `Task title: ${task.spec.title}`,
+    `Task title: ${taskTitle}`,
     `Source branch: ${sourceBranch}`,
     `Target branch: ${targetBranch}`,
     '',
     '## Pre-flight Check',
     '',
-    'Ensure the worktree is at the latest remote source branch state:',
-    `    git fetch origin ${sourceBranch}`,
-    '    CURRENT=$(git rev-parse HEAD)',
-    `    LATEST=$(git rev-parse origin/${sourceBranch})`,
-    '    if [ "$CURRENT" != "$LATEST" ]; then',
-    `      echo "WARNING: HEAD stale, resetting to origin/${sourceBranch}"`,
-    '      git reset --hard "origin/${sourceBranch}"',
+    'Your worktree is already checked out at the source branch. In this mode the',
+    'source branch normally exists only in the local git mirror — it is never',
+    'published, and origin/' + sourceBranch + ' will usually not exist. That is',
+    'expected, not an error, and NOT something to repair by pushing the source',
+    'branch: the remote must only ever receive target branches.',
+    '',
+    `    git rev-parse --abbrev-ref HEAD          # expect ${sourceBranch}`,
+    '    SOURCE_SHA=$(git rev-parse HEAD)         # the work being merged',
+    `    git fetch origin ${targetBranch}         # only the target needs fetching`,
+    '',
+    'If the source branch does happen to exist on origin and is ahead of your',
+    'worktree, take its commits — otherwise leave HEAD alone:',
+    `    if git rev-parse --verify "origin/${sourceBranch}" >/dev/null 2>&1 \\`,
+    `       && git merge-base --is-ancestor HEAD "origin/${sourceBranch}"; then`,
+    `      git reset --hard "origin/${sourceBranch}"`,
+    '      SOURCE_SHA=$(git rev-parse HEAD)',
     '    fi',
     '',
     '## Merge Steps',
     '',
-    '1. Fetch both branches:',
-    `    git fetch origin ${targetBranch}`,
-    `    git fetch origin ${sourceBranch}`,
-    '',
-    '2. Check if fast-forward (source contains target):',
-    `    if git merge-base --is-ancestor origin/${targetBranch} origin/${sourceBranch}; then`,
+    '1. Check if fast-forward (the local source tip already contains the target):',
+    `    if git merge-base --is-ancestor "origin/${targetBranch}" HEAD; then`,
     `      echo "Fast-forward: pushing ${sourceBranch} -> ${targetBranch}"`,
-    `      git push origin ${sourceBranch}:refs/heads/${targetBranch}`,
+    `      git push origin HEAD:refs/heads/${targetBranch}`,
     '    else',
     `      echo "Non-fast-forward: merging ${targetBranch} into ${sourceBranch}"`,
-    `      git merge origin/${targetBranch} --no-edit`,
+    `      git merge "origin/${targetBranch}" --no-edit`,
     `      git push origin HEAD:refs/heads/${targetBranch}`,
     '    fi',
     '',
-    '3. Verify the push landed:',
+    '   Both branches push HEAD to the target ref, so the source branch name never',
+    '   reaches the remote.',
+    '',
+    '2. Verify the push landed — the work must be reachable from the target:',
     `    git fetch origin ${targetBranch}`,
-    `    if ! git merge-base --is-ancestor origin/${sourceBranch} origin/${targetBranch}; then`,
+    `    if ! git merge-base --is-ancestor "$SOURCE_SHA" "origin/${targetBranch}"; then`,
     '      echo "ERROR: push verification failed — target does not contain source"',
     '      exit 1',
     '    fi',
     `    echo "Verified: ${sourceBranch} is now in ${targetBranch}"`,
     '',
     '- Do not perform any code changes.',
-    '- If the branches are already fully merged, the push will be a no-op — do not re-create runs or PRs.',
+    '- Do not push the source branch under any name, and do not open a PR.',
+    `- If ${targetBranch} already contains the work, the push is a no-op — report`,
+    '  `already-merged` rather than re-creating runs or PRs.',
     '',
     '## Completion',
     '',
@@ -411,7 +457,30 @@ export async function buildMergeRun(
     '- Push rejected (auth/protection/remote rejection): outcome=`push-failed`.',
     '- Transient infra/network/git-host error: outcome=`transient-failure`.',
   ];
+}
 
+// The Run wrapper around a merge prompt. Extracted with the prompt so
+// buildMergeRun stays a thin composition of the two and the prompt itself is
+// unit-testable without a cluster.
+interface MergeRunSpecOptions {
+  runName: string;
+  projectName: string;
+  taskName: string;
+  project: Project;
+  mergeAgent: string;
+  resolved: ReturnType<typeof resolveRunConfig>;
+  promptLines: string[];
+}
+
+function buildMergeRunSpec({
+  runName,
+  projectName,
+  taskName,
+  project,
+  mergeAgent,
+  resolved,
+  promptLines,
+}: MergeRunSpecOptions): Run {
   return {
     apiVersion: API_GROUP_VERSION,
     kind: KIND_RUN,
@@ -546,13 +615,23 @@ export async function buildPrOpenRun(
     '',
     '## Pre-flight Check',
     '',
-    'Ensure the worktree is at the latest remote source branch state:',
-    `    git fetch origin ${sourceBranch}`,
+    // PR mode is the one mode that must publish the source branch: `gh pr create
+    // --head` cannot reference a ref the remote does not have. Say so explicitly —
+    // the previous prompt left it implicit, so the agent only discovered it by
+    // watching `gh` fail.
+    'A PR needs its head branch on the remote, so unlike auto-merge mode this mode',
+    'does publish the source branch. Push it (and nothing else) before calling `gh`:',
+    `    git fetch origin ${sourceBranch} || echo "source branch not on origin yet"`,
     '    CURRENT=$(git rev-parse HEAD)',
-    `    LATEST=$(git rev-parse origin/${sourceBranch})`,
-    '    if [ "$CURRENT" != "$LATEST" ]; then',
-    `      echo "WARNING: HEAD stale, resetting to origin/${sourceBranch}"`,
-    '      git reset --hard "origin/${sourceBranch}"',
+    `    if git rev-parse --verify "origin/${sourceBranch}" >/dev/null 2>&1; then`,
+    `      LATEST=$(git rev-parse "origin/${sourceBranch}")`,
+    '      if [ "$CURRENT" != "$LATEST" ]; then',
+    `        echo "WARNING: HEAD stale, resetting to origin/${sourceBranch}"`,
+    `        git reset --hard "origin/${sourceBranch}"`,
+    '      fi',
+    '    else',
+    `      echo "Publishing ${sourceBranch} so the PR has a head branch"`,
+    `      git push origin "HEAD:refs/heads/${sourceBranch}"`,
     '    fi',
     '',
     '## Open the Pull Request',
@@ -564,7 +643,7 @@ export async function buildPrOpenRun(
     '      --body "Automated PR opened by Percussionist integrator agent."',
     '',
     'Capture the PR number from the output or via:',
-    '    PR_NUMBER=$(gh pr list --head "${sourceBranch}" --base "${targetBranch}" --json number --jq ".[0].number")',
+    `    PR_NUMBER=$(gh pr list --head "${sourceBranch}" --base "${targetBranch}" --json number --jq ".[0].number")`,
     '    echo "PR number: $PR_NUMBER"',
     '',
     '## Rules',
