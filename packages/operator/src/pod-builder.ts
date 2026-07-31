@@ -348,6 +348,22 @@ export function renderPod(
   // use it. This prevents man-in-the-middle attacks on git over SSH.
   const sshHostKeyVerification: SshHostKeyVerificationMode = git?.sshHostKeyVerification ?? 'no';
   const knownHostsSecret = git?.known_hostsSecret;
+  const verifyHostKeys =
+    sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new';
+
+  // known_hosts gets its own mount directory and must NOT live under
+  // /etc/git-ssh. That path is a read-only secret tmpfs, so a nested subPath
+  // mount at /etc/git-ssh/known_hosts fails at container creation — runc cannot
+  // create the target file inside a read-only volume, and the kubelet reports
+  // `error mounting ... not a directory` (exit 128 in workspace-init).
+  const knownHostsDir = '/etc/git-known-hosts';
+  const knownHostsPath = `${knownHostsDir}/known_hosts`;
+  const sshHostKeyOpts = verifyHostKeys
+    ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=${knownHostsPath}`
+    : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null';
+  const knownHostsVolumeMount = verifyHostKeys
+    ? [{ name: 'git-known-hosts', mountPath: knownHostsDir, readOnly: true }]
+    : [];
 
   const initContainers =
     git || localGit
@@ -378,10 +394,10 @@ export function renderPod(
                     '',
                     '# SSH key setup',
                     'if [ -f /etc/git-ssh/id ]; then',
-                    `  export GIT_SSH_COMMAND="ssh -i /etc/git-ssh/id -o IdentitiesOnly=yes${sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new' ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=/etc/git-ssh/known_hosts` : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'}"`,
+                    `  export GIT_SSH_COMMAND="ssh -i /etc/git-ssh/id -o IdentitiesOnly=yes${sshHostKeyOpts}"`,
                     '  echo "[workspace-init] using ssh key from secret"',
                     'else',
-                    `  export GIT_SSH_COMMAND="ssh${sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new' ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=/etc/git-ssh/known_hosts` : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'}"`,
+                    `  export GIT_SSH_COMMAND="ssh${sshHostKeyOpts}"`,
                     'fi',
                     '',
                     '# GitHub token',
@@ -694,19 +710,10 @@ export function renderPod(
               ...(githubTokenSecret
                 ? [{ name: 'git-github', mountPath: '/etc/git-github', readOnly: true }]
                 : []),
-              // Mount known_hosts for SSH host key verification (read-only).
-              // When sshHostKeyVerification is strict/accept-new and a known_hostsSecret
-              // is provided, this mounts the secret as /etc/git-ssh/known_hosts.
-              ...(sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new'
-                ? [
-                    {
-                      name: 'git-known-hosts',
-                      mountPath: '/etc/git-ssh/known_hosts',
-                      subPath: 'known_hosts',
-                      readOnly: true,
-                    },
-                  ]
-                : []),
+              // Mount known_hosts for SSH host key verification (read-only) as its
+              // own directory — never nested under the read-only /etc/git-ssh
+              // secret mount (see knownHostsDir above).
+              ...knownHostsVolumeMount,
             ],
             resources: initContainerResources,
           },
@@ -776,7 +783,7 @@ export function renderPod(
           },
         ]
       : []),
-    ...(sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new'
+    ...(verifyHostKeys
       ? knownHostsSecret
         ? [
             {
@@ -788,10 +795,11 @@ export function renderPod(
             },
           ]
         : [
-            // No known_hostsSecret provided but strict mode requested — create an empty
-            // file so SSH doesn't fail on missing file. Host keys will be accepted via
-            // accept-new (first connect) or rejected (strict). This is a safety net for
-            // clusters that haven't provisioned known hosts yet.
+            // No known_hostsSecret provided but verification requested — mount an
+            // empty directory so SSH has a readable parent for UserKnownHostsFile.
+            // A missing known_hosts file reads as empty: host keys are accepted on
+            // first connect under accept-new, rejected under strict. This is a
+            // safety net for clusters that haven't provisioned known hosts yet.
             { name: 'git-known-hosts', emptyDir: {} },
           ]
       : []),
@@ -888,11 +896,11 @@ export function renderPod(
             sshSecret
               ? {
                   name: 'GIT_SSH_COMMAND',
-                  value: `ssh -i /etc/git-ssh/id${sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new' ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=/etc/git-ssh/known_hosts` : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'}${sshHostKeyVerification !== 'strict' && sshHostKeyVerification !== 'accept-new' ? ' -o IdentitiesOnly=yes' : ''}`,
+                  value: `ssh -i /etc/git-ssh/id${sshHostKeyOpts}${verifyHostKeys ? '' : ' -o IdentitiesOnly=yes'}`,
                 }
               : {
                   name: 'GIT_SSH_COMMAND',
-                  value: `ssh${sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new' ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=/etc/git-ssh/known_hosts` : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'}`,
+                  value: `ssh${sshHostKeyOpts}`,
                 },
             ...(spec.secrets?.authSecret
               ? [
@@ -995,19 +1003,10 @@ export function renderPod(
             ...(githubTokenSecret
               ? [{ name: 'git-github', mountPath: '/etc/git-github', readOnly: true }]
               : []),
-            // Mount known_hosts for SSH host key verification (read-only).
-            // When sshHostKeyVerification is strict/accept-new and a known_hostsSecret
-            // is provided, this mounts the secret as /etc/git-ssh/known_hosts.
-            ...(sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new'
-              ? [
-                  {
-                    name: 'git-known-hosts',
-                    mountPath: '/etc/git-ssh/known_hosts',
-                    subPath: 'known_hosts',
-                    readOnly: true,
-                  },
-                ]
-              : []),
+            // Mount known_hosts for SSH host key verification (read-only) as its
+            // own directory — never nested under the read-only /etc/git-ssh
+            // secret mount (see knownHostsDir above).
+            ...knownHostsVolumeMount,
             ...(hasAgents
               ? [
                   {

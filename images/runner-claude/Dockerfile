@@ -11,6 +11,8 @@
 # providers, and nothing here uses Bun FFI.
 
 ARG NODE_VERSION=24
+ARG BUN_VERSION=1.3.14
+ARG PNPM_VERSION=11.1.2
 
 # --- deps: install the runner-claude workspace package -----------------------
 FROM node:${NODE_VERSION}-alpine AS deps
@@ -63,6 +65,26 @@ ENV LANG=C.UTF-8 \
   LC_ALL=C.UTF-8 \
   LC_NUMERIC=C.UTF-8
 
+# Install Bun and pnpm (via Corepack), matching images/runner. Only the deps and
+# build stages had pnpm, and both are discarded — so agents and, crucially,
+# `spec.initScript` ran with node/npm alone.
+#
+# initScript is evaluated in the workspace-init container, which uses this same
+# image (pod-builder.ts resolves it from the run's engine). percussionist-dev's
+# script pre-warms the pnpm store and ends in `|| echo "pnpm install skipped"`,
+# so on the claude engine it logged "skipped" forever and warmed nothing. Agents
+# fared worse: a builder on this repo could run neither `pnpm typecheck` nor any
+# bun test, and resorted to committing with --no-verify.
+ARG BUN_VERSION
+ARG PNPM_VERSION
+RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION} \
+  && ln -sf /root/.bun/bin/bun /usr/local/bin/bun \
+  && npm install -g corepack \
+  && corepack enable \
+  && corepack prepare pnpm@${PNPM_VERSION} --activate \
+  && bun --version \
+  && pnpm --version
+
 # Install the Claude Code CLI explicitly and point the SDK at it.
 #
 # The Agent SDK ships a bundled binary in an *optional* per-platform package.
@@ -94,18 +116,25 @@ COPY --from=build /repo/packages/runner-claude/package.json   /app/packages/runn
 COPY --from=build /repo/packages/runner-claude/node_modules   /app/packages/runner-claude/node_modules
 
 # Small diagnostics helper, matching images/runner's runner-doctor.
+#
+# pnpm and bun are listed deliberately: they were absent from the image for as
+# long as they were absent from this list, and nothing reported it. A tool the
+# doctor does not name is a tool whose absence surfaces as a failing agent run.
 RUN cat > /usr/local/bin/runner-doctor <<'EOF'
 #!/bin/sh
 set -eu
-for cmd in node npm claude bash curl git gh rg tmux; do
+missing=0
+for cmd in node npm pnpm bun claude bash curl git gh rg tmux; do
   if command -v "$cmd" >/dev/null 2>&1; then
     echo "$cmd: $("$cmd" --version 2>/dev/null | head -n 1 || echo present)"
   else
     echo "missing: $cmd" >&2
+    missing=1
   fi
 done
 echo "token present: ${CLAUDE_CODE_OAUTH_TOKEN:+yes}"
 echo "ANTHROPIC_API_KEY set: ${ANTHROPIC_API_KEY:+yes — WARNING, this overrides subscription auth}"
+exit "$missing"
 EOF
 RUN chmod +x /usr/local/bin/runner-doctor
 

@@ -530,6 +530,11 @@ const TOOLS = [
           description:
             'Skip shell injection sanitization (default: false). Only honored for callers authenticated with the MCP bearer token (the web backend); loopback/sidecar callers are always sanitized.',
         },
+        image: {
+          type: 'string',
+          description:
+            "Container image for the exec pod, overriding the project's spec.exec.image. Only honored for callers authenticated with the MCP bearer token (the web backend); loopback/sidecar callers cannot choose the image.",
+        },
       },
       required: ['project', 'command'],
     },
@@ -1992,6 +1997,20 @@ async function callTool(
         );
       }
 
+      // Choosing the exec pod image is trusted-only for the same reason: an
+      // agent that could name the image could run an arbitrary container with
+      // the project's data PVC mounted.
+      const imageOverride = typeof args.image === 'string' ? args.image : undefined;
+      if (imageOverride && !ctx.trustedBearer) {
+        logSecurityEvent('exec_in_workspace.rejected', {
+          project: projectName,
+          reason: 'image override requires bearer-token authentication',
+        });
+        throw new Error(
+          'image is only honored for callers authenticated with the MCP bearer token',
+        );
+      }
+
       if (skipSanitization) {
         logSecurityEvent('exec_in_workspace.sanitization_bypassed', {
           project: projectName,
@@ -2008,7 +2027,14 @@ async function callTool(
         }
       }
 
-      const result = await execInWorkspace(projectName, command, mountPath, timeoutMs, resourceNs);
+      const result = await execInWorkspace(
+        projectName,
+        command,
+        mountPath,
+        timeoutMs,
+        resourceNs,
+        imageOverride,
+      );
       return {
         project: projectName,
         podName: result.podName,

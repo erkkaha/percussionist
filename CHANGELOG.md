@@ -1,6 +1,44 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.4] - 2026-07-31
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Make project edits resettable _(web)_
+- Mount known_hosts outside the read-only git-ssh secret _(operator)_
+- Render task diffs when the project pins a git-less exec image _(web)_
+- Render claude-engine subtask parts without crashing _(web)_
+
+### <!-- 6 -->🧪 Testing
+
+- Isolate test files so module mocks stop leaking across them _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update bun to 1.3.14 in CI workflow
+## [v0.2.3] - 2026-07-29
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Persist project merge behavior edits _(web)_
+- Count every message's usage, not just the transcript tail _(dispatcher)_
+- Retry a truncated turn that reports itself successful _(runner-claude)_
+- Load run-pod images under the reference the cluster asks for _(scripts)_
+- Detect a truncated turn on the assistant message _(runner-claude)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add LXD MicroK8s Tailscale playbook
+
+### <!-- 6 -->🧪 Testing
+
+- Stop the auth bypass test creating a real Project _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Log the shape of a turn that ends without retrying _(runner-claude)_
+- Release v0.2.3
 ## [v0.2.2] - 2026-07-29
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -12,6 +50,10 @@ All notable changes to Percussionist are documented here.
 - Stop board-view's BoardHeader stub leaking into other suites _(web)_
 - Stop board-view's react-query stub leaking into other suites _(web)_
 - Give the board suites a real router instead of stubbing Link _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.2
 ## [v0.2.1] - 2026-07-26
 
 ### <!-- 0 -->🚀 Features

@@ -46,6 +46,7 @@ import type { Project as _Project, Task as _Task } from '@percussionist/api';
 /** GET /api/projects/:name augments the CR with inject file contents for UI pre-population. */
 export interface ProjectDetail extends _Project {
   injectFileContents?: Array<{ filename: string; content: string }>;
+  opencodeConfig?: string;
 }
 
 /** Tasks in board responses may include computed child progress for awaiting-children phase. */
@@ -103,24 +104,24 @@ export interface CreateRunRequest {
 
 export interface CreateProjectRequest {
   name?: string;
-  displayName?: string;
-  model?: string;
-  agent?: string;
+  displayName?: string | null;
+  model?: string | null;
+  agent?: string | null;
   /** Inline opencode.json content — stored as a per-project ConfigMap. */
   opencodeConfig?: string;
   secrets?: {
-    llmKeysSecret?: string;
-    authSecret?: { name: string; key?: string };
+    llmKeysSecret?: string | null;
+    authSecret?: { name: string; key?: string } | null;
   };
   source?: {
     git?: {
       url: string;
-      ref?: string;
-      sshSecret?: { name: string; key?: string };
-      githubTokenSecret?: { name: string; key?: string };
-      author?: { name: string; email: string };
-    };
-    local?: boolean;
+      ref?: string | null;
+      sshSecret?: { name: string; key?: string } | null;
+      githubTokenSecret?: { name: string; key?: string } | null;
+      author?: { name: string; email: string } | null;
+    } | null;
+    local?: boolean | null;
   };
   /** Project-level sidecars injected into every run pod. */
   sidecars?: Array<{
@@ -132,13 +133,13 @@ export interface CreateProjectRequest {
   /** Files to inject into /workspace/<filename> — content managed server-side as K8s Secrets. */
   injectFiles?: Array<{ filename: string; content: string }>;
   /** Shell script to run after git clone, before opencode starts. */
-  initScript?: string;
+  initScript?: string | null;
   /** Team roster: ClusterAgent names available to this project's tasks. */
   agents?: Array<{ name: string }>;
   /** Maximum number of concurrently running tasks. */
-  maxParallel?: number;
+  maxParallel?: number | null;
   /** Run timeout in seconds. */
-  timeoutSeconds?: number;
+  timeoutSeconds?: number | null;
   /** Enable per-task feature branches to prevent git mirror conflicts. */
   featureBranchingEnabled?: boolean;
 
@@ -160,18 +161,18 @@ export interface CreateProjectRequest {
   };
 
   /** Project-level runner image override. */
-  image?: string;
+  image?: string | null;
 
   /** Pod resource requirements at project level. */
   resources?: {
-    requests?: Record<string, string>;
-    limits?: Record<string, string>;
-  };
+    requests?: Record<string, string | null>;
+    limits?: Record<string, string | null>;
+  } | null;
 
   /** Alpine packages installed in every run pod at initialization. */
   runner?: {
     packages?: string[];
-  };
+  } | null;
 
   /** Board lifecycle phase: Active / Complete / Archived. */
   phase?: 'Active' | 'Complete' | 'Archived';
@@ -185,19 +186,19 @@ export interface CreateProjectRequest {
   flow?: {
     preset?: 'simple' | 'review' | 'plan-build' | 'plan-build-review-merge';
     humanApproval?: {
-      plan?: 'required' | 'disabled';
-      build?: 'required' | 'disabled';
+      plan?: 'required' | 'disabled' | null;
+      build?: 'required' | 'disabled' | null;
     };
     plan?: {
-      onApprove?: 'generate-builds' | 'done';
+      onApprove?: 'generate-builds' | 'done' | null;
       buildGeneration?: 'ai' | 'manual' | 'disabled';
     };
     build?: {
-      onSuccess?: 'human-review' | 'ai-review' | 'done';
-      onApprove?: 'merge' | 'done';
+      onSuccess?: 'human-review' | 'ai-review' | 'done' | null;
+      onApprove?: 'merge' | 'done' | null;
     };
     merge?: {
-      mode?: 'auto' | 'manual' | 'disabled';
+      mode?: 'auto' | 'manual' | 'disabled' | null;
     };
     review?: {
       aiReviewerEnabled?: boolean;
@@ -225,30 +226,30 @@ export interface CreateProjectRequest {
     enabled?: boolean;
     image?: string;
     resources?: {
-      requests?: Record<string, string>;
-      limits?: Record<string, string>;
-    };
+      requests?: Record<string, string | null>;
+      limits?: Record<string, string | null>;
+    } | null;
   };
 
   /** Data PVC configuration — shared cache, git mirrors and worktrees. */
   data?: {
-    pvcName?: string;
-    mountPath?: string;
-    storageClass?: string;
+    pvcName?: string | null;
+    mountPath?: string | null;
+    storageClass?: string | null;
   };
 
   /** Per-project memory service with vector embeddings for agent context/memory. */
   embedding?: {
     enabled?: boolean;
-    model?: string;
-    dimensions?: number;
-    ollamaUrl?: string;
+    model?: string | null;
+    dimensions?: number | null;
+    ollamaUrl?: string | null;
   };
 
   /** Exec/maintenance pod configuration — controls the container image used for workspace exec pods. */
   exec?: {
     image?: string;
-  };
+  } | null;
 }
 
 export interface CreateAgentRequest {
@@ -316,15 +317,22 @@ export interface StepFinishPart {
   cost?: number;
 }
 
+// Two engines synthesise `subtask` parts with different payloads: opencode
+// carries a todo checklist, while the claude runner describes the spawned
+// subagent (see runner-claude/src/translate.ts). Every field is optional so a
+// part from either engine type-checks — and so the renderer is forced to guard.
 export interface SubtaskPart {
-  id: string;
-  messageID: string;
+  /** Absent when the claude runner's SDK tool call carried no id. */
+  id?: string;
+  messageID?: string;
   type: 'subtask';
-  todos: Array<{
+  todos?: Array<{
     content: string;
     status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
     priority: 'high' | 'medium' | 'low';
   }>;
+  description?: string;
+  agentType?: string;
 }
 
 export interface FilePart {

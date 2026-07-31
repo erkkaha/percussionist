@@ -46,7 +46,8 @@ Bypass hooks with `--no-verify` (rarely needed).
 - All packages build with `tsc` (ESM output, ES2022 target, NodeNext module)
 - Web client is built separately via Vite (run `pnpm build:client` inside `packages/web`, or just use `pnpm build` from the root which handles it)
 - Docker images live in `images/` with multi-stage Dockerfiles:
-  - `images/runner/` - opencode + git + ssh + node (Alpine-based)
+  - `images/runner/` - opencode + git + ssh + node + pnpm + bun (Alpine-based)
+  - `images/runner-claude/` - Claude Agent SDK runner, same toolchain (Alpine-based)
   - `images/node/` - Shared Node 24 base
   - `images/web/` - Bun runtime
   - `images/manager/` - Node 24
@@ -61,6 +62,37 @@ Percussionist uses a four-layer testing model. See [`docs/testing-strategy.md`](
 | **Unit + Smoke** | `pnpm test` | Every commit; PR gate required | < 1 min |
 | **Core E2E** | `pnpm e2e:core` | Before merging feature branches; CI on every PR | < 10 min |
 | **Extended E2E** | `pnpm e2e:extended` | Before releases; manual trigger for complex paths | < 20 min |
+
+### `bun test --isolate` in `@percussionist/web`
+
+The web suite runs with `--isolate`, which gives every test file a fresh global
+object and module registry. This is not optional tidiness — `mock.module` is
+**process-global**, and Bun patches the supplied keys onto the real module for
+every importer that comes later in the run. Without isolation, a stub in one
+file silently replaces the real component in every file that happens to run
+afterwards:
+
+- `run-detail-terminal.test.tsx` stubs `LogViewer` as `<div>LOGS</div>`, which
+  made all 7 of `log-viewer.test.tsx`'s assertions fail
+- an earlier `react-router` stub set `Link: 'a'`, breaking
+  `session-list.test.tsx`'s `findByRole('link')` queries (see the comment in
+  `board-header.test.tsx`)
+
+Both failed **only on CI** and passed locally, because test file order comes
+from filesystem enumeration and differs between a fresh clone and a working
+tree. Adding an unrelated test file is enough to flip the order and surface it.
+
+`--isolate` requires bun 1.3.14 (what CI pins); 1.3.12 does not have the flag.
+Keep the `bun-version` pins in `.github/workflows/ci.yml` and `release.yml` in
+step with it.
+
+`tests/setup.ts` must install happy-dom's `document` **before** loading
+`@testing-library/jest-dom`. `@testing-library/dom` freezes `screen` at
+module-eval time (`typeof document !== 'undefined' && document.body`); if
+document is missing, every `screen.*` query permanently throws "global
+document has to be available". jest-dom@7 made `@testing-library/dom` a
+required peer, so the setup file dynamic-imports jest-dom after the DOM
+globals — do not reintroduce a static top-level `import '@testing-library/jest-dom'`.
 
 ### Deterministic Principles (always apply)
 
@@ -405,7 +437,15 @@ The manager MCP server also provides tools for managing agent-reported findings:
 
 Packages are installed on top of the runner image
 (`ghcr.io/erkkaha/percussionist/runner:latest`). The base image always
-includes git, openssh, node, npm, bash, curl, unzip, and github-cli.
+includes git, openssh, node, npm, pnpm, bun, bash, curl, unzip, and github-cli.
+
+Both runner images carry the same toolchain, so `spec.initScript` and agent
+build/test commands behave identically across engines. Keep them in step: the
+claude runner shipped without pnpm or bun for a while, and because its
+`runner-doctor` did not name them either, the only symptom was agents that
+could not run `pnpm test` and initScripts that logged "skipped" forever. Run
+`runner-doctor` inside a run pod to check; it exits non-zero if anything is
+missing.
 
 ## Architecture
 - All packages are ESM (`"type": "module"`)
