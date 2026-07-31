@@ -46,7 +46,8 @@ Bypass hooks with `--no-verify` (rarely needed).
 - All packages build with `tsc` (ESM output, ES2022 target, NodeNext module)
 - Web client is built separately via Vite (run `pnpm build:client` inside `packages/web`, or just use `pnpm build` from the root which handles it)
 - Docker images live in `images/` with multi-stage Dockerfiles:
-  - `images/runner/` - opencode + git + ssh + node (Alpine-based)
+  - `images/runner/` - opencode + git + ssh + node + pnpm + bun (Alpine-based)
+  - `images/runner-claude/` - Claude Agent SDK runner, same toolchain (Alpine-based)
   - `images/node/` - Shared Node 24 base
   - `images/web/` - Bun runtime
   - `images/manager/` - Node 24
@@ -436,7 +437,15 @@ The manager MCP server also provides tools for managing agent-reported findings:
 
 Packages are installed on top of the runner image
 (`ghcr.io/erkkaha/percussionist/runner:latest`). The base image always
-includes git, openssh, node, npm, bash, curl, unzip, and github-cli.
+includes git, openssh, node, npm, pnpm, bun, bash, curl, unzip, and github-cli.
+
+Both runner images carry the same toolchain, so `spec.initScript` and agent
+build/test commands behave identically across engines. Keep them in step: the
+claude runner shipped without pnpm or bun for a while, and because its
+`runner-doctor` did not name them either, the only symptom was agents that
+could not run `pnpm test` and initScripts that logged "skipped" forever. Run
+`runner-doctor` inside a run pod to check; it exits non-zero if anything is
+missing.
 
 ## Architecture
 - All packages are ESM (`"type": "module"`)
