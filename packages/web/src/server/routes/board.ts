@@ -408,11 +408,16 @@ board.post('/:project/board/tasks/:taskName/move', adminAuth(), async (c) => {
     // When resetting to backlog/pending, increment retryCount so the
     // reconciler generates a new unique run name (workerRunName hashes
     // retryCount into the name), preserving the old failed Run and its history.
+    // A task that never ran (an idea) has no worker status, and
+    // WorkerStatusSchema requires `status` — patching a bare { retryCount }
+    // would fail validation, so leave worker untouched in that case.
     const resetTargets = ['ready', 'pending', 'backlog'];
     if (resetTargets.includes(column)) {
       const task = await getTask(taskName, ns);
-      const retryCount = (task.status?.worker?.retryCount ?? 0) + 1;
-      patch.worker = { ...task.status?.worker, retryCount };
+      const worker = task.status?.worker;
+      if (worker?.status) {
+        patch.worker = { ...worker, retryCount: (worker.retryCount ?? 0) + 1 };
+      }
     }
 
     const parsedPatch = TaskStatusSchema.partial().safeParse(patch);
