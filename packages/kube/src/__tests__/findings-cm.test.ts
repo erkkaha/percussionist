@@ -170,7 +170,7 @@ describe('parseTriagedFindings', () => {
 
 // The original layout was `inbox/<id>.json`. Every write of it was rejected by
 // the API server with a 422 — `/` is not in the ConfigMap data key charset — so
-// no finding was ever stored and `report_finding` failed for every agent that
+// no finding was ever stored and `report_unrelated_issue` failed for every agent that
 // called it. The parse tests above passed throughout, because they only ever
 // fed hand-built maps to a parser. This is the assertion that was missing.
 describe('findings ConfigMap data keys', () => {

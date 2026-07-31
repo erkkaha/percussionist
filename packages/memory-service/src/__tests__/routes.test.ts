@@ -28,10 +28,22 @@ const {
   handleDeleteMemory,
   inTransaction,
 } = await import('../routes.js');
-const { getRawDb } = await import('../db.js');
+const { getRawDb, vecUnavailableReason } = await import('../db.js');
+
+// Every suite here needs the sqlite-vec extension — handleHealth included, since
+// it calls getDb() to assert the database initialises. Its prebuilt binary is
+// glibc-only — it cannot dlopen on musl, so a whole-monorepo
+// `pnpm test` from an Alpine runner pod used to fail here and take the husky
+// pre-commit hook down with it. Skip with the reason instead of failing: on any
+// glibc machine (dev, CI) the reason is null and every test below runs.
+const vecReason = vecUnavailableReason();
+const describeVec = vecReason ? describe.skip : describe;
+if (vecReason) {
+  console.warn(`[memory-test] skipping vector-backed tests — ${vecReason}`);
+}
 
 beforeAll(() => {
-  initDb();
+  if (!vecReason) initDb();
 });
 
 afterAll(() => {
@@ -73,7 +85,7 @@ function clear() {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('handleHealth', () => {
+describeVec('handleHealth', () => {
   let origFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
@@ -112,7 +124,7 @@ describe('handleHealth', () => {
   });
 });
 
-describe('handleStoreMemory', () => {
+describeVec('handleStoreMemory', () => {
   afterAll(() => clear());
 
   it('stores a memory and returns an id', async () => {
@@ -225,7 +237,7 @@ describe('handleStoreMemory', () => {
   });
 });
 
-describe('handleSearch', () => {
+describeVec('handleSearch', () => {
   beforeAll(() => seed(3));
   afterAll(() => clear());
 
@@ -277,7 +289,7 @@ describe('handleSearch', () => {
   });
 });
 
-describe('handleContext', () => {
+describeVec('handleContext', () => {
   beforeAll(() => seed(3));
   afterAll(() => clear());
 
@@ -303,7 +315,7 @@ describe('handleContext', () => {
 // handleListMemories
 // ---------------------------------------------------------------------------
 
-describe('handleListMemories', () => {
+describeVec('handleListMemories', () => {
   beforeAll(() => seed(5));
   afterAll(() => clear());
 
@@ -363,7 +375,7 @@ describe('handleListMemories', () => {
 // handleGetMemory
 // ---------------------------------------------------------------------------
 
-describe('handleGetMemory', () => {
+describeVec('handleGetMemory', () => {
   beforeAll(() => seed(3));
   afterAll(() => clear());
 
@@ -386,7 +398,7 @@ describe('handleGetMemory', () => {
 // handleUpdateMemory
 // ---------------------------------------------------------------------------
 
-describe('handleUpdateMemory', () => {
+describeVec('handleUpdateMemory', () => {
   beforeAll(() => seed(3));
   afterAll(() => clear());
 
@@ -449,7 +461,7 @@ describe('handleUpdateMemory', () => {
 // handleDeleteMemory
 // ---------------------------------------------------------------------------
 
-describe('handleDeleteMemory', () => {
+describeVec('handleDeleteMemory', () => {
   beforeAll(() => seed(3));
   afterAll(() => clear());
 
@@ -540,7 +552,7 @@ describe('handleDeleteMemory', () => {
 // reachable in normal operation because it awaited the Ollama embedding call
 // while the transaction was open.
 
-describe('inTransaction', () => {
+describeVec('inTransaction', () => {
   it('commits the work when the callback succeeds', async () => {
     const raw = getRawDb();
     const stored = await handleStoreMemory({ content: 'commit me' });
