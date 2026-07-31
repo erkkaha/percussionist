@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DiffContext, DiffFinding } from '@percussionist/api';
-import { normalizeRepoPath } from '@percussionist/api';
+import { DEFAULT_EXEC_IMAGE, normalizeRepoPath } from '@percussionist/api';
 import { Hono } from 'hono';
 import { auth } from '../auth.js';
 import { getProject, getRun, getTask, gitUrlHash, NAMESPACE } from '../kube.js';
@@ -248,6 +248,11 @@ async function execInWorkspaceViaManager(
         // MCP bearer token; loopback/sidecar callers cannot use it.
         // DO NOT REMOVE — see commits 681d3d4 and 227569e.
         skipSanitization: true,
+        // Pin a git-capable image rather than inheriting the project's
+        // spec.exec.image, which may have no git at all (plain ubuntu:24.04
+        // does not). Without this every git command below fails silently and
+        // the route reports the branches as missing.
+        image: DEFAULT_EXEC_IMAGE,
       },
     },
   };
@@ -377,6 +382,9 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
       `BASE=${quoteSh(baseRef)}`,
       `HEAD=${quoteSh(headRef)}`,
       'if [ ! -d "$REPO" ]; then printf \'__PERCUSSIONIST_ERROR__ repo_not_found %s\\n\' "$REPO"; exit 0; fi',
+      // Without this guard a git-less exec image makes every command below fail
+      // quietly, and the route blames the branches (base_missing) instead.
+      'if ! command -v git >/dev/null 2>&1; then printf \'__PERCUSSIONIST_ERROR__ git_missing %s\\n\' "the exec image has no git"; exit 0; fi',
       'git -C "$REPO" fetch origin "+refs/heads/*:refs/remotes/origin/*" --prune 2>/dev/null || echo "[diff] fetch failed, using stale mirror"',
       'RESOLVE() { if git -C "$REPO" rev-parse --verify "origin/$1^{commit}" >/dev/null 2>&1; then printf "origin/%s" "$1"; elif git -C "$REPO" rev-parse --verify "$1^{commit}" >/dev/null 2>&1; then printf "%s" "$1"; fi; }',
       'BASE_REF=$(RESOLVE "$BASE")',
