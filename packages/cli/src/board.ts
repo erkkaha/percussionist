@@ -270,7 +270,7 @@ export interface BoardPlanOpts {
 // ---------------------------------------------------------------------------
 // board findings
 //
-// This is the off-task findings inbox: an agent's `report_finding` writes
+// This is the off-task findings inbox: an agent's `report_unrelated_issue` writes
 // `inbox.<id>.json` into the project's findings ConfigMap, the manager triages
 // those into `triaged.<clusterId>.json`, and only the triaged half reaches
 // `status.board.findings`. So the board can show nothing while reports are
@@ -313,9 +313,9 @@ export async function runBoardFindings(
 
   if (inbox.length === 0 && triaged.length === 0) {
     console.log(`No off-task findings recorded for ${projectName}.`);
-    console.log('  Agents report these with percussionist_dispatcher_report_finding, which is');
-    console.log('  deliberately optional and held to a high bar — an empty list is a normal');
-    console.log('  result, not evidence that reporting is broken.');
+    console.log('  Agents report these with percussionist_dispatcher_report_unrelated_issue,');
+    console.log('  which is deliberately optional and held to a high bar — an empty list is a');
+    console.log('  normal result, not evidence that reporting is broken.');
     console.log();
     console.log('  Note that reviewers also emit "findings" of a different kind: the diff');
     console.log('  findings passed to complete_review, which rank a diff by review priority');

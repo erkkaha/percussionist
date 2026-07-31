@@ -54,6 +54,19 @@ kubectl apply -f k8s/deploy/ollama.yaml
 
 Model warmup is handled by the memory service at startup.
 
+- **A glibc runtime** — `sqlite-vec` ships a prebuilt `vec0.so` that links glibc
+  (`libc.so.6`, `GLIBC_2.14` symbols) and publishes no `libc` field, so package
+  managers install it on Alpine too, where it then fails to `dlopen`. Alpine's
+  `libc6-compat` supplies the `libc.so.6` name but not glibc's versioned symbols,
+  so it is not sufficient. `images/memory/Dockerfile` runs the service on Debian
+  `oven/bun` for this reason.
+
+  On a musl host the extension cannot load, so `packages/memory-service` skips
+  its vector-backed tests with the reason rather than failing (which previously
+  took the whole-monorepo `pnpm test`, and the pre-commit hook with it). If you
+  see `skipping vector-backed tests` locally, that is why — the same suite runs
+  in full on any glibc machine.
+
 ## Resources
 
 | Resource | Request | Limit |
