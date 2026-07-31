@@ -33,22 +33,31 @@ spec:
 
     1. Identify the feature branch and target branch from the task description.
     2. Ensure the working tree is clean: `git status`
-    3. Fetch both branches from origin:
+    3. Fetch the target branch. Do NOT expect the feature branch to be on
+       origin: in auto-merge mode nothing publishes build branches — they live
+       only in the local git mirror, so that one remote branch per task never
+       floods the remote. A missing `origin/<feature>` is normal, and pushing
+       the feature branch to make a command work is the one thing you must not
+       do. Work from your local tip instead:
        ```
        git fetch origin <target>
-       git fetch origin <feature>
+       SOURCE_SHA=$(git rev-parse HEAD)
        ```
-    4. Check if the merge is a fast-forward (source contains target):
+       (In PR mode the task description says to open a PR — that mode does need
+       the head branch published, and its instructions cover it.)
+    4. Check if the merge is a fast-forward (the local tip contains the target):
        ```
-       if git merge-base --is-ancestor origin/<target> origin/<feature>; then
+       if git merge-base --is-ancestor origin/<target> HEAD; then
          echo "Fast-forward: pushing <feature> -> <target>"
-         git push origin <feature>:refs/heads/<target>
+         git push origin HEAD:refs/heads/<target>
        else
          echo "Non-fast-forward: merging <target> into <feature>"
          git merge origin/<target> --no-edit
          git push origin HEAD:refs/heads/<target>
        fi
        ```
+       Both paths push HEAD to the target ref, so the feature branch name never
+       reaches the remote.
     5. If the merge (`git merge`) has conflicts:
        - For simple conflicts (different files, non-overlapping hunks in same
          file): resolve them by editing the conflicted files. Remove conflict
@@ -57,10 +66,12 @@ spec:
          conflicts you cannot confidently resolve): stop and report the
          conflict details. Do NOT force a resolution. The task will be
          escalated to a human.
-    6. Verify the push landed:
+    6. Verify the push landed — check the work is reachable from the target,
+       using the SHA you recorded rather than an origin/<feature> that may not
+       exist:
        ```
        git fetch origin <target>
-       if ! git merge-base --is-ancestor origin/<feature> origin/<target>; then
+       if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/<target>; then
          echo "ERROR: push verification failed — target does not contain source"
          exit 1
        fi

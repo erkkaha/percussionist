@@ -58,8 +58,23 @@ function parentBaselineResolve(git: { ref?: string; parentRef?: string }): strin
   if git -C "$MIRROR_DIR" rev-parse "$_PARENT_REMOTE_REF" >/dev/null 2>&1; then
     _PARENT_BASE_REF="$_PARENT_REMOTE_REF"
     echo "[workspace-init] using remote-tracking ref $_PARENT_REMOTE_REF as parent baseline for ${ref}"
-  else
+  elif git -C "$MIRROR_DIR" rev-parse "refs/heads/${parentRef}" >/dev/null 2>&1; then
     echo "[workspace-init] falling back to local ref ${parentRef} as parent baseline for ${ref}"
+  else
+    # Neither ref exists, so the worktree add below would fail on an unresolvable
+    # baseline — as a bare "git worktree add" fatal, i.e. exit 128 with nothing
+    # naming the missing branch. Diagnosing that took a mirror-by-mirror ref
+    # comparison; say it outright instead.
+    #
+    # The way this happens in practice: the mirror path is derived from
+    # source.git.url, so editing the URL (https -> ssh) points runs at a brand
+    # new mirror cloned from the remote. Any branch that only ever existed in the
+    # old mirror — because a push failed for want of credentials — is simply not
+    # there.
+    echo "[workspace-init] error: parent branch ${parentRef} not found in mirror $MIRROR_DIR" >&2
+    echo "[workspace-init] looked for refs/remotes/origin/${parentRef} and refs/heads/${parentRef}" >&2
+    echo "[workspace-init] it is on neither the remote nor this mirror; if source.git.url changed, the branch may only exist in the mirror for the previous URL" >&2
+    exit 1
   fi`;
 }
 

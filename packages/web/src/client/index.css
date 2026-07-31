@@ -2,6 +2,7 @@
 @plugin "tailwindcss-animate";
 
 @custom-variant dark (&:is(.dark *));
+@custom-variant hover-capable (@media (hover: hover));
 
 @theme {
   /* ── Surfaces ── */

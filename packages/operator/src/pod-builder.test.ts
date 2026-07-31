@@ -856,3 +856,44 @@ describe('renderPod - SSH host key verification mounts', () => {
     expect(volume?.secret).toBeUndefined();
   });
 });
+
+describe('renderPod - parent baseline resolution failure', () => {
+  function branchingRun(): Run {
+    const run = makeRun();
+    run.spec.source = {
+      git: {
+        url: 'https://github.com/test/repo.git',
+        ref: 'feature/plan-1--build-2',
+        parentRef: 'feature/plan-1',
+      },
+    };
+    return run;
+  }
+
+  // Regression: the fallback baseline was used without checking it resolves. When
+  // neither the remote-tracking nor the local ref existed, `git worktree add -b`
+  // died on an unresolvable ref — a bare exit 128 naming nothing. This happens
+  // for real when source.git.url changes: the mirror path is derived from the
+  // URL, so runs move to a fresh clone and any branch that only lived in the old
+  // mirror is gone.
+  it('checks the local fallback ref before using it as a baseline', () => {
+    const script = getWorkspaceInitArgs(branchingRun());
+    expect(script).toContain('rev-parse "refs/heads/feature/plan-1"');
+  });
+
+  it('names the missing parent branch and the mirror instead of failing bare', () => {
+    const script = getWorkspaceInitArgs(branchingRun());
+    expect(script).toContain('parent branch feature/plan-1 not found in mirror');
+    expect(script).toContain('refs/remotes/origin/feature/plan-1');
+    expect(script).toContain('source.git.url changed');
+  });
+
+  it('exits non-zero rather than continuing to worktree add', () => {
+    const script = getWorkspaceInitArgs(branchingRun());
+    const errIdx = script.indexOf('not found in mirror');
+    const addIdx = script.indexOf('worktree add -b');
+    expect(errIdx).toBeGreaterThan(-1);
+    expect(addIdx).toBeGreaterThan(errIdx);
+    expect(script.slice(errIdx, addIdx)).toContain('exit 1');
+  });
+});

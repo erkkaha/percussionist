@@ -46,6 +46,7 @@ spec:
       model: anthropic/claude-sonnet-4
   maxParallel: 2
   phase: Active
+  color: "#3b82f6"
 status:
   board:
     ideas: []
@@ -56,6 +57,8 @@ status:
     blocked: []
     findings: []
 ```
+
+`spec.color` is an optional hex color (`#rrggbb`) used to accent the project in the UI (sidebar, board). If unset, the UI derives a color from the project name. Clusters must re-apply the CRD (`k8s/crds/project.yaml`) for this field to persist — on stale clusters the API server prunes it as an unknown field.
 
 ## Task
 

@@ -103,6 +103,30 @@ describe('project form request', () => {
     expect(request.exec).toBeNull();
   });
 
+  it('includes color on create when set', () => {
+    const state = createInitialState(undefined);
+    state.color = '#58c4dd';
+
+    const request = buildProjectRequest(state, false);
+
+    expect(request.color).toBe('#58c4dd');
+  });
+
+  it('omits color on create when left at Auto', () => {
+    const request = buildProjectRequest(createInitialState(undefined), false);
+
+    expect(request.color).toBeUndefined();
+  });
+
+  it('sends color: null on edit when cleared back to Auto', () => {
+    const state = createInitialState({ color: '#58c4dd' });
+    state.color = '';
+
+    const request = buildProjectRequest(state, true);
+
+    expect(request.color).toBeNull();
+  });
+
   it('clears sidecar values while retaining the sidecar', () => {
     const state = createInitialState(undefined);
     state.sidecars = [{ id: 1, name: 'db', image: 'postgres', ports: '', env: '' }];

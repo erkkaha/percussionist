@@ -67,6 +67,8 @@ export interface ProjectFormState {
   // General
   name: string;
   displayName: string;
+  /** Accent color hex, empty string = automatic (hash-derived) color. */
+  color: string;
   model: string;
   agent: string;
   maxParallel: string;
@@ -236,6 +238,8 @@ export function buildProjectRequest(
   const req: CreateProjectRequest = {};
   if (!isEdit && state.name.trim()) req.name = state.name.trim();
   if (state.displayName.trim() || isEdit) req.displayName = state.displayName.trim() || null;
+  if (isEdit) req.color = state.color || null;
+  else if (state.color) req.color = state.color;
   if (state.model.trim() || isEdit) req.model = state.model.trim() || null;
   if (state.agent.trim() || isEdit) req.agent = state.agent.trim() || null;
   if (state.opencodeConfig !== null) req.opencodeConfig = state.opencodeConfig.trim() || '';
@@ -539,6 +543,7 @@ export function createInitialState(
     // General
     name: '',
     displayName: spec.displayName ?? '',
+    color: spec.color ?? '',
     model: spec.model ?? '',
     agent: spec.agent ?? '',
     maxParallel: spec.maxParallel !== undefined ? String(spec.maxParallel) : '',
@@ -639,6 +644,7 @@ export interface ProjectFormHookReturn extends ProjectFormState {
   // Setters (all fields)
   setName: React.Dispatch<React.SetStateAction<string>>;
   setDisplayName: React.Dispatch<React.SetStateAction<string>>;
+  setColor: React.Dispatch<React.SetStateAction<string>>;
   setModel: React.Dispatch<React.SetStateAction<string>>;
   setAgent: React.Dispatch<React.SetStateAction<string>>;
   setMaxParallel: React.Dispatch<React.SetStateAction<string>>;
@@ -737,6 +743,7 @@ export function useProjectForm(
   // General
   const [name, setName] = useState(initialState.name);
   const [displayName, setDisplayName] = useState(initialState.displayName);
+  const [color, setColor] = useState(initialState.color);
   const [model, setModel] = useState(initialState.model);
   const [agent, setAgent] = useState(initialState.agent);
   const [maxParallel, setMaxParallel] = useState(initialState.maxParallel);
@@ -867,6 +874,7 @@ export function useProjectForm(
     // General
     name,
     displayName,
+    color,
     model,
     agent,
     maxParallel,
@@ -875,6 +883,7 @@ export function useProjectForm(
     phase,
     setName,
     setDisplayName,
+    setColor,
     setModel,
     setAgent,
     setMaxParallel,

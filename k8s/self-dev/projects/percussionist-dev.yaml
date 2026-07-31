@@ -84,11 +84,23 @@ spec:
 
   # Pre-warm pnpm store on startup so agent's pnpm install finishes within
   # the 120s bash tool timeout. Cache persists on the data PVC across runs.
+  #
+  # Name the missing binary instead of a bare "skipped". This script runs in the
+  # workspace-init container, which uses the run's engine image — and for as long
+  # as runner-claude shipped without pnpm, `|| echo "skipped"` reported success
+  # while warming nothing, on every claude-engine run.
+  # No `exit` here: the operator eval's this script in the workspace-init shell,
+  # so exiting would end that container early and skip whatever follows.
   initScript: |
-    echo "[init] warming pnpm store"
-    CI=true pnpm install --frozen-lockfile --config.strict-dep-builds=false 2>&1 || echo "[init] pnpm install skipped"
-    echo "[init] pruning pnpm store"
-    CI=true pnpm store prune 2>&1 || echo "[init] pnpm store prune skipped"
+    if command -v pnpm >/dev/null 2>&1; then
+      echo "[init] warming pnpm store"
+      CI=true pnpm install --frozen-lockfile --config.strict-dep-builds=false 2>&1 || echo "[init] pnpm install failed (see output above)"
+      echo "[init] pruning pnpm store"
+      CI=true pnpm store prune 2>&1 || echo "[init] pnpm store prune failed (see output above)"
+    else
+      echo "[init] WARNING: pnpm not found in the runner image — skipping store warmup"
+      echo "[init] agents in this run cannot run pnpm scripts either"
+    fi
     echo "[init] init complete"
 
   # Feature branching: each task works on its own branch to prevent

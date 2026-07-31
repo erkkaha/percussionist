@@ -266,7 +266,12 @@ export async function deleteAgent(name: string): Promise<void> {
 // Board (embedded in Project)
 
 export async function fetchBoard(project: string): Promise<{
-  settings: { maxParallel: number; agents: Array<{ name: string }>; phase: string };
+  settings: {
+    maxParallel: number;
+    agents: Array<{ name: string }>;
+    phase: string;
+    color?: string | null;
+  };
   columns: Record<string, Task[]>;
   approvals?: Record<string, { approved: boolean; requestChanges: boolean }>;
   status: BoardStatus;

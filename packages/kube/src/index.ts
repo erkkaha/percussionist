@@ -1282,7 +1282,7 @@ const FINDINGS_COMPONENT = 'findings';
 /**
  * A ConfigMap data key must match `[-._a-zA-Z0-9]+`. `/` is not in that set, so
  * the original `inbox/<id>.json` layout was rejected by the API server with a
- * 422 on every single write — no finding was ever stored, and `report_finding`
+ * 422 on every single write — no finding was ever stored, and `report_unrelated_issue`
  * returned an MCP error to every agent that called it. The parse helpers were
  * unit-tested against hand-built maps, which is why nothing caught it: no test
  * ever asked the API server to accept a key.

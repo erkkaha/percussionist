@@ -1,7 +1,11 @@
 // Setup file for DOM-based React component tests using happy-dom.
 // Preloaded via bun test --preload (or bunfig.toml [test].preload).
-
-import '@testing-library/jest-dom';
+//
+// happy-dom must install `document` before anything imports
+// `@testing-library/dom`. That package freezes `screen` at module-eval time;
+// if document is missing, every screen.* query permanently throws. jest-dom@7
+// made `@testing-library/dom` a required peer, so it must be loaded via
+// dynamic import after the DOM globals below — not a static top-level import.
 
 import { Window } from 'happy-dom';
 
@@ -82,3 +86,5 @@ globalThis.getComputedStyle = window.getComputedStyle.bind(
 // requestAnimationFrame / cancelAnimationFrame (happy-dom has these)
 globalThis.requestAnimationFrame = window.requestAnimationFrame.bind(window);
 globalThis.cancelAnimationFrame = window.cancelAnimationFrame.bind(window);
+
+await import('@testing-library/jest-dom');
