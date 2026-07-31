@@ -85,6 +85,14 @@ tree. Adding an unrelated test file is enough to flip the order and surface it.
 Keep the `bun-version` pins in `.github/workflows/ci.yml` and `release.yml` in
 step with it.
 
+`tests/setup.ts` must install happy-dom's `document` **before** loading
+`@testing-library/jest-dom`. `@testing-library/dom` freezes `screen` at
+module-eval time (`typeof document !== 'undefined' && document.body`); if
+document is missing, every `screen.*` query permanently throws "global
+document has to be available". jest-dom@7 made `@testing-library/dom` a
+required peer, so the setup file dynamic-imports jest-dom after the DOM
+globals — do not reintroduce a static top-level `import '@testing-library/jest-dom'`.
+
 ### Deterministic Principles (always apply)
 
 - **Never trust model prose for pass/fail.** Assert only on CR status fields (`Run.status.phase`, `Task.status.phase`) and board JSON columns — never on LLM-generated text.
