@@ -1,6 +1,22 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.4] - 2026-07-31
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Make project edits resettable _(web)_
+- Mount known_hosts outside the read-only git-ssh secret _(operator)_
+- Render task diffs when the project pins a git-less exec image _(web)_
+- Render claude-engine subtask parts without crashing _(web)_
+
+### <!-- 6 -->🧪 Testing
+
+- Isolate test files so module mocks stop leaking across them _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update bun to 1.3.14 in CI workflow
 ## [v0.2.3] - 2026-07-29
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -22,6 +38,7 @@ All notable changes to Percussionist are documented here.
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Log the shape of a turn that ends without retrying _(runner-claude)_
+- Release v0.2.3
 ## [v0.2.2] - 2026-07-29
 
 ### <!-- 1 -->🐛 Bug Fixes
