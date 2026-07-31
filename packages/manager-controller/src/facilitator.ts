@@ -322,6 +322,58 @@ export async function buildBuildTaskGeneratorRun(
   );
 }
 
+/**
+ * Where a reviewer's output is supposed to go.
+ *
+ * Without this block the prompt only ever named `approved` and `diagnosis`, so a
+ * reviewer learned about complete_review's `findings` array from the tool schema
+ * at best and could not construct a matching `context` at all — line-specific
+ * review points came back as unanchored prose in `feedback`, which the board
+ * never renders next to the code. It also had no route for issues that are real
+ * but not about this diff, so those were smuggled into the verdict prose too.
+ *
+ * The diffFingerprint recipe mirrors `computeDiffFingerprint` and the git
+ * invocation in packages/web/src/server/routes/task-diff.ts. Keep them in step:
+ * if the board's diff command changes, a reviewer following these instructions
+ * computes a fingerprint that no longer matches and every finding renders stale.
+ */
+export function reviewOutputPromptLines(baseBranch: string, branch: string): string[] {
+  return [
+    `REVIEW FINDINGS — inline comments on the diff:`,
+    `complete_review takes an optional findings array (max 25) alongside the verdict. Anything you`,
+    `want to say about a specific line belongs there, not in feedback: findings are anchored to a`,
+    `path and line and render inline in the board's diff view, while feedback prose is not anchored`,
+    `and is easily missed. Emit findings whether you approve or request changes — an approval`,
+    `carrying medium/low findings is the normal outcome for work that is correct but leaves a`,
+    `caveat behind. Keep feedback for the overall verdict narrative.`,
+    '',
+    `Each finding needs: id (unique within this call), severity (critical|high|medium|low|info),`,
+    `title (<=160 chars), comment (<=2000 chars), 1-3 anchors, and a context object.`,
+    `An anchor is { path, side: "new" | "old", line, endLine?, hunkHeader? } — use side "new" and`,
+    `post-image line numbers unless you are pointing at a deleted line.`,
+    '',
+    `Every finding in one call must carry the SAME context object, computed from git in your`,
+    `workspace (findings whose context disagrees with the first one are dropped):`,
+    `  FORK_SHA   = git merge-base ${baseBranch} ${branch}`,
+    `  BASE_SHA   = git rev-parse ${baseBranch}^{commit}`,
+    `  HEAD_SHA   = git rev-parse ${branch}^{commit}`,
+    `  DIFF       = git diff --no-color --find-renames --binary $FORK_SHA..${branch} --`,
+    `  diffFingerprint = sha256 of the string "$FORK_SHA\\n$HEAD_SHA\\n" followed by DIFF with`,
+    `                    leading and trailing whitespace stripped (python3/node, not shell echo).`,
+    `Prefer origin/<branch> for either ref when it resolves — the board computes its fingerprint`,
+    `against the pushed refs. A fingerprint that disagrees with the board's only marks the finding`,
+    `stale, it is still stored and read, so never drop a finding because you are unsure of it.`,
+    '',
+    `UNRELATED ISSUES — problems that are not about this diff:`,
+    `A pre-existing bug you happened to notice, or a broken toolchain unrelated to this work, is`,
+    `not a review finding. Report each one once with the percussionist_dispatcher_report_unrelated_issue`,
+    `tool (title, description, severity, category, optional filePath/snippet) and carry on with the`,
+    `review — it lands in the project's issue inbox for triage. Do not smuggle it into the verdict`,
+    `prose as a caveat, and do not let it change approve/request_changes for this task.`,
+    '',
+  ];
+}
+
 // Build a review Run spec without session summary.
 // The reviewer agent uses MCP tools (percussionist_dispatcher_read_session) to fetch session data itself.
 export async function buildReviewRun(
@@ -345,6 +397,15 @@ export async function buildReviewRun(
 
   const completionMessage = succeededRunStatus.message ?? 'session completed';
   const branch = branchName ?? `feat/${task.metadata.name}`;
+  // The board's diff view resolves the review base exactly this way
+  // (packages/web/src/server/routes/task-diff.ts). The reviewer has to diff
+  // against the same base, or the diffFingerprint it computes for its findings
+  // will not match the board's and every finding renders as stale.
+  const baseBranch =
+    task.status?.worker?.mergeIntoBranch ??
+    task.status?.worker?.parentBranch ??
+    project.spec.source?.git?.ref ??
+    'main';
   const taskTypeLabel = task.spec.type ? `TASK TYPE: ${task.spec.type}` : '';
   const isBuildTask = task.spec.type === 'BUILD';
   const isPlanTask = task.spec.type === 'PLAN';
@@ -362,6 +423,7 @@ export async function buildReviewRun(
     `TASK DESCRIPTION: ${task.spec.description ?? '(none)'}`,
     `WORKER RUN: ${succeededRunName}`,
     `BRANCH: ${branch}`,
+    `BASE BRANCH: ${baseBranch}`,
     `COMPLETION MESSAGE: ${completionMessage}`,
     '',
     `SESSION DATA: Use the percussionist_dispatcher_read_session MCP tool (runName="${succeededRunName}") to read the full session.`,
@@ -421,6 +483,7 @@ export async function buildReviewRun(
     ...(alternativeAgents.length > 0
       ? [`AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(', ')}`, '']
       : []),
+    ...reviewOutputPromptLines(baseBranch, branch),
     `Call the percussionist_dispatcher_complete_review MCP tool to submit your review verdict.`,
     `Use approved: true to approve, or approved: false to request changes.`,
   ].join('\n');

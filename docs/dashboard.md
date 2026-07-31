@@ -22,7 +22,7 @@ Session analytics, tool usage metrics, and cost breakdowns help you understand a
 
 ## Findings
 
-The findings panel shows agent-reported off-task issues — bugs, security problems, performance traps, and tech debt — surfaced via the `report_finding` MCP tool. Each finding displays severity (color-coded), category, title, source task/run, file path, status, and occurrence count. Expand a finding to see the full description and code snippet. Action buttons allow creating a Task from a finding, dismissing it, or marking it as a duplicate. The findings data comes from `board.status.findings[]` and the `{project}-findings` ConfigMap.
+The findings panel shows issues agents reported from outside their own task — bugs, security problems, performance traps, and tech debt — surfaced via the `report_unrelated_issue` MCP tool. It does **not** show a reviewer's inline comments on a diff: those arrive via `complete_review`'s `findings` array, live on the task at `status.diffFindings`, and render in the task's diff view. Each finding displays severity (color-coded), category, title, source task/run, file path, status, and occurrence count. Expand a finding to see the full description and code snippet. Action buttons allow creating a Task from a finding, dismissing it, or marking it as a duplicate. The findings data comes from `board.status.findings[]` and the `{project}-findings` ConfigMap.
 
 ## Cluster Metrics
 

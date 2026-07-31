@@ -262,8 +262,9 @@ It returns the current phase, allowed transitions, resolved project
 flow, and expected next action, which helps avoid invalid
 set_task_state or force_retry calls.
 
-Workers can report off-task findings (bugs, security issues, tech debt)
-via the report_finding tool. The findings system auto-triages high/critical
+Workers can report issues unrelated to their own task (bugs, security
+issues, tech debt) via the report_unrelated_issue tool, which files them
+into this project's findings inbox. The findings system auto-triages high/critical
 bugs and security issues into tasks. Use list_findings to see all reported
 findings, update_finding to change their status or severity, and
 create_task_from_finding to promote lower-severity issues to tasks manually.

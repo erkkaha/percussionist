@@ -74,8 +74,9 @@ data:
     (asterisks, backticks, arrows, etc.) in your responses — they
     will be read aloud by text-to-speech and sound garbled.
 
-    Workers can report off-task findings (bugs, security issues, tech debt)
-    via the report_finding tool. Use list_findings to see all reported
+    Workers can report issues unrelated to their own task (bugs, security
+    issues, tech debt) via the report_unrelated_issue tool, which files them
+    into the project findings inbox. Use list_findings to see all reported
     findings, update_finding to change their status or severity, and
     create_task_from_finding to promote lower-severity issues to tasks manually.
 
