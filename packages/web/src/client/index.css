@@ -309,6 +309,23 @@
 }
 
 /* ---------------------------------------------------------------------------
+   Standard table scroll wrapper
+   Use on any route-level data table wrapper for both-axis overflow:
+   - horizontal scroll when columns overflow (narrow widths),
+   - vertical scroll when rows exceed the bounded responsive height.
+   The max-height is required so vertical overflow can actually occur;
+   it is not breakpoint-gated, so medium+ screens get internal vertical
+   scrolling too. Keep per-table min-widths on the <table> element itself.
+   --------------------------------------------------------------------------- */
+
+.table-scroll {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+  max-height: 70vh;
+}
+
+/* ---------------------------------------------------------------------------
    Mobile responsive overrides for settings pages (320px–768px)
    Desktop layout is unchanged — only narrow-viewport overrides below.
    --------------------------------------------------------------------------- */
@@ -327,24 +344,6 @@
 
   .settings-header-mobile h1 {
     font-size: 1.25rem;
-  }
-}
-
-@media (max-width: 768px) {
-  /*
-   * NOTE: settings-table-scroll is now only used by AgentsPage.tsx.
-   * ProjectsPage.tsx uses always-on overflow-x-auto (Tailwind utility)
-   * matching the RunList.tsx pattern, so it does not rely on this
-   * breakpoint-gated rule.
-   */
-  .settings-table-scroll {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    width: 100%;
-  }
-
-  .settings-table-scroll table {
-    min-width: 600px;
   }
 }
 
