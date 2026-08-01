@@ -105,6 +105,8 @@ export interface CreateRunRequest {
 export interface CreateProjectRequest {
   name?: string;
   displayName?: string | null;
+  /** Accent color for UI identification (hex). Falls back to a name-derived color. */
+  color?: string | null;
   model?: string | null;
   agent?: string | null;
   /** Inline opencode.json content — stored as a per-project ConfigMap. */

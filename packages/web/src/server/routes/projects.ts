@@ -207,6 +207,7 @@ projects.get('/events', auth(), async (c) => {
           name: p.metadata.name,
           namespace: p.metadata.namespace,
           displayName: p.spec.displayName,
+          color: p.spec.color,
           model: p.spec.model,
           agent: p.spec.agent,
           authWarning: validateModelAuth(p.spec.model, p.spec.secrets).ok,

@@ -3,7 +3,6 @@ import {
   Activity,
   BarChart3,
   Code2,
-  Folder,
   LogOut,
   MessageSquare,
   Plus,
@@ -18,6 +17,7 @@ import { useProjectsEvents } from '../hooks/useProjectsEvents';
 import { fetchUpdateStatus } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { deriveIdeUrl } from '../lib/code-server-url';
+import { projectColor } from '../lib/project-color';
 import { UsageBar } from './UsageBar';
 import {
   Sidebar,
@@ -129,6 +129,28 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   managerAvailable?: boolean | null;
 }
 
+function ProjectColorChip({
+  name,
+  label,
+  specColor,
+}: {
+  name: string;
+  label: string;
+  specColor?: string | null;
+}) {
+  const color = projectColor(name, specColor);
+  const initial = label.charAt(0).toUpperCase();
+  return (
+    <span
+      className="flex size-4 shrink-0 items-center justify-center rounded-[4px] text-[10px] font-semibold leading-none"
+      style={{ backgroundColor: `${color}1a`, color }}
+      aria-hidden="true"
+    >
+      {initial}
+    </span>
+  );
+}
+
 export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarProps) {
   const location = useLocation();
   const { isAuthenticated, user, logout } = useAuth();
@@ -199,7 +221,11 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                       className="flex-1"
                     >
                       <NavLink to={url} onClick={handleNavClick}>
-                        <Folder />
+                        <ProjectColorChip
+                          name={name}
+                          label={p.spec.displayName || name}
+                          specColor={p.spec.color}
+                        />
                         <span>{p.spec.displayName || name}</span>
                       </NavLink>
                     </SidebarMenuButton>

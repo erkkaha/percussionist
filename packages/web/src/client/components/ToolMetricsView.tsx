@@ -207,8 +207,8 @@ export default function ToolMetricsView({ days }: Props) {
         </div>
       ) : (
         <div className="rounded-lg border border-border bg-surface-raised overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div className="table-scroll">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b border-border text-text-muted text-left">
                   <th className="px-4 py-2.5 font-medium whitespace-nowrap">Tool</th>

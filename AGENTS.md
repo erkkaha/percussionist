@@ -648,7 +648,8 @@ but served within each run pod). These tools are available to agents during run 
 | `write_plan` | Persist a plan artifact to the project's plans ConfigMap |
 | `read_plan` | Read a plan artifact from the project's plans ConfigMap |
 | `read_session` | Read session messages from another run's ConfigMap snapshot |
-| `report_finding` | Report an off-task issue (bug, security, performance, debt) for manager triage |
+| `complete_review` | Submit a review verdict, plus optional `findings` anchored to lines of the diff |
+| `report_unrelated_issue` | Report an issue outside the agent's own task (bug, security, performance, debt) for manager triage |
 
 **`complete_plan`** vs **`complete_run`**:
 - PLAN agents should call `complete_plan` after committing their plan document to `.percussionist/plans/{task-id}.md`
@@ -662,14 +663,21 @@ but served within each run pod). These tools are available to agents during run 
 - For PR-mode integration: use `outcome=pr-opened` with `prNumber` to signal that a PR was opened
 - The reconciler reads the verdict annotation and routes: `merged`→done, `conflict`→awaiting-human, `pr-opened`→polls PR state
 
-**`report_finding`** — Off-task issue reporting:
+**`complete_review`** — review verdict + inline diff comments (for review runs):
+- Requires `approved` + `diagnosis`; optional `feedback`, `suggestion`, `findings`
+- `findings` (≤25) are review comments anchored to the diff: each needs `id`, `severity`, `title`, `comment`, 1–3 `anchors` (`{path, side, line}`), and a `context` (`{baseSha, headSha, forkSha, diffFingerprint}`) identical across the batch
+- Normalized onto the reviewed task at `status.diffFindings` and rendered inline by the board's diff view; the reconciler routes on the verdict annotation only, never the prose
+- `diffFingerprint` = `sha256(forkSha + "\n" + headSha + "\n" + unifiedDiff.trim())`; a stale fingerprint downgrades the finding's presentation but never drops it
+- Do **not** use `report_unrelated_issue` for comments on the diff under review — that is what `findings` is for
+
+**`report_unrelated_issue`** — issues outside the agent's own task (renamed from `report_finding`; old name still dispatches, no longer advertised):
 - Available to all run-pod agents (BUILD, PLAN, review runs; not merge runs)
 - Accepts: `title` (≤256 chars), `description` (≤8192 chars), `severity` (`low`/`medium`/`high`/`critical`), `category` (`bug`/`security`/`performance`/`debt`/`docs`/`other`), optional `filePath` and `snippet`
 - The dispatcher writes the finding to a per-project `{project}-findings` ConfigMap inbox key using merge-patch (conflict-free across concurrent agents)
 - The manager ingests findings on every reconcile cycle: deduplicates (exact key, file+snippet hash, optional semantic similarity via vector memory), triages, and updates `board.status.findings[]`
 - High/critical severity + bug/security category → auto-creates a Task CR with `percussionist.dev/finding-id` and `percussionist.dev/finding-cluster` annotations
 - Returns `{ id, status: "accepted" }` synchronously — dedup is asynchronous (within 60s resync)
-- The worker prompt includes an `OFF-TASK FINDINGS` block instructing agents to report issues once and continue their assigned task
+- The worker prompt includes an `UNRELATED ISSUES` block instructing agents to report issues once and continue their assigned task; the reviewer prompt has the same block plus the `findings` contract
 
 ## Dispatcher SSE Event Streaming
 

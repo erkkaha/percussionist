@@ -177,7 +177,7 @@ function ModelBreakdown({ modelRows }: { modelRows: ModelRow[] }) {
     <section>
       <h2 className="text-sm font-semibold text-text-muted mb-3">Models</h2>
       <div className="rounded-lg border border-border bg-surface-raised overflow-hidden">
-        <div className="overflow-x-auto touch-pan-x">
+        <div className="table-scroll">
           <table className="w-full min-w-[680px] text-sm">
             <thead>
               <tr className="border-b border-border text-text-muted text-left">
@@ -693,8 +693,8 @@ function AgentCharts({ agents }: { agents: AgentSummary[] }) {
       </div>
 
       {/* Agent detail table */}
-      <div className="rounded-lg border border-border overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="rounded-lg border border-border table-scroll">
+        <table className="w-full min-w-[640px] text-sm">
           <thead>
             <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
               <th className="px-4 py-2.5 font-medium">Agent</th>

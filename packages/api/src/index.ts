@@ -1042,6 +1042,12 @@ export const ProjectSpecSchema = z.object({
   // Human-readable label for the UI. Falls back to metadata.name.
   displayName: z.string().optional(),
 
+  // Accent color for UI identification (hex). Falls back to a name-derived color.
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .optional(),
+
   // Git workspace — cloned by all runs and board workers for this project.
   source: SourceSchema.optional(),
 

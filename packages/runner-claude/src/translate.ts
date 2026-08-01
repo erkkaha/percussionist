@@ -402,7 +402,21 @@ export class TranscriptBuilder {
       this.lastAssistant = target;
     }
 
-    target.info.time = { ...target.info.time, completed: now };
+    // A turn being retried is NOT finished, and this stamp is what the
+    // dispatcher settles on. polling.ts starts a 10s SETTLE_MS timer the moment
+    // it sees `completed` on the last message and then terminates the pod, while
+    // the retry budget spans 5s + 20s + 60s — so the dispatcher killed the run
+    // mid-backoff, before the retried turn could produce anything. Six runs died
+    // that way with "session ended without completion signal", each having
+    // already done real work; the captured runner log ends on
+    // "retry 1/3 in 5000ms" with no second attempt because the pod was gone.
+    //
+    // Leaving the stamp off keeps the run alive across the backoff. The next
+    // turn's result stamps it for real, and if the budget is exhausted the final
+    // un-suppressed result stamps it too, so nothing can hang forever.
+    if (!suppressError) {
+      target.info.time = { ...target.info.time, completed: now };
+    }
     if (tokens) target.info.tokens = tokens;
     if (typeof msg.total_cost_usd === 'number') target.info.cost = msg.total_cost_usd;
 
@@ -412,8 +426,10 @@ export class TranscriptBuilder {
     // otherwise leave the array ending on a message with no completed stamp, and
     // the run would never settle — it would hang to the idle timeout instead of
     // reaching Succeeded. Stamp the tail too when it differs.
+    // Skipped while retrying for the same reason as the stamp above: the tail is
+    // what the dispatcher reads, so stamping it would settle the run mid-backoff.
     const tail = this.messages[this.messages.length - 1];
-    if (tail && tail !== target) {
+    if (tail && tail !== target && !suppressError) {
       tail.info.time = { ...tail.info.time, completed: now };
     }
     if (msg.is_error && !suppressError) {

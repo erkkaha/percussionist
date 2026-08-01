@@ -1,3 +1,5 @@
+import { PROJECT_COLOR_PRESETS } from '../../lib/project-color';
+import { cn } from '../../lib/utils';
 import ModelSelector from '../ModelSelector';
 import { Input } from '../ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
@@ -10,6 +12,7 @@ interface GeneralTabProps {
     ProjectFormHookReturn,
     | 'name'
     | 'displayName'
+    | 'color'
     | 'model'
     | 'agent'
     | 'maxParallel'
@@ -21,6 +24,7 @@ interface GeneralTabProps {
       ProjectFormHookReturn,
       | 'setName'
       | 'setDisplayName'
+      | 'setColor'
       | 'setModel'
       | 'setAgent'
       | 'setMaxParallel'
@@ -99,6 +103,45 @@ export default function GeneralTab({ form, isEdit }: GeneralTabProps) {
           </div>
         </div>
       )}
+
+      {/* Color */}
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium text-text-muted">Color</label>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => form.setColor('')}
+            className={cn(
+              'flex h-7 items-center rounded-md border px-2 text-xs font-medium transition-colors',
+              form.color === ''
+                ? 'border-accent text-text'
+                : 'border-border text-text-muted hover:border-accent/60 hover:text-text',
+            )}
+          >
+            Auto
+          </button>
+          {PROJECT_COLOR_PRESETS.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              onClick={() => form.setColor(preset)}
+              aria-label={`Use color ${preset}`}
+              className={cn(
+                'size-7 rounded-md border-2 transition-colors',
+                form.color === preset ? 'border-text' : 'border-transparent',
+              )}
+              style={{ backgroundColor: preset }}
+            />
+          ))}
+          <input
+            type="color"
+            value={form.color || '#000000'}
+            onChange={(e) => form.setColor(e.target.value)}
+            aria-label="Custom color"
+            className="size-7 cursor-pointer rounded-md border border-border bg-transparent p-0.5"
+          />
+        </div>
+      </div>
 
       {/* Model + Agent */}
       <div className="grid grid-cols-2 gap-4">
