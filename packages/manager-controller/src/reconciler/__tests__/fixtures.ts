@@ -16,6 +16,7 @@ export function makeTask(
     runName?: string;
     status?: string;
     mergedAt?: string;
+    abandoned?: boolean;
     gitBranch?: string;
     /** When true, omit the entire `status` field (simulates a task created without phase). */
     noStatus?: boolean;
@@ -75,6 +76,7 @@ export function makeTask(
           ? { status: overrides.status as 'Running' | 'Succeeded' | 'Failed' }
           : {}),
         ...(overrides?.mergedAt ? { mergedAt: overrides.mergedAt } : {}),
+        ...(overrides?.abandoned !== undefined ? { abandoned: overrides.abandoned } : {}),
         ...(overrides?.gitBranch ? { gitBranch: overrides.gitBranch } : {}),
       },
     },
