@@ -36,10 +36,14 @@ metadata:
 rules:
   - apiGroups: ["percussionist.dev"]
     resources: ["runs"]
-    verbs: ["get", "list", "watch", "update", "patch"]
+    verbs: ["get", "list", "watch", "update", "patch", "delete"]
   - apiGroups: ["percussionist.dev"]
     resources: ["runs/status"]
     verbs: ["get", "update", "patch"]
+  # Cleanup Jobs the operator creates to reap expired runs' worktrees.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   # Read Project CRs to get project UID for cache PVC owner references.
   # list+watch required for the project informer (code-server reconciliation).
   - apiGroups: ["percussionist.dev"]
