@@ -61,10 +61,16 @@ async function listTerminalRuns(): Promise<Run[]> {
   }
 }
 
-function isExpired(run: Run, ttlDays: number): boolean {
+export function expiryDeadline(run: Run, ttlDays: number): number | undefined {
   const completedAt = run.status?.completedAt;
-  if (!completedAt) return false;
-  const deadline = new Date(completedAt).getTime() + ttlDays * 86400 * 1000;
+  if (!completedAt) return undefined;
+  const ttlSeconds = run.spec.ttlSecondsAfterFinished ?? ttlDays * 86400;
+  return new Date(completedAt).getTime() + ttlSeconds * 1000;
+}
+
+export function isExpired(run: Run, ttlDays: number): boolean {
+  const deadline = expiryDeadline(run, ttlDays);
+  if (deadline === undefined) return false;
   return Date.now() > deadline;
 }
 

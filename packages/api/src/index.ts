@@ -694,11 +694,7 @@ export const RunSpecSchema = z
     initScript: z.string().optional(),
 
     timeoutSeconds: z.number().int().positive().default(3600),
-    ttlSecondsAfterFinished: z
-      .number()
-      .int()
-      .nonnegative()
-      .default(7 * 86400),
+    ttlSecondsAfterFinished: z.number().int().nonnegative().optional(),
 
     // Data PVC configuration — backs package manager caches, git mirrors,
     // worktrees, and local workspaces for the project.
