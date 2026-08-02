@@ -1,12 +1,14 @@
 // Effect types and executor — applies reconciler decisions to Kubernetes.
 
 import type { Project, Run, Task, TaskPhase } from '@percussionist/api';
+import { LABELS } from '@percussionist/api';
 import {
   createRun,
   createTask,
   deleteRun,
   getRun,
   getTask,
+  listRuns,
   patchProject,
   patchTask,
   patchTaskStatus,
@@ -393,6 +395,33 @@ export async function executeEffects(
       }
       throw e;
     }
+  }
+
+  // Task-level worktree cleanup, wired centrally rather than as a per-site
+  // effect: on a transition to "done", clean up the worker worktree plus any
+  // review/buildgen/merge auxiliary worktrees whose Run CRs still exist.
+  // Fire-and-forget — never blocks the reconcile cycle.
+  if (toPhase === 'done' && project) {
+    const projectName = project.metadata.name;
+    const gitUrl = (project.spec.source as { git?: { url?: string } } | undefined)?.git?.url;
+    const runnerImage = (project.spec.runner as { image?: string } | undefined)?.image;
+    const image = runnerImage ?? project.spec.image ?? 'alpine/git';
+    (async () => {
+      const runs = await listRuns(namespace, undefined, `${LABELS.taskId}=${taskName}`);
+      const runNames = runs.map((r) => r.metadata.name);
+      const { spawnTaskWorktreeCleanupPod } = await import('../worktree-cleanup.js');
+      await spawnTaskWorktreeCleanupPod({
+        task: currentTask,
+        projectName,
+        namespace,
+        image,
+        gitUrl,
+        dataPvcName: project.spec.data?.pvcName,
+        runNames,
+      });
+    })().catch((e: Error) =>
+      console.warn(`[effects] task-done worktree cleanup failed for ${taskName}:`, e.message),
+    );
   }
 
   return {

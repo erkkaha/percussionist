@@ -265,12 +265,17 @@ const MERGE_PATCH = () => setHeaderOptions('Content-Type', PatchStrategy.MergePa
 // ---------------------------------------------------------------------------
 // Run helpers
 
-export async function listRuns(ns: string = NAMESPACE, client = custom()): Promise<Run[]> {
+export async function listRuns(
+  ns: string = NAMESPACE,
+  client = custom(),
+  labelSelector?: string,
+): Promise<Run[]> {
   const res = (await client.listNamespacedCustomObject({
     group: API_GROUP,
     version: API_VERSION,
     namespace: ns,
     plural: PLURAL_RUN,
+    ...(labelSelector ? { labelSelector } : {}),
   })) as { items: Run[] };
   return res.items ?? [];
 }
