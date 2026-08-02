@@ -53,6 +53,8 @@ let buildMergeRunSpy: ReturnType<typeof spyOn>;
 let buildReviewRunSpy: ReturnType<typeof spyOn>;
 let buildBuildTaskGeneratorRunSpy: ReturnType<typeof spyOn>;
 let spawnWorktreeCleanupPodSpy: ReturnType<typeof spyOn>;
+let spawnTaskWorktreeCleanupPodSpy: ReturnType<typeof spyOn>;
+let listRunsSpy: ReturnType<typeof spyOn>;
 let summarizeSessionSpy: ReturnType<typeof spyOn>;
 
 const mockRun = makeRun('mock-run') as Run;
@@ -67,6 +69,7 @@ beforeEach(() => {
   deleteRunSpy = spyOn(kube, 'deleteRun').mockResolvedValue(undefined as any);
   createTaskSpy = spyOn(kube, 'createTask').mockResolvedValue(undefined as any);
   getRunSpy = spyOn(kube, 'getRun').mockResolvedValue(mockRun);
+  listRunsSpy = spyOn(kube, 'listRuns').mockResolvedValue([]);
 
   // worker-builder
   buildWorkerRunSpy = spyOn(workerBuilder, 'buildWorkerRun').mockResolvedValue(mockRun);
@@ -83,6 +86,10 @@ beforeEach(() => {
   spawnWorktreeCleanupPodSpy = spyOn(worktreeCleanup, 'spawnWorktreeCleanupPod').mockResolvedValue(
     undefined as any,
   );
+  spawnTaskWorktreeCleanupPodSpy = spyOn(
+    worktreeCleanup,
+    'spawnTaskWorktreeCleanupPod',
+  ).mockResolvedValue(undefined as any);
 
   // session-summarizer
   summarizeSessionSpy = spyOn(sessionSummarizer, 'summarizeSession').mockResolvedValue(
@@ -99,11 +106,13 @@ afterEach(() => {
   deleteRunSpy.mockRestore();
   createTaskSpy.mockRestore();
   getRunSpy.mockRestore();
+  listRunsSpy.mockRestore();
   buildWorkerRunSpy.mockRestore();
   buildMergeRunSpy.mockRestore();
   buildReviewRunSpy.mockRestore();
   buildBuildTaskGeneratorRunSpy.mockRestore();
   spawnWorktreeCleanupPodSpy.mockRestore();
+  spawnTaskWorktreeCleanupPodSpy.mockRestore();
   summarizeSessionSpy.mockRestore();
 });
 
@@ -547,6 +556,48 @@ describe('executeEffects — CleanupWorktree', () => {
 
     expect(result.applied).toBe(true);
     expect(spawnWorktreeCleanupPodSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('executeEffects — task-done worktree cleanup', () => {
+  const succeededTask = makeTask('test-task', 'test-project', { phase: 'succeeded' });
+  succeededTask.metadata.resourceVersion = '1000';
+
+  it('lists runs by task-id label and spawns task cleanup on transition to done', async () => {
+    getTaskSpy.mockResolvedValue(succeededTask);
+    listRunsSpy.mockResolvedValue([
+      makeRun('test-project-review-abc-1a2b3c'),
+      makeRun('test-project-buildgen-abc-4d5e6f'),
+    ]);
+
+    const result = await call(succeededTask, 'done', []);
+
+    expect(result.applied).toBe(true);
+    // Flush the fire-and-forget cleanup chain.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(listRunsSpy).toHaveBeenCalledWith(
+      namespace,
+      undefined,
+      `percussionist.dev/task-id=${succeededTask.metadata.name}`,
+    );
+    expect(spawnTaskWorktreeCleanupPodSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectName: 'test-project',
+        namespace,
+        runNames: ['test-project-review-abc-1a2b3c', 'test-project-buildgen-abc-4d5e6f'],
+      }),
+    );
+  });
+
+  it('does not list runs or spawn task cleanup on a non-done transition', async () => {
+    const result = await call(testTask, 'scheduled', []);
+
+    expect(result.applied).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(listRunsSpy).not.toHaveBeenCalled();
+    expect(spawnTaskWorktreeCleanupPodSpy).not.toHaveBeenCalled();
   });
 });
 
