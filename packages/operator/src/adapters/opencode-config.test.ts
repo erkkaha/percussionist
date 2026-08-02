@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { CLAUDE_RUNNER_DEFAULTS, OPENCODE_RUNNER_DEFAULTS } from '@percussionist/api';
-import { assertCredentialsUnambiguous, resolveRunnerSpec } from './opencode-config.js';
+import {
+  assertCredentialsUnambiguous,
+  resolveRunnerSpec,
+  ValidationError,
+} from './opencode-config.js';
 
 describe('resolveRunnerSpec', () => {
   test('defaults to opencode when no engine is given', () => {
@@ -52,6 +56,17 @@ describe('assertCredentialsUnambiguous', () => {
         authSecretName: 'claude-oat',
       }),
     ).toThrow(/silently overrides subscription auth/);
+  });
+
+  test('throws a ValidationError so callers can route it to a terminal status', () => {
+    expect(() =>
+      assertCredentialsUnambiguous({
+        ...base,
+        engine: 'claude',
+        llmKeysSecret: 'llm-keys',
+        authSecretName: 'claude-oat',
+      }),
+    ).toThrow(ValidationError);
   });
 
   test('allows subscription auth alone', () => {
