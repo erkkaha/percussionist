@@ -392,7 +392,12 @@ export async function reconcile(run: Run): Promise<void> {
       await core.readNamespacedPod({ name, namespace: ns });
       await cleanupChildResources(run, ns);
     } catch {
-      // Pod already gone — nothing to clean up.
+      // Pod already gone — child resources confirmed cleaned up. Drop the run
+      // from the resync set so it stops being re-enqueued every 10s for the
+      // rest of its TTL retention window. The TTL loop (ttl.ts) lists runs
+      // directly from the API, so this does not affect TTL-based deletion.
+      log(`dequeuing terminal run ${ns}/${name}: pod confirmed gone`);
+      dequeue(`${ns}/${name}`);
     }
     return;
   }
