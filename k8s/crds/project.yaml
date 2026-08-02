@@ -810,5 +810,22 @@ spec:
                           - createdAt
                   required:
                     - activeWorkers
+                reconcile:
+                  type: object
+                  properties:
+                    state:
+                      type: string
+                      enum:
+                        - Ready
+                        - Error
+                    message:
+                      type: string
+                      maxLength: 2048
+                    observedGeneration:
+                      type: integer
+                      minimum: 0
+                      maximum: 9007199254740991
+                  required:
+                    - state
           required:
             - spec

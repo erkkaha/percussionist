@@ -514,6 +514,7 @@ describe('dispatcher MCP server — build-worker context', () => {
   });
 
   it('keeps complete_run available for non-merge runs', async () => {
+    gitCheck.isClean = async () => null;
     const res = await postMcp(
       server.port,
       mcpCall('run-1', 'complete_run', { summary: 'Done with work' }),

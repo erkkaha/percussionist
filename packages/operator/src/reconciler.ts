@@ -19,6 +19,7 @@ import {
   PLURAL_PROJECT,
   PLURAL_RUN,
   type Project,
+  type ProjectStatus,
   type Run,
   RunPhase,
   type RunStatus,
@@ -92,6 +93,31 @@ async function patchStatus(run: Run, patch: RunStatus): Promise<void> {
     );
   } catch (e) {
     err(`patchStatus(${run.metadata.name}):`, (e as Error).message);
+  }
+}
+
+// Merge-patches Project.status.reconcile only — never touches status.board,
+// which is owned by the manager. Modeled on patchStatus above; never throws.
+async function patchProjectReconcileStatus(
+  project: Project,
+  reconcile: NonNullable<ProjectStatus['reconcile']>,
+): Promise<void> {
+  const ns = project.metadata.namespace ?? '';
+  const name = project.metadata.name;
+  try {
+    await co.patchNamespacedCustomObjectStatus(
+      {
+        group: API_GROUP,
+        version: API_VERSION,
+        namespace: ns,
+        plural: PLURAL_PROJECT,
+        name,
+        body: { status: { reconcile } },
+      },
+      setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
+    );
+  } catch (e) {
+    err(`patchProjectReconcileStatus(${ns}/${name}):`, (e as Error).message);
   }
 }
 
@@ -980,6 +1006,115 @@ export async function reconcileProject(project: Project): Promise<void> {
     // memory-service disabled or no source — clean up if exists
     await cleanupMemoryService(project);
   }
+}
+
+// ---------------------------------------------------------------------------
+// safeReconcileProject — crash-safe wrapper around reconcileProject
+//
+// The informer calls this instead of reconcileProject directly. It never
+// throws: every error is logged and surfaced into status.reconcile instead of
+// propagating to an unhandled rejection (which would exit(1) the operator —
+// see index.ts's `unhandledRejection` handler). A single bad Project CR (e.g.
+// an invalid spec.codeServer.resources value rejected by the apiserver) must
+// not stall reconciliation for every other Project/Run in the cluster.
+
+const PROJECT_RECONCILE_MESSAGE_MAX_LENGTH = 2048; // must match k8s/crds/project.yaml maxLength
+const PROJECT_RETRY_DELAY_MS = 30_000;
+
+// Classifies an error from reconcileProject for retry purposes. HTTP 4xx
+// (e.g. the apiserver rejecting a garbage resources.limits.memory value with
+// 422) reflects a permanent spec problem — retrying won't help until the
+// spec changes, so it is not requeued. Everything else (5xx, network errors,
+// or no numeric code at all) is treated as transient and gets one retry.
+export function classifyProjectReconcileError(e: unknown): 'permanent' | 'transient' {
+  const code =
+    (e as { statusCode?: number; code?: number } | null)?.statusCode ??
+    (e as { code?: number } | null)?.code;
+  if (typeof code === 'number' && code >= 400 && code < 500) return 'permanent';
+  return 'transient';
+}
+
+// True when `next` differs from the Project's current status.reconcile.
+// Patching Project status re-triggers the informer's `update` callback, so an
+// unconditional patch would hot-loop; callers must skip the patch when this
+// returns false. `next` must never include a timestamp or other always-
+// changing field, or every reconcile would "differ" and the loop would never
+// converge.
+export function hasReconcileStatusChanged(
+  current: ProjectStatus['reconcile'] | undefined,
+  next: NonNullable<ProjectStatus['reconcile']>,
+): boolean {
+  return (
+    current?.state !== next.state ||
+    current?.message !== next.message ||
+    current?.observedGeneration !== next.observedGeneration
+  );
+}
+
+function truncateReconcileMessage(message: string): string {
+  return message.length > PROJECT_RECONCILE_MESSAGE_MAX_LENGTH
+    ? message.slice(0, PROJECT_RECONCILE_MESSAGE_MAX_LENGTH)
+    : message;
+}
+
+// One pending retry timer per project key, so retries never stack.
+const projectRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+// Cancels any pending delayed retry for a project key. Called on the Project
+// delete path so a retry never fires for (and re-reconciles) a deleted Project.
+export function cancelProjectRetry(key: string): void {
+  const timer = projectRetryTimers.get(key);
+  if (timer) {
+    clearTimeout(timer);
+    projectRetryTimers.delete(key);
+  }
+}
+
+function scheduleProjectRetry(key: string, project: Project): void {
+  if (projectRetryTimers.has(key)) return; // already scheduled — don't stack
+  const timer = setTimeout(() => {
+    projectRetryTimers.delete(key);
+    // The retry itself does not schedule a further retry on failure — it
+    // waits for the next informer event/relist, so a persistently transient
+    // error doesn't turn into an unbounded retry chain.
+    void reconcileProjectOnce(project, false);
+  }, PROJECT_RETRY_DELAY_MS);
+  projectRetryTimers.set(key, timer);
+}
+
+async function reconcileProjectOnce(project: Project, allowRetry: boolean): Promise<void> {
+  const ns = project.metadata.namespace ?? '';
+  const name = project.metadata.name ?? '';
+  const key = `${ns}/${name}`;
+  const logPrefix = `[project/${ns}/${name}]`;
+  try {
+    await reconcileProject(project);
+    const next: NonNullable<ProjectStatus['reconcile']> = {
+      state: 'Ready',
+      observedGeneration: project.metadata.generation,
+    };
+    if (hasReconcileStatusChanged(project.status?.reconcile, next)) {
+      await patchProjectReconcileStatus(project, next);
+    }
+  } catch (e) {
+    const message = truncateReconcileMessage((e as Error).message ?? String(e));
+    err(`${logPrefix} reconcile failed:`, message);
+    const next: NonNullable<ProjectStatus['reconcile']> = {
+      state: 'Error',
+      message,
+      observedGeneration: project.metadata.generation,
+    };
+    if (hasReconcileStatusChanged(project.status?.reconcile, next)) {
+      await patchProjectReconcileStatus(project, next);
+    }
+    if (allowRetry && classifyProjectReconcileError(e) === 'transient') {
+      scheduleProjectRetry(key, project);
+    }
+  }
+}
+
+export async function safeReconcileProject(project: Project): Promise<void> {
+  await reconcileProjectOnce(project, true);
 }
 
 /**
