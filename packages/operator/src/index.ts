@@ -20,6 +20,7 @@ import {
   enqueue,
   kc,
   NAMESPACE,
+  projectKey,
   reconcileClusterSettings,
   runWorker,
   safeReconcileProject,
@@ -120,8 +121,7 @@ async function main(): Promise<void> {
   });
   projectInformer.on('delete', (obj) => {
     const project = obj as unknown as Project;
-    const md = project.metadata;
-    cancelProjectRetry(`${md?.namespace}/${md?.name}`);
+    cancelProjectRetry(projectKey(project));
     cleanupCodeServer(project).catch((e) => {
       err('cleanupCodeServer failed:', (e as Error).message);
     });

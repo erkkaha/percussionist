@@ -65,6 +65,13 @@ const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOStr
 const err = (...args: unknown[]) =>
   console.error(`[operator ${new Date().toISOString()}]`, ...args);
 
+// Extracts a loggable message from a caught value without throwing, even when
+// the value is null/undefined or not an Error (e.g. a rejected promise with
+// no reason at all).
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 // ---------------------------------------------------------------------------
 // K8s clients
 
@@ -92,7 +99,7 @@ async function patchStatus(run: Run, patch: RunStatus): Promise<void> {
       setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
     );
   } catch (e) {
-    err(`patchStatus(${run.metadata.name}):`, (e as Error).message);
+    err(`patchStatus(${run.metadata.name}):`, errorMessage(e));
   }
 }
 
@@ -112,12 +119,25 @@ async function patchProjectReconcileStatus(
         namespace: ns,
         plural: PLURAL_PROJECT,
         name,
-        body: { status: { reconcile } },
+        // A JSON merge patch (RFC 7386) leaves keys absent from the patch
+        // untouched, so omitting `message` when it's undefined (the Ready
+        // path) would leave a stale error message in place forever. Sending
+        // `null` explicitly tells the apiserver to delete the key. `next`
+        // (the typed value used for the unchanged-status comparison) stays
+        // `string | undefined` — only the wire body needs the `null` cast.
+        body: {
+          status: {
+            reconcile: {
+              ...reconcile,
+              message: (reconcile.message ?? null) as unknown as string | undefined,
+            },
+          },
+        },
       },
       setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
     );
   } catch (e) {
-    err(`patchProjectReconcileStatus(${ns}/${name}):`, (e as Error).message);
+    err(`patchProjectReconcileStatus(${ns}/${name}):`, errorMessage(e));
   }
 }
 
@@ -1039,16 +1059,27 @@ export function classifyProjectReconcileError(e: unknown): 'permanent' | 'transi
 // unconditional patch would hot-loop; callers must skip the patch when this
 // returns false. `next` must never include a timestamp or other always-
 // changing field, or every reconcile would "differ" and the loop would never
-// converge.
+// converge. A missing `message` and an explicit `null`/`undefined` one are
+// treated as equivalent, since patchProjectReconcileStatus sends `null` (RFC
+// 7386 delete) for an absent message and the apiserver may reflect that back
+// as either a deleted key or a `null` value.
 export function hasReconcileStatusChanged(
   current: ProjectStatus['reconcile'] | undefined,
   next: NonNullable<ProjectStatus['reconcile']>,
 ): boolean {
+  const normalize = (message: string | null | undefined) => message ?? undefined;
   return (
     current?.state !== next.state ||
-    current?.message !== next.message ||
+    normalize(current?.message) !== normalize(next.message) ||
     current?.observedGeneration !== next.observedGeneration
   );
+}
+
+// Canonical `namespace/name` key for a Project, shared between reconciler.ts
+// (retry-timer map) and index.ts (delete-path timer cancellation) so the two
+// can never disagree about a project's key when a metadata field is missing.
+export function projectKey(project: Project): string {
+  return `${project.metadata.namespace ?? ''}/${project.metadata.name ?? ''}`;
 }
 
 function truncateReconcileMessage(message: string): string {
@@ -1085,8 +1116,14 @@ function scheduleProjectRetry(key: string, project: Project): void {
 async function reconcileProjectOnce(project: Project, allowRetry: boolean): Promise<void> {
   const ns = project.metadata.namespace ?? '';
   const name = project.metadata.name ?? '';
-  const key = `${ns}/${name}`;
+  const key = projectKey(project);
   const logPrefix = `[project/${ns}/${name}]`;
+  // Any event that reaches a real reconcile (a fresh informer add/update, or
+  // this project's own retry firing) supersedes a still-pending retry armed
+  // against an older snapshot of this Project — otherwise a stale retry could
+  // fire later and silently re-apply an outdated spec over a newer, already-
+  // successful reconcile.
+  cancelProjectRetry(key);
   try {
     await reconcileProject(project);
     const next: NonNullable<ProjectStatus['reconcile']> = {
@@ -1097,7 +1134,7 @@ async function reconcileProjectOnce(project: Project, allowRetry: boolean): Prom
       await patchProjectReconcileStatus(project, next);
     }
   } catch (e) {
-    const message = truncateReconcileMessage((e as Error).message ?? String(e));
+    const message = truncateReconcileMessage(errorMessage(e));
     err(`${logPrefix} reconcile failed:`, message);
     const next: NonNullable<ProjectStatus['reconcile']> = {
       state: 'Error',

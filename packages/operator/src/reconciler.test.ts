@@ -2,7 +2,12 @@
 // the 4xx-vs-transient error classifier and the status-unchanged skip check.
 
 import { describe, expect, it } from 'bun:test';
-import { classifyProjectReconcileError, hasReconcileStatusChanged } from './reconciler.js';
+import type { Project } from '@percussionist/api';
+import {
+  classifyProjectReconcileError,
+  hasReconcileStatusChanged,
+  projectKey,
+} from './reconciler.js';
 
 describe('classifyProjectReconcileError', () => {
   it('classifies statusCode 422 (invalid spec) as permanent', () => {
@@ -82,5 +87,41 @@ describe('hasReconcileStatusChanged', () => {
     const current = { state: 'Ready' as const, observedGeneration: 5 };
     const next = { state: 'Ready' as const, observedGeneration: 5 };
     expect(hasReconcileStatusChanged(current, next)).toBe(false);
+  });
+
+  it('returns true when a successful reconcile must clear a stale error message', () => {
+    // Same state and generation, only the stale `message` from a prior Error
+    // needs clearing — this is the case that must trigger a patch, since a
+    // JSON merge patch only clears a key if it's actually sent.
+    const current = {
+      state: 'Ready' as const,
+      message: 'old 422 from a prior bad spec',
+      observedGeneration: 5,
+    };
+    const next = { state: 'Ready' as const, observedGeneration: 5 };
+    expect(hasReconcileStatusChanged(current, next)).toBe(true);
+  });
+
+  it('treats a null message the same as an absent one (post-clear apiserver echo)', () => {
+    const current = {
+      state: 'Ready' as const,
+      message: null as unknown as string,
+      observedGeneration: 5,
+    };
+    const next = { state: 'Ready' as const, observedGeneration: 5 };
+    expect(hasReconcileStatusChanged(current, next)).toBe(false);
+  });
+});
+
+describe('projectKey', () => {
+  const project = (namespace: string | undefined, name: string) =>
+    ({ metadata: { namespace, name } }) as Project;
+
+  it('joins namespace and name', () => {
+    expect(projectKey(project('team-a', 'my-project'))).toBe('team-a/my-project');
+  });
+
+  it('falls back to an empty namespace segment when namespace is missing', () => {
+    expect(projectKey(project(undefined, 'my-project'))).toBe('/my-project');
   });
 });
