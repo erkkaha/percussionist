@@ -200,6 +200,8 @@ spec:
                     mergeError:
                       type: string
                       maxLength: 4096
+                    abandoned:
+                      type: boolean
                   required:
                     - status
                     - retryCount

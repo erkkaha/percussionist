@@ -923,6 +923,9 @@ export const WorkerStatusSchema = z.object({
   mergeRunName: z.string().optional(),
   mergedAt: z.string().optional(),
   mergeError: z.string().max(4096).optional(),
+  // True when a human intentionally abandoned this task from `awaiting-human`
+  // (distinct from normal completion, both of which end `status: 'Succeeded'`).
+  abandoned: z.boolean().optional(),
 });
 
 export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;
