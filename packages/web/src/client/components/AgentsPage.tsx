@@ -179,8 +179,11 @@ export default function AgentsPage({ showHeader = true }: { showHeader?: boolean
           to define reusable agent prompts available across all runs.
         </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-hidden settings-table-scroll">
-          <table className="w-full text-sm">
+        <div
+          className="rounded-lg border border-border table-scroll"
+          data-testid="agents-table-wrapper"
+        >
+          <table className="w-full min-w-[600px] text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
                 <th className="px-4 py-2.5 font-medium">Name</th>

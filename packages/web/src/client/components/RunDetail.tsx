@@ -245,8 +245,8 @@ export default function RunDetail() {
             <CardTitle className="text-sm font-medium text-text-muted">Conditions</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+            <div className="table-scroll">
+              <table className="w-full min-w-[520px] text-sm">
                 <thead>
                   <tr className="text-left text-text-muted border-b border-border-muted">
                     <th className="pb-2 pr-4 font-medium">Type</th>

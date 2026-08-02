@@ -185,4 +185,37 @@ describe('project update merge', () => {
       resources: { requests: { memory: '2Gi', gpu: '1' } },
     });
   });
+
+  it('consumes nested null delete-markers even when the existing spec lacks the subtree', () => {
+    // Edit mode always sends the full flow/resources override objects with
+    // null for "keep the default". A project saved without those subtrees
+    // must not end up with literal nulls in its spec (ProjectSpecSchema
+    // rejects them with "expected string, received null" / invalid enum).
+    expect(
+      mergeProjectPatch(
+        {
+          flow: { preset: 'plan-build-review-merge', merge: { agent: 'integrator', mode: 'auto' } },
+        },
+        {
+          flow: {
+            preset: 'plan-build-review-merge',
+            humanApproval: { plan: null, build: null },
+            plan: { onApprove: null },
+            build: { onSuccess: null, onApprove: null },
+            merge: { mode: null },
+          },
+          resources: { requests: { cpu: null, memory: null }, limits: { cpu: null, memory: null } },
+        },
+      ),
+    ).toEqual({
+      flow: {
+        preset: 'plan-build-review-merge',
+        humanApproval: {},
+        plan: {},
+        build: {},
+        merge: { agent: 'integrator' },
+      },
+      resources: { requests: {}, limits: {} },
+    });
+  });
 });
