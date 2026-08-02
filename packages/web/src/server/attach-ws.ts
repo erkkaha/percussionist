@@ -297,6 +297,10 @@ class BunExecHandler {
 //
 // The legacy ?token= path is still honoured under LEGACY_TOKEN_AUTH=1 so a
 // rolling upgrade doesn't break an open terminal mid-session.
+//
+// This is now the ONLY place in the server that reads a token from a query
+// string — `getAuthValue` (auth.ts) no longer accepts `?token=` for regular
+// HTTP routes, for the same logging reason. Don't go looking for it there.
 
 export async function isAttachAuthorized(req: Request): Promise<boolean> {
   if (process.env.AUTH_DISABLED === '1') return true;
