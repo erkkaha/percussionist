@@ -150,6 +150,38 @@ describe('project form request', () => {
       merge: { mode: null },
     });
   });
+
+  it('round-trips spec.agents with models into roster rows', () => {
+    const state = createInitialState({
+      agents: [{ name: 'builder', model: 'a/b' }, { name: 'reviewer' }],
+    });
+
+    expect(state.rosterAgents).toEqual([
+      { name: 'builder', model: 'a/b' },
+      { name: 'reviewer', model: '' },
+    ]);
+  });
+
+  it('serializes roster rows to { name, model } with trimmed models', () => {
+    const state = createInitialState(undefined);
+    state.rosterAgents = [
+      { name: 'builder', model: '  a/b  ' },
+      { name: 'reviewer', model: '' },
+    ];
+
+    const request = buildProjectRequest(state, true);
+
+    expect(request.agents).toEqual([
+      { name: 'builder', model: 'a/b' },
+      { name: 'reviewer', model: '' },
+    ]);
+  });
+
+  it('serializes an empty roster as an empty agents array', () => {
+    const request = buildProjectRequest(createInitialState(undefined), false);
+
+    expect(request.agents).toEqual([]);
+  });
 });
 
 describe('project update merge', () => {

@@ -19,6 +19,11 @@ export interface InjectFileRow {
   content: string;
 }
 
+export interface RosterAgentRow {
+  name: string;
+  model: string;
+}
+
 // ---------------------------------------------------------------------------
 // ID sequences (module-level, stable across renders)
 // ---------------------------------------------------------------------------
@@ -135,7 +140,7 @@ export interface ProjectFormState {
   sidecars: SidecarRow[];
   injectFiles: InjectFileRow[];
   initScript: string;
-  rosterAgents: string[];
+  rosterAgents: RosterAgentRow[];
   rosterPickerValue: string;
 }
 
@@ -333,7 +338,7 @@ export function buildProjectRequest(
     .map((f) => ({ filename: f.filename.trim(), content: f.content }));
 
   // Agents roster
-  req.agents = state.rosterAgents.map((name) => ({ name }));
+  req.agents = state.rosterAgents.map(({ name, model }) => ({ name, model: model.trim() }));
 
   // Max parallel / timeout
   const parsedMaxParallel = state.maxParallel.trim() ? parseInt(state.maxParallel.trim(), 10) : NaN;
@@ -631,7 +636,7 @@ export function createInitialState(
     sidecars: initialSidecarRows(initialSpec),
     injectFiles: [], // will be set by caller with project data
     initScript: spec.initScript ?? '',
-    rosterAgents: (spec.agents ?? []).map((a: { name: string }) => a.name),
+    rosterAgents: (spec.agents ?? []).map((a) => ({ name: a.name, model: a.model ?? '' })),
     rosterPickerValue: '',
   };
 }
@@ -709,7 +714,7 @@ export interface ProjectFormHookReturn extends ProjectFormState {
   setSidecars: React.Dispatch<React.SetStateAction<SidecarRow[]>>;
   setInjectFiles: React.Dispatch<React.SetStateAction<InjectFileRow[]>>;
   setInitScript: React.Dispatch<React.SetStateAction<string>>;
-  setRosterAgents: React.Dispatch<React.SetStateAction<string[]>>;
+  setRosterAgents: React.Dispatch<React.SetStateAction<RosterAgentRow[]>>;
   setRosterPickerValue: React.Dispatch<React.SetStateAction<string>>;
 
   // Sidecar helpers
@@ -721,6 +726,10 @@ export interface ProjectFormHookReturn extends ProjectFormState {
   addInjectFile: () => void;
   removeInjectFile: (id: number) => void;
   updateInjectFile: (id: number, field: keyof Omit<InjectFileRow, 'id'>, value: string) => void;
+
+  // Roster helpers
+  addRosterAgent: (name: string) => void;
+  updateRosterAgentModel: (name: string, model: string) => void;
 
   // Validation signals
   sidecarErrors: Record<number, string>;
@@ -832,7 +841,7 @@ export function useProjectForm(
   const [sidecars, setSidecars] = useState<SidecarRow[]>(initialState.sidecars);
   const [injectFiles, setInjectFiles] = useState<InjectFileRow[]>(initialState.injectFiles);
   const [initScript, setInitScript] = useState(initialState.initScript);
-  const [rosterAgents, setRosterAgents] = useState<string[]>(initialState.rosterAgents);
+  const [rosterAgents, setRosterAgents] = useState<RosterAgentRow[]>(initialState.rosterAgents);
   const [rosterPickerValue, setRosterPickerValue] = useState(initialState.rosterPickerValue);
 
   // Sidecar helpers
@@ -858,6 +867,15 @@ export function useProjectForm(
   }
   function updateInjectFile(id: number, field: keyof Omit<InjectFileRow, 'id'>, value: string) {
     setInjectFiles((prev) => prev.map((f) => (f.id === id ? { ...f, [field]: value } : f)));
+  }
+
+  // Roster helpers
+  function addRosterAgent(name: string) {
+    setRosterAgents((prev) => [...prev, { name, model: '' }]);
+    setRosterPickerValue('');
+  }
+  function updateRosterAgentModel(name: string, model: string) {
+    setRosterAgents((prev) => prev.map((r) => (r.name === name ? { ...r, model } : r)));
   }
 
   // Validation signals (computed inline — cheap enough for form fields count)
@@ -1010,6 +1028,10 @@ export function useProjectForm(
     addInjectFile,
     removeInjectFile,
     updateInjectFile,
+
+    // Roster helpers
+    addRosterAgent,
+    updateRosterAgentModel,
 
     // Validation
     sidecarErrors,

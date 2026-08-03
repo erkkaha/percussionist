@@ -234,16 +234,16 @@ export default function AdvancedTab({ form, clusterAgents }: AdvancedTabProps) {
         </p>
         {form.rosterAgents.length > 0 && (
           <ul className="space-y-1">
-            {form.rosterAgents.map((agentName) => (
+            {form.rosterAgents.map((row) => (
               <li
-                key={agentName}
+                key={row.name}
                 className="flex items-center justify-between rounded border border-border bg-surface-raised px-3 py-1.5 text-sm"
               >
-                <span className="font-mono">{agentName}</span>
+                <span className="font-mono">{row.name}</span>
                 <button
                   type="button"
                   onClick={() =>
-                    form.setRosterAgents((prev) => prev.filter((n) => n !== agentName))
+                    form.setRosterAgents((prev) => prev.filter((r) => r.name !== row.name))
                   }
                   className="text-text-dim hover:text-phase-failed transition-colors text-xs ml-4"
                 >
@@ -257,8 +257,8 @@ export default function AdvancedTab({ form, clusterAgents }: AdvancedTabProps) {
           <Select
             value={form.rosterPickerValue}
             onValueChange={(v) => {
-              if (v && !form.rosterAgents.includes(v)) {
-                form.setRosterAgents((prev) => [...prev, v]);
+              if (v && !form.rosterAgents.some((r) => r.name === v)) {
+                form.setRosterAgents((prev) => [...prev, { name: v, model: '' }]);
               }
               form.setRosterPickerValue('');
             }}
@@ -268,7 +268,7 @@ export default function AdvancedTab({ form, clusterAgents }: AdvancedTabProps) {
             </SelectTrigger>
             <SelectContent>
               {clusterAgents
-                .filter((a) => !form.rosterAgents.includes(a.name))
+                .filter((a) => !form.rosterAgents.some((r) => r.name === a.name))
                 .map((a) => (
                   <SelectItem key={a.name} value={a.name}>
                     {a.name}

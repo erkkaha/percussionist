@@ -6,6 +6,7 @@
 // Re-export server types so components import from a single place.
 import type {
   AgentCapability,
+  AgentRef,
   BoardStatus,
   ClusterAgent,
   DiffContext,
@@ -136,8 +137,8 @@ export interface CreateProjectRequest {
   injectFiles?: Array<{ filename: string; content: string }>;
   /** Shell script to run after git clone, before opencode starts. */
   initScript?: string | null;
-  /** Team roster: ClusterAgent names available to this project's tasks. */
-  agents?: Array<{ name: string }>;
+  /** Team roster: ClusterAgent references (name + optional per-agent model override) available to this project's tasks. */
+  agents?: AgentRef[];
   /** Maximum number of concurrently running tasks. */
   maxParallel?: number | null;
   /** Run timeout in seconds. */
