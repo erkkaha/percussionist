@@ -51,7 +51,6 @@ export default function BoardView() {
   const [mobileDefaultColumn, setMobileDefaultColumn] = useState('backlog');
   const [showFindings, setShowFindings] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
-  const codeServerUrl = projectName ? deriveIdeUrl(projectName) : undefined;
   const selectedTaskName = searchParams.get('task') ?? null;
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -151,6 +150,8 @@ export default function BoardView() {
 
   const { settings, columns, status, authWarning } = data;
   const roster = (settings.agents ?? []).map((a: { name: string }) => a.name);
+  const codeServerUrl =
+    settings.codeServer?.enabled && projectName ? deriveIdeUrl(projectName) : undefined;
 
   const selectedTask: Task | undefined = selectedTaskName
     ? allTasks.find((t) => t.metadata.name === selectedTaskName)
