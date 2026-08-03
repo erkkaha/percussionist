@@ -203,7 +203,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                         <span>{p.spec.displayName || name}</span>
                       </NavLink>
                     </SidebarMenuButton>
-                    {deriveIdeUrl(name) && (
+                    {p.spec.codeServer?.enabled && deriveIdeUrl(name) && (
                       <Link
                         to={`/projects/${encodeURIComponent(name)}/code-server`}
                         onClick={(e) => e.stopPropagation()}
