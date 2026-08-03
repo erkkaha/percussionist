@@ -1465,6 +1465,38 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
     if (prNumber) {
       return decidePrStateOutcome(input, prNumber, fromPhase, taskName);
     }
+    // PR-mode with no PR yet — a merge retry cleared mergeRunName, or the
+    // PR-open run never recorded a number. Schedule a PR-open run, not a
+    // direct merge: pushing to the target bypasses the PR gate and is
+    // rejected by branch protection on protected targets.
+    if (flow.integration.mode === 'pr') {
+      const prSuffix = createHash('sha256')
+        .update(`${input.project.metadata.name}:${taskName}:pr-open`)
+        .digest('hex')
+        .slice(0, 10);
+      const prOpenRunName = auxiliaryRunName(
+        input.project.metadata.name,
+        'pr',
+        taskName,
+        prSuffix,
+      );
+      return {
+        taskName,
+        fromPhase,
+        toPhase: undefined,
+        statusPatch: { worker: { mergeRunName: prOpenRunName } },
+        effects: [{ type: 'SchedulePrOpenRun', prOpenRunName }],
+        events: [
+          makeEvent(
+            input,
+            fromPhase,
+            'awaiting-feature-merge',
+            'OpeningPullRequest',
+            'Scheduled run to open a GitHub PR from the feature branch to the target',
+          ),
+        ],
+      };
+    }
     // No PR open — schedule a merge run (legacy auto-merge recovery).
     const suffix = createHash('sha256')
       .update(`${input.project.metadata.name}:${taskName}:merge`)

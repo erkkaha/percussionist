@@ -1124,6 +1124,32 @@ describe('decide — awaiting-feature-merge', () => {
     expect((result.statusPatch?.worker as any).mergeRunName).toBeDefined();
   });
 
+  it('no merge run name + pr integration mode + no prNumber → schedule PR-open run, not merge run', () => {
+    // Merge-retry path: the approval cleared mergeRunName. In PR mode the
+    // recovery must open a PR — a direct merge run would push to the target
+    // and bypass (or be rejected by) branch protection.
+    const prProject = makeProject('test-project', { featureBranchingEnabled: true });
+    prProject.spec.flow = { ...prProject.spec.flow, integration: { mode: 'pr' } };
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    const result = decide({
+      task,
+      project: prProject,
+      allTasks: [task],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(prProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects.some((e) => e.type === 'SchedulePrOpenRun')).toBe(true);
+    expect(result.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(false);
+    expect((result.statusPatch?.worker as any).mergeRunName).toBeDefined();
+  });
+
   it('merge run disappeared → failed', () => {
     const task = makeTask('t1', 'test-project', {
       phase: 'awaiting-feature-merge',
