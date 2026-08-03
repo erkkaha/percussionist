@@ -5,6 +5,7 @@ import {
   API_GROUP,
   API_VERSION,
   type ClusterSettings,
+  LABELS,
   PLURAL_CLUSTER_SETTINGS,
   PLURAL_PROJECT,
   PLURAL_RUN,
@@ -24,7 +25,7 @@ import {
   runWorker,
   startPeriodicResync,
 } from './reconciler.js';
-import { startTTLCleanup } from './ttl.js';
+import { spawnWorktreeCleanupJob, startTTLCleanup } from './ttl.js';
 
 const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
@@ -34,6 +35,28 @@ process.on('unhandledRejection', (reason) => {
   err('unhandledRejection:', reason);
   process.exit(1);
 });
+
+/**
+ * Run informer `delete` handler: dequeues the run from the resync set and,
+ * for git-source runs only, fire-and-forget spawns the worktree cleanup Job.
+ * This is the single trigger path for worktree cleanup — it covers TTL
+ * expiry (the TTL loop deletes the Run CR, which raises this same event),
+ * `kubectl delete run`, dashboard delete, and the manager's `delete_run`
+ * tool alike. Local-source runs use the shared `workspace/` subPath
+ * (pod-builder.ts) and must not be touched.
+ */
+export function handleRunDelete(obj: unknown): void {
+  const run = obj as Run;
+  const md = run.metadata;
+  const key = `${md?.namespace}/${md?.name}`;
+  dequeue(key);
+
+  if (run.spec?.source?.git && md?.labels?.[LABELS.projectName]) {
+    spawnWorktreeCleanupJob(run).catch((e) => {
+      err(`worktree cleanup for ${key}:`, (e as Error).message);
+    });
+  }
+}
 
 async function main(): Promise<void> {
   log(`watching ${API_GROUP}/${API_VERSION}/${PLURAL_RUN} in namespace=${NAMESPACE}`);
@@ -53,10 +76,7 @@ async function main(): Promise<void> {
   const runInformer = makeInformer(kc, runPath, listRunsFn as never);
   runInformer.on('add', (obj) => enqueue(obj as unknown as Run));
   runInformer.on('update', (obj) => enqueue(obj as unknown as Run));
-  runInformer.on('delete', (obj) => {
-    const md = (obj as { metadata?: { namespace?: string; name?: string } }).metadata;
-    dequeue(`${md?.namespace}/${md?.name}`);
-  });
+  runInformer.on('delete', handleRunDelete);
   runInformer.on('error', (e) => {
     err('run informer error:', (e as Error).message);
     setTimeout(() => runInformer.start().catch(console.error), 2000);
@@ -122,7 +142,9 @@ async function main(): Promise<void> {
   await runWorker();
 }
 
-main().catch((e) => {
-  err('fatal:', e);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((e) => {
+    err('fatal:', e);
+    process.exit(1);
+  });
+}
