@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import type { Project, Run, RunPhase, Task, TaskPhase } from '@percussionist/api';
 import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../branch-resolver.js';
 import { auxiliaryRunName, workerRunName } from '../worker-builder.js';
+import { childMergeExpected, childSatisfiesGate } from './child-completion.js';
 import type { ReconcileEffect } from './effects.js';
 import type { ResolvedFlow } from './flow.js';
 import type { PrState } from './github-client.js';
@@ -1258,7 +1259,7 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
-  const { task, allTasks } = input;
+  const { task, allTasks, project, flow } = input;
   const taskName = task.metadata.name;
   const fromPhase = 'awaiting-children' as TaskPhase;
 
@@ -1266,9 +1267,6 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
     (t) => t.spec.type === 'BUILD' && t.spec.parentTaskRef === taskName,
   );
   const hasChildren = childTasks.length > 0;
-  const allDone =
-    hasChildren &&
-    childTasks.every((t) => t.status?.phase === 'done' && t.status?.worker?.mergedAt);
 
   if (!hasChildren) {
     // No child BUILD tasks exist — escalate to awaiting-human with explicit reason.
@@ -1289,11 +1287,56 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
     };
   }
 
+  const allDone = childTasks.every((t) => t.status?.phase === 'done');
   if (!allDone) {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
-  return decideChildrenCompleteNext(input, fromPhase);
+  // Terminal state once every child is `done` — no code path ever adds
+  // `mergedAt` after the fact, so the only valid outcomes from here are
+  // proceed (every child satisfies the merge gate) or escalate.
+  const mergeExpected = childMergeExpected(project, flow);
+  const unsatisfiedChildren = childTasks.filter((t) => !childSatisfiesGate(t, mergeExpected));
+
+  if (unsatisfiedChildren.length > 0) {
+    return {
+      taskName,
+      fromPhase,
+      toPhase: 'awaiting-human',
+      effects: [],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'awaiting-human',
+          'ChildrenDoneWithoutMerge',
+          `Child task(s) done without merging and not abandoned: ${unsatisfiedChildren
+            .map((t) => t.metadata.name)
+            .join(', ')}`,
+        ),
+      ],
+    };
+  }
+
+  const next = decideChildrenCompleteNext(input, fromPhase);
+  const unmergedChildren = childTasks.filter((t) => !t.status?.worker?.mergedAt);
+  if (unmergedChildren.length === 0) {
+    return next;
+  }
+
+  // Every child satisfied the gate, but at least one completed without a
+  // merge (abandoned, or the flow never merges children) — note that on the
+  // event so it stays visible even though the parent proceeds.
+  const unmergedNote = `Completed without merge: ${unmergedChildren
+    .map((t) => t.metadata.name)
+    .join(', ')}`;
+  return {
+    ...next,
+    events: next.events.map((e) => ({
+      ...e,
+      message: e.message ? `${e.message} (${unmergedNote})` : unmergedNote,
+    })),
+  };
 }
 
 // All children done — decide next step based on integration config. Shared by
