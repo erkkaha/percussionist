@@ -120,6 +120,58 @@ describe('decide — pending', () => {
     expect(result.toPhase).toBe('scheduled');
   });
 
+  it('pending + done-unmerged-unabandoned predecessor + merge-configured flow → no-op', () => {
+    const fbProject = makeProject('test-project', { featureBranchingEnabled: true });
+    const pred = makeTask('pred', 'test-project', { phase: 'done' });
+    const task = makeTask('t1', 'test-project', { phase: 'pending', predecessorRef: 'pred' });
+    const result = decide({
+      task,
+      project: fbProject,
+      allTasks: [pred, task],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(fbProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBeUndefined();
+  });
+
+  it('pending + abandoned predecessor + merge-configured flow → scheduled', () => {
+    const fbProject = makeProject('test-project', { featureBranchingEnabled: true });
+    const pred = makeTask('pred', 'test-project', { phase: 'done', abandoned: true });
+    const task = makeTask('t1', 'test-project', { phase: 'pending', predecessorRef: 'pred' });
+    const result = decide({
+      task,
+      project: fbProject,
+      allTasks: [pred, task],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(fbProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe('scheduled');
+  });
+
+  it('pending + done predecessor + merge-less flow (plan-build) → scheduled', () => {
+    const planBuildProject = makeProject('test-project', { featureBranchingEnabled: true });
+    planBuildProject.spec.flow = { preset: 'plan-build' };
+    const pred = makeTask('pred', 'test-project', { phase: 'done' });
+    const task = makeTask('t1', 'test-project', { phase: 'pending', predecessorRef: 'pred' });
+    const result = decide({
+      task,
+      project: planBuildProject,
+      allTasks: [pred, task],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(planBuildProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe('scheduled');
+  });
+
   it('pending + future retryAfter → no-op', () => {
     const task = makeTask('t1', 'test-project', {
       phase: 'pending',

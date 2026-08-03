@@ -222,7 +222,7 @@ function makeEvent(
 }
 
 function decidePending(input: ReconcileInput): ReconcileDecision {
-  const { task, project, allTasks, capacity, now } = input;
+  const { task, project, allTasks, capacity, flow, now } = input;
   const taskName = task.metadata.name;
   const fromPhase = 'pending' as TaskPhase;
 
@@ -236,7 +236,7 @@ function decidePending(input: ReconcileInput): ReconcileDecision {
     if (pred?.status?.phase !== 'done') {
       return { taskName, fromPhase, effects: [], events: [] };
     }
-    if (project.spec.featureBranchingEnabled && !pred.status?.worker?.mergedAt) {
+    if (!childSatisfiesGate(pred, childMergeExpected(project, flow))) {
       return { taskName, fromPhase, effects: [], events: [] };
     }
   }
