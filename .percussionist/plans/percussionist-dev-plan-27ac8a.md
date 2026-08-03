@@ -65,8 +65,13 @@ per-agent model override, but the web UI neither surfaces it nor lets users set 
 - "Allow selecting allowed models for each agent" → per-roster-entry model
   selection. **Assumption (stated):** this is a *single model per agent* —
   matching the existing `AgentRef.model` field and the worker-builder override
-  semantics. A multi-model allowlist would require a new schema field plus
-  enforcement logic and is out of scope (see Open questions).
+  semantics. This is the reading that fits the schema and runtime with zero
+  backend change; a multi-model allowlist (a new `allowedModels: string[]`
+  field, run-creation filtering, enforcement) is explicitly deferred as a
+  follow-up (see Open questions). If the reviewer intends "allowlist of N
+  models per agent" instead, the schema/CRD/runtime work is the follow-up and
+  this plan's UI work still applies unchanged (the selector just becomes a
+  multi-select).
 - "project agent model setting should override default setting" → the selected
   per-agent model wins over the ClusterAgent model and the project default.
   This **already works** at runtime (worker-builder precedence above); the work
@@ -116,7 +121,10 @@ per-agent model override, but the web UI neither surfaces it nor lets users set 
      the picker; `updateRosterAgentModel(name: string, model: string)`.
 2. **`packages/web/src/client/lib/types.ts`** — line 140: change
    `agents?: Array<{ name: string }>` to
-   `agents?: Array<{ name: string; model?: string }>`.
+   `agents?: AgentRef[]` (import `AgentRef` from `@percussionist/api` — already
+   a dependency of this file, see lines 40-44). Reusing the schema type avoids
+   drift between the CRD schema and the request type; `model` is already
+   optional in `AgentRef`.
 3. **Tests — `packages/web/tests/project-form.test.ts`**:
    - `createInitialState` round-trips `spec.agents` with models
      (`[{ name: 'builder', model: 'a/b' }]` → row `{ name, model: 'a/b' }`,
@@ -161,7 +169,14 @@ per-agent model override, but the web UI neither surfaces it nor lets users set 
    - renders roster rows with names; adding an agent via the picker; removing a
      row; per-row `ModelSelector` rendering (mock `useProviders`/`fetchProviders`
      or assert the input fallback since ModelSelector degrades gracefully).
-8. **Verification** (run from repo root):
+8. **Server-side merge test (small, optional but recommended) — new
+   `packages/web/tests/projects-merge.test.ts`**: unit-test `mergeProjectPatch`
+   (exported from `packages/web/src/server/routes/projects.ts`) so that merging
+   a roster entry `{ name: 'builder', model: 'a/b' }` over an existing
+   `{ name: 'builder', model: 'c/d' }` replaces the model, and that an incoming
+   `model: ''` overwrites the stored model (no stale value survives). This
+   locks in the server half of the persistence story.
+9. **Verification** (run from repo root):
    - `pnpm typecheck` (pre-commit gate) and `pnpm lint`.
    - `cd packages/web && bun test` for the touched suites.
    - Optional manual check on a live cluster: edit a project, set a roster
@@ -170,8 +185,10 @@ per-agent model override, but the web UI neither surfaces it nor lets users set 
 
 ## Scope boundaries
 
-- **In scope:** web client only — form state, request serialization, new
-  Agents tab, per-agent ModelSelector, tests.
+- **In scope:** web client (form state, request serialization, new Agents tab,
+  per-agent ModelSelector) plus tests — including one optional server-side unit
+  test for `mergeProjectPatch` roster-model persistence (no server *logic*
+  changes).
 - **Explicitly out of scope:** changes to `AgentRefSchema`/CRDs (already
   support `model`), manager-controller worker-builder logic (already implements
   the override), ClusterAgent CR editing UI, board/run list display of
@@ -193,9 +210,11 @@ per-agent model override, but the web UI neither surfaces it nor lets users set 
 - **Interpretation of "allowed models".** Plan assumes a single model per
   agent (matches existing `AgentRef.model`). If a multi-model allowlist
   (e.g. the run picker only offers those models) is actually wanted, it needs a
-  new schema field (e.g. `allowedModels: string[]`), run-creation UI
-  filtering in `CreateRunForm`/board `AddTaskForm`, and enforcement — a
-  follow-up task. Flagged for the reviewer.
+  new schema field (e.g. `allowedModels: string[]`), CRD regeneration via
+  `pnpm codegen`, run-creation UI filtering in `CreateRunForm`/board
+  `AddTaskForm`, and enforcement at the `validateModelAuth`/worker-builder
+  layer — a follow-up task whose UI work overlaps this plan's tab. Flagged for
+  the reviewer.
 - **ModelSelector weight**: it fetches `/api/providers`; renders N selectors
   (one per roster row, max 10). Acceptable; rows are few.
 - **Tab URL compatibility**: new tab id `agents` is validated by `resolveTab`
@@ -206,10 +225,12 @@ per-agent model override, but the web UI neither surfaces it nor lets users set 
 
 ## Acceptance criteria
 
-1. The project settings form (`/projects/:name/edit`) shows a top-level
-   **Agents** tab; the roster is no longer inside the Advanced tab.
+1. The project settings form (`/projects/:name/edit`, and the create form
+   `/settings?tab=projects` → "New Project") shows a top-level **Agents** tab;
+   the roster is no longer inside the Advanced tab.
 2. Each roster entry can have a model selected via `ModelSelector` (or typed
-   manually); an empty model is allowed and displayed as "default".
+   manually); an empty model is allowed and displayed as "default" (with the
+   ClusterAgent's configured model shown as a muted fallback hint when known).
 3. Saving a project persists `spec.agents[].model` (empty string when cleared)
    — verified via `kubectl get project <name> -o yaml` or the API response.
 4. Reloading the edit form repopulates each row's saved model.
@@ -226,3 +247,5 @@ per-agent model override, but the web UI neither surfaces it nor lets users set 
 - **BUILD B** (Tasks 4-7): AgentsTab UI, tab wiring, AdvancedTab cleanup +
   component test. Depends on BUILD A's `RosterAgentRow`/helpers
   (`predecessorRef: BUILD A`).
+- **BUILD C** (Task 8, optional): server-side `mergeProjectPatch` unit test for
+  roster model persistence. Independent of A/B (can run in parallel).
