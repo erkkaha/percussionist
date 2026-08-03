@@ -1239,8 +1239,8 @@ export const ProjectStatusSchema = z.object({
   reconcile: z
     .object({
       state: z.enum(['Ready', 'Error']),
-      message: z.string().optional(),
-      observedGeneration: z.number().int().optional(),
+      message: z.string().max(2048).optional(),
+      observedGeneration: z.number().int().nonnegative().optional(),
     })
     .optional(),
 });
