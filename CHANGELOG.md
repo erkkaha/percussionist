@@ -1,32 +1,86 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
-## [v0.2.7] - 2026-08-02
+## [v0.2.8] - 2026-08-03
 
 ### <!-- 1 -->🐛 Bug Fixes
 
-- Replace stale terminal runs when retrying a merge _(manager)_
-- Consume nested null delete-markers when editing a project _(web)_
-## [v0.2.6] - 2026-07-31
+- Respect PR integration mode on merge retry; compose PR body from plan and reviews _(manager)_
+- Opt run pods out of Claude commit attribution trailers _(operator)_
+- Resolve high-severity audit findings failing scheduled CI _(deps)_
+
+### <!-- 5 -->🎨 Styling
+
+- Apply biome formatting to PR-open builder and operator test imports
+## [v0.2.7] - 2026-08-02
 
 ### <!-- 0 -->🚀 Features
 
+- Add abandoned field to WorkerStatusSchema _(api)_
+- Add child-completion.ts shared gate predicate _(manager-controller)_
+- Wire task-done worktree cleanup for aux runs _(manager)_
 - Add url deep-link support to in-tab notification core _(web)_
 - Emit deep links from board and run notification producers _(web)_
 - Render bell notifications as clickable links _(web)_
 - Deep-link task push notifications to the task detail panel _(web)_
-- Add project color field to spec, CRD, and routes _(api)_
-- Add project color hash helper and client type support _(web)_
-- Render project color chip in sidebar _(web)_
-- Add color picker to project create/edit form _(web)_
-- Render project color strip on board view _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Stub gitCheck.isClean in complete_run availability test _(dispatcher)_
+- Mark worker.abandoned on TaskAbandoned status patch _(manager-controller)_
+- Escalate ChildrenDoneWithoutMerge instead of deadlocking _(manager-controller)_
+- Resume PLAN-approve at integration step after ChildrenDoneWithoutMerge _(manager-controller)_
+- Use shared child-completion gate in decidePending and canSchedule _(manager-controller)_
+- ExplainAwaitingChildren uses shared child-completion gate _(manager-controller)_
+- Honor per-run ttlSecondsAfterFinished in TTL expiry _(operator)_
+- Make ttlSecondsAfterFinished optional, regen CRD; operator: prefer per-run TTL _(api)_
+- Add RBAC for run deletion and batch/v1 jobs _(operator)_
+- Dequeue terminal runs from resync loop once pod is gone _(operator)_
+- Replace ownerless cleanup Pod with a TTL'd batch/v1 Job _(operator)_
+- Trigger worktree cleanup Job from Run delete event _(operator)_
+- Stop crash-loop on bad Project CRs, surface status.reconcile _(operator)_
+- Clear stale reconcile message, prevent stale project retries _(operator)_
+- Derive Project reconcile status constraints from Zod, not hand-edited CRD _(api)_
+- Fail fast on permanent Run credentials misconfiguration _(operator)_
+- Stop accepting auth tokens via ?token= query param and redact token= from request logs _(web)_
+- Survive a missing sqlite-vec instead of failing every test _(memory-service)_
+- Restore Agents table vertical scroll on medium screens _(web)_
+- Apply unified table-scroll wrapper to remaining route table views _(web)_
+- Replace stale terminal runs when retrying a merge _(manager)_
+- Consume nested null delete-markers when editing a project _(web)_
+
+### <!-- 10 -->💼 Other
+
+- Percussionist-dev-plan-rev03 — operator crash-loop and silent Run validation retries
+
+### <!-- 2 -->🚜 Refactor
+
+- Extract decideChildrenCompleteNext helper _(manager-controller)_
+
+### <!-- 3 -->📚 Documentation
+
+- Percussionist-dev-plan-rev02 — fix awaiting-children mergedAt deadlock _(plan)_
+- Add plan for run TTL & cleanup lifecycle fixes (percussionist-dev-plan-rev05) _(plan)_
+- Update run TTL precedence and worktree cleanup description
+- Percussionist-dev-plan-rev10 — remove ?token= query-param auth and redact token from request logs _(plan)_
+- Add plan for notification deep links _(plan)_
+- Add percussionist-dev-plan-8b3e46 _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Mock gitCheck.isClean in complete_run happy-path test _(dispatcher)_
+- Add unit tests for notification core deep links _(web)_
+- Add regression coverage for table scroll wrappers _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Sync pnpm-lock.yaml with committed devDependency bumps
+- Release v0.2.7
+## [v0.2.6] - 2026-07-31
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Fail with the missing parent branch instead of a bare exit 128 _(operator)_
-- Survive a missing sqlite-vec instead of failing every test _(memory-service)_
-- Restore Agents table vertical scroll on medium screens _(web)_
-- Apply unified table-scroll wrapper to remaining route table views _(web)_
 - Show board chat context button on tablets without hover _(web)_
 - Keep a retried turn from settling the run _(runner-claude)_
 - Tell workers the run ends when they stop _(manager)_
@@ -35,24 +89,12 @@ All notable changes to Percussionist are documented here.
 - Merge from the local source branch instead of origin/<source> _(manager)_
 - Promote ideas to the backlog without a worker status _(web)_
 
-### <!-- 10 -->💼 Other
-
-- Project identity colors for sidebar and board (percussionist-dev-plan-580f71)
-
 ### <!-- 3 -->📚 Documentation
 
-- Add plan for notification deep links _(plan)_
-- Add percussionist-dev-plan-8b3e46 _(plan)_
 - Plan for tablet-visible board chat context button _(web)_
-
-### <!-- 6 -->🧪 Testing
-
-- Add unit tests for notification core deep links _(web)_
-- Add regression coverage for table scroll wrappers _(web)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
-- Sync pnpm-lock.yaml with committed devDependency bumps
 - Release v0.2.6
 ## [v0.2.5] - 2026-07-31
 
@@ -66,12 +108,24 @@ All notable changes to Percussionist are documented here.
 - Release v0.2.5
 ## [v0.2.4] - 2026-07-31
 
+### <!-- 0 -->🚀 Features
+
+- Add project color field to spec, CRD, and routes _(api)_
+- Add project color hash helper and client type support _(web)_
+- Render project color chip in sidebar _(web)_
+- Add color picker to project create/edit form _(web)_
+- Render project color strip on board view _(web)_
+
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Make project edits resettable _(web)_
 - Mount known_hosts outside the read-only git-ssh secret _(operator)_
 - Render task diffs when the project pins a git-less exec image _(web)_
 - Render claude-engine subtask parts without crashing _(web)_
+
+### <!-- 10 -->💼 Other
+
+- Project identity colors for sidebar and board (percussionist-dev-plan-580f71)
 
 ### <!-- 6 -->🧪 Testing
 
@@ -83,8 +137,13 @@ All notable changes to Percussionist are documented here.
 - Release v0.2.4
 ## [v0.2.3] - 2026-07-29
 
+### <!-- 0 -->🚀 Features
+
+- Expose codeServer.enabled on board API _(web)_
+
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Gate board-level code-server links on spec.codeServer.enabled _(web)_
 - Persist project merge behavior edits _(web)_
 - Count every message's usage, not just the transcript tail _(dispatcher)_
 - Retry a truncated turn that reports itself successful _(runner-claude)_
@@ -93,10 +152,13 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 3 -->📚 Documentation
 
+- Hide code-server board link when code-server not enabled _(plan)_
 - Add LXD MicroK8s Tailscale playbook
 
 ### <!-- 6 -->🧪 Testing
 
+- Cover codeServerEnabled gating in BoardHeader tests _(web)_
+- Cover BoardView's code-server enabled gate, not just BoardHeader's ternary _(web)_
 - Stop the auth bypass test creating a real Project _(web)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
