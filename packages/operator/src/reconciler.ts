@@ -26,7 +26,11 @@ import {
   TERMINAL_PHASES,
 } from '@percussionist/api';
 import { makeNodeApiClient } from '@percussionist/kube';
-import { assertCredentialsUnambiguous, resolveRunnerSpec } from './adapters/opencode-config.js';
+import {
+  assertCredentialsUnambiguous,
+  resolveRunnerSpec,
+  ValidationError,
+} from './adapters/opencode-config.js';
 import { resolveAgents } from './agent-resolver.js';
 import {
   ideDeploymentName,
@@ -455,12 +459,19 @@ export async function reconcile(run: Run): Promise<void> {
     .catch(() => undefined);
   const engine = deriveEngine(run.spec);
   const runnerSpec = resolveRunnerSpec(cs, engine);
-  assertCredentialsUnambiguous({
-    engine,
-    llmKeysSecret: run.spec.secrets?.llmKeysSecret,
-    authSecretName: run.spec.secrets?.authSecret?.name,
-    runName: `${run.metadata.namespace}/${run.metadata.name}`,
-  });
+  try {
+    assertCredentialsUnambiguous({
+      engine,
+      llmKeysSecret: run.spec.secrets?.llmKeysSecret,
+      authSecretName: run.spec.secrets?.authSecret?.name,
+      runName: `${run.metadata.namespace}/${run.metadata.name}`,
+    });
+  } catch (e) {
+    if (!(e instanceof ValidationError)) throw e;
+    err(`reconcile(${ns}/${name}):`, e.message);
+    await patchStatus(run, { phase: RunPhase.Failed, message: e.message });
+    return;
+  }
   const dispatcherImage = run.spec.dispatcher?.image ?? cs?.spec?.dispatcher?.image;
 
   // Resolve agents from ClusterAgent CRs + inline escape hatch.
