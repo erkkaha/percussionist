@@ -810,7 +810,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
-  const { task, manualActions, flow, now, capacity } = input;
+  const { task, allTasks, manualActions, flow, now, capacity } = input;
   const taskName = task.metadata.name;
   const fromPhase = 'awaiting-human' as TaskPhase;
 
@@ -875,6 +875,24 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
             ),
           ],
         };
+      }
+      // Resume from a ChildrenDoneWithoutMerge escalation: build tasks already
+      // exist and have all finished, so re-approving must not fall through to
+      // `generating-builds` below and duplicate them — resume at the
+      // integration step instead.
+      if (task.status?.worker?.buildTasksCreated) {
+        const childTasks = allTasks.filter(
+          (t) => t.spec.type === 'BUILD' && t.spec.parentTaskRef === taskName,
+        );
+        const allChildrenDone =
+          childTasks.length > 0 && childTasks.every((t) => t.status?.phase === 'done');
+        if (allChildrenDone) {
+          const next = decideChildrenCompleteNext(input, fromPhase);
+          return {
+            ...next,
+            effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }, ...next.effects],
+          };
+        }
       }
       if (flow.plan.onApprove === 'done') {
         const planRunName = task.status?.worker?.runName;

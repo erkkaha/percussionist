@@ -867,6 +867,42 @@ describe('decide — awaiting-children', () => {
     expect(result.events[0]?.message).toContain('build-a');
   });
 
+  it('resume from ChildrenDoneWithoutMerge: approve PLAN in awaiting-human with build tasks already created → integration step, not generating-builds', () => {
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-human',
+      type: 'PLAN',
+    });
+    (planTask.status as any).worker.buildTasksCreated = true;
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      // No mergedAt and not abandoned — this is what escalated the parent.
+    });
+    const buildB = makeTask('build-b', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      mergedAt: '2026-05-29T00:00:00.000Z',
+    });
+    const result = decide({
+      task: planTask,
+      project: featProject,
+      allTasks: [planTask, buildA, buildB],
+      observed: {},
+      manualActions: { approved: true },
+      flow: resolveFlow(featProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    // plan-build-review-merge's integration.mode is 'auto-merge' — resumes at
+    // the feature-branch merge step instead of restarting buildgen.
+    expect(result.toPhase).toBe('awaiting-feature-merge');
+    expect(result.toPhase).not.toBe('generating-builds');
+    expect(result.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(true);
+    expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(true);
+  });
+
   it('mixed children (done + awaiting-merge) → still no-op wait', () => {
     const planTask = makeTask('plan-1', 'test-project', {
       phase: 'awaiting-children',
