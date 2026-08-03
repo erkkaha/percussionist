@@ -13,6 +13,7 @@
 
 import { randomBytes } from 'node:crypto';
 import {
+  buildRepoWebUrl,
   computeBoardColumn,
   type Task,
   type TaskPhase,
@@ -37,6 +38,7 @@ import {
   patchTaskStatus,
   validateAgentTaskCapability,
 } from '../kube.js';
+import { resolveIntegrationMode } from '../lib/integration-mode.js';
 import { isKubeNotFound } from '../lib/kube-errors.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
@@ -200,6 +202,8 @@ board.get('/:project/board', auth(), async (c) => {
       codeServer: project.spec.codeServer,
       displayName: project.spec.displayName,
       color: project.spec.color,
+      repoWebUrl: buildRepoWebUrl(project.spec.source?.git?.url ?? ''),
+      integrationMode: resolveIntegrationMode(project),
     };
 
     const authResult = validateModelAuth(project.spec.model, project.spec.secrets);

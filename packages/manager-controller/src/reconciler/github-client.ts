@@ -5,7 +5,7 @@
 // module-level TTL cache so that reconcile-cycle frequency does not translate
 // to unbounded GitHub API usage.
 
-import type { Project } from '@percussionist/api';
+import { type ParsedGitHubRepo, type Project, parseGitHubUrl } from '@percussionist/api';
 import { core, NAMESPACE } from '@percussionist/kube';
 
 // ---------------------------------------------------------------------------
@@ -18,36 +18,13 @@ export interface PrState {
   mergedAt: string | null;
 }
 
-export interface ParsedGitHubRepo {
-  owner: string;
-  repo: string;
-}
+export type { ParsedGitHubRepo };
 
 // ---------------------------------------------------------------------------
-// URL parsing
+// URL parsing — delegates to the shared @percussionist/api implementation so
+// the web server's PR-link derivation never drifts from this parser.
 
-/**
- * Parse a GitHub repository URL into {owner, repo}. Supports both SSH
- * (`git@github.com:owner/repo.git`) and HTTPS (`https://github.com/owner/repo.git`)
- * forms. Returns undefined for non-GitHub URLs or unparseable inputs.
- */
-export function parseGitHubUrl(url: string): ParsedGitHubRepo | undefined {
-  if (!url || typeof url !== 'string') return undefined;
-
-  // SSH form: git@github.com:owner/repo.git
-  const sshMatch = url.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (sshMatch?.[1] && sshMatch[2]) {
-    return { owner: sshMatch[1], repo: sshMatch[2] };
-  }
-
-  // HTTPS form: https://github.com/owner/repo.git[.extra]
-  const httpsMatch = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/.*)?$/);
-  if (httpsMatch?.[1] && httpsMatch[2]) {
-    return { owner: httpsMatch[1], repo: httpsMatch[2] };
-  }
-
-  return undefined;
-}
+export { parseGitHubUrl };
 
 // ---------------------------------------------------------------------------
 // TTL cache

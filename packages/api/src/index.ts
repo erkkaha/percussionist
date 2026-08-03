@@ -1926,3 +1926,47 @@ export function resolveRunConfig(
     packages: runOverrides?.packages ?? project.runner?.packages,
   };
 }
+
+// ---------------------------------------------------------------------------
+// GitHub URL helpers.
+//
+// Shared between manager-controller (PR-mode integration polling) and the web
+// server (building PR links in the board payload) so the two never drift.
+
+export interface ParsedGitHubRepo {
+  owner: string;
+  repo: string;
+}
+
+/**
+ * Parse a GitHub repository URL into {owner, repo}. Supports both SSH
+ * (`git@github.com:owner/repo.git`) and HTTPS (`https://github.com/owner/repo.git`)
+ * forms. Returns undefined for non-GitHub URLs or unparseable inputs.
+ */
+export function parseGitHubUrl(url: string): ParsedGitHubRepo | undefined {
+  if (!url || typeof url !== 'string') return undefined;
+
+  // SSH form: git@github.com:owner/repo.git
+  const sshMatch = url.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (sshMatch?.[1] && sshMatch[2]) {
+    return { owner: sshMatch[1], repo: sshMatch[2] };
+  }
+
+  // HTTPS form: https://github.com/owner/repo.git[.extra]
+  const httpsMatch = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/.*)?$/);
+  if (httpsMatch?.[1] && httpsMatch[2]) {
+    return { owner: httpsMatch[1], repo: httpsMatch[2] };
+  }
+
+  return undefined;
+}
+
+/**
+ * Build the GitHub web URL for a repository from its git remote URL (SSH or
+ * HTTPS). Returns undefined for non-GitHub or unparseable URLs.
+ */
+export function buildRepoWebUrl(url: string): string | undefined {
+  const parsed = parseGitHubUrl(url);
+  if (!parsed) return undefined;
+  return `https://github.com/${parsed.owner}/${parsed.repo}`;
+}
