@@ -209,6 +209,7 @@ export default function BoardView() {
           authWarning={authWarning}
           codeServerUrl={codeServerUrl}
           isMobile={isMobile}
+          integrationMode={settings.integrationMode}
         />
       </div>
 

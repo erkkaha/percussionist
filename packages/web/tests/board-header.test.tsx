@@ -155,6 +155,16 @@ describe('BoardHeader desktop mode', () => {
     await renderHeader({ sseConnected: false });
     expect(screen.getByText('○ polling')).toBeTruthy();
   });
+
+  it('renders Integration: pr when integrationMode is provided', async () => {
+    await renderHeader({ integrationMode: 'pr' });
+    expect(screen.getByText(/Integration: pr/)).toBeTruthy();
+  });
+
+  it('does NOT render Integration text when integrationMode is omitted', async () => {
+    await renderHeader();
+    expect(screen.queryByText(/Integration:/)).toBeNull();
+  });
 });
 
 describe('BoardHeader mobile compact mode', () => {
