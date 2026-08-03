@@ -37,10 +37,14 @@ mock.module(path.resolve('src/client/components/ui/button'), () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
-// BoardHeader itself only knows about `codeServerUrl` — the real app (BoardView)
-// gates that URL on `settings.codeServer?.enabled` before ever passing it down.
-// `codeServerEnabled` reproduces that gating here so tests can exercise the
-// combined condition without BoardHeader needing to know about the flag.
+// BoardHeader itself only knows about `codeServerUrl` — it has no concept of
+// `settings.codeServer?.enabled`. That flag is collapsed into `codeServerUrl`
+// by BoardView before this component ever sees it (BoardView.tsx), so the
+// combined-condition coverage ("both enabled and url must be true") lives in
+// board-view.test.tsx, which mounts the real BoardView and can actually drive
+// that gate. `codeServerEnabled` here only documents, for each case in this
+// file, what the URL prop would have been in the real app — it is not a
+// substitute for that coverage.
 async function renderHeader(
   overrides: Record<string, unknown> = {},
   { codeServerEnabled = false }: { codeServerEnabled?: boolean } = {},
@@ -123,14 +127,6 @@ describe('BoardHeader desktop mode', () => {
 
   it('does NOT render Code link without codeServerUrl', async () => {
     await renderHeader({ codeServerUrl: undefined }, { codeServerEnabled: false });
-    expect(screen.queryByText('Code')).toBeNull();
-  });
-
-  it('does NOT render Code link when enabled is false even if codeServerUrl is provided', async () => {
-    await renderHeader(
-      { codeServerUrl: 'http://ide-test.example.com' },
-      { codeServerEnabled: false },
-    );
     expect(screen.queryByText('Code')).toBeNull();
   });
 
@@ -263,14 +259,6 @@ describe('BoardHeader mobile compact mode', () => {
 
   it('does NOT render Code link when codeServerUrl is undefined', async () => {
     await renderHeader({ isMobile: true, codeServerUrl: undefined }, { codeServerEnabled: false });
-    expect(screen.queryByTitle('Open code-server workspace')).toBeNull();
-  });
-
-  it('does NOT render Code link when enabled is false even if codeServerUrl is provided', async () => {
-    await renderHeader(
-      { isMobile: true, codeServerUrl: 'http://ide-test.example.com' },
-      { codeServerEnabled: false },
-    );
     expect(screen.queryByTitle('Open code-server workspace')).toBeNull();
   });
 
