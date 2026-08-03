@@ -12,7 +12,12 @@ import {
   resolveRunConfig,
   type Task,
 } from '@percussionist/api';
-import { getClusterAgent, getClusterSettings, validateModelAuth } from '@percussionist/kube';
+import {
+  getClusterAgent,
+  getClusterSettings,
+  readPlanFromConfigMap,
+  validateModelAuth,
+} from '@percussionist/kube';
 import { getContext } from './agent/memory-client.js';
 import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from './branch-resolver.js';
 import { getErrorStatusCode, isKubeNotFoundError } from './kube-errors.js';
@@ -166,6 +171,25 @@ export async function buildWorkerRun(
     );
   }
 
+  // A run is a single session that ends when the agent signals completion.
+  // Observed: an agent finished its turn with "I'll pause here and wait for the
+  // background install or the scheduled wakeup to resume" and never called
+  // complete_run, so the dispatcher settled the run as
+  // "session ended without completion signal" — 47k output tokens of finished
+  // work reported as a failure. The agent was reasoning from a harness that has
+  // wakeups and durable background tasks; this one has neither.
+  promptLines.push(
+    'THIS RUN ENDS WHEN YOU SIGNAL COMPLETION:',
+    '- There is no scheduled wakeup, no resume, and no one polling on your behalf.',
+    '  Ending a turn to "wait" ends the run, and the work is recorded as a failure.',
+    '- Do not background a command and yield expecting to be woken. If you need a',
+    '  long-running command, wait for it in the foreground.',
+    '- If something genuinely cannot finish inside this run, call fail_run with the',
+    '  reason, or complete_run describing what is incomplete. Either is far better',
+    '  than yielding silently.',
+    '',
+  );
+
   // Inject relevant memory context if vector memory is enabled.
   if (project.spec.embedding?.enabled) {
     try {
@@ -193,14 +217,15 @@ export async function buildWorkerRun(
     );
   }
 
-  // Off-task finding reporting prompt — only for BUILD and PLAN runs, not merge.
+  // Unrelated-issue reporting prompt — only for BUILD and PLAN runs, not merge.
   if (task.spec.type !== 'BUILD' || !task.spec.description?.toLowerCase().includes('merge')) {
     promptLines.push(
-      'OFF-TASK FINDINGS:',
+      'UNRELATED ISSUES:',
       '- Your job is the TASK above. Stay on it.',
       '- If, while working, you notice a SEPARATE problem unrelated to your task — a security hole,',
       '  a real bug, a performance trap, or notable tech debt — report it ONCE with the',
-      '  `percussionist_dispatcher_report_finding` tool, then continue your task. Do not investigate it further.',
+      '  `percussionist_dispatcher_report_unrelated_issue` tool, then continue your task.',
+      '  Do not investigate it further.',
       '- Provide: a one-line title, a short description (what is wrong + why it matters +',
       '  suggested fix), severity (low/medium/high/critical), category',
       '  (bug/security/performance/debt/docs/other), and filePath/snippet when you have them.',
@@ -355,50 +380,96 @@ export async function buildMergeRun(
     resolved.source.git.ref = sourceBranch;
     resolved.source.git.parentRef = targetBranch;
   }
-  const promptLines = [
+  const promptLines = autoMergePromptLines(taskName, task.spec.title, sourceBranch, targetBranch);
+
+  return buildMergeRunSpec({
+    runName,
+    projectName,
+    taskName,
+    project,
+    mergeAgent,
+    resolved,
+    promptLines,
+  });
+}
+
+/**
+ * The auto-merge instructions, kept pure so the invariant below is testable.
+ *
+ * In auto-merge mode nothing ever publishes a build branch: the worker commits
+ * into the shared git mirror and `complete_run` only checks the tree is clean.
+ * That is deliberate — one remote branch per BUILD task would flood the remote —
+ * so the source branch usually exists ONLY locally and every step here works off
+ * the local tip rather than `origin/<source>`.
+ *
+ * The previous version referenced `origin/<source>` in its pre-flight, its
+ * fast-forward test and its verification, so all three failed on an unpublished
+ * branch. Merges only landed when the agent improvised a `git push origin
+ * HEAD:refs/heads/<source>` — which published a branch per task and, when the
+ * agent did not improvise, stranded the task with the work sitting in the mirror
+ * (percussionist-dev-build-15fc5e). Both outcomes are wrong; hence the explicit
+ * "do not push the source branch" rule.
+ */
+export function autoMergePromptLines(
+  taskName: string,
+  taskTitle: string,
+  sourceBranch: string,
+  targetBranch: string,
+): string[] {
+  return [
     `TASK: Merge approved changes for ${taskName}`,
     '',
-    `Task title: ${task.spec.title}`,
+    `Task title: ${taskTitle}`,
     `Source branch: ${sourceBranch}`,
     `Target branch: ${targetBranch}`,
     '',
     '## Pre-flight Check',
     '',
-    'Ensure the worktree is at the latest remote source branch state:',
-    `    git fetch origin ${sourceBranch}`,
-    '    CURRENT=$(git rev-parse HEAD)',
-    `    LATEST=$(git rev-parse origin/${sourceBranch})`,
-    '    if [ "$CURRENT" != "$LATEST" ]; then',
-    `      echo "WARNING: HEAD stale, resetting to origin/${sourceBranch}"`,
-    '      git reset --hard "origin/${sourceBranch}"',
+    'Your worktree is already checked out at the source branch. In this mode the',
+    'source branch normally exists only in the local git mirror — it is never',
+    'published, and origin/' + sourceBranch + ' will usually not exist. That is',
+    'expected, not an error, and NOT something to repair by pushing the source',
+    'branch: the remote must only ever receive target branches.',
+    '',
+    `    git rev-parse --abbrev-ref HEAD          # expect ${sourceBranch}`,
+    '    SOURCE_SHA=$(git rev-parse HEAD)         # the work being merged',
+    `    git fetch origin ${targetBranch}         # only the target needs fetching`,
+    '',
+    'If the source branch does happen to exist on origin and is ahead of your',
+    'worktree, take its commits — otherwise leave HEAD alone:',
+    `    if git rev-parse --verify "origin/${sourceBranch}" >/dev/null 2>&1 \\`,
+    `       && git merge-base --is-ancestor HEAD "origin/${sourceBranch}"; then`,
+    `      git reset --hard "origin/${sourceBranch}"`,
+    '      SOURCE_SHA=$(git rev-parse HEAD)',
     '    fi',
     '',
     '## Merge Steps',
     '',
-    '1. Fetch both branches:',
-    `    git fetch origin ${targetBranch}`,
-    `    git fetch origin ${sourceBranch}`,
-    '',
-    '2. Check if fast-forward (source contains target):',
-    `    if git merge-base --is-ancestor origin/${targetBranch} origin/${sourceBranch}; then`,
+    '1. Check if fast-forward (the local source tip already contains the target):',
+    `    if git merge-base --is-ancestor "origin/${targetBranch}" HEAD; then`,
     `      echo "Fast-forward: pushing ${sourceBranch} -> ${targetBranch}"`,
-    `      git push origin ${sourceBranch}:refs/heads/${targetBranch}`,
+    `      git push origin HEAD:refs/heads/${targetBranch}`,
     '    else',
     `      echo "Non-fast-forward: merging ${targetBranch} into ${sourceBranch}"`,
-    `      git merge origin/${targetBranch} --no-edit`,
+    `      git merge "origin/${targetBranch}" --no-edit`,
     `      git push origin HEAD:refs/heads/${targetBranch}`,
     '    fi',
     '',
-    '3. Verify the push landed:',
+    '   Both branches push HEAD to the target ref, so the source branch name never',
+    '   reaches the remote.',
+    '',
+    '2. Verify the push landed — the work must be reachable from the target:',
     `    git fetch origin ${targetBranch}`,
-    `    if ! git merge-base --is-ancestor origin/${sourceBranch} origin/${targetBranch}; then`,
+    `    if ! git merge-base --is-ancestor "$SOURCE_SHA" "origin/${targetBranch}"; then`,
     '      echo "ERROR: push verification failed — target does not contain source"',
     '      exit 1',
     '    fi',
     `    echo "Verified: ${sourceBranch} is now in ${targetBranch}"`,
     '',
     '- Do not perform any code changes.',
-    '- If the branches are already fully merged, the push will be a no-op — do not re-create runs or PRs.',
+    '- Do not push the source branch under any name, and do not open a PR.',
+    `- If ${targetBranch} already contains the work, the push is a no-op — report`,
+    '  `already-merged` rather than re-creating runs or PRs.',
     '',
     '## Completion',
     '',
@@ -410,7 +481,30 @@ export async function buildMergeRun(
     '- Push rejected (auth/protection/remote rejection): outcome=`push-failed`.',
     '- Transient infra/network/git-host error: outcome=`transient-failure`.',
   ];
+}
 
+// The Run wrapper around a merge prompt. Extracted with the prompt so
+// buildMergeRun stays a thin composition of the two and the prompt itself is
+// unit-testable without a cluster.
+interface MergeRunSpecOptions {
+  runName: string;
+  projectName: string;
+  taskName: string;
+  project: Project;
+  mergeAgent: string;
+  resolved: ReturnType<typeof resolveRunConfig>;
+  promptLines: string[];
+}
+
+function buildMergeRunSpec({
+  runName,
+  projectName,
+  taskName,
+  project,
+  mergeAgent,
+  resolved,
+  promptLines,
+}: MergeRunSpecOptions): Run {
   return {
     apiVersion: API_GROUP_VERSION,
     kind: KIND_RUN,
@@ -456,13 +550,63 @@ export async function buildMergeRun(
   };
 }
 
+// Caps for the PR-authoring materials embedded in the PR-open prompt. The Run
+// CR carries the prompt in spec.task, so the total must stay well under the
+// etcd object limit; these caps bound it to roughly 40KB of materials.
+const PR_PLAN_DOC_CAP = 24_000;
+const PR_FINDING_COMMENT_CAP = 600;
+const PR_REVIEW_TEXT_CAP = 2_000;
+
+function clipForPrompt(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}\n…[truncated by Percussionist — full text on the task CR]`;
+}
+
+/**
+ * Render one build task's review record (verdict history + latest structured
+ * findings) as a markdown block for the PR-authoring prompt. Verbatim source
+ * material — the composing agent quotes it in the audit appendix and must not
+ * contradict it in the narrative.
+ */
+function renderBuildTaskReviewRecord(build: Task): string {
+  const lines: string[] = [`#### ${build.metadata.name} — ${build.spec.title}`];
+  const reworkRounds = build.status?.worker?.retryCount ?? 0;
+  if (reworkRounds > 0) lines.push(`Human rework rounds: ${reworkRounds}`);
+
+  const reviews = build.status?.reviews ?? [];
+  if (reviews.length === 0) {
+    lines.push('No review records.');
+  } else {
+    lines.push('Review history (oldest first):');
+    for (const r of reviews) {
+      lines.push(`- **${r.action}** (${r.reviewedAt}${r.attempt !== undefined ? `, attempt ${r.attempt}` : ''})`);
+      if (r.diagnosis) lines.push(`  - Diagnosis: ${clipForPrompt(r.diagnosis, PR_REVIEW_TEXT_CAP)}`);
+      if (r.feedback) lines.push(`  - Feedback: ${clipForPrompt(r.feedback, PR_REVIEW_TEXT_CAP)}`);
+    }
+  }
+
+  const findings = build.status?.diffFindings?.items ?? [];
+  if (findings.length > 0) {
+    lines.push('', 'Latest review findings (from the final review run; earlier rounds are superseded):');
+    for (const f of findings) {
+      const anchor = f.anchors[0] ? `${f.anchors[0].path}:${f.anchors[0].line}` : 'no anchor';
+      lines.push(
+        `- [${f.severity}] ${f.title} (${anchor})`,
+        `  ${clipForPrompt(f.comment, PR_FINDING_COMMENT_CAP)}`,
+      );
+    }
+  }
+  return lines.join('\n');
+}
+
 /**
  * Build a run that opens a GitHub pull request from the task's feature branch
  * to the target branch. Used by `flow.integration.mode: 'pr'`.
  *
- * The run is short-lived: it creates the PR and exits. The reconciler then
- * polls the PR state via `getPrState` and transitions the task to `done` once
- * the PR is merged.
+ * The run is short-lived: it composes a PR description from the plan document
+ * and the build tasks' review records, creates the PR, and exits. The
+ * reconciler then polls the PR state via `getPrState` and transitions the task
+ * to `done` once the PR is merged.
  *
  * Shares agent/source resolution with `buildMergeRun` but uses a PR-creation
  * prompt and reports `outcome=pr-opened` with the PR number via `complete_merge`.
@@ -536,55 +680,29 @@ export async function buildPrOpenRun(
     resolved.source.git.parentRef = targetBranch;
   }
 
-  const promptLines = [
-    `TASK: Open a pull request for ${taskName}`,
-    '',
-    `Task title: ${task.spec.title}`,
-    `Source (head) branch: ${sourceBranch}`,
-    `Target (base) branch: ${targetBranch}`,
-    '',
-    '## Pre-flight Check',
-    '',
-    'Ensure the worktree is at the latest remote source branch state:',
-    `    git fetch origin ${sourceBranch}`,
-    '    CURRENT=$(git rev-parse HEAD)',
-    `    LATEST=$(git rev-parse origin/${sourceBranch})`,
-    '    if [ "$CURRENT" != "$LATEST" ]; then',
-    `      echo "WARNING: HEAD stale, resetting to origin/${sourceBranch}"`,
-    '      git reset --hard "origin/${sourceBranch}"',
-    '    fi',
-    '',
-    '## Open the Pull Request',
-    '',
-    'Use the GitHub CLI (`gh`) to open a PR. The GITHUB_TOKEN env var is already set.',
-    'Run:',
-    `    gh pr create --base "${targetBranch}" --head "${sourceBranch}" \\`,
-    `      --title "${task.spec.title.replace(/"/g, '\\"')}" \\`,
-    '      --body "Automated PR opened by Percussionist integrator agent."',
-    '',
-    'Capture the PR number from the output or via:',
-    '    PR_NUMBER=$(gh pr list --head "${sourceBranch}" --base "${targetBranch}" --json number --jq ".[0].number")',
-    '    echo "PR number: $PR_NUMBER"',
-    '',
-    '## Rules',
-    '',
-    '- Do not merge the PR yourself.',
-    '- Do not modify code, run builds, or push additional commits.',
-    '- If `gh pr create` fails because a PR already exists for this head/base pair,',
-    '  look up the existing PR number with `gh pr list` and report that number.',
-    '- If `gh` is unavailable or GITHUB_TOKEN is not set, report outcome=`push-failed`.',
-    '',
-    '## Completion',
-    '',
-    'When the PR is open, call `percussionist_dispatcher_complete_merge` with:',
-    '- outcome=`pr-opened`',
-    '- prNumber=<the PR number>',
-    '- diagnosis: a brief one-line note (e.g. "Opened PR #42").',
-    '',
-    'On failure, use the standard outcome mapping:',
-    '- outcome=`push-failed` for auth/CLI errors.',
-    '- outcome=`transient-failure` for transient infra/network errors.',
-  ];
+  // Gather PR-authoring materials: the plan document and the build tasks'
+  // review records. Both degrade gracefully — a missing plan or absent build
+  // task CRs must never fail the PR-open run.
+  let planDoc: string | null = null;
+  try {
+    planDoc = await readPlanFromConfigMap(projectName, taskName);
+  } catch (e) {
+    console.error(`[worker-builder] readPlanFromConfigMap failed for ${taskName}`, e);
+  }
+  const buildRefs = task.status?.worker?.createdBuildTaskRefs ?? [];
+  const buildTasks = buildRefs
+    .map((ref) => (allTasks ?? []).find((t) => t.metadata.name === ref))
+    .filter((t): t is Task => t !== undefined);
+
+  const promptLines = prOpenPromptLines(
+    taskName,
+    task.spec.title,
+    task.spec.description,
+    sourceBranch,
+    targetBranch,
+    planDoc,
+    buildTasks,
+  );
 
   return {
     apiVersion: API_GROUP_VERSION,
@@ -629,6 +747,158 @@ export async function buildPrOpenRun(
       ...(resolved.gitCache ? { gitCache: resolved.gitCache } : {}),
     } as RunSpec,
   };
+}
+
+/**
+ * Pure prompt builder for the PR-open run — exported for prompt-contract tests
+ * (same pattern as autoMergePromptLines). The agent both composes the PR body
+ * from the supplied materials and executes the `gh pr create` call.
+ */
+export function prOpenPromptLines(
+  taskName: string,
+  taskTitle: string,
+  taskDescription: string | undefined,
+  sourceBranch: string,
+  targetBranch: string,
+  planDoc: string | null,
+  buildTasks: Task[],
+): string[] {
+  return [
+    `TASK: Open a pull request for ${taskName}`,
+    '',
+    `Task title: ${taskTitle}`,
+    `Source (head) branch: ${sourceBranch}`,
+    `Target (base) branch: ${targetBranch}`,
+    '',
+    '## Pre-flight Check',
+    '',
+    // PR mode is the one mode that must publish the source branch: `gh pr create
+    // --head` cannot reference a ref the remote does not have. Say so explicitly —
+    // the previous prompt left it implicit, so the agent only discovered it by
+    // watching `gh` fail.
+    'A PR needs its head branch on the remote, so unlike auto-merge mode this mode',
+    'does publish the source branch. Push it (and nothing else) before calling `gh`:',
+    `    git fetch origin ${sourceBranch} || echo "source branch not on origin yet"`,
+    '    CURRENT=$(git rev-parse HEAD)',
+    `    if git rev-parse --verify "origin/${sourceBranch}" >/dev/null 2>&1; then`,
+    `      LATEST=$(git rev-parse "origin/${sourceBranch}")`,
+    '      if [ "$CURRENT" != "$LATEST" ]; then',
+    `        echo "WARNING: HEAD stale, resetting to origin/${sourceBranch}"`,
+    `        git reset --hard "origin/${sourceBranch}"`,
+    '      fi',
+    '    else',
+    `      echo "Publishing ${sourceBranch} so the PR has a head branch"`,
+    `      git push origin "HEAD:refs/heads/${sourceBranch}"`,
+    '    fi',
+    '',
+    '## Compose the PR description',
+    '',
+    'Author the PR body yourself by synthesizing the materials at the end of this',
+    'prompt into a document for the human who will review the PR. Write the',
+    'finished markdown to /tmp/pr-body.md — outside the repo; do not create or',
+    'commit files in the worktree.',
+    '',
+    'Use exactly these sections, in this order:',
+    '',
+    '- `## Deliverable` — 2-4 sentences: the user-visible problem, the root cause,',
+    '  and what is true after merge that was not before. Written for someone who',
+    '  has never seen the task.',
+    "- `## Context` — why this work existed, condensed from the plan's context",
+    '  into a short narrative. Do not paste the plan section.',
+    '- `## How it was delivered` — the approach as actually implemented, one',
+    '  paragraph per coherent piece of work (features, not build-task plumbing).',
+    '  Where the implementation deviated from the plan, say so explicitly.',
+    '- `## Verification` — what was tested at which level (unit / DB / e2e) and',
+    '  what reviewers independently checked. Be precise about method: "asserted',
+    '  values re-derived by reviewer" is a different guarantee than "e2e passed".',
+    '- `## What the reviewer should look at` — ranked list of what a human should',
+    '  inspect before merging: unverified steps, environment caveats, unresolved',
+    '  high-severity review findings, risky diffs. If you believe nothing',
+    '  qualifies, say why.',
+    "- `## Risks` — two lists drawn from the plan's risks / open questions:",
+    '  **Remedied** (each with one line on how) and **Remaining** (each with what',
+    '  would close it). Every risk from the plan must appear in exactly one list;',
+    '  none may be silently dropped.',
+    "- `## Acceptance criteria` — the plan's criteria as a markdown checklist,",
+    '  each marked met / not verified / not met, with a word on the evidence.',
+    '- An audit appendix inside `<details><summary>Audit appendix</summary>`:',
+    '  per build task, the verbatim final reviewer verdict + diagnosis and a',
+    '  findings table (severity | title | file:line). Do not paraphrase inside',
+    '  the appendix.',
+    '- Footer line:',
+    `  *Opened by Percussionist integrator (LLM-composed from plan + review record) · task ${taskName}*`,
+    '',
+    'Grounding rules — non-negotiable:',
+    '',
+    '- Every claim must trace to the materials below or to the actual diff. You',
+    '  have the checkout — inspect it with:',
+    `      git log --oneline origin/${targetBranch}..HEAD`,
+    `      git diff --stat origin/${targetBranch}...HEAD`,
+    '  When the plan and the diff disagree, the diff wins; note the deviation.',
+    '- Never soften "unverified": anything a reviewer flagged as owed, skipped,',
+    '  or not runnable goes under "What the reviewer should look at", not under',
+    '  Verification.',
+    '- No quality adjectives, no self-congratulation. Verdicts belong to the',
+    '  reviewers, quoted in the appendix.',
+    '- If the plan document or review records are missing below, skip the',
+    '  sections that depend on them and note the gap in one line — never invent',
+    '  content for them.',
+    '- Keep the body under 60000 characters. If you must trim, trim finding',
+    '  comments first, never risks or acceptance criteria.',
+    '',
+    '## Open the Pull Request',
+    '',
+    'Use the GitHub CLI (`gh`) to open a PR. The GITHUB_TOKEN env var is already set.',
+    'Run:',
+    `    gh pr create --base "${targetBranch}" --head "${sourceBranch}" \\`,
+    `      --title "${taskTitle.replace(/"/g, '\\"')}" \\`,
+    '      --body-file /tmp/pr-body.md',
+    '',
+    'Capture the PR number from the output or via:',
+    `    PR_NUMBER=$(gh pr list --head "${sourceBranch}" --base "${targetBranch}" --json number --jq ".[0].number")`,
+    '    echo "PR number: $PR_NUMBER"',
+    '',
+    '## Rules',
+    '',
+    '- Do not merge the PR yourself.',
+    '- Do not modify the repository, run builds, or push additional commits.',
+    '  Writing /tmp/pr-body.md is fine; nothing under the worktree is.',
+    '- If `gh pr create` fails because a PR already exists for this head/base pair,',
+    '  look up the existing PR number with `gh pr list` and report that number.',
+    '  Update its description to your composed body via:',
+    '      gh pr edit <number> --body-file /tmp/pr-body.md',
+    '- If `gh` is unavailable or GITHUB_TOKEN is not set, report outcome=`push-failed`.',
+    '',
+    '## Completion',
+    '',
+    'When the PR is open, call `percussionist_dispatcher_complete_merge` with:',
+    '- outcome=`pr-opened`',
+    '- prNumber=<the PR number>',
+    '- diagnosis: a brief one-line note (e.g. "Opened PR #42").',
+    '',
+    'On failure, use the standard outcome mapping:',
+    '- outcome=`push-failed` for auth/CLI errors.',
+    '- outcome=`transient-failure` for transient infra/network errors.',
+    '',
+    '## Materials',
+    '',
+    '### Task',
+    '',
+    `Title: ${taskTitle}`,
+    `Description: ${taskDescription ?? '(none)'}`,
+    '',
+    '### Plan document',
+    '',
+    planDoc
+      ? clipForPrompt(planDoc, PR_PLAN_DOC_CAP)
+      : '(No plan document was found for this task.)',
+    '',
+    '### Build task review records',
+    '',
+    buildTasks.length > 0
+      ? buildTasks.map(renderBuildTaskReviewRecord).join('\n\n')
+      : '(No build task review records were found for this task.)',
+  ];
 }
 
 /**

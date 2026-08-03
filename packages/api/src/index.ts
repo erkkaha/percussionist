@@ -694,11 +694,7 @@ export const RunSpecSchema = z
     initScript: z.string().optional(),
 
     timeoutSeconds: z.number().int().positive().default(3600),
-    ttlSecondsAfterFinished: z
-      .number()
-      .int()
-      .nonnegative()
-      .default(7 * 86400),
+    ttlSecondsAfterFinished: z.number().int().nonnegative().optional(),
 
     // Data PVC configuration — backs package manager caches, git mirrors,
     // worktrees, and local workspaces for the project.
@@ -923,6 +919,9 @@ export const WorkerStatusSchema = z.object({
   mergeRunName: z.string().optional(),
   mergedAt: z.string().optional(),
   mergeError: z.string().max(4096).optional(),
+  // True when a human intentionally abandoned this task from `awaiting-human`
+  // (distinct from normal completion, both of which end `status: 'Succeeded'`).
+  abandoned: z.boolean().optional(),
 });
 
 export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;
@@ -1041,6 +1040,12 @@ export type BoardStatus = z.infer<typeof BoardStatusSchema>;
 export const ProjectSpecSchema = z.object({
   // Human-readable label for the UI. Falls back to metadata.name.
   displayName: z.string().optional(),
+
+  // Accent color for UI identification (hex). Falls back to a name-derived color.
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .optional(),
 
   // Git workspace — cloned by all runs and board workers for this project.
   source: SourceSchema.optional(),
@@ -1227,6 +1232,16 @@ export type ProjectSpec = z.infer<typeof ProjectSpecSchema>;
 // Project status — summary only; full task state lives in Task CRs.
 export const ProjectStatusSchema = z.object({
   board: BoardStatusSchema.optional(),
+  // Operator-owned reconcile outcome for this Project's code-server/memory-service
+  // resources. The operator owns this key; the manager owns `board`. Neither
+  // side may clobber the other's key — status patches must be scoped merges.
+  reconcile: z
+    .object({
+      state: z.enum(['Ready', 'Error']),
+      message: z.string().max(2048).optional(),
+      observedGeneration: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
 });
 
 export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
@@ -1833,6 +1848,15 @@ export const GIT_CLONE_CONTAINER = 'workspace-init';
 export const CODE_SERVER_CONTAINER = 'code-server';
 export const CODE_SERVER_PORT = 8080;
 export const CODE_SERVER_DEFAULT_IMAGE = 'ghcr.io/erkkaha/percussionist/code-server:latest';
+/**
+ * Image for maintenance/exec pods when `Project.spec.exec.image` is unset.
+ *
+ * Also the image backend-generated git scripts must pin explicitly: a project
+ * may override `spec.exec.image` with something that has no git at all (plain
+ * `ubuntu:24.04` does not), which would otherwise make every git command in
+ * those scripts silently fail.
+ */
+export const DEFAULT_EXEC_IMAGE = 'alpine/git:v2.54.0';
 
 // ---------------------------------------------------------------------------
 // Config resolution helpers.

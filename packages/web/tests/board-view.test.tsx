@@ -24,6 +24,7 @@ const isMobileMock: { current: boolean } = { current: false };
 const codeServerMock: { current: { enabled: boolean } | undefined } = {
   current: { enabled: false },
 };
+const settingsColorMock: { current: string | null | undefined } = { current: undefined };
 
 const mockBoardData = {
   settings: {
@@ -32,6 +33,9 @@ const mockBoardData = {
     phase: 'Active',
     get codeServer() {
       return codeServerMock.current;
+    },
+    get color() {
+      return settingsColorMock.current;
     },
   },
   columns: { backlog: [], ready: [], running: [], done: [] },
@@ -183,6 +187,29 @@ async function renderBoardView() {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe('BoardView project color strip', () => {
+  afterEach(() => {
+    cleanup();
+    settingsColorMock.current = undefined;
+  });
+
+  it('uses the explicit settings.color when set', async () => {
+    settingsColorMock.current = '#123456';
+    await renderBoardView();
+    const strip = await screen.findByTestId('board-color-strip');
+    expect(strip.style.backgroundColor).toBe('#123456');
+  });
+
+  it('falls back to the deterministic hash color when settings.color is unset', async () => {
+    settingsColorMock.current = undefined;
+    await renderBoardView();
+    const strip = await screen.findByTestId('board-color-strip');
+    const { projectColor } = await import('../src/client/lib/project-color');
+    const expected = projectColor('test-project', undefined);
+    expect(strip.style.backgroundColor).toBe(expected);
+  });
+});
 
 describe('BoardView header container responsive classes', () => {
   afterEach(cleanup);

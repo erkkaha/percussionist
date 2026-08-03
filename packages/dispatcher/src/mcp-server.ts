@@ -2,7 +2,7 @@
 //
 // Exposes tools: fail_run, complete_run, complete_plan, complete_merge,
 //                get_status, create_task, search_code, write_plan, read_plan, read_session,
-//                complete_review
+//                complete_review, report_unrelated_issue
 //
 // fail_run — the agent calls this to signal that it cannot complete its task.
 // The dispatcher detects the call and throws a "session error:" which causes
@@ -32,6 +32,11 @@
 // write_plan / read_plan — persist and retrieve plan artifacts via ConfigMap.
 //
 // read_session — reads session data from another run's ConfigMap snapshot.
+//
+// report_unrelated_issue — files an issue that is outside the run's assigned
+// task into the project issue inbox ConfigMap. Named `report_finding` before
+// 2026-07; agents kept confusing it with complete_review's `findings` array,
+// which anchors review comments to a diff. The old name still dispatches.
 //
 // Transport: MCP Streamable HTTP (POST /mcp), JSON-RPC 2.0.
 // Port: DISPATCHER_MCP_PORT (4097) — adjacent to opencode's 4096, unlikely
@@ -398,13 +403,17 @@ const TOOL_READ_SESSION = {
   },
 };
 
-const TOOL_REPORT_FINDING = {
-  name: 'report_finding',
+const TOOL_REPORT_UNRELATED_ISSUE = {
+  name: 'report_unrelated_issue',
   description:
-    'Report an off-task issue you noticed while working — a bug, security problem, ' +
-    'performance issue, or tech debt that is OUTSIDE your assigned task. The manager ' +
-    'triages it, de-duplicates against existing findings, and may file a task. ' +
-    'Do NOT use this for your own task; finish that and report only incidental discoveries. ' +
+    'Report a problem that is OUTSIDE your assigned task — a bug, security problem, ' +
+    'performance issue, or tech debt you happened to notice while working on something else. ' +
+    'The manager triages it, de-duplicates it, and may file a separate task; it lands in the ' +
+    "project's issue inbox, not on your task. " +
+    'Do NOT use this to describe your own task, and do NOT use it to comment on code under ' +
+    'review — a reviewer judging a diff passes `findings` to complete_review instead, which ' +
+    'anchors each comment to a line of that diff. The one-line test: if fixing it would be ' +
+    'part of the task you were given, it is not an unrelated issue. ' +
     'Returns { id, status: "accepted" }. Deduplication happens asynchronously.',
   inputSchema: {
     type: 'object',
@@ -1169,7 +1178,7 @@ async function handleMcp(
           TOOL_WRITE_PLAN,
           TOOL_READ_PLAN,
           TOOL_READ_SESSION,
-          TOOL_REPORT_FINDING,
+          TOOL_REPORT_UNRELATED_ISSUE,
         ],
       });
     }
@@ -1452,7 +1461,10 @@ async function handleMcp(
         return handleReadSession(req.id, (req.params?.arguments ?? {}) as Record<string, unknown>);
       }
 
-      if (toolName === 'report_finding') {
+      // `report_finding` is the pre-rename name. A run whose agent cached the
+      // tool list before the rename would otherwise get "unknown tool" and lose
+      // the report, so keep accepting it; only the new name is advertised.
+      if (toolName === 'report_unrelated_issue' || toolName === 'report_finding') {
         return handleReportFinding(
           req.id,
           (req.params?.arguments ?? {}) as Record<string, unknown>,

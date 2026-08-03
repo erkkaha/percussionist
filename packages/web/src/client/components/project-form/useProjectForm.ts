@@ -67,6 +67,8 @@ export interface ProjectFormState {
   // General
   name: string;
   displayName: string;
+  /** Accent color hex, empty string = automatic (hash-derived) color. */
+  color: string;
   model: string;
   agent: string;
   maxParallel: string;
@@ -137,6 +139,41 @@ export interface ProjectFormState {
   rosterPickerValue: string;
 }
 
+const FLOW_PRESET_DEFAULTS = {
+  simple: {
+    humanApprovalPlan: 'disabled',
+    humanApprovalBuild: 'disabled',
+    planOnApprove: 'done',
+    buildOnSuccess: 'done',
+    buildOnApprove: 'done',
+    mergeMode: 'disabled',
+  },
+  review: {
+    humanApprovalPlan: 'required',
+    humanApprovalBuild: 'required',
+    planOnApprove: 'done',
+    buildOnSuccess: 'human-review',
+    buildOnApprove: 'done',
+    mergeMode: 'disabled',
+  },
+  'plan-build': {
+    humanApprovalPlan: 'required',
+    humanApprovalBuild: 'required',
+    planOnApprove: 'generate-builds',
+    buildOnSuccess: 'human-review',
+    buildOnApprove: 'done',
+    mergeMode: 'disabled',
+  },
+  'plan-build-review-merge': {
+    humanApprovalPlan: 'required',
+    humanApprovalBuild: 'required',
+    planOnApprove: 'generate-builds',
+    buildOnSuccess: 'human-review',
+    buildOnApprove: 'merge',
+    mergeMode: 'auto',
+  },
+} as const;
+
 // ---------------------------------------------------------------------------
 // Validation helpers (derived, not state)
 // ---------------------------------------------------------------------------
@@ -200,22 +237,31 @@ export function buildProjectRequest(
 ): CreateProjectRequest {
   const req: CreateProjectRequest = {};
   if (!isEdit && state.name.trim()) req.name = state.name.trim();
-  if (state.displayName.trim()) req.displayName = state.displayName.trim();
-  if (state.model.trim()) req.model = state.model.trim();
-  if (state.agent.trim()) req.agent = state.agent.trim();
+  if (state.displayName.trim() || isEdit) req.displayName = state.displayName.trim() || null;
+  if (isEdit) req.color = state.color || null;
+  else if (state.color) req.color = state.color;
+  if (state.model.trim() || isEdit) req.model = state.model.trim() || null;
+  if (state.agent.trim() || isEdit) req.agent = state.agent.trim() || null;
   if (state.opencodeConfig !== null) req.opencodeConfig = state.opencodeConfig.trim() || '';
 
   // Source
   if (state.sourceLocal) {
-    req.source = { local: true };
+    req.source = { local: true, ...(isEdit ? { git: null } : {}) };
   } else if (state.gitUrl.trim()) {
     req.source = {
+      ...(isEdit ? { local: null } : {}),
       git: {
         url: state.gitUrl.trim(),
-        ...(state.gitRef.trim() ? { ref: state.gitRef.trim() } : {}),
-        ...(state.gitSshSecret.trim() ? { sshSecret: { name: state.gitSshSecret.trim() } } : {}),
-        ...(state.gitGithubTokenSecret.trim()
-          ? { githubTokenSecret: { name: state.gitGithubTokenSecret.trim() } }
+        ...(state.gitRef.trim() || isEdit ? { ref: state.gitRef.trim() || null } : {}),
+        ...(state.gitSshSecret.trim() || isEdit
+          ? { sshSecret: state.gitSshSecret.trim() ? { name: state.gitSshSecret.trim() } : null }
+          : {}),
+        ...(state.gitGithubTokenSecret.trim() || isEdit
+          ? {
+              githubTokenSecret: state.gitGithubTokenSecret.trim()
+                ? { name: state.gitGithubTokenSecret.trim() }
+                : null,
+            }
           : {}),
         ...(state.gitAuthorName.trim() && state.gitAuthorEmail.trim()
           ? {
@@ -224,22 +270,30 @@ export function buildProjectRequest(
                 email: state.gitAuthorEmail.trim(),
               },
             }
-          : {}),
+          : isEdit
+            ? { author: null }
+            : {}),
       },
     };
   }
 
   // Secrets
-  if (state.llmKeysSecret.trim() || state.authSecret.trim()) {
+  if (state.llmKeysSecret.trim() || state.authSecret.trim() || isEdit) {
     req.secrets = {
-      ...(state.llmKeysSecret.trim() ? { llmKeysSecret: state.llmKeysSecret.trim() } : {}),
-      ...(state.authSecret.trim() ? { authSecret: { name: state.authSecret.trim() } } : {}),
+      ...(state.llmKeysSecret.trim() || isEdit
+        ? { llmKeysSecret: state.llmKeysSecret.trim() || null }
+        : {}),
+      ...(state.authSecret.trim() || isEdit
+        ? { authSecret: state.authSecret.trim() ? { name: state.authSecret.trim() } : null }
+        : {}),
     };
   }
 
   // Init script
   if (state.initScript.trim()) {
     req.initScript = state.initScript.trim();
+  } else if (isEdit) {
+    req.initScript = null;
   }
 
   // Sidecars
@@ -267,8 +321,8 @@ export function buildProjectRequest(
           return {
             name: sc.name.trim(),
             image: sc.image.trim(),
-            ...(ports?.length ? { ports } : {}),
-            ...(env?.length ? { env } : {}),
+            ...(ports?.length || isEdit ? { ports: ports ?? [] } : {}),
+            ...(env?.length || isEdit ? { env: env ?? [] } : {}),
           };
         })
       : [];
@@ -285,10 +339,12 @@ export function buildProjectRequest(
   const parsedMaxParallel = state.maxParallel.trim() ? parseInt(state.maxParallel.trim(), 10) : NaN;
   if (!Number.isNaN(parsedMaxParallel) && parsedMaxParallel > 0)
     req.maxParallel = parsedMaxParallel;
+  else if (isEdit) req.maxParallel = null;
   const parsedTimeout = state.timeoutSeconds.trim()
     ? parseInt(state.timeoutSeconds.trim(), 10)
     : NaN;
   if (!Number.isNaN(parsedTimeout) && parsedTimeout > 0) req.timeoutSeconds = parsedTimeout;
+  else if (isEdit) req.timeoutSeconds = null;
 
   // Feature branching
   req.featureBranchingEnabled = state.featureBranchingEnabled;
@@ -303,6 +359,8 @@ export function buildProjectRequest(
       maxBackoffSeconds: parseInt(state.retryPolicyMaxBackoffSeconds, 10) || 300,
       poisonPillThresholdSeconds: parseInt(state.retryPolicyPoisonPillThreshold, 10) || 30,
     };
+  } else if (isEdit) {
+    req.retryPolicy = { enabled: false };
   }
 
   // Review policy
@@ -312,12 +370,14 @@ export function buildProjectRequest(
       aiReviewerAgent: state.reviewPolicyAiReviewerAgent.trim() || 'reviewer',
       maxAutoReworks: parseInt(state.reviewPolicyMaxAutoReworks, 10) || 2,
     };
+  } else if (isEdit) {
+    req.reviewPolicy = { aiReviewerEnabled: false };
   }
 
   // Runner overrides
-  if (state.runnerImage.trim()) req.image = state.runnerImage.trim();
-  const resRequests: Record<string, string> = {};
-  const resLimits: Record<string, string> = {};
+  if (state.runnerImage.trim() || isEdit) req.image = state.runnerImage.trim() || null;
+  const resRequests: Record<string, string | null> = {};
+  const resLimits: Record<string, string | null> = {};
   const runnerPackages = Array.from(
     new Set(
       state.runnerPackages
@@ -328,11 +388,13 @@ export function buildProjectRequest(
   );
   if (runnerPackages.length > 0) {
     req.runner = { packages: runnerPackages };
+  } else if (isEdit) {
+    req.runner = null;
   }
-  if (state.cpuRequest.trim()) resRequests.cpu = state.cpuRequest.trim();
-  if (state.memRequest.trim()) resRequests.memory = state.memRequest.trim();
-  if (state.cpuLimit.trim()) resLimits.cpu = state.cpuLimit.trim();
-  if (state.memLimit.trim()) resLimits.memory = state.memLimit.trim();
+  if (state.cpuRequest.trim() || isEdit) resRequests.cpu = state.cpuRequest.trim() || null;
+  if (state.memRequest.trim() || isEdit) resRequests.memory = state.memRequest.trim() || null;
+  if (state.cpuLimit.trim() || isEdit) resLimits.cpu = state.cpuLimit.trim() || null;
+  if (state.memLimit.trim() || isEdit) resLimits.memory = state.memLimit.trim() || null;
   if (Object.keys(resRequests).length > 0 || Object.keys(resLimits).length > 0) {
     req.resources = {
       ...(Object.keys(resRequests).length > 0 ? { requests: resRequests } : {}),
@@ -341,35 +403,73 @@ export function buildProjectRequest(
   }
 
   // Phase (edit mode)
-  if (isEdit && state.phase !== 'Active') req.phase = state.phase;
+  if (isEdit) req.phase = state.phase;
 
   // Git cache
   req.gitCache = { worktreeReuse: state.worktreeReuse };
 
   // Flow configuration
   const flowOverrides: Record<string, unknown> = {};
-  if (state.flowPreset !== 'plan-build-review-merge') flowOverrides.preset = state.flowPreset;
-  if (state.flowHumanApprovalPlan !== 'required' || state.flowHumanApprovalBuild !== 'required') {
+  if (isEdit) {
+    const defaults = FLOW_PRESET_DEFAULTS[state.flowPreset];
+    flowOverrides.preset = state.flowPreset;
+    const hideOverrides = state.flowPreset === 'simple';
     flowOverrides.humanApproval = {
-      ...(state.flowHumanApprovalPlan !== 'required' ? { plan: state.flowHumanApprovalPlan } : {}),
-      ...(state.flowHumanApprovalBuild !== 'required'
-        ? { build: state.flowHumanApprovalBuild }
-        : {}),
+      plan:
+        hideOverrides || state.flowHumanApprovalPlan === defaults.humanApprovalPlan
+          ? null
+          : state.flowHumanApprovalPlan,
+      build:
+        hideOverrides || state.flowHumanApprovalBuild === defaults.humanApprovalBuild
+          ? null
+          : state.flowHumanApprovalBuild,
     };
-  }
-  if (state.flowPlanOnApprove !== 'generate-builds') {
-    flowOverrides.plan = { onApprove: state.flowPlanOnApprove };
-  }
-  if (state.flowBuildOnSuccess !== 'human-review' || state.flowBuildOnApprove !== 'merge') {
+    flowOverrides.plan = {
+      onApprove:
+        hideOverrides || state.flowPlanOnApprove === defaults.planOnApprove
+          ? null
+          : state.flowPlanOnApprove,
+    };
     flowOverrides.build = {
-      ...(state.flowBuildOnSuccess !== 'human-review'
-        ? { onSuccess: state.flowBuildOnSuccess }
-        : {}),
-      ...(state.flowBuildOnApprove !== 'merge' ? { onApprove: state.flowBuildOnApprove } : {}),
+      onSuccess:
+        hideOverrides || state.flowBuildOnSuccess === defaults.buildOnSuccess
+          ? null
+          : state.flowBuildOnSuccess,
+      onApprove:
+        hideOverrides || state.flowBuildOnApprove === defaults.buildOnApprove
+          ? null
+          : state.flowBuildOnApprove,
     };
-  }
-  if (state.flowMergeMode !== 'auto') {
-    flowOverrides.merge = { mode: state.flowMergeMode };
+    flowOverrides.merge = {
+      mode:
+        hideOverrides || state.flowMergeMode === defaults.mergeMode ? null : state.flowMergeMode,
+    };
+  } else {
+    if (state.flowPreset !== 'plan-build-review-merge') flowOverrides.preset = state.flowPreset;
+    if (state.flowHumanApprovalPlan !== 'required' || state.flowHumanApprovalBuild !== 'required') {
+      flowOverrides.humanApproval = {
+        ...(state.flowHumanApprovalPlan !== 'required'
+          ? { plan: state.flowHumanApprovalPlan }
+          : {}),
+        ...(state.flowHumanApprovalBuild !== 'required'
+          ? { build: state.flowHumanApprovalBuild }
+          : {}),
+      };
+    }
+    if (state.flowPlanOnApprove !== 'generate-builds') {
+      flowOverrides.plan = { onApprove: state.flowPlanOnApprove };
+    }
+    if (state.flowBuildOnSuccess !== 'human-review' || state.flowBuildOnApprove !== 'merge') {
+      flowOverrides.build = {
+        ...(state.flowBuildOnSuccess !== 'human-review'
+          ? { onSuccess: state.flowBuildOnSuccess }
+          : {}),
+        ...(state.flowBuildOnApprove !== 'merge' ? { onApprove: state.flowBuildOnApprove } : {}),
+      };
+    }
+    if (state.flowMergeMode !== 'auto') {
+      flowOverrides.merge = { mode: state.flowMergeMode };
+    }
   }
   if (Object.keys(flowOverrides).length > 0) {
     req.flow = flowOverrides;
@@ -378,43 +478,52 @@ export function buildProjectRequest(
   // Code Server
   if (state.codeServerEnabled) {
     const csResources: Record<string, unknown> = {};
-    const csResRequests: Record<string, string> = {};
-    const csResLimits: Record<string, string> = {};
-    if (state.csCpuRequest.trim()) csResRequests.cpu = state.csCpuRequest.trim();
-    if (state.csMemRequest.trim()) csResRequests.memory = state.csMemRequest.trim();
-    if (state.csCpuLimit.trim()) csResLimits.cpu = state.csCpuLimit.trim();
-    if (state.csMemLimit.trim()) csResLimits.memory = state.csMemLimit.trim();
+    const csResRequests: Record<string, string | null> = {};
+    const csResLimits: Record<string, string | null> = {};
+    if (state.csCpuRequest.trim() || isEdit) csResRequests.cpu = state.csCpuRequest.trim() || null;
+    if (state.csMemRequest.trim() || isEdit)
+      csResRequests.memory = state.csMemRequest.trim() || null;
+    if (state.csCpuLimit.trim() || isEdit) csResLimits.cpu = state.csCpuLimit.trim() || null;
+    if (state.csMemLimit.trim() || isEdit) csResLimits.memory = state.csMemLimit.trim() || null;
     if (Object.keys(csResRequests).length > 0) csResources.requests = csResRequests;
     if (Object.keys(csResLimits).length > 0) csResources.limits = csResLimits;
     req.codeServer = {
       enabled: true,
-      ...(state.codeServerImage.trim() ? { image: state.codeServerImage.trim() } : {}),
+      image: state.codeServerImage.trim() || 'codercom/code-server:4.96.4',
       ...(Object.keys(csResources).length > 0 ? { resources: csResources } : {}),
     };
+  } else if (isEdit) {
+    req.codeServer = { enabled: false };
   }
 
   // Data PVC (only if any field is set)
-  const dataFields: Record<string, string> = {};
-  if (state.pvcName.trim()) dataFields.pvcName = state.pvcName.trim();
-  if (state.mountPath !== '/data') dataFields.mountPath = state.mountPath;
-  if (state.storageClass.trim()) dataFields.storageClass = state.storageClass.trim();
+  const dataFields: Record<string, string | null> = {};
+  if (state.pvcName.trim() || isEdit) dataFields.pvcName = state.pvcName.trim() || null;
+  if (state.mountPath !== '/data' || isEdit)
+    dataFields.mountPath = state.mountPath === '/data' ? null : state.mountPath;
+  if (state.storageClass.trim() || isEdit)
+    dataFields.storageClass = state.storageClass.trim() || null;
   if (Object.keys(dataFields).length > 0) {
-    req.data = dataFields as { pvcName?: string; mountPath?: string; storageClass?: string };
+    req.data = dataFields;
   }
 
   // Embedding / Memory service
   if (state.embeddingEnabled) {
     req.embedding = {
       enabled: true,
-      model: state.embeddingModel.trim() || undefined,
-      dimensions: parseInt(state.embeddingDimensions, 10) || undefined,
-      ollamaUrl: state.embeddingOllamaUrl.trim() || undefined,
+      model: state.embeddingModel.trim() || null,
+      dimensions: parseInt(state.embeddingDimensions, 10) || null,
+      ollamaUrl: state.embeddingOllamaUrl.trim() || null,
     };
+  } else if (isEdit) {
+    req.embedding = { enabled: false };
   }
 
   // Exec / Maintenance pod image
   if (state.execImage.trim()) {
     req.exec = { image: state.execImage.trim() };
+  } else if (isEdit) {
+    req.exec = null;
   }
 
   return req;
@@ -434,6 +543,7 @@ export function createInitialState(
     // General
     name: '',
     displayName: spec.displayName ?? '',
+    color: spec.color ?? '',
     model: spec.model ?? '',
     agent: spec.agent ?? '',
     maxParallel: spec.maxParallel !== undefined ? String(spec.maxParallel) : '',
@@ -534,6 +644,7 @@ export interface ProjectFormHookReturn extends ProjectFormState {
   // Setters (all fields)
   setName: React.Dispatch<React.SetStateAction<string>>;
   setDisplayName: React.Dispatch<React.SetStateAction<string>>;
+  setColor: React.Dispatch<React.SetStateAction<string>>;
   setModel: React.Dispatch<React.SetStateAction<string>>;
   setAgent: React.Dispatch<React.SetStateAction<string>>;
   setMaxParallel: React.Dispatch<React.SetStateAction<string>>;
@@ -627,10 +738,12 @@ export function useProjectForm(
   const initialState = createInitialState(initialSpec);
   // Override injectFiles with project data (needs the full project object)
   initialState.injectFiles = initialInjectFileRows(initialProject);
+  initialState.opencodeConfig = initialProject?.opencodeConfig ?? '';
 
   // General
   const [name, setName] = useState(initialState.name);
   const [displayName, setDisplayName] = useState(initialState.displayName);
+  const [color, setColor] = useState(initialState.color);
   const [model, setModel] = useState(initialState.model);
   const [agent, setAgent] = useState(initialState.agent);
   const [maxParallel, setMaxParallel] = useState(initialState.maxParallel);
@@ -761,6 +874,7 @@ export function useProjectForm(
     // General
     name,
     displayName,
+    color,
     model,
     agent,
     maxParallel,
@@ -769,6 +883,7 @@ export function useProjectForm(
     phase,
     setName,
     setDisplayName,
+    setColor,
     setModel,
     setAgent,
     setMaxParallel,

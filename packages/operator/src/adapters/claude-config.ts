@@ -229,7 +229,17 @@ export function renderClaudeSettings(agents: AgentDef[], primaryName: string | u
       for (const mapped of TOOL_EQUIVALENTS[tool] ?? []) deny.add(mapped);
     }
   }
-  const settings = deny.size > 0 ? { permissions: { deny: [...deny].sort() } } : {};
+  // Always present, never conditional: run-pod commits must not carry
+  // "Co-Authored-By: Claude ..." trailers (repo policy — main already has 14
+  // of them from before this flag). The model name in the trailer varies by
+  // deployment, so a prompt-level instruction would be fragile; the settings
+  // flag kills it at the source. Its presence also means the rendered content
+  // is never "{}", so runner-claude's writeClaudeSettings() always writes the
+  // file instead of skipping it.
+  const settings = {
+    includeCoAuthoredBy: false,
+    ...(deny.size > 0 ? { permissions: { deny: [...deny].sort() } } : {}),
+  };
   return JSON.stringify(settings, null, 2);
 }
 

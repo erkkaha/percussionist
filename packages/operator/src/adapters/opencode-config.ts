@@ -31,6 +31,18 @@ export function resolveRunnerSpec(cs?: ClusterSettings, engine?: RunnerEngine): 
 }
 
 /**
+ * Marks a permanent Run misconfiguration, as opposed to a transient error.
+ * Callers can use `instanceof ValidationError` to route these to a terminal
+ * status patch instead of the usual retry-with-backoff path.
+ */
+export class ValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ValidationError';
+  }
+}
+
+/**
  * Guards the one credential mistake that fails silently.
  *
  * `ANTHROPIC_API_KEY` overrides subscription auth unconditionally, and in
@@ -47,7 +59,7 @@ export function assertCredentialsUnambiguous(opts: {
 }): void {
   if (opts.engine !== 'claude') return;
   if (!opts.llmKeysSecret || !opts.authSecretName) return;
-  throw new Error(
+  throw new ValidationError(
     `Run ${opts.runName}: engine "claude" has both spec.secrets.llmKeysSecret ` +
       `(${opts.llmKeysSecret}) and spec.secrets.authSecret (${opts.authSecretName}) set. ` +
       `ANTHROPIC_API_KEY silently overrides subscription auth, so this run would bill ` +

@@ -271,6 +271,7 @@ export async function fetchBoard(project: string): Promise<{
     agents: Array<{ name: string }>;
     phase: string;
     codeServer?: { enabled?: boolean };
+    color?: string | null;
   };
   columns: Record<string, Task[]>;
   approvals?: Record<string, { approved: boolean; requestChanges: boolean }>;

@@ -3,6 +3,7 @@
 // most likely next action given the project's configuration.
 
 import type { Project, Run, Task, TaskPhase } from '@percussionist/api';
+import { childMergeExpected, childSatisfiesGate } from './child-completion.js';
 import { type ResolvedFlow, resolveFlow } from './flow.js';
 import { TRANSITION_TABLE } from './transitions.js';
 
@@ -463,23 +464,45 @@ function explainAwaitingChildren(
     };
   }
 
-  const incomplete = children.filter(
-    (t) => !(t.status?.phase === 'done' && t.status?.worker?.mergedAt),
-  );
-  if (incomplete.length > 0) {
+  const notDone = children.filter((t) => t.status?.phase !== 'done');
+  if (notDone.length > 0) {
     return {
-      primary: `Waiting for ${incomplete.length} child BUILD task(s) to complete and merge`,
-      reason: 'not all child BUILD tasks are done with mergedAt',
-      blockingConditions: incomplete.map(
+      primary: `Waiting for ${notDone.length} child BUILD task(s) to reach done`,
+      reason: 'not all child BUILD tasks are done',
+      blockingConditions: notDone.map(
         (t) => `Child ${t.metadata.name} is ${t.status?.phase ?? 'unknown'}`,
       ),
       suggestedActions: ['Wait for children to finish or inspect child task flows'],
     };
   }
 
+  // Every child is done — this is a terminal state (no code path ever adds
+  // mergedAt after the fact), so the only remaining outcomes are proceed
+  // (every child satisfies the merge gate) or escalate to awaiting-human.
+  const mergeExpected = childMergeExpected(project, flow);
+  const unsatisfied = children.filter((t) => !childSatisfiesGate(t, mergeExpected));
+  if (unsatisfied.length > 0) {
+    return {
+      primary: `${unsatisfied.length} child BUILD task(s) done without merging and not abandoned; task will escalate to awaiting-human`,
+      reason: 'child(ren) done without mergedAt while childMergeExpected and not abandoned',
+      blockingConditions: unsatisfied.map(
+        (t) => `Child ${t.metadata.name} is done without mergedAt and not abandoned`,
+      ),
+      suggestedActions: [
+        'Merge, abandon, or otherwise resolve the child, then approve the parent to resume at the integration step',
+      ],
+    };
+  }
+
+  const unmerged = children.filter((t) => !t.status?.worker?.mergedAt);
+  const unmergedNote =
+    unmerged.length > 0
+      ? ` (completed without merge: ${unmerged.map((t) => t.metadata.name).join(', ')})`
+      : '';
+
   if (!project.spec.featureBranchingEnabled || flow.integration.mode === 'disabled') {
     return {
-      primary: 'All children complete; task will move to done',
+      primary: `All children complete; task will move to done${unmergedNote}`,
       reason: 'featureBranching disabled or integration.mode=disabled',
       blockingConditions: [],
       suggestedActions: ['No action needed'],
@@ -488,8 +511,7 @@ function explainAwaitingChildren(
 
   if (flow.integration.mode === 'manual') {
     return {
-      primary:
-        'All children complete; task will move to awaiting-human for manual feature-branch merge',
+      primary: `All children complete; task will move to awaiting-human for manual feature-branch merge${unmergedNote}`,
       reason: 'integration.mode=manual',
       blockingConditions: ['Awaiting human merge'],
       suggestedActions: [
@@ -499,8 +521,7 @@ function explainAwaitingChildren(
   }
 
   return {
-    primary:
-      'All children complete; task will move to awaiting-feature-merge and schedule merge run',
+    primary: `All children complete; task will move to awaiting-feature-merge and schedule merge run${unmergedNote}`,
     reason: 'integration.mode=auto-merge',
     blockingConditions: [],
     suggestedActions: ['Wait for merge run to schedule'],

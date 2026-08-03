@@ -3,13 +3,20 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 const realKube = await import('@percussionist/kube');
 
 const state = {
-  execCalls: [] as Array<{ project: string; command: string }>,
+  execCalls: [] as Array<{ project: string; command: string; image?: string }>,
 };
 
 mock.module('@percussionist/kube', () => ({
   ...realKube,
-  execInWorkspace: async (project: string, command: string) => {
-    state.execCalls.push({ project, command });
+  execInWorkspace: async (
+    project: string,
+    command: string,
+    _mountPath?: string,
+    _timeoutMs?: number,
+    _ns?: string,
+    image?: string,
+  ) => {
+    state.execCalls.push({ project, command, image });
     return { podName: 'maint-pod', stdout: 'ok', exitCode: 0 };
   },
   getProject: async () => ({
@@ -93,5 +100,41 @@ describe('exec_in_workspace sanitization bypass', () => {
 
     expect(response.result?.isError).toBeFalsy();
     expect(state.execCalls).toHaveLength(1);
+  });
+});
+
+describe('exec_in_workspace image override', () => {
+  beforeEach(() => {
+    state.execCalls = [];
+  });
+
+  // An agent that could name the image could run an arbitrary container with the
+  // project's data PVC mounted, so the override is trusted-callers-only.
+  it('rejects an image override from untrusted callers', async () => {
+    const response = (await __test.handleMcp(
+      execRequest('ls /data', { image: 'attacker/image:latest' }),
+    )) as McpResult;
+
+    expect(response.result?.isError).toBe(true);
+    expect(response.result?.content?.[0]?.text).toContain('bearer token');
+    expect(state.execCalls).toEqual([]);
+  });
+
+  it('passes a trusted caller’s image through to the exec pod', async () => {
+    const response = (await __test.handleMcp(
+      execRequest('ls /data', { image: 'alpine/git:v2.54.0' }),
+      { trustedBearer: true },
+    )) as McpResult;
+
+    expect(response.result?.isError).toBeFalsy();
+    expect(state.execCalls).toHaveLength(1);
+    expect(state.execCalls[0]?.image).toBe('alpine/git:v2.54.0');
+  });
+
+  it('leaves the image unset when the caller does not ask for one', async () => {
+    const response = (await __test.handleMcp(execRequest('ls /data'))) as McpResult;
+
+    expect(response.result?.isError).toBeFalsy();
+    expect(state.execCalls[0]?.image).toBeUndefined();
   });
 });

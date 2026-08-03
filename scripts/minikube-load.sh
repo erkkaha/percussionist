@@ -65,19 +65,16 @@ build_one() {
   case "$name" in
     runner)
       docker build "${extra[@]}" -t "$tag" "$REPO_ROOT/images/runner"
+      docker tag "$tag" "$RUNNER_GHCR_TAG"
       ;;
     runner-claude)
       docker build "${extra[@]}" -t "$tag" \
         -f "$REPO_ROOT/images/runner-claude/Dockerfile" "$REPO_ROOT"
-      # CLAUDE_RUNNER_DEFAULTS.image is the published registry reference, not
-      # this :dev tag, so without this alias a local build would be ignored and
-      # the pod would pull the last release instead. Tag both and load both
-      # below, so what you just built is what runs.
       docker tag "$tag" "$RUNNER_CLAUDE_GHCR_TAG"
       ;;
-    runner-claude-alias)
-      # The runner-claude pass already built and tagged this reference; this
-      # pass exists only to load the second tag into minikube.
+    # Alias passes: the real build already tagged the second reference, so these
+    # exist only to load it into minikube.
+    runner-alias | runner-claude-alias | dispatcher-alias)
       ;;
     operator)
       docker build "${extra[@]}" -t "$tag" --build-arg PKG=operator \
@@ -86,6 +83,7 @@ build_one() {
     dispatcher)
       docker build "${extra[@]}" -t "$tag" --build-arg PKG=dispatcher \
         -f "$REPO_ROOT/images/node/Dockerfile" "$REPO_ROOT"
+      docker tag "$tag" "$DISPATCHER_GHCR_TAG"
       ;;
     web)
       local web_version
@@ -167,7 +165,7 @@ evict_for() {
           --timeout=60s 2>/dev/null || true
       fi
       ;;
-    runner|runner-claude|dispatcher)
+    runner|runner-claude|dispatcher|runner-alias|runner-claude-alias|dispatcher-alias)
       local runs
       runs="$(list_runs_with_pods)"
       if [[ -z "$runs" ]]; then return 0; fi
@@ -329,11 +327,22 @@ process_one() {
 # behaviour for the runner for backward compat.
 RUNNER_TAG="${IMAGE:-percussionist/runner:dev}"
 RUNNER_CLAUDE_TAG="percussionist/runner-claude:dev"
-# The reference CLAUDE_RUNNER_DEFAULTS.image actually resolves to. A local build
-# is tagged with both so it shadows the published image in-cluster.
-RUNNER_CLAUDE_GHCR_TAG="ghcr.io/erkkaha/percussionist/runner-claude:latest"
 OPERATOR_TAG="percussionist/operator:dev"
 DISPATCHER_TAG="percussionist/dispatcher:dev"
+
+# References a run pod can actually ask for, which are not always these :dev
+# tags. k8s/deploy/operator.yaml sets RUNNER_IMAGE_DEFAULT and DISPATCHER_IMAGE
+# to published ghcr refs, and those env vars override the code defaults — so
+# `--only dispatcher` loaded percussionist/dispatcher:dev, which nothing
+# requested, and the rebuilt sidecar never reached a run pod. Silent: the load
+# succeeds, the ID check passes against the tag it just loaded, and the next run
+# still comes up on the released image.
+#
+# Tag every local build with the reference the cluster resolves to as well, and
+# load both, so a local build always shadows the published one.
+RUNNER_CLAUDE_GHCR_TAG="ghcr.io/erkkaha/percussionist/runner-claude:latest"
+RUNNER_GHCR_TAG="ghcr.io/erkkaha/percussionist/runner:latest"
+DISPATCHER_GHCR_TAG="ghcr.io/erkkaha/percussionist/dispatcher:latest"
 WEB_TAG="percussionist/web:dev"
 MANAGER_TAG="percussionist/manager:dev"
 MEMORY_TAG="percussionist/memory:dev"
@@ -356,11 +365,13 @@ trap restore_all EXIT
 
 if [[ -n "$ONLY" ]]; then
   case "$ONLY" in
-    runner)     process_one runner     "$RUNNER_TAG" ;;
+    runner)     process_one runner     "$RUNNER_TAG" \
+                && process_one runner-alias "$RUNNER_GHCR_TAG" ;;
     runner-claude) process_one runner-claude "$RUNNER_CLAUDE_TAG" \
                    && process_one runner-claude-alias "$RUNNER_CLAUDE_GHCR_TAG" ;;
     operator)   if $FORCE; then RESTORE_OPERATOR=true; fi; process_one operator   "$OPERATOR_TAG" ;;
-    dispatcher) process_one dispatcher "$DISPATCHER_TAG" ;;
+    dispatcher) process_one dispatcher "$DISPATCHER_TAG" \
+                && process_one dispatcher-alias "$DISPATCHER_GHCR_TAG" ;;
     web)        if $FORCE; then RESTORE_WEB=true; fi; process_one web        "$WEB_TAG" ;;
     manager)    if $FORCE; then RESTORE_MANAGER=true; fi; process_one manager    "$MANAGER_TAG" ;;
     memory)     process_one memory     "$MEMORY_TAG" ;;
@@ -369,10 +380,12 @@ if [[ -n "$ONLY" ]]; then
   esac
 else
   process_one runner     "$RUNNER_TAG"
+  process_one runner-alias "$RUNNER_GHCR_TAG"
   process_one runner-claude "$RUNNER_CLAUDE_TAG"
   process_one runner-claude-alias "$RUNNER_CLAUDE_GHCR_TAG"
   if $FORCE; then RESTORE_OPERATOR=true; fi; process_one operator   "$OPERATOR_TAG"
   process_one dispatcher "$DISPATCHER_TAG"
+  process_one dispatcher-alias "$DISPATCHER_GHCR_TAG"
   if $FORCE; then RESTORE_WEB=true; fi;        process_one web        "$WEB_TAG"
   if $FORCE; then RESTORE_MANAGER=true; fi;    process_one manager    "$MANAGER_TAG"
   process_one memory     "$MEMORY_TAG"
@@ -382,7 +395,7 @@ fi
 # Scaled-down deployments are brought back up by the EXIT trap.
 
 echo ">> Images present in minikube:"
-minikube image ls | grep -E 'percussionist/(runner|runner-claude|operator|dispatcher|web|manager|memory|code-server)' || true
+minikube image ls | grep -E 'percussionist/(runner|runner-claude|operator|dispatcher|web|manager|memory|code-server)' | sort || true
 
 # ---------------------------------------------------------------------------
 # Pin the ingress-nginx HTTP NodePort to 30080 so the dashboard and per-run

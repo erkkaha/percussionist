@@ -1,6 +1,8 @@
 // Scheduler — determines which tasks are eligible to run.
 
 import type { Project, Task, TaskPhase } from '@percussionist/api';
+import { childMergeExpected, childSatisfiesGate } from './child-completion.js';
+import type { ResolvedFlow } from './flow.js';
 
 // Active phases that count toward WIP limit.
 const ACTIVE_PHASES: readonly TaskPhase[] = [
@@ -23,6 +25,7 @@ export function canSchedule(
   project: Project,
   allTasks: Task[],
   activeCount: number,
+  flow: ResolvedFlow,
 ): boolean {
   // WIP limit check.
   const maxParallel = project.spec.maxParallel ?? 2;
@@ -36,8 +39,7 @@ export function canSchedule(
     if (pred?.status?.phase !== 'done') {
       return false;
     }
-    // Feature branching: predecessor must be merged.
-    if (project.spec.featureBranchingEnabled && !pred.status?.worker?.mergedAt) {
+    if (!childSatisfiesGate(pred, childMergeExpected(project, flow))) {
       return false;
     }
   }

@@ -11,6 +11,7 @@ import {
   Clock,
   Copy,
   FolderOpen,
+  Users,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -128,7 +129,10 @@ function MessageBubble({
   message: SessionMessage;
   messageRefsMap: React.MutableRefObject<Map<string, HTMLDivElement>>;
 }) {
-  const { info, parts } = message;
+  const { info } = message;
+  // The session payload is proxied straight from the runner without validation,
+  // so treat a missing `parts` as an empty message rather than a blank page.
+  const parts = message.parts ?? [];
   const isUser = info.role === 'user';
 
   // Store ref for scroll target
@@ -322,10 +326,17 @@ function MessageBubble({
           </div>
         )}
 
-        {/* Task lists */}
-        {subtaskParts.map((part) => (
-          <TaskList key={part.id} todos={part.todos} />
-        ))}
+        {/* Subtasks — a todo checklist (opencode) or a spawned subagent (claude) */}
+        {subtaskParts.map((part, i) => {
+          // The claude runner leaves `id` unset when the SDK gives the tool call
+          // no id, so fall back to position for the key.
+          const key = part.id ?? `subtask-${i}`;
+          return part.todos && part.todos.length > 0 ? (
+            <TaskList key={key} todos={part.todos} />
+          ) : (
+            <SubagentRow key={key} part={part} />
+          );
+        })}
 
         {/* Todowrite tools rendered as task lists */}
         {todowriteParts.map((part) => {
@@ -395,6 +406,20 @@ function MessageBubble({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Subagent row — the claude engine's `subtask` part, which names a spawned
+// subagent instead of carrying a todo checklist.
+
+function SubagentRow({ part }: { part: SubtaskPart }) {
+  return (
+    <div className="flex items-start gap-2 rounded border border-border-muted bg-surface px-3 py-2 text-xs">
+      <Users className="h-3.5 w-3.5 mt-0.5 shrink-0 text-phase-running" />
+      <span className="font-mono text-text shrink-0">{part.agentType ?? 'subagent'}</span>
+      {part.description && <span className="text-text-muted break-words">{part.description}</span>}
     </div>
   );
 }

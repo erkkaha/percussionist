@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import type { Project, Run, RunPhase, Task, TaskPhase } from '@percussionist/api';
 import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../branch-resolver.js';
 import { auxiliaryRunName, workerRunName } from '../worker-builder.js';
+import { childMergeExpected, childSatisfiesGate } from './child-completion.js';
 import type { ReconcileEffect } from './effects.js';
 import type { ResolvedFlow } from './flow.js';
 import type { PrState } from './github-client.js';
@@ -221,7 +222,7 @@ function makeEvent(
 }
 
 function decidePending(input: ReconcileInput): ReconcileDecision {
-  const { task, project, allTasks, capacity, now } = input;
+  const { task, project, allTasks, capacity, flow, now } = input;
   const taskName = task.metadata.name;
   const fromPhase = 'pending' as TaskPhase;
 
@@ -235,7 +236,7 @@ function decidePending(input: ReconcileInput): ReconcileDecision {
     if (pred?.status?.phase !== 'done') {
       return { taskName, fromPhase, effects: [], events: [] };
     }
-    if (project.spec.featureBranchingEnabled && !pred.status?.worker?.mergedAt) {
+    if (!childSatisfiesGate(pred, childMergeExpected(project, flow))) {
       return { taskName, fromPhase, effects: [], events: [] };
     }
   }
@@ -809,7 +810,7 @@ function decideReviewing(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
-  const { task, manualActions, flow, now, capacity } = input;
+  const { task, allTasks, manualActions, flow, now, capacity } = input;
   const taskName = task.metadata.name;
   const fromPhase = 'awaiting-human' as TaskPhase;
 
@@ -819,7 +820,7 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
       taskName,
       fromPhase,
       toPhase: 'done',
-      statusPatch: { worker: { status: 'Succeeded', completedAt: now } },
+      statusPatch: { worker: { status: 'Succeeded', completedAt: now, abandoned: true } },
       effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
       events: [makeEvent(input, fromPhase, 'done', 'TaskAbandoned')],
     };
@@ -874,6 +875,24 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
             ),
           ],
         };
+      }
+      // Resume from a ChildrenDoneWithoutMerge escalation: build tasks already
+      // exist and have all finished, so re-approving must not fall through to
+      // `generating-builds` below and duplicate them — resume at the
+      // integration step instead.
+      if (task.status?.worker?.buildTasksCreated) {
+        const childTasks = allTasks.filter(
+          (t) => t.spec.type === 'BUILD' && t.spec.parentTaskRef === taskName,
+        );
+        const allChildrenDone =
+          childTasks.length > 0 && childTasks.every((t) => t.status?.phase === 'done');
+        if (allChildrenDone) {
+          const next = decideChildrenCompleteNext(input, fromPhase);
+          return {
+            ...next,
+            effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }, ...next.effects],
+          };
+        }
       }
       if (flow.plan.onApprove === 'done') {
         const planRunName = task.status?.worker?.runName;
@@ -1258,7 +1277,7 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
-  const { task, project, allTasks, flow } = input;
+  const { task, allTasks, project, flow } = input;
   const taskName = task.metadata.name;
   const fromPhase = 'awaiting-children' as TaskPhase;
 
@@ -1266,9 +1285,6 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
     (t) => t.spec.type === 'BUILD' && t.spec.parentTaskRef === taskName,
   );
   const hasChildren = childTasks.length > 0;
-  const allDone =
-    hasChildren &&
-    childTasks.every((t) => t.status?.phase === 'done' && t.status?.worker?.mergedAt);
 
   if (!hasChildren) {
     // No child BUILD tasks exist — escalate to awaiting-human with explicit reason.
@@ -1289,11 +1305,68 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
     };
   }
 
+  const allDone = childTasks.every((t) => t.status?.phase === 'done');
   if (!allDone) {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
-  // All children done — decide next step based on integration config.
+  // Terminal state once every child is `done` — no code path ever adds
+  // `mergedAt` after the fact, so the only valid outcomes from here are
+  // proceed (every child satisfies the merge gate) or escalate.
+  const mergeExpected = childMergeExpected(project, flow);
+  const unsatisfiedChildren = childTasks.filter((t) => !childSatisfiesGate(t, mergeExpected));
+
+  if (unsatisfiedChildren.length > 0) {
+    return {
+      taskName,
+      fromPhase,
+      toPhase: 'awaiting-human',
+      effects: [],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'awaiting-human',
+          'ChildrenDoneWithoutMerge',
+          `Child task(s) done without merging and not abandoned: ${unsatisfiedChildren
+            .map((t) => t.metadata.name)
+            .join(', ')}`,
+        ),
+      ],
+    };
+  }
+
+  const next = decideChildrenCompleteNext(input, fromPhase);
+  const unmergedChildren = childTasks.filter((t) => !t.status?.worker?.mergedAt);
+  if (unmergedChildren.length === 0) {
+    return next;
+  }
+
+  // Every child satisfied the gate, but at least one completed without a
+  // merge (abandoned, or the flow never merges children) — note that on the
+  // event so it stays visible even though the parent proceeds.
+  const unmergedNote = `Completed without merge: ${unmergedChildren
+    .map((t) => t.metadata.name)
+    .join(', ')}`;
+  return {
+    ...next,
+    events: next.events.map((e) => ({
+      ...e,
+      message: e.message ? `${e.message} (${unmergedNote})` : unmergedNote,
+    })),
+  };
+}
+
+// All children done — decide next step based on integration config. Shared by
+// decideAwaitingChildren and (once a task resumes from an escalation with
+// children already complete) decideAwaitingHuman's PLAN-approve branch.
+function decideChildrenCompleteNext(
+  input: ReconcileInput,
+  fromPhase: TaskPhase,
+): ReconcileDecision {
+  const { task, project, flow } = input;
+  const taskName = task.metadata.name;
+
   if (!project.spec.featureBranchingEnabled || flow.integration.mode === 'disabled') {
     return {
       taskName,
@@ -1391,6 +1464,38 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
     // PR-open run has completed. Poll GitHub for the PR state.
     if (prNumber) {
       return decidePrStateOutcome(input, prNumber, fromPhase, taskName);
+    }
+    // PR-mode with no PR yet — a merge retry cleared mergeRunName, or the
+    // PR-open run never recorded a number. Schedule a PR-open run, not a
+    // direct merge: pushing to the target bypasses the PR gate and is
+    // rejected by branch protection on protected targets.
+    if (flow.integration.mode === 'pr') {
+      const prSuffix = createHash('sha256')
+        .update(`${input.project.metadata.name}:${taskName}:pr-open`)
+        .digest('hex')
+        .slice(0, 10);
+      const prOpenRunName = auxiliaryRunName(
+        input.project.metadata.name,
+        'pr',
+        taskName,
+        prSuffix,
+      );
+      return {
+        taskName,
+        fromPhase,
+        toPhase: undefined,
+        statusPatch: { worker: { mergeRunName: prOpenRunName } },
+        effects: [{ type: 'SchedulePrOpenRun', prOpenRunName }],
+        events: [
+          makeEvent(
+            input,
+            fromPhase,
+            'awaiting-feature-merge',
+            'OpeningPullRequest',
+            'Scheduled run to open a GitHub PR from the feature branch to the target',
+          ),
+        ],
+      };
     }
     // No PR open — schedule a merge run (legacy auto-merge recovery).
     const suffix = createHash('sha256')

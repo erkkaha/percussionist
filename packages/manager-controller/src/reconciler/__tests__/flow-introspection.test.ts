@@ -309,6 +309,55 @@ describe('inspectTaskFlow — awaiting-children', () => {
     const result = inspectTaskFlow(planTask, project, [planTask, buildA]);
     expect(result.expectedNext.primary).toContain('done');
   });
+
+  it('child done without merge, not abandoned, merge expected → escalate to awaiting-human', () => {
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-children',
+      type: 'PLAN',
+    });
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+    });
+    const result = inspectTaskFlow(planTask, featProject, [planTask, buildA]);
+    expect(result.expectedNext.primary).toContain('awaiting-human');
+    expect(result.expectedNext.primary).toContain('done without merging and not abandoned');
+    expect(result.expectedNext.blockingConditions[0]).toContain('build-a');
+  });
+
+  it('child done via abandonment satisfies the gate → proceeds instead of waiting', () => {
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-children',
+      type: 'PLAN',
+    });
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      abandoned: true,
+    });
+    const result = inspectTaskFlow(planTask, featProject, [planTask, buildA]);
+    expect(result.expectedNext.primary).toContain('awaiting-feature-merge');
+    expect(result.expectedNext.primary).toContain('completed without merge: build-a');
+  });
+
+  it('child done via merge-less flow satisfies the gate → proceeds instead of waiting', () => {
+    const planBuildProject = makeProject('test-project', { featureBranchingEnabled: false });
+    planBuildProject.spec.flow = { preset: 'plan-build' };
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-children',
+      type: 'PLAN',
+    });
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+    });
+    const result = inspectTaskFlow(planTask, planBuildProject, [planTask, buildA]);
+    expect(result.expectedNext.primary).toContain('done');
+    expect(result.expectedNext.primary).toContain('completed without merge: build-a');
+  });
 });
 
 describe('inspectTaskFlow — failed', () => {

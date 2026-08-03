@@ -19,13 +19,18 @@ import {
   PLURAL_PROJECT,
   PLURAL_RUN,
   type Project,
+  type ProjectStatus,
   type Run,
   RunPhase,
   type RunStatus,
   TERMINAL_PHASES,
 } from '@percussionist/api';
 import { makeNodeApiClient } from '@percussionist/kube';
-import { assertCredentialsUnambiguous, resolveRunnerSpec } from './adapters/opencode-config.js';
+import {
+  assertCredentialsUnambiguous,
+  resolveRunnerSpec,
+  ValidationError,
+} from './adapters/opencode-config.js';
 import { resolveAgents } from './agent-resolver.js';
 import {
   ideDeploymentName,
@@ -64,6 +69,13 @@ const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOStr
 const err = (...args: unknown[]) =>
   console.error(`[operator ${new Date().toISOString()}]`, ...args);
 
+// Extracts a loggable message from a caught value without throwing, even when
+// the value is null/undefined or not an Error (e.g. a rejected promise with
+// no reason at all).
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 // ---------------------------------------------------------------------------
 // K8s clients
 
@@ -91,7 +103,45 @@ async function patchStatus(run: Run, patch: RunStatus): Promise<void> {
       setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
     );
   } catch (e) {
-    err(`patchStatus(${run.metadata.name}):`, (e as Error).message);
+    err(`patchStatus(${run.metadata.name}):`, errorMessage(e));
+  }
+}
+
+// Merge-patches Project.status.reconcile only — never touches status.board,
+// which is owned by the manager. Modeled on patchStatus above; never throws.
+async function patchProjectReconcileStatus(
+  project: Project,
+  reconcile: NonNullable<ProjectStatus['reconcile']>,
+): Promise<void> {
+  const ns = project.metadata.namespace ?? '';
+  const name = project.metadata.name;
+  try {
+    await co.patchNamespacedCustomObjectStatus(
+      {
+        group: API_GROUP,
+        version: API_VERSION,
+        namespace: ns,
+        plural: PLURAL_PROJECT,
+        name,
+        // A JSON merge patch (RFC 7386) leaves keys absent from the patch
+        // untouched, so omitting `message` when it's undefined (the Ready
+        // path) would leave a stale error message in place forever. Sending
+        // `null` explicitly tells the apiserver to delete the key. `next`
+        // (the typed value used for the unchanged-status comparison) stays
+        // `string | undefined` — only the wire body needs the `null` cast.
+        body: {
+          status: {
+            reconcile: {
+              ...reconcile,
+              message: (reconcile.message ?? null) as unknown as string | undefined,
+            },
+          },
+        },
+      },
+      setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
+    );
+  } catch (e) {
+    err(`patchProjectReconcileStatus(${ns}/${name}):`, errorMessage(e));
   }
 }
 
@@ -262,8 +312,9 @@ It returns the current phase, allowed transitions, resolved project
 flow, and expected next action, which helps avoid invalid
 set_task_state or force_retry calls.
 
-Workers can report off-task findings (bugs, security issues, tech debt)
-via the report_finding tool. The findings system auto-triages high/critical
+Workers can report issues unrelated to their own task (bugs, security
+issues, tech debt) via the report_unrelated_issue tool, which files them
+into this project's findings inbox. The findings system auto-triages high/critical
 bugs and security issues into tasks. Use list_findings to see all reported
 findings, update_finding to change their status or severity, and
 create_task_from_finding to promote lower-severity issues to tasks manually.
@@ -391,7 +442,12 @@ export async function reconcile(run: Run): Promise<void> {
       await core.readNamespacedPod({ name, namespace: ns });
       await cleanupChildResources(run, ns);
     } catch {
-      // Pod already gone — nothing to clean up.
+      // Pod already gone — child resources confirmed cleaned up. Drop the run
+      // from the resync set so it stops being re-enqueued every 10s for the
+      // rest of its TTL retention window. The TTL loop (ttl.ts) lists runs
+      // directly from the API, so this does not affect TTL-based deletion.
+      log(`dequeuing terminal run ${ns}/${name}: pod confirmed gone`);
+      dequeue(`${ns}/${name}`);
     }
     return;
   }
@@ -408,12 +464,19 @@ export async function reconcile(run: Run): Promise<void> {
     .catch(() => undefined);
   const engine = deriveEngine(run.spec);
   const runnerSpec = resolveRunnerSpec(cs, engine);
-  assertCredentialsUnambiguous({
-    engine,
-    llmKeysSecret: run.spec.secrets?.llmKeysSecret,
-    authSecretName: run.spec.secrets?.authSecret?.name,
-    runName: `${run.metadata.namespace}/${run.metadata.name}`,
-  });
+  try {
+    assertCredentialsUnambiguous({
+      engine,
+      llmKeysSecret: run.spec.secrets?.llmKeysSecret,
+      authSecretName: run.spec.secrets?.authSecret?.name,
+      runName: `${run.metadata.namespace}/${run.metadata.name}`,
+    });
+  } catch (e) {
+    if (!(e instanceof ValidationError)) throw e;
+    err(`reconcile(${ns}/${name}):`, e.message);
+    await patchStatus(run, { phase: RunPhase.Failed, message: e.message });
+    return;
+  }
   const dispatcherImage = run.spec.dispatcher?.image ?? cs?.spec?.dispatcher?.image;
 
   // Resolve agents from ClusterAgent CRs + inline escape hatch.
@@ -979,6 +1042,132 @@ export async function reconcileProject(project: Project): Promise<void> {
     // memory-service disabled or no source — clean up if exists
     await cleanupMemoryService(project);
   }
+}
+
+// ---------------------------------------------------------------------------
+// safeReconcileProject — crash-safe wrapper around reconcileProject
+//
+// The informer calls this instead of reconcileProject directly. It never
+// throws: every error is logged and surfaced into status.reconcile instead of
+// propagating to an unhandled rejection (which would exit(1) the operator —
+// see index.ts's `unhandledRejection` handler). A single bad Project CR (e.g.
+// an invalid spec.codeServer.resources value rejected by the apiserver) must
+// not stall reconciliation for every other Project/Run in the cluster.
+
+const PROJECT_RECONCILE_MESSAGE_MAX_LENGTH = 2048; // must match k8s/crds/project.yaml maxLength
+const PROJECT_RETRY_DELAY_MS = 30_000;
+
+// Classifies an error from reconcileProject for retry purposes. HTTP 4xx
+// (e.g. the apiserver rejecting a garbage resources.limits.memory value with
+// 422) reflects a permanent spec problem — retrying won't help until the
+// spec changes, so it is not requeued. Everything else (5xx, network errors,
+// or no numeric code at all) is treated as transient and gets one retry.
+export function classifyProjectReconcileError(e: unknown): 'permanent' | 'transient' {
+  const code =
+    (e as { statusCode?: number; code?: number } | null)?.statusCode ??
+    (e as { code?: number } | null)?.code;
+  if (typeof code === 'number' && code >= 400 && code < 500) return 'permanent';
+  return 'transient';
+}
+
+// True when `next` differs from the Project's current status.reconcile.
+// Patching Project status re-triggers the informer's `update` callback, so an
+// unconditional patch would hot-loop; callers must skip the patch when this
+// returns false. `next` must never include a timestamp or other always-
+// changing field, or every reconcile would "differ" and the loop would never
+// converge. A missing `message` and an explicit `null`/`undefined` one are
+// treated as equivalent, since patchProjectReconcileStatus sends `null` (RFC
+// 7386 delete) for an absent message and the apiserver may reflect that back
+// as either a deleted key or a `null` value.
+export function hasReconcileStatusChanged(
+  current: ProjectStatus['reconcile'] | undefined,
+  next: NonNullable<ProjectStatus['reconcile']>,
+): boolean {
+  const normalize = (message: string | null | undefined) => message ?? undefined;
+  return (
+    current?.state !== next.state ||
+    normalize(current?.message) !== normalize(next.message) ||
+    current?.observedGeneration !== next.observedGeneration
+  );
+}
+
+// Canonical `namespace/name` key for a Project, shared between reconciler.ts
+// (retry-timer map) and index.ts (delete-path timer cancellation) so the two
+// can never disagree about a project's key when a metadata field is missing.
+export function projectKey(project: Project): string {
+  return `${project.metadata.namespace ?? ''}/${project.metadata.name ?? ''}`;
+}
+
+function truncateReconcileMessage(message: string): string {
+  return message.length > PROJECT_RECONCILE_MESSAGE_MAX_LENGTH
+    ? message.slice(0, PROJECT_RECONCILE_MESSAGE_MAX_LENGTH)
+    : message;
+}
+
+// One pending retry timer per project key, so retries never stack.
+const projectRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+// Cancels any pending delayed retry for a project key. Called on the Project
+// delete path so a retry never fires for (and re-reconciles) a deleted Project.
+export function cancelProjectRetry(key: string): void {
+  const timer = projectRetryTimers.get(key);
+  if (timer) {
+    clearTimeout(timer);
+    projectRetryTimers.delete(key);
+  }
+}
+
+function scheduleProjectRetry(key: string, project: Project): void {
+  if (projectRetryTimers.has(key)) return; // already scheduled — don't stack
+  const timer = setTimeout(() => {
+    projectRetryTimers.delete(key);
+    // The retry itself does not schedule a further retry on failure — it
+    // waits for the next informer event/relist, so a persistently transient
+    // error doesn't turn into an unbounded retry chain.
+    void reconcileProjectOnce(project, false);
+  }, PROJECT_RETRY_DELAY_MS);
+  projectRetryTimers.set(key, timer);
+}
+
+async function reconcileProjectOnce(project: Project, allowRetry: boolean): Promise<void> {
+  const ns = project.metadata.namespace ?? '';
+  const name = project.metadata.name ?? '';
+  const key = projectKey(project);
+  const logPrefix = `[project/${ns}/${name}]`;
+  // Any event that reaches a real reconcile (a fresh informer add/update, or
+  // this project's own retry firing) supersedes a still-pending retry armed
+  // against an older snapshot of this Project — otherwise a stale retry could
+  // fire later and silently re-apply an outdated spec over a newer, already-
+  // successful reconcile.
+  cancelProjectRetry(key);
+  try {
+    await reconcileProject(project);
+    const next: NonNullable<ProjectStatus['reconcile']> = {
+      state: 'Ready',
+      observedGeneration: project.metadata.generation,
+    };
+    if (hasReconcileStatusChanged(project.status?.reconcile, next)) {
+      await patchProjectReconcileStatus(project, next);
+    }
+  } catch (e) {
+    const message = truncateReconcileMessage(errorMessage(e));
+    err(`${logPrefix} reconcile failed:`, message);
+    const next: NonNullable<ProjectStatus['reconcile']> = {
+      state: 'Error',
+      message,
+      observedGeneration: project.metadata.generation,
+    };
+    if (hasReconcileStatusChanged(project.status?.reconcile, next)) {
+      await patchProjectReconcileStatus(project, next);
+    }
+    if (allowRetry && classifyProjectReconcileError(e) === 'transient') {
+      scheduleProjectRetry(key, project);
+    }
+  }
+}
+
+export async function safeReconcileProject(project: Project): Promise<void> {
+  await reconcileProjectOnce(project, true);
 }
 
 /**

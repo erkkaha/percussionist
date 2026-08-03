@@ -182,8 +182,10 @@ describe('renderClaudeAgentFile', () => {
 });
 
 describe('renderClaudeSettings', () => {
-  test('an all-allow agent produces no restrictions', () => {
-    expect(renderClaudeSettings([BUILDER], 'builder')).toBe('{}');
+  test('an all-allow agent produces no restrictions, only the attribution opt-out', () => {
+    expect(JSON.parse(renderClaudeSettings([BUILDER], 'builder'))).toEqual({
+      includeCoAuthoredBy: false,
+    });
   });
 
   test('a denied tool becomes a deny rule under its Claude Code name', () => {
@@ -192,6 +194,7 @@ describe('renderClaudeSettings', () => {
       content: '---\nname: reader\npermission:\n  bash: deny\n  read: allow\n---\nbody',
     };
     expect(JSON.parse(renderClaudeSettings([denied], 'reader'))).toEqual({
+      includeCoAuthoredBy: false,
       permissions: { deny: ['Bash'] },
     });
   });
@@ -203,6 +206,7 @@ describe('renderClaudeSettings', () => {
       content: '---\nname: a\npermission:\n  webfetch: ask\n---\nbody',
     };
     expect(JSON.parse(renderClaudeSettings([asked], 'a'))).toEqual({
+      includeCoAuthoredBy: false,
       permissions: { deny: ['WebFetch'] },
     });
   });
@@ -232,7 +236,9 @@ describe('renderClaudeSettings', () => {
       content:
         '---\nname: reviewer\npermission:\n  edit: deny\n  webfetch: deny\n  todowrite: deny\n---\nb',
     };
-    expect(renderClaudeSettings([planner, reviewer], 'planner')).toBe('{}');
+    expect(JSON.parse(renderClaudeSettings([planner, reviewer], 'planner'))).toEqual({
+      includeCoAuthoredBy: false,
+    });
   });
 
   test('the primary agent still gets its own denials with others mounted', () => {
@@ -262,12 +268,32 @@ describe('renderClaudeSettings', () => {
   test('an unresolvable primary among several agents yields no restrictions', () => {
     const a: AgentDef = { name: 'a', content: '---\nname: a\npermission:\n  bash: deny\n---\nb' };
     const b: AgentDef = { name: 'b', content: '---\nname: b\npermission:\n  read: deny\n---\nb' };
-    expect(renderClaudeSettings([a, b], undefined)).toBe('{}');
-    expect(renderClaudeSettings([a, b], 'nonexistent')).toBe('{}');
+    expect(JSON.parse(renderClaudeSettings([a, b], undefined)).permissions).toBeUndefined();
+    expect(JSON.parse(renderClaudeSettings([a, b], 'nonexistent')).permissions).toBeUndefined();
   });
 
   test('no mounted agents yields no restrictions', () => {
-    expect(renderClaudeSettings([], 'planner')).toBe('{}');
+    expect(JSON.parse(renderClaudeSettings([], 'planner')).permissions).toBeUndefined();
+  });
+
+  // Repo policy: run-pod commits must not carry "Co-Authored-By: Claude ..."
+  // trailers. The flag must be present in every rendering — including the
+  // no-agents case — which also guarantees the content is never "{}", so
+  // runner-claude's writeClaudeSettings() always materialises the file
+  // instead of skipping it.
+  test('every rendering opts out of commit attribution and is never the empty object', () => {
+    const denied: AgentDef = {
+      name: 'a',
+      content: '---\nname: a\npermission:\n  bash: deny\n---\nb',
+    };
+    for (const rendered of [
+      renderClaudeSettings([], undefined),
+      renderClaudeSettings([BUILDER], 'builder'),
+      renderClaudeSettings([denied], 'a'),
+    ]) {
+      expect(rendered.trim()).not.toBe('{}');
+      expect(JSON.parse(rendered).includeCoAuthoredBy).toBe(false);
+    }
   });
 
   // `list` has no Claude Code counterpart; guessing at one would deny a tool the
@@ -277,7 +303,7 @@ describe('renderClaudeSettings', () => {
       name: 'a',
       content: '---\nname: a\npermission:\n  list: deny\n---\nbody',
     };
-    expect(renderClaudeSettings([denied], 'a')).toBe('{}');
+    expect(JSON.parse(renderClaudeSettings([denied], 'a')).permissions).toBeUndefined();
   });
 });
 

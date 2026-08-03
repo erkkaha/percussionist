@@ -52,6 +52,8 @@ export interface NotificationEntry {
   body?: string;
   sound: DrumSound;
   at: number; // Date.now()
+  /** App-relative destination URL to navigate to on click, if any. */
+  url?: string;
 }
 
 const HISTORY_CAP = 50;
@@ -237,6 +239,8 @@ export interface NotifyOptions {
   /** Unique key — if we've already notified for this key, skip. */
   key: string;
   sound: DrumSound;
+  /** App-relative destination URL to navigate to on click (optional). */
+  url?: string;
 }
 
 /**
@@ -255,6 +259,7 @@ export function notify(opts: NotifyOptions): void {
     body: opts.body,
     sound: opts.sound,
     at: Date.now(),
+    url: opts.url,
   };
   _history.unshift(entry);
   if (_history.length > HISTORY_CAP) _history.length = HISTORY_CAP;
@@ -277,7 +282,16 @@ export function notify(opts: NotifyOptions): void {
       body: opts.body,
       tag: opts.key,
       icon: '/icon-192.png',
+      ...(opts.url !== undefined ? { data: { url: opts.url } } : {}),
     });
+    // Navigate to the linked content when the OS notification is clicked.
+    if (opts.url !== undefined) {
+      const url = opts.url;
+      n.onclick = () => {
+        window.focus();
+        window.location.assign(url);
+      };
+    }
     // Auto-close after 6 s.
     setTimeout(() => n.close(), 6_000);
   } catch {

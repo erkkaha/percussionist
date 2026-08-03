@@ -1,6 +1,108 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.7] - 2026-08-02
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Replace stale terminal runs when retrying a merge _(manager)_
+- Consume nested null delete-markers when editing a project _(web)_
+## [v0.2.6] - 2026-07-31
+
+### <!-- 0 -->🚀 Features
+
+- Add url deep-link support to in-tab notification core _(web)_
+- Emit deep links from board and run notification producers _(web)_
+- Render bell notifications as clickable links _(web)_
+- Deep-link task push notifications to the task detail panel _(web)_
+- Add project color field to spec, CRD, and routes _(api)_
+- Add project color hash helper and client type support _(web)_
+- Render project color chip in sidebar _(web)_
+- Add color picker to project create/edit form _(web)_
+- Render project color strip on board view _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Fail with the missing parent branch instead of a bare exit 128 _(operator)_
+- Survive a missing sqlite-vec instead of failing every test _(memory-service)_
+- Restore Agents table vertical scroll on medium screens _(web)_
+- Apply unified table-scroll wrapper to remaining route table views _(web)_
+- Show board chat context button on tablets without hover _(web)_
+- Keep a retried turn from settling the run _(runner-claude)_
+- Tell workers the run ends when they stop _(manager)_
+- Tell reviewers where findings go, rename report_finding _(agents)_
+- Survive a missing sqlite-vec instead of failing every test _(memory-service)_
+- Merge from the local source branch instead of origin/<source> _(manager)_
+- Promote ideas to the backlog without a worker status _(web)_
+
+### <!-- 10 -->💼 Other
+
+- Project identity colors for sidebar and board (percussionist-dev-plan-580f71)
+
+### <!-- 3 -->📚 Documentation
+
+- Add plan for notification deep links _(plan)_
+- Add percussionist-dev-plan-8b3e46 _(plan)_
+- Plan for tablet-visible board chat context button _(web)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add unit tests for notification core deep links _(web)_
+- Add regression coverage for table scroll wrappers _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Sync pnpm-lock.yaml with committed devDependency bumps
+- Release v0.2.6
+## [v0.2.5] - 2026-07-31
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Load jest-dom after happy-dom installs document _(web)_
+- Install bun and pnpm so agents and initScripts can build _(runner-claude)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.5
+## [v0.2.4] - 2026-07-31
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Make project edits resettable _(web)_
+- Mount known_hosts outside the read-only git-ssh secret _(operator)_
+- Render task diffs when the project pins a git-less exec image _(web)_
+- Render claude-engine subtask parts without crashing _(web)_
+
+### <!-- 6 -->🧪 Testing
+
+- Isolate test files so module mocks stop leaking across them _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update bun to 1.3.14 in CI workflow
+- Release v0.2.4
+## [v0.2.3] - 2026-07-29
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Persist project merge behavior edits _(web)_
+- Count every message's usage, not just the transcript tail _(dispatcher)_
+- Retry a truncated turn that reports itself successful _(runner-claude)_
+- Load run-pod images under the reference the cluster asks for _(scripts)_
+- Detect a truncated turn on the assistant message _(runner-claude)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add LXD MicroK8s Tailscale playbook
+
+### <!-- 6 -->🧪 Testing
+
+- Stop the auth bypass test creating a real Project _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Log the shape of a turn that ends without retrying _(runner-claude)_
+- Release v0.2.3
 ## [v0.2.2] - 2026-07-29
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -12,6 +114,10 @@ All notable changes to Percussionist are documented here.
 - Stop board-view's BoardHeader stub leaking into other suites _(web)_
 - Stop board-view's react-query stub leaking into other suites _(web)_
 - Give the board suites a real router instead of stubbing Link _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.2
 ## [v0.2.1] - 2026-07-26
 
 ### <!-- 0 -->🚀 Features

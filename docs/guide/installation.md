@@ -115,5 +115,6 @@ kubectl -n percussionist get crd | grep percussionist
 
 ## Next
 
+- [LXD, MicroK8s, and Tailscale](/guide/lxd-microk8s-tailscale) — tailnet-only single-node playbook
 - [Configuration](/guide/configuration) — project spec reference
 - [Getting Started](/guide/getting-started) — first run walkthrough

@@ -120,6 +120,58 @@ describe('decide — pending', () => {
     expect(result.toPhase).toBe('scheduled');
   });
 
+  it('pending + done-unmerged-unabandoned predecessor + merge-configured flow → no-op', () => {
+    const fbProject = makeProject('test-project', { featureBranchingEnabled: true });
+    const pred = makeTask('pred', 'test-project', { phase: 'done' });
+    const task = makeTask('t1', 'test-project', { phase: 'pending', predecessorRef: 'pred' });
+    const result = decide({
+      task,
+      project: fbProject,
+      allTasks: [pred, task],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(fbProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBeUndefined();
+  });
+
+  it('pending + abandoned predecessor + merge-configured flow → scheduled', () => {
+    const fbProject = makeProject('test-project', { featureBranchingEnabled: true });
+    const pred = makeTask('pred', 'test-project', { phase: 'done', abandoned: true });
+    const task = makeTask('t1', 'test-project', { phase: 'pending', predecessorRef: 'pred' });
+    const result = decide({
+      task,
+      project: fbProject,
+      allTasks: [pred, task],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(fbProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe('scheduled');
+  });
+
+  it('pending + done predecessor + merge-less flow (plan-build) → scheduled', () => {
+    const planBuildProject = makeProject('test-project', { featureBranchingEnabled: true });
+    planBuildProject.spec.flow = { preset: 'plan-build' };
+    const pred = makeTask('pred', 'test-project', { phase: 'done' });
+    const task = makeTask('t1', 'test-project', { phase: 'pending', predecessorRef: 'pred' });
+    const result = decide({
+      task,
+      project: planBuildProject,
+      allTasks: [pred, task],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(planBuildProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe('scheduled');
+  });
+
   it('pending + future retryAfter → no-op', () => {
     const task = makeTask('t1', 'test-project', {
       phase: 'pending',
@@ -323,6 +375,7 @@ describe('decide — awaiting-human', () => {
     const task = makeTask('t1', 'test-project', { phase: 'awaiting-human' });
     const result = decide(makeInput(task, { manualActions: { abandon: true } }));
     expect(result.toPhase).toBe('done');
+    expect((result.statusPatch?.worker as any).abandoned).toBe(true);
   });
 
   it('awaiting-human + requestChanges → rework-requested', () => {
@@ -656,7 +709,9 @@ describe('decide — awaiting-children', () => {
     expect((result.statusPatch?.worker as any).mergeRunName).toBeDefined();
   });
 
-  it('BUILD children done but missing mergedAt → no-op (wait for merge cycle)', () => {
+  it('BUILD children done but missing mergedAt + merge expected → awaiting-human ChildrenDoneWithoutMerge', () => {
+    // featProject resolves to the default 'plan-build-review-merge' preset,
+    // where build.onApprove === 'merge' — children are expected to merge.
     const planTask = makeTask('plan-1', 'test-project', {
       phase: 'awaiting-children',
       type: 'PLAN',
@@ -665,7 +720,7 @@ describe('decide — awaiting-children', () => {
       type: 'BUILD',
       phase: 'done',
       parentTaskRef: 'plan-1',
-      // No mergedAt — BUILD was approved via onApprove='done' without merge
+      // No mergedAt and not abandoned — anomalous done-without-merge state.
     });
     const buildB = makeTask('build-b', 'test-project', {
       type: 'BUILD',
@@ -683,8 +738,9 @@ describe('decide — awaiting-children', () => {
       capacity: { activeCount: 0, maxParallel: 2 },
       now,
     });
-    expect(result.toPhase).toBeUndefined();
-    expect(result.effects).toEqual([]);
+    expect(result.toPhase).toBe('awaiting-human');
+    expect(result.events[0]?.reason).toBe('ChildrenDoneWithoutMerge');
+    expect(result.events[0]?.message).toContain('build-a');
   });
 
   it('all BUILD children done with mergedAt + feature branching disabled → done', () => {
@@ -738,6 +794,195 @@ describe('decide — awaiting-children', () => {
     expect(result.toPhase).toBe('awaiting-feature-merge');
     expect(result.effects.some((e) => e.type === 'SchedulePrOpenRun')).toBe(true);
     expect((result.statusPatch?.worker as any).mergeRunName).toBeDefined();
+  });
+
+  it('plan-build preset + featureBranchingEnabled: false, children done via BuildApprovedDone → parent proceeds', () => {
+    const planBuildProject = makeProject('test-project');
+    planBuildProject.spec.flow = { preset: 'plan-build' };
+    const planBuildFlow = resolveFlow(planBuildProject);
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-children',
+      type: 'PLAN',
+    });
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      // No mergedAt — plan-build's onApprove: 'done' completes without merge.
+    });
+    const result = decide({
+      task: planTask,
+      project: planBuildProject,
+      allTasks: [planTask, buildA],
+      observed: {},
+      manualActions: {},
+      flow: planBuildFlow,
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe('done');
+    expect(result.events[0]?.reason).toBe('AllChildrenDoneNoIntegration');
+  });
+
+  it('plan-build preset + featureBranchingEnabled: true, children done without mergedAt → parent proceeds per integration.mode', () => {
+    const planBuildProject = makeProject('test-project', { featureBranchingEnabled: true });
+    planBuildProject.spec.flow = { preset: 'plan-build' };
+    const planBuildFlow = resolveFlow(planBuildProject);
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-children',
+      type: 'PLAN',
+    });
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      // plan-build's build.onApprove is 'done', so merge is never expected.
+    });
+    const result = decide({
+      task: planTask,
+      project: planBuildProject,
+      allTasks: [planTask, buildA],
+      observed: {},
+      manualActions: {},
+      flow: planBuildFlow,
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    // plan-build's integration.mode is 'auto-merge' — parent schedules the
+    // feature-branch merge instead of waiting forever.
+    expect(result.toPhase).toBe('awaiting-feature-merge');
+    expect(result.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(true);
+  });
+
+  it('plan-build-review-merge: one child done+abandoned, rest merged → parent proceeds, event mentions unmerged child', () => {
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-children',
+      type: 'PLAN',
+    });
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      abandoned: true,
+      // No mergedAt — abandoned children never merge.
+    });
+    const buildB = makeTask('build-b', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      mergedAt: '2026-05-29T00:00:00.000Z',
+    });
+    const result = decide({
+      task: planTask,
+      project: featProject,
+      allTasks: [planTask, buildA, buildB],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(featProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe('awaiting-feature-merge');
+    expect(result.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(true);
+    expect(result.events[0]?.message).toContain('build-a');
+  });
+
+  it('plan-build-review-merge: one child done, unmerged, not abandoned → awaiting-human ChildrenDoneWithoutMerge', () => {
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-children',
+      type: 'PLAN',
+    });
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      // No mergedAt and not abandoned.
+    });
+    const buildB = makeTask('build-b', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      mergedAt: '2026-05-29T00:00:00.000Z',
+    });
+    const result = decide({
+      task: planTask,
+      project: featProject,
+      allTasks: [planTask, buildA, buildB],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(featProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBe('awaiting-human');
+    expect(result.events[0]?.reason).toBe('ChildrenDoneWithoutMerge');
+    expect(result.events[0]?.message).toContain('build-a');
+  });
+
+  it('resume from ChildrenDoneWithoutMerge: approve PLAN in awaiting-human with build tasks already created → integration step, not generating-builds', () => {
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-human',
+      type: 'PLAN',
+    });
+    (planTask.status as any).worker.buildTasksCreated = true;
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      // No mergedAt and not abandoned — this is what escalated the parent.
+    });
+    const buildB = makeTask('build-b', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      mergedAt: '2026-05-29T00:00:00.000Z',
+    });
+    const result = decide({
+      task: planTask,
+      project: featProject,
+      allTasks: [planTask, buildA, buildB],
+      observed: {},
+      manualActions: { approved: true },
+      flow: resolveFlow(featProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    // plan-build-review-merge's integration.mode is 'auto-merge' — resumes at
+    // the feature-branch merge step instead of restarting buildgen.
+    expect(result.toPhase).toBe('awaiting-feature-merge');
+    expect(result.toPhase).not.toBe('generating-builds');
+    expect(result.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(true);
+    expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(true);
+  });
+
+  it('mixed children (done + awaiting-merge) → still no-op wait', () => {
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-children',
+      type: 'PLAN',
+    });
+    const buildA = makeTask('build-a', 'test-project', {
+      type: 'BUILD',
+      phase: 'done',
+      parentTaskRef: 'plan-1',
+      mergedAt: '2026-05-29T00:00:00.000Z',
+    });
+    const buildB = makeTask('build-b', 'test-project', {
+      type: 'BUILD',
+      phase: 'awaiting-merge',
+      parentTaskRef: 'plan-1',
+    });
+    const result = decide({
+      task: planTask,
+      project: featProject,
+      allTasks: [planTask, buildA, buildB],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(featProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects).toEqual([]);
   });
 });
 
@@ -876,6 +1121,32 @@ describe('decide — awaiting-feature-merge', () => {
     const result = decide(makeInput(task));
     expect(result.toPhase).toBeUndefined();
     expect(result.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(true);
+    expect((result.statusPatch?.worker as any).mergeRunName).toBeDefined();
+  });
+
+  it('no merge run name + pr integration mode + no prNumber → schedule PR-open run, not merge run', () => {
+    // Merge-retry path: the approval cleared mergeRunName. In PR mode the
+    // recovery must open a PR — a direct merge run would push to the target
+    // and bypass (or be rejected by) branch protection.
+    const prProject = makeProject('test-project', { featureBranchingEnabled: true });
+    prProject.spec.flow = { ...prProject.spec.flow, integration: { mode: 'pr' } };
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    const result = decide({
+      task,
+      project: prProject,
+      allTasks: [task],
+      observed: {},
+      manualActions: {},
+      flow: resolveFlow(prProject),
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects.some((e) => e.type === 'SchedulePrOpenRun')).toBe(true);
+    expect(result.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(false);
     expect((result.statusPatch?.worker as any).mergeRunName).toBeDefined();
   });
 
