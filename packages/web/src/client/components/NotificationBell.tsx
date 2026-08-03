@@ -5,7 +5,9 @@
 // - Unread count resets to 0 as soon as the panel opens (auto-read).
 // - History is in-memory per page load (up to 50 entries, newest first).
 
+import { ChevronRight } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useNotificationHistory } from '../hooks/useNotificationHistory';
 import type { DrumSound, NotificationEntry } from '../lib/notifications';
 
@@ -53,7 +55,7 @@ function BellIcon({ className }: { className?: string }) {
   );
 }
 
-function NotificationItem({ entry }: { entry: NotificationEntry }) {
+function NotificationItem({ entry, onClick }: { entry: NotificationEntry; onClick?: () => void }) {
   const [, forceUpdate] = useState(0);
 
   // Re-render every 30 s so relative timestamps stay fresh while panel is open.
@@ -62,16 +64,35 @@ function NotificationItem({ entry }: { entry: NotificationEntry }) {
     return () => clearInterval(id);
   }, []);
 
-  return (
-    <div className="flex items-start gap-2.5 px-3 py-2.5 border-b border-border-muted last:border-0 hover:bg-surface-overlay transition-colors">
+  const rowClass =
+    'flex items-start gap-2.5 px-3 py-2.5 border-b border-border-muted last:border-0 hover:bg-surface-overlay transition-colors';
+
+  const rowContent = (
+    <>
       <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${DOT_COLOR[entry.sound]}`} />
       <div className="flex-1 min-w-0">
         <p className="text-xs font-medium text-text leading-tight">{entry.title}</p>
         {entry.body && <p className="text-xs text-text-dim mt-0.5 truncate">{entry.body}</p>}
       </div>
       <span className="text-xs text-text-dim shrink-0 mt-0.5">{formatRelative(entry.at)}</span>
-    </div>
+    </>
   );
+
+  // Entries with a destination URL render as links (navigate + close the
+  // panel); entries without one stay as plain, non-clickable rows.
+  if (entry.url) {
+    return (
+      <Link to={entry.url} onClick={onClick} className={`group ${rowClass}`}>
+        {rowContent}
+        <ChevronRight
+          className="w-3.5 h-3.5 shrink-0 mt-0.5 text-text-dim group-hover:text-text transition-colors"
+          aria-hidden="true"
+        />
+      </Link>
+    );
+  }
+
+  return <div className={rowClass}>{rowContent}</div>;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +184,16 @@ export default function NotificationBell() {
             {entries.length === 0 ? (
               <p className="text-xs text-text-dim text-center py-6">No notifications yet</p>
             ) : (
-              entries.map((entry) => <NotificationItem key={entry.key} entry={entry} />)
+              entries.map((entry) => (
+                <NotificationItem
+                  key={entry.key}
+                  entry={entry}
+                  onClick={() => {
+                    setOpen(false);
+                    markAllRead();
+                  }}
+                />
+              ))
             )}
           </div>
         </div>

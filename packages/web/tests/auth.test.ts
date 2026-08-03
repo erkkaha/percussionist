@@ -16,7 +16,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { createApp } from '../src/server/app.js';
+import { createApp, redactTokenParam } from '../src/server/app.js';
 import { closeDb } from '../src/server/db.js';
 import { resetAuth } from '../src/server/lib/better-auth.js';
 
@@ -383,5 +383,52 @@ describe('x-auth-token header', () => {
       body: JSON.stringify({ task: 't1' }),
     });
     expect(res.status).not.toBe(401);
+  });
+});
+
+// ===========================================================================
+// ?token= query param is not a credential
+//
+// Query strings are printed by hono/logger on every request, so `getAuthValue`
+// no longer reads `?token=` at all — even the legacy shared secret, even with
+// LEGACY_TOKEN_AUTH=1, must arrive via a header or session cookie.
+// ===========================================================================
+
+describe('?token= query param is not a credential', () => {
+  it('GET /api/settings?token=<valid secret> → 401', async () => {
+    const res = await req('/api/settings?token=test-secret-token-12345');
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/runs?token=<valid secret> → 401', async () => {
+    const res = await req('/api/runs?token=test-secret-token-12345', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: 't1' }),
+    });
+    expect(res.status).toBe(401);
+  });
+});
+
+// ===========================================================================
+// redactTokenParam — logger output must never contain a raw token value.
+// ===========================================================================
+
+describe('redactTokenParam', () => {
+  it('masks a token value in a logger-style line', () => {
+    expect(redactTokenParam('<-- GET /api/settings?token=abc123')).toBe(
+      '<-- GET /api/settings?token=[REDACTED]',
+    );
+  });
+
+  it('masks only the token value among multiple query params', () => {
+    expect(redactTokenParam('GET /api/runs?foo=1&token=abc&bar=2')).toBe(
+      'GET /api/runs?foo=1&token=[REDACTED]&bar=2',
+    );
+  });
+
+  it('passes lines with no token= through byte-identical', () => {
+    const line = '<-- GET /api/settings';
+    expect(redactTokenParam(line)).toBe(line);
   });
 });

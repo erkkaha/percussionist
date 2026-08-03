@@ -232,7 +232,7 @@ export default function SessionList() {
       {!isLoading && data && data.total > 0 && (
         <>
           <div
-            className="rounded-lg border border-border overflow-x-auto"
+            className="rounded-lg border border-border table-scroll"
             data-testid="sessions-table-wrapper"
           >
             <table className="w-full min-w-[640px] text-sm" aria-label="Session runs">
