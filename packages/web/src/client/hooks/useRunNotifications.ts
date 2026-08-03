@@ -35,6 +35,7 @@ export function useRunNotifications(runs: Run[] | undefined): void {
             title: `Run succeeded`,
             body: name,
             sound: 'success',
+            url: `/runs/${encodeURIComponent(name)}`,
           });
         } else if (phase === RunPhase.Failed && prev !== undefined) {
           notify({
@@ -42,6 +43,7 @@ export function useRunNotifications(runs: Run[] | undefined): void {
             title: `Run failed`,
             body: `${name}${run.status?.message ? ` — ${run.status.message}` : ''}`,
             sound: 'failure',
+            url: `/runs/${encodeURIComponent(name)}`,
           });
         } else if (phase === RunPhase.Cancelled && prev !== undefined) {
           notify({
@@ -49,6 +51,7 @@ export function useRunNotifications(runs: Run[] | undefined): void {
             title: `Run cancelled`,
             body: name,
             sound: 'cancelled',
+            url: `/runs/${encodeURIComponent(name)}`,
           });
         }
 

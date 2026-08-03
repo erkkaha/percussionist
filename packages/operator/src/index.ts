@@ -13,6 +13,7 @@ import {
   type Run,
 } from '@percussionist/api';
 import {
+  cancelProjectRetry,
   cleanupCodeServer,
   cleanupMemoryService,
   co,
@@ -20,9 +21,10 @@ import {
   enqueue,
   kc,
   NAMESPACE,
+  projectKey,
   reconcileClusterSettings,
-  reconcileProject,
   runWorker,
+  safeReconcileProject,
   startPeriodicResync,
 } from './reconciler.js';
 import { spawnWorktreeCleanupJob, startTTLCleanup } from './ttl.js';
@@ -96,10 +98,14 @@ async function main(): Promise<void> {
 
   const csInformer = makeInformer(kc, csPath, listCsFn as never);
   csInformer.on('add', (obj) => {
-    void reconcileClusterSettings(obj as unknown as ClusterSettings);
+    reconcileClusterSettings(obj as unknown as ClusterSettings).catch((e) => {
+      err('reconcileClusterSettings(add) failed:', (e as Error).message);
+    });
   });
   csInformer.on('update', (obj) => {
-    void reconcileClusterSettings(obj as unknown as ClusterSettings);
+    reconcileClusterSettings(obj as unknown as ClusterSettings).catch((e) => {
+      err('reconcileClusterSettings(update) failed:', (e as Error).message);
+    });
   });
   csInformer.on('error', (e) => {
     err('cluster-settings informer error:', (e as Error).message);
@@ -121,14 +127,27 @@ async function main(): Promise<void> {
 
   const projectInformer = makeInformer(kc, projectPath, listProjectsFn as never);
   projectInformer.on('add', (obj) => {
-    void reconcileProject(obj as unknown as Project);
+    // safeReconcileProject already catches and surfaces every error into
+    // status.reconcile; this .catch is a belt-and-suspenders backstop so a
+    // genuine bug in that wrapper still can't reach unhandledRejection/exit(1).
+    safeReconcileProject(obj as unknown as Project).catch((e) => {
+      err('safeReconcileProject(add) failed:', (e as Error).message);
+    });
   });
   projectInformer.on('update', (obj) => {
-    void reconcileProject(obj as unknown as Project);
+    safeReconcileProject(obj as unknown as Project).catch((e) => {
+      err('safeReconcileProject(update) failed:', (e as Error).message);
+    });
   });
   projectInformer.on('delete', (obj) => {
-    void cleanupCodeServer(obj as unknown as Project);
-    void cleanupMemoryService(obj as unknown as Project);
+    const project = obj as unknown as Project;
+    cancelProjectRetry(projectKey(project));
+    cleanupCodeServer(project).catch((e) => {
+      err('cleanupCodeServer failed:', (e as Error).message);
+    });
+    cleanupMemoryService(project).catch((e) => {
+      err('cleanupMemoryService failed:', (e as Error).message);
+    });
   });
   projectInformer.on('error', (e) => {
     err('project informer error:', (e as Error).message);

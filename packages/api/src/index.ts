@@ -1229,6 +1229,16 @@ export type ProjectSpec = z.infer<typeof ProjectSpecSchema>;
 // Project status — summary only; full task state lives in Task CRs.
 export const ProjectStatusSchema = z.object({
   board: BoardStatusSchema.optional(),
+  // Operator-owned reconcile outcome for this Project's code-server/memory-service
+  // resources. The operator owns this key; the manager owns `board`. Neither
+  // side may clobber the other's key — status patches must be scoped merges.
+  reconcile: z
+    .object({
+      state: z.enum(['Ready', 'Error']),
+      message: z.string().max(2048).optional(),
+      observedGeneration: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
 });
 
 export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
