@@ -2,7 +2,7 @@
 // Reads runTTLDays from ClusterSettings and deletes terminal-phase Runs
 // whose completedAt + runTTLDays is in the past.
 
-import { CoreV1Api } from '@kubernetes/client-node';
+import { BatchV1Api } from '@kubernetes/client-node';
 import {
   API_GROUP,
   API_VERSION,
@@ -15,7 +15,9 @@ import {
 import { gitUrlHash, makeNodeApiClient } from '@percussionist/kube';
 import { co, kc, NAMESPACE } from './reconciler.js';
 
-const coreV1 = makeNodeApiClient(kc, CoreV1Api);
+const batchV1 = makeNodeApiClient(kc, BatchV1Api);
+
+const CLEANUP_JOB_TTL_SECONDS = 3600;
 
 const log = (...args: unknown[]) => console.log(`[ttl ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) => console.error(`[ttl ${new Date().toISOString()}]`, ...args);
@@ -92,7 +94,6 @@ export async function runTTLCleanup(): Promise<void> {
       });
       log(`deleted expired Run ${name} (past ${ttlDays}d TTL)`);
       deleted++;
-      cleanupExpiredRunWorktree(run).catch(() => {});
     } catch (e: unknown) {
       if (!isNotFound(e)) {
         err(`delete Run ${name}:`, (e as Error).message);
@@ -106,17 +107,17 @@ export async function runTTLCleanup(): Promise<void> {
 }
 
 /**
- * Spawn a fire-and-forget pod to remove a run's worktree directory from the PVC.
+ * Build the batch/v1 Job spec that removes a run's worktree directory (and
+ * prunes its git mirror worktree/branch) from the data PVC. Pure so it's
+ * unit-testable without a cluster.
  */
-async function cleanupExpiredRunWorktree(run: Run): Promise<void> {
+export function buildCleanupJob(run: Run) {
   const runName = run.metadata.name;
   const projectName = run.metadata.labels?.['percussionist.dev/project'];
-  if (!projectName) return;
-
-  const dataMountPath = '/data';
+  const dataPvcName = run.spec.data?.pvcName ?? `${projectName}-data`;
+  const dataMountPath = run.spec.data?.mountPath ?? '/data';
   const worktreeDir = `${dataMountPath}/worktrees/${runName}`;
-  const gitUrl = (run.spec as { source?: { git?: { url?: string } } } | undefined)?.source?.git
-    ?.url;
+  const gitUrl = run.spec.source?.git?.url;
 
   const scriptLines: string[] = [
     'set -e',
@@ -144,47 +145,66 @@ async function cleanupExpiredRunWorktree(run: Run): Promise<void> {
 
   scriptLines.push('echo "[cleanup-ttl] done"');
 
-  const podName = `cleanup-ttl-${runName}`
+  const jobName = `cleanup-ttl-${runName}`
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .slice(0, 63)
     .replace(/-+$/, '');
 
-  const pod = {
-    apiVersion: 'v1',
-    kind: 'Pod',
-    metadata: { name: podName, namespace: NAMESPACE },
+  return {
+    apiVersion: 'batch/v1',
+    kind: 'Job',
+    metadata: { name: jobName, namespace: NAMESPACE },
     spec: {
-      restartPolicy: 'Never',
-      containers: [
-        {
-          name: 'cleanup',
-          image: 'alpine/git',
-          imagePullPolicy: 'IfNotPresent',
-          command: ['/bin/sh', '-c'],
-          args: [scriptLines.join('\n')],
-          resources: {
-            requests: { cpu: '50m', memory: '64Mi' },
-            limits: { cpu: '200m', memory: '256Mi' },
-          },
-          volumeMounts: [{ name: 'data', mountPath: dataMountPath }],
+      ttlSecondsAfterFinished: CLEANUP_JOB_TTL_SECONDS,
+      backoffLimit: 2,
+      template: {
+        spec: {
+          restartPolicy: 'Never',
+          containers: [
+            {
+              name: 'cleanup',
+              image: 'alpine/git',
+              imagePullPolicy: 'IfNotPresent',
+              command: ['/bin/sh', '-c'],
+              args: [scriptLines.join('\n')],
+              resources: {
+                requests: { cpu: '50m', memory: '64Mi' },
+                limits: { cpu: '200m', memory: '256Mi' },
+              },
+              volumeMounts: [{ name: 'data', mountPath: dataMountPath }],
+            },
+          ],
+          volumes: [
+            {
+              name: 'data',
+              persistentVolumeClaim: { claimName: dataPvcName },
+            },
+          ],
         },
-      ],
-      volumes: [
-        {
-          name: 'data',
-          persistentVolumeClaim: { claimName: `${projectName}-data` },
-        },
-      ],
+      },
     },
   };
+}
+
+/**
+ * Spawn a fire-and-forget Job to remove a run's worktree directory from the
+ * PVC. Deterministically named so a 409 on create just means one is already
+ * in flight for this run.
+ */
+export async function spawnWorktreeCleanupJob(run: Run): Promise<void> {
+  const runName = run.metadata.name;
+  const projectName = run.metadata.labels?.['percussionist.dev/project'];
+  if (!projectName && !run.spec.data?.pvcName) return;
+
+  const job = buildCleanupJob(run);
 
   try {
-    await coreV1.createNamespacedPod({ namespace: NAMESPACE, body: pod });
-    log(`cleanup pod ${podName} created for run ${runName}`);
+    await batchV1.createNamespacedJob({ namespace: NAMESPACE, body: job });
+    log(`cleanup job ${job.metadata.name} created for run ${runName}`);
   } catch (e: unknown) {
     if ((e as { statusCode?: number }).statusCode !== 409) {
-      err(`cleanup pod for ${runName}:`, (e as Error).message);
+      err(`cleanup job for ${runName}:`, (e as Error).message);
     }
   }
 }

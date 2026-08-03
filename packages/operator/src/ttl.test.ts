@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'bun:test';
 import type { Run } from '@percussionist/api';
-import { isExpired } from './ttl.js';
+import { buildCleanupJob, isExpired } from './ttl.js';
 
 // Helper to create a minimal terminal Run CR with all required fields
 function makeRun(overrides: Partial<Run['spec']> = {}, completedAt?: string): Run {
@@ -57,5 +57,54 @@ describe('isExpired', () => {
   it('never considers a run without completedAt expired', () => {
     const run = makeRun({ ttlSecondsAfterFinished: 0 });
     expect(isExpired(run, 0)).toBe(false);
+  });
+});
+
+describe('buildCleanupJob', () => {
+  it('mounts the overridden pvcName when spec.data.pvcName is set', () => {
+    const run = makeRun({ data: { pvcName: 'custom-pvc' } });
+    const job = buildCleanupJob(run);
+    expect(job.spec.template.spec.volumes[0]?.persistentVolumeClaim.claimName).toBe('custom-pvc');
+  });
+
+  it('defaults the claim name to `${project}-data` when no override is set', () => {
+    const run = makeRun();
+    const job = buildCleanupJob(run);
+    expect(job.spec.template.spec.volumes[0]?.persistentVolumeClaim.claimName).toBe(
+      'test-project-data',
+    );
+  });
+
+  it('mounts the overridden mountPath when spec.data.mountPath is set', () => {
+    const run = makeRun({ data: { mountPath: '/custom-mount' } });
+    const job = buildCleanupJob(run);
+    const container = job.spec.template.spec.containers[0];
+    expect(container?.volumeMounts[0]?.mountPath).toBe('/custom-mount');
+    expect(container?.args[0]).toContain('/custom-mount/worktrees/test-run-123');
+  });
+
+  it('defaults the mountPath to /data when no override is set', () => {
+    const run = makeRun();
+    const job = buildCleanupJob(run);
+    expect(job.spec.template.spec.containers[0]?.volumeMounts[0]?.mountPath).toBe('/data');
+  });
+
+  it('sets a 1h TTL, backoffLimit 2, and restartPolicy Never', () => {
+    const run = makeRun();
+    const job = buildCleanupJob(run);
+    expect(job.spec.ttlSecondsAfterFinished).toBe(3600);
+    expect(job.spec.backoffLimit).toBe(2);
+    expect(job.spec.template.spec.restartPolicy).toBe('Never');
+  });
+
+  it('sanitizes and truncates a long/odd-charactered run name into a valid Job name', () => {
+    const longName = `Weird_Run.Name--${'x'.repeat(80)}`;
+    const run = makeRun();
+    run.metadata.name = longName;
+    const job = buildCleanupJob(run);
+    expect(job.metadata.name.length).toBeLessThanOrEqual(63);
+    expect(job.metadata.name).toMatch(/^[a-z0-9-]+$/);
+    expect(job.metadata.name.startsWith('cleanup-ttl-')).toBe(true);
+    expect(job.metadata.name.endsWith('-')).toBe(false);
   });
 });
