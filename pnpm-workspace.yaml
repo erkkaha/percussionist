@@ -6,6 +6,23 @@ ignoredBuiltDependencies:
   - esbuild
 
 minimumReleaseAge: 10080
+
+# Transitive high-severity advisories with patches available in-range.
+overrides:
+  fast-uri: ">=3.1.4"
+  form-data: ">=4.0.6"
+  js-yaml: ">=4.3.0 <5"
+  postcss: ">=8.5.18"
+  ws: ">=8.21.0"
+
+auditConfig:
+  ignoreGhsas:
+    # vite server.fs.deny bypass — Windows-only dev-server issue; vitepress
+    # stable (1.6.x) pins vite ^5.4 and the 5.x line has no patched release.
+    - GHSA-fx2h-pf6j-xcff
+    # react-router RSC-mode CSRF — web is a classic BrowserRouter SPA (no
+    # RSC); the patch only exists in the react-router 8.3 major.
+    - GHSA-qwww-vcr4-c8h2
 trustPolicy: downgrade
 trustedDependencies:
   - semver
