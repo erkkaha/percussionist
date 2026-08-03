@@ -779,7 +779,7 @@ describe('renderPod - claude settings scope', () => {
   }
 
   it('does not deny the primary agent a tool only another mounted agent forbids', () => {
-    expect(settingsFor('planner')).toEqual({});
+    expect(settingsFor('planner')).toEqual({ includeCoAuthoredBy: false });
   });
 
   it('still applies the denials of the agent that is driving', () => {
@@ -787,7 +787,7 @@ describe('renderPod - claude settings scope', () => {
   });
 
   it('writes no restrictions when the driving agent is ambiguous', () => {
-    expect(settingsFor(undefined)).toEqual({});
+    expect(settingsFor(undefined)).toEqual({ includeCoAuthoredBy: false });
   });
 });
 
