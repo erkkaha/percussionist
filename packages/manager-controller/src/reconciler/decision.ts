@@ -1258,7 +1258,7 @@ function decideGeneratingBuilds(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
-  const { task, project, allTasks, flow } = input;
+  const { task, allTasks } = input;
   const taskName = task.metadata.name;
   const fromPhase = 'awaiting-children' as TaskPhase;
 
@@ -1293,7 +1293,19 @@ function decideAwaitingChildren(input: ReconcileInput): ReconcileDecision {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
-  // All children done — decide next step based on integration config.
+  return decideChildrenCompleteNext(input, fromPhase);
+}
+
+// All children done — decide next step based on integration config. Shared by
+// decideAwaitingChildren and (once a task resumes from an escalation with
+// children already complete) decideAwaitingHuman's PLAN-approve branch.
+function decideChildrenCompleteNext(
+  input: ReconcileInput,
+  fromPhase: TaskPhase,
+): ReconcileDecision {
+  const { task, project, flow } = input;
+  const taskName = task.metadata.name;
+
   if (!project.spec.featureBranchingEnabled || flow.integration.mode === 'disabled') {
     return {
       taskName,
