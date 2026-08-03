@@ -135,7 +135,7 @@ describe('SessionList table structure', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('table wrapper maintains horizontal overflow behavior (overflow-x-auto)', async () => {
+  it('table wrapper uses shared table-scroll pattern (both-axis overflow)', async () => {
     sessionsMock.sessions = [{ ...MOCK_SESSION }];
     sessionsMock.total = 1;
     const { default: SessionList } = await import('../src/client/components/SessionList');
@@ -146,13 +146,21 @@ describe('SessionList table structure', () => {
     const link = await screen.findByRole('link', { name: 'test-session' });
     expect(link).toBeInTheDocument();
 
-    // The wrapper (found by data-testid) has overflow-x-auto
+    // The wrapper (found by data-testid) has the shared table-scroll class,
+    // which provides both horizontal and vertical overflow.
     const wrapper = screen.getByTestId('sessions-table-wrapper');
-    expect(wrapper.className).toContain('overflow-x-auto');
+    expect(wrapper.className).toContain('table-scroll');
+    // No reliance on the removed breakpoint-gated class or vertical clipping —
+    // scroll behavior must not be gated to a viewport range.
+    expect(wrapper.className).not.toContain('settings-table-scroll');
+    expect(wrapper.className).not.toMatch(/(^|\s)(sm|md|lg|xl|2xl):/);
+    expect(wrapper.className).not.toContain('overflow-hidden');
 
-    // Verify the wrapper contains the table
+    // Verify the wrapper contains the table, which keeps its min-width so
+    // narrow widths still pan horizontally.
     const table = wrapper.querySelector('table');
     expect(table).not.toBeNull();
+    expect(table?.className ?? '').toMatch(/\bmin-w-/);
   });
 
   it('session rows render as direct tr elements under tbody (no a/div as direct tbody child)', async () => {

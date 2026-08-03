@@ -63,13 +63,13 @@ describe('diffPhases', () => {
 });
 
 describe('taskPush policy', () => {
-  it('pushes on the human-gate phases with a board deep link', () => {
+  it('pushes on the human-gate phases with a task deep link', () => {
     for (const phase of ['awaiting-human', 'waiting-for-input', 'failed']) {
       const payload = taskPush(makeTask('t1', phase), phase);
       expect(payload).not.toBeNull();
       expect(payload?.body).toBe('Do the thing in proj');
       expect(payload?.tag).toBe('task:proj:t1');
-      expect(payload?.url).toBe('/projects/proj/board');
+      expect(payload?.url).toBe('/projects/proj/board?task=t1');
     }
   });
 

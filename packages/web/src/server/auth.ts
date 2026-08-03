@@ -69,8 +69,9 @@ export function getAuthValue(c: Context): string | null {
   if (token) return token;
   const apiKeyHeader = c.req.header('x-api-key');
   if (apiKeyHeader) return apiKeyHeader;
-  const queryToken = c.req.query('token');
-  if (queryToken) return queryToken;
+  // Deliberately NOT reading `?token=` here: Hono's logger middleware prints
+  // the full path including the query string, so a query-param credential
+  // ends up in web pod stdout on every request.
   return null;
 }
 

@@ -165,7 +165,7 @@ export default function ProjectsPage({
         </div>
       ) : (
         <div
-          className="rounded-lg border border-border overflow-hidden overflow-x-auto"
+          className="rounded-lg border border-border table-scroll"
           data-testid="projects-table-wrapper"
         >
           <table className="w-full min-w-[720px] text-sm">

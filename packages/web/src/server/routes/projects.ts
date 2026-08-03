@@ -92,17 +92,18 @@ export function mergeProjectPatch(
   for (const [key, value] of Object.entries(patch)) {
     if (value === null) {
       delete merged[key];
-    } else if (
-      typeof value === 'object' &&
-      !Array.isArray(value) &&
-      typeof merged[key] === 'object' &&
-      merged[key] !== null &&
-      !Array.isArray(merged[key])
-    ) {
-      merged[key] = mergeProjectPatch(
-        merged[key] as Record<string, unknown>,
-        value as Record<string, unknown>,
-      );
+    } else if (typeof value === 'object' && !Array.isArray(value)) {
+      // Recurse even when the existing side has no counterpart: nested nulls
+      // are delete-markers from the UI ("clear this override") and must be
+      // consumed here, never copied into the spec — ProjectSpecSchema rejects
+      // null. Editing a project whose spec lacked e.g. `flow.humanApproval`
+      // used to fail validation because the null-laden patch object was
+      // assigned verbatim.
+      const base =
+        typeof merged[key] === 'object' && merged[key] !== null && !Array.isArray(merged[key])
+          ? (merged[key] as Record<string, unknown>)
+          : {};
+      merged[key] = mergeProjectPatch(base, value as Record<string, unknown>);
     } else {
       merged[key] = value;
     }

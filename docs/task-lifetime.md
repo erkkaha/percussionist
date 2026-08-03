@@ -208,4 +208,4 @@ A task has up to three live Runs at once:
 | Merge (feature branch) | `awaiting-children` (auto-merge mode) | `{project}-merge-{task}-{retryCount}` (`auxiliaryRunName`) |
 | Buildgen | `generating-builds` | `{project}-buildgen-{task}-0` (`auxiliaryRunName`) |
 
-Old Runs are never deleted by state transitions — they persist as history until the TTL controller removes them after `runTTLDays` days (default 7).
+Old Runs are never deleted by state transitions — they persist as history until the TTL controller removes them. A Run's own `spec.ttlSecondsAfterFinished`, when set, takes precedence over the cluster-wide `runTTLDays` default (default 7 days); `runTTLDays` only applies to Runs that don't set the per-run field. Deleting a Run — whether by TTL expiry, `kubectl delete run`, the dashboard, or the manager — triggers a `batch/v1` Job that cleans up the Run's worktree.

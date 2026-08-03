@@ -78,7 +78,7 @@ export function taskPush(task: Task, to: string): PushPayload | null {
     body: `${task.spec.title || name} in ${project}`,
     // One live notification per task — a newer transition replaces the older.
     tag: `task:${project}:${name}`,
-    url: `/projects/${encodeURIComponent(project)}/board`,
+    url: `/projects/${encodeURIComponent(project)}/board?task=${encodeURIComponent(name)}`,
   };
 }
 

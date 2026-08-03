@@ -50,9 +50,12 @@ let createTaskSpy: ReturnType<typeof spyOn>;
 let getRunSpy: ReturnType<typeof spyOn>;
 let buildWorkerRunSpy: ReturnType<typeof spyOn>;
 let buildMergeRunSpy: ReturnType<typeof spyOn>;
+let buildPrOpenRunSpy: ReturnType<typeof spyOn>;
 let buildReviewRunSpy: ReturnType<typeof spyOn>;
 let buildBuildTaskGeneratorRunSpy: ReturnType<typeof spyOn>;
 let spawnWorktreeCleanupPodSpy: ReturnType<typeof spyOn>;
+let spawnTaskWorktreeCleanupPodSpy: ReturnType<typeof spyOn>;
+let listRunsSpy: ReturnType<typeof spyOn>;
 let summarizeSessionSpy: ReturnType<typeof spyOn>;
 
 const mockRun = makeRun('mock-run') as Run;
@@ -67,10 +70,12 @@ beforeEach(() => {
   deleteRunSpy = spyOn(kube, 'deleteRun').mockResolvedValue(undefined as any);
   createTaskSpy = spyOn(kube, 'createTask').mockResolvedValue(undefined as any);
   getRunSpy = spyOn(kube, 'getRun').mockResolvedValue(mockRun);
+  listRunsSpy = spyOn(kube, 'listRuns').mockResolvedValue([]);
 
   // worker-builder
   buildWorkerRunSpy = spyOn(workerBuilder, 'buildWorkerRun').mockResolvedValue(mockRun);
   buildMergeRunSpy = spyOn(workerBuilder, 'buildMergeRun').mockResolvedValue(mockRun);
+  buildPrOpenRunSpy = spyOn(workerBuilder, 'buildPrOpenRun').mockResolvedValue(mockRun);
 
   // facilitator (dynamically imported inside effects.ts)
   buildReviewRunSpy = spyOn(facilitator, 'buildReviewRun').mockResolvedValue(mockRun);
@@ -83,6 +88,10 @@ beforeEach(() => {
   spawnWorktreeCleanupPodSpy = spyOn(worktreeCleanup, 'spawnWorktreeCleanupPod').mockResolvedValue(
     undefined as any,
   );
+  spawnTaskWorktreeCleanupPodSpy = spyOn(
+    worktreeCleanup,
+    'spawnTaskWorktreeCleanupPod',
+  ).mockResolvedValue(undefined as any);
 
   // session-summarizer
   summarizeSessionSpy = spyOn(sessionSummarizer, 'summarizeSession').mockResolvedValue(
@@ -99,11 +108,14 @@ afterEach(() => {
   deleteRunSpy.mockRestore();
   createTaskSpy.mockRestore();
   getRunSpy.mockRestore();
+  listRunsSpy.mockRestore();
   buildWorkerRunSpy.mockRestore();
   buildMergeRunSpy.mockRestore();
+  buildPrOpenRunSpy.mockRestore();
   buildReviewRunSpy.mockRestore();
   buildBuildTaskGeneratorRunSpy.mockRestore();
   spawnWorktreeCleanupPodSpy.mockRestore();
+  spawnTaskWorktreeCleanupPodSpy.mockRestore();
   summarizeSessionSpy.mockRestore();
 });
 
@@ -365,6 +377,79 @@ describe('executeEffects — ScheduleMergeRun', () => {
 
     expect(result.applied).toBe(true);
   });
+
+  // Merge retries regenerate the same deterministic run name (retryCount is
+  // not bumped for merge failures), so a leftover terminal run must be
+  // replaced — including Succeeded, since merge agents report failure
+  // verdicts through a Succeeded run. Otherwise the stale verdict is
+  // re-observed and the task wedges in a retry loop.
+  it('re-creates when existing run is Succeeded (stale verdict from a prior attempt)', async () => {
+    createRunSpy.mockRejectedValueOnce(new Error('already exists'));
+    getRunSpy.mockResolvedValue(makeRun('merge-1', { phase: 'Succeeded' }));
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(deleteRunSpy).toHaveBeenCalledWith('merge-1', namespace);
+    expect(createRunSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-creates when existing run is Failed', async () => {
+    createRunSpy.mockRejectedValueOnce(new Error('already exists'));
+    getRunSpy.mockResolvedValue(makeRun('merge-1', { phase: 'Failed' }));
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(deleteRunSpy).toHaveBeenCalledWith('merge-1', namespace);
+    expect(createRunSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT re-create when existing run is still Running', async () => {
+    createRunSpy.mockRejectedValueOnce(new Error('already exists'));
+    getRunSpy.mockResolvedValue(makeRun('merge-1', { phase: 'Running' }));
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(deleteRunSpy).not.toHaveBeenCalled();
+    expect(createRunSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('executeEffects — SchedulePrOpenRun', () => {
+  const effect: ReconcileEffect = { type: 'SchedulePrOpenRun', prOpenRunName: 'pr-1' };
+
+  it('creates a PR-open run via buildPrOpenRun + createRun', async () => {
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(result.effectsApplied).toEqual(['SchedulePrOpenRun']);
+    expect(buildPrOpenRunSpy).toHaveBeenCalled();
+    expect(createRunSpy).toHaveBeenCalled();
+  });
+
+  it('re-creates when existing run is terminal (same collision as merge runs)', async () => {
+    createRunSpy.mockRejectedValueOnce(new Error('already exists'));
+    getRunSpy.mockResolvedValue(makeRun('pr-1', { phase: 'Succeeded' }));
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(deleteRunSpy).toHaveBeenCalledWith('pr-1', namespace);
+    expect(createRunSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT re-create when existing run is still Running', async () => {
+    createRunSpy.mockRejectedValueOnce(new Error('already exists'));
+    getRunSpy.mockResolvedValue(makeRun('pr-1', { phase: 'Running' }));
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(deleteRunSpy).not.toHaveBeenCalled();
+    expect(createRunSpy).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('executeEffects — CreateRun', () => {
@@ -547,6 +632,48 @@ describe('executeEffects — CleanupWorktree', () => {
 
     expect(result.applied).toBe(true);
     expect(spawnWorktreeCleanupPodSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('executeEffects — task-done worktree cleanup', () => {
+  const succeededTask = makeTask('test-task', 'test-project', { phase: 'succeeded' });
+  succeededTask.metadata.resourceVersion = '1000';
+
+  it('lists runs by task-id label and spawns task cleanup on transition to done', async () => {
+    getTaskSpy.mockResolvedValue(succeededTask);
+    listRunsSpy.mockResolvedValue([
+      makeRun('test-project-review-abc-1a2b3c'),
+      makeRun('test-project-buildgen-abc-4d5e6f'),
+    ]);
+
+    const result = await call(succeededTask, 'done', []);
+
+    expect(result.applied).toBe(true);
+    // Flush the fire-and-forget cleanup chain.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(listRunsSpy).toHaveBeenCalledWith(
+      namespace,
+      undefined,
+      `percussionist.dev/task-id=${succeededTask.metadata.name}`,
+    );
+    expect(spawnTaskWorktreeCleanupPodSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectName: 'test-project',
+        namespace,
+        runNames: ['test-project-review-abc-1a2b3c', 'test-project-buildgen-abc-4d5e6f'],
+      }),
+    );
+  });
+
+  it('does not list runs or spawn task cleanup on a non-done transition', async () => {
+    const result = await call(testTask, 'scheduled', []);
+
+    expect(result.applied).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(listRunsSpy).not.toHaveBeenCalled();
+    expect(spawnTaskWorktreeCleanupPodSpy).not.toHaveBeenCalled();
   });
 });
 

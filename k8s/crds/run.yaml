@@ -332,7 +332,6 @@ spec:
                   exclusiveMinimum: true
                   maximum: 9007199254740991
                 ttlSecondsAfterFinished:
-                  default: 604800
                   type: integer
                   minimum: 0
                   maximum: 9007199254740991
@@ -369,7 +368,6 @@ spec:
                 - interactive
                 - image
                 - timeoutSeconds
-                - ttlSecondsAfterFinished
             status:
               type: object
               properties:

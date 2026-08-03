@@ -28,6 +28,7 @@ export function useBoardNotifications(projectName: string, tasks: Task[]): void 
               title: `Task succeeded`,
               body: `${label} in ${projectName}`,
               sound: 'success',
+              url: `/projects/${encodeURIComponent(projectName)}/board?task=${encodeURIComponent(taskName)}`,
             });
           } else if (status === 'Failed') {
             notify({
@@ -35,6 +36,7 @@ export function useBoardNotifications(projectName: string, tasks: Task[]): void 
               title: `Task failed`,
               body: `${label} in ${projectName}`,
               sound: 'failure',
+              url: `/projects/${encodeURIComponent(projectName)}/board?task=${encodeURIComponent(taskName)}`,
             });
           } else if (status === 'Escalated') {
             notify({
@@ -42,6 +44,7 @@ export function useBoardNotifications(projectName: string, tasks: Task[]): void 
               title: `Task escalated`,
               body: `${label} in ${projectName} needs attention`,
               sound: 'escalated',
+              url: `/projects/${encodeURIComponent(projectName)}/board?task=${encodeURIComponent(taskName)}`,
             });
           } else if (status === 'Running') {
             notify({
@@ -49,6 +52,7 @@ export function useBoardNotifications(projectName: string, tasks: Task[]): void 
               title: `Task started`,
               body: `${label} in ${projectName}`,
               sound: 'running',
+              url: `/projects/${encodeURIComponent(projectName)}/board?task=${encodeURIComponent(taskName)}`,
             });
           }
         }
