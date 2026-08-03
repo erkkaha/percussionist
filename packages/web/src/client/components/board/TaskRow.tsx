@@ -1,6 +1,15 @@
 // TaskRow.tsx — compact clickable task row for the list panel.
 
-import { Check, FileText, Flag, MessageSquarePlus, RotateCcw, User, Wrench } from 'lucide-react';
+import {
+  Check,
+  FileText,
+  Flag,
+  GitPullRequest,
+  MessageSquarePlus,
+  RotateCcw,
+  User,
+  Wrench,
+} from 'lucide-react';
 import { useChat } from '../../lib/chat-context';
 import type { Task } from '../../lib/types';
 import { getBlockedReasonPresentation, getParentRefPresentation } from './display-refs';
@@ -137,6 +146,16 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
               </span>
             )}
 
+            {/* PR open (awaiting-feature-merge, human must merge on GitHub) */}
+            {worker?.prNumber !== undefined &&
+              task.status?.phase === 'awaiting-feature-merge' &&
+              !worker.mergedAt && (
+                <span className="text-label-md font-mono uppercase px-1.5 py-0.5 rounded-sm bg-accent/20 text-accent flex items-center gap-0.5">
+                  <GitPullRequest className="h-2.5 w-2.5" />
+                  PR open
+                </span>
+              )}
+
             {/* Waiting for prerequisite */}
             {blockedReason.text && (
               <span
@@ -187,7 +206,9 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
           {task.status?.phase === 'awaiting-feature-merge' && (
             <div className="pt-0.5">
               <span className="text-label-md font-mono text-text-dim/60">
-                Merging feature branch to target
+                {worker?.prNumber !== undefined
+                  ? `Waiting for PR #${worker.prNumber} to be merged on GitHub`
+                  : 'Merging feature branch to target'}
               </span>
             </div>
           )}

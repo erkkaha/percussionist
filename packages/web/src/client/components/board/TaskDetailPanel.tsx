@@ -15,6 +15,7 @@ import {
   FileText,
   Flag,
   GitCommit as GitCommitIcon,
+  GitPullRequest,
   History,
   MousePointerClick,
   RefreshCw,
@@ -65,6 +66,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from '../ui/switch';
 import { Textarea } from '../ui/textarea';
 import { getChildRefPresentation } from './display-refs';
+import { getPrPresentation } from './pr-presentation';
 import TaskEventsPanel from './TaskEventsPanel';
 import TaskRunsPanel from './TaskRunsPanel';
 
@@ -100,6 +102,7 @@ interface TaskDetailPanelProps {
   projectName: string;
   approvals: Record<string, { approved: boolean; requestChanges: boolean }> | undefined;
   codeServerUrl?: string;
+  repoWebUrl?: string;
   onDeleted: () => void;
 }
 
@@ -542,13 +545,16 @@ function OverviewContent({
   col,
   projectName,
   codeServerUrl,
+  repoWebUrl,
 }: {
   task: Task;
   col: string;
   projectName: string;
   codeServerUrl?: string;
+  repoWebUrl?: string;
 }) {
   const worker = task.status?.worker;
+  const pr = getPrPresentation(task, repoWebUrl);
   const { data: runsData } = useTaskRuns(task.metadata.name);
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [showReviews, setShowReviews] = useState(false);
@@ -616,6 +622,50 @@ function OverviewContent({
             )}
           </div>
         )}
+        {pr && (
+          <div>
+            <p className="text-label-md font-mono uppercase text-text-dim">Pull Request</p>
+            {pr.url ? (
+              <a
+                href={pr.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded border border-border-muted bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text truncate max-w-full hover:text-accent hover:border-accent/30 transition-colors"
+                title={`Open PR #${pr.prNumber} on GitHub`}
+              >
+                <GitPullRequest className="h-3 w-3 shrink-0" />
+                PR #{pr.prNumber}
+                <span
+                  className={
+                    pr.state === 'merged'
+                      ? 'text-phase-succeeded'
+                      : pr.state === 'closed'
+                        ? 'text-phase-failed'
+                        : 'text-accent'
+                  }
+                >
+                  {pr.state}
+                </span>
+              </a>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded border border-border-muted bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text truncate max-w-full">
+                <GitPullRequest className="h-3 w-3 shrink-0" />
+                PR #{pr.prNumber}
+                <span
+                  className={
+                    pr.state === 'merged'
+                      ? 'text-phase-succeeded'
+                      : pr.state === 'closed'
+                        ? 'text-phase-failed'
+                        : 'text-accent'
+                  }
+                >
+                  {pr.state}
+                </span>
+              </span>
+            )}
+          </div>
+        )}
         {worker?.reviewApproved !== undefined && (
           <div>
             <p className="text-label-md font-mono uppercase text-text-dim">Agent review</p>
@@ -650,6 +700,14 @@ function OverviewContent({
           >
             {worker.reviewFeedback}
           </p>
+        </div>
+      )}
+
+      {/* Merge error */}
+      {worker?.mergeError && (
+        <div>
+          <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">Merge Error</p>
+          <p className="text-phase-failed/80 text-sm whitespace-pre-wrap">{worker.mergeError}</p>
         </div>
       )}
 
@@ -901,6 +959,7 @@ function TaskDetailPanelInner({
   projectName,
   approvals,
   codeServerUrl,
+  repoWebUrl,
   onDeleted,
 }: TaskDetailPanelProps) {
   const queryClient = useQueryClient();
@@ -1195,6 +1254,7 @@ function TaskDetailPanelInner({
             col={col}
             projectName={projectName}
             codeServerUrl={codeServerUrl}
+            repoWebUrl={repoWebUrl}
           />
         )}
         {activeTab === 'runs' && <TaskRunsPanel projectName={projectName} taskName={taskName} />}
@@ -1222,6 +1282,7 @@ export const TaskDetailPanel = memo(TaskDetailPanelInner, (prev, next) => {
     prev.col === next.col &&
     prev.projectName === next.projectName &&
     prev.approvals === next.approvals &&
+    prev.repoWebUrl === next.repoWebUrl &&
     prev.onDeleted === next.onDeleted
   );
 });

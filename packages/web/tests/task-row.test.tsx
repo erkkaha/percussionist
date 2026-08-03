@@ -108,3 +108,58 @@ describe('TaskRow "Inject task into chat" button', () => {
     expect(tokens).toContain('focus-visible:opacity-100');
   });
 });
+
+// ---------------------------------------------------------------------------
+// PR-open indicator (awaiting-feature-merge, PR-gated integration mode)
+// ---------------------------------------------------------------------------
+
+async function renderTaskRowWithTask(task: Task, col: string) {
+  const { TaskRow } = await import('../src/client/components/board/TaskRow');
+  const injectTask = mock((_task: Task, _project: string) => {});
+  render(
+    React.createElement(
+      ChatContext.Provider,
+      { value: { injectTask } },
+      React.createElement(TaskRow, {
+        task,
+        col,
+        isSelected: false,
+        onClick: () => {},
+        projectName: PROJECT_NAME,
+      }),
+    ),
+  );
+}
+
+describe('TaskRow PR-open indicator', () => {
+  afterEach(cleanup);
+
+  it('shows "PR open" badge and PR-number status line when awaiting-feature-merge with prNumber', async () => {
+    const task: Task = {
+      ...stubTask,
+      status: { phase: 'awaiting-feature-merge', worker: { prNumber: 7 } },
+    };
+    await renderTaskRowWithTask(task, 'in-progress');
+    expect(screen.getByText('PR open')).toBeTruthy();
+    expect(screen.getByText('Waiting for PR #7 to be merged on GitHub')).toBeTruthy();
+  });
+
+  it('keeps the old status line when awaiting-feature-merge without prNumber', async () => {
+    const task: Task = {
+      ...stubTask,
+      status: { phase: 'awaiting-feature-merge' },
+    };
+    await renderTaskRowWithTask(task, 'in-progress');
+    expect(screen.queryByText('PR open')).toBeNull();
+    expect(screen.getByText('Merging feature branch to target')).toBeTruthy();
+  });
+
+  it('shows no "PR open" badge for a done task with prNumber', async () => {
+    const task: Task = {
+      ...stubTask,
+      status: { phase: 'done', worker: { prNumber: 7, mergedAt: '2026-01-02T00:00:00Z' } },
+    };
+    await renderTaskRowWithTask(task, 'done');
+    expect(screen.queryByText('PR open')).toBeNull();
+  });
+});

@@ -173,6 +173,7 @@ export default function BoardView() {
         projectName={projectName}
         approvals={approvals}
         codeServerUrl={codeServerUrl}
+        repoWebUrl={settings.repoWebUrl}
         onDeleted={() => {
           setSearchParams({}, { replace: true });
           setSheetOpen(false);
