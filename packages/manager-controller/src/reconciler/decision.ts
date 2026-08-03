@@ -1474,12 +1474,7 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
         .update(`${input.project.metadata.name}:${taskName}:pr-open`)
         .digest('hex')
         .slice(0, 10);
-      const prOpenRunName = auxiliaryRunName(
-        input.project.metadata.name,
-        'pr',
-        taskName,
-        prSuffix,
-      );
+      const prOpenRunName = auxiliaryRunName(input.project.metadata.name, 'pr', taskName, prSuffix);
       return {
         taskName,
         fromPhase,

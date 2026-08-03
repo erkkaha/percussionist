@@ -579,15 +579,21 @@ function renderBuildTaskReviewRecord(build: Task): string {
   } else {
     lines.push('Review history (oldest first):');
     for (const r of reviews) {
-      lines.push(`- **${r.action}** (${r.reviewedAt}${r.attempt !== undefined ? `, attempt ${r.attempt}` : ''})`);
-      if (r.diagnosis) lines.push(`  - Diagnosis: ${clipForPrompt(r.diagnosis, PR_REVIEW_TEXT_CAP)}`);
+      lines.push(
+        `- **${r.action}** (${r.reviewedAt}${r.attempt !== undefined ? `, attempt ${r.attempt}` : ''})`,
+      );
+      if (r.diagnosis)
+        lines.push(`  - Diagnosis: ${clipForPrompt(r.diagnosis, PR_REVIEW_TEXT_CAP)}`);
       if (r.feedback) lines.push(`  - Feedback: ${clipForPrompt(r.feedback, PR_REVIEW_TEXT_CAP)}`);
     }
   }
 
   const findings = build.status?.diffFindings?.items ?? [];
   if (findings.length > 0) {
-    lines.push('', 'Latest review findings (from the final review run; earlier rounds are superseded):');
+    lines.push(
+      '',
+      'Latest review findings (from the final review run; earlier rounds are superseded):',
+    );
     for (const f of findings) {
       const anchor = f.anchors[0] ? `${f.anchors[0].path}:${f.anchors[0].line}` : 'no anchor';
       lines.push(

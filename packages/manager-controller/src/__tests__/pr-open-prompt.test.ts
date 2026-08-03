@@ -133,15 +133,9 @@ describe('prOpenPromptLines — composed body, grounded in materials', () => {
   });
 
   it('degrades gracefully when materials are missing', () => {
-    const bare = prOpenPromptLines(
-      'plan-x',
-      'title',
-      undefined,
-      SOURCE,
-      TARGET,
-      null,
-      [],
-    ).join('\n');
+    const bare = prOpenPromptLines('plan-x', 'title', undefined, SOURCE, TARGET, null, []).join(
+      '\n',
+    );
     expect(bare).toContain('(No plan document was found for this task.)');
     expect(bare).toContain('(No build task review records were found for this task.)');
     expect(bare).toContain('Description: (none)');

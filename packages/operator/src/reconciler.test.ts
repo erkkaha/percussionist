@@ -5,12 +5,12 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { CoreV1Api } from '@kubernetes/client-node';
 import { type Project, type Run, RunPhase } from '@percussionist/api';
-import * as runKeyClient from './run-key-client.js';
 import {
   classifyProjectReconcileError,
   hasReconcileStatusChanged,
   projectKey,
 } from './reconciler.js';
+import * as runKeyClient from './run-key-client.js';
 
 function makeTerminalRun(overrides: Partial<Run> = {}): Run {
   return {
