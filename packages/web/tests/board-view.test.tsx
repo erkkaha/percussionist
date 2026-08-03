@@ -26,6 +26,7 @@ const mockBoardData = {
     agents: [{ name: 'agent-a' }],
     maxParallel: 2,
     phase: 'Active',
+    codeServer: { enabled: false },
   },
   columns: { backlog: [], ready: [], running: [], done: [] },
   status: { managerMetrics: null, findings: [] },
