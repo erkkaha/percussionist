@@ -19,8 +19,9 @@ Mirror fetches are serialized with `flock` so parallel runs don't corrupt the ba
 ### Worktree cleanup
 
 - Pod init container prunes stale worktrees on startup via `git worktree prune`
-- A cleanup pod spawns when a task reaches `done` to remove all worker worktrees for that task
-- TTL controller handles cleanup of runs older than `runTTLDays`
+- A cleanup pod spawns when a task reaches `done` to remove all worker, review, buildgen, and merge worktrees for that task
+- Deleting a Run's git-sourced worktree is triggered off Run deletion — TTL expiry, `kubectl delete run`, dashboard delete, or the manager's `delete_run` — via a `batch/v1` Job (not a bare Pod), so it isn't limited to the TTL path
+- The TTL controller expires a Run using its own `spec.ttlSecondsAfterFinished` when set, otherwise falling back to the cluster-wide `runTTLDays` default
 
 ## Local Git (`source.local: true`)
 
