@@ -819,7 +819,7 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
       taskName,
       fromPhase,
       toPhase: 'done',
-      statusPatch: { worker: { status: 'Succeeded', completedAt: now } },
+      statusPatch: { worker: { status: 'Succeeded', completedAt: now, abandoned: true } },
       effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
       events: [makeEvent(input, fromPhase, 'done', 'TaskAbandoned')],
     };

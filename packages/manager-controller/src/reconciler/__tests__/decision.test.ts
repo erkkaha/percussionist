@@ -323,6 +323,7 @@ describe('decide — awaiting-human', () => {
     const task = makeTask('t1', 'test-project', { phase: 'awaiting-human' });
     const result = decide(makeInput(task, { manualActions: { abandon: true } }));
     expect(result.toPhase).toBe('done');
+    expect((result.statusPatch?.worker as any).abandoned).toBe(true);
   });
 
   it('awaiting-human + requestChanges → rework-requested', () => {
