@@ -1,6 +1,30 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.9] - 2026-08-04
+
+### <!-- 0 -->🚀 Features
+
+- Add shared GitHub URL helpers and board integration-mode/repoWebUrl
+- Surface PR chip, merge error, and PR-open indicator in task UI
+- Show integration mode in BoardHeader
+- Plumb per-agent roster models through project form state _(web)_
+- Add dedicated Agents tab with per-agent model selection _(web)_
+- Resolve IDE links from ClusterSettings.codeServerUrlTemplate _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Stop worktree-cleanup pods racing rm -rf on the done transition _(manager)_
+
+### <!-- 10 -->💼 Other
+
+- Surface PR-gated integration state in web UI (percussionist-dev-plan-0d07a0)
+- Dedicated project Agents tab with per-agent model selection (percussionist-dev-plan-27ac8a)
+- Dedicated project Agents tab with per-agent model selection (percussionist-dev-plan-27ac8a)
+
+### <!-- 6 -->🧪 Testing
+
+- Add mergeProjectPatch roster-model persistence tests _(web)_
 ## [v0.2.8] - 2026-08-03
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -12,6 +36,10 @@ All notable changes to Percussionist are documented here.
 ### <!-- 5 -->🎨 Styling
 
 - Apply biome formatting to PR-open builder and operator test imports
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.8
 ## [v0.2.7] - 2026-08-02
 
 ### <!-- 0 -->🚀 Features
