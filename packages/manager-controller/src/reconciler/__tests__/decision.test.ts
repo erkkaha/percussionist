@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { childMergeExpected } from '../child-completion.js';
 import { capReviewFeedback, decide } from '../decision.js';
 import { resolveFlow } from '../flow.js';
 import { isValidTransition } from '../transitions.js';
@@ -336,6 +337,31 @@ describe('decide — waiting-for-input', () => {
     );
     expect(result.toPhase).toBe('running');
     expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(true);
+  });
+
+  it('waiting + answer + run terminated or deleted → no-op (pinned deadlock, do not fix silently)', () => {
+    // PINNED CURRENT BEHAVIOR — known deadlock, deliberately not fixed here.
+    // decideWaitingForInput only resumes the task when the worker run is still
+    // `Running`. When an answer is present but the run terminated
+    // (Succeeded/Failed) or was deleted, the function returns a no-op, so the
+    // task parks in waiting-for-input forever with no timeout or escalation.
+    // This test pins that behavior so it cannot silently change shape; a real
+    // fix (transition to failed, or schedule a fresh run) belongs in a
+    // follow-up task (see plan rev24 Risks §4).
+    const cases: Array<ReturnType<typeof makeRun> | undefined> = [
+      makeRun('run-1', { phase: 'Succeeded' }),
+      makeRun('run-1', { phase: 'Failed' }),
+      undefined, // run deleted
+    ];
+    for (const worker of cases) {
+      const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'PLAN' });
+      const result = decide(
+        makeInput(task, { observed: { worker }, manualActions: { answer: 'yes' } }),
+      );
+      expect(result.toPhase).toBeUndefined();
+      expect(result.effects).toEqual([]);
+      expect(result.events).toEqual([]);
+    }
   });
 });
 
@@ -983,6 +1009,101 @@ describe('decide — awaiting-children', () => {
     });
     expect(result.toPhase).toBeUndefined();
     expect(result.effects).toEqual([]);
+  });
+
+  it('guard: done child without mergedAt and without abandoned NEVER yields a no-op in any flow configuration', () => {
+    // Regression guard for the rev02 impossible-wait deadlock. awaiting-children
+    // used to no-op forever when every child was done but the merge gate was
+    // unsatisfied. Every flow configuration must resolve a fully-done board to
+    // a concrete next step — a silent no-op here would park the parent forever.
+    const configurations: Array<{
+      name: string;
+      preset: string;
+      featureBranching: boolean;
+      integration?: 'auto-merge' | 'pr' | 'manual' | 'disabled';
+    }> = [
+      { name: 'simple', preset: 'simple', featureBranching: false },
+      { name: 'simple + feature branching', preset: 'simple', featureBranching: true },
+      { name: 'review', preset: 'review', featureBranching: false },
+      { name: 'review + feature branching', preset: 'review', featureBranching: true },
+      { name: 'plan-build', preset: 'plan-build', featureBranching: false },
+      { name: 'plan-build + feature branching', preset: 'plan-build', featureBranching: true },
+      {
+        name: 'plan-build-review-merge',
+        preset: 'plan-build-review-merge',
+        featureBranching: false,
+      },
+      {
+        name: 'plan-build-review-merge + feature branching',
+        preset: 'plan-build-review-merge',
+        featureBranching: true,
+      },
+      {
+        name: 'plan-build-review-merge + feature branching + pr integration',
+        preset: 'plan-build-review-merge',
+        featureBranching: true,
+        integration: 'pr',
+      },
+      {
+        name: 'plan-build-review-merge + feature branching + manual integration',
+        preset: 'plan-build-review-merge',
+        featureBranching: true,
+        integration: 'manual',
+      },
+      {
+        name: 'plan-build-review-merge + feature branching + disabled integration',
+        preset: 'plan-build-review-merge',
+        featureBranching: true,
+        integration: 'disabled',
+      },
+    ];
+
+    for (const cfg of configurations) {
+      const cfgProject = makeProject('test-project', {
+        featureBranchingEnabled: cfg.featureBranching,
+      });
+      cfgProject.spec.flow = {
+        ...cfgProject.spec.flow,
+        preset: cfg.preset,
+        ...(cfg.integration ? { integration: { mode: cfg.integration } } : {}),
+      };
+      const cfgFlow = resolveFlow(cfgProject);
+      const planTask = makeTask('plan-1', 'test-project', {
+        phase: 'awaiting-children',
+        type: 'PLAN',
+      });
+      const child = makeTask('build-a', 'test-project', {
+        type: 'BUILD',
+        phase: 'done',
+        parentTaskRef: 'plan-1',
+        // No mergedAt and not abandoned — the anomalous done-without-merge state.
+      });
+      const result = decide({
+        task: planTask,
+        project: cfgProject,
+        allTasks: [planTask, child],
+        observed: {},
+        manualActions: {},
+        flow: cfgFlow,
+        capacity: { activeCount: 0, maxParallel: 2 },
+        now,
+      });
+
+      const isNoop = result.toPhase === undefined && result.effects.length === 0;
+      expect(isNoop, `${cfg.name}: done-unmerged-unabandoned child must never no-op`).toBe(false);
+
+      const mergeExpected = childMergeExpected(cfgProject, cfgFlow);
+      if (mergeExpected) {
+        // Merge-expected flows must escalate to a human — never wait forever.
+        expect(result.toPhase, `${cfg.name}: merge-expected flow must escalate`).toBe(
+          'awaiting-human',
+        );
+        expect(result.events[0]?.reason, `${cfg.name}`).toBe('ChildrenDoneWithoutMerge');
+      } else {
+        // Merge-less flows must still progress to a concrete next step.
+        expect(result.toPhase, `${cfg.name}: must progress`).toBeDefined();
+      }
+    }
   });
 });
 
@@ -1639,6 +1760,37 @@ describe('decide — generating-builds', () => {
     const result = decide(makeInput(planTask));
     expect(result.toPhase).toBe('awaiting-human');
     expect(result.events[0]?.reason).toBe('NoWorkerRunForBuildGen');
+  });
+
+  it('generating-builds + buildgen run Failed → awaiting-human + buildTasksFacilitatorRun null (BuildGenFailed)', () => {
+    // Stale/failed buildgen run: clear the facilitator run name and escalate —
+    // a fresh buildgen attempt must be scheduled, not re-observed forever.
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'generating-builds',
+      type: 'PLAN',
+    });
+    (planTask.status as any).worker = { buildTasksFacilitatorRun: 'buildgen-1' };
+    const buildgenRun = makeRun('buildgen-1', { phase: 'Failed' });
+    const result = decide(
+      makeInput(planTask, { observed: { buildgen: buildgenRun }, allTasks: [planTask] }),
+    );
+    expect(result.toPhase).toBe('awaiting-human');
+    expect((result.statusPatch?.worker as any).buildTasksFacilitatorRun).toBeNull();
+    expect(result.events[0]?.reason).toBe('BuildGenFailed');
+  });
+
+  it('generating-builds + buildgen run name set but run missing → no-op wait', () => {
+    // The Run CR is still being created — wait for the next reconcile cycle
+    // instead of bouncing the task back and forth.
+    const planTask = makeTask('plan-1', 'test-project', {
+      phase: 'generating-builds',
+      type: 'PLAN',
+    });
+    (planTask.status as any).worker = { buildTasksFacilitatorRun: 'buildgen-1' };
+    const result = decide(makeInput(planTask, { allTasks: [planTask] }));
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects).toEqual([]);
+    expect(result.events).toEqual([]);
   });
 });
 
