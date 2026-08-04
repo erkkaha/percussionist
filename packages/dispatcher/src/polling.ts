@@ -8,6 +8,7 @@ import {
   compactMessagesForSnapshot,
   fetchMessages,
   listSessions,
+  type RawMessage,
 } from './session.js';
 import { incrementalFlush, sendStats } from './stats-reporter.js';
 
@@ -624,6 +625,227 @@ async function httpJsonPost(
 }
 
 // ---------------------------------------------------------------------------
+// Poll status loop
+//
+// Extracted from runPrompt so the message stream, timing and health-check
+// behavior can be unit-tested with scripted deps. The loop owns its transient
+// state (sawBusy, idle/completing timers, published phase) while the three
+// fields that runPrompt's other actors (SSE stream handler, completion/failure
+// signals, hard timeout) read and write stay in the shared `state` object.
+
+export interface PollLoopSharedState {
+  /** Set true to stop the loop; also set by the completion/failure signals. */
+  terminate: boolean;
+  /**
+   * "The session is parked" — drives the idle timeout and the
+   * don't-terminate-yet logic. Set by session.idle, which fires after EVERY
+   * completed assistant turn — so it is not evidence that a human is needed.
+   */
+  waitingForInput: boolean;
+  /**
+   * The narrower question: is the run actually blocked on a person? Only a
+   * permission prompt or a user-aborted message mean that. This is what gets
+   * published as RunPhase.WaitingForInput, because the manager fails any
+   * non-PLAN task that reports it ("BUILD tasks cannot wait for input").
+   */
+  needsHumanInput: boolean;
+}
+
+export interface RunPollStatusConstants {
+  pollMs: number;
+  firstResponseTimeoutMs: number;
+  settleMs: number;
+  idleTimeoutMs: number;
+  healthFailThreshold: number;
+}
+
+export interface RunPollStatusDeps {
+  fetchMessages: (sessionID: string) => Promise<RawMessage[]>;
+  checkHealth: () => Promise<boolean>;
+  patchStatus: (p: object) => Promise<void>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  isShuttingDown: () => boolean;
+  sessionID: string;
+  state: PollLoopSharedState;
+  tokens: TokenAggregator;
+  constants: RunPollStatusConstants;
+}
+
+export async function runPollStatusLoop(deps: RunPollStatusDeps): Promise<void> {
+  const {
+    fetchMessages,
+    checkHealth,
+    patchStatus,
+    sleep,
+    now,
+    isShuttingDown,
+    sessionID,
+    state,
+    tokens,
+    constants,
+  } = deps;
+  const { pollMs, firstResponseTimeoutMs, settleMs, idleTimeoutMs, healthFailThreshold } =
+    constants;
+
+  const startedAt = now();
+  await sleep(1000);
+  let iter = 0;
+  let unhealthyCount = 0;
+  // Set true only when the poll loop sees its first assistant message (and is
+  // what keeps the first-response timeout from firing once the model is
+  // mid-stream). Note it is deliberately NOT consulted by the zero-token guard
+  // below — a zero-token first response must still throw FatalRunError.
+  let sawBusy = false;
+  // Last value of `needsHumanInput` published to the CR. The dispatcher is the
+  // only component that can observe an agent pausing for clarification, so if
+  // it doesn't write RunPhase.WaitingForInput nobody does.
+  let publishedWaiting = false;
+  let lastMessageId: string | undefined;
+  let idleSince: number | undefined;
+  let completingSince: number | undefined;
+
+  while (!state.terminate && !isShuttingDown()) {
+    iter++;
+    try {
+      const msgs = await fetchMessages(sessionID);
+      const last = msgs.length > 0 ? msgs[msgs.length - 1] : undefined;
+
+      // Periodic health check every 10s (5 iterations). If opencode is
+      // OOM-killed this detects it faster than waiting for stream failure.
+      if (iter % 5 === 0) {
+        const healthy = await checkHealth();
+        if (!healthy) {
+          unhealthyCount++;
+          if (unhealthyCount >= healthFailThreshold) {
+            throw new FatalRunError('opencode server unreachable: health check failed');
+          }
+        } else {
+          unhealthyCount = 0;
+        }
+      }
+
+      const elapsedSinceStart = now() - startedAt;
+      if (!sawBusy && elapsedSinceStart > firstResponseTimeoutMs) {
+        throw new FatalRunError(
+          `opencode did not produce an assistant response within ${firstResponseTimeoutMs / 1000}s of dispatch`,
+        );
+      }
+
+      // Activity detection — any new message (user or assistant) resets
+      // the idle timer and settling counter.
+      if (last?.info?.id && last.info.id !== lastMessageId) {
+        lastMessageId = last.info.id;
+        idleSince = undefined;
+        completingSince = undefined;
+      }
+
+      if (last?.info?.role === 'assistant') {
+        sawBusy = true;
+        // Record every message, not just the newest. This used to sample only
+        // the tail, so a run's reported usage depended on how many distinct
+        // messages happened to be last at a poll boundary: anything that
+        // arrived and was superseded inside one 2s tick was never counted at
+        // all. A build task that finished quickly reported 2 in / 56 out
+        // because the tail was sampled about once, while a long one that
+        // failed reported 1457 / 22943 from the same code — the difference was
+        // poll cadence, not usage.
+        //
+        // Idempotent to repeat: the aggregator keys on message id and takes
+        // the max within an id, so re-reading the whole list every tick
+        // converges on each message's final counts instead of accumulating
+        // them.
+        recordUsage(tokens, sessionID, msgs);
+        await tokens.flush(patchStatus);
+
+        // Check for errors regardless of time.completed — OpenCode may set
+        // a MessageAbortedError on the message without setting the completed
+        // timestamp (aborted messages are never fully "completed").
+        if (last.info.error) {
+          if (isMessageAbortedError(last.info.error)) {
+            if (!state.waitingForInput) {
+              log('assistant message aborted by user — waiting for input');
+              state.waitingForInput = true;
+            }
+            // A user-cancelled message genuinely leaves the run blocked on a
+            // person deciding what to do next.
+            state.needsHumanInput = true;
+          } else {
+            throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
+          }
+        }
+
+        if (last.info.time?.completed) {
+          const totalTokens = tokens.totals();
+          if (state.waitingForInput) {
+            // Don't reset waitingForInput for abort errors on the current
+            // message.  Only reset when a new non-aborted message arrives.
+            if (!last.info.error && (totalTokens.tokensIn > 0 || totalTokens.tokensOut > 0)) {
+              state.waitingForInput = false;
+              // Work resumed, so whatever the human was needed for is done.
+              state.needsHumanInput = false;
+            }
+            // If still waiting (aborted or idle), fall through without
+            // terminating — the poll loop keeps running.
+          } else if (totalTokens.tokensIn === 0 && totalTokens.tokensOut === 0) {
+            // A completed assistant message with zero recorded usage means
+            // opencode "answered" without producing anything. For the first
+            // response this is fatal. (Regression: `sawBusy = true` used to be
+            // set before this check, making the guard unreachable, so an empty
+            // first response silently fell through to waitingForInput. Once
+            // any usage has been recorded totalTokens is > 0, so this branch
+            // can only ever fire on the first assistant message.)
+            throw new FatalRunError(
+              'opencode produced an assistant response with zero token usage before any work was done',
+            );
+          } else if (completingSince && now() - completingSince >= settleMs) {
+            log('last assistant message completed — settled, done');
+            state.terminate = true;
+            return;
+          } else if (!completingSince) {
+            completingSince = now();
+          }
+        }
+      }
+
+      // --- idle timeout: terminate if session is idle for too long ---
+      if (state.waitingForInput) {
+        if (idleSince === undefined) idleSince = now();
+        if (now() - idleSince >= idleTimeoutMs) {
+          log('session idle for too long — terminating');
+          state.terminate = true;
+          return;
+        }
+      } else {
+        idleSince = undefined;
+      }
+
+      // --- publish WaitingForInput <-> Running transitions to the CR ---
+      // Done here rather than at each mutation site so it also picks up flips
+      // made by the SSE handler, which runs outside this loop.
+      if (state.needsHumanInput !== publishedWaiting) {
+        publishedWaiting = state.needsHumanInput;
+        const phase = state.needsHumanInput ? RunPhase.WaitingForInput : RunPhase.Running;
+        log(`phase -> ${phase}`);
+        await patchStatus({ phase });
+      }
+    } catch (e) {
+      if (state.terminate) return;
+      // Unrecoverable conditions must escape the loop so main() can snapshot,
+      // report stats and patch Failed. Everything else is treated as a
+      // transient blip and retried on the next tick.
+      if (e instanceof FatalRunError) {
+        err('pollStatus fatal:', e.message);
+        throw e;
+      }
+      if ((e as Error).message?.startsWith('session error:')) throw e;
+      err('pollStatus iter error:', (e as Error).message);
+    }
+    await sleep(pollMs);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Prompt-driven mode
 
 export async function runPrompt(
@@ -671,28 +893,23 @@ export async function runPrompt(
     }
   }
 
-  let sawBusy = false; // set true only when poll loop sees first assistant message
+  // Shared state for the poll-status loop (extracted into runPollStatusLoop).
   // `waitingForInput` means "the session is parked" and drives the idle timeout
   // and the don't-terminate-yet logic. It is set by session.idle, which fires
   // after EVERY completed assistant turn — so it is not evidence that a human
   // is needed.
-  let waitingForInput = false;
   // `needsHumanInput` is the narrower question: is the run actually blocked on a
   // person? Only a permission prompt or a user-aborted message mean that. This
   // is what gets published as RunPhase.WaitingForInput, because the manager
   // fails any non-PLAN task that reports it ("BUILD tasks cannot wait for
   // input"). Publishing on session.idle failed every BUILD task at the end of
   // its first turn.
-  let needsHumanInput = false;
-  // Last value of `needsHumanInput` published to the CR. The dispatcher is the
-  // only component that can observe an agent pausing for clarification, so if
-  // it doesn't write RunPhase.WaitingForInput nobody does.
-  let publishedWaiting = false;
-  let terminate = false;
+  const pollState: PollLoopSharedState = {
+    terminate: false,
+    waitingForInput: false,
+    needsHumanInput: false,
+  };
   let promptFlushCursor = 0;
-  let completingSince: number | undefined;
-  let idleSince: number | undefined;
-  let lastMessageId: string | undefined;
 
   // Transient error codes that warrant a retry of the prompt POST.
   const RETRYABLE_CODES = new Set([
@@ -756,7 +973,7 @@ export async function runPrompt(
         log('prompt completed (sync)', JSON.stringify(syncData.info));
         return;
       } catch (e) {
-        if (terminate || promptPostController.signal.aborted) return;
+        if (pollState.terminate || promptPostController.signal.aborted) return;
         const code = (e as NodeJS.ErrnoException).code ?? '';
         const isRetryable =
           RETRYABLE_CODES.has(code) || (e as Error).message?.includes('socket hang up');
@@ -786,153 +1003,30 @@ export async function runPrompt(
   })();
   const promptPostFailure = promptPost.then(() => new Promise<void>(() => {}));
 
-  const pollStatus = async (): Promise<void> => {
-    const POLL_MS = 2000;
-    const startedAt = Date.now();
-    await sleep(1000);
-    let iter = 0;
-    let unhealthyCount = 0;
-    while (!terminate && !isShuttingDown()) {
-      iter++;
-      try {
-        const msgs = await fetchMessages(sessionID);
-        const last = msgs.length > 0 ? msgs[msgs.length - 1] : undefined;
-
-        // Periodic health check every 10s (5 iterations). If opencode is
-        // OOM-killed this detects it faster than waiting for stream failure.
-        if (iter % 5 === 0) {
-          const healthy = await checkHealth();
-          if (!healthy) {
-            unhealthyCount++;
-            if (unhealthyCount >= 3) {
-              throw new FatalRunError('opencode server unreachable: health check failed');
-            }
-          } else {
-            unhealthyCount = 0;
-          }
-        }
-
-        const elapsedSinceStart = Date.now() - startedAt;
-        if (!sawBusy && elapsedSinceStart > FIRST_RESPONSE_TIMEOUT_MS) {
-          throw new FatalRunError(
-            `opencode did not produce an assistant response within ${FIRST_RESPONSE_TIMEOUT_MS / 1000}s of dispatch`,
-          );
-        }
-
-        // Activity detection — any new message (user or assistant) resets
-        // the idle timer and settling counter.
-        if (last?.info?.id && last.info.id !== lastMessageId) {
-          lastMessageId = last.info.id;
-          idleSince = undefined;
-          completingSince = undefined;
-        }
-
-        if (last?.info?.role === 'assistant') {
-          sawBusy = true;
-          // Record every message, not just the newest. This used to sample only
-          // the tail, so a run's reported usage depended on how many distinct
-          // messages happened to be last at a poll boundary: anything that
-          // arrived and was superseded inside one 2s tick was never counted at
-          // all. A build task that finished quickly reported 2 in / 56 out
-          // because the tail was sampled about once, while a long one that
-          // failed reported 1457 / 22943 from the same code — the difference was
-          // poll cadence, not usage.
-          //
-          // Idempotent to repeat: the aggregator keys on message id and takes
-          // the max within an id, so re-reading the whole list every tick
-          // converges on each message's final counts instead of accumulating
-          // them.
-          recordUsage(tokens, sessionID, msgs);
-          await tokens.flush(patchStatus);
-
-          // Check for errors regardless of time.completed — OpenCode may set
-          // a MessageAbortedError on the message without setting the completed
-          // timestamp (aborted messages are never fully "completed").
-          if (last.info.error) {
-            if (isMessageAbortedError(last.info.error)) {
-              if (!waitingForInput) {
-                log('assistant message aborted by user — waiting for input');
-                waitingForInput = true;
-              }
-              // A user-cancelled message genuinely leaves the run blocked on a
-              // person deciding what to do next.
-              needsHumanInput = true;
-            } else {
-              throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
-            }
-          }
-
-          if (last.info.time?.completed) {
-            const totalTokens = tokens.totals();
-            if (waitingForInput) {
-              // Don't reset waitingForInput for abort errors on the current
-              // message.  Only reset when a new non-aborted message arrives.
-              if (!last.info.error && (totalTokens.tokensIn > 0 || totalTokens.tokensOut > 0)) {
-                waitingForInput = false;
-                // Work resumed, so whatever the human was needed for is done.
-                needsHumanInput = false;
-              }
-              // If still waiting (aborted or idle), fall through without
-              // terminating — the poll loop keeps running.
-            } else if (totalTokens.tokensIn === 0 && totalTokens.tokensOut === 0) {
-              if (!sawBusy) {
-                throw new FatalRunError(
-                  'opencode produced an assistant response with zero token usage before any work was done',
-                );
-              }
-              waitingForInput = true;
-              idleSince ??= Date.now();
-            } else if (completingSince && Date.now() - completingSince >= SETTLE_MS) {
-              log('last assistant message completed — settled, done');
-              terminate = true;
-              return;
-            } else if (!completingSince) {
-              completingSince = Date.now();
-            }
-          }
-        }
-
-        // --- idle timeout: terminate if session is idle for too long ---
-        if (waitingForInput) {
-          if (idleSince === undefined) idleSince = Date.now();
-          if (Date.now() - idleSince >= IDLE_TIMEOUT_MS) {
-            log('session idle for too long — terminating');
-            terminate = true;
-            return;
-          }
-        } else {
-          idleSince = undefined;
-        }
-
-        // --- publish WaitingForInput <-> Running transitions to the CR ---
-        // Done here rather than at each mutation site so it also picks up flips
-        // made by the SSE handler, which runs outside this loop.
-        if (needsHumanInput !== publishedWaiting) {
-          publishedWaiting = needsHumanInput;
-          const phase = needsHumanInput ? RunPhase.WaitingForInput : RunPhase.Running;
-          log(`phase -> ${phase}`);
-          await patchStatus({ phase });
-        }
-      } catch (e) {
-        if (terminate) return;
-        // Unrecoverable conditions must escape the loop so main() can snapshot,
-        // report stats and patch Failed. Everything else is treated as a
-        // transient blip and retried on the next tick.
-        if (e instanceof FatalRunError) {
-          err('pollStatus fatal:', e.message);
-          throw e;
-        }
-        if ((e as Error).message?.startsWith('session error:')) throw e;
-        err('pollStatus iter error:', (e as Error).message);
-      }
-      await sleep(POLL_MS);
-    }
-  };
+  const pollStatus = (): Promise<void> =>
+    runPollStatusLoop({
+      fetchMessages,
+      checkHealth,
+      patchStatus,
+      sleep,
+      now: () => Date.now(),
+      isShuttingDown,
+      sessionID,
+      state: pollState,
+      tokens,
+      constants: {
+        pollMs: 2000,
+        firstResponseTimeoutMs: FIRST_RESPONSE_TIMEOUT_MS,
+        settleMs: SETTLE_MS,
+        idleTimeoutMs: IDLE_TIMEOUT_MS,
+        healthFailThreshold: 3,
+      },
+    });
 
   const streamEvents = async (): Promise<void> => {
     let streamErrors = 0;
     let reconnects = 0;
-    while (!terminate) {
+    while (!pollState.terminate) {
       try {
         if (reconnects > 0) maybeLogStreamReconnect('prompt', reconnects);
         const evtRes = await fetch(`${BASE_URL}/event`, {
@@ -947,7 +1041,7 @@ export async function runPrompt(
         const reader = evtRes.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
-        while (!terminate) {
+        while (!pollState.terminate) {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
@@ -971,9 +1065,9 @@ export async function runPrompt(
             logEvent(evt);
             if (
               (evt.type === 'permission.updated' || evt.type === 'session.idle') &&
-              !waitingForInput
+              !pollState.waitingForInput
             ) {
-              waitingForInput = true;
+              pollState.waitingForInput = true;
               // Snapshot sessions immediately when parking so the manager can
               // read the conversation context even if this pod is killed while
               // waiting.
@@ -985,7 +1079,7 @@ export async function runPrompt(
             // fires after every completed turn (see the flush below), so it
             // must not surface as RunPhase.WaitingForInput.
             if (evt.type === 'permission.updated') {
-              needsHumanInput = true;
+              pollState.needsHumanInput = true;
             }
             if (evt.type === 'session.idle') {
               // Incremental DB flush after each completed assistant turn.
@@ -1035,7 +1129,7 @@ export async function runPrompt(
           /* ignore */
         }
       } catch (e) {
-        if (terminate) return;
+        if (pollState.terminate) return;
         streamErrors++;
         err('SSE stream error:', (e as Error).message, `(${streamErrors}/5)`);
         if (streamErrors >= 5) {
@@ -1044,12 +1138,12 @@ export async function runPrompt(
         await sleep(5000);
       }
       // Add delay between all reconnection attempts (success or error) to prevent runaway loops
-      if (!terminate) await sleep(1000);
+      if (!pollState.terminate) await sleep(1000);
     }
   };
 
   const hardTimeout = setTimeout(() => {
-    if (waitingForInput) {
+    if (pollState.waitingForInput) {
       err('dispatcher timeout guard — waiting for input, exiting cleanly');
       process.exit(0);
     } else {
@@ -1059,17 +1153,17 @@ export async function runPrompt(
   }, HARD_TIMEOUT_MS);
   hardTimeout.unref();
   void streamEvents().catch((e) => {
-    if (!terminate) err('streamEvents fatal:', (e as Error).message);
+    if (!pollState.terminate) err('streamEvents fatal:', (e as Error).message);
   });
 
   // Periodic snapshot every 30s for visibility during long-running tasks.
   // First iteration fires immediately (no initial delay) to capture early state.
   const periodicSnapshot = async (): Promise<void> => {
     let first = true;
-    while (!terminate) {
+    while (!pollState.terminate) {
       if (!first) await sleep(30_000);
       first = false;
-      if (!terminate) {
+      if (!pollState.terminate) {
         snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
           err('periodic snapshot failed:', (e as Error).message),
         );
@@ -1077,7 +1171,7 @@ export async function runPrompt(
     }
   };
   void periodicSnapshot().catch((e) => {
-    if (!terminate) err('periodicSnapshot fatal:', (e as Error).message);
+    if (!pollState.terminate) err('periodicSnapshot fatal:', (e as Error).message);
   });
 
   // Race the normal poll loop against:
@@ -1090,16 +1184,16 @@ export async function runPrompt(
   // patches Succeeded with the agent's summary as the completion message.
   let agentCompletionSummary: string | undefined;
   const failureRaced = failureSignal.then((reason) => {
-    terminate = true;
+    pollState.terminate = true;
     throw new Error(`session error: agent signalled failure — ${reason}`);
   });
   const completionRaced = completionSignal.then((summary) => {
-    terminate = true;
+    pollState.terminate = true;
     agentCompletionSummary = summary;
     log(`complete_run called by agent: ${summary}`);
   });
   const planRaced = planSignal?.then((summary) => {
-    terminate = true;
+    pollState.terminate = true;
     agentCompletionSummary = summary;
     log(`complete_plan called by agent: ${summary}`);
   });
@@ -1121,7 +1215,7 @@ export async function runPrompt(
       raceError = e as Error;
     }
   }
-  terminate = true;
+  pollState.terminate = true;
   promptPostController.abort();
   clearTimeout(hardTimeout);
 
