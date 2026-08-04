@@ -40,7 +40,7 @@ beatctl github-token create --token ghp_xxxxx -n percussionist
 
 ```bash
 # Already done for the main cluster — verify it exists
-kubectl get secret opencode-auth -n percussionist
+kubectl get secret agent-auth -n percussionist
 ```
 
 If missing:
@@ -53,12 +53,12 @@ beatctl auth import
 
 ```bash
 kubectl get secrets -n percussionist \
-  | grep -E 'git-ssh-key|git-github-token|opencode-auth'
+  | grep -E 'git-ssh-key|git-github-token|agent-auth'
 ```
 
 Expected output:
 ```
 git-github-token   Opaque   1      ...
 git-ssh-key        kubernetes.io/ssh-auth   1   ...
-opencode-auth      Opaque   1      ...
+agent-auth      Opaque   1      ...
 ```

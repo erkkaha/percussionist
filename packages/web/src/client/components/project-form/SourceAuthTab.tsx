@@ -160,7 +160,7 @@ export default function SourceAuthTab({ form }: SourceAuthTabProps) {
               type="text"
               value={form.authSecret}
               onChange={(e) => form.setAuthSecret(e.target.value)}
-              placeholder="opencode-auth"
+              placeholder="agent-auth"
               className="font-mono"
             />
             <p className="text-xs text-text-dim">

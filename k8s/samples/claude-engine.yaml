@@ -3,8 +3,13 @@
 # Prerequisite — mint a long-lived subscription token and store it:
 #
 #   claude setup-token
-#   kubectl -n percussionist create secret generic claude-oat \
+#   kubectl -n percussionist create secret generic agent-auth \
 #     --from-literal=CLAUDE_CODE_OAUTH_TOKEN='sk-ant-oat01-...'
+#
+# The same `agent-auth` Secret may also carry opencode's blob under the
+# `auth.json` key (`beatctl auth import` adds/updates that key without
+# touching this one) — the operator picks the right key per engine, so one
+# Secret serves projects whose agents mix claude and opencode models.
 #
 # Note there is deliberately NO llmKeysSecret here. ANTHROPIC_API_KEY overrides
 # subscription auth unconditionally and is used without prompting in
@@ -30,7 +35,7 @@ spec:
 
   secrets:
     authSecret:
-      name: claude-oat
+      name: agent-auth
       key: CLAUDE_CODE_OAUTH_TOKEN
 
   # Keep subscription-backed fan-out low: a single seat running many
@@ -69,7 +74,7 @@ spec:
       ref: master
   secrets:
     authSecret:
-      name: claude-oat
+      name: agent-auth
       key: CLAUDE_CODE_OAUTH_TOKEN
   # Deliberately says nothing about how to signal completion. The builder agent's
   # own body carries that instruction, and the operator delivers it as the
