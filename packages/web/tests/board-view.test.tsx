@@ -99,6 +99,8 @@ mock.module(path.resolve('src/client/lib/api'), () => ({
 // than on this helper, which the real app treats as a pure function of hostname.
 mock.module(path.resolve('src/client/lib/code-server-url'), () => ({
   deriveIdeUrl: () => 'http://ide-test-project.example.com',
+  ideUrl: () => 'http://ide-test-project.example.com',
+  useIdeUrlTemplate: () => ({ template: undefined, isLoading: false }),
 }));
 
 // BoardHeader is deliberately NOT mocked here.

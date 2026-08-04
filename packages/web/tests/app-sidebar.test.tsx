@@ -40,6 +40,7 @@ mock.module(path.resolve('src/client/lib/auth'), () => ({
 
 mock.module(path.resolve('src/client/lib/api'), () => ({
   fetchUpdateStatus: async () => ({ updateAvailable: false }),
+  fetchSettings: async () => ({ metadata: { name: 'default' }, spec: {} }),
 }));
 
 // ui/sidebar.tsx (and its transitive deps) resolve `@/...` path aliases that

@@ -11,7 +11,7 @@ import {
   requestChangesTask,
   retryEscalatedTask,
 } from '../lib/api';
-import { deriveIdeUrl } from '../lib/code-server-url';
+import { ideUrl, useIdeUrlTemplate } from '../lib/code-server-url';
 import { projectColor } from '../lib/project-color';
 import type { ManagerMetrics, Task } from '../lib/types';
 import { AddTaskForm } from './board/AddTaskForm';
@@ -143,6 +143,8 @@ export default function BoardView() {
   const rawApprovals = data?.approvals;
   const approvals = useMemo(() => rawApprovals, [rawApprovals]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const { template: ideTemplate } = useIdeUrlTemplate();
+
   if (!name) return null;
 
   if (isLoading && !data) return <p className="text-sm text-text-dim p-4">Loading board…</p>;
@@ -152,7 +154,7 @@ export default function BoardView() {
   const { settings, columns, status, authWarning } = data;
   const roster = (settings.agents ?? []).map((a: { name: string }) => a.name);
   const codeServerUrl =
-    settings.codeServer?.enabled && projectName ? deriveIdeUrl(projectName) : undefined;
+    settings.codeServer?.enabled && projectName ? ideUrl(projectName, ideTemplate) : undefined;
   const color = projectColor(projectName, settings.color);
 
   const selectedTask: Task | undefined = selectedTaskName

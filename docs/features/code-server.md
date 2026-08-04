@@ -24,9 +24,26 @@ spec:
 ## Access
 
 ```bash
-kubectl -n percussionist port-forward svc/code-server-my-project 8080:8080
+kubectl -n percussionist port-forward svc/ide-my-project 8080:8080
 # Open http://localhost:8080
 ```
+
+With `PERCUSSIONIST_INGRESS_BASE_URL` set on the operator, each project also
+gets an Ingress at `ide-{project}.<base host>`.
+
+### Dashboard links
+
+The web UI resolves IDE links from `ClusterSettings.spec.codeServerUrlTemplate`
+(a URL with a `{project}` placeholder, editable under Settings → Runner):
+
+```yaml
+spec:
+  codeServerUrlTemplate: https://ide-{project}.10.0.0.1.nip.io
+```
+
+When unset, the UI falls back to replacing the first label of the dashboard
+hostname with `ide-{project}` — which only works when the IDE ingresses are
+siblings of the dashboard's own domain.
 
 ## Workspace Layout
 

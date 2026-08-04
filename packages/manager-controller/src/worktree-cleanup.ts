@@ -132,7 +132,9 @@ export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Pro
     'set -e',
     `echo "[cleanup] removing worktree ${worktreeDir}"`,
     `BRANCH=$(git -C ${shQuote(worktreeDir)} symbolic-ref HEAD 2>/dev/null || true)`,
-    `rm -rf ${shQuote(worktreeDir)}`,
+    // A task-level cleanup pod may be deleting the same tree concurrently;
+    // entries vanishing mid-rm make rm exit non-zero, which is still success.
+    `rm -rf ${shQuote(worktreeDir)} 2>/dev/null || true`,
     ...(mirrorDir
       ? [
           `if [ -d "${mirrorDir}" ]; then`,
@@ -251,7 +253,8 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
     `    BRANCH="\${BRANCH#refs/heads/}"`,
     `    [ -n "$BRANCH" ] && BRANCHES="$BRANCHES $BRANCH"`,
     `    echo "[cleanup] removing $dir"`,
-    `    rm -rf "$dir"`,
+    // Concurrent run-level cleanup pods may race on the same tree — see above.
+    `    rm -rf "$dir" 2>/dev/null || true`,
     `done`,
     ...(runNames.length > 0
       ? [
@@ -261,7 +264,7 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
           `  BRANCH="\${BRANCH#refs/heads/}"`,
           `  [ -n "$BRANCH" ] && BRANCHES="$BRANCHES $BRANCH"`,
           `  echo "[cleanup] removing $dir"`,
-          `  rm -rf "$dir"`,
+          `  rm -rf "$dir" 2>/dev/null || true`,
           `done`,
         ]
       : []),
