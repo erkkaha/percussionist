@@ -633,6 +633,24 @@ describe('executeEffects — CleanupWorktree', () => {
     expect(result.applied).toBe(true);
     expect(spawnWorktreeCleanupPodSpy).not.toHaveBeenCalled();
   });
+
+  it('skips run-level cleanup on the done transition (task-level cleanup covers it)', async () => {
+    const succeededTask = makeTask('test-task', 'test-project', { phase: 'succeeded' });
+    succeededTask.metadata.resourceVersion = '1000';
+    getTaskSpy.mockResolvedValue(succeededTask);
+    listRunsSpy.mockResolvedValue([]);
+
+    const result = await call(succeededTask, 'done', [effect]);
+
+    expect(result.applied).toBe(true);
+    // Flush the fire-and-forget task-level cleanup chain.
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Run-level pod must not spawn — it would race the task-level pod's
+    // rm -rf on the same worktree; only the task-level cleanup runs.
+    expect(spawnWorktreeCleanupPodSpy).not.toHaveBeenCalled();
+    expect(spawnTaskWorktreeCleanupPodSpy).toHaveBeenCalled();
+  });
 });
 
 describe('executeEffects — task-done worktree cleanup', () => {

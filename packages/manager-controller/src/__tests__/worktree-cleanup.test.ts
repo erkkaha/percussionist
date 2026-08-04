@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import type { Task } from '@percussionist/api';
 import * as kube from '@percussionist/kube';
-import { spawnTaskWorktreeCleanupPod } from '../worktree-cleanup.js';
+import { spawnTaskWorktreeCleanupPod, spawnWorktreeCleanupPod } from '../worktree-cleanup.js';
 
 function makeTask(name: string): Task {
   return {
@@ -93,5 +93,57 @@ describe('spawnTaskWorktreeCleanupPod — script content', () => {
 
     expect(capturedScript).not.toContain('/data/worktrees/proj-review');
     expect(capturedScript.match(/for dir in/g)?.length).toBe(1);
+  });
+
+  it('tolerates a concurrent cleanup deleting the same tree (rm must not abort the script)', async () => {
+    const task = makeTask('build-123');
+
+    await spawnTaskWorktreeCleanupPod({
+      task,
+      projectName: 'proj',
+      namespace: 'percussionist',
+      image: 'alpine/git',
+      runNames: ['proj-review-abc-1a2b3c'],
+    });
+
+    // Both removal loops run under `set -e`; a racing pod making entries
+    // vanish mid-rm returns non-zero from rm, so every rm must be `|| true`.
+    expect(capturedScript).toContain('set -e');
+    expect(capturedScript).not.toMatch(/rm -rf [^\n]*(?<!\|\| true)$/m);
+  });
+});
+
+describe('spawnWorktreeCleanupPod — script content', () => {
+  let coreSpy: ReturnType<typeof spyOn>;
+  let capturedScript: string;
+
+  beforeEach(() => {
+    capturedScript = '';
+    const fakeCore = {
+      createNamespacedPod: async ({ body }: { body: any }) => {
+        capturedScript = body.spec.containers[0].args[0];
+        return body;
+      },
+    };
+    coreSpy = spyOn(kube, 'core').mockReturnValue(fakeCore as any);
+  });
+
+  afterEach(() => {
+    coreSpy.mockRestore();
+  });
+
+  it('tolerates a concurrent task-level cleanup deleting the same tree', async () => {
+    const task = makeTask('build-123');
+
+    await spawnWorktreeCleanupPod({
+      task,
+      runName: 'proj-merge-build-123-1a2b3c',
+      projectName: 'proj',
+      namespace: 'percussionist',
+      image: 'alpine/git',
+    });
+
+    expect(capturedScript).toContain('set -e');
+    expect(capturedScript).not.toMatch(/rm -rf [^\n]*(?<!\|\| true)$/m);
   });
 });

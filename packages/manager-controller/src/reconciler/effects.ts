@@ -304,6 +304,12 @@ export async function executeEffects(
             );
             break;
           }
+          if (toPhase === 'done') {
+            // The task-level cleanup pod spawned on the "done" transition
+            // removes every run worktree of the task, including this one.
+            // Spawning both makes the two pods race rm -rf on the same tree.
+            break;
+          }
           const projectName = project.metadata.name;
           const gitUrl = (project.spec.source as { git?: { url?: string } } | undefined)?.git?.url;
           const runnerImage = (project.spec.runner as { image?: string } | undefined)?.image;
