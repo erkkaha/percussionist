@@ -16,7 +16,7 @@ import { useProjects } from '../hooks/useProjects';
 import { useProjectsEvents } from '../hooks/useProjectsEvents';
 import { fetchUpdateStatus } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { deriveIdeUrl } from '../lib/code-server-url';
+import { ideUrl, useIdeUrlTemplate } from '../lib/code-server-url';
 import { projectColor } from '../lib/project-color';
 import { UsageBar } from './UsageBar';
 import {
@@ -166,6 +166,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
   });
 
   const { isMobile, setOpenMobile } = useSidebar();
+  const { template: ideTemplate } = useIdeUrlTemplate();
 
   const handleNavClick = React.useCallback(
     (e: React.MouseEvent) => {
@@ -229,7 +230,7 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
                         <span>{p.spec.displayName || name}</span>
                       </NavLink>
                     </SidebarMenuButton>
-                    {p.spec.codeServer?.enabled && deriveIdeUrl(name) && (
+                    {p.spec.codeServer?.enabled && ideUrl(name, ideTemplate) && (
                       <Link
                         to={`/projects/${encodeURIComponent(name)}/code-server`}
                         onClick={(e) => e.stopPropagation()}

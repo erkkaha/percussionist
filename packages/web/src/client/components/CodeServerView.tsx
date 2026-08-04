@@ -1,14 +1,21 @@
 import { useParams, useSearchParams } from 'react-router-dom';
-import { deriveIdeUrl } from '../lib/code-server-url';
+import { ideUrl, useIdeUrlTemplate } from '../lib/code-server-url';
 
 export default function CodeServerView() {
   const { name } = useParams<{ name: string }>();
   const [searchParams] = useSearchParams();
 
-  const codeServerUrl = name ? deriveIdeUrl(name) : undefined;
+  const { template, isLoading } = useIdeUrlTemplate();
+  const codeServerUrl = name ? ideUrl(name, template) : undefined;
 
   if (!name) {
     return <p className="text-text-dim p-4">No project specified.</p>;
+  }
+
+  // Don't point the iframe at the fallback-derived URL while the template is
+  // still loading — a wrong first src is a wasted (possibly hanging) load.
+  if (isLoading) {
+    return <p className="text-text-dim p-4">Loading…</p>;
   }
 
   if (!codeServerUrl) {

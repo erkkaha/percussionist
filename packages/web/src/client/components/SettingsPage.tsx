@@ -569,6 +569,9 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
     (runner.resources as Record<string, Record<string, string>> | undefined)?.limits?.memory ?? '',
   );
   const [runTTLDays, setRunTTLDays] = useState(String((spec.runTTLDays as number) ?? 7));
+  const [codeServerUrlTemplate, setCodeServerUrlTemplate] = useState(
+    (spec.codeServerUrlTemplate as string | undefined) ?? '',
+  );
 
   return (
     <Card>
@@ -653,6 +656,23 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
             </p>
           </div>
         </div>
+        <div className="border-t border-border pt-4">
+          <p className="text-sm font-medium mb-2">Code-server</p>
+          <div>
+            <label className="text-xs text-text-dim block mb-1">
+              IDE URL template ({'{project}'} placeholder)
+            </label>
+            <Input
+              value={codeServerUrlTemplate}
+              onChange={(e) => setCodeServerUrlTemplate(e.target.value)}
+              placeholder="https://ide-{project}.example.com"
+            />
+            <p className="text-xs text-text-dim mt-1">
+              Where the browser reaches per-project code-server ingresses. Leave empty to derive
+              from the dashboard hostname (ide-{'{project}'}.&lt;dashboard domain&gt;).
+            </p>
+          </div>
+        </div>
       </CardContent>
       <CardFooter className="sm:flex-row flex-col gap-2">
         <Button
@@ -671,6 +691,7 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
             onSave({
               ...spec,
               runTTLDays: parseInt(runTTLDays, 10) || 7,
+              codeServerUrlTemplate: codeServerUrlTemplate.trim() || undefined,
               runner: {
                 image: image.trim() || undefined,
                 timeoutSeconds: parseInt(timeoutSeconds, 10) || undefined,
