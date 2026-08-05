@@ -113,7 +113,9 @@ export function buildRunFromFlags(
 
   // Merge project defaults first, then explicit flags win over them.
   const pd = projectDefaults;
-  const resolvedAgent = opts.agent;
+  const resolvedAgent = opts.agent ?? pd?.agent;
+  const resolvedImage = opts.image ?? pd?.image;
+  const resolvedTimeoutSeconds = opts.timeout ? Number(opts.timeout) : pd?.timeoutSeconds;
   const resolvedModel = opts.model ?? pd?.model;
   const resolvedLlmSecret = opts.llmKeysSecret ?? pd?.secrets?.llmKeysSecret;
   const resolvedAuthSecret = opts.authSecret ?? pd?.secrets?.authSecret?.name;
@@ -161,8 +163,8 @@ export function buildRunFromFlags(
       ...(opts.interactive ? { interactive: true } : {}),
       ...(resolvedAgent ? { agent: resolvedAgent } : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
-      ...(opts.image ? { image: opts.image } : {}),
-      ...(opts.timeout ? { timeoutSeconds: Number(opts.timeout) } : {}),
+      ...(resolvedImage ? { image: resolvedImage } : {}),
+      ...(resolvedTimeoutSeconds ? { timeoutSeconds: resolvedTimeoutSeconds } : {}),
       ...(resolvedLlmSecret || resolvedAuthSecret
         ? {
             secrets: {
@@ -205,6 +207,14 @@ export function buildRunFromFlags(
       ...(pd?.sidecars?.length ? { sidecars: pd.sidecars } : {}),
       // Inherit initScript from the project spec. Not overridable via CLI flags.
       ...(pd?.initScript ? { initScript: pd.initScript } : {}),
+      // Inherit resources from the project spec. Not overridable via CLI flags.
+      ...(pd?.resources ? { resources: pd.resources } : {}),
+      // Inherit data PVC config from the project spec. Not overridable via CLI flags.
+      ...(pd?.data ? { data: pd.data } : {}),
+      // Inherit git cache options from the project spec. Not overridable via CLI flags.
+      ...(pd?.gitCache ? { gitCache: pd.gitCache } : {}),
+      // Inherit runner packages from the project spec. Not overridable via CLI flags.
+      ...(pd?.runner?.packages ? { runner: { packages: pd.runner.packages } } : {}),
     },
   };
   return RunSchema.parse(raw);
@@ -236,6 +246,9 @@ export function withProjectLabels(meta: Record<string, unknown> | undefined, pro
 export function buildRunFromFile(path: string, opts: SubmitOpts): Run {
   const doc = YAML.parse(readFileSync(path, 'utf8'));
   // Let a user override the name/namespace at the CLI without editing the file.
+  // opts.namespace is only set when -n was explicitly passed (the option has no
+  // commander default), so the file's metadata.namespace survives unless the
+  // user overrides it.
   if (opts.name) doc.metadata = { ...(doc.metadata ?? {}), name: opts.name };
   if (opts.namespace) {
     doc.metadata = { ...(doc.metadata ?? {}), namespace: opts.namespace };
@@ -245,6 +258,16 @@ export function buildRunFromFile(path: string, opts: SubmitOpts): Run {
   const project = String(opts.project ?? doc?.spec?.project ?? '');
   doc.metadata = withProjectLabels(doc.metadata, project);
   return RunSchema.parse(doc);
+}
+
+/**
+ * Read a run YAML file's metadata.namespace, if any. runSubmit uses this to
+ * resolve Project defaults in the namespace a -f submission will actually land
+ * in, instead of the global default.
+ */
+function namespaceFromFile(path: string): string | undefined {
+  const doc = YAML.parse(readFileSync(path, 'utf8'));
+  return doc?.metadata?.namespace;
 }
 
 // Poll the CR status until phase is Running (or terminal, which is fatal for
@@ -285,11 +308,23 @@ async function waitForRunning(namespace: string, name: string, timeoutMs = 120_0
 }
 
 export async function runSubmit(opts: SubmitOpts): Promise<void> {
-  const ns = opts.namespace ?? DEFAULT_NAMESPACE;
-
   if (!opts.project && !opts.file) {
     fatal('--project is required (use --file to supply a fully-specified run YAML)', undefined);
   }
+
+  // A -f submission may carry its own metadata.namespace. Resolve the namespace
+  // the run will land in before the Project lookup so defaults come from the
+  // file's namespace rather than the global default. Explicit -n wins, then the
+  // file, then the default (which honors $PERCUSSIONIST_NAMESPACE).
+  let fileNs: string | undefined;
+  if (opts.file) {
+    try {
+      fileNs = namespaceFromFile(opts.file);
+    } catch (e) {
+      fatal('invalid run spec', e);
+    }
+  }
+  const ns = opts.namespace ?? fileNs ?? DEFAULT_NAMESPACE;
 
   // Resolve project defaults before building the run spec. Hard-fail if the
   // project is referenced but cannot be found — a missing project is almost
