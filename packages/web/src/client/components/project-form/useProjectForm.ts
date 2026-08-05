@@ -497,7 +497,11 @@ export function buildProjectRequest(
       enabled: true,
       image: state.codeServerImage.trim() || 'codercom/code-server:4.96.4',
       ...(Object.keys(csResources).length > 0 ? { resources: csResources } : {}),
-      ...(state.humanFolderEnabled ? { humanFolder: { enabled: true } } : {}),
+      ...(state.humanFolderEnabled
+        ? { humanFolder: { enabled: true } }
+        : isEdit
+          ? { humanFolder: null }
+          : {}),
     };
   } else if (isEdit) {
     req.codeServer = { enabled: false };

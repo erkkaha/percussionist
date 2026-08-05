@@ -235,7 +235,7 @@ export interface CreateProjectRequest {
     /** Persistent human workspace folder (repo clone on project default branch). */
     humanFolder?: {
       enabled?: boolean;
-    };
+    } | null;
   };
 
   /** Data PVC configuration — shared cache, git mirrors and worktrees. */
