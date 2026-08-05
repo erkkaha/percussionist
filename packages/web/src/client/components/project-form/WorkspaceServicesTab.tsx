@@ -7,6 +7,7 @@ interface WorkspaceServicesTabProps {
     ProjectFormHookReturn,
     | 'codeServerEnabled'
     | 'codeServerImage'
+    | 'humanFolderEnabled'
     | 'csCpuRequest'
     | 'csMemRequest'
     | 'csCpuLimit'
@@ -24,6 +25,7 @@ interface WorkspaceServicesTabProps {
       ProjectFormHookReturn,
       | 'setCodeServerEnabled'
       | 'setCodeServerImage'
+      | 'setHumanFolderEnabled'
       | 'setCSCpuRequest'
       | 'setCSMemRequest'
       | 'setCSCpuLimit'
@@ -65,6 +67,23 @@ export default function WorkspaceServicesTab({ form }: WorkspaceServicesTabProps
                 placeholder="codercom/code-server:4.96.4"
                 className="font-mono"
               />
+            </div>
+            <div className="border-t border-border pt-3">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-text-muted">
+                    Human workspace folder (repo clone)
+                  </p>
+                  <p className="text-xs text-text-dim">
+                    Clone the project repo into /data/code on the project default branch so the
+                    human lands in a usable workspace.
+                  </p>
+                </div>
+                <Switch
+                  checked={form.humanFolderEnabled}
+                  onCheckedChange={(v) => form.setHumanFolderEnabled(v)}
+                />
+              </div>
             </div>
             <div className="border-t border-border pt-3">
               <p className="text-xs font-medium mb-2 text-text-muted">Resource Requests</p>

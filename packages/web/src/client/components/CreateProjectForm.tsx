@@ -231,6 +231,7 @@ export default function CreateProjectForm({
     form: {
       codeServerEnabled: form.codeServerEnabled,
       codeServerImage: form.codeServerImage,
+      humanFolderEnabled: form.humanFolderEnabled,
       csCpuRequest: form.csCpuRequest,
       csMemRequest: form.csMemRequest,
       csCpuLimit: form.csCpuLimit,
@@ -245,6 +246,7 @@ export default function CreateProjectForm({
       execImage: form.execImage,
       setCodeServerEnabled: form.setCodeServerEnabled,
       setCodeServerImage: form.setCodeServerImage,
+      setHumanFolderEnabled: form.setHumanFolderEnabled,
       setCSCpuRequest: form.setCSCpuRequest,
       setCSMemRequest: form.setCSMemRequest,
       setCSCpuLimit: form.setCSCpuLimit,

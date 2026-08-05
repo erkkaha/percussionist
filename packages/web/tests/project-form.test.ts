@@ -44,6 +44,53 @@ describe('project form request', () => {
     expect(request.codeServer).toBeUndefined();
   });
 
+  it('sends codeServer.humanFolder.enabled when the human folder toggle is on', () => {
+    const state = createInitialState(undefined);
+    state.codeServerEnabled = true;
+    state.humanFolderEnabled = true;
+
+    const request = buildProjectRequest(state, false);
+
+    expect(request.codeServer).toEqual({
+      enabled: true,
+      image: 'codercom/code-server:4.96.4',
+      humanFolder: { enabled: true },
+    });
+  });
+
+  it('omits humanFolder from the payload when the toggle is off', () => {
+    const state = createInitialState(undefined);
+    state.codeServerEnabled = true;
+
+    const request = buildProjectRequest(state, false);
+
+    expect(request.codeServer).toEqual({
+      enabled: true,
+      image: 'codercom/code-server:4.96.4',
+    });
+    expect(request.codeServer?.humanFolder).toBeUndefined();
+  });
+
+  it('initializes humanFolderEnabled from spec when editing', () => {
+    const state = createInitialState({
+      codeServer: { enabled: true, humanFolder: { enabled: true } },
+    });
+
+    expect(state.humanFolderEnabled).toBe(true);
+  });
+
+  it('omits humanFolder entirely when code-server is disabled', () => {
+    const state = createInitialState({
+      codeServer: { enabled: true, humanFolder: { enabled: true } },
+    });
+    state.codeServerEnabled = false;
+
+    const request = buildProjectRequest(state, true);
+
+    expect(request.codeServer).toEqual({ enabled: false });
+    expect(request.codeServer?.humanFolder).toBeUndefined();
+  });
+
   it('sends explicit resets and disables for edited fields', () => {
     const state = createInitialState({
       displayName: 'Old name',

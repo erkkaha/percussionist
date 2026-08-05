@@ -121,6 +121,7 @@ export interface ProjectFormState {
   // Workspace & Services
   codeServerEnabled: boolean;
   codeServerImage: string;
+  humanFolderEnabled: boolean;
   csCpuRequest: string;
   csMemRequest: string;
   csCpuLimit: string;
@@ -496,6 +497,7 @@ export function buildProjectRequest(
       enabled: true,
       image: state.codeServerImage.trim() || 'codercom/code-server:4.96.4',
       ...(Object.keys(csResources).length > 0 ? { resources: csResources } : {}),
+      ...(state.humanFolderEnabled ? { humanFolder: { enabled: true } } : {}),
     };
   } else if (isEdit) {
     req.codeServer = { enabled: false };
@@ -609,6 +611,7 @@ export function createInitialState(
     // Workspace & Services
     codeServerEnabled: spec.codeServer?.enabled ?? false,
     codeServerImage: spec.codeServer?.image ?? 'codercom/code-server:4.96.4',
+    humanFolderEnabled: spec.codeServer?.humanFolder?.enabled ?? false,
     csCpuRequest:
       (spec.codeServer?.resources as { requests?: Record<string, string> } | undefined)?.requests
         ?.cpu ?? '',
@@ -698,6 +701,7 @@ export interface ProjectFormHookReturn extends ProjectFormState {
 
   setCodeServerEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setCodeServerImage: React.Dispatch<React.SetStateAction<string>>;
+  setHumanFolderEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setCSCpuRequest: React.Dispatch<React.SetStateAction<string>>;
   setCSMemRequest: React.Dispatch<React.SetStateAction<string>>;
   setCSCpuLimit: React.Dispatch<React.SetStateAction<string>>;
@@ -824,6 +828,7 @@ export function useProjectForm(
   // Workspace & Services
   const [codeServerEnabled, setCodeServerEnabled] = useState(initialState.codeServerEnabled);
   const [codeServerImage, setCodeServerImage] = useState(initialState.codeServerImage);
+  const [humanFolderEnabled, setHumanFolderEnabled] = useState(initialState.humanFolderEnabled);
   const [csCpuRequest, setCSCpuRequest] = useState(initialState.csCpuRequest);
   const [csMemRequest, setCSMemRequest] = useState(initialState.csMemRequest);
   const [csCpuLimit, setCSCpuLimit] = useState(initialState.csCpuLimit);
@@ -982,6 +987,7 @@ export function useProjectForm(
     // Workspace & Services
     codeServerEnabled,
     codeServerImage,
+    humanFolderEnabled,
     csCpuRequest,
     csMemRequest,
     csCpuLimit,
@@ -996,6 +1002,7 @@ export function useProjectForm(
     execImage,
     setCodeServerEnabled,
     setCodeServerImage,
+    setHumanFolderEnabled,
     setCSCpuRequest,
     setCSMemRequest,
     setCSCpuLimit,
