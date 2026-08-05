@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+
 // beatctl — the percussionist CLI.
 //
 // Subcommands are thin: each one does argument parsing here and delegates to
 // a focused module. Global flags (--namespace) are repeated on every command
 // rather than hoisted so `beatctl logs foo -n ns` reads naturally.
 
+import type { TaskPhase } from '@percussionist/api';
 import { Command } from 'commander';
 import { runAgentCreate, runAgentDelete, runAgentGet, runAgentList } from './agent.js';
 import { runAttach } from './attach.js';
@@ -494,7 +496,6 @@ boardTask
   .option('--type <type>', 'task type: PLAN or BUILD', 'PLAN')
   .option('--priority <level>', 'priority: high, medium, low', 'medium')
   .option('--agent <agent>', 'agent name (must be in project agents list)')
-  .option('--column <name>', 'target column (default: ready)', 'ready')
   .action((projectName: string, opts) => {
     if (!opts.title || !opts.agent) {
       console.error('beatctl: --title and --agent are required');
@@ -507,16 +508,15 @@ boardTask
       type: opts.type as 'PLAN' | 'BUILD',
       priority: opts.priority as 'high' | 'medium' | 'low',
       agent: opts.agent,
-      column: opts.column,
     });
   });
 
 boardTask
   .command('move <project>')
-  .description('move a task between columns')
+  .description('move a task between phases (validated against the transition table)')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
   .option('--task-name <name>', 'task CR name to move')
-  .option('--to <column>', 'target column name (required)')
+  .option('--to <phase>', 'target phase name (required)')
   .action((projectName: string, opts) => {
     if (!opts.taskName || !opts.to) {
       console.error('beatctl: --task-name and --to are required');
@@ -525,7 +525,7 @@ boardTask
     runBoardTaskMove(projectName, {
       namespace: opts.namespace,
       taskName: opts.taskName,
-      to: opts.to,
+      to: opts.to as TaskPhase,
     });
   });
 

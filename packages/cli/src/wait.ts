@@ -7,13 +7,22 @@
 //
 // Exit codes:
 //   0  — run reached the awaited phase (default: Succeeded)
-//   1  — run reached a terminal phase other than the awaited one
+//   1  — run reached a terminal phase other than the awaited one, or was
+//        deleted mid-wait after being observed at least once (e.g. cancel)
 //   2  — timeout before any terminal phase
-//   3  — transient errors (CR not found, API error, etc.)
+//   3  — transient errors (API error), or the run CR was never found on the
+//        first poll (typo'd name / wrong namespace) — a usage error, not a
+//        run outcome, so it prints even with --quiet
 //
 // We poll at ~1Hz. A Watch would be nicer but adds RBAC surface and edge
 // cases (410 Gone resync, deleted-while-waiting) that aren't worth it for a
 // short-lived CLI command; submit.ts already uses the same polling pattern.
+//
+// The polling/decision loop lives in `waitForOutcome`, a pure core that
+// takes an injected `getRunFn` and returns `{ code, message }` without
+// calling `process.exit` or printing — so the exit-code contract is unit-
+// testable without a cluster. `runWait` is a thin wrapper: run the core,
+// print the message, exit with the code.
 
 import { type Run, RunPhase, TERMINAL_PHASES } from '@percussionist/api';
 import { DEFAULT_NAMESPACE, getRun, loadKube } from './kube.js';
@@ -49,24 +58,53 @@ function normalisePhase(raw: string | undefined): string | undefined {
   return match;
 }
 
-export async function runWait(name: string, opts: WaitOpts): Promise<void> {
-  const ns = opts.namespace ?? DEFAULT_NAMESPACE;
-  const timeoutSec = parseTimeoutSeconds(opts.timeout, 600);
-  const awaited = normalisePhase(opts.for);
+export interface WaitForOutcomeOptions {
+  ns: string;
+  timeoutSec: number;
+  /** Phase to await; when set, seeing it (terminal or not) succeeds immediately. */
+  awaited?: string;
+  /** Suppress progress lines when no `emit` hook is supplied. */
+  quiet?: boolean;
+  /**
+   * Fetches the Run CR. Must throw an error whose `code` (or `body.code`)
+   * is 404 when the CR does not exist, mirroring the k8s client behaviour.
+   */
+  getRunFn: (ns: string, name: string) => Promise<Run>;
+  /** Progress-line render hook (phase changes, trailing newlines). */
+  emit?: (line: string) => void;
+}
 
-  const { custom } = loadKube();
+export interface WaitOutcome {
+  code: 0 | 1 | 2 | 3;
+  /** Fully-formatted final message (with `beatctl: ` prefix), if the caller should show one. */
+  message?: string;
+  /**
+   * When true, the message is a normal run outcome and should be suppressed
+   * in quiet mode. Absent/false messages are usage errors or hard failures
+   * and are always printed (e.g. CR not found, API error, timeout).
+   */
+  shownOnlyWhenNotQuiet?: boolean;
+}
+
+/**
+ * Polling/decision loop for `beatctl wait`. Pure: no cluster access (the
+ * fetch is injected), no printing, no `process.exit` — returns the exit code
+ * and message for `runWait` to render.
+ */
+export async function waitForOutcome(
+  name: string,
+  opts: WaitForOutcomeOptions,
+): Promise<WaitOutcome> {
+  const { ns, timeoutSec, awaited, getRunFn } = opts;
+  const log = opts.emit ?? (opts.quiet ? () => {} : (line: string) => process.stderr.write(line));
   const deadline = Date.now() + timeoutSec * 1000;
   let lastPhase: string | undefined;
-  let last: Run | undefined;
-
-  const log = (msg: string) => {
-    if (!opts.quiet) process.stderr.write(msg);
-  };
   const stamp = () => new Date().toISOString().slice(11, 19);
 
   while (Date.now() < deadline) {
+    let last: Run;
     try {
-      last = await getRun(custom, ns, name);
+      last = await getRunFn(ns, name);
     } catch (e) {
       const anyE = e as {
         body?: { message?: string; code?: number };
@@ -74,26 +112,29 @@ export async function runWait(name: string, opts: WaitOpts): Promise<void> {
         code?: number;
       };
       const code = anyE?.body?.code ?? anyE?.code;
-      // 404 after we've already observed the run means it was deleted
-      // mid-wait (e.g. `beatctl cancel`). Treat that as a terminal
-      // "Cancelled" outcome rather than a transient error — the user
-      // explicitly asked for the run to go away.
       if (code === 404) {
-        log('\n');
-        if (!opts.quiet) {
-          console.error(
-            `beatctl: run ${name} was deleted before settling` +
-              (lastPhase ? ` (last phase=${lastPhase})` : ''),
-          );
+        if (lastPhase) {
+          // 404 after we've already observed the run means it was deleted
+          // mid-wait (e.g. `beatctl cancel`). Treat that as a terminal
+          // "Cancelled" outcome rather than a transient error — the user
+          // explicitly asked for the run to go away.
+          log('\n');
+          return {
+            code: 1,
+            message: `beatctl: run ${name} was deleted before settling (last phase=${lastPhase})`,
+            shownOnlyWhenNotQuiet: true,
+          };
         }
-        // If the caller was specifically waiting for a non-terminal phase
-        // (e.g. `--for Running`) and we never saw it, that's still a
-        // failure — same exit code as any other unmet-expectation.
-        process.exit(1);
+        // 404 on the first poll: the run was never observed, so this is a
+        // usage error (typo'd name, wrong namespace), not a run outcome.
+        log('\n');
+        return {
+          code: 3,
+          message: `beatctl: run ${name} not found in namespace ${ns}`,
+        };
       }
       const msg = anyE?.body?.message ?? anyE?.message ?? String(e);
-      console.error(`beatctl: wait: ${msg}`);
-      process.exit(3);
+      return { code: 3, message: `beatctl: wait: ${msg}` };
     }
 
     const phase = last.status?.phase;
@@ -106,7 +147,7 @@ export async function runWait(name: string, opts: WaitOpts): Promise<void> {
     // whether it's terminal. (Useful for `--for Running` to gate attach.)
     if (awaited && phase === awaited) {
       log('\n');
-      process.exit(0);
+      return { code: 0 };
     }
 
     if (phase && TERMINAL_PHASES.has(phase as RunPhase)) {
@@ -116,23 +157,48 @@ export async function runWait(name: string, opts: WaitOpts): Promise<void> {
       // here means a *different* terminal phase was reached, which is a
       // failure for our wait.
       if (!awaited && phase === RunPhase.Succeeded) {
-        process.exit(0);
+        return { code: 0 };
       }
-      if (!opts.quiet) {
-        const statusMsg = last.status?.message;
-        console.error(`beatctl: run ${name} reached ${phase}${statusMsg ? `: ${statusMsg}` : ''}`);
-      }
-      process.exit(1);
+      const statusMsg = last.status?.message;
+      return {
+        code: 1,
+        message: `beatctl: run ${name} reached ${phase}${statusMsg ? `: ${statusMsg}` : ''}`,
+        shownOnlyWhenNotQuiet: true,
+      };
     }
 
     await new Promise((r) => setTimeout(r, 1000));
   }
 
   log('\n');
-  console.error(
-    `beatctl: timed out after ${timeoutSec}s waiting for ${
+  return {
+    code: 2,
+    message: `beatctl: timed out after ${timeoutSec}s waiting for ${
       awaited ?? 'a terminal phase'
     } (last phase=${lastPhase ?? '-'})`,
-  );
-  process.exit(2);
+  };
+}
+
+export async function runWait(name: string, opts: WaitOpts): Promise<void> {
+  const ns = opts.namespace ?? DEFAULT_NAMESPACE;
+  const timeoutSec = parseTimeoutSeconds(opts.timeout, 600);
+  const awaited = normalisePhase(opts.for);
+
+  const { custom } = loadKube();
+
+  const outcome = await waitForOutcome(name, {
+    ns,
+    timeoutSec,
+    awaited,
+    quiet: opts.quiet,
+    getRunFn: (n, nm) => getRun(custom, n, nm),
+    emit: (line) => {
+      if (!opts.quiet) process.stderr.write(line);
+    },
+  });
+
+  if (outcome.message && (!outcome.shownOnlyWhenNotQuiet || !opts.quiet)) {
+    console.error(outcome.message);
+  }
+  process.exit(outcome.code);
 }
