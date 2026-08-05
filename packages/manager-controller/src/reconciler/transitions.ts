@@ -1,40 +1,6 @@
 // Transition table — single source of truth for allowed phase transitions.
+// Hoisted to @percussionist/api so the CLI can validate against the same table
+// the manager's reconciler uses; this file is a re-export shim so existing
+// imports (decision.ts, effects.ts, agent/tools.ts, tests) keep working unchanged.
 
-import type { TaskPhase } from '@percussionist/api';
-
-export const TRANSITION_TABLE: Record<TaskPhase, TaskPhase[]> = {
-  idea: ['pending'],
-  pending: ['scheduled'],
-  scheduled: ['initializing', 'failed'],
-  initializing: ['running', 'succeeded', 'failed'],
-  running: ['waiting-for-input', 'succeeded', 'failed'],
-  'waiting-for-input': ['running', 'failed'],
-  succeeded: ['reviewing', 'awaiting-human', 'done'],
-  reviewing: ['awaiting-human', 'rework-requested'],
-  'awaiting-human': [
-    'awaiting-merge',
-    'generating-builds',
-    'awaiting-feature-merge',
-    'rework-requested',
-    'done',
-    'failed',
-  ],
-  'awaiting-merge': ['done', 'awaiting-human', 'failed'],
-  'rework-requested': ['scheduled'],
-  'generating-builds': ['awaiting-children', 'awaiting-human', 'failed'],
-  'awaiting-children': ['awaiting-feature-merge', 'awaiting-human', 'done', 'failed'],
-  'awaiting-feature-merge': ['done', 'awaiting-human', 'failed'],
-  failed: ['pending', 'awaiting-human', 'awaiting-merge'],
-  done: [],
-};
-
-export function isValidTransition(from: TaskPhase, to: TaskPhase): boolean {
-  return TRANSITION_TABLE[from]?.includes(to) ?? false;
-}
-
-export function validateTransition(from: TaskPhase, to: TaskPhase): string | null {
-  const allowed = TRANSITION_TABLE[from];
-  if (!allowed) return `Unknown source phase: ${from}`;
-  if (allowed.includes(to)) return null;
-  return `Invalid transition: ${from} → ${to}. Allowed: ${allowed.join(', ') || '(none, terminal)'}`;
-}
+export { isValidTransition, TRANSITION_TABLE, validateTransition } from '@percussionist/api';

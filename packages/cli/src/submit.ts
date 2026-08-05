@@ -217,6 +217,9 @@ export function withProjectLabels(meta: Record<string, unknown> | undefined, pro
 export function buildRunFromFile(path: string, opts: SubmitOpts): Run {
   const doc = YAML.parse(readFileSync(path, 'utf8'));
   // Let a user override the name/namespace at the CLI without editing the file.
+  // opts.namespace is only set when -n was explicitly passed (the option has no
+  // commander default), so the file's metadata.namespace survives unless the
+  // user overrides it.
   if (opts.name) doc.metadata = { ...(doc.metadata ?? {}), name: opts.name };
   if (opts.namespace) {
     doc.metadata = { ...(doc.metadata ?? {}), namespace: opts.namespace };
@@ -226,6 +229,16 @@ export function buildRunFromFile(path: string, opts: SubmitOpts): Run {
   const project = String(opts.project ?? doc?.spec?.project ?? '');
   doc.metadata = withProjectLabels(doc.metadata, project);
   return RunSchema.parse(doc);
+}
+
+/**
+ * Read a run YAML file's metadata.namespace, if any. runSubmit uses this to
+ * resolve Project defaults in the namespace a -f submission will actually land
+ * in, instead of the global default.
+ */
+function namespaceFromFile(path: string): string | undefined {
+  const doc = YAML.parse(readFileSync(path, 'utf8'));
+  return doc?.metadata?.namespace;
 }
 
 // Poll the CR status until phase is Running (or terminal, which is fatal for
@@ -266,11 +279,23 @@ async function waitForRunning(namespace: string, name: string, timeoutMs = 120_0
 }
 
 export async function runSubmit(opts: SubmitOpts): Promise<void> {
-  const ns = opts.namespace ?? DEFAULT_NAMESPACE;
-
   if (!opts.project && !opts.file) {
     fatal('--project is required (use --file to supply a fully-specified run YAML)', undefined);
   }
+
+  // A -f submission may carry its own metadata.namespace. Resolve the namespace
+  // the run will land in before the Project lookup so defaults come from the
+  // file's namespace rather than the global default. Explicit -n wins, then the
+  // file, then the default (which honors $PERCUSSIONIST_NAMESPACE).
+  let fileNs: string | undefined;
+  if (opts.file) {
+    try {
+      fileNs = namespaceFromFile(opts.file);
+    } catch (e) {
+      fatal('invalid run spec', e);
+    }
+  }
+  const ns = opts.namespace ?? fileNs ?? DEFAULT_NAMESPACE;
 
   // Resolve project defaults before building the run spec. Hard-fail if the
   // project is referenced but cannot be found — a missing project is almost
