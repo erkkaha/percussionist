@@ -20,7 +20,6 @@ import {
 import {
   core,
   fetchSessionMessages,
-  getClusterAgent,
   getClusterSettings,
   listClusterAgents,
   readPlanFromConfigMap,
@@ -29,7 +28,7 @@ import {
 } from '@percussionist/kube';
 import { resolveParentBranch, resolveTaskBranch } from './branch-resolver.js';
 import { getErrorStatusCode, isKubeNotFoundError } from './kube-errors.js';
-import { truncateK8sName } from './worker-builder.js';
+import { resolveAgentModel, truncateK8sName } from './worker-builder.js';
 
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
 
@@ -302,14 +301,6 @@ export async function buildBuildTaskGeneratorRun(
     `- Do NOT output JSON or prose — just call the tools.`,
   ].join('\n');
 
-  // Validate auth for the resolved model.
-  const authValidation = validateModelAuth(resolved.model, resolved.secrets);
-  if (!authValidation.ok) {
-    throw new Error(
-      `Auth validation failed for buildgen run (task="${planTask.metadata.name}"): ${authValidation.error}`,
-    );
-  }
-
   return await buildFacilitatorRun(
     project,
     planTask,
@@ -496,14 +487,6 @@ export async function buildReviewRun(
     successReview: true,
   };
 
-  // Validate auth for the resolved model.
-  const authValidation = validateModelAuth(resolved.model, resolved.secrets);
-  if (!authValidation.ok) {
-    throw new Error(
-      `Auth validation failed for review run (task="${task.metadata.name}"): ${authValidation.error}`,
-    );
-  }
-
   return await buildFacilitatorRun(
     project,
     task,
@@ -527,14 +510,20 @@ async function buildFacilitatorRun(
   facilitatorAgentName: string,
   allTasks: Task[] = [],
 ): Promise<Run> {
-  // Resolve agent-level model override, same as buildWorkerRun does.
-  try {
-    const agent = await getClusterAgent(facilitatorAgentName);
-    if (agent.spec.model) {
-      resolved.model = agent.spec.model;
-    }
-  } catch {
-    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
+  // Per-agent model resolution, same as buildWorkerRun:
+  // project roster model → ClusterAgent model → project/cluster default.
+  const agentModel = await resolveAgentModel(project, facilitatorAgentName);
+  if (agentModel) {
+    resolved.model = agentModel;
+  }
+
+  // Validate auth against the model the run will actually use — after the
+  // per-agent override, not before it.
+  const authValidation = validateModelAuth(resolved.model, resolved.secrets);
+  if (!authValidation.ok) {
+    throw new Error(
+      `Auth validation failed for facilitator run (task="${task.metadata.name}", agent="${facilitatorAgentName}"): ${authValidation.error}`,
+    );
   }
   const source = resolved.source
     ? { ...resolved.source, ...(resolved.source.git ? { git: { ...resolved.source.git } } : {}) }

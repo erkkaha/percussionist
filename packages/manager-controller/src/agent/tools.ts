@@ -61,7 +61,7 @@ import { inspectTaskFlow, type ObservedRuns } from '../reconciler/flow-introspec
 import { isValidTransition, TRANSITION_TABLE } from '../reconciler/transitions.js';
 import { getPauseStatus, setPaused } from '../reconciler-bridge.js';
 import { webHeaders } from '../web-headers.js';
-import { buildWorkerRun, workerRunName } from '../worker-builder.js';
+import { buildWorkerRun, resolveAgentModel, workerRunName } from '../worker-builder.js';
 import { MANAGER_NAMESPACE, MCP_PORT, MCP_TOKEN, OPENCODE_URL } from './config.js';
 import {
   deleteMemory,
@@ -1369,8 +1369,16 @@ async function callTool(
         projectTasks,
       );
       const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
-      if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
-      if (modelOverride) workerRun.spec.model = modelOverride;
+      const effectiveAgent = agentOverride ?? phaseAgent;
+      if (effectiveAgent) workerRun.spec.agent = effectiveAgent;
+      if (modelOverride) {
+        workerRun.spec.model = modelOverride;
+      } else if (effectiveAgent && effectiveAgent !== task.spec.agent) {
+        // buildWorkerRun resolved the model for task.spec.agent — re-resolve
+        // for the agent actually running, falling back to the project default.
+        workerRun.spec.model =
+          (await resolveAgentModel(project, effectiveAgent)) ?? project.spec.model;
+      }
 
       // Validate auth before creating the run.
       const finalModel = workerRun.spec.model;
@@ -1529,8 +1537,16 @@ async function callTool(
           projectTasks,
         );
         const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
-        if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
-        if (modelOverride) workerRun.spec.model = modelOverride;
+        const effectiveAgent = agentOverride ?? phaseAgent;
+        if (effectiveAgent) workerRun.spec.agent = effectiveAgent;
+        if (modelOverride) {
+          workerRun.spec.model = modelOverride;
+        } else if (effectiveAgent && effectiveAgent !== task.spec.agent) {
+          // buildWorkerRun resolved the model for task.spec.agent — re-resolve
+          // for the agent actually running, falling back to the project default.
+          workerRun.spec.model =
+            (await resolveAgentModel(project, effectiveAgent)) ?? project.spec.model;
+        }
 
         // Validate auth after model overrides.
         const finalModel = workerRun.spec.model;
