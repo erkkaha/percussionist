@@ -31,8 +31,8 @@ describe('installFakeKube (operator)', () => {
       })) as { spec: { runTTLDays: number } };
       expect(cs.spec.runTTLDays).toBe(14);
       expect(fake.calls).toHaveLength(1);
-      expect(fake.calls[0]!.method).toBe('getClusterCustomObject');
-      expect(fake.calls[0]!.args[0]).toEqual({
+      expect(fake.calls[0]?.method).toBe('getClusterCustomObject');
+      expect(fake.calls[0]?.args[0]).toEqual({
         group: 'percussionist.dev',
         version: 'v1alpha1',
         plural: 'clustersettings',
@@ -51,7 +51,7 @@ describe('installFakeKube (operator)', () => {
       // kubeCore() returns a CoreV1Api instance — the prototype spy must catch it.
       const pod = await kubeCore().readNamespacedPod({ name: 'run-1', namespace: 'test-ns' });
       expect(pod.metadata?.name).toBe('run-1');
-      expect(fake.calls[0]!.method).toBe('readNamespacedPod');
+      expect(fake.calls[0]?.method).toBe('readNamespacedPod');
     } finally {
       fake.restore();
     }

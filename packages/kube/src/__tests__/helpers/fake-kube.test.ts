@@ -26,8 +26,8 @@ describe('installFakeKube (kube)', () => {
       });
       expect(res.data?.['a.md']).toBe('hello');
       expect(fake.calls).toHaveLength(1);
-      expect(fake.calls[0]!.method).toBe('readNamespacedConfigMap');
-      expect(fake.calls[0]!.args[0]).toEqual({ name: 'my-proj-plans', namespace: 'test-ns' });
+      expect(fake.calls[0]?.method).toBe('readNamespacedConfigMap');
+      expect(fake.calls[0]?.args[0]).toEqual({ name: 'my-proj-plans', namespace: 'test-ns' });
     } finally {
       fake.restore();
     }

@@ -180,7 +180,8 @@ class ResponseSequence {
     if (Array.isArray(entry)) {
       if (entry.length === 0) return this.exhaustedError();
       const idx = Math.min(this.cursor, entry.length - 1);
-      const element = entry[idx]!;
+      const element = entry[idx];
+      if (element === undefined) return this.exhaustedError();
       const isLast = this.cursor >= entry.length - 1;
       if ('once' in element) {
         if (!isLast) this.cursor += 1;
