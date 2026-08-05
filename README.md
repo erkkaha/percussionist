@@ -823,7 +823,7 @@ Then add tasks to the board:
 # Add ClusterAgents (team roster) first — reference cluster-scoped agent definitions.
 beatctl agent create --name code-reviewer -f agents/code-reviewer.yaml
 
-# Add a task. It starts in the "ready" column.
+# Add a task. It starts in the "backlog" column.
 beatctl board task add my-project \
   --title "Implement login" \
   --description "Add OAuth login with GitHub provider" \
@@ -833,8 +833,8 @@ beatctl board task add my-project \
 beatctl board get my-project
 ```
 
-The manager controller automatically picks up tasks in "ready", creates worker
-runs, and moves them across columns as they progress.
+The manager controller automatically picks up tasks in "backlog", creates worker
+runs, and moves them across phases as they progress.
 
 ### Human-in-the-loop
 
