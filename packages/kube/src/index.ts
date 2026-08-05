@@ -323,11 +323,12 @@ export async function patchRunStatus(
   statusPatch: Partial<RunStatus>,
   ns: string = NAMESPACE,
   maxRetries = 3,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
 ): Promise<Run> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
+      await sleep(100 * 2 ** (attempt - 1));
     }
     try {
       return (await custom().patchNamespacedCustomObjectStatus(
@@ -356,11 +357,12 @@ export async function patchRunAnnotations(
   annotations: Record<string, string | undefined>,
   ns: string = NAMESPACE,
   maxRetries = 3,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
 ): Promise<Run> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
+      await sleep(100 * 2 ** (attempt - 1));
     }
     try {
       return (await custom().patchNamespacedCustomObject(
@@ -1838,6 +1840,9 @@ export async function execInWorkspace(
   timeoutMs = 120_000,
   ns: string = NAMESPACE,
   imageOverride?: string,
+  client = core(),
+  getProjectFn: (name: string, ns: string) => Promise<Project> = getProject,
+  pollIntervalMs = 2_000,
 ): Promise<WorkspaceExecResult> {
   const podName = `ws-exec-${projectName}-${Date.now()}`.slice(0, 63).replace(/[^a-z0-9-]/g, '-');
 
@@ -1848,7 +1853,7 @@ export async function execInWorkspace(
   let execImage = imageOverride ?? DEFAULT_EXEC_IMAGE;
   let pvcName = `${projectName}-data`;
   try {
-    const project = await getProject(projectName, ns);
+    const project = await getProjectFn(projectName, ns);
     execImage = imageOverride ?? project.spec.exec?.image ?? DEFAULT_EXEC_IMAGE;
     pvcName = project.spec.data?.pvcName ?? `${projectName}-data`;
   } catch {
@@ -1886,7 +1891,7 @@ export async function execInWorkspace(
     },
   };
 
-  await core().createNamespacedPod({ namespace: ns, body: pod });
+  await client.createNamespacedPod({ namespace: ns, body: pod });
 
   // Poll until the pod reaches a terminal phase or timeout
   const deadline = Date.now() + timeoutMs;
@@ -1894,10 +1899,10 @@ export async function execInWorkspace(
   let finalPhase = 'Unknown';
 
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 2_000));
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
     let podStatus: V1Pod;
     try {
-      podStatus = await core().readNamespacedPod({ name: podName, namespace: ns });
+      podStatus = await client.readNamespacedPod({ name: podName, namespace: ns });
     } catch {
       break;
     }
@@ -1911,7 +1916,7 @@ export async function execInWorkspace(
   // Collect logs before deletion (best-effort)
   let stdout = '';
   try {
-    const logRes = await core().readNamespacedPodLog({
+    const logRes = await client.readNamespacedPodLog({
       name: podName,
       namespace: ns,
       container: 'exec',
@@ -1922,11 +1927,9 @@ export async function execInWorkspace(
   }
 
   // Delete the pod (best-effort)
-  core()
-    .deleteNamespacedPod({ name: podName, namespace: ns })
-    .catch(() => {
-      /* ignore */
-    });
+  client.deleteNamespacedPod({ name: podName, namespace: ns }).catch(() => {
+    /* ignore */
+  });
 
   return { stdout, exitCode, podName };
 }
