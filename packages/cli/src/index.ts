@@ -247,7 +247,7 @@ auth
   .command('import')
   .description('copy your local opencode auth.json into a cluster Secret')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
-  .option('--name <name>', 'Secret name to create/update', 'opencode-auth')
+  .option('--name <name>', 'Secret name to create/update', 'agent-auth')
   .option('--key <key>', 'key inside the Secret that holds auth.json', 'auth.json')
   .option(
     '-p, --provider <id>',

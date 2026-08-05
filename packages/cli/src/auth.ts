@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { CoreV1Api, V1Secret } from '@kubernetes/client-node';
+import { PatchStrategy, setHeaderOptions } from '@kubernetes/client-node';
 import { fatal, loadKube } from './kube.js';
 
 export interface AuthImportOpts {
@@ -122,10 +123,20 @@ async function upsertSecret(
 
   try {
     await core.readNamespacedSecret({ name, namespace });
-    // Exists: replace. We prefer replace over patch here because the
-    // user's auth.json is authoritative — partial merges invite
-    // "stale entry kept around" bugs after a logout.
-    await core.replaceNamespacedSecret({ name, namespace, body });
+    // Exists: patch only our key. The auth.json blob itself is still
+    // replaced wholesale (the local file is authoritative — partial merges
+    // of its *entries* invite "stale provider kept around" bugs after a
+    // logout), but sibling keys are preserved: the agent-auth Secret also
+    // carries CLAUDE_CODE_OAUTH_TOKEN for the claude engine, and a
+    // whole-Secret replace here silently wiped it.
+    await core.patchNamespacedSecret(
+      {
+        name,
+        namespace,
+        body: { metadata: { labels: body.metadata?.labels }, stringData: { [key]: jsonBlob } },
+      },
+      setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
+    );
     return 'updated';
   } catch (e) {
     const code = (e as { code?: number }).code;

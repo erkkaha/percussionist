@@ -187,7 +187,7 @@ spec:
             - name: OPENCODE_AUTH_CONTENT
               valueFrom:
                 secretKeyRef:
-                  name: opencode-auth
+                  name: agent-auth
                   key: auth.json
                   optional: true
           envFrom:
