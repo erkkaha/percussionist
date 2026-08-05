@@ -45,7 +45,7 @@ import { DEFAULT_NAMESPACE } from './kube.js';
 import { runLogs } from './logs.js';
 import { runProjectCreate, runProjectDelete, runProjectGet, runProjectList } from './project.js';
 import { runSshKeyCreate } from './ssh-key.js';
-import { runSubmit } from './submit.js';
+import { createAgentFileAccumulator, runSubmit } from './submit.js';
 import { runValidateAgents } from './validate.js';
 import { runGet, runLs } from './view.js';
 import { runWait } from './wait.js';
@@ -80,6 +80,13 @@ program
   .action(runWeb);
 
 // submit --------------------------------------------------------------------
+// Shared accumulator for the repeatable inline-agent flags: --agent-file
+// collects { path } entries in argv order and --agent-name binds to the last
+// entry that has no name yet — the "preceding --agent-file" the help text
+// promises. A --agent-name with no preceding unnamed file is a usage error
+// (see createAgentFileAccumulator in submit.ts).
+const inlineAgentFiles = createAgentFileAccumulator();
+
 program
   .command('submit')
   .description('create a new Run')
@@ -122,12 +129,12 @@ program
   .option(
     '--agent-file <path>',
     'path to an agent .md file (repeatable)',
-    (val: string, prev: string[] = []) => [...prev, val],
+    inlineAgentFiles.pushFile,
   )
   .option(
     '--agent-name <name>',
     'override the agent name for the preceding --agent-file (repeatable)',
-    (val: string, prev: string[] = []) => [...prev, val],
+    inlineAgentFiles.bindName,
   )
   .action(runSubmit);
 

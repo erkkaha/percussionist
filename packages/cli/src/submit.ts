@@ -28,6 +28,43 @@ import YAML from 'yaml';
 import { runAttach } from './attach.js';
 import { createRun, DEFAULT_NAMESPACE, fatal, getProject, getRun, loadKube } from './kube.js';
 
+export interface AgentFileEntry {
+  path: string;
+  name?: string;
+}
+
+/**
+ * Shared accumulator backing the `submit` command's repeatable inline-agent
+ * flags. Commander processes options in argv order, so `--agent-file` pushes
+ * a `{ path }` entry and `--agent-name` binds to the last entry that has no
+ * name yet — the "preceding --agent-file" the help text promises. A name with
+ * no preceding unnamed file is a hard usage error rather than a silent
+ * misassignment.
+ *
+ * Both processors return the shared `entries` array so `opts.agentFile` always
+ * reflects the full collected list regardless of flag order.
+ */
+export function createAgentFileAccumulator() {
+  const entries: AgentFileEntry[] = [];
+  return {
+    entries,
+    pushFile: (path: string) => {
+      entries.push({ path });
+      return entries;
+    },
+    bindName: (name: string) => {
+      const target = [...entries].reverse().find((entry) => entry.name === undefined);
+      if (!target) {
+        throw new Error(
+          '--agent-name requires a preceding --agent-file that does not already have a name',
+        );
+      }
+      target.name = name;
+      return entries;
+    },
+  };
+}
+
 export interface SubmitOpts {
   task?: string;
   interactive?: boolean;
@@ -52,8 +89,7 @@ export interface SubmitOpts {
   gitAuthorName?: string;
   gitAuthorEmail?: string;
   // inline agents
-  agentFile?: string[];
-  agentName?: string[];
+  agentFile?: AgentFileEntry[];
   // project defaults
   project?: string;
 }
@@ -102,20 +138,13 @@ export function buildRunFromFlags(
   // Build inline agents from --agent-file / --agent-name flags.
   const rawAgents: Array<{ name: string; content: string }> = [];
   if (opts.agentFile) {
-    for (let i = 0; i < opts.agentFile.length; i++) {
-      const filePath = opts.agentFile[i];
-      if (!filePath) continue;
-      let agentName: string | undefined;
-      // Check if there's a corresponding --agent-name override at the same index.
-      if (opts.agentName?.[i]) {
-        agentName = opts.agentName[i];
-      } else {
-        // Derive name from filename: strip directory, remove .md extension.
-        const basename = filePath.split('/').pop() ?? '';
-        agentName = basename.replace(/\.md$/, '');
-      }
+    for (const entry of opts.agentFile) {
+      // An explicit --agent-name (bound at parse time to this entry) wins;
+      // otherwise derive the name from the filename: strip directory, remove
+      // the .md extension.
+      const agentName = entry.name ?? (entry.path.split('/').pop() ?? '').replace(/\.md$/, '');
       if (!agentName) continue;
-      const content = readFileSync(filePath, 'utf8');
+      const content = readFileSync(entry.path, 'utf8');
       rawAgents.push({ name: agentName, content });
     }
   }
