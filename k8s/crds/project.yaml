@@ -544,6 +544,22 @@ spec:
                       type: array
                       items:
                         type: string
+                    humanFolder:
+                      type: object
+                      properties:
+                        enabled:
+                          default: false
+                          type: boolean
+                        name:
+                          default: code
+                          type: string
+                        branch:
+                          type: string
+                        remoteUrl:
+                          type: string
+                      required:
+                        - enabled
+                        - name
                   required:
                     - enabled
                     - image

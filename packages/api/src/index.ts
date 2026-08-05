@@ -207,6 +207,16 @@ export const ResourceRequirementsSchema = z
 
 export type ResourceRequirements = z.infer<typeof ResourceRequirementsSchema>;
 
+// Persistent human workspace folder on the project data PVC, cloned from the
+// project repo for humans opening code-server.
+export const HumanFolderSpecSchema = z.object({
+  enabled: z.boolean().default(false),
+  name: z.string().default('code'),
+  branch: z.string().optional(),
+  remoteUrl: z.string().optional(),
+});
+export type HumanFolderSpec = z.infer<typeof HumanFolderSpecSchema>;
+
 // Code-server configuration for interactive workspace access.
 export const CodeServerSpecSchema = z.object({
   /** Enable per-project code-server for interactive workspace access. */
@@ -217,6 +227,13 @@ export const CodeServerSpecSchema = z.object({
   resources: ResourceRequirementsSchema.optional(),
   /** Alpine/APT packages to install in the code-server init container. */
   packages: z.array(z.string()).max(50).optional(),
+  /**
+   * Opt-in persistent human workspace folder (named `code` by default) on the
+   * project data PVC. When enabled, the folder is cloned from the project repo
+   * (spec.source.git) on the project default branch (spec.source.git.ref) and
+   * code-server opens it by default.
+   */
+  humanFolder: HumanFolderSpecSchema.optional(),
 });
 export type CodeServerSpec = z.infer<typeof CodeServerSpecSchema>;
 
