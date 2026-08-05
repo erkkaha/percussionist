@@ -77,7 +77,9 @@ export function buildRunFromFlags(
 
   // Merge project defaults first, then explicit flags win over them.
   const pd = projectDefaults;
-  const resolvedAgent = opts.agent;
+  const resolvedAgent = opts.agent ?? pd?.agent;
+  const resolvedImage = opts.image ?? pd?.image;
+  const resolvedTimeoutSeconds = opts.timeout ? Number(opts.timeout) : pd?.timeoutSeconds;
   const resolvedModel = opts.model ?? pd?.model;
   const resolvedLlmSecret = opts.llmKeysSecret ?? pd?.secrets?.llmKeysSecret;
   const resolvedAuthSecret = opts.authSecret ?? pd?.secrets?.authSecret?.name;
@@ -132,8 +134,8 @@ export function buildRunFromFlags(
       ...(opts.interactive ? { interactive: true } : {}),
       ...(resolvedAgent ? { agent: resolvedAgent } : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
-      ...(opts.image ? { image: opts.image } : {}),
-      ...(opts.timeout ? { timeoutSeconds: Number(opts.timeout) } : {}),
+      ...(resolvedImage ? { image: resolvedImage } : {}),
+      ...(resolvedTimeoutSeconds ? { timeoutSeconds: resolvedTimeoutSeconds } : {}),
       ...(resolvedLlmSecret || resolvedAuthSecret
         ? {
             secrets: {
@@ -176,6 +178,14 @@ export function buildRunFromFlags(
       ...(pd?.sidecars?.length ? { sidecars: pd.sidecars } : {}),
       // Inherit initScript from the project spec. Not overridable via CLI flags.
       ...(pd?.initScript ? { initScript: pd.initScript } : {}),
+      // Inherit resources from the project spec. Not overridable via CLI flags.
+      ...(pd?.resources ? { resources: pd.resources } : {}),
+      // Inherit data PVC config from the project spec. Not overridable via CLI flags.
+      ...(pd?.data ? { data: pd.data } : {}),
+      // Inherit git cache options from the project spec. Not overridable via CLI flags.
+      ...(pd?.gitCache ? { gitCache: pd.gitCache } : {}),
+      // Inherit runner packages from the project spec. Not overridable via CLI flags.
+      ...(pd?.runner?.packages ? { runner: { packages: pd.runner.packages } } : {}),
     },
   };
   return RunSchema.parse(raw);
