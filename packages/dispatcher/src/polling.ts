@@ -848,6 +848,44 @@ export async function runPollStatusLoop(deps: RunPollStatusDeps): Promise<void> 
 // ---------------------------------------------------------------------------
 // Prompt-driven mode
 
+export interface PromptPostResult {
+  ok: boolean;
+  status: number;
+  json(): Promise<unknown>;
+  text(): Promise<string>;
+}
+
+/**
+ * Injectable seams for runPrompt. Every field defaults to the real
+ * implementation (the caller-provided patchStatus/sleep, the session.js
+ * helpers, snapshotAllSessions, sendStats, the live /session POST), so passing
+ * no deps is behavior-identical to the pre-seam code. Tests override the
+ * fields to drive the race outcomes, the prompt-POST retry matrix and the
+ * hard-timeout path deterministically.
+ */
+export interface RunPromptDeps {
+  /** POST the prompt to the session; default hits opencode's /session/{id}/message. */
+  postMessage?: (sessionID: string, body: Record<string, unknown>) => Promise<PromptPostResult>;
+  /** Read messages for a session (poll loop + retry "already has messages" check). */
+  fetchMessages?: typeof fetchMessages;
+  /** opencode health probe (poll loop). */
+  checkHealth?: typeof checkHealth;
+  /** Sleep; default is the caller-provided sleep. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Clock for the poll loop and timestamps; default Date.now. */
+  now?: () => number;
+  /** Status patcher; default is the caller-provided patchStatus. */
+  patchStatus?: (p: object) => Promise<void>;
+  /** Session snapshot; default snapshotAllSessions with the caller-provided coreApi. */
+  snapshot?: typeof snapshotAllSessions;
+  /** Full analytics flush on run completion; default sendStats. */
+  sendStats?: typeof sendStats;
+  /** Create the opencode session; default POSTs /session. */
+  createSession?: () => Promise<{ id: string }>;
+  /** Hard-timeout delay in ms; default HARD_TIMEOUT_MS. */
+  hardTimeoutMs?: number;
+}
+
 export async function runPrompt(
   patchStatus: (p: object) => Promise<void>,
   isShuttingDown: () => boolean,
@@ -859,20 +897,36 @@ export async function runPrompt(
   failureSignal: Promise<string>,
   completionSignal: Promise<string>,
   planSignal?: Promise<string>,
+  deps?: RunPromptDeps,
 ): Promise<{ sessionID: string; startedAt: string }> {
+  const d = deps ?? {};
   const tokens = new TokenAggregator();
 
-  const sessionRes = await fetch(`${BASE_URL}/session`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: `run/${runName}` }),
-  });
-  if (!sessionRes.ok) throw new Error(`Failed to create session: HTTP ${sessionRes.status}`);
-  const sessionData = (await sessionRes.json()) as { id: string };
+  const doCreateSession =
+    d.createSession ??
+    (async () => {
+      const sessionRes = await fetch(`${BASE_URL}/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: `run/${runName}` }),
+      });
+      if (!sessionRes.ok) throw new Error(`Failed to create session: HTTP ${sessionRes.status}`);
+      return (await sessionRes.json()) as { id: string };
+    });
+  const doNow = d.now ?? (() => Date.now());
+  const doSleep = d.sleep ?? sleep;
+  const doPatchStatus = d.patchStatus ?? patchStatus;
+  const doFetchMessages = d.fetchMessages ?? fetchMessages;
+  const doCheckHealth = d.checkHealth ?? checkHealth;
+  const doSendStats = d.sendStats ?? sendStats;
+  const doSnapshot =
+    d.snapshot ?? ((c, rn, ns, ru, sid) => snapshotAllSessions(c, rn, ns, ru, sid));
+
+  const sessionData = await doCreateSession();
   const sessionID = sessionData.id;
   log(`created session ${sessionID}`);
-  const runStartedAt = new Date().toISOString();
-  await patchStatus({
+  const runStartedAt = new Date(doNow()).toISOString();
+  await doPatchStatus({
     phase: RunPhase.Running,
     sessionID,
     startedAt: runStartedAt,
@@ -922,6 +976,15 @@ export async function runPrompt(
   const MAX_PROMPT_RETRIES = 3;
 
   const promptPostController = new AbortController();
+  const doPostMessage =
+    d.postMessage ??
+    ((sid: string, body: Record<string, unknown>) =>
+      httpJsonPost(
+        `${BASE_URL}/session/${sid}/message`,
+        body,
+        FIRST_RESPONSE_TIMEOUT_MS,
+        promptPostController.signal,
+      ));
 
   // Retry wrapper around httpJsonPost: on transient network errors, wait for
   // opencode to become healthy, check whether the session already has messages
@@ -930,12 +993,7 @@ export async function runPrompt(
     let attempt = 0;
     while (true) {
       try {
-        const syncRes = await httpJsonPost(
-          `${BASE_URL}/session/${sessionID}/message`,
-          promptBody,
-          FIRST_RESPONSE_TIMEOUT_MS,
-          promptPostController.signal,
-        );
+        const syncRes = await doPostMessage(sessionID, promptBody);
         if (!syncRes.ok) {
           throw new Error(`prompt failed: HTTP ${syncRes.status} ${await syncRes.text()}`);
         }
@@ -968,7 +1026,7 @@ export async function runPrompt(
             syncTokensCacheWrite,
             syncCost,
           );
-          await tokens.flush(patchStatus);
+          await tokens.flush(doPatchStatus);
         }
         log('prompt completed (sync)', JSON.stringify(syncData.info));
         return;
@@ -983,11 +1041,11 @@ export async function runPrompt(
           `prompt POST failed (${(e as Error).message}), retrying (${attempt}/${MAX_PROMPT_RETRIES})…`,
         );
         // Wait for opencode to be healthy before re-checking / re-posting.
-        await sleep(5000);
+        await doSleep(5000);
         // Check whether the prompt was already received (session has messages).
         // If so there's nothing to re-POST — the poll loop will handle completion.
         try {
-          const existingMsgs = await fetchMessages(sessionID);
+          const existingMsgs = await doFetchMessages(sessionID);
           if (existingMsgs.length > 0) {
             log(
               `prompt POST failed but session already has ${existingMsgs.length} message(s) — skipping re-POST`,
@@ -1005,11 +1063,11 @@ export async function runPrompt(
 
   const pollStatus = (): Promise<void> =>
     runPollStatusLoop({
-      fetchMessages,
-      checkHealth,
-      patchStatus,
-      sleep,
-      now: () => Date.now(),
+      fetchMessages: doFetchMessages,
+      checkHealth: doCheckHealth,
+      patchStatus: doPatchStatus,
+      sleep: doSleep,
+      now: doNow,
       isShuttingDown,
       sessionID,
       state: pollState,
@@ -1034,7 +1092,7 @@ export async function runPrompt(
         });
         reconnects++;
         if (!evtRes.ok || !evtRes.body) {
-          await sleep(5000);
+          await doSleep(5000);
           continue;
         }
         streamErrors = 0;
@@ -1071,7 +1129,7 @@ export async function runPrompt(
               // Snapshot sessions immediately when parking so the manager can
               // read the conversation context even if this pod is killed while
               // waiting.
-              snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
+              doSnapshot(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
                 err('WaitingForInput snapshot failed:', (e as Error).message),
               );
             }
@@ -1118,7 +1176,7 @@ export async function runPrompt(
                     p.info.tokens?.cache?.write,
                     p.info.cost,
                   );
-                await tokens.flush(patchStatus);
+                await tokens.flush(doPatchStatus);
               }
             }
           }
@@ -1135,23 +1193,33 @@ export async function runPrompt(
         if (streamErrors >= 5) {
           throw new Error('opencode server unreachable: stream disconnected');
         }
-        await sleep(5000);
+        await doSleep(5000);
       }
       // Add delay between all reconnection attempts (success or error) to prevent runaway loops
-      if (!pollState.terminate) await sleep(1000);
+      if (!pollState.terminate) await doSleep(1000);
     }
   };
 
-  const hardTimeout = setTimeout(() => {
-    if (pollState.waitingForInput) {
-      err('dispatcher timeout guard — waiting for input, exiting cleanly');
-      process.exit(0);
-    } else {
-      err('dispatcher timeout guard');
-      process.exit(3);
-    }
-  }, HARD_TIMEOUT_MS);
-  hardTimeout.unref();
+  // Hard-timeout guard. Previously this called process.exit(0)/process.exit(3)
+  // directly, which skipped the session snapshot, sendStats and the
+  // RunPhase.Failed patch — exactly the failure mode FatalRunError was
+  // introduced to prevent (see the class comment above). Instead the timer
+  // rejects a promise the Promise.race observes, so the run exits through the
+  // normal snapshot → stats → Failed path and main()'s handler only has to do
+  // the final (idempotent) status patch and process exit.
+  const hardTimeoutMs = d.hardTimeoutMs ?? HARD_TIMEOUT_MS;
+  let hardTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const hardTimeout = new Promise<never>((_resolve, reject) => {
+    hardTimeoutHandle = setTimeout(() => {
+      if (pollState.waitingForInput) {
+        err('dispatcher timeout guard — waiting for input, failing run via normal path');
+      } else {
+        err('dispatcher timeout guard — hard timeout exceeded');
+      }
+      reject(new FatalRunError(`dispatcher hard timeout exceeded (${hardTimeoutMs}ms)`));
+    }, hardTimeoutMs);
+    hardTimeoutHandle.unref();
+  });
   void streamEvents().catch((e) => {
     if (!pollState.terminate) err('streamEvents fatal:', (e as Error).message);
   });
@@ -1161,10 +1229,10 @@ export async function runPrompt(
   const periodicSnapshot = async (): Promise<void> => {
     let first = true;
     while (!pollState.terminate) {
-      if (!first) await sleep(30_000);
+      if (!first) await doSleep(30_000);
       first = false;
       if (!pollState.terminate) {
-        snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
+        doSnapshot(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
           err('periodic snapshot failed:', (e as Error).message),
         );
       }
@@ -1203,7 +1271,14 @@ export async function runPrompt(
   let aborting = false;
   try {
     await Promise.race(
-      [pollStatus(), promptPostFailure, failureRaced, completionRaced, planRaced].filter(Boolean),
+      [
+        pollStatus(),
+        promptPostFailure,
+        failureRaced,
+        completionRaced,
+        planRaced,
+        hardTimeout,
+      ].filter(Boolean),
     );
   } catch (e) {
     if ((e as Error).name === 'AbortError') {
@@ -1217,23 +1292,32 @@ export async function runPrompt(
   }
   pollState.terminate = true;
   promptPostController.abort();
-  clearTimeout(hardTimeout);
+  if (hardTimeoutHandle) clearTimeout(hardTimeoutHandle);
 
   if (isShuttingDown()) {
     log('shutting down mid-run');
-    await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
-    await patchStatus({ message: 'dispatcher terminated' });
+    await doSnapshot(coreApi, runName, runNamespace, runUid, sessionID);
+    await doPatchStatus({ message: 'dispatcher terminated' });
     return { sessionID, startedAt: runStartedAt };
   }
 
   // If the race was won by an aborted message, keep the run in Running
   // phase and exit cleanly instead of crashing with Failed status.
   if (aborting) {
-    await tokens.flush(patchStatus, true);
-    await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
+    await tokens.flush(doPatchStatus, true);
+    await doSnapshot(coreApi, runName, runNamespace, runUid, sessionID);
     const totals = tokens.totals();
-    await sendStats(sessionID, RunPhase.Running, runStartedAt, new Date().toISOString(), totals);
-    await patchStatus({ phase: RunPhase.Running, message: 'waiting for input (message aborted)' });
+    await doSendStats(
+      sessionID,
+      RunPhase.Running,
+      runStartedAt,
+      new Date(doNow()).toISOString(),
+      totals,
+    );
+    await doPatchStatus({
+      phase: RunPhase.Running,
+      message: 'waiting for input (message aborted)',
+    });
     log('done (waiting for input after abort)');
     return { sessionID, startedAt: runStartedAt };
   }
@@ -1241,14 +1325,14 @@ export async function runPrompt(
   // Always flush tokens, snapshot, and persist stats — whether the run
   // succeeded or failed.  This ensures the manager always has a ConfigMap
   // to read for facilitation context and SQLite always has a record.
-  await tokens.flush(patchStatus, true);
-  await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
+  await tokens.flush(doPatchStatus, true);
+  await doSnapshot(coreApi, runName, runNamespace, runUid, sessionID);
 
-  const completedAt = new Date().toISOString();
+  const completedAt = new Date(doNow()).toISOString();
   const totals = tokens.totals();
 
   if (raceError) {
-    await sendStats(
+    await doSendStats(
       sessionID,
       RunPhase.Failed,
       runStartedAt,
@@ -1256,12 +1340,17 @@ export async function runPrompt(
       totals,
       raceError.message,
     );
+    // Patch Failed here so the run's terminal phase is recorded even before
+    // the error propagates to main()'s catch (which re-patches idempotently).
+    // The hard-timeout guard relies on this path: previously it called
+    // process.exit directly, leaving the run stuck in Running with no snapshot.
+    await doPatchStatus({ phase: RunPhase.Failed, message: raceError.message, completedAt });
     throw raceError;
   }
 
   if (agentCompletionSummary) {
-    await sendStats(sessionID, RunPhase.Succeeded, runStartedAt, completedAt, totals);
-    await patchStatus({
+    await doSendStats(sessionID, RunPhase.Succeeded, runStartedAt, completedAt, totals);
+    await doPatchStatus({
       phase: RunPhase.Succeeded,
       message: `agent signalled completion — ${agentCompletionSummary}`,
       completedAt,
@@ -1269,8 +1358,8 @@ export async function runPrompt(
     log('done');
   } else {
     const msg = 'session ended without completion signal';
-    await sendStats(sessionID, RunPhase.Failed, runStartedAt, completedAt, totals, msg);
-    await patchStatus({ phase: RunPhase.Failed, message: msg, completedAt });
+    await doSendStats(sessionID, RunPhase.Failed, runStartedAt, completedAt, totals, msg);
+    await doPatchStatus({ phase: RunPhase.Failed, message: msg, completedAt });
     log('done (failed — no explicit completion signal)');
   }
 
