@@ -88,7 +88,9 @@ program
   )
   .option('-a, --attach', 'after submit, wait for Running and attach automatically')
   .option('--name <name>', 'run name (auto-generated if omitted)')
-  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  // No default for -n: with -f, a namespace in the file wins unless -n is
+  // explicitly passed, and the fallback below honors $PERCUSSIONIST_NAMESPACE.
+  .option('-n, --namespace <ns>', 'namespace')
   .option('-f, --file <path>', 'read run YAML from file')
   .option('--image <image>', 'override runner image')
   .option('--agent <agent>', 'agent name')
@@ -388,7 +390,9 @@ project
   .command('create')
   .description('create a new project from flags or a YAML file')
   .option('--name <name>', 'project name (required unless -f)')
-  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  // No default for -n: with -f, a namespace in the file wins unless -n is
+  // explicitly passed, and the fallback below honors $PERCUSSIONIST_NAMESPACE.
+  .option('-n, --namespace <ns>', 'namespace')
   .option('-f, --file <path>', 'read project YAML from file')
   .option('--display-name <name>', 'human-readable label')
   .option('--git-url <url>', 'git repository URL')
