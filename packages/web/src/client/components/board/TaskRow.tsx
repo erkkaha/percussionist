@@ -1,10 +1,12 @@
 // TaskRow.tsx — compact clickable task row for the list panel.
 
 import {
+  Bot,
   Check,
   FileText,
   Flag,
   GitPullRequest,
+  Loader2,
   MessageSquarePlus,
   RotateCcw,
   User,
@@ -106,10 +108,25 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
               </span>
             )}
 
-            {/* Phase badge (in-progress column) */}
-            {col === 'in-progress' && task.status?.phase && (
-              <span className="text-label-md font-mono uppercase text-phase-running flex items-center gap-0.5">
-                {task.status.phase}
+            {/* Phase badge (in-progress / review column; "reviewing" is superseded by the AI review badge below) */}
+            {(col === 'in-progress' || col === 'review') &&
+              task.status?.phase &&
+              task.status.phase !== 'reviewing' && (
+                <span
+                  className={`text-label-md font-mono uppercase flex items-center gap-0.5 ${
+                    col === 'in-progress' ? 'text-phase-running' : 'text-accent'
+                  }`}
+                >
+                  {task.status.phase}
+                </span>
+              )}
+
+            {/* AI review in-flight (review lane) */}
+            {col === 'review' && task.status?.phase === 'reviewing' && (
+              <span className="text-label-md font-mono uppercase flex items-center gap-0.5 text-accent">
+                <Bot className="h-2.5 w-2.5" />
+                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                ai review…
               </span>
             )}
 
