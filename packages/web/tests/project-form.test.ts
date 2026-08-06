@@ -44,6 +44,73 @@ describe('project form request', () => {
     expect(request.codeServer).toBeUndefined();
   });
 
+  it('sends codeServer.humanFolder.enabled when the human folder toggle is on', () => {
+    const state = createInitialState(undefined);
+    state.codeServerEnabled = true;
+    state.humanFolderEnabled = true;
+
+    const request = buildProjectRequest(state, false);
+
+    expect(request.codeServer).toEqual({
+      enabled: true,
+      image: 'codercom/code-server:4.96.4',
+      humanFolder: { enabled: true },
+    });
+  });
+
+  it('omits humanFolder from the payload when the toggle is off', () => {
+    const state = createInitialState(undefined);
+    state.codeServerEnabled = true;
+
+    const request = buildProjectRequest(state, false);
+
+    expect(request.codeServer).toEqual({
+      enabled: true,
+      image: 'codercom/code-server:4.96.4',
+    });
+    expect(request.codeServer?.humanFolder).toBeUndefined();
+  });
+
+  it('sends humanFolder: null as a delete marker when the toggle is off in edit mode', () => {
+    const state = createInitialState({
+      codeServer: { enabled: true, humanFolder: { enabled: true } },
+    });
+    state.codeServerEnabled = true;
+    state.humanFolderEnabled = false;
+
+    const request = buildProjectRequest(state, true);
+
+    expect(request.codeServer).toEqual({
+      enabled: true,
+      image: 'codercom/code-server:4.96.4',
+      resources: {
+        requests: { cpu: null, memory: null },
+        limits: { cpu: null, memory: null },
+      },
+      humanFolder: null,
+    });
+  });
+
+  it('initializes humanFolderEnabled from spec when editing', () => {
+    const state = createInitialState({
+      codeServer: { enabled: true, humanFolder: { enabled: true } },
+    });
+
+    expect(state.humanFolderEnabled).toBe(true);
+  });
+
+  it('omits humanFolder entirely when code-server is disabled', () => {
+    const state = createInitialState({
+      codeServer: { enabled: true, humanFolder: { enabled: true } },
+    });
+    state.codeServerEnabled = false;
+
+    const request = buildProjectRequest(state, true);
+
+    expect(request.codeServer).toEqual({ enabled: false });
+    expect(request.codeServer?.humanFolder).toBeUndefined();
+  });
+
   it('sends explicit resets and disables for edited fields', () => {
     const state = createInitialState({
       displayName: 'Old name',
@@ -216,6 +283,19 @@ describe('project update merge', () => {
       },
       resources: { requests: { memory: '2Gi', gpu: '1' } },
     });
+  });
+
+  it('removes humanFolder from an existing spec when the edit payload carries null', () => {
+    const merged = mergeProjectPatch(
+      { codeServer: { enabled: true, image: 'custom', humanFolder: { enabled: true } } },
+      { codeServer: { enabled: true, image: 'codercom/code-server:4.96.4', humanFolder: null } },
+    );
+
+    expect(merged.codeServer).toEqual({
+      enabled: true,
+      image: 'codercom/code-server:4.96.4',
+    });
+    expect((merged.codeServer as Record<string, unknown>).humanFolder).toBeUndefined();
   });
 
   it('consumes nested null delete-markers even when the existing spec lacks the subtree', () => {
