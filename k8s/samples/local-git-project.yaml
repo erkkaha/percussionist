@@ -27,7 +27,7 @@ spec:
   secrets:
     llmKeysSecret: llm-keys
     authSecret:
-      name: opencode-auth
+      name: agent-auth
 
   # Optional: customise the data PVC name or storage class.
   # data:

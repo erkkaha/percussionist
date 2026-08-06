@@ -401,7 +401,7 @@ export default function CreateRunForm() {
                   type="text"
                   value={authSecretName}
                   onChange={(e) => setOpencodeAuthSecretName(e.target.value)}
-                  placeholder="opencode-auth"
+                  placeholder="agent-auth"
                   className="font-mono"
                 />
                 <p className="text-xs text-text-dim">

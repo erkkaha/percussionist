@@ -26,6 +26,27 @@ const MAX_RETRIES = 3;
 
 export { MAX_RETRIES };
 
+/**
+ * Resolve the model an agent should run with, independent of the project-level
+ * default. Order (highest → lowest): per-agent model in the project roster →
+ * ClusterAgent spec.model. Returns undefined when neither is set, so callers
+ * keep their project/cluster default.
+ */
+export async function resolveAgentModel(
+  project: Project,
+  agentName: string,
+): Promise<string | undefined> {
+  const rosterModel = (project.spec.agents ?? []).find((a) => a.name === agentName)?.model;
+  if (rosterModel) return rosterModel;
+  try {
+    const agent = await getClusterAgent(agentName);
+    return agent.spec.model || undefined;
+  } catch {
+    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
+    return undefined;
+  }
+}
+
 async function getOptionalClusterSettings(context: string) {
   try {
     return await getClusterSettings();
@@ -62,23 +83,11 @@ export async function buildWorkerRun(
     secrets: clusterSettings?.spec?.secrets,
   });
 
-  // ClusterAgent model override (overrides project default, not per-agent).
   // Resolution order (highest → lowest):
   //   explicit run override (MCP tool) → per-agent model → ClusterAgent model → project.spec.model
-  try {
-    const agent = await getClusterAgent(task.spec.agent);
-    if (agent.spec.model) {
-      resolved.model = agent.spec.model;
-    }
-  } catch {
-    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
-  }
-
-  // Per-agent model override: if the task's agent has a `model` field set in
-  // the project roster, use it instead of the ClusterAgent or project-level default.
-  const agentOverride = (project.spec.agents ?? []).find((a) => a.name === task.spec.agent);
-  if (agentOverride?.model) {
-    resolved.model = agentOverride.model;
+  const agentModel = await resolveAgentModel(project, task.spec.agent);
+  if (agentModel) {
+    resolved.model = agentModel;
   }
 
   // Validate that auth is configured for the resolved model.
@@ -351,20 +360,10 @@ export async function buildMergeRun(
         ? MERGING_AGENT
         : task.spec.agent;
 
-  // ClusterAgent model override (overrides project default, not per-agent).
-  try {
-    const agent = await getClusterAgent(mergeAgent);
-    if (agent.spec.model) {
-      resolved.model = agent.spec.model;
-    }
-  } catch {
-    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
-  }
-
-  // Per-agent model override (project roster takes priority over ClusterAgent).
-  const mergeAgentOverride = (project.spec.agents ?? []).find((a) => a.name === mergeAgent);
-  if (mergeAgentOverride?.model) {
-    resolved.model = mergeAgentOverride.model;
+  // Per-agent model (project roster → ClusterAgent), else project/cluster default.
+  const mergeAgentModel = await resolveAgentModel(project, mergeAgent);
+  if (mergeAgentModel) {
+    resolved.model = mergeAgentModel;
   }
 
   // Validate that auth is configured for the resolved model.
@@ -660,17 +659,10 @@ export async function buildPrOpenRun(
         ? INTEGRATION_AGENT
         : task.spec.agent;
 
-  try {
-    const agent = await getClusterAgent(integrationAgent);
-    if (agent.spec.model) {
-      resolved.model = agent.spec.model;
-    }
-  } catch {
-    // Agent CR not found — fall back to project/cluster defaults.
-  }
-  const agentOverride = (project.spec.agents ?? []).find((a) => a.name === integrationAgent);
-  if (agentOverride?.model) {
-    resolved.model = agentOverride.model;
+  // Per-agent model (project roster → ClusterAgent), else project/cluster default.
+  const integrationAgentModel = await resolveAgentModel(project, integrationAgent);
+  if (integrationAgentModel) {
+    resolved.model = integrationAgentModel;
   }
 
   const authValidation = validateModelAuth(resolved.model, resolved.secrets);

@@ -1,6 +1,15 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.10] - 2026-08-05
+
+### <!-- 0 -->🚀 Features
+
+- Unify agent auth into one agent-auth Secret _(cli)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Honor project roster agent models in facilitator and agent-swap runs _(manager)_
 ## [v0.2.9] - 2026-08-04
 
 ### <!-- 0 -->🚀 Features
@@ -25,6 +34,10 @@ All notable changes to Percussionist are documented here.
 ### <!-- 6 -->🧪 Testing
 
 - Add mergeProjectPatch roster-model persistence tests _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.9
 ## [v0.2.8] - 2026-08-03
 
 ### <!-- 1 -->🐛 Bug Fixes

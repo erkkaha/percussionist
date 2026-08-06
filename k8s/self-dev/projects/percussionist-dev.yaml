@@ -4,7 +4,7 @@
 # agent/<task-name> branches; integrator merges to main.
 #
 # Prerequisites (see secrets/README.md):
-#   kubectl get secret git-ssh-key git-github-token opencode-auth -n percussionist
+#   kubectl get secret git-ssh-key git-github-token agent-auth -n percussionist
 #
 # Apply:
 #   kubectl apply -f k8s/self-dev/projects/percussionist-dev.yaml
@@ -45,7 +45,7 @@ spec:
 
   secrets:
     authSecret:
-      name: opencode-auth
+      name: agent-auth
 
   # 2 hours — enough time for image builds and e2e smoke tests.
   timeoutSeconds: 7200
