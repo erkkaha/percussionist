@@ -458,6 +458,48 @@ const reconcileCases: ReconcileCase[] = [
     ],
   },
   {
+    name: 'invalid Run spec (no task, not interactive) → Failed patch with the refine message, no pod work, no dequeue',
+    run: makeRun('run-invalid', {
+      spec: {
+        project: 'test-project',
+        interactive: false,
+        image: 'ghcr.io/erkkaha/percussionist/runner:latest',
+        timeoutSeconds: 3600,
+        agents: [{ name: 'builder' }],
+      },
+    }),
+    script: { patchNamespacedCustomObjectStatus: { value: {} } },
+    expectedMethods: ['patchNamespacedCustomObjectStatus'],
+    expectedPatches: [
+      {
+        phase: RunPhase.Failed,
+        message: 'task: spec.task is required unless spec.interactive is true',
+      },
+    ],
+  },
+  {
+    name: 'invalid Run spec (contradictory source) → Failed patch with the source message, no pod work, no dequeue',
+    run: makeRun('run-invalid-src', {
+      spec: {
+        project: 'test-project',
+        task: 'test-task',
+        interactive: false,
+        image: 'ghcr.io/erkkaha/percussionist/runner:latest',
+        timeoutSeconds: 3600,
+        agents: [{ name: 'builder' }],
+        source: { git: { url: 'https://example.com/repo.git' }, local: true },
+      },
+    }),
+    script: { patchNamespacedCustomObjectStatus: { value: {} } },
+    expectedMethods: ['patchNamespacedCustomObjectStatus'],
+    expectedPatches: [
+      {
+        phase: RunPhase.Failed,
+        message: 'source: source.git and source.local are mutually exclusive',
+      },
+    ],
+  },
+  {
     name: 'terminal run + pod still exists → cleanupChildResources, no dequeue',
     run: makeRun('run-6', { status: { phase: RunPhase.Succeeded } }),
     script: {
@@ -815,6 +857,41 @@ describe('safeReconcileProject()', () => {
         { state: 'Error', message: 'invalid resources.limits.memory', observedGeneration: 3 },
       ]);
       // 4xx is a permanent spec problem — retrying cannot help, so no timer.
+      expect(timerDelays).toEqual([]);
+    } finally {
+      setTimeoutSpy.mockRestore();
+      fake.restore();
+    }
+  });
+
+  it('invalid spec (contradictory source) → Error status with the refine message, no retry timer, reconcileProject never runs', async () => {
+    const timerDelays: unknown[] = [];
+    const setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(
+      (_callback: (...args: unknown[]) => void, delay?: number) => {
+        timerDelays.push(delay);
+        return { timerId: timerDelays.length } as unknown as ReturnType<typeof setTimeout>;
+      },
+    );
+    fake = installFakeKube({ patchNamespacedCustomObjectStatus: { value: {} } });
+    try {
+      const project = makeProject('proj-invalid', {
+        spec: { source: { git: { url: 'https://example.com/repo.git' }, local: true } },
+      });
+
+      await reconciler.safeReconcileProject(project);
+
+      // Validation short-circuits before any reconcileProject work: only the
+      // Error status patch fires. Spec problems are permanent — no retry timer,
+      // and the terminal-ish Error state (guarded by hasReconcileStatusChanged)
+      // prevents any hot-loop.
+      expect(fake.calls.map((c) => c.method)).toEqual(['patchNamespacedCustomObjectStatus']);
+      expect(projectReconcilePatches(fake)).toEqual([
+        {
+          state: 'Error',
+          message: 'source: source.git and source.local are mutually exclusive',
+          observedGeneration: 3,
+        },
+      ]);
       expect(timerDelays).toEqual([]);
     } finally {
       setTimeoutSpy.mockRestore();

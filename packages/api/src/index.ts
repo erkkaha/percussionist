@@ -2,7 +2,10 @@
 //
 // CRD YAML in crds/ is generated from these schemas via `pnpm run codegen`
 // in the scripts/ package. When they disagree the Zod definition wins at
-// admission time inside the operator.
+// reconcile time inside the operator: Run/Project specs are re-validated
+// against the Zod schemas on every reconcile, because the generated CRDs carry
+// no CEL equivalents of the .refine() rules. CRD defaults are authoritative at
+// admission (the apiserver stamps them onto every CR).
 //
 // Five CRDs:
 //   ClusterAgent       — cluster-scoped agent role definitions

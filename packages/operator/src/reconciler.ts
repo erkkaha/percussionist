@@ -64,6 +64,7 @@ import {
 } from './pod-builder.js';
 import { ensureDataPVC } from './pvc-helper.js';
 import { mintRunKey, revokeRunKey } from './run-key-client.js';
+import { validateProjectSpec, validateRunSpec } from './spec-validation.js';
 
 const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
@@ -449,6 +450,21 @@ export async function reconcile(run: Run): Promise<void> {
       log(`dequeuing terminal run ${ns}/${name}: pod confirmed gone`);
       dequeue(`${ns}/${name}`);
     }
+    return;
+  }
+
+  // Re-validate the spec against the Zod schema. The generated CRDs have no CEL
+  // equivalents of the .refine() rules (z.toJSONSchema drops them), so a spec
+  // violating an invariant is admitted and would otherwise be reconciled into
+  // an undefined state (e.g. a dispatcher auto-prompting with no task, or a
+  // pod-builder getting a contradictory source). Failing here — before any pod
+  // work — mirrors the assertCredentialsUnambiguous catch below. RunPhase.Failed
+  // is terminal, so the guard above short-circuits every future reconcile: no
+  // retry storm.
+  const specCheck = validateRunSpec(run.spec);
+  if (!specCheck.ok) {
+    err(`reconcile(${ns}/${name}):`, specCheck.error);
+    await patchStatus(run, { phase: RunPhase.Failed, message: specCheck.error });
     return;
   }
 
@@ -1198,6 +1214,26 @@ async function reconcileProjectOnce(project: Project, allowRetry: boolean): Prom
   // fire later and silently re-apply an outdated spec over a newer, already-
   // successful reconcile.
   cancelProjectRetry(key);
+  // Re-validate the spec against the Zod schema before reconciling. The CRD
+  // admits specs the generated schema cannot express (the .refine() rules have
+  // no CEL equivalents), and a Project violating one (e.g. both source.git and
+  // source.local set) cannot be meaningfully reconciled — pod-builder and
+  // code-server would each pick an arbitrary side. Surface it as a permanent
+  // Error, exactly like the 4xx classification in the catch below: no retry,
+  // no hot-loop — the guard above the patch keeps this from re-firing.
+  const specCheck = validateProjectSpec(project.spec);
+  if (!specCheck.ok) {
+    err(`${logPrefix} invalid spec:`, specCheck.error);
+    const next: NonNullable<ProjectStatus['reconcile']> = {
+      state: 'Error',
+      message: truncateReconcileMessage(specCheck.error),
+      observedGeneration: project.metadata.generation,
+    };
+    if (hasReconcileStatusChanged(project.status?.reconcile, next)) {
+      await patchProjectReconcileStatus(project, next);
+    }
+    return;
+  }
   try {
     await reconcileProject(project);
     const next: NonNullable<ProjectStatus['reconcile']> = {
