@@ -12,10 +12,10 @@
 // The reply goes to stdout and every diagnostic to stderr, so `--message` can be
 // piped or captured from CI without the port-forward chatter contaminating it.
 
-import { type ChildProcess, spawn } from 'node:child_process';
-import { createServer } from 'node:net';
+import type { ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { DEFAULT_NAMESPACE, loadKube } from './kube.js';
+import { pickFreePort, startPortForward } from './port-forward.js';
 
 const MANAGER_SERVICE = 'percussionist-manager';
 const MANAGER_PORT = 4098;
@@ -55,61 +55,6 @@ async function sendMessage(base: string, message: string): Promise<boolean> {
   }
 }
 
-async function pickFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.unref();
-    srv.on('error', reject);
-    srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address();
-      if (addr && typeof addr === 'object') {
-        const port = addr.port;
-        srv.close(() => resolve(port));
-      } else {
-        srv.close();
-        reject(new Error('could not determine free port'));
-      }
-    });
-  });
-}
-
-async function startPortForward(namespace: string, localPort: number): Promise<ChildProcess> {
-  return new Promise((resolve, reject) => {
-    const args = [
-      'port-forward',
-      '-n',
-      namespace,
-      `svc/${MANAGER_SERVICE}`,
-      `${localPort}:${MANAGER_PORT}`,
-    ];
-    const child = spawn('kubectl', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let ready = false;
-    const onReady = () => {
-      if (ready) return;
-      ready = true;
-      resolve(child);
-    };
-
-    const onChunk = (buf: Buffer) => {
-      const s = buf.toString();
-      if (s.includes('Forwarding from')) onReady();
-      process.stderr.write(s);
-    };
-    child.stdout?.on('data', onChunk);
-    child.stderr?.on('data', onChunk);
-
-    child.on('exit', (code) => {
-      if (!ready) {
-        reject(new Error(`kubectl port-forward exited with code ${code}`));
-      }
-    });
-    child.on('error', reject);
-  });
-}
-
 export async function runChat(opts: ChatOpts): Promise<void> {
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
   loadKube();
@@ -120,7 +65,7 @@ export async function runChat(opts: ChatOpts): Promise<void> {
 
   let pf: ChildProcess;
   try {
-    pf = await startPortForward(ns, localPort);
+    pf = await startPortForward(ns, MANAGER_SERVICE, MANAGER_PORT, localPort);
   } catch (e) {
     console.error('beatctl: port-forward failed:', (e as Error).message);
     process.exit(1);

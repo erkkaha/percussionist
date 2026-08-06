@@ -821,4 +821,113 @@ describe('safeReconcileProject()', () => {
       fake.restore();
     }
   });
+
+  // ── Upsert helper paths (rev23 BUILD 6) ─────────────────────────────────
+  // reconcileProject's Deployment/Service upserts go through the shared
+  // upsertDeployment/upsertService helpers; these pin the read → create and
+  // read → SSA-patch sequences and the per-resource ordering.
+
+  it('upsert path: codeServer + embedding enabled with missing resources → creates deployments/services in order', async () => {
+    fake = installFakeKube({
+      readNamespacedPersistentVolumeClaim: { error: notFound() },
+      createNamespacedPersistentVolumeClaim: { value: {} },
+      readNamespacedDeployment: { error: notFound() },
+      createNamespacedDeployment: { value: {} },
+      readNamespacedService: { error: notFound() },
+      createNamespacedService: { value: {} },
+      patchNamespacedCustomObjectStatus: { value: {} },
+    });
+    try {
+      const project = makeProject('proj-upsert-create', {
+        spec: {
+          source: { local: true },
+          codeServer: { enabled: true },
+          embedding: { enabled: true },
+        },
+      });
+
+      await reconciler.safeReconcileProject(project);
+
+      // code-server Deployment + Service, then memory Deployment + Service,
+      // each preceded by its own PVC probe/creation (the PVC preamble runs
+      // once per enabled component).
+      expect(fake.calls.map((c) => c.method)).toEqual([
+        'readNamespacedPersistentVolumeClaim', // code-server PVC probe (404)
+        'createNamespacedPersistentVolumeClaim', // code-server PVC
+        'readNamespacedDeployment', // code-server deployment (404)
+        'createNamespacedDeployment', // code-server deployment
+        'readNamespacedService', // code-server service (404)
+        'createNamespacedService', // code-server service
+        'readNamespacedPersistentVolumeClaim', // memory PVC probe (404)
+        'createNamespacedPersistentVolumeClaim', // memory PVC
+        'readNamespacedDeployment', // memory deployment (404)
+        'createNamespacedDeployment', // memory deployment
+        'readNamespacedService', // memory service (404)
+        'createNamespacedService', // memory service
+        'patchNamespacedCustomObjectStatus', // Ready
+      ]);
+      // No patches on the create path — nothing existed to patch.
+      expect(
+        fake.calls.filter(
+          (c) =>
+            c.method.startsWith('patchNamespaced') &&
+            c.method !== 'patchNamespacedCustomObjectStatus',
+        ),
+      ).toHaveLength(0);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('upsert path: codeServer + embedding enabled with existing resources → SSA-patches, never creates', async () => {
+    fake = installFakeKube({
+      readNamespacedPersistentVolumeClaim: { value: {} },
+      readNamespacedDeployment: { value: {} },
+      patchNamespacedDeployment: { value: {} },
+      readNamespacedService: { value: {} },
+      patchNamespacedService: { value: {} },
+      patchNamespacedCustomObjectStatus: { value: {} },
+    });
+    try {
+      const project = makeProject('proj-upsert-patch', {
+        spec: {
+          source: { local: true },
+          codeServer: { enabled: true },
+          embedding: { enabled: true },
+        },
+      });
+
+      await reconciler.safeReconcileProject(project);
+
+      expect(fake.calls.map((c) => c.method)).toEqual([
+        'readNamespacedPersistentVolumeClaim', // code-server PVC exists
+        'readNamespacedDeployment', // code-server deployment exists
+        'patchNamespacedDeployment', // code-server deployment SSA
+        'readNamespacedService', // code-server service exists
+        'patchNamespacedService', // code-server service SSA
+        'readNamespacedPersistentVolumeClaim', // memory PVC exists
+        'readNamespacedDeployment', // memory deployment exists
+        'patchNamespacedDeployment', // memory deployment SSA
+        'readNamespacedService', // memory service exists
+        'patchNamespacedService', // memory service SSA
+        'patchNamespacedCustomObjectStatus', // Ready
+      ]);
+      // Nothing missing → the create paths never fire.
+      expect(fake.calls.filter((c) => c.method.startsWith('createNamespaced'))).toHaveLength(0);
+      // Every Deployment/Service patch carries the SSA middleware option
+      // (Content-Type: application/apply-patch+yaml) — the fake records the
+      // setHeaderOptions options object as the second call argument.
+      for (const method of ['patchNamespacedDeployment', 'patchNamespacedService']) {
+        const patches = fake.calls.filter((c) => c.method === method);
+        expect(patches.length).toBe(2);
+        for (const c of patches) {
+          const opts = c.args[1] as { middleware?: unknown[] } | undefined;
+          expect(Array.isArray(opts?.middleware)).toBe(true);
+          expect((opts?.middleware ?? []).length).toBeGreaterThan(0);
+        }
+      }
+    } finally {
+      fake.restore();
+    }
+  });
 });
