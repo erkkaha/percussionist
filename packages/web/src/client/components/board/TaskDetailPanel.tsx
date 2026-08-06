@@ -32,10 +32,12 @@ import remarkGfm from 'remark-gfm';
 import { useTaskDiff } from '../../hooks/useTaskDiff';
 import { useTaskRuns } from '../../hooks/useTaskRuns';
 import {
+  answerTask,
   approveTask,
   deleteBoardTask,
   fetchPlan,
   moveTask,
+  replyToRun,
   requestChangesTask,
   retryEscalatedTask,
   retryReviewTask,
@@ -967,9 +969,14 @@ function TaskDetailPanelInner({
   const [showRequestChanges, setShowRequestChanges] = useState(false);
   const [requestChangesComment, setRequestChangesComment] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [answerText, setAnswerText] = useState('');
 
   const taskName = task.metadata.name;
   const worker = task.status?.worker;
+  // The board response attaches the worker run's phase (server-computed view
+  // field, see GET /api/projects/:project/board). WaitingForInput means the run
+  // pod is still alive and parked on a human — not a failure.
+  const isWaitingForInput = task.workerRunPhase === 'WaitingForInput';
   const isBuild = task.spec.type === 'BUILD';
   const isPlan = task.spec.type === 'PLAN';
   // The worker run is parked on a human prompt — show "waiting for input"
@@ -1010,6 +1017,29 @@ function TaskDetailPanelInner({
   const retryReviewMutation = useMutation({
     mutationFn: () => retryReviewTask(projectName, taskName),
     onSuccess: invalidateBoard,
+  });
+
+  const answerMutation = useMutation({
+    mutationFn: async (answer: string) => {
+      // 1. Forward the human's reply into the opencode session so the parked
+      //    agent sees it, then 2. write the percussionist.dev/action-answer
+      //    annotation that decideWaitingForInput consumes to resume the task
+      //    (run back in Running + answer annotation → task running).
+      //
+      // Limitation (plan risk, unverified on a live cluster): posting a
+      //    session message reliably resumes an aborted-message wait, but
+      //    whether it dismisses an opencode *permission* prompt is unknown.
+      //    The answer annotation is written either way, so the task resumes
+      //    once the session picks the message up — the box is safe to use.
+      if (worker?.runName) {
+        await replyToRun(worker.runName, answer);
+      }
+      await answerTask(projectName, taskName, answer);
+    },
+    onSuccess: () => {
+      invalidateBoard();
+      setAnswerText('');
+    },
   });
 
   const promoteIdeaMutation = useMutation({
@@ -1243,6 +1273,53 @@ function TaskDetailPanelInner({
                 {requestChangesMutation.isPending ? 'Submitting…' : 'Submit'}
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Answer box — the worker run is parked waiting for user input */}
+        {isWaitingForInput && (
+          <div className="space-y-2 border border-phase-pending/30 rounded-md p-3 bg-surface">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-label-md font-mono uppercase text-phase-pending">
+                Answer — run is waiting for input
+              </p>
+              {worker?.runName && (
+                <span
+                  className="font-mono text-[10px] text-text-dim truncate"
+                  title={worker.runName}
+                >
+                  {worker.runName}
+                </span>
+              )}
+            </div>
+            <Textarea
+              placeholder="Type your answer for the agent…"
+              value={answerText}
+              onChange={(e) => setAnswerText(e.target.value)}
+              rows={3}
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setAnswerText('')}
+                disabled={answerMutation.isPending || !answerText.trim()}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-text-dim hover:text-text transition-colors disabled:opacity-40"
+              >
+                Clear
+              </button>
+              <button
+                onClick={() => {
+                  const answer = answerText.trim();
+                  if (answer) answerMutation.mutate(answer);
+                }}
+                disabled={answerMutation.isPending || !answerText.trim()}
+                className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 px-3 py-1.5 text-xs font-medium text-text transition-colors"
+              >
+                {answerMutation.isPending ? 'Sending…' : 'Send Answer'}
+              </button>
+            </div>
+            {answerMutation.isError && (
+              <p className="text-xs text-phase-failed">{(answerMutation.error as Error).message}</p>
+            )}
           </div>
         )}
       </div>
