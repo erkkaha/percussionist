@@ -286,13 +286,13 @@ describe('decide — running', () => {
     expect(result.toPhase).toBe('waiting-for-input');
   });
 
-  it('running + WaitingForInput BUILD → failed', () => {
+  it('running + WaitingForInput BUILD → waiting-for-input', () => {
     const task = makeTask('t1', 'test-project', { phase: 'running', type: 'BUILD' });
     const result = decide(
       makeInput(task, { observed: { worker: makeRun('run-1', { phase: 'WaitingForInput' }) } }),
     );
-    expect(result.toPhase).toBe('failed');
-    expect(result.events[0]?.reason).toBe('BuildCannotWait');
+    expect(result.toPhase).toBe('waiting-for-input');
+    expect(result.events[0]?.reason).toBe('WaitingForInput');
   });
 
   it('running + stale run → failed', () => {
@@ -336,6 +336,45 @@ describe('decide — waiting-for-input', () => {
     );
     expect(result.toPhase).toBe('running');
     expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(true);
+  });
+
+  it('waiting + run missing → failed', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = decide(makeInput(task, { observed: {} }));
+    expect(result.toPhase).toBe('failed');
+    expect((result.statusPatch?.worker as any).status).toBe('Failed');
+    expect(result.events[0]?.reason).toBe('InputRunTerminated');
+  });
+
+  it('waiting + Failed run → failed', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = decide(
+      makeInput(task, { observed: { worker: makeRun('run-1', { phase: 'Failed' }) } }),
+    );
+    expect(result.toPhase).toBe('failed');
+    expect((result.statusPatch?.worker as any).status).toBe('Failed');
+    expect(result.events[0]?.reason).toBe('InputRunTerminated');
+  });
+
+  it('waiting + Cancelled run → failed', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = decide(
+      makeInput(task, { observed: { worker: makeRun('run-1', { phase: 'Cancelled' }) } }),
+    );
+    expect(result.toPhase).toBe('failed');
+    expect((result.statusPatch?.worker as any).status).toBe('Failed');
+    expect(result.events[0]?.reason).toBe('InputRunTerminated');
+  });
+
+  it('waiting + Succeeded run → succeeded', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = decide(
+      makeInput(task, { observed: { worker: makeRun('run-1', { phase: 'Succeeded' }) } }),
+    );
+    expect(result.toPhase).toBe('succeeded');
+    expect((result.statusPatch?.worker as any).status).toBe('Succeeded');
+    expect((result.statusPatch?.worker as any).completedAt).toBe(now);
+    expect(result.events[0]?.reason).toBe('InputRunSucceeded');
   });
 });
 

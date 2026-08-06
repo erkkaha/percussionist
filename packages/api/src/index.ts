@@ -865,7 +865,7 @@ export const TaskPhase = z.enum([
   'scheduled', // Scheduler picked it, run being created
   'initializing', // Pod starting, git checkout in progress
   'running', // Agent actively working
-  'waiting-for-input', // PLAN-only: agent asked a question
+  'waiting-for-input', // agent asked a question (parked for human input)
   // Post-work
   'succeeded', // Run completed successfully
   'reviewing', // AI reviewer evaluating (optional)
@@ -920,7 +920,7 @@ export const TRANSITION_TABLE: Record<TaskPhase, TaskPhase[]> = {
   scheduled: ['initializing', 'failed'],
   initializing: ['running', 'succeeded', 'failed'],
   running: ['waiting-for-input', 'succeeded', 'failed'],
-  'waiting-for-input': ['running', 'failed'],
+  'waiting-for-input': ['running', 'succeeded', 'failed'],
   succeeded: ['reviewing', 'awaiting-human', 'done'],
   reviewing: ['awaiting-human', 'rework-requested'],
   'awaiting-human': [
