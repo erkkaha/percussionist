@@ -769,6 +769,19 @@ const processing = new Set<string>();
 const dirty = new Set<string>();
 const seen = new Map<string, Run>();
 
+/** Idle sleep between queue drains when the queue is empty (ms). */
+export const IDLE_SLEEP_MS = 250;
+/** Delay before a transiently-failed run is re-enqueued (ms). */
+export const ERROR_REQUEUE_DELAY_MS = 5000;
+
+/** Injectable idle sleep (defaults to `setTimeout`). */
+export type IdleSleep = (ms: number) => Promise<void>;
+/** Injectable requeue scheduler for transient reconcile failures (defaults to `setTimeout`). */
+export type RequeueScheduler = (callback: () => void, delayMs: number) => unknown;
+
+const defaultIdleSleep: IdleSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const defaultRequeue: RequeueScheduler = (callback, delayMs) => setTimeout(callback, delayMs);
+
 export function enqueue(run: Run): void {
   const key = `${run.metadata.namespace}/${run.metadata.name}`;
   seen.set(key, run);
@@ -791,49 +804,78 @@ export function dequeue(key: string): void {
   if (idx !== -1) queue.splice(idx, 1);
 }
 
-export async function runWorker(): Promise<void> {
-  while (true) {
-    const key = queue.shift();
-    if (!key) {
-      await new Promise((r) => setTimeout(r, 250));
-      continue;
-    }
-    pending.delete(key);
-    const run = seen.get(key);
-    if (!run) continue;
-    processing.add(key);
-    try {
-      const [namespace, name] = key.split('/');
-      const fresh =
-        namespace && name
-          ? ((await co.getNamespacedCustomObject({
-              group: API_GROUP,
-              version: API_VERSION,
-              namespace,
-              plural: PLURAL_RUN,
-              name,
-            })) as Run)
-          : run;
-      seen.set(key, fresh);
-      await reconcile(fresh);
-    } catch (e) {
-      err(`reconcile(${key}) failed:`, (e as Error).message);
-      if (isNotFound(e)) {
-        // Run CR was deleted — remove from state to prevent indefinite re-enqueue.
-        dequeue(key);
-      } else {
-        setTimeout(() => {
-          const current = seen.get(key);
-          if (current) enqueue(current);
-        }, 5000);
-      }
-    } finally {
-      processing.delete(key);
-      if (dirty.delete(key)) {
+/**
+ * Processes a single work-queue entry: shifts one key, fetches the fresh Run
+ * CR via `co.getNamespacedCustomObject` (falling back to the cached run when
+ * the key carries no namespace/name split), and reconciles it. Returns true
+ * when a key was processed (including the skip and error paths), false when
+ * the queue was empty and the caller slept `delay(IDLE_SLEEP_MS)`.
+ *
+ * `delay` and `scheduleRequeue` are injectable seams whose defaults reproduce
+ * the original `runWorker` `setTimeout` behavior (250ms idle sleep, 5s
+ * error-requeue) — they exist so queue-semantics tests can drive the loop
+ * without spawning the infinite `runWorker` loop or real timers.
+ */
+export async function runWorkerOnce(
+  delay: IdleSleep = defaultIdleSleep,
+  scheduleRequeue: RequeueScheduler = defaultRequeue,
+): Promise<boolean> {
+  const key = queue.shift();
+  if (!key) {
+    await delay(IDLE_SLEEP_MS);
+    return false;
+  }
+  pending.delete(key);
+  const run = seen.get(key);
+  if (!run) {
+    // Key queued without a `seen` entry (defensive: enqueue always sets
+    // `seen`, so this only guards against direct queue manipulation).
+    return true;
+  }
+  processing.add(key);
+  try {
+    const [namespace, name] = key.split('/');
+    const fresh =
+      namespace && name
+        ? ((await co.getNamespacedCustomObject({
+            group: API_GROUP,
+            version: API_VERSION,
+            namespace,
+            plural: PLURAL_RUN,
+            name,
+          })) as Run)
+        : run;
+    seen.set(key, fresh);
+    await reconcile(fresh);
+    return true;
+  } catch (e) {
+    err(`reconcile(${key}) failed:`, (e as Error).message);
+    if (isNotFound(e)) {
+      // Run CR was deleted — remove from state to prevent indefinite re-enqueue.
+      dequeue(key);
+    } else {
+      scheduleRequeue(() => {
         const current = seen.get(key);
         if (current) enqueue(current);
-      }
+      }, ERROR_REQUEUE_DELAY_MS);
     }
+    return true;
+  } finally {
+    processing.delete(key);
+    if (dirty.delete(key)) {
+      const current = seen.get(key);
+      if (current) enqueue(current);
+    }
+  }
+}
+
+/** The operator's main reconcile loop: one `runWorkerOnce` iteration per pass. */
+export async function runWorker(
+  delay: IdleSleep = defaultIdleSleep,
+  scheduleRequeue: RequeueScheduler = defaultRequeue,
+): Promise<void> {
+  while (true) {
+    await runWorkerOnce(delay, scheduleRequeue);
   }
 }
 
@@ -841,6 +883,22 @@ export function startPeriodicResync(): void {
   setInterval(() => {
     for (const run of seen.values()) enqueue(run);
   }, 10_000).unref();
+}
+
+// Test-only access to the in-memory work queue. Production code never calls
+// this; queue.test.ts uses it to reset state between scenarios and to assert
+// on the resulting queue/pending/processing/dirty/seen contents. The queue
+// itself stays module-private otherwise.
+export interface WorkQueueStateForTests {
+  queue: string[];
+  pending: Set<string>;
+  processing: Set<string>;
+  dirty: Set<string>;
+  seen: Map<string, Run>;
+}
+
+export function __queueStateForTests(): WorkQueueStateForTests {
+  return { queue, pending, processing, dirty, seen };
 }
 
 // ---------------------------------------------------------------------------

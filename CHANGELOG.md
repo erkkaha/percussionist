@@ -5,11 +5,32 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
+- Add humanFolder schema and regenerate CRDs _(api)_
+- Clone and open human folder in code-server _(operator)_
+- Add human folder toggle to project form _(web)_
 - Unify agent auth into one agent-auth Secret _(cli)_
 
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Give human-folder bootstrap commit an identity and stop clobbering human git config _(operator)_
+- Allow disabling human folder via edit form _(web)_
+- Wait exits 3 on first-poll 404 instead of claiming deletion _(cli)_
+- Repoint board task move to sanctioned phase transitions and drop task add --column _(cli)_
+- Bind --agent-name to the preceding --agent-file _(cli)_
+- Merge project agent/image/timeout/resources defaults into submit _(cli)_
+- Stop -n default from overriding file namespaces on submit/project create _(cli)_
 - Honor project roster agent models in facilitator and agent-swap runs _(manager)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add plan for human repo folder on project pvc _(plans)_
+- Revise human repo folder plan — clone from spec on project default branch _(plans)_
+- Beatctl CLI correctness plan rev19 (percussionist-dev-plan-rev19)
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Enable human folder on percussionist-dev and document _(self-dev)_
+- Release v0.2.10
 ## [v0.2.9] - 2026-08-04
 
 ### <!-- 0 -->🚀 Features
