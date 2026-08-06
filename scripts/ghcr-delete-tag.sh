@@ -11,7 +11,7 @@ set -u -o pipefail
 API_BASE="https://api.github.com"
 OWNER="erkkaha"
 REPO="percussionist"
-IMAGES=("runner" "operator" "dispatcher" "manager" "web" "memory")
+IMAGES=("runner" "runner-claude" "operator" "dispatcher" "manager" "web" "memory" "code-server")
 
 usage() { echo "usage: $0 <tag> [tag ...]" >&2; exit 1; }
 [ $# -gt 0 ] || usage

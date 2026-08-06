@@ -304,7 +304,7 @@ export async function waitForCompletion(
   }
 
   // Final flush on terminal paths (timeout or cancelled)
-  const phase = signal?.aborted ? 'Failed' : 'Failed';
+  const phase = 'Failed';
   log(
     signal?.aborted
       ? `waitForCompletion cancelled via signal`
