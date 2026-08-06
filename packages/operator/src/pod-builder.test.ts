@@ -79,6 +79,12 @@ function getDispatcherEnv(run: Run): Array<{ name?: string; value?: string }> {
   return (dispatcher?.env as Array<{ name?: string; value?: string }>) ?? [];
 }
 
+function getWorkspaceInitEnv(run: Run): Array<{ name?: string; value?: string }> {
+  const pod = renderPod(run, []);
+  const init = pod.spec?.initContainers?.find((c) => c.name === 'workspace-init');
+  return (init?.env as Array<{ name?: string; value?: string }>) ?? [];
+}
+
 describe('renderPod - workspace-init script generation', () => {
   describe('remote git with worktreeReuse=true (default)', () => {
     it('should generate worktree creation with parent baseline resolution when creating new branch from parentRef', () => {
@@ -209,6 +215,91 @@ describe('renderPod - workspace-init script generation', () => {
       // Should NOT contain parent baseline resolution when no parentRef
       expect(args).not.toContain('_PARENT_REMOTE_REF');
       expect(args).not.toContain('_PARENT_BASE_REF');
+    });
+  });
+
+  describe('git fields shipped via env vars (shell-interpolation security fix)', () => {
+    function branchingRun(): Run {
+      return makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'build-task-1',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          source: {
+            git: {
+              url: 'https://github.com/test/repo.git',
+              ref: 'feature/child-branch',
+              parentRef: 'feature/my-feature',
+            },
+          },
+        },
+      });
+    }
+
+    it('passes GIT_URL/GIT_REF/GIT_PARENT_REF via env for a run with parentRef', () => {
+      const env = getWorkspaceInitEnv(branchingRun());
+      const byName = new Map(env.map((e) => [e.name, e.value]));
+      expect(byName.get('GIT_URL')).toBe('https://github.com/test/repo.git');
+      expect(byName.get('GIT_REF')).toBe('feature/child-branch');
+      expect(byName.get('GIT_PARENT_REF')).toBe('feature/my-feature');
+    });
+
+    it('omits GIT_REF/GIT_PARENT_REF env when ref/parentRef are unset', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'build-task-1',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          source: { git: { url: 'https://github.com/test/repo.git' } },
+        },
+      });
+      const env = getWorkspaceInitEnv(run);
+      const byName = new Map(env.map((e) => [e.name, e.value]));
+      expect(byName.get('GIT_URL')).toBe('https://github.com/test/repo.git');
+      expect(byName.has('GIT_REF')).toBe(false);
+      expect(byName.has('GIT_PARENT_REF')).toBe(false);
+    });
+
+    it('omits all GIT_* env for local git', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'build-task-1',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          source: { local: true },
+        },
+      });
+      const env = getWorkspaceInitEnv(run);
+      const names = env.map((e) => e.name);
+      expect(names).not.toContain('GIT_URL');
+      expect(names).not.toContain('GIT_REF');
+      expect(names).not.toContain('GIT_PARENT_REF');
+    });
+
+    it('references $GIT_URL/$GIT_REF/$GIT_PARENT_REF in the rendered script', () => {
+      const args = getWorkspaceInitArgs(branchingRun());
+      expect(args).toContain('git clone --mirror "$GIT_URL" "$MIRROR_DIR"');
+      expect(args).toContain('remote set-url origin "$GIT_URL"');
+      expect(args).toContain('checkout "$GIT_REF"');
+      expect(args).toContain('checkout -b "$GIT_REF" "origin/$GIT_REF"');
+      expect(args).toContain('checkout -b "$GIT_REF" "$GIT_PARENT_REF"');
+      expect(args).toContain('worktree add --force "$WORKTREE_DIR" "$GIT_REF"');
+      expect(args).toContain('worktree add -b "$GIT_REF" "$WORKTREE_DIR" "$_PARENT_BASE_REF"');
+    });
+
+    it('renders no ${git.*} template remnants in the script', () => {
+      const args = getWorkspaceInitArgs(branchingRun());
+      expect(args).not.toContain('${git.');
+    });
+
+    it('keeps the parent-baseline substring assertions passing', () => {
+      const args = getWorkspaceInitArgs(branchingRun());
+      expect(args).toContain('_PARENT_REMOTE_REF=');
+      expect(args).toContain('refs/remotes/origin/');
+      expect(args).toContain('_PARENT_BASE_REF=');
     });
   });
 
@@ -878,13 +969,13 @@ describe('renderPod - parent baseline resolution failure', () => {
   // mirror is gone.
   it('checks the local fallback ref before using it as a baseline', () => {
     const script = getWorkspaceInitArgs(branchingRun());
-    expect(script).toContain('rev-parse "refs/heads/feature/plan-1"');
+    expect(script).toContain('rev-parse "refs/heads/$GIT_PARENT_REF"');
   });
 
   it('names the missing parent branch and the mirror instead of failing bare', () => {
     const script = getWorkspaceInitArgs(branchingRun());
-    expect(script).toContain('parent branch feature/plan-1 not found in mirror');
-    expect(script).toContain('refs/remotes/origin/feature/plan-1');
+    expect(script).toContain('parent branch $GIT_PARENT_REF not found in mirror');
+    expect(script).toContain('refs/remotes/origin/$GIT_PARENT_REF');
     expect(script).toContain('source.git.url changed');
   });
 
