@@ -74,7 +74,7 @@ build_one() {
       ;;
     # Alias passes: the real build already tagged the second reference, so these
     # exist only to load it into minikube.
-    runner-alias | runner-claude-alias | dispatcher-alias)
+    runner-alias | runner-claude-alias | dispatcher-alias | code-server-alias)
       ;;
     operator)
       docker build "${extra[@]}" -t "$tag" --build-arg PKG=operator \
@@ -102,6 +102,7 @@ build_one() {
       ;;
     code-server)
       docker build "${extra[@]}" -t "$tag" "$REPO_ROOT/images/code-server"
+      docker tag "$tag" "$CODE_SERVER_GHCR_TAG"
       ;;
     *) echo "unknown image: $name" >&2; return 1 ;;
   esac
@@ -347,6 +348,7 @@ WEB_TAG="percussionist/web:dev"
 MANAGER_TAG="percussionist/manager:dev"
 MEMORY_TAG="percussionist/memory:dev"
 CODE_SERVER_TAG="percussionist/code-server:dev"
+CODE_SERVER_GHCR_TAG="ghcr.io/erkkaha/percussionist/code-server:latest"
 
 RESTORE_OPERATOR=false
 RESTORE_WEB=false
@@ -375,7 +377,8 @@ if [[ -n "$ONLY" ]]; then
     web)        if $FORCE; then RESTORE_WEB=true; fi; process_one web        "$WEB_TAG" ;;
     manager)    if $FORCE; then RESTORE_MANAGER=true; fi; process_one manager    "$MANAGER_TAG" ;;
     memory)     process_one memory     "$MEMORY_TAG" ;;
-    code-server) process_one code-server "$CODE_SERVER_TAG" ;;
+    code-server) process_one code-server "$CODE_SERVER_TAG" \
+                 && process_one code-server-alias "$CODE_SERVER_GHCR_TAG" ;;
     *) echo "unknown --only value: $ONLY (runner|runner-claude|operator|dispatcher|web|manager|memory|code-server)" >&2; exit 2 ;;
   esac
 else
@@ -390,6 +393,7 @@ else
   if $FORCE; then RESTORE_MANAGER=true; fi;    process_one manager    "$MANAGER_TAG"
   process_one memory     "$MEMORY_TAG"
   process_one code-server "$CODE_SERVER_TAG"
+  process_one code-server-alias "$CODE_SERVER_GHCR_TAG"
 fi
 
 # Scaled-down deployments are brought back up by the EXIT trap.

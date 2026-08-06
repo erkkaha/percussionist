@@ -220,12 +220,17 @@ export const HumanFolderSpecSchema = z.object({
 });
 export type HumanFolderSpec = z.infer<typeof HumanFolderSpecSchema>;
 
+// The published, tooled code-server image (bun/pnpm/node/npm/ripgrep/jq on
+// top of codercom). Single source of truth for the CRD default; the operator
+// falls back to the same constant when spec.codeServer.image is unset.
+export const CODE_SERVER_DEFAULT_IMAGE = 'ghcr.io/erkkaha/percussionist/code-server:latest';
+
 // Code-server configuration for interactive workspace access.
 export const CodeServerSpecSchema = z.object({
   /** Enable per-project code-server for interactive workspace access. */
   enabled: z.boolean().default(false),
   /** code-server container image. */
-  image: z.string().default('codercom/code-server:4.96.4'),
+  image: z.string().default(CODE_SERVER_DEFAULT_IMAGE),
   /** Pod resource requirements for code-server container. */
   resources: ResourceRequirementsSchema.optional(),
   /** Alpine/APT packages to install in the code-server init container. */
@@ -1909,7 +1914,6 @@ export const DISPATCHER_CONTAINER = 'dispatcher';
 export const GIT_CLONE_CONTAINER = 'workspace-init';
 export const CODE_SERVER_CONTAINER = 'code-server';
 export const CODE_SERVER_PORT = 8080;
-export const CODE_SERVER_DEFAULT_IMAGE = 'ghcr.io/erkkaha/percussionist/code-server:latest';
 /**
  * Image for maintenance/exec pods when `Project.spec.exec.image` is unset.
  *
