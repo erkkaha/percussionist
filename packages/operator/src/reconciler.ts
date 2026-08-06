@@ -8,7 +8,9 @@ import {
   NetworkingV1Api,
   PatchStrategy,
   setHeaderOptions,
+  type V1Deployment,
   type V1Pod,
+  type V1Service,
 } from '@kubernetes/client-node';
 import {
   API_GROUP,
@@ -907,6 +909,109 @@ export function __queueStateForTests(): WorkQueueStateForTests {
 // Called by the project informer on add/update. Creates or updates code-server
 // resources when spec.codeServer.enabled is true and a source is configured.
 
+// Shared read → SSA-patch → on-NotFound-create upsert for the project's
+// Deployment resources (code-server and memory-service). The method order
+// (read → patch → create) and log strings are pinned by reconciler-flow.test.ts
+// via the recording fake kube client, so they must not drift.
+async function upsertDeployment(
+  project: Project,
+  ns: string,
+  logPrefix: string,
+  name: string,
+  render: (p: Project) => V1Deployment,
+): Promise<void> {
+  try {
+    await apps.readNamespacedDeployment({ name, namespace: ns });
+    // Exists — patch it via SSA
+    await apps.patchNamespacedDeployment(
+      {
+        name,
+        namespace: ns,
+        body: render(project),
+        fieldManager: 'percussionist-operator',
+        force: true,
+      },
+      setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
+    );
+    log(`${logPrefix} patched deployment ${name}`);
+  } catch (e) {
+    if (isNotFound(e)) {
+      await apps.createNamespacedDeployment({
+        namespace: ns,
+        body: render(project),
+      });
+      log(`${logPrefix} created deployment ${name}`);
+    } else {
+      err(`${logPrefix} deployment error:`, (e as Error).message);
+      throw e;
+    }
+  }
+}
+
+// Shared read → SSA-patch → on-NotFound-create upsert for the project's
+// Service resources (code-server and memory-service). Method order and log
+// strings are pinned by reconciler-flow.test.ts, same as upsertDeployment.
+async function upsertService(
+  project: Project,
+  ns: string,
+  logPrefix: string,
+  name: string,
+  render: (p: Project) => V1Service,
+): Promise<void> {
+  try {
+    await core.readNamespacedService({ name, namespace: ns });
+    // Exists — patch it via SSA
+    await core.patchNamespacedService(
+      {
+        name,
+        namespace: ns,
+        body: render(project),
+        fieldManager: 'percussionist-operator',
+        force: true,
+      },
+      setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
+    );
+    log(`${logPrefix} patched service ${name}`);
+  } catch (e) {
+    if (isNotFound(e)) {
+      await core.createNamespacedService({
+        namespace: ns,
+        body: render(project),
+      });
+      log(`${logPrefix} created service ${name}`);
+    } else {
+      err(`${logPrefix} service error:`, (e as Error).message);
+      throw e;
+    }
+  }
+}
+
+// Ensures the project's data PVC exists before resource creation that mounts
+// it (code-server and memory-service both need it). Returns false when the PVC
+// could not be ensured — the caller must bail (nothing can mount without it).
+async function ensureDataPvcOrBail(
+  project: Project,
+  ns: string,
+  logPrefix: string,
+): Promise<boolean> {
+  const name = project.metadata.name ?? '';
+  const projectUid = project.metadata.uid ?? '';
+  const pvcName = project.spec.data?.pvcName ?? `${name}-data`;
+  try {
+    await ensureDataPVC({
+      projectName: name,
+      namespace: ns,
+      projectUid,
+      storageClass: project.spec.data?.storageClass,
+      pvcName,
+    });
+    return true;
+  } catch (e) {
+    err(`${logPrefix} failed to ensure data PVC:`, (e as Error).message);
+    return false; // Cannot proceed without PVC
+  }
+}
+
 export async function reconcileProject(project: Project): Promise<void> {
   const name = project.metadata.name;
   if (!name) throw new Error('Project missing name');
@@ -918,78 +1023,11 @@ export async function reconcileProject(project: Project): Promise<void> {
     log(`${logPrefix} reconciling code-server resources`);
 
     // Ensure data PVC exists first (code-server needs it).
-    const projectUid = project.metadata.uid ?? '';
-    const pvcName = project.spec.data?.pvcName ?? `${name}-data`;
-    try {
-      await ensureDataPVC({
-        projectName: name,
-        namespace: ns,
-        projectUid,
-        storageClass: project.spec.data?.storageClass,
-        pvcName,
-      });
-    } catch (e) {
-      err(`${logPrefix} failed to ensure data PVC:`, (e as Error).message);
-      return; // Cannot proceed without PVC
-    }
+    if (!(await ensureDataPvcOrBail(project, ns, logPrefix))) return;
 
-    // Upsert Deployment
-    const deployName = ideDeploymentName(project);
-    try {
-      await apps.readNamespacedDeployment({ name: deployName, namespace: ns });
-      // Exists — patch it via SSA
-      await apps.patchNamespacedDeployment(
-        {
-          name: deployName,
-          namespace: ns,
-          body: renderIdeDeployment(project),
-          fieldManager: 'percussionist-operator',
-          force: true,
-        },
-        setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
-      );
-      log(`${logPrefix} patched deployment ${deployName}`);
-    } catch (e) {
-      if (isNotFound(e)) {
-        await apps.createNamespacedDeployment({
-          namespace: ns,
-          body: renderIdeDeployment(project),
-        });
-        log(`${logPrefix} created deployment ${deployName}`);
-      } else {
-        err(`${logPrefix} deployment error:`, (e as Error).message);
-        throw e;
-      }
-    }
-
-    // Upsert Service
-    const svcName = ideServiceName(project);
-    try {
-      await core.readNamespacedService({ name: svcName, namespace: ns });
-      // Exists — patch it via SSA
-      await core.patchNamespacedService(
-        {
-          name: svcName,
-          namespace: ns,
-          body: renderIdeService(project),
-          fieldManager: 'percussionist-operator',
-          force: true,
-        },
-        setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
-      );
-      log(`${logPrefix} patched service ${svcName}`);
-    } catch (e) {
-      if (isNotFound(e)) {
-        await core.createNamespacedService({
-          namespace: ns,
-          body: renderIdeService(project),
-        });
-        log(`${logPrefix} created service ${svcName}`);
-      } else {
-        err(`${logPrefix} service error:`, (e as Error).message);
-        throw e;
-      }
-    }
+    // Upsert Deployment + Service
+    await upsertDeployment(project, ns, logPrefix, ideDeploymentName(project), renderIdeDeployment);
+    await upsertService(project, ns, logPrefix, ideServiceName(project), renderIdeService);
 
     // Upsert Ingress (only when INGRESS_BASE_URL is set).
     const ingressName = ideIngressName(project);
@@ -1022,78 +1060,23 @@ export async function reconcileProject(project: Project): Promise<void> {
     log(`${logPrefix} reconciling memory-service resources`);
 
     // Ensure data PVC exists first (memory-service needs it).
-    const projectUid = project.metadata.uid ?? '';
-    const pvcName = project.spec.data?.pvcName ?? `${name}-data`;
-    try {
-      await ensureDataPVC({
-        projectName: name,
-        namespace: ns,
-        projectUid,
-        storageClass: project.spec.data?.storageClass,
-        pvcName,
-      });
-    } catch (e) {
-      err(`${logPrefix} failed to ensure data PVC:`, (e as Error).message);
-      return; // Cannot proceed without PVC
-    }
+    if (!(await ensureDataPvcOrBail(project, ns, logPrefix))) return;
 
-    // Upsert Deployment
-    const memDeployName = memoryServiceDeploymentName(project);
-    try {
-      await apps.readNamespacedDeployment({ name: memDeployName, namespace: ns });
-      // Exists — patch it via SSA
-      await apps.patchNamespacedDeployment(
-        {
-          name: memDeployName,
-          namespace: ns,
-          body: renderMemoryServiceDeployment(project),
-          fieldManager: 'percussionist-operator',
-          force: true,
-        },
-        setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
-      );
-      log(`${logPrefix} patched deployment ${memDeployName}`);
-    } catch (e) {
-      if (isNotFound(e)) {
-        await apps.createNamespacedDeployment({
-          namespace: ns,
-          body: renderMemoryServiceDeployment(project),
-        });
-        log(`${logPrefix} created deployment ${memDeployName}`);
-      } else {
-        err(`${logPrefix} deployment error:`, (e as Error).message);
-        throw e;
-      }
-    }
-
-    // Upsert Service
-    const memSvcName = memoryServiceServiceName(project);
-    try {
-      await core.readNamespacedService({ name: memSvcName, namespace: ns });
-      // Exists — patch it via SSA
-      await core.patchNamespacedService(
-        {
-          name: memSvcName,
-          namespace: ns,
-          body: renderMemoryServiceService(project),
-          fieldManager: 'percussionist-operator',
-          force: true,
-        },
-        setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
-      );
-      log(`${logPrefix} patched service ${memSvcName}`);
-    } catch (e) {
-      if (isNotFound(e)) {
-        await core.createNamespacedService({
-          namespace: ns,
-          body: renderMemoryServiceService(project),
-        });
-        log(`${logPrefix} created service ${memSvcName}`);
-      } else {
-        err(`${logPrefix} service error:`, (e as Error).message);
-        throw e;
-      }
-    }
+    // Upsert Deployment + Service
+    await upsertDeployment(
+      project,
+      ns,
+      logPrefix,
+      memoryServiceDeploymentName(project),
+      renderMemoryServiceDeployment,
+    );
+    await upsertService(
+      project,
+      ns,
+      logPrefix,
+      memoryServiceServiceName(project),
+      renderMemoryServiceService,
+    );
 
     log(`${logPrefix} memory-service resources reconciled`);
   } else {
