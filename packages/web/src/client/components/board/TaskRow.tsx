@@ -49,6 +49,11 @@ interface TaskRowProps {
 export function TaskRow({ task, col, isSelected, onClick, projectName, approvals }: TaskRowProps) {
   const worker = task.status?.worker;
   const isBuild = task.spec.type === 'BUILD';
+  // A run parked on a human (WaitingForInput), or a task parked in
+  // waiting-for-input phase, must show an amber "waiting for input" badge —
+  // never the red "failed" badge, even when worker.status is 'Failed'.
+  const isWaiting =
+    task.workerRunPhase === 'WaitingForInput' || task.status?.phase === 'waiting-for-input';
   const colColor = COLUMN_COLORS[col] ?? 'bg-surface-overlay text-text-dim';
   const lastActivity = worker?.completedAt ?? worker?.startedAt ?? task.metadata.creationTimestamp;
   const parentRef = getParentRefPresentation(task);
@@ -113,6 +118,20 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
               </span>
             )}
 
+            {/* Waiting for input — run is parked on a human prompt */}
+            {col !== 'in-progress' && isWaiting && (
+              <span
+                className="text-label-md font-mono uppercase text-amber-400"
+                title={
+                  task.workerRunPhase === 'WaitingForInput'
+                    ? 'Run is waiting for user input'
+                    : 'Task is waiting for user input'
+                }
+              >
+                waiting for input
+              </span>
+            )}
+
             {/* Escalated */}
             {col !== 'in-progress' && worker?.status === 'Escalated' && (
               <span className="text-label-md font-mono uppercase text-phase-failed">escalated</span>
@@ -126,7 +145,7 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
             )}
 
             {/* Failed */}
-            {col !== 'in-progress' && worker?.status === 'Failed' && (
+            {col !== 'in-progress' && worker?.status === 'Failed' && !isWaiting && (
               <span className="text-label-md font-mono uppercase text-phase-failed">failed</span>
             )}
 

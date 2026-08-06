@@ -972,6 +972,9 @@ function TaskDetailPanelInner({
   const worker = task.status?.worker;
   const isBuild = task.spec.type === 'BUILD';
   const isPlan = task.spec.type === 'PLAN';
+  // The worker run is parked on a human prompt — show "waiting for input"
+  // instead of the raw worker.status, and hide Retry while the run is alive.
+  const isWaiting = task.workerRunPhase === 'WaitingForInput';
   const canShowDiff =
     task.status?.phase === 'done' ||
     task.status?.phase === 'awaiting-human' ||
@@ -1053,10 +1056,19 @@ function TaskDetailPanelInner({
 
         {/* Meta badges */}
         <div className="flex items-center gap-2 flex-wrap">
-          {worker?.status && (
-            <span className="text-label-md font-mono uppercase text-text-dim bg-surface-overlay px-2 py-0.5 rounded">
-              {worker.status}
+          {isWaiting ? (
+            <span
+              className="text-label-md font-mono uppercase text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded"
+              title="Run is waiting for user input"
+            >
+              waiting for input
             </span>
+          ) : (
+            worker?.status && (
+              <span className="text-label-md font-mono uppercase text-text-dim bg-surface-overlay px-2 py-0.5 rounded">
+                {worker.status}
+              </span>
+            )
           )}
           {task.spec.priority && task.spec.priority !== 'medium' && (
             <span
@@ -1130,7 +1142,7 @@ function TaskDetailPanelInner({
             </>
           )}
 
-          {(worker?.status === 'Failed' || worker?.status === 'Escalated') && (
+          {(worker?.status === 'Failed' || worker?.status === 'Escalated') && !isWaiting && (
             <button
               onClick={() => retryMutation.mutate()}
               disabled={retryMutation.isPending}
@@ -1167,6 +1179,14 @@ function TaskDetailPanelInner({
             </div>
           )}
         </div>
+
+        {/* Waiting hint — run is parked on a human prompt */}
+        {isWaiting && (
+          <p className="text-xs text-amber-400/90">
+            Run is waiting for user input — retry is unavailable until the run completes or is
+            answered.
+          </p>
+        )}
 
         {/* Request Changes inline form */}
         {showRequestChanges && (

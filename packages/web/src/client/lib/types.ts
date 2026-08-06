@@ -64,6 +64,11 @@ export interface Task extends _Task {
     childRefs: string[];
     childDisplayRefs?: string[];
   };
+  /** Worker run phase (e.g. WaitingForInput) — server-computed view field on the
+   * board response so the client can tell "failed" from "parked on a human". */
+  workerRunPhase?: string;
+  /** Worker run status message, when present. */
+  workerRunMessage?: string;
 }
 
 // ---------------------------------------------------------------------------

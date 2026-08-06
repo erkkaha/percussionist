@@ -3,11 +3,12 @@ import { Badge, BadgeDot } from './ui/badge';
 
 const VARIANT_MAP: Record<
   string,
-  'pending' | 'initializing' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+  'pending' | 'waiting' | 'initializing' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 > = {
   Pending: 'pending',
   Initializing: 'initializing',
   Running: 'running',
+  WaitingForInput: 'waiting',
   Succeeded: 'succeeded',
   Failed: 'failed',
   Cancelled: 'cancelled',
