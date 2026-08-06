@@ -1,22 +1,23 @@
 import { describe, expect, it } from 'bun:test';
-import { parseModelProvider, requiresCloudAuth, validateModelAuth } from '../index.js';
+import { parseModelRef } from '@percussionist/api';
+import { requiresCloudAuth, validateModelAuth } from '../index.js';
 
-describe('parseModelProvider', () => {
+describe('parseModelRef', () => {
   it('parses provider from providerID/modelID format', () => {
-    expect(parseModelProvider('anthropic/claude-sonnet-4-20250514')).toBe('anthropic');
+    expect(parseModelRef('anthropic/claude-sonnet-4-20250514').providerID).toBe('anthropic');
   });
 
-  it('returns undefined when no slash present', () => {
-    expect(parseModelProvider('claude-sonnet-4-20250514')).toBeUndefined();
+  it('returns no provider when no slash present', () => {
+    expect(parseModelRef('claude-sonnet-4-20250514').providerID).toBeUndefined();
   });
 
   it('handles empty string', () => {
-    expect(parseModelProvider('')).toBeUndefined();
+    expect(parseModelRef('')).toEqual({});
   });
 
   it('handles multi-part provider IDs', () => {
-    expect(parseModelProvider('github-copilot/claude-sonnet')).toBe('github-copilot');
-    expect(parseModelProvider('google-genai/gemini-2.0-flash')).toBe('google-genai');
+    expect(parseModelRef('github-copilot/claude-sonnet').providerID).toBe('github-copilot');
+    expect(parseModelRef('google-genai/gemini-2.0-flash').providerID).toBe('google-genai');
   });
 });
 
@@ -27,6 +28,7 @@ describe('requiresCloudAuth', () => {
     expect(requiresCloudAuth('google/gemini-2.0-flash')).toBe(true);
     expect(requiresCloudAuth('github-copilot/claude-sonnet')).toBe(true);
     expect(requiresCloudAuth('azure/gpt-4')).toBe(true);
+    expect(requiresCloudAuth('claude-code/claude-opus-5')).toBe(true);
     expect(requiresCloudAuth('aws/claude-v3')).toBe(true);
     expect(requiresCloudAuth('bedrock/claude-v3')).toBe(true);
     expect(requiresCloudAuth('together/llama-3')).toBe(true);
@@ -112,6 +114,24 @@ describe('validateModelAuth', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('fails for claude-code without auth secrets', () => {
+    const result = validateModelAuth('claude-code/claude-opus-5');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('claude-code');
+      expect(result.error).toContain('requires authentication');
+      expect(result.error).toContain('authSecret');
+      expect(result.error).toContain('CLAUDE_CODE_OAUTH_TOKEN');
+    }
+  });
+
+  it('passes for claude-code with authSecret', () => {
+    const result = validateModelAuth('claude-code/claude-opus-5', {
+      authSecret: { name: 's' },
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it('fails for cloud providers without any auth secrets', () => {
     const result = validateModelAuth('anthropic/claude-sonnet-4-20250514');
     expect(result.ok).toBe(false);
@@ -131,6 +151,7 @@ describe('validateModelAuth', () => {
       'google-genai/gemini',
       'github-copilot/claude',
       'azure/gpt-4',
+      'claude-code/claude',
       'aws/claude',
       'bedrock/claude',
       'together/llama',
