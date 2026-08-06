@@ -154,3 +154,14 @@ export async function revokeRunKey(runName: string): Promise<void> {
     log(`revoke for ${runName} failed:`, (e as Error).message);
   }
 }
+
+/**
+ * Test-only surface: reset the module-level caches — the resolved
+ * `authEnabledPromise` and the warn-once flag — so unit tests can exercise
+ * both branches of `isAuthEnabled()` and the missing-token warning without
+ * re-importing the module. Not used by any production path.
+ */
+export function __resetForTests(): void {
+  authEnabledPromise = null;
+  warnedMissingToken = false;
+}
