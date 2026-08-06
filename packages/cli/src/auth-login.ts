@@ -13,8 +13,8 @@
 // requires an existing GitHub session — the CLI inherits your identity rather
 // than establishing one of its own.
 
-import { spawn } from 'node:child_process';
 import { DEFAULT_NAMESPACE } from './kube.js';
+import { openBrowser } from './port-forward.js';
 import { clearSession, readSession, webRequest, withWebApi, writeSession } from './web-client.js';
 
 /** Client id the server sees; `validateClient` is not configured, so it is a label. */
@@ -44,22 +44,6 @@ export interface AuthLoginOpts {
   namespace?: string;
   /** Don't try to open a browser; just print the URL. */
   noBrowser?: boolean;
-}
-
-function openBrowser(url: string): void {
-  const platform = process.platform;
-  const [cmd, args] =
-    platform === 'darwin'
-      ? ['open', [url]]
-      : platform === 'win32'
-        ? ['cmd', ['/c', 'start', url]]
-        : ['xdg-open', [url]];
-  try {
-    const child = spawn(cmd as string, args as string[], { stdio: 'ignore', detached: true });
-    child.unref();
-  } catch {
-    // No browser opener available — the printed URL is the fallback.
-  }
 }
 
 async function sleep(ms: number): Promise<void> {
