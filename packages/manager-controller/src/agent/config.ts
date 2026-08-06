@@ -24,26 +24,3 @@ export const WEB_AUTH_TOKEN = process.env.WEB_AUTH_TOKEN ?? '';
 // manager's destructive tool surface is not gated by a credential that also
 // exists in run pods.
 export const MCP_TOKEN = process.env.MCP_TOKEN ?? '';
-
-export interface AgentDecision {
-  action: 'retry_same' | 'retry_alternative' | 'skip' | 'escalate';
-  agent?: string;
-  reason: string;
-}
-
-export interface FacilitationParseResult {
-  parsed: {
-    diagnosis: string;
-    recommendedAction:
-      | 'retry_same'
-      | 'retry_alternative'
-      | 'skip'
-      | 'approve'
-      | 'request_changes'
-      | 'escalate';
-    alternativeAgent?: string;
-    suggestion?: string;
-  } | null;
-  corrected: boolean;
-  rawOutput: string;
-}
