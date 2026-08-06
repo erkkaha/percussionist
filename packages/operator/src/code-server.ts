@@ -155,6 +155,10 @@ export function renderIdeDeployment(project: Project): V1Deployment {
 # ── Human folder: persistent repo clone on the data PVC ─────────────────
 HUMAN_DIR="${humanDir}"
 mkdir -p "$HUMAN_DIR"
+# The bootstrap empty commit below needs an author identity: it comes from the
+# GIT_AUTHOR_*/GIT_COMMITTER_* env vars on this container (same pattern as the
+# workspace-init container in pod-builder.ts), so it succeeds even before the
+# repo-local user.name/user.email seeding at the end of this block.
 if [ ! -d "$HUMAN_DIR/.git" ]; then
   if [ -n "\${HUMAN_FOLDER_REMOTE_URL}" ]; then
     echo "[code-server-init] cloning \${HUMAN_FOLDER_REMOTE_URL} into $HUMAN_DIR"
@@ -197,12 +201,18 @@ else
   fi
 fi
 # Best-effort author seeding so the human's first commit works without
-# configuring git (spec.source.git.author with fallback defaults).
+# configuring git (spec.source.git.author with fallback defaults). Seed only
+# when unset — a human who sets their own name/email in the folder must keep
+# it across pod restarts. The bootstrap commit above already has an identity
+# via the GIT_AUTHOR_*/GIT_COMMITTER_* env vars on this container; this
+# repo-local config is for the human's own commits in the IDE.
 if [ -n "\${HUMAN_FOLDER_AUTHOR_NAME}" ]; then
-  git -C "$HUMAN_DIR" config user.name "\${HUMAN_FOLDER_AUTHOR_NAME}" 2>/dev/null || true
+  git -C "$HUMAN_DIR" config --get user.name >/dev/null 2>&1 || \\
+    git -C "$HUMAN_DIR" config user.name "\${HUMAN_FOLDER_AUTHOR_NAME}" 2>/dev/null || true
 fi
 if [ -n "\${HUMAN_FOLDER_AUTHOR_EMAIL}" ]; then
-  git -C "$HUMAN_DIR" config user.email "\${HUMAN_FOLDER_AUTHOR_EMAIL}" 2>/dev/null || true
+  git -C "$HUMAN_DIR" config --get user.email >/dev/null 2>&1 || \\
+    git -C "$HUMAN_DIR" config user.email "\${HUMAN_FOLDER_AUTHOR_EMAIL}" 2>/dev/null || true
 fi
 `
     : '';
@@ -457,6 +467,16 @@ ${humanFolderScript}`;
     }
     initEnv.push({ name: 'HUMAN_FOLDER_AUTHOR_NAME', value: humanFolderAuthor.name });
     initEnv.push({ name: 'HUMAN_FOLDER_AUTHOR_EMAIL', value: humanFolderAuthor.email });
+    // Author identity for git operations the init script performs itself (the
+    // git-init bootstrap's empty initial commit) — same env pattern as the
+    // workspace-init container in pod-builder.ts. These apply only to this
+    // container's git invocations; the main code-server container does not get
+    // them, so the human's own commits use the repo-local config seeded by the
+    // script (unset-only).
+    initEnv.push({ name: 'GIT_AUTHOR_NAME', value: humanFolderAuthor.name });
+    initEnv.push({ name: 'GIT_AUTHOR_EMAIL', value: humanFolderAuthor.email });
+    initEnv.push({ name: 'GIT_COMMITTER_NAME', value: humanFolderAuthor.name });
+    initEnv.push({ name: 'GIT_COMMITTER_EMAIL', value: humanFolderAuthor.email });
     initEnv.push({ name: 'GIT_TERMINAL_PROMPT', value: '0' });
     if (sshSecret) {
       initEnv.push({

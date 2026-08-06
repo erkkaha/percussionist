@@ -277,5 +277,59 @@ describe('renderIdeDeployment', () => {
       expect(cmd).toContain('no remote URL; bootstrapping empty git repo');
       expect((init?.env ?? []).find((e) => e.name === 'HUMAN_FOLDER_REMOTE_URL')).toBeUndefined();
     });
+
+    it('enabled: GIT_AUTHOR_*/GIT_COMMITTER_* env gives the bootstrap commit an identity before seeding', () => {
+      const dep = renderIdeDeployment(
+        makeProject({
+          spec: {
+            source: {
+              git: {
+                url: 'git@github.com:acme/repo.git',
+                ref: 'main',
+                author: { name: 'Ada Lovelace', email: 'ada@example.com' },
+              },
+            },
+            codeServer: { enabled: true, humanFolder: { enabled: true } },
+          },
+        }),
+      );
+      const init = getInitContainer(dep);
+      const initEnv = init?.env ?? [];
+      // The bootstrap `git commit --allow-empty` runs before any repo-local
+      // user.name/user.email seeding, so its identity must come from the
+      // container env (pod-builder workspace-init pattern) or it silently no-ops
+      // (exit 128 "Author identity unknown", swallowed by `|| true`).
+      expect(initEnv.find((e) => e.name === 'GIT_AUTHOR_NAME')?.value).toBe('Ada Lovelace');
+      expect(initEnv.find((e) => e.name === 'GIT_AUTHOR_EMAIL')?.value).toBe('ada@example.com');
+      expect(initEnv.find((e) => e.name === 'GIT_COMMITTER_NAME')?.value).toBe('Ada Lovelace');
+      expect(initEnv.find((e) => e.name === 'GIT_COMMITTER_EMAIL')?.value).toBe('ada@example.com');
+
+      // The identity env is init-container only — the human's own commits in
+      // the IDE must use their repo-local config, not the platform's env.
+      const container = dep.spec?.template.spec?.containers?.find((c) => c.name === 'code-server');
+      expect(container?.env?.find((e) => e.name === 'GIT_AUTHOR_NAME')).toBeUndefined();
+      expect(container?.env?.find((e) => e.name === 'GIT_COMMITTER_EMAIL')).toBeUndefined();
+    });
+
+    it('enabled: author seeding is unset-only (config --get guard) and never overwrites a human identity', () => {
+      const dep = renderIdeDeployment(
+        makeProject({
+          spec: {
+            source: { git: { url: 'git@github.com:acme/repo.git', ref: 'main' } },
+            codeServer: { enabled: true, humanFolder: { enabled: true } },
+          },
+        }),
+      );
+      const init = getInitContainer(dep);
+      const cmd = init?.command?.[2] ?? '';
+      // Every `config user.name/email` write must be guarded by a `--get`
+      // check so a human's own git identity survives pod restarts.
+      const nameWrites = cmd.split('\n').filter((l) => l.includes('config user.name '));
+      expect(nameWrites).toHaveLength(1);
+      expect(cmd).toContain('git -C "$HUMAN_DIR" config --get user.name >/dev/null 2>&1 || \\');
+      const emailWrites = cmd.split('\n').filter((l) => l.includes('config user.email '));
+      expect(emailWrites).toHaveLength(1);
+      expect(cmd).toContain('git -C "$HUMAN_DIR" config --get user.email >/dev/null 2>&1 || \\');
+    });
   });
 });
