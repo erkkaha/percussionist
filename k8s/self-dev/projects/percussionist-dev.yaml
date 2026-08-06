@@ -76,6 +76,13 @@ spec:
   # Per-project code-server for interactive workspace access.
   codeServer:
     enabled: true
+    # Persistent human repo folder on the data PVC (/data/code): a clone of the
+    # project repo checked out on the project default branch (source.git.ref =
+    # main), opened by default in code-server. The clone runs in the code-server
+    # init container using source.git.sshSecret (mounted in the init container
+    # only — not in the main code-server container).
+    humanFolder:
+      enabled: true
 
   # Use a richer image for maintenance/exec pods (e.g. exec_in_workspace).
   # Falls back to alpine/git:v2.54.0 when unset.
