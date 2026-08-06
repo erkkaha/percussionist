@@ -665,10 +665,14 @@ export const RunSpecSchema = z
     // Set by manager-controller when this run was spawned by a board task.
     boardTask: z.string().optional(),
 
-    // Which agent runtime serves this run. Defaults to opencode; `claude` swaps
-    // in the runner-claude image, which speaks the same runner HTTP contract
-    // backed by the Claude Agent SDK.
-    engine: z.enum(RUNNER_ENGINES).optional(),
+    // Agent runtime for this run — full description text lives in .describe()
+    // below so codegen emits it into the CRD (comments do not survive codegen).
+    engine: z
+      .enum(RUNNER_ENGINES)
+      .describe(
+        'Agent runtime for this run. "opencode" (default) uses the opencode runner; "claude" uses the runner-claude image, which serves the same runner HTTP contract backed by the Claude Agent SDK and authenticates via spec.secrets.authSecret holding a CLAUDE_CODE_OAUTH_TOKEN.',
+      )
+      .optional(),
 
     // What the agent should do. Required unless interactive: true.
     task: z.string().min(1).optional(),
