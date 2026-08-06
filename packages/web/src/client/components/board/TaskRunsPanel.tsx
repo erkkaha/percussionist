@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRun } from '../../hooks/useRun';
 import { useRunEvents } from '../../hooks/useRunEvents';
 import { useTaskRuns } from '../../hooks/useTaskRuns';
@@ -6,13 +6,14 @@ import { TERMINAL_PHASES } from '../../lib/types';
 import LogViewer from '../LogViewer';
 import SessionView from '../SessionView';
 import StatusBadge from '../StatusBadge';
+import TerminalTab from '../TerminalTab';
 
 interface TaskRunsPanelProps {
   projectName: string;
   taskName: string;
 }
 
-type SubTab = 'session' | 'logs';
+type SubTab = 'session' | 'logs' | 'terminal';
 
 function age(iso: string | undefined): string {
   if (!iso) return '-';
@@ -66,6 +67,113 @@ function LogSubPanel({ runName }: { runName: string }) {
         eventTick={eventTick}
       />
     </div>
+  );
+}
+
+function TerminalSubPanel({ runName }: { runName: string }) {
+  const { data: run } = useRun(runName, 5_000);
+  const runPhase = run?.status?.phase;
+  const isActive = !!run && (!runPhase || !TERMINAL_PHASES.has(runPhase));
+
+  if (!run) {
+    return <p className="text-xs text-text-dim p-4">Loading run…</p>;
+  }
+
+  // Attach execs `opencode attach` inside the pod; the claude engine's runner
+  // is a headless HTTP server with no TUI to connect to. Explain the absence
+  // rather than silently dropping the tab. An undefined engine means opencode
+  // (matches deriveEngine), so only the explicit 'claude' branch is special.
+  if (run.spec.engine === 'claude') {
+    return (
+      <div className="px-4 py-3">
+        <p className="text-sm text-text-dim">
+          Interactive attach is not available for the{' '}
+          <code className="font-mono text-xs">claude</code> engine — its runner is a headless server
+          with no terminal session. Use the Session and Logs sections below.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 py-3">
+      <TerminalTab runName={runName} active={isActive} />
+    </div>
+  );
+}
+
+interface SelectedRunTabsProps {
+  runName: string;
+  subTab: SubTab;
+  setSubTab: (tab: SubTab) => void;
+}
+
+// Sub-tab bar + panel for the selected run. Lives in its own component so the
+// terminal gate can call useRun(runName) unconditionally (hooks cannot be
+// conditional, and TaskRunsPanel only has a run selected sometimes). The gate
+// must come from the full run CR fetched here — the useTaskRuns list object is
+// stripped server-side and lacks spec.engine / status.podPhase.
+function SelectedRunTabs({ runName, subTab, setSubTab }: SelectedRunTabsProps) {
+  const { data: run } = useRun(runName, 5_000);
+  const runPhase = run?.status?.phase;
+  const isActive = !!run && (!runPhase || !TERMINAL_PHASES.has(runPhase));
+  const canAttach =
+    !!run && isActive && !!run.status?.podName && run.status?.podPhase === 'Running';
+
+  // A run completing while the terminal tab is open makes the button disappear
+  // and the panel go blank; fall back to Session. Guard on `run` being loaded so
+  // a transient undefined during the initial fetch doesn't yank the tab.
+  useEffect(() => {
+    if (subTab === 'terminal' && run && !canAttach) setSubTab('session');
+  }, [subTab, run, canAttach, setSubTab]);
+
+  return (
+    <>
+      <div className="shrink-0 flex items-center gap-0 border-b border-border px-4">
+        <button
+          onClick={() => setSubTab('session')}
+          className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+            subTab === 'session'
+              ? 'border-accent text-text'
+              : 'border-transparent text-text-dim hover:text-text'
+          }`}
+        >
+          Session
+        </button>
+        <button
+          onClick={() => setSubTab('logs')}
+          className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+            subTab === 'logs'
+              ? 'border-accent text-text'
+              : 'border-transparent text-text-dim hover:text-text'
+          }`}
+        >
+          Logs
+        </button>
+        {canAttach && (
+          <button
+            onClick={() => setSubTab('terminal')}
+            className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+              subTab === 'terminal'
+                ? 'border-accent text-text'
+                : 'border-transparent text-text-dim hover:text-text'
+            }`}
+          >
+            Terminal
+          </button>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {subTab === 'session' ? (
+          <RunSubPanel runName={runName} />
+        ) : subTab === 'logs' ? (
+          <LogSubPanel runName={runName} />
+        ) : (
+          <TerminalSubPanel runName={runName} />
+        )}
+      </div>
+    </>
   );
 }
 
@@ -126,39 +234,8 @@ export default function TaskRunsPanel({ projectName, taskName }: TaskRunsPanelPr
       </div>
 
       {/* Sub-tabs for selected run */}
-      {selectedRun && (
-        <>
-          <div className="shrink-0 flex items-center gap-0 border-b border-border px-4">
-            <button
-              onClick={() => setSubTab('session')}
-              className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                subTab === 'session'
-                  ? 'border-accent text-text'
-                  : 'border-transparent text-text-dim hover:text-text'
-              }`}
-            >
-              Session
-            </button>
-            <button
-              onClick={() => setSubTab('logs')}
-              className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                subTab === 'logs'
-                  ? 'border-accent text-text'
-                  : 'border-transparent text-text-dim hover:text-text'
-              }`}
-            >
-              Logs
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto">
-            {selectedRunName && subTab === 'session' ? (
-              <RunSubPanel runName={selectedRunName} />
-            ) : selectedRunName ? (
-              <LogSubPanel runName={selectedRunName} />
-            ) : null}
-          </div>
-        </>
+      {selectedRun && selectedRunName && (
+        <SelectedRunTabs runName={selectedRunName} subTab={subTab} setSubTab={setSubTab} />
       )}
 
       {/* No selection */}
