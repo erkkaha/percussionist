@@ -207,6 +207,16 @@ export const ResourceRequirementsSchema = z
 
 export type ResourceRequirements = z.infer<typeof ResourceRequirementsSchema>;
 
+// Persistent human workspace folder on the project data PVC, cloned from the
+// project repo for humans opening code-server.
+export const HumanFolderSpecSchema = z.object({
+  enabled: z.boolean().default(false),
+  name: z.string().default('code'),
+  branch: z.string().optional(),
+  remoteUrl: z.string().optional(),
+});
+export type HumanFolderSpec = z.infer<typeof HumanFolderSpecSchema>;
+
 // Code-server configuration for interactive workspace access.
 export const CodeServerSpecSchema = z.object({
   /** Enable per-project code-server for interactive workspace access. */
@@ -217,6 +227,13 @@ export const CodeServerSpecSchema = z.object({
   resources: ResourceRequirementsSchema.optional(),
   /** Alpine/APT packages to install in the code-server init container. */
   packages: z.array(z.string()).max(50).optional(),
+  /**
+   * Opt-in persistent human workspace folder (named `code` by default) on the
+   * project data PVC. When enabled, the folder is cloned from the project repo
+   * (spec.source.git) on the project default branch (spec.source.git.ref) and
+   * code-server opens it by default.
+   */
+  humanFolder: HumanFolderSpecSchema.optional(),
 });
 export type CodeServerSpec = z.infer<typeof CodeServerSpecSchema>;
 
@@ -891,6 +908,48 @@ export const TaskColumn = {
   Blocked: 'blocked',
 } as const;
 export type TaskColumn = (typeof TaskColumn)[keyof typeof TaskColumn];
+
+// ---------------------------------------------------------------------------
+// Task phase transition table — single source of truth for allowed phase
+// transitions. Shared by the manager's reconciler (decision/effects/MCP tools)
+// and the CLI's `board task move` so both validate against the same table.
+
+export const TRANSITION_TABLE: Record<TaskPhase, TaskPhase[]> = {
+  idea: ['pending'],
+  pending: ['scheduled'],
+  scheduled: ['initializing', 'failed'],
+  initializing: ['running', 'succeeded', 'failed'],
+  running: ['waiting-for-input', 'succeeded', 'failed'],
+  'waiting-for-input': ['running', 'failed'],
+  succeeded: ['reviewing', 'awaiting-human', 'done'],
+  reviewing: ['awaiting-human', 'rework-requested'],
+  'awaiting-human': [
+    'awaiting-merge',
+    'generating-builds',
+    'awaiting-feature-merge',
+    'rework-requested',
+    'done',
+    'failed',
+  ],
+  'awaiting-merge': ['done', 'awaiting-human', 'failed'],
+  'rework-requested': ['scheduled'],
+  'generating-builds': ['awaiting-children', 'awaiting-human', 'failed'],
+  'awaiting-children': ['awaiting-feature-merge', 'awaiting-human', 'done', 'failed'],
+  'awaiting-feature-merge': ['done', 'awaiting-human', 'failed'],
+  failed: ['pending', 'awaiting-human', 'awaiting-merge'],
+  done: [],
+};
+
+export function isValidTransition(from: TaskPhase, to: TaskPhase): boolean {
+  return TRANSITION_TABLE[from]?.includes(to) ?? false;
+}
+
+export function validateTransition(from: TaskPhase, to: TaskPhase): string | null {
+  const allowed = TRANSITION_TABLE[from];
+  if (!allowed) return `Unknown source phase: ${from}`;
+  if (allowed.includes(to)) return null;
+  return `Invalid transition: ${from} → ${to}. Allowed: ${allowed.join(', ') || '(none, terminal)'}`;
+}
 
 // Per-worker execution tracking — now lives in Task.status.worker.
 export const WorkerStatusSchema = z.object({

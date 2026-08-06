@@ -823,7 +823,7 @@ Then add tasks to the board:
 # Add ClusterAgents (team roster) first — reference cluster-scoped agent definitions.
 beatctl agent create --name code-reviewer -f agents/code-reviewer.yaml
 
-# Add a task. It starts in the "ready" column.
+# Add a task. It starts in the "backlog" column.
 beatctl board task add my-project \
   --title "Implement login" \
   --description "Add OAuth login with GitHub provider" \
@@ -833,8 +833,8 @@ beatctl board task add my-project \
 beatctl board get my-project
 ```
 
-The manager controller automatically picks up tasks in "ready", creates worker
-runs, and moves them across columns as they progress.
+The manager controller automatically picks up tasks in "backlog", creates worker
+runs, and moves them across phases as they progress.
 
 ### Human-in-the-loop
 
@@ -1139,8 +1139,14 @@ opencode auth login github-copilot     # opens https://github.com/login/device
 beatctl auth import
 ```
 
-This creates a Secret called `opencode-auth` in the `percussionist` namespace.
-Re-run after re-authenticating locally; the Secret is replaced wholesale.
+This creates a Secret called `agent-auth` in the `percussionist` namespace.
+Re-run after re-authenticating locally; only the `auth.json` key is replaced,
+so other keys in the Secret survive. That matters because `agent-auth` is
+also where the claude engine's subscription token lives (key
+`CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token` — see
+`k8s/samples/claude-engine.yaml`). One Secret serves both engines: the
+operator injects the engine-appropriate key per run, so a project whose
+agents mix `claude-code/*` and opencode models needs no per-engine wiring.
 
 ### Referencing from a run
 
@@ -1149,8 +1155,8 @@ spec:
   task: "Say hi"
   model: github-copilot/claude-sonnet-4.5
   secrets:
-    opencodeAuthSecret:
-      name: opencode-auth
+    authSecret:
+      name: agent-auth
 ```
 
 Or with inline flags:
@@ -1159,12 +1165,14 @@ Or with inline flags:
 beatctl submit \
   -t "Say hi" \
   -m github-copilot/claude-sonnet-4.5 \
-  --auth-secret opencode-auth
+  --auth-secret agent-auth
 ```
 
-`llmKeysSecret` (static API keys) and `opencodeAuthSecret` (OAuth tokens) are
+`llmKeysSecret` (static API keys) and `authSecret` (OAuth tokens) are
 orthogonal — both may be set. If both configure the same provider, the
-auth.json entry wins.
+auth.json entry wins. The exception is the claude engine, which refuses a
+run configured with both: `ANTHROPIC_API_KEY` silently overrides
+subscription auth while looking like it's on the subscription.
 
 ### Config file injection (`opencodeConfigMap`)
 

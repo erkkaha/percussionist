@@ -332,7 +332,7 @@ provider entries into Kubernetes:
 opencode auth login <provider>
 pnpm beatctl auth import --dry-run --provider <provider>
 pnpm beatctl auth import --provider <provider>
-kubectl -n "$NAMESPACE" get secret opencode-auth
+kubectl -n "$NAMESPACE" get secret agent-auth
 ```
 
 `beatctl auth import` reads the local auth file and writes an Opaque Secret; it
@@ -344,7 +344,7 @@ Reference the Secret from `ClusterSettings`, a `Project`, or an individual
 spec:
   secrets:
     authSecret:
-      name: opencode-auth
+      name: agent-auth
 ```
 
 Snapshots taken after this point contain provider credentials and dashboard
@@ -473,7 +473,7 @@ pnpm beatctl submit \
   --name tailnet-smoke \
   --task 'Reply with exactly: percussionist smoke passed' \
   --model "$MODEL" \
-  --auth-secret opencode-auth \
+  --auth-secret agent-auth \
   --timeout 300
 pnpm beatctl wait tailnet-smoke --timeout 360
 pnpm beatctl get tailnet-smoke

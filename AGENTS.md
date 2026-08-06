@@ -174,6 +174,7 @@ kubectl -n percussionist port-forward svc/code-server-my-project 8080:8080
 ### Workspace Layout
 
 The code-server mounts the project's data PVC at `/data`, giving access to:
+- `/data/code/` — human-accessible repo clone on the project default branch (when `spec.codeServer.humanFolder.enabled: true`)
 - `/data/worktrees/{run-name}/` — per-run git worktrees (remote git)
 - `/data/workspace/` — persistent workspace (local git)
 - `/data/git-mirrors/` — bare git mirrors

@@ -4,7 +4,7 @@
 # agent/<task-name> branches; integrator merges to main.
 #
 # Prerequisites (see secrets/README.md):
-#   kubectl get secret git-ssh-key git-github-token opencode-auth -n percussionist
+#   kubectl get secret git-ssh-key git-github-token agent-auth -n percussionist
 #
 # Apply:
 #   kubectl apply -f k8s/self-dev/projects/percussionist-dev.yaml
@@ -45,7 +45,7 @@ spec:
 
   secrets:
     authSecret:
-      name: opencode-auth
+      name: agent-auth
 
   # 2 hours — enough time for image builds and e2e smoke tests.
   timeoutSeconds: 7200
@@ -76,6 +76,13 @@ spec:
   # Per-project code-server for interactive workspace access.
   codeServer:
     enabled: true
+    # Persistent human repo folder on the data PVC (/data/code): a clone of the
+    # project repo checked out on the project default branch (source.git.ref =
+    # main), opened by default in code-server. The clone runs in the code-server
+    # init container using source.git.sshSecret (mounted in the init container
+    # only — not in the main code-server container).
+    humanFolder:
+      enabled: true
 
   # Use a richer image for maintenance/exec pods (e.g. exec_in_workspace).
   # Falls back to alpine/git:v2.54.0 when unset.

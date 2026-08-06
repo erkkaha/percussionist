@@ -11,9 +11,20 @@ metadata:
   name: my-project
 spec:
   source:
-    local: true
+    local: true  # or source.git
   codeServer:
     enabled: true
+    # Optional: persistent human repo folder on the data PVC — a clone of the
+    # project repo checked out on the project default branch (spec.source.git.ref),
+    # opened by default in code-server. Defaults resolve to name "code", branch
+    # = spec.source.git.ref, remote = spec.source.git.url (source.git only;
+    # without a remote URL the folder bootstraps as an empty git repo).
+    humanFolder:
+      enabled: true
+      # Optional overrides:
+      # name: code
+      # branch: main
+      # remoteUrl: git@github.com:example/repo.git
     # Optional overrides:
     # image: codercom/code-server:4.96.4
     # resources:
@@ -51,10 +62,18 @@ The code-server mounts the project's data PVC at `/data`, giving access to:
 
 | Path | Content |
 |------|---------|
+| `/data/code/` | Human repo clone on project default branch (when `humanFolder` enabled) |
 | `/data/worktrees/{run-name}/` | Per-run git worktrees (remote git) |
 | `/data/workspace/` | Persistent workspace (local git) |
 | `/data/git-mirrors/` | Bare git mirrors |
 | `/data/cache/` | Package manager caches |
+
+When `humanFolder` is enabled, `/data/code/` is a clone of the project repo
+checked out on the project default branch (`spec.source.git.ref`). `git push`
+from the human folder requires the human's own credentials: the project's deploy
+key (`source.git.sshSecret`) is mounted in the code-server init container (for
+the clone) only — it is never exposed in the main code-server container, which
+runs with `auth: none`.
 
 ## Requirements
 
