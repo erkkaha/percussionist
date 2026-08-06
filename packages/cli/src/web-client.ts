@@ -12,12 +12,11 @@
 // `Authorization: Bearer <token>` (the server accepts header-borne sessions via
 // better-auth's bearer plugin).
 
-import { type ChildProcess, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
-import { createServer } from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { DEFAULT_NAMESPACE } from './kube.js';
+import { pickFreePort, startPortForward } from './port-forward.js';
 
 const WEB_SERVICE = 'percussionist-web';
 const WEB_PORT = 8080;
@@ -78,52 +77,6 @@ export function sessionHeaders(): Record<string, string> {
 // ---------------------------------------------------------------------------
 // Port-forward plumbing
 
-async function pickFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.unref();
-    srv.on('error', reject);
-    srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address();
-      if (addr && typeof addr === 'object') {
-        const port = addr.port;
-        srv.close(() => resolve(port));
-      } else {
-        srv.close();
-        reject(new Error('could not determine free port'));
-      }
-    });
-  });
-}
-
-async function startPortForward(namespace: string, localPort: number): Promise<ChildProcess> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      'kubectl',
-      ['port-forward', '-n', namespace, `svc/${WEB_SERVICE}`, `${localPort}:${WEB_PORT}`],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-
-    let ready = false;
-    const onChunk = (buf: Buffer) => {
-      const s = buf.toString();
-      if (s.includes('Forwarding from') && !ready) {
-        ready = true;
-        resolve(child);
-      }
-      if (s.toLowerCase().includes('error') || s.toLowerCase().includes('unable')) {
-        process.stderr.write(s);
-      }
-    };
-    child.stdout?.on('data', onChunk);
-    child.stderr?.on('data', onChunk);
-    child.on('exit', (code) => {
-      if (!ready) reject(new Error(`kubectl port-forward exited with code ${String(code)}`));
-    });
-    child.on('error', reject);
-  });
-}
-
 /**
  * Run `fn` with a usable web API base URL, tearing down any port-forward after.
  */
@@ -138,7 +91,7 @@ export async function withWebApi<T>(
 
   const ns = namespace ?? DEFAULT_NAMESPACE;
   const localPort = await pickFreePort();
-  const pf = await startPortForward(ns, localPort);
+  const pf = await startPortForward(ns, WEB_SERVICE, WEB_PORT, localPort);
   try {
     return await fn(`http://127.0.0.1:${localPort}`);
   } finally {

@@ -18,6 +18,7 @@ import {
   updateProject,
 } from '../kube.js';
 import { isKubeNotFound, kubeStatusCode } from '../lib/kube-errors.js';
+import { upsertConfigMap, upsertSecret } from '../lib/kube-upsert.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
 const projects = new Hono();
@@ -47,22 +48,11 @@ function injectFileSecretName(projectName: string, filename: string): string {
  * content.  Creates it if absent, patches it if present.
  */
 async function upsertProjectConfigCm(projectName: string, content: string): Promise<void> {
-  const name = projectConfigCmName(projectName);
-  const ns = NAMESPACE;
-  const body = {
-    apiVersion: 'v1',
-    kind: 'ConfigMap',
-    metadata: { name, namespace: ns, labels: { 'percussionist.dev/project': projectName } },
-    data: { [CONFIG_CM_KEY]: content },
-  };
-  try {
-    await core().readNamespacedConfigMap({ name, namespace: ns });
-    // exists — replace
-    await core().replaceNamespacedConfigMap({ name, namespace: ns, body });
-  } catch {
-    // not found — create
-    await core().createNamespacedConfigMap({ namespace: ns, body });
-  }
+  await upsertConfigMap(
+    projectConfigCmName(projectName),
+    { [CONFIG_CM_KEY]: content },
+    { 'percussionist.dev/project': projectName },
+  );
 }
 
 async function deleteProjectConfigCm(projectName: string): Promise<void> {
@@ -121,19 +111,13 @@ async function upsertInjectFileSecret(
   content: string,
 ): Promise<InjectFileRef> {
   const name = injectFileSecretName(projectName, filename);
-  const ns = NAMESPACE;
-  const body = {
-    apiVersion: 'v1',
-    kind: 'Secret',
-    metadata: { name, namespace: ns, labels: { 'percussionist.dev/project': projectName } },
-    stringData: { [INJECT_FILE_SECRET_KEY]: content },
-  };
-  try {
-    await core().readNamespacedSecret({ name, namespace: ns });
-    await core().replaceNamespacedSecret({ name, namespace: ns, body });
-  } catch {
-    await core().createNamespacedSecret({ namespace: ns, body });
-  }
+  await upsertSecret(
+    name,
+    { [INJECT_FILE_SECRET_KEY]: content },
+    {
+      'percussionist.dev/project': projectName,
+    },
+  );
   return { filename, secretRef: { name, key: INJECT_FILE_SECRET_KEY } };
 }
 
