@@ -11,11 +11,9 @@ import { CLAUDE_ENGINE_PROVIDER_ID, CLAUDE_RUNNER_DEFAULTS } from '@percussionis
 import { Hono } from 'hono';
 import { auth } from '../auth.js';
 import { core, NAMESPACE } from '../kube.js';
-import { managerMcpHeaders } from '../lib/manager-mcp.js';
+import { callManagerTool } from '../lib/manager-mcp.js';
 
 const router = new Hono();
-
-const MANAGER_MCP_URL = `http://percussionist-manager.${NAMESPACE}.svc.cluster.local:4097/mcp`;
 
 /**
  * Models offered for the claude-code engine.
@@ -82,26 +80,10 @@ function withClaudeEngine(data: ProvidersPayload): ProvidersPayload {
 /** Fetch opencode's provider list, or null when the sidecar cannot answer. */
 async function fetchOpencodeProviders(): Promise<ProvidersPayload | null> {
   try {
-    const res = await fetch(MANAGER_MCP_URL, {
-      method: 'POST',
-      headers: managerMcpHeaders(),
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: { name: 'list_models', arguments: {} },
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return null;
+    const result = await callManagerTool('list_models', {}, 10_000);
+    if (result.isError) return null;
 
-    const rpc = (await res.json()) as {
-      result?: { content?: Array<{ type: string; text?: string }>; isError?: boolean };
-      error?: { message?: string };
-    };
-    if (rpc.error || rpc.result?.isError) return null;
-
-    const text = rpc.result?.content?.find((p) => p.type === 'text')?.text;
+    const text = result.content?.find((p) => p.type === 'text')?.text;
     if (!text) return null;
     return JSON.parse(text) as ProvidersPayload;
   } catch {

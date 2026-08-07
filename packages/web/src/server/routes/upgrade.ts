@@ -6,13 +6,9 @@
 
 import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
-import { NAMESPACE } from '../kube.js';
-import { managerMcpHeaders } from '../lib/manager-mcp.js';
+import { callManagerTool, ManagerMcpHttpError } from '../lib/manager-mcp.js';
 
 const router = new Hono();
-
-const MANAGER_SERVICE = `http://percussionist-manager.${NAMESPACE}.svc.cluster.local`;
-const MCP_URL = `${MANAGER_SERVICE}:4097/mcp`;
 
 export interface UpdateStatus {
   current: {
@@ -32,50 +28,12 @@ export interface UpdateStatus {
 // Returns the currently running component versions and the latest available
 // version from the container registry. Suitable for polling from the UI.
 router.get('/status', auth(), async (c) => {
-  const mcpRequest = {
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'tools/call',
-    params: {
-      name: 'check_for_updates',
-      arguments: {},
-    },
-  };
-
   try {
-    const res = await fetch(MCP_URL, {
-      method: 'POST',
-      headers: managerMcpHeaders(),
-      body: JSON.stringify(mcpRequest),
-      signal: AbortSignal.timeout(30_000),
-    });
+    const mcpResult = await callManagerTool('check_for_updates', {});
 
-    if (!res.ok) {
-      return c.json({ error: `Manager MCP service returned ${res.status}` } as UpdateStatus, 502);
-    }
+    const rawText = mcpResult.content?.[0]?.text;
 
-    const mcpResponse = (await res.json()) as {
-      jsonrpc: string;
-      id: number;
-      result?: { isError?: boolean; content: Array<{ type: string; text: string }> };
-      error?: { code: number; message: string };
-    };
-
-    if (mcpResponse.error) {
-      return c.json(
-        {
-          current: { operator: null, manager: null, web: null, dispatcher: null },
-          latest: null,
-          updateAvailable: false,
-          error: mcpResponse.error.message,
-        } satisfies UpdateStatus,
-        500,
-      );
-    }
-
-    const rawText = mcpResponse.result?.content?.[0]?.text;
-
-    if (mcpResponse.result?.isError) {
+    if (mcpResult.isError) {
       return c.json(
         {
           current: { operator: null, manager: null, web: null, dispatcher: null },
@@ -102,6 +60,11 @@ router.get('/status', auth(), async (c) => {
     const result = JSON.parse(rawText) as UpdateStatus;
     return c.json(result);
   } catch (e) {
+    // HTTP failures from the manager keep the 502 they had before the shared
+    // client; JSON-RPC and transport errors map to 500.
+    if (e instanceof ManagerMcpHttpError) {
+      return c.json({ error: e.message } as UpdateStatus, 502);
+    }
     return c.json(
       {
         current: { operator: null, manager: null, web: null, dispatcher: null },
@@ -129,45 +92,12 @@ router.post('/apply', adminAuth(), async (c) => {
     return c.json({ error: 'targetTag is required' } satisfies Partial<UpgradeResult>, 400);
   }
 
-  const mcpRequest = {
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'tools/call',
-    params: {
-      name: 'apply_upgrade',
-      arguments: { targetTag },
-    },
-  };
-
   try {
-    const res = await fetch(MCP_URL, {
-      method: 'POST',
-      headers: managerMcpHeaders(),
-      body: JSON.stringify(mcpRequest),
-      signal: AbortSignal.timeout(30_000),
-    });
+    const mcpResult = await callManagerTool('apply_upgrade', { targetTag });
 
-    if (!res.ok) {
-      return c.json(
-        { error: `Manager MCP service returned ${res.status}` } satisfies Partial<UpgradeResult>,
-        502,
-      );
-    }
+    const rawText = mcpResult.content?.[0]?.text;
 
-    const mcpResponse = (await res.json()) as {
-      jsonrpc: string;
-      id: number;
-      result?: { isError?: boolean; content: Array<{ type: string; text: string }> };
-      error?: { code: number; message: string };
-    };
-
-    if (mcpResponse.error) {
-      return c.json({ error: mcpResponse.error.message } satisfies Partial<UpgradeResult>, 500);
-    }
-
-    const rawText = mcpResponse.result?.content?.[0]?.text;
-
-    if (mcpResponse.result?.isError) {
+    if (mcpResult.isError) {
       return c.json(
         { error: rawText ?? 'Unknown MCP tool error' } satisfies Partial<UpgradeResult>,
         500,
@@ -181,6 +111,11 @@ router.post('/apply', adminAuth(), async (c) => {
     const result = JSON.parse(rawText) as UpgradeResult;
     return c.json(result);
   } catch (e) {
+    // HTTP failures from the manager keep the 502 they had before the shared
+    // client; JSON-RPC and transport errors map to 500.
+    if (e instanceof ManagerMcpHttpError) {
+      return c.json({ error: e.message } satisfies Partial<UpgradeResult>, 502);
+    }
     return c.json({ error: (e as Error).message } satisfies Partial<UpgradeResult>, 500);
   }
 });

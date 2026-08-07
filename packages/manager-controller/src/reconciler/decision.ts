@@ -436,24 +436,10 @@ function decideRunning(input: ReconcileInput): ReconcileDecision {
   }
 
   if (runPhase === 'WaitingForInput') {
-    if (task.spec.type !== 'PLAN') {
-      return {
-        taskName,
-        fromPhase,
-        toPhase: 'failed',
-        statusPatch: { worker: { status: 'Failed' } },
-        effects: [],
-        events: [
-          makeEvent(
-            input,
-            fromPhase,
-            'failed',
-            'BuildCannotWait',
-            'BUILD tasks cannot wait for input',
-          ),
-        ],
-      };
-    }
+    // Every task type parks on waiting-for-input. `needsHumanInput` is only
+    // published when a human is genuinely required (permission.updated SSE
+    // event), so parking is safe for BUILD tasks too — the old BuildCannotWait
+    // hard-fail manufactured a `failed` task while its run was still alive.
     return {
       taskName,
       fromPhase,
@@ -493,15 +479,59 @@ function decideRunning(input: ReconcileInput): ReconcileDecision {
 }
 
 function decideWaitingForInput(input: ReconcileInput): ReconcileDecision {
-  const { task, manualActions, observed } = input;
+  const { task, manualActions, observed, now } = input;
   const taskName = task.metadata.name;
   const fromPhase = 'waiting-for-input' as TaskPhase;
+  const run = observed.worker;
+  const runPhase = getEffectiveRunPhase(run);
+
+  // Dead-run exits: a parked task must never be stranded forever. If the worker
+  // run disappeared or terminated while we were waiting, fail the task (the
+  // board's failed badge is then truthful again); if it actually succeeded
+  // (e.g. the human answered through the session), complete the task.
+  if (!run || runPhase === 'Failed' || runPhase === 'Cancelled') {
+    return {
+      taskName,
+      fromPhase,
+      toPhase: 'failed',
+      statusPatch: { worker: { status: 'Failed' } },
+      effects: [],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'failed',
+          'InputRunTerminated',
+          'Worker run terminated while waiting for input',
+        ),
+      ],
+    };
+  }
+
+  if (runPhase === 'Succeeded') {
+    return {
+      taskName,
+      fromPhase,
+      toPhase: 'succeeded',
+      statusPatch: { worker: { status: 'Succeeded', completedAt: now } },
+      effects: [],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'succeeded',
+          'InputRunSucceeded',
+          'Worker run succeeded while waiting for input',
+        ),
+      ],
+    };
+  }
 
   if (!manualActions.answer) {
     return { taskName, fromPhase, effects: [], events: [] };
   }
 
-  if (observed.worker?.status?.phase === 'Running') {
+  if (runPhase === 'Running') {
     return {
       taskName,
       fromPhase,

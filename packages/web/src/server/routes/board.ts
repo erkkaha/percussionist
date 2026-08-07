@@ -15,6 +15,7 @@ import { randomBytes } from 'node:crypto';
 import {
   buildRepoWebUrl,
   computeBoardColumn,
+  type RunPhase,
   type Task,
   type TaskPhase,
   type TaskSpec,
@@ -31,6 +32,7 @@ import {
   deleteTask,
   getProject,
   getTask,
+  listRuns,
   listTasks,
   NAMESPACE,
   patchProjectSpec,
@@ -111,6 +113,19 @@ board.get('/:project/board', auth(), async (c) => {
   const name = c.req.param('project');
   try {
     const [project, tasks] = await Promise.all([getProject(name), listTasks(name)]);
+    const ns = project.metadata.namespace ?? NAMESPACE;
+    // Build a name → phase map for the project's runs. A task whose worker run
+    // is parked on a human (WaitingForInput) must be distinguishable from a
+    // genuinely failed one — worker.status alone can't tell them apart. This is
+    // a server-computed view field on the board response, not a Task status field.
+    const runs = await listRuns(ns, undefined, `percussionist.dev/project=${name}`);
+    const runPhaseMap = new Map<string, RunPhase>();
+    const runMessageMap = new Map<string, string>();
+    for (const run of runs) {
+      if (!run.metadata.name || !run.status?.phase) continue;
+      runPhaseMap.set(run.metadata.name, run.status.phase);
+      if (run.status.message) runMessageMap.set(run.metadata.name, run.status.message);
+    }
     const tasksByName = new Map(tasks.map((task) => [task.metadata.name, task]));
     const titleCounts = new Map<string, number>();
     for (const task of tasks) {
@@ -177,10 +192,16 @@ board.get('/:project/board', auth(), async (c) => {
       };
 
       // Attach child progress if available.
+      const workerRunName = task.status?.worker?.runName;
       const taskWithProgress = {
         ...task,
         childProgress: childProgressMap.get(task.metadata.name),
         displayRefs,
+        // Worker run phase/message (e.g. WaitingForInput) — lets the client tell
+        // "failed" from "parked on a human". Absent when the task has no run or
+        // the run isn't in the project's run list (JSON.stringify drops undefined).
+        workerRunPhase: workerRunName ? runPhaseMap.get(workerRunName) : undefined,
+        workerRunMessage: workerRunName ? runMessageMap.get(workerRunName) : undefined,
       };
       columns[col]?.push(taskWithProgress);
     }
