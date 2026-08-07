@@ -66,6 +66,12 @@ program
   .option('--repo-root <path>', 'repo root containing k8s/crds and k8s/deploy', process.cwd())
   .option('--down', 'remove deployed resources', false)
   .option('--no-wait', "don't wait for deployment rollout")
+  .option(
+    '--gitops',
+    'install via Flux so upgrades include CRDs (installs source- and kustomize-controller)',
+    false,
+  )
+  .option('--release <tag>', 'release tag to pin under --gitops (default: this checkout)')
   .action(runDeploy);
 
 // web -----------------------------------------------------------------------

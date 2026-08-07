@@ -64,6 +64,7 @@ import { getPauseStatus, setPaused } from '../reconciler-bridge.js';
 import { webHeaders } from '../web-headers.js';
 import { buildWorkerRun, resolveAgentModel, workerRunName } from '../worker-builder.js';
 import { MANAGER_NAMESPACE, MCP_PORT, MCP_TOKEN, OPENCODE_URL } from './config.js';
+import { detectFluxSource, pinFluxSourceTag, requestReconcile } from './gitops.js';
 import {
   deleteMemory,
   getContext,
@@ -580,7 +581,9 @@ const TOOLS = [
     description:
       'Check the currently running Percussionist component versions against the latest available release on GHCR. ' +
       'Reads image tags from the live deployments (operator, manager, web) and queries the container registry ' +
-      'to find the newest semver tag. Returns current versions, the latest available tag, and whether an update is available.',
+      'to find the newest semver tag. Returns current versions, the latest available tag, and whether an update is available. ' +
+      "Also reports `mode`: 'gitops' when a Flux OCIRepository drives the install (its pinned tag is then the " +
+      "authoritative current version), or 'deployments' when upgrades patch container images directly.",
     inputSchema: {
       type: 'object',
       properties: {},
@@ -590,9 +593,11 @@ const TOOLS = [
   {
     name: 'apply_upgrade',
     description:
-      'Upgrade Percussionist deployments (operator, manager, web) to a specified target image tag. ' +
-      'Uses the currently running image registry prefix to construct the new image references and patches ' +
-      "each deployment in-place (rolling update). Requires 'patch' permission on deployments.",
+      'Upgrade Percussionist to a target release tag. On a Flux-managed install this pins the ' +
+      'OCIRepository to that tag and triggers reconciliation, which applies the CRDs before rolling ' +
+      'the Deployments. Otherwise it falls back to patching the operator, manager and web container ' +
+      'images in place — that fallback cannot upgrade CRDs, and says so in `warnings`. ' +
+      'Returns the `mode` used.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2251,7 +2256,11 @@ async function callTool(
         registryError = (e as Error).message;
       }
 
-      const currentTag = foundImage.tag;
+      // On a GitOps install the pinned source tag is authoritative: it is what
+      // an upgrade actually changes, and it is correct even mid-rollout when
+      // the Deployments still report the outgoing version.
+      const fluxSource = await detectFluxSource();
+      const currentTag = fluxSource?.tag ?? foundImage.tag;
       const updateAvailable = latestTag !== null && latestTag !== currentTag && !registryError;
 
       return {
@@ -2264,6 +2273,19 @@ async function callTool(
         latest: latestTag,
         updateAvailable,
         registryPrefix: foundImage.registryPrefix,
+        mode: fluxSource ? 'gitops' : 'deployments',
+        ...(fluxSource
+          ? {
+              source: {
+                name: fluxSource.name,
+                namespace: fluxSource.namespace,
+                tag: fluxSource.tag,
+                url: fluxSource.url,
+                semverRange: fluxSource.semverRange,
+                suspended: fluxSource.suspended,
+              },
+            }
+          : {}),
         ...(registryError ? { error: registryError } : {}),
       };
     }
@@ -2271,6 +2293,52 @@ async function callTool(
     case 'apply_upgrade': {
       const targetTag = String(args.targetTag ?? '');
       if (!targetTag) throw new Error('targetTag is required');
+
+      // Preferred path: move the pin and let Flux apply the whole release —
+      // CRDs first, then the Deployments, then the runner and dispatcher image
+      // defaults that the direct-patch path below cannot reach.
+      const fluxSource = await detectFluxSource();
+      if (fluxSource) {
+        if (fluxSource.suspended) {
+          return {
+            patched: [],
+            errors: [
+              `Flux source ${fluxSource.namespace}/${fluxSource.name} is suspended — ` +
+                `resume it (flux resume source oci ${fluxSource.name}) before upgrading.`,
+            ],
+            targetTag,
+            mode: 'gitops',
+          };
+        }
+
+        try {
+          await pinFluxSourceTag(fluxSource, targetTag);
+        } catch (e) {
+          return {
+            patched: [],
+            errors: [`ocirepository/${fluxSource.name}: ${(e as Error).message}`],
+            targetTag,
+            mode: 'gitops',
+          };
+        }
+
+        const reconcileFailures = await requestReconcile(fluxSource, new Date().toISOString());
+        return {
+          patched: [`ocirepository/${fluxSource.name}`],
+          errors: [],
+          targetTag,
+          mode: 'gitops',
+          ...(reconcileFailures.length
+            ? {
+                warnings: [
+                  `Pinned to ${targetTag}, but could not trigger immediate reconciliation of ` +
+                    `${reconcileFailures.join(', ')}. Flux will pick the change up at its next ` +
+                    `interval.`,
+                ],
+              }
+            : {}),
+        };
+      }
 
       const DEPLOYMENT_NAMES = [
         'percussionist-operator',
@@ -2363,7 +2431,24 @@ async function callTool(
         }
       }
 
-      return { patched, errors, targetTag };
+      // This path swaps container images and nothing else. CRDs are left at
+      // whatever version was installed, so any field the new release writes
+      // that the old schema does not declare is pruned by the API server on
+      // write — silently, with a 200 response. Say so rather than reporting an
+      // unqualified success.
+      return {
+        patched,
+        errors,
+        targetTag,
+        mode: 'deployments',
+        warnings: [
+          'CRDs were not upgraded — this install is not managed by Flux, and the manager ' +
+            'has no permission to modify CustomResourceDefinitions. If this release changes ' +
+            'the CRD schemas, apply them from a checkout of the tag ' +
+            `(kubectl apply -f k8s/crds/ at ${targetTag}) or switch to a GitOps install ` +
+            'with `beatctl deploy --gitops`.',
+        ],
+      };
     }
 
     case 'list_models': {

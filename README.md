@@ -37,6 +37,7 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 - **Manager agent** — the manager controller embeds an OpenCode agent (opencode-web sidecar) with K8s tool access, a decision engine that diagnoses failures and parses ambiguous output, and an interactive chat API. Chat via the web dashboard or `beatctl chat`.
 - **Vector memory** — per-project semantic memory service with LLM-powered context injection (`RELEVANT PROJECT CONTEXT:` in worker prompts) and automatic session summarization on run completion; summaries are stored in ConfigMaps and the vector database for use by BUILD task generators.
 - **Runner packages** — declare Alpine packages (`spec.runner.packages`) that get installed at pod init time; the manager injects `AVAILABLE SYSTEM TOOLS:` into agent prompts so agents know what's available.
+- **GitOps upgrades** — `beatctl deploy --gitops` puts the control plane behind Flux, pinned to an exact release. Upgrades stay on-demand (dashboard button or one patched field) but apply CRDs before rolling the Deployments, which the in-place upgrade path cannot do. Manifests ship as an OCI artifact alongside the images on every release.
 
 ## Repo layout
 
@@ -54,6 +55,7 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 │   │   ├── manager-controller.yaml
 │   │   ├── agent-config.yaml  # opencode.json config + agent skill for manager decision engine
 │   │   └── web.yaml
+│   ├── flux/           # GitOps bootstrap (OCIRepository + Kustomizations)
 │   ├── agents/         # Production ClusterAgent definitions
 │   ├── samples/        # Example manifests and smoke test
 │   └── tests/          # E2E test manifests
@@ -135,6 +137,14 @@ kubectl apply -f k8s/deploy/web.yaml
 kubectl -n percussionist rollout status deploy/percussionist-operator
 kubectl -n percussionist rollout status deploy/percussionist-manager
 kubectl -n percussionist rollout status deploy/percussionist-web
+```
+
+Or hand the control plane to Flux, so that later upgrades apply CRDs as well as
+images (the in-place upgrade path cannot — see
+[docs/guide/gitops.md](docs/guide/gitops.md)):
+
+```sh
+beatctl deploy --gitops
 ```
 
 To uninstall everything:
@@ -463,7 +473,8 @@ pnpm bundle
 | Command | What it does |
 |---------|-------------|
 | `beatctl deploy` | Install CRDs and apply operator + manager controller + web manifests; waits for rollouts. |
-| `beatctl deploy --down` | Delete all operator/web/manager resources and CRDs. |
+| `beatctl deploy --gitops` | Install the same manifests via Flux, pinned to a release, so later upgrades apply CRDs too. Add `--release <tag>` to pin a version other than the checkout's. |
+| `beatctl deploy --down` | Delete all operator/web/manager resources and CRDs. Removes the Flux bootstrap first if present. |
 | `beatctl web` | Port-forward the dashboard to `localhost` and open it in your browser. `localhost` is a secure context so browser notifications and drum audio work without HTTPS. |
 | `beatctl submit -t "<task>" --project <name>` | Create an `Run` with an inline task prompt (requires a project name). |
 | `beatctl submit -i --project <name>` | Interactive run — no prompt; runner stays alive for `beatctl attach`. |

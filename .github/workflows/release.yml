@@ -119,6 +119,13 @@ jobs:
             "
           done
 
+          # Pin the GitOps bootstrap to the version being released, so a fresh
+          # checkout of the tag installs manifests matching its images.
+          sed -i -E "s|^(    tag: )v[0-9]+\.[0-9]+\.[0-9]+.*\$|\1${VERSION}|" \
+            k8s/flux/percussionist.yaml
+          grep -q "    tag: ${VERSION}$" k8s/flux/percussionist.yaml \
+            || { echo "failed to pin k8s/flux/percussionist.yaml to ${VERSION}" >&2; exit 1; }
+
       - name: Commit and tag
         run: |
           git config user.name "github-actions[bot]"

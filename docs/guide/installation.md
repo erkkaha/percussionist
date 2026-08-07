@@ -1,5 +1,17 @@
 # Installation
 
+There are two ways to install the control plane, and the choice determines how
+upgrades behave later:
+
+| | Install | Upgrades cover |
+|---|---|---|
+| Direct | `beatctl deploy`, or the manual steps below | Container images only — CRDs need a manual re-apply |
+| GitOps | `beatctl deploy --gitops` | CRDs and manifests together, applied in order |
+
+Direct is the smaller footprint and needs nothing besides `kubectl`. GitOps
+runs two extra controllers and makes the dashboard's Upgrade button complete —
+see [GitOps upgrades](/guide/gitops) for what that fixes and why it matters.
+
 ## CRDs
 
 Apply the Custom Resource Definitions first. These define the API types that Percussionist operates on.
@@ -15,8 +27,11 @@ CRDs must be applied before any Percussionist resources can be created.
 Deploy the operator, manager, web dashboard, and RBAC:
 
 ```bash
-kubectl apply -f k8s/deploy/
+kubectl apply -k k8s/deploy/
 ```
+
+Note `-k`, not `-f`: the directory carries a `kustomization.yaml`, which
+`kubectl apply -f` tries to apply as a cluster resource and fails on.
 
 ### Components
 

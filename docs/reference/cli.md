@@ -78,7 +78,13 @@ Install or remove Percussionist CRDs and deployments.
 ```bash
 beatctl deploy                                # install
 beatctl deploy --down                         # remove
+beatctl deploy --gitops                       # install via Flux
+beatctl deploy --gitops --release v0.2.11     # ...pinned to a release
 ```
+
+`--gitops` hands the control plane to Flux so that later upgrades apply CRDs as
+well as images — the in-place upgrade path cannot touch CRDs. See
+[GitOps upgrades](/guide/gitops).
 
 ### web
 

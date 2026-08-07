@@ -113,7 +113,8 @@ See [`docs/testing-strategy.md`](docs/testing-strategy.md#adding-a-new-determini
 
 ## Deployment
 - CRDs: `kubectl apply -f k8s/crds/` (must be applied first)
-- Manifests: `kubectl apply -f k8s/deploy/` (operator, manager, web, RBAC)
+- Manifests: `kubectl apply -k k8s/deploy/` (operator, manager, web, RBAC) — `-k`, not `-f`: the directory has a `kustomization.yaml`
+- GitOps alternative: `beatctl deploy --gitops` installs via Flux (`k8s/flux/`) so upgrades apply CRDs before rolling Deployments; the in-place upgrade path cannot touch CRDs
 - Default namespace: `percussionist` (overridable via `PERCUSSIONIST_NAMESPACE`)
 - Smoke test: `kubectl apply -f k8s/samples/m1-smoke.yaml`
 - All deployments are single-replica with `Recreate` strategy (no leader election)
@@ -553,8 +554,8 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `exec_in_workspace` | Run commands in the project's data PVC workspace |
 | `read_plan` | Read a plan artifact from the project's plans ConfigMap |
 | `write_plan` | Write a plan artifact to the project's plans ConfigMap |
-| `check_for_updates` | Check the latest Percussionist release version |
-| `apply_upgrade` | Upgrade Percussionist deployments to a target image tag |
+| `check_for_updates` | Check the latest Percussionist release version; reports `gitops` or `deployments` upgrade mode |
+| `apply_upgrade` | Upgrade Percussionist to a target release tag. Pins the Flux OCIRepository when present (applies CRDs first), otherwise patches Deployment images and warns that CRDs were not upgraded |
 | `list_models` | List available LLM providers and models from the opencode sidecar |
 | `list_task_events` | List task lifecycle audit events (append-only log) |
 | `read_manager_logs` | Read logs from the manager controller pod |
