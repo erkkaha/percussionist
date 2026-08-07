@@ -50,7 +50,7 @@ export default function SettingsPage() {
     queryFn: fetchSettings,
   });
 
-  const { data: opencodeConfig, isLoading: configLoading } = useQuery({
+  const { data: opencodeConfig } = useQuery({
     queryKey: ['opencode-config'],
     queryFn: fetchOpencodeConfig,
   });
@@ -230,7 +230,7 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
     | { name?: string }
     | undefined;
   const [authSecretName, setAuthSecretName] = useState(authSecretObj?.name ?? '');
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [_showCreateModal, _setShowCreateModal] = useState(false);
 
   // Pre-populate from cluster config
   const llmSecretData: Record<string, string> = {};
@@ -860,7 +860,9 @@ function UpdatesPanel() {
                     <Button
                       variant="default"
                       size="sm"
-                      onClick={() => upgradeMutation.mutate(data.latest!)}
+                      onClick={() => {
+                        if (data.latest) upgradeMutation.mutate(data.latest);
+                      }}
                       disabled={upgradeMutation.isPending}
                     >
                       {upgradeMutation.isPending ? 'Upgrading...' : 'Upgrade'}

@@ -10,10 +10,15 @@ import type { CreateMemoryRequest, UpdateMemoryRequest } from '../lib/types';
 
 const QUERY_KEY = ['project-memories'];
 
+function requireProject(project: string | undefined): string {
+  if (!project) throw new Error('Project is required');
+  return project;
+}
+
 export function useProjectMemories(project: string | undefined) {
   return useQuery({
     queryKey: [...QUERY_KEY, project],
-    queryFn: () => fetchProjectMemories(project!),
+    queryFn: () => fetchProjectMemories(requireProject(project)),
     enabled: !!project,
   });
 }
@@ -29,7 +34,7 @@ export function useProjectMemories(project: string | undefined) {
 export function useMemoryHealth(project: string | undefined) {
   return useQuery({
     queryKey: [...QUERY_KEY, project, 'health'],
-    queryFn: () => fetchMemoryHealth(project!),
+    queryFn: () => fetchMemoryHealth(requireProject(project)),
     enabled: !!project,
     // Cheap, and the answer changes the moment the add-on is deployed.
     refetchInterval: 30_000,
@@ -39,7 +44,7 @@ export function useMemoryHealth(project: string | undefined) {
 export function useCreateMemory(project: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (req: CreateMemoryRequest) => createProjectMemory(project!, req),
+    mutationFn: (req: CreateMemoryRequest) => createProjectMemory(requireProject(project), req),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [...QUERY_KEY, project] });
     },
@@ -50,7 +55,7 @@ export function useUpdateMemory(project: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: UpdateMemoryRequest }) =>
-      updateProjectMemory(project!, id, req),
+      updateProjectMemory(requireProject(project), id, req),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [...QUERY_KEY, project] });
     },
@@ -60,7 +65,7 @@ export function useUpdateMemory(project: string | undefined) {
 export function useDeleteMemory(project: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => deleteProjectMemory(project!, id),
+    mutationFn: (id: string) => deleteProjectMemory(requireProject(project), id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [...QUERY_KEY, project] });
     },

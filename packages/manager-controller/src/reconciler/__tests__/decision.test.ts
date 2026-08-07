@@ -1559,7 +1559,10 @@ describe('decide — reviewing', () => {
 
   it('reviewing + verdict with findings → replaces diffFindings', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 };
+    task.status = {
+      ...task.status,
+      worker: { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 },
+    } as any;
     const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
       'percussionist.dev/review-verdict': JSON.stringify({
@@ -1604,7 +1607,10 @@ describe('decide — reviewing', () => {
 
   it('reviewing + verdict without findings preserves existing diffFindings', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 };
+    task.status = {
+      ...task.status,
+      worker: { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 },
+    } as any;
     (task.status as any).diffFindings = {
       version: 1,
       context: { baseSha: 'old', headSha: 'old', forkSha: 'old', diffFingerprint: 'old' },
@@ -1627,7 +1633,10 @@ describe('decide — reviewing', () => {
 
   it('reviewing + later verdict replaces prior diffFindings', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-2', retryCount: 0, aiReworkCount: 0 };
+    task.status = {
+      ...task.status,
+      worker: { reviewRunName: 'review-2', retryCount: 0, aiReworkCount: 0 },
+    } as any;
     (task.status as any).diffFindings = {
       version: 1,
       context: { baseSha: 'old', headSha: 'old', forkSha: 'old', diffFingerprint: 'old' },
@@ -1672,7 +1681,10 @@ describe('decide — reviewing', () => {
 
   it('reviewing + request_changes over ceiling with findings persists diffFindings', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 2 };
+    task.status = {
+      ...task.status,
+      worker: { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 2 },
+    } as any;
     const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
       'percussionist.dev/review-verdict': JSON.stringify({
@@ -1696,7 +1708,10 @@ describe('decide — reviewing', () => {
 
   it('reviewing + malformed verdict preserves existing diffFindings', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 };
+    task.status = {
+      ...task.status,
+      worker: { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 },
+    } as any;
     (task.status as any).diffFindings = {
       version: 1,
       context: { baseSha: 'old', headSha: 'old', forkSha: 'old', diffFingerprint: 'old' },

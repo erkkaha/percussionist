@@ -131,7 +131,6 @@ export default function ModelSelector({
             aria-haspopup="listbox"
             aria-expanded={open}
           >
-            {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative chevron icon */}
             <svg
               className={cn('w-3.5 h-3.5 transition-transform', open && 'rotate-180')}
               viewBox="0 0 12 12"

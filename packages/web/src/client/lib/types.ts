@@ -4,24 +4,7 @@
 // derived from the server schema, plus a few client-specific view models.
 
 // Re-export server types so components import from a single place.
-import type {
-  AgentCapability,
-  AgentRef,
-  BoardStatus,
-  ClusterAgent,
-  DiffContext,
-  DiffFinding,
-  DiffFindingSeverity,
-  DiffLineAnchor,
-  Finding,
-  ManagerMetrics,
-  Project,
-  Run,
-  TaskColumn,
-  TaskDiffFindings,
-  TaskType,
-  WorkerStatus,
-} from '@percussionist/api';
+import type { AgentCapability, AgentRef, DiffContext, DiffFinding } from '@percussionist/api';
 
 export type {
   AgentCapability,

@@ -15,17 +15,9 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react';
-import { useInViewport } from '../hooks/useInViewport';
 import { useSession } from '../hooks/useSession';
 import { useShiki } from '../hooks/useShiki';
-import type {
-  FilePart,
-  SessionMessage,
-  SessionPart,
-  SubtaskPart,
-  TextPart,
-  ToolPart,
-} from '../lib/types';
+import type { FilePart, SessionMessage, SubtaskPart, TextPart, ToolPart } from '../lib/types';
 import { skeletonKeys } from '../lib/utils';
 import { CodeBlock } from './CodeBlock';
 import { FileDiff } from './FileDiff';
@@ -534,6 +526,7 @@ function ToolCall({ part }: { part: ToolPart }) {
             <div className="text-xs text-text-dim mb-1">Command</div>
             <div
               className="text-xs font-mono bg-surface-raised rounded p-2 overflow-x-auto"
+              // biome-ignore lint/security/noDangerouslySetInnerHtml: Command text is rendered through escaped ANSI-to-HTML conversion.
               dangerouslySetInnerHTML={{ __html: commandHtml }}
             />
           </div>
@@ -575,6 +568,7 @@ function ToolCall({ part }: { part: ToolPart }) {
             {outputHtml ? (
               <div
                 className="text-xs font-mono bg-surface-raised rounded p-2 overflow-x-auto max-h-96"
+                // biome-ignore lint/security/noDangerouslySetInnerHtml: Tool output is rendered through escaped ANSI-to-HTML conversion.
                 dangerouslySetInnerHTML={{ __html: outputHtml }}
               />
             ) : (
@@ -612,7 +606,9 @@ function formatToolInput(input: Record<string, unknown>): string {
   // Show common tool fields nicely.
   const entries = Object.entries(input);
   if (entries.length === 1) {
-    const [key, val] = entries[0]!;
+    const onlyEntry = entries[0];
+    if (!onlyEntry) return '';
+    const [key, val] = onlyEntry;
     if (typeof val === 'string') {
       // Single string input — show directly.
       if (val.length > 2000) return `${key}: ${val.slice(0, 2000)}... (truncated)`;
@@ -620,6 +616,6 @@ function formatToolInput(input: Record<string, unknown>): string {
     }
   }
   const json = JSON.stringify(input, null, 2);
-  if (json.length > 2000) return json.slice(0, 2000) + '\n... (truncated)';
+  if (json.length > 2000) return `${json.slice(0, 2000)}\n... (truncated)`;
   return json;
 }

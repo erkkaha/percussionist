@@ -35,7 +35,7 @@ const NS = 'percussionist-e2e-review-findings';
 const PROJECT = 'e2e-review-findings-test';
 const TASK_NAME = 't1';
 const TASK_LABEL = 'percussionist.dev/task-id';
-const LLM_SECRET = process.env['LLM_SECRET'] ?? 'llm-keys';
+const LLM_SECRET = process.env.LLM_SECRET ?? 'llm-keys';
 
 // ---------------------------------------------------------------------------
 // Helpers

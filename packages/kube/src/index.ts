@@ -25,6 +25,7 @@ import {
   SelfDecodingBody,
   ServerConfiguration,
   setHeaderOptions,
+  type V1ObjectMeta,
   type V1Pod,
   wrapHttpLibrary,
 } from '@kubernetes/client-node';
@@ -211,22 +212,26 @@ function init() {
 
 export function kubeConfig(): KubeConfig {
   init();
-  return _kc!;
+  if (!_kc) throw new Error('Kubernetes client was not initialized');
+  return _kc;
 }
 
 export function core(): CoreV1Api {
   init();
-  return _core!;
+  if (!_core) throw new Error('Kubernetes CoreV1Api client was not initialized');
+  return _core;
 }
 
 export function custom(): CustomObjectsApi {
   init();
-  return _custom!;
+  if (!_custom) throw new Error('Kubernetes CustomObjectsApi client was not initialized');
+  return _custom;
 }
 
 export function apps(): AppsV1Api {
   init();
-  return _apps!;
+  if (!_apps) throw new Error('Kubernetes AppsV1Api client was not initialized');
+  return _apps;
 }
 
 // For CLI use — loads from kubeconfig only (no in-cluster fallback).
@@ -1107,7 +1112,7 @@ export async function readSessionConfigMap(
     if (!sessionsRaw) return null;
     const sessions: string[] = JSON.parse(sessionsRaw);
     if (!sessions.includes(sessionID)) return null;
-    const raw = cm.data![`messages-${sessionID}.json`];
+    const raw = cm.data?.[`messages-${sessionID}.json`];
     if (!raw) return null;
     return {
       messages: JSON.parse(raw),
@@ -1176,7 +1181,7 @@ export async function getPlansConfigMap(
 ): Promise<{
   apiVersion: string;
   kind: string;
-  metadata: Record<string, unknown>;
+  metadata: V1ObjectMeta;
   data?: Record<string, string>;
 } | null> {
   try {
@@ -1187,7 +1192,7 @@ export async function getPlansConfigMap(
     return {
       apiVersion: cm.apiVersion ?? 'v1',
       kind: cm.kind ?? 'ConfigMap',
-      metadata: cm.metadata as unknown as Record<string, unknown>,
+      metadata: cm.metadata ?? {},
       data: cm.data,
     };
   } catch (e: unknown) {
@@ -1236,6 +1241,16 @@ export async function writePlanToConfigMap(
     warning = `ConfigMap data size (${Math.round(totalSize / 1024)}KB) approaching 1MB limit. Consider removing old plans.`;
   }
 
+  const metadata: V1ObjectMeta = {
+    name: existing.metadata.name ?? cmName,
+    namespace: existing.metadata.namespace ?? ns,
+    labels: existing.metadata.labels,
+    annotations: existing.metadata.annotations,
+  };
+  if (existing.metadata.resourceVersion) {
+    metadata.resourceVersion = existing.metadata.resourceVersion;
+  }
+
   if (!existing.metadata.resourceVersion) {
     // Create new ConfigMap
     await core().createNamespacedConfigMap({
@@ -1243,7 +1258,7 @@ export async function writePlanToConfigMap(
       body: {
         apiVersion: 'v1',
         kind: 'ConfigMap',
-        metadata: existing.metadata as any,
+        metadata,
         data: newData,
       },
     });
@@ -1255,9 +1270,7 @@ export async function writePlanToConfigMap(
       body: {
         apiVersion: 'v1',
         kind: 'ConfigMap',
-        metadata: {
-          ...existing.metadata,
-        } as any,
+        metadata,
         data: newData,
       },
     });
@@ -1272,7 +1285,7 @@ export async function readPlanFromConfigMap(
   ns: string = NAMESPACE,
 ): Promise<string | null> {
   const cm = await getPlansConfigMap(projectName, ns);
-  if (!cm || !cm.data) return null;
+  if (!cm?.data) return null;
   return cm.data[`${taskName}.md`] ?? null;
 }
 

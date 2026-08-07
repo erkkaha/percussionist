@@ -182,15 +182,15 @@ describe('SessionList table structure', () => {
     expect(tbody).not.toBeNull();
 
     // Every direct child of tbody must be a tr element
-    const directChildren = Array.from(tbody!.childNodes);
+    const directChildren = Array.from(tbody?.childNodes);
     expect(directChildren.length).toBe(2);
     for (const child of directChildren) {
       expect(child.nodeName).toBe('TR');
     }
 
     // No a or div elements as direct tbody children
-    expect(tbody!.querySelector(':scope > a')).toBeNull();
-    expect(tbody!.querySelector(':scope > div')).toBeNull();
+    expect(tbody?.querySelector(':scope > a')).toBeNull();
+    expect(tbody?.querySelector(':scope > div')).toBeNull();
   });
 
   it('Name cell contains a Link to the expected session detail route', async () => {

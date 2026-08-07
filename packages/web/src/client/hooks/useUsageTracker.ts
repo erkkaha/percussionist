@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { categorizeUsageRoute } from '../lib/usage-categorization';
 import { isGloballyLocked, onGlobalLockChange, setGloballyLocked } from '../lib/usage-lock-state';
 import {
   type Category,

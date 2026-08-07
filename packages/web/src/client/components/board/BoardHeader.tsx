@@ -25,7 +25,7 @@ function formatRelative(iso: string): string {
   return `${h}h ago`;
 }
 
-const SEVERITY_DOT: Record<string, string> = {
+const _SEVERITY_DOT: Record<string, string> = {
   critical: 'bg-red-500',
   high: 'bg-orange-500',
   medium: 'bg-yellow-500',

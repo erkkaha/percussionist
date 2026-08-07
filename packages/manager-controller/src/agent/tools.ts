@@ -1051,7 +1051,8 @@ async function deleteRunsForTask(
   });
   const deletedNames: string[] = [];
   for (const run of taskRuns) {
-    const name = run.metadata.name!;
+    const name = run.metadata.name;
+    if (!name) continue;
     const phase = run.status?.phase;
     const terminal = phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled';
     const active =
@@ -1871,7 +1872,8 @@ async function callTool(
       const pods = await listPodsByLabels({ 'app.kubernetes.io/component': 'manager' }, resourceNs);
       if (pods.length === 0) throw new Error('No manager pods found');
 
-      const podName = pods[0]!.metadata!.name!;
+      const podName = pods[0]?.metadata?.name;
+      if (!podName) throw new Error('Manager pod is missing metadata.name');
       const logs = await readPodLog(podName, 'manager', tailLines, resourceNs);
       return { podName, container: 'manager', tailLines, logs };
     }
@@ -2319,17 +2321,22 @@ async function callTool(
           {
             name: containerName,
             image: newImage,
+            ...(depName === 'percussionist-operator'
+              ? {
+                  env: [
+                    {
+                      name: 'DISPATCHER_IMAGE',
+                      value: `${registryPrefix}/dispatcher:${targetTag}`,
+                    },
+                    {
+                      name: 'MEMORY_SERVICE_IMAGE',
+                      value: `${registryPrefix}/memory:${targetTag}`,
+                    },
+                  ],
+                }
+              : {}),
           },
         ];
-
-        if (depName === 'percussionist-operator') {
-          const dispatcherNewImage = `${registryPrefix}/dispatcher:${targetTag}`;
-          const memoryNewImage = `${registryPrefix}/memory:${targetTag}`;
-          containers[0]!.env = [
-            { name: 'DISPATCHER_IMAGE', value: dispatcherNewImage },
-            { name: 'MEMORY_SERVICE_IMAGE', value: memoryNewImage },
-          ];
-        }
 
         const patchBody = {
           spec: {
@@ -2566,7 +2573,8 @@ async function callTool(
 
       if (!canonicalUF) throw new Error(`Finding "${findingIdUF}" not found`);
 
-      const clusterIdUF = canonicalUF.clusterId!;
+      const clusterIdUF = canonicalUF.clusterId;
+      if (!clusterIdUF) throw new Error(`Finding "${findingIdUF}" is missing clusterId`);
       const updatedUF: Finding = { ...canonicalUF };
 
       if (args.status) {
@@ -2648,7 +2656,8 @@ async function callTool(
             taskTypeCT === 'PLAN'
               ? a.name.toLowerCase().includes('planner')
               : a.name.toLowerCase().includes('builder'),
-          )?.name ?? (agentsCT.length > 0 ? agentsCT[0]!.name : 'default'));
+          )?.name ?? (agentsCT.length > 0 ? agentsCT[0]?.name : 'default'));
+      const agentNameCT = defaultAgentCT ?? 'default';
 
       const taskPriorityCT = args.priority
         ? (String(args.priority) as 'high' | 'medium' | 'low')
@@ -2669,7 +2678,7 @@ async function callTool(
           type: taskTypeCT,
           title: `[Finding] ${findingCT.title.slice(0, 240)}`,
           description: `Created from finding ${findingCT.id}:\n\n${findingCT.description}${findingCT.filePath ? `\n\nFile: ${findingCT.filePath}` : ''}`,
-          agent: defaultAgentCT,
+          agent: agentNameCT,
           priority: taskPriorityCT,
         },
       });
@@ -2701,7 +2710,8 @@ async function callTool(
         if (triagedCT) {
           triagedCT.taskRef = taskNameCT;
           triagedCT.status = 'in-progress';
-          const clusterIdCT = triagedCT.clusterId!;
+          const clusterIdCT = triagedCT.clusterId;
+          if (!clusterIdCT) throw new Error(`Finding "${findingIdCT}" is missing clusterId`);
           const patchDataCT: Record<string, string | null> = {};
           patchDataCT[triagedFindingKey(clusterIdCT)] = JSON.stringify(triagedCT);
           await patchFindingsConfigMap(projectNameCT, patchDataCT, resourceNsCT).catch(() => {
@@ -2729,7 +2739,7 @@ async function callTool(
         taskName: taskNameCT,
         findingId: findingCT.id,
         type: taskTypeCT,
-        agent: defaultAgentCT,
+        agent: agentNameCT,
         priority: taskPriorityCT,
       };
     }

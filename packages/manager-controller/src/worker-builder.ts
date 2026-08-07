@@ -430,7 +430,7 @@ export function autoMergePromptLines(
     '',
     'Your worktree is already checked out at the source branch. In this mode the',
     'source branch normally exists only in the local git mirror — it is never',
-    'published, and origin/' + sourceBranch + ' will usually not exist. That is',
+    `published, and origin/${sourceBranch} will usually not exist. That is`,
     'expected, not an error, and NOT something to repair by pushing the source',
     'branch: the remote must only ever receive target branches.',
     '',
