@@ -15,6 +15,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { patchFluxManifest, tagFromVersion } from './gitops-manifest.js';
 import { DEFAULT_NAMESPACE, fatal } from './kube.js';
 
 export interface DeployOpts {
@@ -22,6 +23,10 @@ export interface DeployOpts {
   repoRoot?: string;
   down?: boolean;
   wait?: boolean;
+  /** Hand the control plane to Flux instead of applying manifests directly. */
+  gitops?: boolean;
+  /** Release tag to pin under --gitops (default: this checkout's version). */
+  release?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -394,6 +399,158 @@ function patchedOperatorManifest(operatorYaml: string, ip: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// GitOps mode
+
+/** The Flux CRD whose presence means kustomize-controller is installed. */
+const FLUX_KUSTOMIZATION_CRD = 'kustomizations.kustomize.toolkit.fluxcd.io';
+
+function fluxControllersPresent(): boolean {
+  try {
+    kubectlOutput(['get', 'crd', FLUX_KUSTOMIZATION_CRD, '-o', 'name']);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Install the two Flux controllers this needs — source and kustomize.
+ *
+ * Deliberately not the full Flux suite: helm, notification, image-reflector
+ * and image-automation are unused here, and image-automation in particular
+ * wants write access to a git repo. Two controllers is the whole footprint.
+ *
+ * Requires the `flux` CLI. Rather than curl an install manifest from the
+ * network on the user's behalf, this fails with the exact command to run —
+ * installing a second control plane into someone's cluster should be their
+ * explicit act.
+ */
+async function installFluxControllers(): Promise<void> {
+  const probe = spawnSync('flux', ['--version'], { stdio: 'ignore' });
+  if (probe.error) {
+    throw new Error(
+      'flux CLI not found on PATH, and the Flux controllers are not installed in this cluster.\n' +
+        '  Install the CLI (https://fluxcd.io/flux/installation/) and re-run, or install the\n' +
+        '  controllers yourself:\n' +
+        '    flux install --components=source-controller,kustomize-controller',
+    );
+  }
+
+  console.log('beatctl: installing Flux source-controller and kustomize-controller...');
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      'flux',
+      ['install', '--components=source-controller,kustomize-controller'],
+      {
+        stdio: 'inherit',
+      },
+    );
+    child.on('error', reject);
+    child.on('exit', (code) =>
+      (code ?? 1) === 0 ? resolve() : reject(new Error(`flux install exited with code ${code}`)),
+    );
+  });
+}
+
+/** Read the version of this checkout, used as the default pin. */
+function checkoutVersion(repoRoot: string): string {
+  const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as {
+    version?: string;
+  };
+  if (!pkg.version) throw new Error('no version field in package.json');
+  return pkg.version;
+}
+
+/**
+ * Apply the Flux bootstrap: an OCIRepository pinned to one release tag, plus
+ * the two Kustomizations that apply CRDs and then the control plane.
+ *
+ * After this, upgrades are a change to `.spec.ref.tag` — which is what the
+ * dashboard's Upgrade button does once it sees the source exists.
+ */
+async function applyGitopsBootstrap(
+  repoRoot: string,
+  nodeIP: string,
+  version: string,
+  wait: boolean,
+): Promise<void> {
+  const manifestPath = resolveManifest(repoRoot, 'k8s/flux/percussionist.yaml');
+  const patched = patchFluxManifest(readFileSync(manifestPath, 'utf8'), {
+    tag: tagFromVersion(version),
+    ingressBaseUrl: `https://${nodeIP}.nip.io:30443`,
+  });
+
+  const tmp = path.join(tmpdir(), `percussionist-flux-${Date.now()}.yaml`);
+  writeFileSync(tmp, patched);
+  try {
+    console.log(`beatctl: pinning percussionist to ${tagFromVersion(version)}`);
+    await runKubectl(['apply', '-f', tmp]);
+
+    if (wait) {
+      // The CRD Kustomization is waited on separately: it is the one whose
+      // failure would otherwise show up later as fields silently vanishing
+      // from Projects and Runs.
+      console.log('beatctl: waiting for Flux to apply the CRDs...');
+      await runKubectl([
+        '-n',
+        'flux-system',
+        'wait',
+        '--for=condition=Ready',
+        'kustomization/percussionist-crds',
+        '--timeout=300s',
+      ]);
+      console.log('beatctl: waiting for Flux to roll out the control plane...');
+      await runKubectl([
+        '-n',
+        'flux-system',
+        'wait',
+        '--for=condition=Ready',
+        'kustomization/percussionist',
+        '--timeout=600s',
+      ]);
+    }
+  } finally {
+    try {
+      rmSync(tmp);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Remove the Flux bootstrap.
+ *
+ * Runs before the rest of --down, and is not conditional on --gitops: tearing
+ * down the Deployments while a Kustomization still points at them means Flux
+ * re-applies everything within its reconcile interval, and the delete looks
+ * like it silently failed.
+ */
+async function deleteGitopsBootstrap(): Promise<void> {
+  if (!fluxControllersPresent()) return;
+
+  const targets = [
+    'kustomization/percussionist',
+    'kustomization/percussionist-crds',
+    'ocirepository/percussionist',
+  ];
+  let announced = false;
+  for (const target of targets) {
+    try {
+      const found = kubectlOutput(['-n', 'flux-system', 'get', target, '-o', 'name']);
+      if (!found) continue;
+    } catch {
+      continue; // not present
+    }
+    if (!announced) {
+      console.log('beatctl: removing Flux bootstrap so it cannot re-apply what we delete...');
+      announced = true;
+    }
+    await runKubectl(['-n', 'flux-system', 'delete', target, '--ignore-not-found']);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 
 export async function runDeploy(opts: DeployOpts): Promise<void> {
@@ -419,6 +576,7 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
 
   if (opts.down) {
     try {
+      await deleteGitopsBootstrap();
       console.log('beatctl: deleting web + operator + manager deployments/RBAC...');
       await runKubectl([
         'delete',
@@ -485,6 +643,39 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
 
   const ingressBaseUrl = `https://${nodeIP}.nip.io:30443`;
   console.log(`beatctl: ingress base URL: ${ingressBaseUrl}`);
+
+  // GitOps mode hands everything below to Flux: it applies the same CRDs and
+  // manifests from the published artifact for the pinned tag, in the same
+  // order, and keeps doing so. The direct path stays for installs that would
+  // rather not run a second control plane.
+  if (opts.gitops) {
+    try {
+      if (!fluxControllersPresent()) {
+        await installFluxControllers();
+      } else {
+        console.log('beatctl: Flux controllers already installed');
+      }
+
+      const version = opts.release ?? checkoutVersion(repoRoot);
+      await applyGitopsBootstrap(repoRoot, nodeIP, version, opts.wait !== false);
+    } catch (e) {
+      fatal('GitOps deploy failed', e);
+    }
+
+    console.log('beatctl: deploy complete (GitOps)');
+    console.log('');
+    console.log('================================================================');
+    console.log(`  Dashboard:  https://app.${nodeIP}.nip.io:30443/`);
+    console.log(`  Runs:       https://<run-name>.${nodeIP}.nip.io:30443/`);
+    console.log('  Note: accept the self-signed cert on first visit');
+    console.log('');
+    console.log('  Upgrades now include CRDs. Use the dashboard Settings page,');
+    console.log('  or pin a version directly:');
+    console.log('    kubectl -n flux-system patch ocirepository percussionist \\');
+    console.log('      --type=merge -p \'{"spec":{"ref":{"tag":"vX.Y.Z"}}}\'');
+    console.log('================================================================');
+    return;
+  }
 
   // Write a patched copy of operator.yaml with the correct HTTPS base URL.
   const patchedOperator = patchedOperatorManifest(manifests.operator, nodeIP);

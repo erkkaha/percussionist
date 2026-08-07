@@ -164,7 +164,7 @@ Do not use `beatctl deploy` for this topology. The current command assumes an
 ```bash
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f k8s/crds/
-kubectl apply -f k8s/deploy/
+kubectl apply -k k8s/deploy/
 ```
 
 Remove the dashboard Ingress created by the generic manifests and disable

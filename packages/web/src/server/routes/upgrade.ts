@@ -10,6 +10,17 @@ import { callManagerTool, ManagerMcpHttpError } from '../lib/manager-mcp.js';
 
 const router = new Hono();
 
+/**
+ * How upgrades reach the cluster.
+ *
+ * `gitops` — a Flux OCIRepository drives the install; upgrading moves its
+ * pinned tag and Flux applies the whole release, CRDs first.
+ * `deployments` — the manager patches container images directly. CRDs are out
+ * of reach on this path, so a release that changes a schema needs a manual
+ * `kubectl apply -f k8s/crds/`.
+ */
+export type UpgradeMode = 'gitops' | 'deployments';
+
 export interface UpdateStatus {
   current: {
     operator: string | null;
@@ -20,6 +31,15 @@ export interface UpdateStatus {
   latest: string | null;
   updateAvailable: boolean;
   registryPrefix?: string;
+  mode?: UpgradeMode;
+  source?: {
+    name: string;
+    namespace: string;
+    tag: string | null;
+    url: string;
+    semverRange: string | null;
+    suspended: boolean;
+  };
   error?: string;
 }
 
@@ -81,6 +101,13 @@ export interface UpgradeResult {
   patched: string[];
   errors: string[];
   targetTag: string;
+  mode?: UpgradeMode;
+  /**
+   * Non-fatal caveats about what the upgrade did *not* cover — most
+   * importantly, that the `deployments` path leaves CRDs at their installed
+   * version.
+   */
+  warnings?: string[];
   error?: string;
 }
 

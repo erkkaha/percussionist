@@ -141,8 +141,8 @@ Explain the current lifecycle state of a task in the context of its project flow
 | `exec_in_workspace` | Run commands in the project's data PVC workspace |
 | `list_available_packages` | List Alpine packages declared for a project |
 | `install_packages` | Install ad-hoc Alpine packages |
-| `check_for_updates` | Check the latest Percussionist release version |
-| `apply_upgrade` | Upgrade Percussionist deployments |
+| `check_for_updates` | Check the latest Percussionist release version; reports whether upgrades run in `gitops` or `deployments` mode |
+| `apply_upgrade` | Upgrade Percussionist. Pins the Flux source when one exists (CRDs included), otherwise patches Deployment images and warns that CRDs were skipped |
 | `list_models` | List available LLM providers and models |
 | `list_task_events` | List task lifecycle audit events |
 

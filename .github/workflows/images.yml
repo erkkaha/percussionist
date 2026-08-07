@@ -120,10 +120,82 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
+  manifests:
+    name: Push manifests artifact
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same normalisation as build-and-push. Kept inline rather than hoisted
+      # into a shared job so the existing matrix job is untouched.
+      - name: Normalize version
+        id: ver
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" == *-* ]]; then
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Flux CLI
+        uses: fluxcd/flux2/action@v2.9.4
+
+      # A versioned artifact must pin the images it ships. The checked-in
+      # manifests track `:latest` so a working copy always runs current, but
+      # that makes a deployed revision unidentifiable and lets a pod
+      # reschedule roll a component forward silently. Rewriting the tags here
+      # keeps the repo convenient and the artifact reproducible.
+      #
+      # Only our own images match; `ollama/ollama:latest` and the pinned
+      # opencode sidecar are left alone.
+      - name: Pin image tags in manifests
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          FILES=$(grep -rl "ghcr.io/${{ github.repository }}/[a-z-]*:latest" k8s/)
+          [ -n "$FILES" ] || { echo "no image references found to pin" >&2; exit 1; }
+          # shellcheck disable=SC2086
+          sed -i -E "s|(ghcr\.io/${{ github.repository }}/[a-z-]+):latest|\1:${TAG}|g" $FILES
+          if grep -rq "ghcr.io/${{ github.repository }}/[a-z-]*:latest" k8s/; then
+            echo "unpinned references remain:" >&2
+            grep -rn "ghcr.io/${{ github.repository }}/[a-z-]*:latest" k8s/ >&2
+            exit 1
+          fi
+          echo "pinned to ${TAG}:"
+          grep -rn "ghcr.io/${{ github.repository }}/[a-z-]*:${TAG}" k8s/
+
+      # Ship k8s/ as an OCI artifact so a GitOps install needs no repo
+      # checkout, and so CRDs travel with the images they belong to. The
+      # channel tag mirrors the image tags: `latest` for releases, `beta` for
+      # pre-releases.
+      - name: Push manifests
+        run: |
+          ARTIFACT="oci://ghcr.io/${{ github.repository }}/manifests"
+          flux push artifact "${ARTIFACT}:${{ steps.ver.outputs.tag }}" \
+            --path=k8s \
+            --source="${{ github.repositoryUrl }}" \
+            --revision="${{ steps.ver.outputs.tag }}@sha1:${{ github.sha }}"
+          flux tag artifact "${ARTIFACT}:${{ steps.ver.outputs.tag }}" \
+            --tag "${{ steps.ver.outputs.channel }}"
+
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: [build-and-push, manifests]
     if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
     permissions:
       contents: write

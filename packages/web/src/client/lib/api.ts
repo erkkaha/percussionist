@@ -499,6 +499,9 @@ export async function deleteSecret(name: string): Promise<void> {
   }
 }
 
+/** See UpgradeMode in server/routes/upgrade.ts. */
+export type UpgradeMode = 'gitops' | 'deployments';
+
 export interface UpdateStatus {
   current: {
     operator: string | null;
@@ -509,6 +512,15 @@ export interface UpdateStatus {
   latest: string | null;
   updateAvailable: boolean;
   registryPrefix?: string;
+  mode?: UpgradeMode;
+  source?: {
+    name: string;
+    namespace: string;
+    tag: string | null;
+    url: string;
+    semverRange: string | null;
+    suspended: boolean;
+  };
   error?: string;
 }
 
@@ -520,6 +532,8 @@ export interface UpgradeResult {
   patched: string[];
   errors: string[];
   targetTag: string;
+  mode?: UpgradeMode;
+  warnings?: string[];
 }
 
 export async function postUpgradeApply(targetTag: string): Promise<UpgradeResult> {
