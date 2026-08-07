@@ -22,6 +22,7 @@ import {
   type Run,
   runnerDefaultsFor,
 } from '@percussionist/api';
+import { WEB_AUTH_TOKEN } from './config.js';
 import { renderPod, resolveAuthSecretKey } from './pod-builder.js';
 
 // Helper to create a minimal Run CR with all required fields
@@ -772,10 +773,8 @@ describe('renderPod - per-run stats key', () => {
   });
 
   it('falls back to the shared token when no per-run key was minted', () => {
-    // WEB_AUTH_TOKEN is unset in tests, so the fallback is the empty string —
-    // what matters is that omitting the key does not surface "undefined".
     const pod = renderPod(makeRun(), []);
-    expect(webAuthTokenOf(pod)).toBe('');
+    expect(webAuthTokenOf(pod)).toBe(WEB_AUTH_TOKEN);
   });
 
   it('never leaks the run key into the runner container', () => {
