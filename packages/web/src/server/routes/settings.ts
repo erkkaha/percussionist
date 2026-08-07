@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
 import { core, getClusterSettings, NAMESPACE, updateClusterSettings } from '../kube.js';
 import { isKubeNotFound } from '../lib/kube-errors.js';
+import { upsertSecret } from '../lib/kube-upsert.js';
 
 const settings = new Hono();
 
@@ -13,22 +14,6 @@ const DECISION_AGENT_CM_KEY = 'manager-decision.md';
 
 // ---------------------------------------------------------------------------
 // Helpers
-
-async function upsertSecret(name: string, data: Record<string, string>): Promise<void> {
-  const ns = NAMESPACE;
-  const body = {
-    apiVersion: 'v1',
-    kind: 'Secret',
-    metadata: { name, namespace: ns },
-    stringData: data,
-  };
-  try {
-    await core().readNamespacedSecret({ name, namespace: ns });
-    await core().replaceNamespacedSecret({ name, namespace: ns, body });
-  } catch {
-    await core().createNamespacedSecret({ namespace: ns, body });
-  }
-}
 
 async function deleteSecret(name: string): Promise<void> {
   try {

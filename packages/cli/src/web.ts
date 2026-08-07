@@ -11,9 +11,10 @@
 //   4. Open http://localhost:<local>/ in the default browser.
 //   5. Block until the user presses Ctrl-C; kill the port-forward on exit.
 
-import { type ChildProcess, spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { DEFAULT_NAMESPACE } from './kube.js';
+import { openBrowser, pickFreePort, startPortForward } from './port-forward.js';
 
 const WEB_SERVICE = 'percussionist-web';
 const WEB_PORT = 8080;
@@ -24,24 +25,6 @@ export interface WebOpts {
   port?: string;
   /** Skip opening the browser — just forward and print the URL. */
   noBrowser?: boolean;
-}
-
-async function pickFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.unref();
-    srv.on('error', reject);
-    srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address();
-      if (addr && typeof addr === 'object') {
-        const port = addr.port;
-        srv.close(() => resolve(port));
-      } else {
-        srv.close();
-        reject(new Error('could not determine free port'));
-      }
-    });
-  });
 }
 
 async function resolveLocalPort(explicit?: string): Promise<number> {
@@ -61,67 +44,6 @@ async function resolveLocalPort(explicit?: string): Promise<number> {
   return pickFreePort();
 }
 
-async function startPortForward(namespace: string, localPort: number): Promise<ChildProcess> {
-  return new Promise((resolve, reject) => {
-    const args = [
-      'port-forward',
-      '-n',
-      namespace,
-      `svc/${WEB_SERVICE}`,
-      `${localPort}:${WEB_PORT}`,
-    ];
-    const child = spawn('kubectl', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let ready = false;
-    const onReady = () => {
-      if (ready) return;
-      ready = true;
-      resolve(child);
-    };
-
-    const onChunk = (buf: Buffer) => {
-      const s = buf.toString();
-      if (s.includes('Forwarding from')) onReady();
-      // Surface kubectl errors (auth, RBAC, etc.) to the user.
-      if (s.toLowerCase().includes('error') || s.toLowerCase().includes('unable')) {
-        process.stderr.write(s);
-      }
-    };
-    child.stdout?.on('data', onChunk);
-    child.stderr?.on('data', onChunk);
-
-    child.on('exit', (code) => {
-      if (!ready) {
-        reject(new Error(`kubectl port-forward exited with code ${String(code)}`));
-      }
-    });
-    child.on('error', reject);
-  });
-}
-
-function openBrowser(url: string): void {
-  const platform = process.platform;
-  let cmd: string;
-  let args: string[];
-
-  if (platform === 'darwin') {
-    cmd = 'open';
-    args = [url];
-  } else if (platform === 'win32') {
-    cmd = 'cmd';
-    args = ['/c', 'start', url];
-  } else {
-    // Linux: try xdg-open, fall back gracefully.
-    cmd = 'xdg-open';
-    args = [url];
-  }
-
-  const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
-  child.unref();
-}
-
 export async function runWeb(opts: WebOpts): Promise<void> {
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
   const localPort = await resolveLocalPort(opts.port);
@@ -131,7 +53,7 @@ export async function runWeb(opts: WebOpts): Promise<void> {
 
   let pf: ChildProcess;
   try {
-    pf = await startPortForward(ns, localPort);
+    pf = await startPortForward(ns, WEB_SERVICE, WEB_PORT, localPort);
   } catch (e) {
     console.error('beatctl: port-forward failed:', (e as Error).message);
     process.exit(1);
