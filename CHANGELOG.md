@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.13] - 2026-08-07
+
+### <!-- 0 -->🚀 Features
+
+- Add GitOps upgrade path so CRDs upgrade with images _(deploy)_
 ## [v0.2.12] - 2026-08-07
 
 ### <!-- 0 -->🚀 Features
@@ -56,6 +61,7 @@ All notable changes to Percussionist are documented here.
 
 - Migrate biome config
 - Clear biome warnings
+- Release v0.2.12
 ## [v0.2.11] - 2026-08-06
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
