@@ -130,6 +130,15 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
               </span>
             )}
 
+            {/* AI approved (review lane) — robot icon marks the check as the AI reviewer's verdict */}
+            {col === 'review' && worker?.reviewApproved === true && (
+              <span className="text-label-md font-mono uppercase flex items-center gap-0.5 text-phase-succeeded">
+                <Bot className="h-2.5 w-2.5" />
+                <Check className="h-2.5 w-2.5" />
+                ai approved
+              </span>
+            )}
+
             {/* Escalated */}
             {col !== 'in-progress' && worker?.status === 'Escalated' && (
               <span className="text-label-md font-mono uppercase text-phase-failed">escalated</span>

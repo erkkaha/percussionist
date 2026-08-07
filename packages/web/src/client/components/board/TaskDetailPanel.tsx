@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   ArrowRight,
+  Bot,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -668,7 +669,10 @@ function OverviewContent({
         )}
         {worker?.reviewApproved !== undefined && (
           <div>
-            <p className="text-label-md font-mono uppercase text-text-dim">Agent review</p>
+            <p className="text-label-md font-mono uppercase text-text-dim flex items-center gap-1">
+              <Bot className="h-3 w-3" />
+              Agent review
+            </p>
             <span
               className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
                 worker.reviewApproved
