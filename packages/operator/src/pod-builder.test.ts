@@ -455,6 +455,65 @@ describe('renderPod - workspace-init script generation', () => {
     });
   });
 
+  describe('single shared copy of the worktree-setup shell (BUILD 8)', () => {
+    function branchingRun(gitCache?: { worktreeReuse?: boolean }): Run {
+      return makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'build-task-1',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          source: {
+            git: {
+              url: 'https://github.com/test/repo.git',
+              ref: 'feature/child-branch',
+              parentRef: 'feature/my-feature',
+            },
+          },
+          ...(gitCache ? { gitCache } : {}),
+        },
+      });
+    }
+
+    // The reset-to-remote-tip stanza used to be copy-pasted five times into
+    // every rendered script (resume branch, force-add path, normal-add path,
+    // across both modes). It now renders exactly once, after the mode block, so
+    // every path flows through it.
+    it('renders the reset-to-remote-tip stanza exactly once for a ref run', () => {
+      const argsReuse = getWorkspaceInitArgs(branchingRun());
+      expect((argsReuse.match(/reset to origin\//g) ?? []).length).toBe(1);
+
+      const argsFresh = getWorkspaceInitArgs(branchingRun({ worktreeReuse: false }));
+      expect((argsFresh.match(/reset to origin\//g) ?? []).length).toBe(1);
+    });
+
+    // The force-add / normal-add / parent-baseline / error chain is shared
+    // verbatim by both modes, so the add-worktree content after the mode-
+    // specific prologue is identical.
+    it('renders identical add-worktree content in worktreeReuse fresh-create and freshWorktree modes', () => {
+      const argsReuse = getWorkspaceInitArgs(branchingRun());
+      const argsFresh = getWorkspaceInitArgs(branchingRun({ worktreeReuse: false }));
+
+      const startMarker = '# Re-sync refs/heads from remotes/origin';
+      // The hoisted reset stanza is the first `rev-parse origin/$GIT_REF` after
+      // the add chain; it is not part of the add-worktree content.
+      const endMarker =
+        'if git -C "$WORKTREE_DIR" rev-parse "origin/$GIT_REF" >/dev/null 2>&1; then';
+
+      const startReuse = argsReuse.indexOf(startMarker);
+      const startFresh = argsFresh.indexOf(startMarker);
+      expect(startReuse).toBeGreaterThan(-1);
+      expect(startFresh).toBeGreaterThan(-1);
+
+      const chainReuse = argsReuse.slice(startReuse, argsReuse.indexOf(endMarker));
+      const chainFresh = argsFresh.slice(startFresh, argsFresh.indexOf(endMarker));
+
+      // worktreeReuse wraps the chain in an outer if/else, so its script has a
+      // standalone `fi` after the chain that freshWorktree does not.
+      expect(chainReuse.replace(/\nfi\n$/, '\n')).toBe(chainFresh);
+    });
+  });
+
   describe('log messages for parent baseline resolution', () => {
     it('should include log message when using remote-tracking ref as parent baseline', () => {
       const run = makeRun({
