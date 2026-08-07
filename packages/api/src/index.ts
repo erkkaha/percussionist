@@ -2,7 +2,10 @@
 //
 // CRD YAML in crds/ is generated from these schemas via `pnpm run codegen`
 // in the scripts/ package. When they disagree the Zod definition wins at
-// admission time inside the operator.
+// reconcile time inside the operator: Run/Project specs are re-validated
+// against the Zod schemas on every reconcile, because the generated CRDs carry
+// no CEL equivalents of the .refine() rules. CRD defaults are authoritative at
+// admission (the apiserver stamps them onto every CR).
 //
 // Five CRDs:
 //   ClusterAgent       — cluster-scoped agent role definitions
@@ -217,12 +220,17 @@ export const HumanFolderSpecSchema = z.object({
 });
 export type HumanFolderSpec = z.infer<typeof HumanFolderSpecSchema>;
 
+// The published, tooled code-server image (bun/pnpm/node/npm/ripgrep/jq on
+// top of codercom). Single source of truth for the CRD default; the operator
+// falls back to the same constant when spec.codeServer.image is unset.
+export const CODE_SERVER_DEFAULT_IMAGE = 'ghcr.io/erkkaha/percussionist/code-server:latest';
+
 // Code-server configuration for interactive workspace access.
 export const CodeServerSpecSchema = z.object({
   /** Enable per-project code-server for interactive workspace access. */
   enabled: z.boolean().default(false),
   /** code-server container image. */
-  image: z.string().default('codercom/code-server:4.96.4'),
+  image: z.string().default(CODE_SERVER_DEFAULT_IMAGE),
   /** Pod resource requirements for code-server container. */
   resources: ResourceRequirementsSchema.optional(),
   /** Alpine/APT packages to install in the code-server init container. */
@@ -657,10 +665,14 @@ export const RunSpecSchema = z
     // Set by manager-controller when this run was spawned by a board task.
     boardTask: z.string().optional(),
 
-    // Which agent runtime serves this run. Defaults to opencode; `claude` swaps
-    // in the runner-claude image, which speaks the same runner HTTP contract
-    // backed by the Claude Agent SDK.
-    engine: z.enum(RUNNER_ENGINES).optional(),
+    // Agent runtime for this run — full description text lives in .describe()
+    // below so codegen emits it into the CRD (comments do not survive codegen).
+    engine: z
+      .enum(RUNNER_ENGINES)
+      .describe(
+        'Agent runtime for this run. "opencode" (default) uses the opencode runner; "claude" uses the runner-claude image, which serves the same runner HTTP contract backed by the Claude Agent SDK and authenticates via spec.secrets.authSecret holding a CLAUDE_CODE_OAUTH_TOKEN.',
+      )
+      .optional(),
 
     // What the agent should do. Required unless interactive: true.
     task: z.string().min(1).optional(),
@@ -865,7 +877,7 @@ export const TaskPhase = z.enum([
   'scheduled', // Scheduler picked it, run being created
   'initializing', // Pod starting, git checkout in progress
   'running', // Agent actively working
-  'waiting-for-input', // PLAN-only: agent asked a question
+  'waiting-for-input', // agent asked a question (parked for human input)
   // Post-work
   'succeeded', // Run completed successfully
   'reviewing', // AI reviewer evaluating (optional)
@@ -920,7 +932,7 @@ export const TRANSITION_TABLE: Record<TaskPhase, TaskPhase[]> = {
   scheduled: ['initializing', 'failed'],
   initializing: ['running', 'succeeded', 'failed'],
   running: ['waiting-for-input', 'succeeded', 'failed'],
-  'waiting-for-input': ['running', 'failed'],
+  'waiting-for-input': ['running', 'succeeded', 'failed'],
   succeeded: ['reviewing', 'awaiting-human', 'done'],
   reviewing: ['awaiting-human', 'rework-requested'],
   'awaiting-human': [
@@ -1906,7 +1918,6 @@ export const DISPATCHER_CONTAINER = 'dispatcher';
 export const GIT_CLONE_CONTAINER = 'workspace-init';
 export const CODE_SERVER_CONTAINER = 'code-server';
 export const CODE_SERVER_PORT = 8080;
-export const CODE_SERVER_DEFAULT_IMAGE = 'ghcr.io/erkkaha/percussionist/code-server:latest';
 /**
  * Image for maintenance/exec pods when `Project.spec.exec.image` is unset.
  *

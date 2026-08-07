@@ -50,6 +50,7 @@ import {
   PLURAL_RUN,
   PLURAL_TASK,
   type Project,
+  parseModelRef,
   type Run,
   type RunStatus,
   type Task,
@@ -2041,6 +2042,7 @@ const CLOUD_PROVIDERS = new Set([
   'google-genai',
   'github-copilot',
   'azure',
+  'claude-code',
   'aws',
   'bedrock',
   'together',
@@ -2073,19 +2075,9 @@ export type AuthValidationResult = AuthValidationSuccess | AuthValidationFailure
  * model name starts with a recognized cloud prefix.
  */
 export function requiresCloudAuth(model: string): boolean {
-  const slashIdx = model.indexOf('/');
-  if (slashIdx === -1) return false;
-  const provider = model.slice(0, slashIdx).toLowerCase();
-  return CLOUD_PROVIDERS.has(provider);
-}
-
-/**
- * Parse the provider prefix from a `providerID/modelID` model string.
- */
-export function parseModelProvider(model: string): string | undefined {
-  const slashIdx = model.indexOf('/');
-  if (slashIdx === -1) return undefined;
-  return model.slice(0, slashIdx);
+  const { providerID } = parseModelRef(model);
+  if (!providerID) return false;
+  return CLOUD_PROVIDERS.has(providerID.toLowerCase());
 }
 
 /**
@@ -2107,19 +2099,29 @@ export function validateModelAuth(
 ): AuthValidationResult {
   if (!model) return { ok: true };
 
-  const provider = parseModelProvider(model);
-  if (!provider) return { ok: true };
+  const { providerID } = parseModelRef(model);
+  if (!providerID) return { ok: true };
 
-  const lowerProvider = provider.toLowerCase();
+  const lowerProvider = providerID.toLowerCase();
   if (LOCAL_PROVIDERS.has(lowerProvider)) return { ok: true };
   if (!CLOUD_PROVIDERS.has(lowerProvider)) return { ok: true };
 
   if (secrets?.authSecret || secrets?.llmKeysSecret) return { ok: true };
 
+  if (lowerProvider === 'claude-code') {
+    return {
+      ok: false,
+      error:
+        `Model "${model}" uses provider "claude-code" which requires authentication. ` +
+        `Set spec.secrets.authSecret to a Secret whose key holds the ` +
+        `CLAUDE_CODE_OAUTH_TOKEN subscription token (e.g. produced by \`claude setup-token\`).`,
+    };
+  }
+
   return {
     ok: false,
     error:
-      `Model "${model}" uses provider "${provider}" which requires authentication, ` +
+      `Model "${model}" uses provider "${providerID}" which requires authentication, ` +
       `but neither spec.secrets.authSecret nor spec.secrets.llmKeysSecret is configured. ` +
       `Run \`beatctl auth import\` to import opencode auth, or set llmKeysSecret to a Secret ` +
       `containing the provider's API key (e.g. ANTHROPIC_API_KEY).`,

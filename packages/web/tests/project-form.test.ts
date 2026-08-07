@@ -53,7 +53,7 @@ describe('project form request', () => {
 
     expect(request.codeServer).toEqual({
       enabled: true,
-      image: 'codercom/code-server:4.96.4',
+      image: 'ghcr.io/erkkaha/percussionist/code-server:latest',
       humanFolder: { enabled: true },
     });
   });
@@ -66,7 +66,7 @@ describe('project form request', () => {
 
     expect(request.codeServer).toEqual({
       enabled: true,
-      image: 'codercom/code-server:4.96.4',
+      image: 'ghcr.io/erkkaha/percussionist/code-server:latest',
     });
     expect(request.codeServer?.humanFolder).toBeUndefined();
   });
@@ -82,7 +82,7 @@ describe('project form request', () => {
 
     expect(request.codeServer).toEqual({
       enabled: true,
-      image: 'codercom/code-server:4.96.4',
+      image: 'ghcr.io/erkkaha/percussionist/code-server:latest',
       resources: {
         requests: { cpu: null, memory: null },
         limits: { cpu: null, memory: null },
@@ -288,12 +288,18 @@ describe('project update merge', () => {
   it('removes humanFolder from an existing spec when the edit payload carries null', () => {
     const merged = mergeProjectPatch(
       { codeServer: { enabled: true, image: 'custom', humanFolder: { enabled: true } } },
-      { codeServer: { enabled: true, image: 'codercom/code-server:4.96.4', humanFolder: null } },
+      {
+        codeServer: {
+          enabled: true,
+          image: 'ghcr.io/erkkaha/percussionist/code-server:latest',
+          humanFolder: null,
+        },
+      },
     );
 
     expect(merged.codeServer).toEqual({
       enabled: true,
-      image: 'codercom/code-server:4.96.4',
+      image: 'ghcr.io/erkkaha/percussionist/code-server:latest',
     });
     expect((merged.codeServer as Record<string, unknown>).humanFolder).toBeUndefined();
   });

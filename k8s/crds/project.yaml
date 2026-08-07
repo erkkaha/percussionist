@@ -528,7 +528,7 @@ spec:
                       default: false
                       type: boolean
                     image:
-                      default: codercom/code-server:4.96.4
+                      default: ghcr.io/erkkaha/percussionist/code-server:latest
                       type: string
                     resources:
                       type: object

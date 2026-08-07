@@ -64,7 +64,7 @@ export default function WorkspaceServicesTab({ form }: WorkspaceServicesTabProps
                 type="text"
                 value={form.codeServerImage}
                 onChange={(e) => form.setCodeServerImage(e.target.value)}
-                placeholder="codercom/code-server:4.96.4"
+                placeholder="ghcr.io/erkkaha/percussionist/code-server:latest"
                 className="font-mono"
               />
             </div>
