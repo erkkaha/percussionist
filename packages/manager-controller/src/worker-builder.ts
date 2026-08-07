@@ -35,11 +35,15 @@ export { MAX_RETRIES };
 export async function resolveAgentModel(
   project: Project,
   agentName: string,
+  deps: {
+    getClusterAgent?: typeof getClusterAgent;
+  } = {},
 ): Promise<string | undefined> {
   const rosterModel = (project.spec.agents ?? []).find((a) => a.name === agentName)?.model;
   if (rosterModel) return rosterModel;
+  const getClusterAgentFn = deps.getClusterAgent ?? getClusterAgent;
   try {
-    const agent = await getClusterAgent(agentName);
+    const agent = await getClusterAgentFn(agentName);
     return agent.spec.model || undefined;
   } catch {
     // Agent CR not found or inaccessible — fall back to project/cluster defaults.

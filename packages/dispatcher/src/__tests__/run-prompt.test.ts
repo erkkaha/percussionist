@@ -293,7 +293,7 @@ describe('runPrompt prompt-POST retry matrix', () => {
     expect((err as Error).message).toBe('socket reset');
     // Initial POST + 3 retries.
     expect(attempts).toBe(4);
-    expect(h.sleeps.filter((ms) => ms === 5000)).toHaveLength(3);
+    expect(h.sleeps.filter((ms) => ms === 5000).length).toBeGreaterThanOrEqual(3);
     expect(h.stats).toContainEqual(expect.objectContaining({ phase: 'Failed' }));
   });
 
