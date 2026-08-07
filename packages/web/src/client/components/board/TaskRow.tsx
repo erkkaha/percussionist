@@ -50,12 +50,18 @@ interface TaskRowProps {
 
 export function TaskRow({ task, col, isSelected, onClick, projectName, approvals }: TaskRowProps) {
   const worker = task.status?.worker;
+  const phase = task.status?.phase;
   const isBuild = task.spec.type === 'BUILD';
   // A run parked on a human (WaitingForInput), or a task parked in
   // waiting-for-input phase, must show an amber "waiting for input" badge —
   // never the red "failed" badge, even when worker.status is 'Failed'.
-  const isWaiting =
-    task.workerRunPhase === 'WaitingForInput' || task.status?.phase === 'waiting-for-input';
+  const isWaiting = task.workerRunPhase === 'WaitingForInput' || phase === 'waiting-for-input';
+  const showPhaseBadge =
+    (col === 'in-progress' || col === 'review') &&
+    phase &&
+    phase !== 'reviewing' &&
+    !isWaiting &&
+    worker?.status !== 'Failed';
   const colColor = COLUMN_COLORS[col] ?? 'bg-surface-overlay text-text-dim';
   const lastActivity = worker?.completedAt ?? worker?.startedAt ?? task.metadata.creationTimestamp;
   const parentRef = getParentRefPresentation(task);
@@ -114,17 +120,15 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
             )}
 
             {/* Phase badge (in-progress / review column; "reviewing" is superseded by the AI review badge below) */}
-            {(col === 'in-progress' || col === 'review') &&
-              task.status?.phase &&
-              task.status.phase !== 'reviewing' && (
-                <span
-                  className={`text-label-md font-mono uppercase flex items-center gap-0.5 ${
-                    col === 'in-progress' ? 'text-phase-running' : 'text-accent'
-                  }`}
-                >
-                  {task.status.phase}
-                </span>
-              )}
+            {showPhaseBadge && (
+              <span
+                className={`text-label-md font-mono uppercase flex items-center gap-0.5 ${
+                  col === 'in-progress' ? 'text-phase-running' : 'text-accent'
+                }`}
+              >
+                {phase}
+              </span>
+            )}
 
             {/* AI review in-flight (review lane) */}
             {col === 'review' && task.status?.phase === 'reviewing' && (
