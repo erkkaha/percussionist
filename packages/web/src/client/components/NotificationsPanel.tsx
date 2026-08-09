@@ -8,6 +8,7 @@ import {
   subscribeToPush,
   unsubscribeFromPush,
 } from '../lib/push';
+import { waitForServiceWorkerRegistration } from '../lib/pwa';
 import { NOTIFICATION_SOUNDS, useNotificationStore } from '../stores/settingsStore';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -24,13 +25,28 @@ function PushSection() {
   const [state, setState] = useState<PushState>({ kind: 'loading' });
 
   useEffect(() => {
-    if (!isPushSupported()) {
-      setState({ kind: 'unsupported' });
-      return;
-    }
-    getPushSubscription().then((sub) =>
-      setState({ kind: 'ready', enabled: sub !== null, busy: false }),
-    );
+    let cancelled = false;
+    void (async () => {
+      // Cheap sync capability guard first; the registration resolves async below.
+      if (!isPushSupported()) {
+        setState({ kind: 'unsupported' });
+        return;
+      }
+      // Await the service worker before deciding: it may still be registering
+      // after `load`, and reading it synchronously would falsely report
+      // "Unavailable" forever.
+      const reg = await waitForServiceWorkerRegistration();
+      if (cancelled) return;
+      if (!reg) {
+        setState({ kind: 'unsupported' });
+        return;
+      }
+      const sub = await getPushSubscription();
+      if (!cancelled) setState({ kind: 'ready', enabled: sub !== null, busy: false });
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (state.kind === 'loading') return null;
