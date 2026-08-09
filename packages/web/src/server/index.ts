@@ -15,6 +15,7 @@ import { getDb } from './db.js';
 import { NAMESPACE } from './kube.js';
 import { bootstrapAgentKeys, pruneExpiredRunKeys } from './lib/agent-keys.js';
 import { startPushTriggers } from './lib/push-triggers.js';
+import { runHousekeeping } from './lib/run-housekeeping.js';
 import { startMetricsCollector } from './metrics-collector.js';
 import stats, { RETENTION_DAYS, runRetentionCleanup } from './routes/stats.js';
 
@@ -88,10 +89,14 @@ console.log(
 );
 
 // ---------------------------------------------------------------------------
-// Retention cron — run hourly.
+// Retention cron — run hourly. Wrapped in runHousekeeping so a thrown DB error
+// (e.g. SQLITE_BUSY under a concurrent stats-POST write) is logged and retried
+// on the next tick instead of surfacing as an uncaughtException that kills the
+// pod — and every open SSE stream and attach terminal with it.
 
-runRetentionCleanup();
-setInterval(runRetentionCleanup, 60 * 60 * 1000);
+const retentionCleanup = runHousekeeping('runRetentionCleanup', runRetentionCleanup);
+void retentionCleanup.run();
+setInterval(() => void retentionCleanup.run(), 60 * 60 * 1000);
 
 // ---------------------------------------------------------------------------
 // Agent API keys.
@@ -107,10 +112,14 @@ if (process.env.AUTH_DISABLED !== '1') {
 
   // Expired run keys are refused by verification regardless; this only stops
   // rows accumulating for runs whose pods died without presenting the key again.
-  void pruneExpiredRunKeys();
+  // Wrapped in runHousekeeping: pruneExpiredRunKeys has no internal catch, so a
+  // single SQLITE_BUSY used to reject into the unhandledRejection handler and
+  // call process.exit(1). Errors are logged and retried on the next tick.
+  const pruneKeys = runHousekeeping('pruneExpiredRunKeys', pruneExpiredRunKeys);
+  void pruneKeys.run();
   const pruneInterval = setInterval(
     () => {
-      void pruneExpiredRunKeys();
+      void pruneKeys.run();
     },
     60 * 60 * 1000,
   );
