@@ -325,14 +325,6 @@ stats.patch('/session', scoped('stats', 'write'), async (c) => {
   return c.json({ ok: true });
 });
 
-// GET /api/stats/exists/:sessionID — check if a session row exists (for backfill guard).
-stats.get('/exists/:sessionID', auth(), (c) => {
-  const { sessionID } = c.req.param();
-  const db = getDb();
-  const row = db.select({ id: runs.id }).from(runs).where(eq(runs.id, sessionID)).get();
-  return c.json({ exists: row !== undefined });
-});
-
 // GET /api/stats/export?days=30 — full dump for LLM analysis.
 //
 // Returns a JSON array where each element is a session with nested messages,

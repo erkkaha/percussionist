@@ -95,6 +95,22 @@ async function expectHandledNotRouterMiss(res: Response): Promise<void> {
   expect(body.error).not.toBe('Not Found');
 }
 
+// Flipped guard: asserts the API catch-all answered for a path that no longer
+// has a handler. The catch-all returns 404 (in the test app, Hono's default
+// notFound; in production the explicit `/api/*` handler in index.ts), which is
+// exactly what `expectHandledNotRouterMiss` rejects on — so expecting it to
+// reject proves no handler matched and the 404 catch-all answered.
+async function expectRouterMiss(res: Response): Promise<void> {
+  expect(res.status).toBe(404);
+  let rejected = false;
+  try {
+    await expectHandledNotRouterMiss(res);
+  } catch {
+    rejected = true;
+  }
+  expect(rejected).toBe(true);
+}
+
 describe('board routes', () => {
   // Backed by K8s: without a cluster this fails to connect, with one it reports
   // the missing Project. Either way a handler answered.
@@ -171,13 +187,6 @@ describe('board routes', () => {
 const SESSION_ID = `smoke-session-${Date.now()}`;
 
 describe('stats API', () => {
-  it('GET /api/stats/exists/:sessionID → false for unknown', async () => {
-    const res = await req(`/api/stats/exists/no-such-session`);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { exists: boolean };
-    expect(body.exists).toBe(false);
-  });
-
   it('POST /api/stats/session → 200 ok', async () => {
     const res = await json('/api/stats/session', {
       sessionID: SESSION_ID,
@@ -228,11 +237,9 @@ describe('stats API', () => {
     expect(body.ok).toBe(true);
   });
 
-  it('GET /api/stats/exists/:sessionID → true after insert', async () => {
+  it('GET /api/stats/exists/:sessionID → 404 (route removed)', async () => {
     const res = await req(`/api/stats/exists/${SESSION_ID}`);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { exists: boolean };
-    expect(body.exists).toBe(true);
+    await expectRouterMiss(res);
   });
 
   it('POST /api/stats/session same ID → idempotent', async () => {
@@ -278,4 +285,39 @@ describe('stats API', () => {
     const res = await json('/api/stats/session', { run: { name: 'x' } });
     expect(res.status).toBe(400);
   });
+});
+
+// ===========================================================================
+// Removed product surface — deleted endpoints must be answered by the 404
+// catch-all, not by a handler.
+// ===========================================================================
+
+describe('removed product surface → API 404 catch-all', () => {
+  // These were deleted as dead product surface: the board task /abandon route,
+  // the four findings-triage routes, and GET /stats/exists/:sessionID. A
+  // reviewer of the guard itself should note the wiring check above — the
+  // flip of expectHandledNotRouterMiss is asserted per path here.
+  const removedPaths: Array<{ method: string; path: string; body?: unknown }> = [
+    { method: 'POST', path: `/api/projects/${PROJECT}/board/tasks/t1/abandon` },
+    { method: 'GET', path: `/api/projects/${PROJECT}/findings` },
+    { method: 'GET', path: `/api/projects/${PROJECT}/findings/f1` },
+    {
+      method: 'PATCH',
+      path: `/api/projects/${PROJECT}/findings/f1`,
+      body: { status: 'wontfix' },
+    },
+    { method: 'POST', path: `/api/projects/${PROJECT}/findings/f1/task`, body: { type: 'BUILD' } },
+    { method: 'GET', path: '/api/stats/exists/sid' },
+  ];
+
+  for (const { method, path, body } of removedPaths) {
+    it(`${method} ${path} → 404 from the API catch-all`, async () => {
+      const res = await req(path, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      await expectRouterMiss(res);
+    });
+  }
 });

@@ -1,11 +1,12 @@
 // Tests for project-scoped board task actions.
 //
-// approve / request-changes / retry-review / answer (and abandon) used to call
+// approve / request-changes / retry-review / answer used to call
 // getTask(taskName) with the default namespace and never verified
 // task.spec.projectRef. Tasks in non-default namespaces 404'd, and — worse —
 // when a task with the same name existed in the default namespace, the
 // annotation was patched on the wrong task while appendTaskEvent recorded the
-// event under the URL project, corrupting the activity feed.
+// event under the URL project, corrupting the activity feed. (The abandon
+// route shared the flaw until it was deleted as dead product surface.)
 //
 // These tests pin the getProjectTask() helper behaviour: tasks resolve via the
 // project's namespace, projectRef mismatch returns 404 with no annotation patch

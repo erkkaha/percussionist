@@ -219,7 +219,6 @@ describe('unauthenticated access → 401', () => {
       expectUnauthorized('/api/stats/session', 'POST', { sessionID: 'x', run: { name: 'y' } }));
     it('PATCH /api/stats/session → 401', async () =>
       expectUnauthorized('/api/stats/session', 'PATCH', { sessionID: 'x', run: { name: 'y' } }));
-    it('GET /api/stats/exists/sid → 401', async () => expectUnauthorized('/api/stats/exists/sid'));
     it('GET /api/stats/export → 401', async () => expectUnauthorized('/api/stats/export'));
     it('GET /api/stats/sessions → 401', async () => expectUnauthorized('/api/stats/sessions'));
     it('GET /api/stats/tool-metrics → 401', async () =>
@@ -290,8 +289,6 @@ describe('unauthenticated access → 401', () => {
       expectUnauthorized('/api/projects/myproj/board/tasks/t1/request-changes', 'POST', {
         feedback: 'fix this',
       }));
-    it('POST /api/projects/myproj/board/tasks/t1/abandon → 401', async () =>
-      expectUnauthorized('/api/projects/myproj/board/tasks/t1/abandon', 'POST'));
     it('POST /api/projects/myproj/board/tasks/t1/answer → 401', async () =>
       expectUnauthorized('/api/projects/myproj/board/tasks/t1/answer', 'POST', { answer: 'yes' }));
     it('POST /api/projects/myproj/board/task-events → 401', async () =>
