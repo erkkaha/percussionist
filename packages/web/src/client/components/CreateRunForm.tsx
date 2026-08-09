@@ -5,7 +5,7 @@ import { useProjects } from '../hooks/useProjects';
 import { useRun } from '../hooks/useRun';
 import { submitRun } from '../lib/api';
 import { authHeaders } from '../lib/auth';
-import type { AgentDef, CreateRunRequest, Project, Run } from '../lib/types';
+import type { CreateRunRequest, Project, Run } from '../lib/types';
 import ModelSelector from './ModelSelector';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -16,6 +16,19 @@ import { Textarea } from './ui/textarea';
 interface ClusterAgent {
   name: string;
   content: string;
+}
+
+/** Inline-agent row with a stable id so typing a name does not remount the row. */
+interface AgentRow {
+  id: number;
+  name: string;
+  content: string;
+}
+
+// Stable, module-level id sequence for inline-agent rows (mirrors nextSidecarId()).
+let _agentRowIdSeq = 0;
+function nextAgentRowId() {
+  return ++_agentRowIdSeq;
 }
 
 async function fetchClusterAgents(): Promise<ClusterAgent[]> {
@@ -48,7 +61,7 @@ export default function CreateRunForm() {
   const [llmKeysSecret, setLlmKeysSecret] = useState('');
   const [authSecretName, setOpencodeAuthSecretName] = useState('');
   const [seeded, setSeeded] = useState(false);
-  const [agents, setAgents] = useState<AgentDef[]>([]);
+  const [agents, setAgents] = useState<AgentRow[]>([]);
   const [clusterAgents, setClusterAgents] = useState<ClusterAgent[]>([]);
   const [selectedClusterAgent, setSelectedClusterAgent] = useState('');
 
@@ -61,15 +74,15 @@ export default function CreateRunForm() {
 
   function addAgent() {
     if (agents.length >= 5) return;
-    setAgents((prev) => [...prev, { name: '', content: '' }]);
+    setAgents((prev) => [...prev, { id: nextAgentRowId(), name: '', content: '' }]);
   }
 
-  function removeAgent(index: number) {
-    setAgents((prev) => prev.filter((_, i) => i !== index));
+  function removeAgent(id: number) {
+    setAgents((prev) => prev.filter((a) => a.id !== id));
   }
 
-  function updateAgent(index: number, field: 'name' | 'content', value: string) {
-    setAgents((prev) => prev.map((a, i) => (i === index ? { ...a, [field]: value } : a)));
+  function updateAgent(id: number, field: 'name' | 'content', value: string) {
+    setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, [field]: value } : a)));
   }
 
   // When a cluster agent is selected, populate inline agents from it.
@@ -81,7 +94,7 @@ export default function CreateRunForm() {
     }
     const found = clusterAgents.find((a) => a.name === name);
     if (found) {
-      setAgents([{ name, content: found.content }]);
+      setAgents([{ id: nextAgentRowId(), name, content: found.content }]);
     }
   }
 
@@ -97,7 +110,13 @@ export default function CreateRunForm() {
     if (run.spec.model) setModel(run.spec.model);
     if (run.spec.agent) setAgent(run.spec.agent);
     if (run.spec.inlineAgents && run.spec.inlineAgents.length > 0)
-      setAgents([...run.spec.inlineAgents]);
+      setAgents(
+        run.spec.inlineAgents.map((a) => ({
+          id: nextAgentRowId(),
+          name: a.name,
+          content: a.content,
+        })),
+      );
     if (run.spec.interactive) setInteractive(run.spec.interactive);
     if (run.spec.timeoutSeconds) setTimeoutSeconds(run.spec.timeoutSeconds);
     if (run.spec.source?.git?.url) {
@@ -179,7 +198,8 @@ export default function CreateRunForm() {
     if (task.trim()) req.task = task.trim();
     if (model.trim()) req.model = model.trim();
     if (agent.trim()) req.agent = agent.trim();
-    if (agents.length > 0) req.inlineAgents = agents;
+    if (agents.length > 0)
+      req.inlineAgents = agents.map(({ name, content }) => ({ name, content }));
     if (showGit && gitUrl.trim()) {
       const git: NonNullable<NonNullable<CreateRunRequest['source']>['git']> = {
         url: gitUrl.trim(),
@@ -335,14 +355,14 @@ export default function CreateRunForm() {
             </button>
           </div>
           {agents.map((a, i) => (
-            <div key={a.name} className="space-y-2 rounded-md border border-border bg-surface p-3">
+            <div key={a.id} className="space-y-2 rounded-md border border-border bg-surface p-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-text-muted">Agent {i + 1}</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => removeAgent(i)}
+                  onClick={() => removeAgent(a.id)}
                   disabled={agents.length <= 1}
                   className="text-phase-failed hover:text-red-400 disabled:opacity-30"
                 >
@@ -352,13 +372,13 @@ export default function CreateRunForm() {
               <Input
                 type="text"
                 value={a.name}
-                onChange={(e) => updateAgent(i, 'name', e.target.value)}
+                onChange={(e) => updateAgent(a.id, 'name', e.target.value)}
                 placeholder="agent-name (used as filename)"
                 className="font-mono"
               />
               <Textarea
                 value={a.content}
-                onChange={(e) => updateAgent(i, 'content', e.target.value)}
+                onChange={(e) => updateAgent(a.id, 'content', e.target.value)}
                 placeholder={`---\ndescription: What this agent does\n---\nSystem prompt...`}
                 rows={6}
                 className="font-mono"
