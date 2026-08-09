@@ -244,10 +244,14 @@ export default function ActivityPage() {
       const data = (await res.json()) as { events: TaskEvent[]; count: number };
       setEvents((prev) => {
         if (replace) return data.events;
-        // Merge: prepend new events by id, deduplicate
+        // Merge: deduplicate by id
         const existingIds = new Set(prev.map((e) => e.id));
         const fresh = data.events.filter((e) => !existingIds.has(e.id));
-        return [...fresh, ...prev];
+        // Backwards pagination returns older events (newest-first within the
+        // page): append them below so date groups stay monotonic (newest at
+        // top, older below). Periodic polls return the newest page and must
+        // prepend to surface new events at the top.
+        return before ? [...prev, ...fresh] : [...fresh, ...prev];
       });
       setHasMore(data.count >= LIMIT);
       if (data.events.length > 0) {

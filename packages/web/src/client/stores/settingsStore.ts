@@ -9,12 +9,10 @@ export const NOTIFICATION_PREFS_KEY = 'percussionist:notifications';
 
 export interface NotificationSettings {
   soundEnabled: boolean;
-  selectedSound: string;
 }
 
 const DEFAULT_SETTINGS: NotificationSettings = {
   soundEnabled: true,
-  selectedSound: 'success',
 };
 
 /** Available notification drum sounds with display labels and descriptions. */
@@ -41,14 +39,12 @@ export const NOTIFICATION_SOUNDS: Array<{
 export const useNotificationStore = create<
   NotificationSettings & {
     setSoundEnabled: (enabled: boolean) => void;
-    setSelectedSound: (sound: string) => void;
   }
 >()(
   persist(
     (set) => ({
       ...DEFAULT_SETTINGS,
       setSoundEnabled: (enabled: boolean) => set({ soundEnabled: enabled }),
-      setSelectedSound: (sound: string) => set({ selectedSound: sound }),
     }),
     {
       name: NOTIFICATION_PREFS_KEY,
