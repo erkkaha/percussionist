@@ -92,8 +92,6 @@ function PushSection() {
 export default function NotificationsPanel() {
   const soundEnabled = useNotificationStore((s) => s.soundEnabled);
   const setSoundEnabled = useNotificationStore((s) => s.setSoundEnabled);
-  const selectedSound = useNotificationStore((s) => s.selectedSound);
-  const setSelectedSound = useNotificationStore((s) => s.setSelectedSound);
 
   return (
     <Card>
@@ -136,22 +134,6 @@ export default function NotificationsPanel() {
         {soundEnabled && (
           <>
             <Separator />
-
-            {/* Selected sound */}
-            <div className="flex flex-col gap-2">
-              <span className="text-sm font-medium">Default notification sound</span>
-              <select
-                value={selectedSound}
-                onChange={(e) => setSelectedSound(e.target.value)}
-                className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                {NOTIFICATION_SOUNDS.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </div>
 
             {/* Sound preview list */}
             <div className="flex flex-col gap-3">

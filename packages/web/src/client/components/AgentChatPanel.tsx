@@ -67,8 +67,32 @@ function timeAgo(ts: number): string {
   return `${Math.floor(days / 30)}mo ago`;
 }
 
-function messageKey(m: ChatMessage): string {
-  return `${m.role}\0${m.text}`;
+// Monotonically increasing sequence for messages that carry no server `id`
+// (optimistic user bubbles, system/error bubbles, POST-response text). A fresh
+// key per message lets identical text render more than once ("yes" twice).
+let _clientSeq = 0;
+
+// Stable per-message identity: keep the server `id` when one is supplied,
+// otherwise assign a unique client sequence key.
+function stableKey(m: ChatMessage): string {
+  return m.id ?? `client-${++_clientSeq}`;
+}
+
+// Synthetic keys are the ones we assign locally (`client-*` for live messages,
+// `hist-*` for loaded history); everything else is a real server id.
+function isSyntheticKey(id: string | undefined): boolean {
+  return id == null || id.startsWith('client-') || id.startsWith('hist-');
+}
+
+// Index of the last item satisfying the predicate, or -1. Matching the last
+// (newest) occurrence keeps an SSE upgrade from hijacking an older history
+// bubble with identical text.
+function lastIndexMatching(items: ChatMessage[], pred: (m: ChatMessage) => boolean): number {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const m = items[i];
+    if (m && pred(m)) return i;
+  }
+  return -1;
 }
 
 interface AgentChatPanelProps {
@@ -112,6 +136,7 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const seenKeysRef = useRef<Set<string>>(new Set());
+  const messagesRef = useRef<ChatMessage[]>([]);
   const speakEnabledRef = useRef(false);
   const speakAfterCreatedRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -132,10 +157,51 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
 
   const addMessageIfNew = useCallback(
     (msg: ChatMessage) => {
-      const key = messageKey(msg);
-      if (seenKeysRef.current.has(key)) return;
-      seenKeysRef.current.add(key);
-      setMessages((prev) => [...prev, msg]);
+      // Messages without a server id (optimistic user bubbles, system/error
+      // bubbles, POST-response text) get a unique client sequence identity so
+      // identical text renders more than once.
+      const hasServerId = msg.id != null;
+      const id = msg.id ?? stableKey(msg);
+      msg.id = id;
+
+      if (seenKeysRef.current.has(id)) return;
+      seenKeysRef.current.add(id);
+
+      const prev = messagesRef.current;
+      let next: ChatMessage[];
+      if (hasServerId) {
+        // SSE message with a real id: if the same role+text is already shown
+        // under a synthetic key (from history or the POST response), replace
+        // it in place so the bubble keeps its real id instead of duplicating.
+        const placeholderIdx = lastIndexMatching(
+          prev,
+          (m) => m.role === msg.role && m.text === msg.text && isSyntheticKey(m.id),
+        );
+        if (placeholderIdx !== -1) {
+          next = prev.slice();
+          next[placeholderIdx] = msg;
+        } else {
+          next = [...prev, msg];
+        }
+      } else {
+        // POST response text with no id: if SSE already delivered the same
+        // role+text under a real id, refresh that bubble's text in place
+        // instead of appending a duplicate.
+        const matchIdx = lastIndexMatching(
+          prev,
+          (m) => m.role === msg.role && m.text === msg.text && !isSyntheticKey(m.id),
+        );
+        const target = matchIdx !== -1 ? prev[matchIdx] : undefined;
+        if (target) {
+          next = prev.slice();
+          next[matchIdx] = { ...target, text: msg.text };
+        } else {
+          next = [...prev, msg];
+        }
+      }
+      messagesRef.current = next;
+      setMessages(next);
+
       if (msg.role !== 'assistant') return;
       const isNew = msg.created != null && msg.created > speakAfterCreatedRef.current;
       if (isNew || speakEnabledRef.current) {
@@ -210,15 +276,20 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
     setHistoryLoaded(false);
     resetSeen();
     setMessages([]);
+    messagesRef.current = [];
     speakAfterCreatedRef.current = 0;
     fetch('/api/agent/chat/history', { headers: authHeaders() })
       .then((r) => r.json())
       .then((d) => {
-        const history = d.history as ChatMessage[] | undefined;
-        setMessages(history ?? []);
+        const history = (d.history as ChatMessage[] | undefined) ?? [];
+        // Server history has no `id`; give each item a stable role+seq key so
+        // it renders (and dedups consistently) without collisions.
+        const loaded = history.map((m, i) => (m.id ? m : { ...m, id: `hist-${i}-${m.role}` }));
+        setMessages(loaded);
+        messagesRef.current = loaded;
         let maxCreated = 0;
-        for (const m of history ?? []) {
-          seenKeysRef.current.add(messageKey(m));
+        for (const m of loaded) {
+          if (m.id) seenKeysRef.current.add(m.id);
           if (m.created && m.created > maxCreated) maxCreated = m.created;
         }
         speakAfterCreatedRef.current = maxCreated;
@@ -252,10 +323,14 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
     };
   }, [open, historyLoaded, addMessageIfNew]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom when new messages arrive while the panel is open
+  // (guarding on `open` so it fires on each new message instead of once at
+  // mount while the panel is still closed).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `messages` is an intentional trigger for re-running the scroll.
   useEffect(() => {
+    if (!open) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
+  }, [messages, open]);
 
   // Cleanup speech and recognition on close/unmount
   useEffect(() => {
@@ -400,7 +475,7 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
 
               return (
                 <div
-                  key={messageKey(msg)}
+                  key={msg.id ?? stableKey(msg)}
                   className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
