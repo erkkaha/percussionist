@@ -50,7 +50,6 @@ Bypass hooks with `--no-verify` (rarely needed).
   - `images/runner-claude/` - Claude Agent SDK runner, same toolchain (Alpine-based)
   - `images/node/` - Shared Node 24 base
   - `images/web/` - Bun runtime
-  - `images/manager/` - Node 24
 - Images are built locally (no external registry) and loaded into cluster via `scripts/minikube-load.sh`
 
 ## Testing

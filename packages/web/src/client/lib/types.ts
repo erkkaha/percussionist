@@ -18,7 +18,6 @@ export type {
   ManagerMetrics,
   Project,
   Run,
-  TaskColumn,
   TaskDiffFindings,
   TaskType,
   WorkerStatus,
