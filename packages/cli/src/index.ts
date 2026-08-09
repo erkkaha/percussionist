@@ -38,6 +38,7 @@ import {
 import { runCancel } from './cancel.js';
 import { runChat } from './chat.js';
 import { runDeploy } from './deploy.js';
+import { runDoctor } from './doctor.js';
 import { runGithubTokenCreate } from './github-token.js';
 import { DEFAULT_NAMESPACE } from './kube.js';
 import { runLogs } from './logs.js';
@@ -604,6 +605,38 @@ validate
   .description('audit ClusterAgent capabilities and Project roster coverage')
   .option('-n, --namespace <ns>', 'namespace (reserved; audit is cluster-wide)', DEFAULT_NAMESPACE)
   .action(runValidateAgents);
+
+// doctor ---------------------------------------------------------------------
+// Read-only cluster diagnostics. Only get/list verbs plus bounded probes; the
+// opt-in --probe-dns exec is the only in-pod action. Exit codes:
+// 0 = all checks pass, 1 = any check fails, 2 = cluster unreachable/fatal.
+program
+  .command('doctor')
+  .description(
+    'run read-only cluster diagnostics (CRDs, RBAC, NetworkPolicy, DNS, storage, credentials, providers, dashboard, health)',
+  )
+  .option('-n, --namespace <ns>', 'namespace to inspect', DEFAULT_NAMESPACE)
+  .option(
+    '--check <name>',
+    'run only the named check category (repeatable)',
+    (val: string, prev: string[] = []) => [...prev, val],
+  )
+  .option('--json', 'emit a machine-readable JSON report', false)
+  .option(
+    '--probe-dns',
+    'exec `getent hosts` into a ready pod to verify in-cluster DNS (opt-in, best-effort)',
+    false,
+  )
+  .option('--timeout <seconds>', 'per-probe timeout in seconds', '30')
+  .action((opts) =>
+    runDoctor({
+      namespace: opts.namespace,
+      check: opts.check,
+      json: Boolean(opts.json),
+      probeDns: Boolean(opts.probeDns),
+      timeout: Number(opts.timeout),
+    }),
+  );
 
 program.parseAsync(process.argv).catch((e) => {
   console.error('beatctl:', (e as Error).message ?? e);
