@@ -110,8 +110,33 @@ const TASK = process.env.RUN_TASK ?? '';
 // poll loop to enforce this first-response deadline.
 const FIRST_RESPONSE_TIMEOUT_MS = 3_600_000;
 const HARD_TIMEOUT_MS = FIRST_RESPONSE_TIMEOUT_MS + 300_000;
+// Lead time over the pod's activeDeadlineSeconds (spec.timeoutSeconds) so the
+// dispatcher's graceful snapshot → sendStats(Failed) → patchStatus(Failed)
+// path completes before the kubelet SIGTERMs/SIGKILLs the pod.
+const HARD_TIMEOUT_GRACE_MS = 60_000;
+// Floor for the env-derived hard timeout so tiny configured timeouts still
+// get a boot window before the deadline guard fires.
+const MIN_HARD_TIMEOUT_MS = 30_000;
 const SETTLE_MS = 10_000;
 const IDLE_TIMEOUT_MS = 900_000;
+
+/**
+ * Resolve the run's overall hard-timeout delay from RUN_TIMEOUT_SECONDS
+ * (injected by the operator from Run.spec.timeoutSeconds). The deadline fires
+ * HARD_TIMEOUT_GRACE_MS before the pod's activeDeadlineSeconds so the graceful
+ * failure path wins the race with the kubelet, floored at MIN_HARD_TIMEOUT_MS
+ * so tiny timeouts still get a boot window. Falls back to the legacy
+ * HARD_TIMEOUT_MS (65 min) when the env is missing or invalid (local runs,
+ * tests, legacy pods).
+ */
+export function resolveHardTimeoutMs(envSeconds?: string): number {
+  const seconds = envSeconds === undefined ? process.env.RUN_TIMEOUT_SECONDS : envSeconds;
+  const n = seconds ? Number(seconds) : NaN;
+  if (Number.isFinite(n) && n > 0) {
+    return Math.max(MIN_HARD_TIMEOUT_MS, n * 1000 - HARD_TIMEOUT_GRACE_MS);
+  }
+  return HARD_TIMEOUT_MS; // legacy fallback: 65 min
+}
 
 // ---------------------------------------------------------------------------
 // Token aggregator
@@ -897,7 +922,7 @@ export interface RunPromptDeps {
   sendStats?: typeof sendStats;
   /** Create the opencode session; default POSTs /session. */
   createSession?: () => Promise<{ id: string }>;
-  /** Hard-timeout delay in ms; default HARD_TIMEOUT_MS. */
+  /** Hard-timeout delay in ms; default resolveHardTimeoutMs() (derived from RUN_TIMEOUT_SECONDS, falling back to HARD_TIMEOUT_MS). */
   hardTimeoutMs?: number;
 }
 
@@ -936,6 +961,11 @@ export async function runPrompt(
   const doSendStats = d.sendStats ?? sendStats;
   const doSnapshot =
     d.snapshot ?? ((c, rn, ns, ru, sid) => snapshotAllSessions(c, rn, ns, ru, sid));
+
+  // Overall run deadline. deps.hardTimeoutMs (tests) wins; otherwise derive
+  // from RUN_TIMEOUT_SECONDS lazily so the env is read at call time, not
+  // module scope (falls back to the legacy 65-min HARD_TIMEOUT_MS).
+  const hardTimeoutMs = d.hardTimeoutMs ?? resolveHardTimeoutMs();
 
   const sessionData = await doCreateSession();
   const sessionID = sessionData.id;
@@ -1089,7 +1119,15 @@ export async function runPrompt(
       tokens,
       constants: {
         pollMs: 2000,
-        firstResponseTimeoutMs: FIRST_RESPONSE_TIMEOUT_MS,
+        // Cap the first-response window at the effective deadline minus one
+        // poll tick so a run whose configured timeout is under 1 h fails with
+        // the precise "no assistant response" message instead of the generic
+        // hard-timeout message. The 1s floor keeps tiny injected hardTimeoutMs
+        // (tests) from making the window negative.
+        firstResponseTimeoutMs: Math.min(
+          FIRST_RESPONSE_TIMEOUT_MS,
+          Math.max(1000, hardTimeoutMs - 2000),
+        ),
         settleMs: SETTLE_MS,
         idleTimeoutMs: IDLE_TIMEOUT_MS,
         healthFailThreshold: 3,
@@ -1169,7 +1207,6 @@ export async function runPrompt(
   // rejects a promise the Promise.race observes, so the run exits through the
   // normal snapshot → stats → Failed path and main()'s handler only has to do
   // the final (idempotent) status patch and process exit.
-  const hardTimeoutMs = d.hardTimeoutMs ?? HARD_TIMEOUT_MS;
   let hardTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const hardTimeout = new Promise<never>((_resolve, reject) => {
     hardTimeoutHandle = setTimeout(() => {
