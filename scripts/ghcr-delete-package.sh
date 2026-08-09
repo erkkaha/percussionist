@@ -13,7 +13,7 @@ set -euo pipefail
 API_BASE="https://api.github.com"
 OWNER="${GH_OWNER:-erkkaha}"
 REPO="${GH_REPO:-percussionist}"
-DEFAULT_PACKAGES=("runner" "operator" "dispatcher" "manager" "web" "memory")
+DEFAULT_PACKAGES=("runner" "runner-claude" "operator" "dispatcher" "manager" "web" "memory" "code-server")
 
 DRY_RUN=true
 USE_ALL=false

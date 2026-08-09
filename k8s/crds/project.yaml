@@ -641,32 +641,6 @@ spec:
                           - workerId
                           - sessionID
                           - messageText
-                    facilitations:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          diagnosis:
-                            type: string
-                            maxLength: 1024
-                          recommendedAction:
-                            type: string
-                            enum:
-                              - retry_same
-                              - retry_alternative
-                              - skip
-                              - approve
-                              - request_changes
-                              - escalate
-                          alternativeAgent:
-                            type: string
-                            maxLength: 63
-                          suggestion:
-                            type: string
-                            maxLength: 4096
-                        required:
-                          - diagnosis
-                          - recommendedAction
                     lastEventAt:
                       type: string
                     managerMetrics:

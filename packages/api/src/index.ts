@@ -596,16 +596,6 @@ export type ClusterSettings = z.infer<typeof ClusterSettingsSchema>;
 // ---------------------------------------------------------------------------
 // Facilitation types — must come before OpenCodeRunSpec which references them.
 
-export const FacilitationAction = {
-  RetrySame: 'retry_same',
-  RetryAlternative: 'retry_alternative',
-  Skip: 'skip',
-  Approve: 'approve',
-  RequestChanges: 'request_changes',
-  Escalate: 'escalate',
-} as const;
-export type FacilitationAction = (typeof FacilitationAction)[keyof typeof FacilitationAction];
-
 export const FacilitationSpecSchema = z.object({
   targetRunName: z.string().min(1),
   targetTaskId: z.string().min(1),
@@ -616,22 +606,6 @@ export const FacilitationSpecSchema = z.object({
 });
 
 export type FacilitationSpec = z.infer<typeof FacilitationSpecSchema>;
-
-export const FacilitationResultSchema = z.object({
-  diagnosis: z.string().max(1024),
-  recommendedAction: z.enum([
-    FacilitationAction.RetrySame,
-    FacilitationAction.RetryAlternative,
-    FacilitationAction.Skip,
-    FacilitationAction.Approve,
-    FacilitationAction.RequestChanges,
-    FacilitationAction.Escalate,
-  ]),
-  alternativeAgent: z.string().max(63).optional(),
-  suggestion: z.string().max(4096).optional(),
-});
-
-export type FacilitationResult = z.infer<typeof FacilitationResultSchema>;
 
 // ---------------------------------------------------------------------------
 // Run — the core CRD reconciled by the operator.
@@ -897,18 +871,6 @@ export function computeBoardColumn(phase: TaskPhase): BoardColumn {
   return 'in-progress';
 }
 
-// Legacy task column enum — kept for backwards compatibility during migration
-export const TaskColumn = {
-  Backlog: 'backlog',
-  Ready: 'ready',
-  InProgress: 'in-progress',
-  Review: 'review',
-  Rework: 'rework',
-  Done: 'done',
-  Blocked: 'blocked',
-} as const;
-export type TaskColumn = (typeof TaskColumn)[keyof typeof TaskColumn];
-
 // ---------------------------------------------------------------------------
 // Task phase transition table — single source of truth for allowed phase
 // transitions. Shared by the manager's reconciler (decision/effects/MCP tools)
@@ -1083,7 +1045,6 @@ export const BoardStatusSchema = z.object({
   activeWorkers: z.number().int().min(0).default(0),
   escalations: z.string().array().optional(),
   pendingQuestions: PendingQuestionSchema.array().optional(),
-  facilitations: FacilitationResultSchema.array().optional(),
   lastEventAt: z.string().optional(),
   /** Manager reconciliation metrics — written by manager-controller. */
   managerMetrics: ManagerMetricsSchema.optional(),
@@ -1803,11 +1764,6 @@ export const TaskStatusSchema = z
     retryAfter: z.string().optional(),
     lastFailureReason: z.string().max(4096).optional(),
     lastFailureDuration: z.number().optional(),
-
-    // Legacy column field — kept for backwards compatibility, never written by new code.
-    column: z
-      .enum(['backlog', 'ready', 'in-progress', 'review', 'rework', 'done', 'blocked'])
-      .optional(),
 
     // Worker execution state — set when phase is scheduled or beyond.
     worker: WorkerStatusSchema.optional(),

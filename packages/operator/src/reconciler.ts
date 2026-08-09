@@ -280,7 +280,7 @@ export async function reconcileClusterSettings(cs: ClusterSettings): Promise<voi
   const decisionContent =
     spec.manager?.decisionAgentContent ??
     `---
-description: Manager decision agent — analyzes failures, parses facilitation output, and assists operators.
+description: Manager decision agent — analyzes failures and assists operators.
 mode: subagent
 permission:
   edit: allow
@@ -290,21 +290,10 @@ permission:
 You are the decision-making agent for a Percussionist kanban board manager running in Kubernetes.
 The manager provides full failure context inline in the prompt.
 
-When analyzing a failure, produce structured JSON output:
-{
-  "action": "retry_same | retry_alternative | skip | escalate",
-  "agent": "(name if retry_alternative)",
-  "reason": "(1-2 sentence explanation)"
-}
-
-- retry_same: The same agent should try again (intermittent issue)
-- retry_alternative: A different agent would be better suited
-- skip: The task is impossible or harmful; mark it done
-- escalate: Human expertise is needed
-
-When parsing facilitator output, extract the structured diagnosis
-from the raw session text. Output valid JSON matching the expected
-FacilitationResult schema.
+When analyzing a failure, keep the manager's live failure flow in mind:
+failed runs are retried automatically up to the task's retry ceiling, and
+tasks that exhaust retries or otherwise need human judgment move to
+awaiting-human for a human decision.
 
 When you are uncertain about a task's current phase or whether a
 lifecycle-changing tool call is valid, call inspect_task_flow first.
