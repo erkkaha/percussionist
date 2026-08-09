@@ -3,6 +3,7 @@ import { useRun } from '../hooks/useRun';
 import { useRunEvents } from '../hooks/useRunEvents';
 import { TERMINAL_PHASES } from '../lib/types';
 import { skeletonKeys } from '../lib/utils';
+import ErrorBoundary from './ErrorBoundary';
 import SessionView from './SessionView';
 import StatusBadge from './StatusBadge';
 import TokenCounter from './TokenCounter';
@@ -200,13 +201,21 @@ export default function SessionDetail() {
           <CardTitle className="text-sm font-medium text-text-muted">Session</CardTitle>
         </CardHeader>
         <CardContent>
-          <SessionView
-            name={name ?? ''}
-            hasSession={hasSession}
-            active={isActive}
-            sseConnected={sseConnected}
-            eventTick={eventTick}
-          />
+          <ErrorBoundary
+            fallback={
+              <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-4 text-sm text-phase-failed">
+                Could not load this session&apos;s conversation.
+              </div>
+            }
+          >
+            <SessionView
+              name={name ?? ''}
+              hasSession={hasSession}
+              active={isActive}
+              sseConnected={sseConnected}
+              eventTick={eventTick}
+            />
+          </ErrorBoundary>
         </CardContent>
       </Card>
     </div>
