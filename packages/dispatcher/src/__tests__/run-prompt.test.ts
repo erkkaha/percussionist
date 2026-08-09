@@ -475,6 +475,24 @@ describe('runInteractive (smoke)', () => {
       patchNamespacedConfigMap: async () => {},
     } as unknown as CoreV1Api;
 
+    // Spy on sendStats to assert the termination-path flush. The first session
+    // id ('s1') is discovered before shutdown, so the flush is keyed on it.
+    const statsCalls: Array<{
+      sessionID: string;
+      phase: string;
+      startedAt: string;
+      completedAt: string | undefined;
+    }> = [];
+    const before = new Date().toISOString();
+    const sendStatsSpy = async (
+      sessionID: string,
+      phase: string,
+      startedAt: string,
+      completedAt: string | undefined,
+    ): Promise<void> => {
+      statsCalls.push({ sessionID, phase, startedAt, completedAt });
+    };
+
     let shuttingDown = false;
     setTimeout(() => {
       shuttingDown = true;
@@ -494,6 +512,7 @@ describe('runInteractive (smoke)', () => {
         'run-1',
         'ns',
         'uid',
+        { sendStats: sendStatsSpy },
       );
     } finally {
       (globalThis as { fetch: unknown }).fetch = origFetch;
@@ -505,5 +524,16 @@ describe('runInteractive (smoke)', () => {
     );
     // A session snapshot ConfigMap was written (on discovery and/or first idle).
     expect(cmCreates.length).toBeGreaterThanOrEqual(1);
+    // Termination flushed a final full sendStats keyed on the first session,
+    // in Running phase (interactive termination is not a failure), spanning
+    // the whole interactive run (startedAt no earlier than test start).
+    expect(statsCalls.length).toBe(1);
+    expect(statsCalls[0]?.sessionID).toBe('s1');
+    expect(statsCalls[0]?.phase).toBe('Running');
+    expect(statsCalls[0]?.startedAt).toBeDefined();
+    expect(statsCalls[0]?.startedAt >= before).toBe(true);
+    expect(Number.isNaN(Date.parse(statsCalls[0]?.startedAt ?? ''))).toBe(false);
+    expect(statsCalls[0]?.completedAt).toBeDefined();
+    expect(Number.isNaN(Date.parse(statsCalls[0]?.completedAt ?? ''))).toBe(false);
   });
 });

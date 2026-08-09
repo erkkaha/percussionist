@@ -459,6 +459,11 @@ export async function streamSseEvents(opts: SseStreamOptions): Promise<void> {
 // ---------------------------------------------------------------------------
 // Interactive mode
 
+export interface RunInteractiveDeps {
+  /** Injectable sendStats for tests; defaults to the real implementation. */
+  sendStats?: typeof sendStats;
+}
+
 export async function runInteractive(
   patchStatus: (p: object) => Promise<void>,
   isShuttingDown: () => boolean,
@@ -467,6 +472,7 @@ export async function runInteractive(
   runName: string,
   runNamespace: string,
   runUid: string,
+  deps?: RunInteractiveDeps,
 ): Promise<void> {
   await patchStatus({
     phase: RunPhase.Running,
@@ -609,6 +615,22 @@ export async function runInteractive(
   terminate = true;
 
   await tokens.flush(patchStatus, true);
+  // Final full analytics flush so interactive-run deltas that the incremental
+  // flush lost (failed PATCHes, missed turns) are not permanently dropped.
+  // Best-effort: sendStats swallows all failures internally. Keyed on
+  // firstSessionID — the same session the incremental flush uses; interactive
+  // multi-session analytics are a pre-existing limitation, out of scope.
+  const doSendStats = deps?.sendStats ?? sendStats;
+  const totals = tokens.totals();
+  if (firstSessionID) {
+    await doSendStats(
+      firstSessionID,
+      RunPhase.Running,
+      interactiveStartedAt,
+      new Date().toISOString(),
+      totals,
+    );
+  }
   log('interactive session ending — snapshotting');
   await snapshotAllSessions(coreApi, runName, runNamespace, runUid);
   await patchStatus({ message: 'dispatcher terminated' });
