@@ -18,6 +18,7 @@
 // for staying read-only (get/list verbs + bounded probes), and `--probe-dns`
 // is the only opt-in in-pod exec (a read-only `getent hosts`).
 
+import { STATIC_CHECKS } from './doctor-static.js';
 import type { DoctorClients } from './k8s-clients.js';
 import { doctorClients } from './k8s-clients.js';
 import { DEFAULT_NAMESPACE } from './kube.js';
@@ -60,13 +61,13 @@ export interface DoctorCheck {
 }
 
 /**
- * Default check registry. The per-category check functions (crds, rbac,
- * network-policy, dns, storage, credentials, providers, models, dashboard,
- * health) are wired into this array by the follow-up BUILD tasks; the
- * orchestrator only iterates whatever is registered here (or injected via
- * `runDoctor` deps).
+ * Default check registry. The five static checks (crds, rbac, network-policy,
+ * dns, storage) come from doctor-static.ts; the follow-up BUILD tasks wire the
+ * remaining categories (credentials, providers, models, dashboard, health)
+ * into this array the same way. The orchestrator only iterates whatever is
+ * registered here (or injected via `runDoctor` deps).
  */
-export const DEFAULT_CHECKS: DoctorCheck[] = [];
+export const DEFAULT_CHECKS: DoctorCheck[] = [...STATIC_CHECKS];
 
 export const DEFAULT_PROBE_TIMEOUT_SEC = 30;
 
