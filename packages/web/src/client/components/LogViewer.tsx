@@ -37,6 +37,36 @@ function toTerminalLines(text: string): string {
   return text.replace(/\r?\n/g, '\r\n');
 }
 
+/**
+ * Cap for the overlap search (characters). The server's tail-N payload is
+ * bounded by the window size (max 1000 lines), but a single pathological line
+ * (e.g. a giant JSON dump) could still be megabytes long — this keeps the
+ * suffix/prefix scan cost predictable while covering realistic windows.
+ */
+const MAX_OVERLAP = 256 * 1024;
+
+/**
+ * Longest overlap between the previously written payload and the new one:
+ * the largest `k` such that `prev` ends with `next.slice(0, k)`, i.e. the new
+ * payload continues where the old one left off. The predicate is monotonic in
+ * `k`, so binary search finds it in O(n log n). Returns 0 when the payload
+ * "moved forward" with no shared boundary.
+ */
+function overlapLength(prev: string, next: string): number {
+  if (!prev || !next) return 0;
+  // Fast path: append-only growth — the whole previous payload is a prefix.
+  if (next.startsWith(prev)) return prev.length;
+  const maxK = Math.min(prev.length, next.length, MAX_OVERLAP);
+  let lo = 0;
+  let hi = maxK;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (prev.endsWith(next.slice(0, mid))) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
 export default function LogViewer({
   name,
   active,
@@ -56,6 +86,8 @@ export default function LogViewer({
   const writtenLenRef = useRef(0);
   /** Tracks which container+tail combo was last written (to detect resets). */
   const lastKeyRef = useRef('');
+  /** The full payload last written to the terminal (for overlap diffing). */
+  const lastPayloadRef = useRef('');
   /** Mirror of latest data.lines for use inside the mount effect. */
   const dataRef = useRef<string>('');
   /** Mirror of current container:tailLines key. */
@@ -134,6 +166,7 @@ export default function LogViewer({
       if (existingLines) {
         term.write(toTerminalLines(existingLines));
         writtenLenRef.current = existingLines.length;
+        lastPayloadRef.current = existingLines;
         lastKeyRef.current = keyRef.current;
         if (autoScrollRef.current) term.scrollToBottom();
       }
@@ -146,6 +179,7 @@ export default function LogViewer({
       termRef.current = null;
       fitAddonRef.current = null;
       writtenLenRef.current = 0;
+      lastPayloadRef.current = '';
       lastKeyRef.current = '';
     };
   }, []);
@@ -170,6 +204,9 @@ export default function LogViewer({
     const currentKey = `${container}:${tailLines}`;
     const newLines = data?.lines ?? '';
 
+    // Capture the previously written payload before refreshing the mirror.
+    const prevLines = lastPayloadRef.current;
+
     // Always keep mirrors current so the mount effect can use them.
     dataRef.current = newLines;
     keyRef.current = currentKey;
@@ -181,6 +218,7 @@ export default function LogViewer({
       // Container or tail changed — full reset.
       term.reset();
       writtenLenRef.current = 0;
+      lastPayloadRef.current = '';
       lastKeyRef.current = currentKey;
     }
 
@@ -197,11 +235,31 @@ export default function LogViewer({
       return;
     }
 
-    // Clear "Loading logs..." once data arrives.
-    if (newLines.length > writtenLenRef.current) {
-      const delta = newLines.slice(writtenLenRef.current);
-      term.write(toTerminalLines(delta));
+    // Clear "Loading logs..." and append new content. The server returns the
+    // LAST `tailLines` lines, which is not append-only once the log exceeds
+    // the window — slicing by a character offset would land mid-line (garbled/
+    // duplicated output) and shorter payloads would be silently dropped. Diff
+    // by content overlap instead, and reset when the windows no longer line up.
+    if (newLines) {
+      if (writtenLenRef.current === 0) {
+        // Nothing on screen yet (or after an error sentinel) — full write.
+        term.write(toTerminalLines(newLines));
+      } else {
+        const overlap = overlapLength(prevLines, newLines);
+        const windowDropped = newLines.length < writtenLenRef.current;
+        if (overlap === 0 || windowDropped) {
+          // No shared suffix/prefix (the tail window moved past what we had)
+          // or the server dropped lines we already showed — reset so the
+          // terminal never shows garbled or duplicated output.
+          term.reset();
+          term.write(toTerminalLines(newLines));
+        } else {
+          // Append only the characters that are not already on screen.
+          term.write(toTerminalLines(newLines.slice(overlap)));
+        }
+      }
       writtenLenRef.current = newLines.length;
+      lastPayloadRef.current = newLines;
     }
 
     if (autoScroll) {
