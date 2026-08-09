@@ -89,7 +89,7 @@
 
 /* Override brand button text for contrast */
 .VPHero .VPButton.brand {
-  color: #111317 !important;
+  color: #111317;
 }
 
 .VPNavBarTitle .VPImage.logo {
@@ -103,7 +103,7 @@
 /* Remove theme toggle (dark-only site) */
 .VPNavBarAppearance,
 .VPSwitchAppearance {
-  display: none !important;
+  display: none;
 }
 
 /* Testimonials */

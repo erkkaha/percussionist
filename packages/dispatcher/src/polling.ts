@@ -351,6 +351,87 @@ export async function snapshotAllSessions(
 }
 
 // ---------------------------------------------------------------------------
+// Shared SSE transport
+//
+// Both runInteractive and runPrompt tail opencode's /event stream. The
+// transport machinery — fetch with Accept: text/event-stream, reconnect
+// counting, !ok/!body backoff, the \n\n buffer split / data: line filter /
+// JSON.parse loop, logEvent, reader.cancel(), the 5-error fatal threshold and
+// the 1 s inter-reconnect delay (the reconnect-storm fix per AGENTS.md) — is
+// identical in both modes; only the per-event handlers differ. The wrappers
+// supply mode/isTerminated/sleep and their own onEvent handler.
+
+export interface SseStreamOptions {
+  mode: 'interactive' | 'prompt';
+  isTerminated: () => boolean;
+  sleep: (ms: number) => Promise<void>;
+  onEvent: (evt: { type?: string; properties?: Record<string, unknown> }) => void | Promise<void>;
+}
+
+export async function streamSseEvents(opts: SseStreamOptions): Promise<void> {
+  const { mode, isTerminated, sleep, onEvent } = opts;
+  let streamErrors = 0;
+  let reconnects = 0;
+  while (!isTerminated()) {
+    try {
+      if (reconnects > 0) maybeLogStreamReconnect(mode, reconnects);
+      const evtRes = await fetch(`${BASE_URL}/event`, {
+        headers: { Accept: 'text/event-stream' },
+      });
+      reconnects++;
+      if (!evtRes.ok || !evtRes.body) {
+        await sleep(5000);
+        continue;
+      }
+      streamErrors = 0;
+      const reader = evtRes.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (!isTerminated()) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // biome-ignore lint/suspicious/noImplicitAnyLet: idx is inferred from indexOf
+        let idx;
+        // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic SSE parse loop
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const raw = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const dataLines = raw
+            .split('\n')
+            .filter((l) => l.startsWith('data:'))
+            .map((l) => l.slice(5).trimStart());
+          if (dataLines.length === 0) continue;
+          let evt: { type?: string; properties?: Record<string, unknown> };
+          try {
+            evt = JSON.parse(dataLines.join('\n'));
+          } catch {
+            continue;
+          }
+          logEvent(evt);
+          await onEvent(evt);
+        }
+      }
+      try {
+        await reader.cancel();
+      } catch {
+        /* ignore */
+      }
+    } catch (e) {
+      if (isTerminated()) return;
+      streamErrors++;
+      err('SSE stream error:', (e as Error).message, `(${streamErrors}/5)`);
+      if (streamErrors >= 5) {
+        throw new Error('opencode server unreachable: stream disconnected');
+      }
+      await sleep(5000);
+    }
+    // Add delay between all reconnection attempts (success or error) to prevent runaway loops
+    if (!isTerminated()) await sleep(1000);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Interactive mode
 
 export async function runInteractive(
@@ -408,22 +489,7 @@ export async function runInteractive(
         }
       }
       for (const sessionID of knownSessions) {
-        const msgs = await fetchMessages(sessionID);
-        for (const msg of msgs) {
-          const t = msg.info?.tokens;
-          const cost = (msg.info as { cost?: number })?.cost ?? 0;
-          if (t?.input || t?.output || cost > 0)
-            tokens.update(
-              sessionID,
-              msg.info?.id ?? `${sessionID}-idx`,
-              t?.input ?? 0,
-              t?.output ?? 0,
-              t?.reasoning,
-              t?.cache?.read,
-              t?.cache?.write,
-              cost,
-            );
-        }
+        recordUsage(tokens, sessionID, await fetchMessages(sessionID));
       }
       await tokens.flush(patchStatus);
       await sleep(3000);
@@ -431,117 +497,66 @@ export async function runInteractive(
   };
 
   const streamEvents = async (): Promise<void> => {
-    let streamErrors = 0;
-    let reconnects = 0;
-    while (!terminate) {
-      try {
-        if (reconnects > 0) maybeLogStreamReconnect('interactive', reconnects);
-        const evtRes = await fetch(`${BASE_URL}/event`, {
-          headers: { Accept: 'text/event-stream' },
-        });
-        reconnects++;
-        if (!evtRes.ok || !evtRes.body) {
-          await sleep(5000);
-          continue;
-        }
-        streamErrors = 0;
-        const reader = evtRes.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (!terminate) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          // biome-ignore lint/suspicious/noImplicitAnyLet: idx is inferred from indexOf
-          let idx;
-          // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic SSE parse loop
-          while ((idx = buffer.indexOf('\n\n')) >= 0) {
-            const raw = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 2);
-            const dataLines = raw
-              .split('\n')
-              .filter((l) => l.startsWith('data:'))
-              .map((l) => l.slice(5).trimStart());
-            if (dataLines.length === 0) continue;
-            let evt: { type?: string; properties?: Record<string, unknown> };
-            try {
-              evt = JSON.parse(dataLines.join('\n'));
-            } catch {
-              continue;
-            }
-            logEvent(evt);
-            if (evt.type === 'session.idle') {
-              // Snapshot after the first assistant turn completes.
-              if (!hasSnapshotted) maybeSnapshot('first idle');
-              // Incremental DB flush on each completed turn.
-              if (firstSessionID) {
-                const sid = firstSessionID;
-                const totals = tokens.totals();
-                incrementalFlush(sid, interactiveStartedAt, totals, interactiveFlushCursor)
-                  .then((newCursor) => {
-                    interactiveFlushCursor = newCursor;
-                  })
-                  .catch((e) =>
-                    err('interactive incrementalFlush failed (non-fatal):', (e as Error).message),
-                  );
-              }
-            }
-            if (evt.type === 'message.updated') {
-              const p = (evt.properties ?? {}) as {
-                info?: {
-                  sessionID?: string;
-                  id?: string;
-                  tokens?: {
-                    input?: number;
-                    output?: number;
-                    reasoning?: number;
-                    cache?: { read?: number; write?: number };
-                  };
-                  cost?: number;
-                };
-              };
-              const sid = p.info?.sessionID;
-              if (sid) {
-                if (!knownSessions.has(sid)) {
-                  knownSessions.add(sid);
-                  if (!firstSessionID) {
-                    firstSessionID = sid;
-                    await patchStatus({ sessionID: firstSessionID, message: 'session active' });
-                  }
-                }
-                if (typeof p.info?.tokens?.input === 'number' || typeof p.info?.cost === 'number')
-                  tokens.update(
-                    sid,
-                    p.info.id ?? `${sid}-live`,
-                    p.info.tokens?.input ?? 0,
-                    p.info.tokens?.output ?? 0,
-                    p.info.tokens?.reasoning,
-                    p.info.tokens?.cache?.read,
-                    p.info.tokens?.cache?.write,
-                    p.info.cost,
-                  );
-                await tokens.flush(patchStatus);
-              }
-            }
+    await streamSseEvents({
+      mode: 'interactive',
+      isTerminated: () => terminate,
+      sleep,
+      onEvent: async (evt) => {
+        if (evt.type === 'session.idle') {
+          // Snapshot after the first assistant turn completes.
+          if (!hasSnapshotted) maybeSnapshot('first idle');
+          // Incremental DB flush on each completed turn.
+          if (firstSessionID) {
+            const sid = firstSessionID;
+            const totals = tokens.totals();
+            incrementalFlush(sid, interactiveStartedAt, totals, interactiveFlushCursor)
+              .then((newCursor) => {
+                interactiveFlushCursor = newCursor;
+              })
+              .catch((e) =>
+                err('interactive incrementalFlush failed (non-fatal):', (e as Error).message),
+              );
           }
         }
-        try {
-          await reader.cancel();
-        } catch {
-          /* ignore */
+        if (evt.type === 'message.updated') {
+          const p = (evt.properties ?? {}) as {
+            info?: {
+              sessionID?: string;
+              id?: string;
+              tokens?: {
+                input?: number;
+                output?: number;
+                reasoning?: number;
+                cache?: { read?: number; write?: number };
+              };
+              cost?: number;
+            };
+          };
+          const sid = p.info?.sessionID;
+          if (sid) {
+            if (!knownSessions.has(sid)) {
+              knownSessions.add(sid);
+              if (!firstSessionID) {
+                firstSessionID = sid;
+                await patchStatus({ sessionID: firstSessionID, message: 'session active' });
+              }
+            }
+            if (typeof p.info?.tokens?.input === 'number' || typeof p.info?.cost === 'number')
+              tokens.update(
+                sid,
+                p.info.id ?? `${sid}-live`,
+                p.info.tokens?.input ?? 0,
+                p.info.tokens?.output ?? 0,
+                p.info.tokens?.reasoning,
+                p.info.tokens?.cache?.read,
+                p.info.tokens?.cache?.write,
+                p.info.cost,
+              );
+            await tokens.flush(patchStatus);
+          }
         }
-      } catch (e) {
-        if (terminate) return;
-        streamErrors++;
-        err('SSE stream error:', (e as Error).message, `(${streamErrors}/5)`);
-        if (streamErrors >= 5) {
-          throw new Error('opencode server unreachable: stream disconnected');
-        }
-        await sleep(5000);
-      }
-      // Add delay between all reconnection attempts (success or error) to prevent runaway loops
-      if (!terminate) await sleep(1000);
-    }
+      },
+    });
   };
 
   const shutdown = new Promise<void>((resolve) => {
@@ -1082,122 +1097,69 @@ export async function runPrompt(
     });
 
   const streamEvents = async (): Promise<void> => {
-    let streamErrors = 0;
-    let reconnects = 0;
-    while (!pollState.terminate) {
-      try {
-        if (reconnects > 0) maybeLogStreamReconnect('prompt', reconnects);
-        const evtRes = await fetch(`${BASE_URL}/event`, {
-          headers: { Accept: 'text/event-stream' },
-        });
-        reconnects++;
-        if (!evtRes.ok || !evtRes.body) {
-          await doSleep(5000);
-          continue;
+    await streamSseEvents({
+      mode: 'prompt',
+      isTerminated: () => pollState.terminate,
+      sleep: doSleep,
+      onEvent: async (evt) => {
+        if (
+          (evt.type === 'permission.updated' || evt.type === 'session.idle') &&
+          !pollState.waitingForInput
+        ) {
+          pollState.waitingForInput = true;
+          // Snapshot sessions immediately when parking so the manager can
+          // read the conversation context even if this pod is killed while
+          // waiting.
+          doSnapshot(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
+            err('WaitingForInput snapshot failed:', (e as Error).message),
+          );
         }
-        streamErrors = 0;
-        const reader = evtRes.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (!pollState.terminate) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          // biome-ignore lint/suspicious/noImplicitAnyLet: idx is inferred from indexOf
-          let idx;
-          // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic SSE parse loop
-          while ((idx = buffer.indexOf('\n\n')) >= 0) {
-            const raw = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 2);
-            const dataLines = raw
-              .split('\n')
-              .filter((l) => l.startsWith('data:'))
-              .map((l) => l.slice(5).trimStart());
-            if (dataLines.length === 0) continue;
-            let evt: { type?: string; properties?: Record<string, unknown> };
-            try {
-              evt = JSON.parse(dataLines.join('\n'));
-            } catch {
-              continue;
-            }
-            logEvent(evt);
-            if (
-              (evt.type === 'permission.updated' || evt.type === 'session.idle') &&
-              !pollState.waitingForInput
-            ) {
-              pollState.waitingForInput = true;
-              // Snapshot sessions immediately when parking so the manager can
-              // read the conversation context even if this pod is killed while
-              // waiting.
-              doSnapshot(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
-                err('WaitingForInput snapshot failed:', (e as Error).message),
-              );
-            }
-            // Only a permission prompt means a person has to act. session.idle
-            // fires after every completed turn (see the flush below), so it
-            // must not surface as RunPhase.WaitingForInput.
-            if (evt.type === 'permission.updated') {
-              pollState.needsHumanInput = true;
-            }
-            if (evt.type === 'session.idle') {
-              // Incremental DB flush after each completed assistant turn.
-              const totals = tokens.totals();
-              incrementalFlush(sessionID, runStartedAt, totals, promptFlushCursor)
-                .then((newCursor) => {
-                  promptFlushCursor = newCursor;
-                })
-                .catch((e) =>
-                  err('prompt incrementalFlush failed (non-fatal):', (e as Error).message),
-                );
-            }
-            if (evt.type === 'message.updated') {
-              const p = (evt.properties ?? {}) as {
-                info?: {
-                  sessionID?: string;
-                  id?: string;
-                  tokens?: {
-                    input?: number;
-                    output?: number;
-                    reasoning?: number;
-                    cache?: { read?: number; write?: number };
-                  };
-                  cost?: number;
-                };
+        // Only a permission prompt means a person has to act. session.idle
+        // fires after every completed turn (see the flush below), so it
+        // must not surface as RunPhase.WaitingForInput.
+        if (evt.type === 'permission.updated') {
+          pollState.needsHumanInput = true;
+        }
+        if (evt.type === 'session.idle') {
+          // Incremental DB flush after each completed assistant turn.
+          const totals = tokens.totals();
+          incrementalFlush(sessionID, runStartedAt, totals, promptFlushCursor)
+            .then((newCursor) => {
+              promptFlushCursor = newCursor;
+            })
+            .catch((e) => err('prompt incrementalFlush failed (non-fatal):', (e as Error).message));
+        }
+        if (evt.type === 'message.updated') {
+          const p = (evt.properties ?? {}) as {
+            info?: {
+              sessionID?: string;
+              id?: string;
+              tokens?: {
+                input?: number;
+                output?: number;
+                reasoning?: number;
+                cache?: { read?: number; write?: number };
               };
-              if (p.info?.sessionID === sessionID) {
-                if (typeof p.info.tokens?.input === 'number' || typeof p.info.cost === 'number')
-                  tokens.update(
-                    sessionID,
-                    p.info.id ?? `${sessionID}-live`,
-                    p.info.tokens?.input ?? 0,
-                    p.info.tokens?.output ?? 0,
-                    p.info.tokens?.reasoning,
-                    p.info.tokens?.cache?.read,
-                    p.info.tokens?.cache?.write,
-                    p.info.cost,
-                  );
-                await tokens.flush(doPatchStatus);
-              }
-            }
+              cost?: number;
+            };
+          };
+          if (p.info?.sessionID === sessionID) {
+            if (typeof p.info.tokens?.input === 'number' || typeof p.info.cost === 'number')
+              tokens.update(
+                sessionID,
+                p.info.id ?? `${sessionID}-live`,
+                p.info.tokens?.input ?? 0,
+                p.info.tokens?.output ?? 0,
+                p.info.tokens?.reasoning,
+                p.info.tokens?.cache?.read,
+                p.info.tokens?.cache?.write,
+                p.info.cost,
+              );
+            await tokens.flush(doPatchStatus);
           }
         }
-        try {
-          await reader.cancel();
-        } catch {
-          /* ignore */
-        }
-      } catch (e) {
-        if (pollState.terminate) return;
-        streamErrors++;
-        err('SSE stream error:', (e as Error).message, `(${streamErrors}/5)`);
-        if (streamErrors >= 5) {
-          throw new Error('opencode server unreachable: stream disconnected');
-        }
-        await doSleep(5000);
-      }
-      // Add delay between all reconnection attempts (success or error) to prevent runaway loops
-      if (!pollState.terminate) await doSleep(1000);
-    }
+      },
+    });
   };
 
   // Hard-timeout guard. Previously this called process.exit(0)/process.exit(3)

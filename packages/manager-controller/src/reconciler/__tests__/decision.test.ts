@@ -287,13 +287,13 @@ describe('decide — running', () => {
     expect(result.toPhase).toBe('waiting-for-input');
   });
 
-  it('running + WaitingForInput BUILD → failed', () => {
+  it('running + WaitingForInput BUILD → waiting-for-input', () => {
     const task = makeTask('t1', 'test-project', { phase: 'running', type: 'BUILD' });
     const result = decide(
       makeInput(task, { observed: { worker: makeRun('run-1', { phase: 'WaitingForInput' }) } }),
     );
-    expect(result.toPhase).toBe('failed');
-    expect(result.events[0]?.reason).toBe('BuildCannotWait');
+    expect(result.toPhase).toBe('waiting-for-input');
+    expect(result.events[0]?.reason).toBe('WaitingForInput');
   });
 
   it('running + stale run → failed', () => {
@@ -339,29 +339,43 @@ describe('decide — waiting-for-input', () => {
     expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(true);
   });
 
-  it('waiting + answer + run terminated or deleted → no-op (pinned deadlock, do not fix silently)', () => {
-    // PINNED CURRENT BEHAVIOR — known deadlock, deliberately not fixed here.
-    // decideWaitingForInput only resumes the task when the worker run is still
-    // `Running`. When an answer is present but the run terminated
-    // (Succeeded/Failed) or was deleted, the function returns a no-op, so the
-    // task parks in waiting-for-input forever with no timeout or escalation.
-    // This test pins that behavior so it cannot silently change shape; a real
-    // fix (transition to failed, or schedule a fresh run) belongs in a
-    // follow-up task (see plan rev24 Risks §4).
-    const cases: Array<ReturnType<typeof makeRun> | undefined> = [
-      makeRun('run-1', { phase: 'Succeeded' }),
-      makeRun('run-1', { phase: 'Failed' }),
-      undefined, // run deleted
-    ];
-    for (const worker of cases) {
-      const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'PLAN' });
-      const result = decide(
-        makeInput(task, { observed: { worker }, manualActions: { answer: 'yes' } }),
-      );
-      expect(result.toPhase).toBeUndefined();
-      expect(result.effects).toEqual([]);
-      expect(result.events).toEqual([]);
-    }
+  it('waiting + run missing → failed', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = decide(makeInput(task, { observed: {} }));
+    expect(result.toPhase).toBe('failed');
+    expect((result.statusPatch?.worker as any).status).toBe('Failed');
+    expect(result.events[0]?.reason).toBe('InputRunTerminated');
+  });
+
+  it('waiting + Failed run → failed', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = decide(
+      makeInput(task, { observed: { worker: makeRun('run-1', { phase: 'Failed' }) } }),
+    );
+    expect(result.toPhase).toBe('failed');
+    expect((result.statusPatch?.worker as any).status).toBe('Failed');
+    expect(result.events[0]?.reason).toBe('InputRunTerminated');
+  });
+
+  it('waiting + Cancelled run → failed', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = decide(
+      makeInput(task, { observed: { worker: makeRun('run-1', { phase: 'Cancelled' }) } }),
+    );
+    expect(result.toPhase).toBe('failed');
+    expect((result.statusPatch?.worker as any).status).toBe('Failed');
+    expect(result.events[0]?.reason).toBe('InputRunTerminated');
+  });
+
+  it('waiting + Succeeded run → succeeded', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = decide(
+      makeInput(task, { observed: { worker: makeRun('run-1', { phase: 'Succeeded' }) } }),
+    );
+    expect(result.toPhase).toBe('succeeded');
+    expect((result.statusPatch?.worker as any).status).toBe('Succeeded');
+    expect((result.statusPatch?.worker as any).completedAt).toBe(now);
+    expect(result.events[0]?.reason).toBe('InputRunSucceeded');
   });
 });
 
@@ -1545,7 +1559,10 @@ describe('decide — reviewing', () => {
 
   it('reviewing + verdict with findings → replaces diffFindings', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 };
+    task.status = {
+      ...task.status,
+      worker: { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 },
+    } as any;
     const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
       'percussionist.dev/review-verdict': JSON.stringify({
@@ -1590,7 +1607,10 @@ describe('decide — reviewing', () => {
 
   it('reviewing + verdict without findings preserves existing diffFindings', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 };
+    task.status = {
+      ...task.status,
+      worker: { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 },
+    } as any;
     (task.status as any).diffFindings = {
       version: 1,
       context: { baseSha: 'old', headSha: 'old', forkSha: 'old', diffFingerprint: 'old' },
@@ -1613,7 +1633,10 @@ describe('decide — reviewing', () => {
 
   it('reviewing + later verdict replaces prior diffFindings', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-2', retryCount: 0, aiReworkCount: 0 };
+    task.status = {
+      ...task.status,
+      worker: { reviewRunName: 'review-2', retryCount: 0, aiReworkCount: 0 },
+    } as any;
     (task.status as any).diffFindings = {
       version: 1,
       context: { baseSha: 'old', headSha: 'old', forkSha: 'old', diffFingerprint: 'old' },
@@ -1658,7 +1681,10 @@ describe('decide — reviewing', () => {
 
   it('reviewing + request_changes over ceiling with findings persists diffFindings', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 2 };
+    task.status = {
+      ...task.status,
+      worker: { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 2 },
+    } as any;
     const reviewRun = makeRun('review-1', { phase: 'Succeeded' });
     (reviewRun.metadata as any).annotations = {
       'percussionist.dev/review-verdict': JSON.stringify({
@@ -1682,7 +1708,10 @@ describe('decide — reviewing', () => {
 
   it('reviewing + malformed verdict preserves existing diffFindings', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing' });
-    (task.status!.worker as any) = { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 };
+    task.status = {
+      ...task.status,
+      worker: { reviewRunName: 'review-1', retryCount: 0, aiReworkCount: 0 },
+    } as any;
     (task.status as any).diffFindings = {
       version: 1,
       context: { baseSha: 'old', headSha: 'old', forkSha: 'old', diffFingerprint: 'old' },

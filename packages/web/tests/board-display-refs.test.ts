@@ -41,10 +41,12 @@ function makeTask(task: {
 let app: Hono;
 let getProjectSpy: ReturnType<typeof spyOn>;
 let listTasksSpy: ReturnType<typeof spyOn>;
+let listRunsSpy: ReturnType<typeof spyOn>;
 
 beforeAll(async () => {
   getProjectSpy = spyOn(kube, 'getProject').mockResolvedValue(MOCK_PROJECT);
   listTasksSpy = spyOn(kube, 'listTasks').mockResolvedValue([]);
+  listRunsSpy = spyOn(kube, 'listRuns').mockResolvedValue([]);
   const { createApp } = await import('../src/server/app.js');
   app = createApp();
 });
@@ -52,12 +54,14 @@ beforeAll(async () => {
 afterAll(() => {
   getProjectSpy.mockRestore();
   listTasksSpy.mockRestore();
+  listRunsSpy.mockRestore();
   delete process.env.AUTH_DISABLED;
 });
 
 beforeEach(() => {
   getProjectSpy.mockResolvedValue(MOCK_PROJECT);
   listTasksSpy.mockResolvedValue([]);
+  listRunsSpy.mockResolvedValue([]);
 });
 
 describe('GET /api/projects/:project/board display refs', () => {

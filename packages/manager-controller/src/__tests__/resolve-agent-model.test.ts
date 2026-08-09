@@ -27,11 +27,23 @@ describe('resolveAgentModel — per-agent model resolution', () => {
 
   test('returns undefined when roster has no model and ClusterAgent is unreachable', async () => {
     const project = makeProject([{ name: 'reviewer' }]);
-    expect(await resolveAgentModel(project, 'reviewer')).toBeUndefined();
+    expect(
+      await resolveAgentModel(project, 'reviewer', {
+        getClusterAgent: async () => {
+          throw new Error('cluster unreachable');
+        },
+      }),
+    ).toBeUndefined();
   });
 
   test('returns undefined for an agent not in the roster when ClusterAgent is unreachable', async () => {
     const project = makeProject([]);
-    expect(await resolveAgentModel(project, 'ghost')).toBeUndefined();
+    expect(
+      await resolveAgentModel(project, 'ghost', {
+        getClusterAgent: async () => {
+          throw new Error('cluster unreachable');
+        },
+      }),
+    ).toBeUndefined();
   });
 });

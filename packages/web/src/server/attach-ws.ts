@@ -59,6 +59,16 @@ interface ExecWebSocket {
   close(): void;
 }
 
+interface ExecWebSocketHandler {
+  connect(
+    path: string,
+    textHandler: ((text: string) => boolean) | null,
+    binaryHandler: ((stream: number, buff: Buffer) => boolean) | null,
+  ): Promise<ExecWebSocket>;
+}
+
+type KubeWebSocketInterface = ConstructorParameters<typeof Exec>[1];
+
 // ---------------------------------------------------------------------------
 // Resizable stream — the k8s Exec class checks for `columns`/`rows` props
 // and a `resize()` method to drive the TerminalSizeQueue, which sends resize
@@ -103,7 +113,7 @@ export class BunWsWrapper {
       this.protocol = this.ws.protocol;
       this.emit('open');
     };
-    this.ws.onclose = (e) => {
+    this.ws.onclose = (e: CloseEvent) => {
       this.closeFired = true;
       this.readyState = WebSocket.CLOSED;
       if (!this.opened) {
@@ -119,7 +129,7 @@ export class BunWsWrapper {
         this.emit('close', e.code, e.reason);
       }
     };
-    this.ws.onmessage = (e) => {
+    this.ws.onmessage = (e: MessageEvent) => {
       if (typeof e.data === 'string') {
         this.emit('message', e.data, false);
       } else if (Buffer.isBuffer(e.data)) {
@@ -133,7 +143,7 @@ export class BunWsWrapper {
       } else if (e.data instanceof ArrayBuffer) {
         this.emit('message', Buffer.from(e.data as ArrayBuffer), true);
       } else if (e.data instanceof Blob) {
-        e.data.arrayBuffer().then((ab) => {
+        e.data.arrayBuffer().then((ab: ArrayBuffer) => {
           this.emit('message', Buffer.from(new Uint8Array(ab)), true);
         });
       }
@@ -157,7 +167,7 @@ export class BunWsWrapper {
 
   on(event: string, handler: (...args: unknown[]) => void): void {
     if (!this.listeners.has(event)) this.listeners.set(event, new Set());
-    this.listeners.get(event)!.add(handler);
+    this.listeners.get(event)?.add(handler);
   }
 
   off(event: string, handler: (...args: unknown[]) => void): void {
@@ -177,7 +187,7 @@ export class BunWsWrapper {
   }
 
   send(data: Buffer | string): void {
-    this.ws.send(data as any);
+    this.ws.send(data as unknown as string | Blob | BufferSource);
   }
 
   close(): void {
@@ -285,6 +295,10 @@ class BunExecHandler {
       }
     });
   }
+}
+
+function asKubeWebSocketInterface(handler: ExecWebSocketHandler): KubeWebSocketInterface {
+  return handler as unknown as KubeWebSocketInterface;
 }
 
 // ---------------------------------------------------------------------------
@@ -409,7 +423,7 @@ export const attachWsHandlers = {
   open(ws: import('bun').ServerWebSocket<WsData>): void {
     const data = ws.data;
     const kc: KubeConfig = kubeConfig();
-    const exec = new Exec(kc, new BunExecHandler(kc) as any);
+    const exec = new Exec(kc, asKubeWebSocketInterface(new BunExecHandler(kc)));
 
     data.stdin = new PassThrough();
     data.stdout = new ResizablePassThrough();
@@ -470,13 +484,13 @@ export const attachWsHandlers = {
           typeof ctrl.cols === 'number' &&
           typeof ctrl.rows === 'number'
         ) {
-          data.stdout!.resize(ctrl.cols, ctrl.rows);
+          data.stdout?.resize(ctrl.cols, ctrl.rows);
         }
       } catch {
         // Ignore malformed control messages.
       }
     } else {
-      data.stdin!.write(msg);
+      data.stdin?.write(msg);
     }
   },
 

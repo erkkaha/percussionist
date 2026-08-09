@@ -8,6 +8,7 @@ const badgeVariants = cva(
     variants: {
       variant: {
         pending: 'bg-phase-pending/15 text-phase-pending border-phase-pending/30',
+        waiting: 'bg-phase-pending/15 text-phase-pending border-phase-pending/30',
         initializing:
           'bg-phase-initializing/15 text-phase-initializing border-phase-initializing/30',
         running: 'bg-phase-running/15 text-phase-running border-phase-running/30',
@@ -27,6 +28,7 @@ const dotVariants = cva('inline-block h-1.5 w-1.5 rounded-full', {
   variants: {
     variant: {
       pending: 'bg-phase-pending',
+      waiting: 'bg-phase-pending animate-pulse',
       initializing: 'bg-phase-initializing animate-pulse',
       running: 'bg-phase-running animate-pulse',
       succeeded: 'bg-phase-succeeded',

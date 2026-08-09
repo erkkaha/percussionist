@@ -205,12 +205,12 @@ describeVec('handleStoreMemory', () => {
       agent_run: string;
     } | null;
     expect(row).not.toBeNull();
-    expect(row!.content).toBe('Session summary of agent work on feature X');
-    const parsedMeta = JSON.parse(row!.metadata);
+    expect(row?.content).toBe('Session summary of agent work on feature X');
+    const parsedMeta = JSON.parse(row?.metadata);
     expect(parsedMeta.type).toBe('session-summary');
     expect(parsedMeta.runName).toBe('plan-worker-1');
     expect(parsedMeta.sessionID).toBe('sess-abc123');
-    expect(row!.agent_run).toBe('run:plan-worker-1');
+    expect(row?.agent_run).toBe('run:plan-worker-1');
   });
 
   it('stores session-summary with truncated content', async () => {
@@ -231,8 +231,8 @@ describeVec('handleStoreMemory', () => {
     } | null;
     expect(row).not.toBeNull();
     // Content should be stored as-is (truncation happens at summarizer level, not here)
-    expect(row!.content.length).toBe(50_000);
-    const parsedMeta = JSON.parse(row!.metadata);
+    expect(row?.content.length).toBe(50_000);
+    const parsedMeta = JSON.parse(row?.metadata);
     expect(parsedMeta.type).toBe('session-summary');
   });
 });
@@ -325,8 +325,12 @@ describeVec('handleListMemories', () => {
     expect(result.total).toBe(5);
     // Verify descending order (newest first)
     for (let i = 0; i < result.memories.length - 1; i++) {
-      const prev = new Date(result.memories[i]!.createdAt!).getTime();
-      const curr = new Date(result.memories[i + 1]!.createdAt!).getTime();
+      const current = result.memories[i];
+      const next = result.memories[i + 1];
+      expect(current).toBeDefined();
+      expect(next).toBeDefined();
+      const prev = new Date(current?.createdAt ?? '').getTime();
+      const curr = new Date(next?.createdAt ?? '').getTime();
       expect(prev).toBeGreaterThanOrEqual(curr);
     }
   });
@@ -412,7 +416,7 @@ describeVec('handleUpdateMemory', () => {
     // Verify search now finds the updated content (embedding was refreshed)
     const results = await handleSearch({ query: 'updated content' });
     expect(results.length).toBeGreaterThanOrEqual(1);
-    expect(results[0]!.content).toBe('updated content');
+    expect(results[0]?.content).toBe('updated content');
   });
 
   it('updates metadata without re-embedding', async () => {
@@ -518,13 +522,13 @@ describeVec('handleDeleteMemory', () => {
   });
 
   it('survives delete + re-store without rowid desync (regression test for C1)', async () => {
-    const raw = getRawDb();
+    const _raw = getRawDb();
 
     // Store, verify search works
     const first = await handleStoreMemory({ content: 'first' });
     const s1 = await handleSearch({ query: 'first', limit: 10 });
     expect(s1.length).toBeGreaterThanOrEqual(1);
-    expect(s1[0]!.content).toBe('first');
+    expect(s1[0]?.content).toBe('first');
 
     // Delete everything
     const allMemories = await handleListMemories({});
@@ -538,7 +542,7 @@ describeVec('handleDeleteMemory', () => {
 
     const s2 = await handleSearch({ query: 'second', limit: 10 });
     expect(s2.length).toBeGreaterThanOrEqual(1);
-    expect(s2[0]!.content).toBe('second');
+    expect(s2[0]?.content).toBe('second');
   });
 });
 

@@ -144,7 +144,7 @@ findings.patch('/:project/findings/:id', adminAuth(), async (c) => {
     const currentFindings =
       (project.status?.board as { findings?: Finding[] } | undefined)?.findings ?? [];
     const updatedFindings = currentFindings.map((f) =>
-      f.id === findingId || f.clusterId === findingId ? target! : f,
+      f.id === findingId || f.clusterId === findingId ? target : f,
     );
     await patchProjectStatus(name, { board: { findings: updatedFindings } }, ns);
 
@@ -196,7 +196,8 @@ findings.post('/:project/findings/:id/task', adminAuth(), async (c) => {
           ? a.name.toLowerCase().includes('planner')
           : a.name.toLowerCase().includes('builder'),
       )?.name ??
-      (agents.length > 0 ? agents[0]!.name : 'default');
+      (agents.length > 0 ? agents[0]?.name : 'default');
+    const agentName = defaultAgent ?? 'default';
 
     const taskPriority =
       target.severity === 'critical' ? 'high' : (target.severity as 'high' | 'medium' | 'low');
@@ -214,7 +215,7 @@ findings.post('/:project/findings/:id/task', adminAuth(), async (c) => {
         type: taskType,
         title: `[Finding] ${target.title.slice(0, 240)}`,
         description: `Created from finding ${target.id}:\n\n${target.description}${target.filePath ? `\n\nFile: ${target.filePath}` : ''}`,
-        agent: defaultAgent,
+        agent: agentName,
         priority: taskPriority,
       },
     });
@@ -251,7 +252,7 @@ findings.post('/:project/findings/:id/task', adminAuth(), async (c) => {
     const currentFindings =
       (project.status?.board as { findings?: Finding[] } | undefined)?.findings ?? [];
     const updatedFindings = currentFindings.map((f) =>
-      f.id === findingId || f.clusterId === findingId ? target! : f,
+      f.id === findingId || f.clusterId === findingId ? target : f,
     );
     await patchProjectStatus(name, { board: { findings: updatedFindings } }, ns);
 

@@ -14,8 +14,12 @@ Percussionist runs [OpenCode](https://opencode.ai) AI agents inside Kubernetes p
 
 ```bash
 kubectl apply -f k8s/crds/
-kubectl apply -f k8s/deploy/
+kubectl apply -k k8s/deploy/
 ```
+
+Note `-k` for the manifests: that directory carries a `kustomization.yaml`,
+which `kubectl apply -f` fails on. To have later upgrades include CRDs, use
+`beatctl deploy --gitops` instead — see [GitOps upgrades](/guide/gitops).
 
 2. **Create a Project**
 

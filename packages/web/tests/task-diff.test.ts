@@ -444,7 +444,7 @@ describe('GET /api/projects/:project/tasks/:taskName/diff', () => {
     getTaskSpy.mockResolvedValue(makeTask());
 
     let capturedCommand = '';
-    fetchSpy.mockImplementation((url: URL | string, init?: RequestInit) => {
+    fetchSpy.mockImplementation((_url: URL | string, init?: RequestInit) => {
       const body = JSON.parse(init?.body as string) as {
         params?: { arguments?: { command?: string } };
       };
@@ -467,7 +467,7 @@ describe('GET /api/projects/:project/tasks/:taskName/diff', () => {
     getTaskSpy.mockResolvedValue(makeTask());
 
     let capturedArgs: { image?: string; skipSanitization?: boolean } = {};
-    fetchSpy.mockImplementation((url: URL | string, init?: RequestInit) => {
+    fetchSpy.mockImplementation((_url: URL | string, init?: RequestInit) => {
       const body = JSON.parse(init?.body as string) as {
         params?: { arguments?: { image?: string; skipSanitization?: boolean } };
       };
@@ -486,7 +486,7 @@ describe('GET /api/projects/:project/tasks/:taskName/diff', () => {
     getTaskSpy.mockResolvedValue(makeTask());
 
     let capturedCommand = '';
-    fetchSpy.mockImplementation((url: URL | string, init?: RequestInit) => {
+    fetchSpy.mockImplementation((_url: URL | string, init?: RequestInit) => {
       const body = JSON.parse(init?.body as string) as {
         params?: { arguments?: { command?: string } };
       };

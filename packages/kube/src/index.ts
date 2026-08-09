@@ -25,6 +25,7 @@ import {
   SelfDecodingBody,
   ServerConfiguration,
   setHeaderOptions,
+  type V1ObjectMeta,
   type V1Pod,
   wrapHttpLibrary,
 } from '@kubernetes/client-node';
@@ -50,6 +51,7 @@ import {
   PLURAL_RUN,
   PLURAL_TASK,
   type Project,
+  parseModelRef,
   type Run,
   type RunStatus,
   type Task,
@@ -210,22 +212,26 @@ function init() {
 
 export function kubeConfig(): KubeConfig {
   init();
-  return _kc!;
+  if (!_kc) throw new Error('Kubernetes client was not initialized');
+  return _kc;
 }
 
 export function core(): CoreV1Api {
   init();
-  return _core!;
+  if (!_core) throw new Error('Kubernetes CoreV1Api client was not initialized');
+  return _core;
 }
 
 export function custom(): CustomObjectsApi {
   init();
-  return _custom!;
+  if (!_custom) throw new Error('Kubernetes CustomObjectsApi client was not initialized');
+  return _custom;
 }
 
 export function apps(): AppsV1Api {
   init();
-  return _apps!;
+  if (!_apps) throw new Error('Kubernetes AppsV1Api client was not initialized');
+  return _apps;
 }
 
 // For CLI use — loads from kubeconfig only (no in-cluster fallback).
@@ -1106,7 +1112,7 @@ export async function readSessionConfigMap(
     if (!sessionsRaw) return null;
     const sessions: string[] = JSON.parse(sessionsRaw);
     if (!sessions.includes(sessionID)) return null;
-    const raw = cm.data![`messages-${sessionID}.json`];
+    const raw = cm.data?.[`messages-${sessionID}.json`];
     if (!raw) return null;
     return {
       messages: JSON.parse(raw),
@@ -1175,7 +1181,7 @@ export async function getPlansConfigMap(
 ): Promise<{
   apiVersion: string;
   kind: string;
-  metadata: Record<string, unknown>;
+  metadata: V1ObjectMeta;
   data?: Record<string, string>;
 } | null> {
   try {
@@ -1186,7 +1192,7 @@ export async function getPlansConfigMap(
     return {
       apiVersion: cm.apiVersion ?? 'v1',
       kind: cm.kind ?? 'ConfigMap',
-      metadata: cm.metadata as unknown as Record<string, unknown>,
+      metadata: cm.metadata ?? {},
       data: cm.data,
     };
   } catch (e: unknown) {
@@ -1235,6 +1241,16 @@ export async function writePlanToConfigMap(
     warning = `ConfigMap data size (${Math.round(totalSize / 1024)}KB) approaching 1MB limit. Consider removing old plans.`;
   }
 
+  const metadata: V1ObjectMeta = {
+    name: existing.metadata.name ?? cmName,
+    namespace: existing.metadata.namespace ?? ns,
+    labels: existing.metadata.labels,
+    annotations: existing.metadata.annotations,
+  };
+  if (existing.metadata.resourceVersion) {
+    metadata.resourceVersion = existing.metadata.resourceVersion;
+  }
+
   if (!existing.metadata.resourceVersion) {
     // Create new ConfigMap
     await core().createNamespacedConfigMap({
@@ -1242,7 +1258,7 @@ export async function writePlanToConfigMap(
       body: {
         apiVersion: 'v1',
         kind: 'ConfigMap',
-        metadata: existing.metadata as any,
+        metadata,
         data: newData,
       },
     });
@@ -1254,9 +1270,7 @@ export async function writePlanToConfigMap(
       body: {
         apiVersion: 'v1',
         kind: 'ConfigMap',
-        metadata: {
-          ...existing.metadata,
-        } as any,
+        metadata,
         data: newData,
       },
     });
@@ -1271,7 +1285,7 @@ export async function readPlanFromConfigMap(
   ns: string = NAMESPACE,
 ): Promise<string | null> {
   const cm = await getPlansConfigMap(projectName, ns);
-  if (!cm || !cm.data) return null;
+  if (!cm?.data) return null;
   return cm.data[`${taskName}.md`] ?? null;
 }
 
@@ -2041,6 +2055,7 @@ const CLOUD_PROVIDERS = new Set([
   'google-genai',
   'github-copilot',
   'azure',
+  'claude-code',
   'aws',
   'bedrock',
   'together',
@@ -2073,19 +2088,9 @@ export type AuthValidationResult = AuthValidationSuccess | AuthValidationFailure
  * model name starts with a recognized cloud prefix.
  */
 export function requiresCloudAuth(model: string): boolean {
-  const slashIdx = model.indexOf('/');
-  if (slashIdx === -1) return false;
-  const provider = model.slice(0, slashIdx).toLowerCase();
-  return CLOUD_PROVIDERS.has(provider);
-}
-
-/**
- * Parse the provider prefix from a `providerID/modelID` model string.
- */
-export function parseModelProvider(model: string): string | undefined {
-  const slashIdx = model.indexOf('/');
-  if (slashIdx === -1) return undefined;
-  return model.slice(0, slashIdx);
+  const { providerID } = parseModelRef(model);
+  if (!providerID) return false;
+  return CLOUD_PROVIDERS.has(providerID.toLowerCase());
 }
 
 /**
@@ -2107,19 +2112,29 @@ export function validateModelAuth(
 ): AuthValidationResult {
   if (!model) return { ok: true };
 
-  const provider = parseModelProvider(model);
-  if (!provider) return { ok: true };
+  const { providerID } = parseModelRef(model);
+  if (!providerID) return { ok: true };
 
-  const lowerProvider = provider.toLowerCase();
+  const lowerProvider = providerID.toLowerCase();
   if (LOCAL_PROVIDERS.has(lowerProvider)) return { ok: true };
   if (!CLOUD_PROVIDERS.has(lowerProvider)) return { ok: true };
 
   if (secrets?.authSecret || secrets?.llmKeysSecret) return { ok: true };
 
+  if (lowerProvider === 'claude-code') {
+    return {
+      ok: false,
+      error:
+        `Model "${model}" uses provider "claude-code" which requires authentication. ` +
+        `Set spec.secrets.authSecret to a Secret whose key holds the ` +
+        `CLAUDE_CODE_OAUTH_TOKEN subscription token (e.g. produced by \`claude setup-token\`).`,
+    };
+  }
+
   return {
     ok: false,
     error:
-      `Model "${model}" uses provider "${provider}" which requires authentication, ` +
+      `Model "${model}" uses provider "${providerID}" which requires authentication, ` +
       `but neither spec.secrets.authSecret nor spec.secrets.llmKeysSecret is configured. ` +
       `Run \`beatctl auth import\` to import opencode auth, or set llmKeysSecret to a Secret ` +
       `containing the provider's API key (e.g. ANTHROPIC_API_KEY).`,

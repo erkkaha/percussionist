@@ -19,7 +19,7 @@ import { useState } from 'react';
 import type { Finding } from '../../lib/types';
 
 const FINDING_SEVERITIES: Finding['severity'][] = ['critical', 'high', 'medium', 'low'];
-const FINDING_CATEGORIES: Finding['category'][] = [
+const _FINDING_CATEGORIES: Finding['category'][] = [
   'bug',
   'security',
   'performance',
@@ -27,7 +27,7 @@ const FINDING_CATEGORIES: Finding['category'][] = [
   'docs',
   'other',
 ];
-const FINDING_STATUSES: Finding['status'][] = [
+const _FINDING_STATUSES: Finding['status'][] = [
   'triaged',
   'in-progress',
   'resolved',
@@ -65,7 +65,7 @@ const CATEGORY_ICON: Record<Finding['category'], typeof Bug> = {
   other: CircleDot,
 };
 
-const CATEGORY_LABEL: Record<Finding['category'], string> = {
+const _CATEGORY_LABEL: Record<Finding['category'], string> = {
   bug: 'Bug',
   security: 'Security',
   performance: 'Performance',
@@ -101,7 +101,7 @@ interface FindingsPanelProps {
   onClose?: () => void;
 }
 
-export function FindingsPanel({ findings, projectName, onClose }: FindingsPanelProps) {
+export function FindingsPanel({ findings, onClose }: FindingsPanelProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Finding['severity'] | 'all'>('all');
 

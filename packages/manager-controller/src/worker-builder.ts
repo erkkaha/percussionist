@@ -35,11 +35,15 @@ export { MAX_RETRIES };
 export async function resolveAgentModel(
   project: Project,
   agentName: string,
+  deps: {
+    getClusterAgent?: typeof getClusterAgent;
+  } = {},
 ): Promise<string | undefined> {
   const rosterModel = (project.spec.agents ?? []).find((a) => a.name === agentName)?.model;
   if (rosterModel) return rosterModel;
+  const getClusterAgentFn = deps.getClusterAgent ?? getClusterAgent;
   try {
-    const agent = await getClusterAgent(agentName);
+    const agent = await getClusterAgentFn(agentName);
     return agent.spec.model || undefined;
   } catch {
     // Agent CR not found or inaccessible — fall back to project/cluster defaults.
@@ -426,7 +430,7 @@ export function autoMergePromptLines(
     '',
     'Your worktree is already checked out at the source branch. In this mode the',
     'source branch normally exists only in the local git mirror — it is never',
-    'published, and origin/' + sourceBranch + ' will usually not exist. That is',
+    `published, and origin/${sourceBranch} will usually not exist. That is`,
     'expected, not an error, and NOT something to repair by pushing the source',
     'branch: the remote must only ever receive target branches.',
     '',

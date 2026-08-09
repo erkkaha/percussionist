@@ -39,7 +39,6 @@ const DOT_COLOR: Record<DrumSound, string> = {
 
 function BellIcon({ className }: { className?: string }) {
   return (
-    // biome-ignore lint/a11y/noSvgWithoutTitle: decorative bell icon
     <svg
       className={className}
       viewBox="0 0 24 24"

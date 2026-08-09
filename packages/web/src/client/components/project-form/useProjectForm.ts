@@ -495,7 +495,7 @@ export function buildProjectRequest(
     if (Object.keys(csResLimits).length > 0) csResources.limits = csResLimits;
     req.codeServer = {
       enabled: true,
-      image: state.codeServerImage.trim() || 'codercom/code-server:4.96.4',
+      image: state.codeServerImage.trim() || 'ghcr.io/erkkaha/percussionist/code-server:latest',
       ...(Object.keys(csResources).length > 0 ? { resources: csResources } : {}),
       ...(state.humanFolderEnabled
         ? { humanFolder: { enabled: true } }
@@ -614,7 +614,7 @@ export function createInitialState(
 
     // Workspace & Services
     codeServerEnabled: spec.codeServer?.enabled ?? false,
-    codeServerImage: spec.codeServer?.image ?? 'codercom/code-server:4.96.4',
+    codeServerImage: spec.codeServer?.image ?? 'ghcr.io/erkkaha/percussionist/code-server:latest',
     humanFolderEnabled: spec.codeServer?.humanFolder?.enabled ?? false,
     csCpuRequest:
       (spec.codeServer?.resources as { requests?: Record<string, string> } | undefined)?.requests

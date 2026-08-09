@@ -2,7 +2,6 @@
 
 import { ChevronDown, Filter, Plus, X } from 'lucide-react';
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useIsMobile } from '../../hooks/use-mobile';
 import type { Task } from '../../lib/types';
 import { AddTaskForm } from './AddTaskForm';

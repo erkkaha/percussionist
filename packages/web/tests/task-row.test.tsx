@@ -113,7 +113,11 @@ describe('TaskRow "Inject task into chat" button', () => {
 // PR-open indicator (awaiting-feature-merge, PR-gated integration mode)
 // ---------------------------------------------------------------------------
 
-async function renderTaskRowWithTask(task: Task, col: string) {
+async function renderTaskRowWithTask(
+  task: Task,
+  col: string,
+  approvals?: Record<string, { approved: boolean; requestChanges: boolean }>,
+) {
   const { TaskRow } = await import('../src/client/components/board/TaskRow');
   const injectTask = mock((_task: Task, _project: string) => {});
   render(
@@ -126,6 +130,7 @@ async function renderTaskRowWithTask(task: Task, col: string) {
         isSelected: false,
         onClick: () => {},
         projectName: PROJECT_NAME,
+        approvals,
       }),
     ),
   );
@@ -161,5 +166,84 @@ describe('TaskRow PR-open indicator', () => {
     };
     await renderTaskRowWithTask(task, 'done');
     expect(screen.queryByText('PR open')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AI review badges (review column): "ai review…" in-flight + "ai approved"
+// verdicts. All decisions derive from Task CR status fields (status.phase,
+// status.worker.reviewApproved); the Bot icon (lucide-bot class) marks a badge
+// as AI-originated, distinct from the human annotation-driven badges.
+// ---------------------------------------------------------------------------
+
+describe('TaskRow AI review badges', () => {
+  afterEach(cleanup);
+
+  it('shows the "ai review…" badge with an animated spinner for a reviewing task in the review column', async () => {
+    const task: Task = {
+      ...stubTask,
+      status: { phase: 'reviewing' },
+    };
+    await renderTaskRowWithTask(task, 'review');
+
+    const badge = screen.getByText('ai review…');
+    expect(badge).toBeTruthy();
+    // The Loader2 spinner must carry the animate-spin class.
+    expect(badge.querySelector('svg.animate-spin')).toBeTruthy();
+    // Robot icon marks the in-flight review as AI-originated.
+    expect(badge.querySelector('svg.lucide-bot')).toBeTruthy();
+  });
+
+  it('shows the "ai approved" badge with a robot icon for a reviewApproved task in the review column', async () => {
+    const task: Task = {
+      ...stubTask,
+      status: { phase: 'awaiting-human', worker: { reviewApproved: true } },
+    };
+    await renderTaskRowWithTask(task, 'review');
+
+    const badge = screen.getByText('ai approved');
+    expect(badge).toBeTruthy();
+    // Robot icon marks the check as the AI reviewer's verdict.
+    expect(badge.querySelector('svg.lucide-bot')).toBeTruthy();
+    expect(badge.querySelector('svg.lucide-check')).toBeTruthy();
+  });
+
+  it('keeps the human approved badge free of the robot icon', async () => {
+    const task: Task = {
+      ...stubTask,
+      status: { phase: 'awaiting-human' },
+    };
+    await renderTaskRowWithTask(task, 'review', {
+      [task.metadata.name]: { approved: true, requestChanges: false },
+    });
+
+    const badge = screen.getByText('approved');
+    expect(badge).toBeTruthy();
+    // The robot marker only appears on AI-originated badges — the human
+    // approval keeps the plain Check icon.
+    expect(badge.querySelector('svg.lucide-bot')).toBeNull();
+    expect(badge.querySelector('svg.lucide-check')).toBeTruthy();
+  });
+
+  it('does not show the "ai approved" badge outside the review column', async () => {
+    const task: Task = {
+      ...stubTask,
+      status: { phase: 'awaiting-human', worker: { reviewApproved: true } },
+    };
+    await renderTaskRowWithTask(task, 'in-progress');
+    expect(screen.queryByText('ai approved')).toBeNull();
+  });
+
+  it('does not duplicate the "reviewing" phase text alongside the "ai review…" badge', async () => {
+    const task: Task = {
+      ...stubTask,
+      status: { phase: 'reviewing' },
+    };
+    await renderTaskRowWithTask(task, 'review');
+
+    expect(screen.getByText('ai review…')).toBeTruthy();
+    // Badge 3 excludes "reviewing" from the generic phase badge so the phase
+    // text is not shown twice.
+    expect(screen.queryByText('reviewing')).toBeNull();
   });
 });

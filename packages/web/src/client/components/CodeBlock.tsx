@@ -105,11 +105,11 @@ export function CodeBlock({
       </div>
 
       {/* Code content */}
-      {/* biome-ignore lint/security/noDangerouslySetInnerHtml: shiki output is safe */}
       <div
         className={`overflow-x-auto text-xs ${
           shouldShowLineNumbers ? 'code-with-line-numbers' : ''
         }`}
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: Shiki returns escaped, tokenized HTML from source text.
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </div>

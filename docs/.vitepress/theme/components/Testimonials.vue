@@ -20,6 +20,7 @@
 </template>
 
 <script setup>
+// biome-ignore lint/style/useVueMultiWordComponentNames: VitePress component filename is user-facing docs copy.
 import { nextTick, onMounted, onUnmounted, ref } from 'vue';
 
 const lines = ref([]);

@@ -33,6 +33,7 @@ import {
   OPERATOR_KEY_PERMISSIONS,
   RUN_KEY_PERMISSIONS,
 } from './better-auth.js';
+import { upsertSecret } from './kube-upsert.js';
 
 const log = (...args: unknown[]) => console.log('[agent-keys]', ...args);
 
@@ -267,10 +268,6 @@ export async function bootstrapAgentKeys(): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // Secret plumbing
-//
-// Mirrors upsertSecret() in routes/settings.ts. Kept local rather than shared
-// because that one is route-scoped and this must be callable before any request
-// has been served.
 
 async function secretTokenExists(name: string): Promise<boolean> {
   try {
@@ -279,20 +276,5 @@ async function secretTokenExists(name: string): Promise<boolean> {
     return typeof token === 'string' && token.length > 0;
   } catch {
     return false;
-  }
-}
-
-async function upsertSecret(name: string, data: Record<string, string>): Promise<void> {
-  const body = {
-    apiVersion: 'v1',
-    kind: 'Secret',
-    metadata: { name, namespace: NAMESPACE },
-    stringData: data,
-  };
-  try {
-    await core().readNamespacedSecret({ name, namespace: NAMESPACE });
-    await core().replaceNamespacedSecret({ name, namespace: NAMESPACE, body });
-  } catch {
-    await core().createNamespacedSecret({ namespace: NAMESPACE, body });
   }
 }

@@ -141,8 +141,9 @@ export async function ingestFindings(project: Project, ns: string = NAMESPACE): 
           5,
         );
         const findingsResults = results.filter((r) => r.metadata?.kind === 'finding');
-        if (findingsResults.length > 0 && findingsResults[0]!.distance < 0.15) {
-          const matchId = findingsResults[0]!.metadata?.clusterId as string | undefined;
+        const nearestFinding = findingsResults[0];
+        if (nearestFinding && nearestFinding.distance < 0.15) {
+          const matchId = nearestFinding.metadata?.clusterId as string | undefined;
           if (matchId) {
             const canonical = triagedMap.get(matchId);
             if (canonical) {
@@ -223,7 +224,8 @@ export async function ingestFindings(project: Project, ns: string = NAMESPACE): 
             taskType === 'PLAN'
               ? a.name.toLowerCase().includes('planner')
               : a.name.toLowerCase().includes('builder'),
-          )?.name ?? (agents.length > 0 ? agents[0]!.name : 'default');
+          )?.name ?? (agents.length > 0 ? agents[0]?.name : 'default');
+        const agentName = defaultAgent ?? 'default';
 
         const newTask = buildTask({
           name: taskName,
@@ -235,7 +237,7 @@ export async function ingestFindings(project: Project, ns: string = NAMESPACE): 
             type: taskType as 'PLAN' | 'BUILD',
             title: `[Finding] ${finding.title.slice(0, 240)}`,
             description: `Auto-created from finding ${finding.id}:\n\n${finding.description}${finding.filePath ? `\n\nFile: ${finding.filePath}` : ''}`,
-            agent: defaultAgent,
+            agent: agentName,
             priority: taskPriority,
           },
         });

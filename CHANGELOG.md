@@ -1,10 +1,77 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.13] - 2026-08-07
+
+### <!-- 0 -->🚀 Features
+
+- Add GitOps upgrade path so CRDs upgrade with images _(deploy)_
+## [v0.2.12] - 2026-08-07
+
+### <!-- 0 -->🚀 Features
+
+- Show AI review in-flight badge in board review column _(web)_
+- Show ai approved badge with robot icon in board review column _(web)_
+- Attach worker run phase to board tasks _(web)_
+- Show waiting-for-input badge instead of failed for parked runs _(web)_
+- Board answer flow for runs waiting for user input _(web)_
+- Add Terminal sub-tab to task runs panel _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Zod-validate Run/Project specs at reconcile entry, fail with status message _(operator)_
+- Treat claude-code as a cloud provider in validateModelAuth and reuse api parseModelRef _(kube)_
+- Unify code-server image default on the published ghcr image _(api,web)_
+- Pass git url/ref/parentRef via env vars in workspace-init _(operator)_
+- Park BUILD tasks on waiting-for-input with dead-run exits _(manager)_
+- Avoid duplicate failed task badges _(web)_
+
+### <!-- 10 -->💼 Other
+
+- Rev18 validation gaps, claude-code auth, code-server image default, codegen drift
+
+### <!-- 2 -->🚜 Refactor
+
+- Extract callManagerTool shared MCP client _(web)_
+- Use gitUrlHash from @percussionist/kube _(manager-controller)_
+- Extract shared upsertSecret helper _(web)_
+- Extract shared port-forward module _(cli)_
+- Deduplicate reconcileProject upserts into shared helpers _(operator)_
+- Extract shared SSE stream helper; fix interactive usage undercount _(dispatcher)_
+- Single shared worktree-setup shell in pod-builder _(operator)_
+
+### <!-- 3 -->📚 Documentation
+
+- Plan board review-stage AI review visibility
+- Update plan board review-stage AI review visibility (rev 2)
+- Move spec.engine description into Zod describe() so codegen preserves it _(api)_
+- Deduplicate copy-pasted infra across packages (rev23 plan)
+- Plan for board showing failed when run waits for input _(plans)_
+- Plan for board active-run terminal tab _(plans)_
+- Revise board active-run terminal plan (gate from live run CR) _(plans)_
+
+### <!-- 6 -->🧪 Testing
+
+- Cover TaskRow ai review state badges _(web)_
+- Add component tests for board terminal gating _(web)_
+- Stabilize CI-flaky retry and agent-model fallbacks
+- Respect configured shared web token _(operator)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Migrate biome config
+- Clear biome warnings
+- Release v0.2.12
+## [v0.2.11] - 2026-08-06
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.11
 ## [v0.2.10] - 2026-08-05
 
 ### <!-- 0 -->🚀 Features
 
+- Extract runPollStatusLoop with scripted-stream tests _(dispatcher)_
 - Add humanFolder schema and regenerate CRDs _(api)_
 - Clone and open human folder in code-server _(operator)_
 - Add human folder toggle to project form _(web)_
@@ -21,11 +88,30 @@ All notable changes to Percussionist are documented here.
 - Stop -n default from overriding file namespaces on submit/project create _(cli)_
 - Honor project roster agent models in facilitator and agent-swap runs _(manager)_
 
+### <!-- 2 -->🚜 Refactor
+
+- Extract runWorkerOnce with injectable queue seams (rev24 BUILD 3) _(operator)_
+
 ### <!-- 3 -->📚 Documentation
 
+- Document recording fake-kube helper pattern in testing strategy
 - Add plan for human repo folder on project pvc _(plans)_
 - Revise human repo folder plan — clone from spec on project default branch _(plans)_
 - Beatctl CLI correctness plan rev19 (percussionist-dev-plan-rev19)
+
+### <!-- 5 -->🎨 Styling
+
+- Drop non-null assertions in fake-kube helper (rev24 BUILD 1) _(kube,operator)_
+
+### <!-- 6 -->🧪 Testing
+
+- Plan regression coverage for reconcile/kube/dispatcher paths (rev24)
+- Pin non-happy-path reconcile regressions (rev24 BUILD 6) _(manager)_
+- RunPrompt race-path/retry tests and hard-timeout guard fix _(dispatcher)_
+- Add recording fake-kube test helper (rev24 BUILD 1) _(kube,operator)_
+- Write-path regression tests for kube write helpers (rev24 BUILD 2) _(kube)_
+- Cover run-key-client, agent-resolver, pvc-helper, ttl flows (rev24 BUILD 5) _(operator)_
+- Table-driven reconcile() + safeReconcileProject flow tests (rev24 BUILD 4) _(operator)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 

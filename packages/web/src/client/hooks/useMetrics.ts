@@ -64,7 +64,7 @@ function parseMemory(raw: string): number {
 }
 
 /** Parse a Kubernetes storage quantity string to bytes. Handles Ki/Mi/Gi/Ti and plain integers. */
-function parseStorageBytes(raw: string): number {
+function _parseStorageBytes(raw: string): number {
   const n = parseInt(raw, 10);
   if (raw.endsWith('Ki')) return n * 1024;
   if (raw.endsWith('Mi')) return n * 1024 * 1024;

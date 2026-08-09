@@ -4,8 +4,6 @@ import { useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { authHeaders } from '../lib/auth';
 import { cn, skeletonKeys } from '../lib/utils';
-import StatusBadge from './StatusBadge';
-import TokenCounter from './TokenCounter';
 import ToolMetricsView from './ToolMetricsView';
 import {
   type ChartConfig,
@@ -89,7 +87,9 @@ interface TrendsResponse {
 // Helpers
 
 function shortModelLabel(model: string): string {
-  return model.includes('/') ? model.split('/').pop()! : model;
+  if (!model.includes('/')) return model;
+  const parts = model.split('/');
+  return parts.at(-1) ?? model;
 }
 
 function fmtDuration(ms: number | null): string {
@@ -280,7 +280,7 @@ function useTrends(days: number) {
 // ---------------------------------------------------------------------------
 // Trend charts
 
-function fmtTime(iso: string): string {
+function _fmtTime(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
@@ -438,7 +438,7 @@ function TrendCharts({ trends }: { trends: TrendsResponse }) {
 
   const models =
     modelTrendPoints.length > 0
-      ? Object.keys(modelTrendPoints[0]!).filter((k) => k !== 'date')
+      ? Object.keys(modelTrendPoints[0] ?? {}).filter((k) => k !== 'date')
       : [];
 
   const chartConfig: ChartConfig = {
