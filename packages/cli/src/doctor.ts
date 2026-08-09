@@ -18,10 +18,16 @@
 // for staying read-only (get/list verbs + bounded probes), and `--probe-dns`
 // is the only opt-in in-pod exec (a read-only `getent hosts`).
 
+import { RUNTIME_CHECKS } from './doctor-runtime.js';
 import { STATIC_CHECKS } from './doctor-static.js';
+import { withProbeTimeout } from './doctor-util.js';
 import type { DoctorClients } from './k8s-clients.js';
 import { doctorClients } from './k8s-clients.js';
 import { DEFAULT_NAMESPACE } from './kube.js';
+
+// Re-export for check modules that historically imported it from here; new
+// code should import from doctor-util.js directly to avoid a cycle.
+export { withProbeTimeout };
 
 export const DoctorExitCode = {
   Ok: 0,
@@ -62,12 +68,13 @@ export interface DoctorCheck {
 
 /**
  * Default check registry. The five static checks (crds, rbac, network-policy,
- * dns, storage) come from doctor-static.ts; the follow-up BUILD tasks wire the
- * remaining categories (credentials, providers, models, dashboard, health)
- * into this array the same way. The orchestrator only iterates whatever is
- * registered here (or injected via `runDoctor` deps).
+ * dns, storage) come from doctor-static.ts and the three runtime checks
+ * (credentials, providers, models) from doctor-runtime.ts; the remaining
+ * categories (dashboard, health) are wired in the same way by their BUILD
+ * tasks. The orchestrator only iterates whatever is registered here (or
+ * injected via `runDoctor` deps).
  */
-export const DEFAULT_CHECKS: DoctorCheck[] = [...STATIC_CHECKS];
+export const DEFAULT_CHECKS: DoctorCheck[] = [...STATIC_CHECKS, ...RUNTIME_CHECKS];
 
 export const DEFAULT_PROBE_TIMEOUT_SEC = 30;
 
@@ -191,31 +198,6 @@ export async function runDoctor(opts: DoctorOpts = {}, deps: DoctorDeps = {}): P
   }
 
   process.exitCode = exitCode;
-}
-
-/**
- * Race a promise against an AbortSignal.timeout and reject with a labelled
- * timeout error if it does not settle in time. Every doctor network probe
- * must go through this (or pass `signal: AbortSignal.timeout(ms)` to a raw
- * fetch) so the `--timeout` bound is honoured.
- */
-export async function withProbeTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  label: string,
-): Promise<T> {
-  if (!Number.isFinite(ms) || ms <= 0) return promise;
-  const signal = AbortSignal.timeout(ms);
-  let onAbort: (() => void) | undefined;
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => {
-      onAbort = () => reject(new Error(`${label} timed out after ${ms}ms`));
-      signal.addEventListener('abort', onAbort, { once: true });
-    }),
-  ]).finally(() => {
-    if (onAbort) signal.removeEventListener('abort', onAbort);
-  });
 }
 
 async function defaultProbeConnection(ctx: DoctorCheckContext): Promise<void> {

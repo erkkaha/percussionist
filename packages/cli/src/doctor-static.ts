@@ -38,7 +38,7 @@ import {
   type Project,
 } from '@percussionist/api';
 import type { DoctorCheck, DoctorCheckResult } from './doctor.js';
-import { withProbeTimeout } from './doctor.js';
+import { withProbeTimeout } from './doctor-util.js';
 import type { DoctorClients } from './k8s-clients.js';
 import { listAllProjects } from './kube.js';
 
