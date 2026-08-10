@@ -10,9 +10,16 @@
 // is robust if that loopback assumption ever changes.
 //
 // This mirrors the port-forward pattern in web-client.ts / chat.ts but is
-// generic over the MCP tool name, so every doctor check that probes the
-// manager (list_models, tools/list, …) shares one implementation. Every network
-// step is bounded by `AbortSignal.timeout` (`--timeout` on the doctor command).
+// generic over the MCP method, so every doctor check that probes the manager
+// (list_models, tools/list, …) shares one implementation. Every network step is
+// bounded by `AbortSignal.timeout` (`--timeout` on the doctor command).
+//
+// Two call shapes are exposed:
+//   - `managerMcpRequest(namespace, tool, args)` — `tools/call`, unwraps the
+//     text content of the tool result (used by list_models and friends).
+//   - `managerMcpListTools(namespace)` — `tools/list`, returns the raw tool
+//     descriptor array (used as a liveness probe by the health check).
+// Both share the generic `managerMcpJsonRpc` port-forward + fetch plumbing.
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -147,18 +154,16 @@ export interface ManagerMcpRequestOpts {
 }
 
 /**
- * Call a manager MCP tool over a short-lived port-forward and return the
- * parsed tool result.
- *
- * `managerMcpRequest(namespace, 'list_models', {})` returns the payload the
- * tool echoes back (providers + models). Throws `ManagerMcpError` on any
- * failure so callers can distinguish "sidecar not ready" from "MCP
- * unreachable".
+ * Call a JSON-RPC method on the manager's MCP server over a short-lived
+ * port-forward and return the parsed `result` object (the shape depends on the
+ * method — `tools/call` returns `{ content, isError? }`, `tools/list` returns
+ * `{ tools }`). Throws `ManagerMcpError` on any failure so callers can
+ * distinguish "sidecar not ready" from "MCP unreachable".
  */
-export async function managerMcpRequest<T = unknown>(
+export async function managerMcpJsonRpc<T = unknown>(
   namespace: string,
-  tool: string,
-  args: Record<string, unknown> = {},
+  method: string,
+  params: Record<string, unknown> = {},
   opts: ManagerMcpRequestOpts = {},
 ): Promise<T> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS;
@@ -184,12 +189,7 @@ export async function managerMcpRequest<T = unknown>(
       res = await fetch(`http://127.0.0.1:${localPort}${MCP_PATH}`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'tools/call',
-          params: { name: tool, arguments: args },
-        }),
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
@@ -207,7 +207,7 @@ export async function managerMcpRequest<T = unknown>(
     }
 
     const rpc = (await res.json()) as {
-      result?: { content?: Array<{ type: string; text?: string }>; isError?: boolean };
+      result?: T;
       error?: { code?: number; message?: string };
     };
 
@@ -217,25 +217,74 @@ export async function managerMcpRequest<T = unknown>(
         `JSON-RPC error ${rpc.error.code ?? ''}: ${rpc.error.message ?? 'unknown'}`.trim(),
       );
     }
-    if (rpc.result?.isError) {
-      const text = rpc.result.content?.find((p) => p.type === 'text')?.text ?? 'tool failed';
-      // Strip the server's "Error calling <tool>: " prefix — the remainder is
-      // the specific cause (e.g. "opencode /provider returned 502").
-      throw new ManagerMcpError('tool-error', text.replace(/^Error calling [^:]+:\s*/, ''));
-    }
-
-    const text = rpc.result?.content?.find((p) => p.type === 'text')?.text;
-    if (text === undefined) {
-      throw new ManagerMcpError('unreachable', 'manager MCP returned no content');
-    }
-    try {
-      return JSON.parse(text) as T;
-    } catch {
-      return text as unknown as T;
-    }
+    return rpc.result as T;
   } finally {
     if (!pf.killed) pf.kill('SIGTERM');
   }
+}
+
+/**
+ * Call a manager MCP tool over a short-lived port-forward and return the
+ * parsed tool result.
+ *
+ * `managerMcpRequest(namespace, 'list_models', {})` returns the payload the
+ * tool echoes back (providers + models). Throws `ManagerMcpError` on any
+ * failure so callers can distinguish "sidecar not ready" from "MCP
+ * unreachable".
+ */
+export async function managerMcpRequest<T = unknown>(
+  namespace: string,
+  tool: string,
+  args: Record<string, unknown> = {},
+  opts: ManagerMcpRequestOpts = {},
+): Promise<T> {
+  const result = await managerMcpJsonRpc<{
+    content?: Array<{ type: string; text?: string }>;
+    isError?: boolean;
+  }>(namespace, 'tools/call', { name: tool, arguments: args }, opts);
+
+  if (result?.isError) {
+    const text = result.content?.find((p) => p.type === 'text')?.text ?? 'tool failed';
+    // Strip the server's "Error calling <tool>: " prefix — the remainder is
+    // the specific cause (e.g. "opencode /provider returned 502").
+    throw new ManagerMcpError('tool-error', text.replace(/^Error calling [^:]+:\s*/, ''));
+  }
+
+  const text = result?.content?.find((p) => p.type === 'text')?.text;
+  if (text === undefined) {
+    throw new ManagerMcpError('unreachable', 'manager MCP returned no content');
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text as unknown as T;
+  }
+}
+
+/** A tool descriptor from the manager's MCP `tools/list` response. */
+export interface McpToolDescriptor {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+/**
+ * Probe the manager's MCP server with a JSON-RPC `tools/list` and return the
+ * exposed tool descriptors. The check-health path uses this as a liveness
+ * probe: a successful response proves the manager pod + MCP server are serving
+ * without depending on the opencode sidecar.
+ */
+export async function managerMcpListTools(
+  namespace: string,
+  opts: ManagerMcpRequestOpts = {},
+): Promise<McpToolDescriptor[]> {
+  const result = await managerMcpJsonRpc<{ tools?: McpToolDescriptor[] }>(
+    namespace,
+    'tools/list',
+    {},
+    opts,
+  );
+  return result?.tools ?? [];
 }
 
 function isTimeoutError(e: unknown): boolean {

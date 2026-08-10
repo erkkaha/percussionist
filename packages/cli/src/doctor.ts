@@ -18,6 +18,7 @@
 // for staying read-only (get/list verbs + bounded probes), and `--probe-dns`
 // is the only opt-in in-pod exec (a read-only `getent hosts`).
 
+import { PLATFORM_CHECKS } from './doctor-platform.js';
 import { RUNTIME_CHECKS } from './doctor-runtime.js';
 import { STATIC_CHECKS } from './doctor-static.js';
 import { withProbeTimeout } from './doctor-util.js';
@@ -68,13 +69,17 @@ export interface DoctorCheck {
 
 /**
  * Default check registry. The five static checks (crds, rbac, network-policy,
- * dns, storage) come from doctor-static.ts and the three runtime checks
- * (credentials, providers, models) from doctor-runtime.ts; the remaining
- * categories (dashboard, health) are wired in the same way by their BUILD
- * tasks. The orchestrator only iterates whatever is registered here (or
- * injected via `runDoctor` deps).
+ * dns, storage) come from doctor-static.ts, the three runtime checks
+ * (credentials, providers, models) from doctor-runtime.ts, and the two
+ * platform checks (dashboard, health) from doctor-platform.ts. The
+ * orchestrator only iterates whatever is registered here (or injected via
+ * `runDoctor` deps).
  */
-export const DEFAULT_CHECKS: DoctorCheck[] = [...STATIC_CHECKS, ...RUNTIME_CHECKS];
+export const DEFAULT_CHECKS: DoctorCheck[] = [
+  ...STATIC_CHECKS,
+  ...RUNTIME_CHECKS,
+  ...PLATFORM_CHECKS,
+];
 
 export const DEFAULT_PROBE_TIMEOUT_SEC = 30;
 

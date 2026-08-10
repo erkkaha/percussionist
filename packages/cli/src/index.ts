@@ -613,7 +613,7 @@ validate
 program
   .command('doctor')
   .description(
-    'run read-only cluster diagnostics (CRDs, RBAC, NetworkPolicy, DNS, storage, credentials, providers, dashboard, health)',
+    'run read-only cluster diagnostics (CRDs, RBAC, NetworkPolicy, DNS, storage, credentials, providers, models, dashboard, health)',
   )
   .option('-n, --namespace <ns>', 'namespace to inspect', DEFAULT_NAMESPACE)
   .option(
