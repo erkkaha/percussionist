@@ -1070,6 +1070,50 @@ describe('checkStorage', () => {
     expect(result.detail).toContain('PVC percussionist/demo-data is Failed');
   });
 
+  it('errors when a project data PVC is Lost', async () => {
+    const clients = makeClients({
+      storage: {
+        listStorageClass: async () => ({
+          items: [
+            {
+              metadata: {
+                name: 'standard',
+                annotations: { 'storageclass.kubernetes.io/is-default-class': 'true' },
+              },
+            },
+          ],
+        }),
+      },
+      core: {
+        readNamespacedPersistentVolumeClaim: async ({ name }) => ({
+          metadata: { name },
+          status: { phase: name === 'demo-data' ? 'Lost' : 'Bound' },
+        }),
+      },
+      custom: {
+        listClusterCustomObject: async () => ({
+          items: [{ metadata: { name: 'demo', namespace: NS }, spec: {} }],
+        }),
+      },
+      apps: {
+        readNamespacedDeployment: async () => ({
+          metadata: { name: 'percussionist-operator' },
+          spec: {
+            template: {
+              spec: {
+                containers: [{ env: [{ name: 'DEFAULT_STORAGE_CLASS', value: 'standard' }] }],
+              },
+            },
+          },
+        }),
+      },
+    });
+
+    const result = await checkStorage(clients, NS, 100);
+    expect(result.status).toBe('fail');
+    expect(result.detail).toContain('PVC percussionist/demo-data is Lost');
+  });
+
   it('warns when a project data PVC is Pending', async () => {
     const clients = makeClients({
       storage: {
