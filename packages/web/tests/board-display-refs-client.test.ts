@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   getBlockedReasonPresentation,
+  getChildPhasePresentation,
   getChildRefPresentation,
   getParentRefPresentation,
 } from '../src/client/components/board/display-refs.js';
@@ -96,5 +97,41 @@ describe('board client display ref presentation helpers', () => {
     const second = getChildRefPresentation(task, 'proj-build-b', 1);
     expect(second.text).toBe('proj-build-b');
     expect(second.tooltip).toBe('proj-build-b');
+  });
+});
+
+describe('board client child phase presentation', () => {
+  function makeChildProgressTask(childPhases?: string[]) {
+    return makeTask({
+      status: { phase: 'awaiting-children' } as Task['status'],
+      childProgress: {
+        total: 2,
+        completed: 1,
+        childRefs: ['proj-build-a', 'proj-build-b'],
+        childDisplayRefs: ['Implement API', 'Wire UI'],
+        ...(childPhases ? { childPhases } : {}),
+      },
+    });
+  }
+
+  it('flags a done child as done', () => {
+    const task = makeChildProgressTask(['done', 'running']);
+    expect(getChildPhasePresentation(task, 0).done).toBe(true);
+  });
+
+  it('flags a non-done child as not done', () => {
+    const task = makeChildProgressTask(['done', 'running']);
+    expect(getChildPhasePresentation(task, 1).done).toBe(false);
+  });
+
+  it('degrades to not-done when childPhases is missing', () => {
+    const task = makeChildProgressTask();
+    expect(getChildPhasePresentation(task, 0).done).toBe(false);
+    expect(getChildPhasePresentation(task, 1).done).toBe(false);
+  });
+
+  it('degrades to not-done when childProgress is missing', () => {
+    const task = makeTask();
+    expect(getChildPhasePresentation(task, 0).done).toBe(false);
   });
 });

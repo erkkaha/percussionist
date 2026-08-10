@@ -36,3 +36,13 @@ export function getChildRefPresentation(
     tooltip: text !== childName ? `Task ID: ${childName}` : childName,
   };
 }
+
+/**
+ * Per-child completion presentation for the Child Tasks list. A child counts
+ * as done iff its phase is 'done' (matches the server's `completed` count in
+ * `board.ts`). When `childPhases` is absent (stale cached board response) every
+ * child degrades to not-done — the list renders exactly as before.
+ */
+export function getChildPhasePresentation(task: Task, index: number): { done: boolean } {
+  return { done: task.childProgress?.childPhases?.[index] === 'done' };
+}

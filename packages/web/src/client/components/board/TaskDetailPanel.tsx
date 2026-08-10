@@ -68,7 +68,7 @@ import StatusBadge from '../StatusBadge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Switch } from '../ui/switch';
 import { Textarea } from '../ui/textarea';
-import { getChildRefPresentation } from './display-refs';
+import { getChildPhasePresentation, getChildRefPresentation } from './display-refs';
 import { getPrPresentation } from './pr-presentation';
 import TaskEventsPanel from './TaskEventsPanel';
 import TaskRunsPanel from './TaskRunsPanel';
@@ -894,6 +894,7 @@ function OverviewContent({
           <div className="space-y-1">
             {task.childProgress.childRefs.map((childName, index) => {
               const childRef = getChildRefPresentation(task, childName, index);
+              const { done } = getChildPhasePresentation(task, index);
               return (
                 <button
                   key={childName}
@@ -908,7 +909,14 @@ function OverviewContent({
                   className="flex items-center gap-1.5 text-sm text-text-dim hover:text-text transition-colors w-full text-left"
                   title={childRef.tooltip}
                 >
-                  <Wrench className="h-3.5 w-3.5 shrink-0" />
+                  {done ? (
+                    <CheckCircle2
+                      className="h-3.5 w-3.5 shrink-0 text-green-500"
+                      aria-label="Done"
+                    />
+                  ) : (
+                    <Wrench className="h-3.5 w-3.5 shrink-0" aria-label="In progress" />
+                  )}
                   <span className="font-mono text-xs truncate">{childRef.text}</span>
                 </button>
               );
