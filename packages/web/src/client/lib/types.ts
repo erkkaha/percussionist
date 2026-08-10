@@ -379,8 +379,29 @@ export interface SessionMessage {
 export interface SessionResponse {
   sessionID: string;
   messages: SessionMessage[];
-  source?: 'live' | 'snapshot';
+  source?: 'live' | 'snapshot' | 'db';
   truncated?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Session stats rows (from GET /api/stats/sessions and /api/stats/sessions/:name)
+
+export interface StatSession {
+  id: string;
+  name: string;
+  namespace: string | null;
+  task: string | null;
+  model: string | null;
+  agent: string | null;
+  phase: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  tokensIn: number;
+  tokensOut: number;
+  cost?: number;
+  error: string | null;
+  createdAt: string | null;
+  resolvedModel: string;
 }
 
 // ---------------------------------------------------------------------------

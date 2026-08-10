@@ -366,6 +366,35 @@ stats.get('/export', auth(), (c) => {
   return c.json(result);
 });
 
+// Shared row projection for session listings — used by both the list route and
+// the single-name lookup below so a session row renders identically everywhere.
+// Resolve model: runs.model first, fallback to first user message's model.
+const sessionRowSelect = {
+  id: runs.id,
+  name: runs.name,
+  namespace: runs.namespace,
+  task: runs.task,
+  model: runs.model,
+  agent: runs.agent,
+  phase: runs.phase,
+  startedAt: runs.startedAt,
+  completedAt: runs.completedAt,
+  tokensIn: runs.tokensIn,
+  tokensOut: runs.tokensOut,
+  cost: runs.cost,
+  error: runs.error,
+  createdAt: runs.createdAt,
+  resolvedModel: sql<string>`
+    COALESCE(${runs.model}, (
+      SELECT ${messages.model} FROM ${messages}
+      WHERE ${messages.sessionId} = ${runs.id}
+        AND ${messages.role} = 'user'
+        AND ${messages.model} IS NOT NULL
+      LIMIT 1
+    ), 'unknown')
+  `,
+};
+
 // GET /api/stats/sessions?days=30&limit=50&offset=0 — lightweight session listing for UI.
 //
 // Returns flat run rows (no nested messages/toolCalls/fileOps) plus server-side
@@ -381,37 +410,7 @@ stats.get('/sessions', auth(), (c) => {
 
   const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
 
-  // Resolve model: runs.model first, fallback to first user message's model.
-  const resolvedModel = sql<string>`
-    COALESCE(${runs.model}, (
-      SELECT ${messages.model} FROM ${messages}
-      WHERE ${messages.sessionId} = ${runs.id}
-        AND ${messages.role} = 'user'
-        AND ${messages.model} IS NOT NULL
-      LIMIT 1
-    ), 'unknown')
-  `;
-
-  const baseQuery = db
-    .select({
-      id: runs.id,
-      name: runs.name,
-      namespace: runs.namespace,
-      task: runs.task,
-      model: runs.model,
-      agent: runs.agent,
-      phase: runs.phase,
-      startedAt: runs.startedAt,
-      completedAt: runs.completedAt,
-      tokensIn: runs.tokensIn,
-      tokensOut: runs.tokensOut,
-      cost: runs.cost,
-      error: runs.error,
-      createdAt: runs.createdAt,
-      resolvedModel,
-    })
-    .from(runs)
-    .orderBy(desc(runs.startedAt));
+  const baseQuery = db.select(sessionRowSelect).from(runs).orderBy(desc(runs.startedAt));
 
   const allRows = cutoff ? baseQuery.where(gte(runs.startedAt, cutoff)).all() : baseQuery.all();
 
@@ -537,6 +536,150 @@ stats.get('/sessions', auth(), (c) => {
     modelRows,
   });
 });
+
+// GET /api/stats/sessions/:name — single-session lookup by exact run name.
+//
+// The stats DB row outlives the Run CR (deleted after runTTLDays), so this is
+// the durable source of truth for the session detail page. Returns the same
+// StatSession shape as the list rows, or 404 when the run has no DB row.
+stats.get('/sessions/:name', auth(), (c) => {
+  const name = c.req.param('name');
+  const db = getDb();
+  const row = db.select(sessionRowSelect).from(runs).where(eq(runs.name, name)).get();
+  if (!row) return c.json({ error: `Session "${name}" not found` }, 404);
+  return c.json(row);
+});
+
+// GET /api/stats/sessions/:name/messages — replay a run's stored conversation
+// from the `messages` table.
+//
+// The dispatcher persists every message's full parts array (JSON) in the
+// `content` column, so a conversation survives the run pod and the Run CR TTL.
+// Returns SessionResponse-shaped JSON with source: 'db' so the client can feed
+// it straight into SessionView. 404 only when the run has no DB row at all.
+stats.get('/sessions/:name/messages', auth(), (c) => {
+  const name = c.req.param('name');
+  const replay = replaySessionFromDb(name);
+  if (!replay) return c.json({ error: `No stored session for "${name}"` }, 404);
+  return c.json(replay);
+});
+
+// ---------------------------------------------------------------------------
+// DB replay — reconstruct a SessionView-compatible conversation from stored
+// messages for a run whose Run CR (and pod) have been deleted by the run TTL
+// controller. The dispatcher persists every message's full parts array as JSON
+// in `content`, so this restores the conversation with the same fidelity as the
+// live/snapshot sources.
+
+export interface ReplayedSessionMessage {
+  info: {
+    id: string;
+    sessionID: string;
+    role: string;
+    time: { created?: number; completed?: number };
+    tokens?: {
+      input: number;
+      output: number;
+      reasoning: number;
+      cache: { read: number; write: number };
+    };
+    cost?: number;
+    modelID?: string;
+    providerID?: string;
+  };
+  parts: unknown[];
+}
+
+export interface ReplayedSession {
+  sessionID: string;
+  messages: ReplayedSessionMessage[];
+}
+
+/** Look up a run row's session ID by run name (survives Run CR TTL deletion). */
+export function lookupSessionIdByRunName(name: string): string | null {
+  const db = getDb();
+  const row = db.select({ id: runs.id }).from(runs).where(eq(runs.name, name)).get();
+  return row?.id ?? null;
+}
+
+/**
+ * Replay a run's stored messages from the stats DB, ordered by message index.
+ * Returns null when the run has no DB row at all; messages may be empty when
+ * the row exists but no messages were ever flushed (e.g. a run that died
+ * before its first turn completed).
+ */
+export function replaySessionFromDb(name: string): ReplayedSession | null {
+  const sessionID = lookupSessionIdByRunName(name);
+  if (!sessionID) return null;
+
+  const db = getDb();
+  const rows = db
+    .select()
+    .from(messages)
+    .where(eq(messages.sessionId, sessionID))
+    .orderBy(asc(messages.idx))
+    .all();
+
+  return {
+    sessionID,
+    messages: rows.map((row) => reconstructDbMessage(sessionID, row)),
+  };
+}
+
+function reconstructDbMessage(
+  sessionID: string,
+  row: typeof messages.$inferSelect,
+): ReplayedSessionMessage {
+  // model is stored as "providerID/modelID" (dispatcher join) or bare modelID.
+  let providerID: string | undefined;
+  let modelID: string | undefined;
+  if (row.model) {
+    const slash = row.model.indexOf('/');
+    if (slash > 0 && slash < row.model.length - 1) {
+      providerID = row.model.slice(0, slash);
+      modelID = row.model.slice(slash + 1);
+    } else {
+      modelID = row.model;
+    }
+  }
+
+  // The dispatcher persists the full parts array as JSON in `content`. Fall
+  // back to a single text part for legacy plain-text rows.
+  let parts: unknown[];
+  try {
+    const parsed = JSON.parse(row.content ?? '') as unknown;
+    parts = Array.isArray(parsed)
+      ? parsed
+      : [{ id: `${row.id}-text`, messageID: row.id, type: 'text', text: String(parsed ?? '') }];
+  } catch {
+    parts = [{ id: `${row.id}-text`, messageID: row.id, type: 'text', text: row.content ?? '' }];
+  }
+
+  const created = row.createdAt ? Date.parse(row.createdAt) : Number.NaN;
+  const completed = row.completedAt ? Date.parse(row.completedAt) : Number.NaN;
+
+  return {
+    info: {
+      id: row.id,
+      sessionID,
+      role: row.role ?? 'assistant',
+      time: {
+        ...(Number.isNaN(created) ? {} : { created }),
+        ...(Number.isNaN(completed) ? {} : { completed }),
+      },
+      tokens: {
+        input: row.tokensIn ?? 0,
+        output: row.tokensOut ?? 0,
+        reasoning: row.tokensReasoning ?? 0,
+        cache: { read: row.tokensCacheRead ?? 0, write: row.tokensCacheWrite ?? 0 },
+      },
+      cost: row.cost ?? undefined,
+      ...(modelID ? { modelID } : {}),
+      ...(providerID ? { providerID } : {}),
+    },
+    parts,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Retention cleanup — exported so the server can schedule it.
