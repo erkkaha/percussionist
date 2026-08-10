@@ -286,11 +286,6 @@ const taskYAML = makeCRD({
       jsonPath: '.status.phase',
     },
     {
-      name: 'Column',
-      type: 'string',
-      jsonPath: '.status.column',
-    },
-    {
       name: 'Type',
       type: 'string',
       jsonPath: '.spec.type',

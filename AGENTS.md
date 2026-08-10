@@ -50,7 +50,6 @@ Bypass hooks with `--no-verify` (rarely needed).
   - `images/runner-claude/` - Claude Agent SDK runner, same toolchain (Alpine-based)
   - `images/node/` - Shared Node 24 base
   - `images/web/` - Bun runtime
-  - `images/manager/` - Node 24
 - Images are built locally (no external registry) and loaded into cluster via `scripts/minikube-load.sh`
 
 ## Testing
@@ -692,6 +691,11 @@ and session state changes. Implementation notes:
   debugging (properties truncated to 200 chars)
 - **Known issue**: OpenCode's SSE stream may close immediately after `server.connected`,
   causing rapid reconnections. The 1-second backoff prevents resource exhaustion.
+- **Per-run deadline**: prompt-mode runs enforce an overall deadline derived from
+  `RUN_TIMEOUT_SECONDS` (`spec.timeoutSeconds`) via `resolveHardTimeoutMs()`, firing
+  `HARD_TIMEOUT_GRACE_MS` (60 s) before the pod's `activeDeadlineSeconds` so the graceful
+  snapshot → `sendStats(Failed)` → `patchStatus(Failed)` path wins the race with the
+  kubelet; falls back to the legacy 65-min `HARD_TIMEOUT_MS` when the env is unset.
 - See `packages/dispatcher/src/polling.ts` lines 194-252 (interactive) and 481-540 (prompt)
 
 ## Image Build & Load Pitfalls

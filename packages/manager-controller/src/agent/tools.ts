@@ -12,6 +12,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { setHeaderOptions } from '@kubernetes/client-node';
 import {
   BoardStatusSchema,
+  computeBoardColumn,
   type Finding,
   FindingCategory,
   FindingSeverity,
@@ -1212,7 +1213,7 @@ async function callTool(
             type: t.spec.type,
             title: t.spec.title,
             phase: t.status?.phase,
-            column: t.status?.column,
+            column: computeBoardColumn(t.status?.phase ?? 'pending'),
             labels: t.metadata.labels,
           }));
         }

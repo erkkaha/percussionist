@@ -80,6 +80,10 @@ export async function incrementalFlush(
     fileOps: fileOpsPayload,
   };
 
+  // The web PATCH is idempotent (insert-or-ignore on messages/toolCalls/fileOps,
+  // upsert on the run row — see packages/web/src/server/routes/stats.ts), so a
+  // delta whose PATCH fails is safe to re-send on the next turn: holding the
+  // cursor here just re-delivers the same rows, never duplicates them.
   try {
     const res = await fetch(`${WEB_STATS_URL}/api/stats/session`, {
       method: 'PATCH',
@@ -94,14 +98,16 @@ export async function incrementalFlush(
       log(
         `incrementalFlush: flushed ${newMessages.length} message(s) from idx ${fromIdx} (session ${sessionID})`,
       );
-    } else {
-      err(`incrementalFlush: web pod HTTP ${res.status}`);
+      return rawMessages.length; // advance cursor to total seen
     }
+    err(`incrementalFlush: web pod HTTP ${res.status} — keeping cursor at ${fromIdx} for retry`);
   } catch (e) {
-    err('incrementalFlush: POST failed (non-fatal):', (e as Error).message);
+    err(
+      `incrementalFlush: POST failed (non-fatal): ${(e as Error).message} — keeping cursor at ${fromIdx} for retry`,
+    );
   }
 
-  return rawMessages.length; // advance cursor to total seen
+  return fromIdx; // do not advance — the delta will be re-sent on the next turn
 }
 
 // ---------------------------------------------------------------------------

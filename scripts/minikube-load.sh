@@ -264,7 +264,11 @@ restore_manager() {
 process_one() {
   local name="$1"; local tag="$2"
   if $BUILD; then
-    echo ">> Building $tag${FORCE:+ (no-cache)}"
+    if $FORCE; then
+      echo ">> Building $tag (no-cache)"
+    else
+      echo ">> Building $tag"
+    fi
     build_one "$name" "$tag"
   fi
 
