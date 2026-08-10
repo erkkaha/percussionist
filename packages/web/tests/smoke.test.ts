@@ -186,6 +186,60 @@ describe('board routes', () => {
 
 const SESSION_ID = `smoke-session-${Date.now()}`;
 
+// Response shape of GET /api/stats/sessions — mirrors the client types in
+// SessionList.tsx / StatsView.tsx so shape drift is caught here.
+interface SessionRow {
+  id: string;
+  name: string;
+  resolvedModel: string;
+  agent: string | null;
+  model: string | null;
+  phase: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+interface AgentSummaryRow {
+  agent: string;
+  runs: number;
+  succeeded: number;
+  failed: number;
+  successRate: number | null;
+  totalTokensIn: number;
+  totalTokensOut: number;
+  totalCost: number;
+  avgTokensPerRun: number;
+  avgDurationMs: number | null;
+  models: string[];
+}
+
+interface ModelRow {
+  model: string;
+  runs: number;
+  tokensIn: number;
+  tokensOut: number;
+  cost: number;
+}
+
+interface SessionsResponse {
+  sessions: SessionRow[];
+  total: number;
+  limit: number;
+  offset: number;
+  summary: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    successRate: number | null;
+    totalTokensIn: number;
+    totalTokensOut: number;
+    totalCost: number;
+    avgDurationMs: number | null;
+  };
+  agentSummaries: AgentSummaryRow[];
+  modelRows: ModelRow[];
+}
+
 describe('stats API', () => {
   it('POST /api/stats/session → 200 ok', async () => {
     const res = await json('/api/stats/session', {
@@ -279,6 +333,179 @@ describe('stats API', () => {
     expect((body.summary as Record<string, unknown>).total).toBeGreaterThan(0);
     expect(Array.isArray(body.agentSummaries)).toBe(true);
     expect(Array.isArray(body.modelRows)).toBe(true);
+  });
+
+  it('GET /api/stats/sessions paginates in SQL and aggregates over the full window', async () => {
+    // Baseline: exactly the SESSION_ID posted by the earlier tests in this file.
+    // If this ever fails, an earlier test started inserting sessions and the
+    // hand-computed expectations below need updating.
+    const baseRes = await req('/api/stats/sessions?days=0');
+    expect(baseRes.status).toBe(200);
+    const base = (await baseRes.json()) as SessionsResponse;
+    expect(base.total).toBe(1);
+
+    const now = Date.now();
+    const inserts = [
+      {
+        // Same agent/model as the baseline session (builder + openai/gpt-4o).
+        sessionID: `smoke-paging-builder-${now}`,
+        run: {
+          name: 'smoke-run-2',
+          agent: 'builder',
+          model: 'openai/gpt-4o',
+          phase: 'Succeeded',
+          startedAt: '2025-02-01T00:00:00Z',
+          completedAt: '2025-02-01T00:10:00Z', // 600000 ms
+          tokensIn: 1000,
+          tokensOut: 500,
+          cost: 0.05,
+        },
+        messages: [],
+        toolCalls: [],
+        fileOps: [],
+      },
+      {
+        sessionID: `smoke-paging-planner-${now}`,
+        run: {
+          name: 'smoke-run-3',
+          agent: 'planner',
+          model: 'anthropic/claude-3',
+          phase: 'Failed',
+          startedAt: '2025-02-02T00:00:00Z',
+          completedAt: '2025-02-02T00:20:00Z', // 1200000 ms
+          tokensIn: 2000,
+          tokensOut: 1000,
+          cost: 0.1,
+        },
+        messages: [],
+        toolCalls: [],
+        fileOps: [],
+      },
+      {
+        // No runs.model — resolved from the user message's model.
+        sessionID: `smoke-paging-reviewer-${now}`,
+        run: {
+          name: 'smoke-run-4',
+          agent: 'reviewer',
+          model: null,
+          phase: 'Succeeded',
+          startedAt: '2025-02-03T00:00:00Z',
+          completedAt: null, // no duration
+          tokensIn: 500,
+          tokensOut: 250,
+          cost: 0.025,
+        },
+        messages: [
+          {
+            id: `smoke-paging-reviewer-${now}-m0`,
+            idx: 0,
+            role: 'user',
+            content: '[]',
+            model: 'openai/gpt-4o',
+          },
+        ],
+        toolCalls: [],
+        fileOps: [],
+      },
+    ];
+    for (const payload of inserts) {
+      expect((await json('/api/stats/session', payload)).status).toBe(200);
+    }
+
+    // First page: LIMIT/OFFSET must be applied in SQL, newest startedAt first.
+    const res = await req('/api/stats/sessions?days=0&limit=2&offset=0');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as SessionsResponse;
+    expect(body.limit).toBe(2);
+    expect(body.offset).toBe(0);
+    expect(body.sessions.length).toBe(2);
+    expect(body.sessions.map((s) => s.name)).toEqual(['smoke-run-4', 'smoke-run-3']);
+    // Correlated subquery resolves the reviewer session's model from its user message.
+    expect(body.sessions[0]?.resolvedModel).toBe('openai/gpt-4o');
+
+    // Second page — offset works in SQL too.
+    const res2 = await req('/api/stats/sessions?days=0&limit=2&offset=2');
+    expect(res2.status).toBe(200);
+    const body2 = (await res2.json()) as SessionsResponse;
+    expect(body2.sessions.map((s) => s.name)).toEqual(['smoke-run-2', 'smoke-run-1']);
+
+    // total + summary cover the full window (4 sessions = 1 baseline + 3 new),
+    // independent of the page bounds.
+    expect(body.total).toBe(4);
+    expect(body.summary.total).toBe(4);
+    expect(body.summary.succeeded).toBe(3);
+    expect(body.summary.failed).toBe(1);
+    expect(body.summary.successRate).toBe(75);
+    expect(body.summary.totalTokensIn).toBe(4500);
+    expect(body.summary.totalTokensOut).toBe(2250);
+    expect(body.summary.totalCost).toBeCloseTo(0.175, 5);
+    // Durations: 300000 (baseline) + 600000 + 1200000 over 3 runs.
+    expect(body.summary.avgDurationMs).toBe(700000);
+
+    // modelRows — resolved models, ordered by tokensIn DESC.
+    expect(body.modelRows).toHaveLength(2);
+    const gptRow = body.modelRows[0];
+    expect(gptRow.model).toBe('openai/gpt-4o');
+    expect(gptRow.runs).toBe(3); // baseline + smoke-run-2 + smoke-run-4 (message-resolved)
+    expect(gptRow.tokensIn).toBe(2500);
+    expect(gptRow.tokensOut).toBe(1250);
+    expect(gptRow.cost).toBeCloseTo(0.075, 6);
+    const claudeRow = body.modelRows[1];
+    expect(claudeRow.model).toBe('anthropic/claude-3');
+    expect(claudeRow.runs).toBe(1);
+    expect(claudeRow.tokensIn).toBe(2000);
+    expect(claudeRow.tokensOut).toBe(1000);
+    expect(claudeRow.cost).toBeCloseTo(0.1, 6);
+
+    // agentSummaries — per-agent SQL groups with derived values.
+    expect(body.agentSummaries).toHaveLength(3);
+    const byAgent = (agent: string) => {
+      const row = body.agentSummaries.find((a) => a.agent === agent);
+      expect(row).toBeDefined();
+      return row as AgentSummaryRow;
+    };
+
+    const builder = byAgent('builder');
+    expect(builder.runs).toBe(2);
+    expect(builder.succeeded).toBe(2);
+    expect(builder.failed).toBe(0);
+    expect(builder.successRate).toBe(100);
+    expect(builder.totalTokensIn).toBe(2000);
+    expect(builder.totalTokensOut).toBe(1000);
+    expect(builder.totalCost).toBeCloseTo(0.05, 6);
+    expect(builder.avgTokensPerRun).toBe(1500);
+    // (300000 + 600000) / 2
+    expect(builder.avgDurationMs).toBe(450000);
+    expect(builder.models).toEqual(['openai/gpt-4o']);
+
+    const planner = byAgent('planner');
+    expect(planner.runs).toBe(1);
+    expect(planner.succeeded).toBe(0);
+    expect(planner.failed).toBe(1);
+    expect(planner.successRate).toBe(0);
+    expect(planner.totalTokensIn).toBe(2000);
+    expect(planner.totalTokensOut).toBe(1000);
+    expect(planner.totalCost).toBeCloseTo(0.1, 6);
+    expect(planner.avgTokensPerRun).toBe(3000);
+    expect(planner.avgDurationMs).toBe(1200000);
+    expect(planner.models).toEqual(['anthropic/claude-3']);
+
+    const reviewer = byAgent('reviewer');
+    expect(reviewer.runs).toBe(1);
+    expect(reviewer.succeeded).toBe(1);
+    expect(reviewer.failed).toBe(0);
+    expect(reviewer.successRate).toBe(100);
+    expect(reviewer.totalTokensIn).toBe(500);
+    expect(reviewer.totalTokensOut).toBe(250);
+    expect(reviewer.totalCost).toBeCloseTo(0.025, 6);
+    expect(reviewer.avgTokensPerRun).toBe(750);
+    // No completedAt — duration stays null.
+    expect(reviewer.avgDurationMs).toBeNull();
+    // models[] comes from runs.model only; smoke-run-4 has none.
+    expect(reviewer.models).toEqual([]);
+
+    // agentSummaries sorted by runs DESC (builder first).
+    expect(body.agentSummaries[0]?.agent).toBe('builder');
   });
 
   it('POST /api/stats/session missing sessionID → 400', async () => {

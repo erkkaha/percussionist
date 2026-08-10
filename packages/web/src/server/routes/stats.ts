@@ -360,9 +360,15 @@ stats.get('/export', auth(), (c) => {
 
 // GET /api/stats/sessions?days=30&limit=50&offset=0 — lightweight session listing for UI.
 //
-// Returns flat run rows (no nested messages/toolCalls/fileOps) plus server-side
-// aggregated summary, agent breakdown, and model breakdown. Pagination via
-// limit/offset.
+// Returns flat run rows (no nested messages/toolCalls/fileOps) plus aggregated
+// summary, agent breakdown, and model breakdown. Pagination via limit/offset.
+//
+// The page query runs with SQL LIMIT/OFFSET so the correlated resolvedModel
+// subquery only executes for the page rows; the summary/agentSummaries/modelRows
+// aggregates are computed in SQL over the full retention window (days=0 = the
+// whole table), never materialised in JS. The response shape is fixed — the
+// clients (SessionList with PAGE_SIZE=50, StatsView with STATS_LIMIT=500) parse
+// sessions/total/summary/agentSummaries/modelRows strictly.
 stats.get('/sessions', auth(), (c) => {
   const daysParam = c.req.query('days') ?? '30';
   const days = parseInt(daysParam, 10);
@@ -372,19 +378,26 @@ stats.get('/sessions', auth(), (c) => {
   const db = getDb();
 
   const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
+  const whereClause = cutoff ? gte(runs.startedAt, cutoff) : undefined;
 
   // Resolve model: runs.model first, fallback to first user message's model.
+  // Note: `runs.id` must be written as a raw identifier, not ${runs.id} —
+  // drizzle renders an interpolated column unqualified ("id") inside a raw sql
+  // template, so the subquery would bind "id" to messages.id instead of the
+  // outer runs row and the fallback would never resolve.
   const resolvedModel = sql<string>`
     COALESCE(${runs.model}, (
       SELECT ${messages.model} FROM ${messages}
-      WHERE ${messages.sessionId} = ${runs.id}
+      WHERE ${messages.sessionId} = runs.id
         AND ${messages.role} = 'user'
         AND ${messages.model} IS NOT NULL
       LIMIT 1
     ), 'unknown')
   `;
 
-  const baseQuery = db
+  // Page query — LIMIT/OFFSET pushed into SQL so the resolvedModel subquery
+  // runs only for the page rows, not every row in the window.
+  const sessions = db
     .select({
       id: runs.id,
       name: runs.name,
@@ -403,97 +416,142 @@ stats.get('/sessions', auth(), (c) => {
       resolvedModel,
     })
     .from(runs)
-    .orderBy(desc(runs.startedAt));
+    .where(whereClause)
+    .orderBy(desc(runs.startedAt))
+    .limit(limit)
+    .offset(offset)
+    .all() as Array<{
+    id: string;
+    name: string;
+    namespace: string | null;
+    task: string | null;
+    model: string | null;
+    agent: string | null;
+    phase: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    tokensIn: number | null;
+    tokensOut: number | null;
+    cost: number | null;
+    error: string | null;
+    createdAt: string | null;
+    resolvedModel: string;
+  }>;
 
-  const allRows = cutoff ? baseQuery.where(gte(runs.startedAt, cutoff)).all() : baseQuery.all();
+  // Full-window aggregates — total + summary over the entire retention window
+  // (days=0 = whole table), independent of the page.
+  const agg = db
+    .select({
+      total: sql<number>`COUNT(*)`.as('total'),
+      succeeded: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Succeeded' THEN 1 ELSE 0 END)`.as(
+        'succeeded',
+      ),
+      failed: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Failed' THEN 1 ELSE 0 END)`.as('failed'),
+      totalTokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('total_tokens_in'),
+      totalTokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('total_tokens_out'),
+      totalCost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as('total_cost'),
+      avgDurationMs:
+        sql<number>`AVG(CASE WHEN ${runs.startedAt} IS NOT NULL AND ${runs.completedAt} IS NOT NULL
+        THEN (julianday(${runs.completedAt}) - julianday(${runs.startedAt})) * 86400000 ELSE NULL END)`.as(
+          'avg_duration_ms',
+        ),
+    })
+    .from(runs)
+    .where(whereClause)
+    .get();
 
-  const total = allRows.length;
+  const total = agg?.total ?? 0;
+  const succeeded = agg?.succeeded ?? 0;
+  const failed = agg?.failed ?? 0;
 
-  // Summary
-  const succeeded = allRows.filter((r) => r.phase === 'Succeeded').length;
-  const failed = allRows.filter((r) => r.phase === 'Failed').length;
-  const totalTokensIn = allRows.reduce((a, r) => a + (r.tokensIn ?? 0), 0);
-  const totalTokensOut = allRows.reduce((a, r) => a + (r.tokensOut ?? 0), 0);
-  const totalCost = allRows.reduce((a, r) => a + (r.cost ?? 0), 0);
+  const summary = {
+    total,
+    succeeded,
+    failed,
+    successRate: total > 0 ? Math.round((succeeded / total) * 100) : null,
+    totalTokensIn: agg?.totalTokensIn ?? 0,
+    totalTokensOut: agg?.totalTokensOut ?? 0,
+    totalCost: agg?.totalCost ?? 0,
+    avgDurationMs: agg?.avgDurationMs != null ? Math.round(agg.avgDurationMs) : null,
+  };
 
-  const durations: number[] = [];
-  for (const r of allRows) {
-    if (r.startedAt && r.completedAt) {
-      const ms = new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime();
-      if (!Number.isNaN(ms)) durations.push(ms);
-    }
+  // Per-model breakdown — GROUP BY the resolved model, ordered by tokens in
+  // (matches the previous JS sort).
+  const modelRows = db
+    .select({
+      model: resolvedModel,
+      runs: sql<number>`COUNT(*)`.as('runs'),
+      tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('tokens_in'),
+      tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('tokens_out'),
+      cost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as('cost'),
+    })
+    .from(runs)
+    .where(whereClause)
+    .groupBy(resolvedModel)
+    .orderBy(sql`COALESCE(SUM(${runs.tokensIn}), 0) DESC`)
+    .all() as Array<{
+    model: string;
+    runs: number;
+    tokensIn: number;
+    tokensOut: number;
+    cost: number;
+  }>;
+
+  // Per-agent breakdown — grouped in SQL; only the derived fields
+  // (successRate/avgTokensPerRun/avgDurationMs) and the runs-desc sort are JS.
+  const agentRows = db
+    .select({
+      agent: sql<string>`COALESCE(${runs.agent}, 'unknown')`.as('agent'),
+      runs: sql<number>`COUNT(*)`.as('runs'),
+      succeeded: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Succeeded' THEN 1 ELSE 0 END)`.as(
+        'succeeded',
+      ),
+      failed: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Failed' THEN 1 ELSE 0 END)`.as('failed'),
+      tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('tokens_in'),
+      tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('tokens_out'),
+      cost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as('cost'),
+      avgDurationMs:
+        sql<number>`AVG(CASE WHEN ${runs.startedAt} IS NOT NULL AND ${runs.completedAt} IS NOT NULL
+        THEN (julianday(${runs.completedAt}) - julianday(${runs.startedAt})) * 86400000 ELSE NULL END)`.as(
+          'avg_duration_ms',
+        ),
+    })
+    .from(runs)
+    .where(whereClause)
+    .groupBy(sql`COALESCE(${runs.agent}, 'unknown')`)
+    .all() as Array<{
+    agent: string;
+    runs: number;
+    succeeded: number;
+    failed: number;
+    tokensIn: number;
+    tokensOut: number;
+    cost: number;
+    avgDurationMs: number | null;
+  }>;
+
+  // Per-agent model lists — from runs.model only (matches the previous JS,
+  // which added r.model, not the resolved model, to each agent's models[]).
+  const agentModelRows = db
+    .select({
+      agent: sql<string>`COALESCE(${runs.agent}, 'unknown')`.as('agent'),
+      model: runs.model,
+    })
+    .from(runs)
+    .where(and(whereClause, sql`${runs.model} IS NOT NULL`))
+    .groupBy(sql`COALESCE(${runs.agent}, 'unknown')`, runs.model)
+    .all() as Array<{ agent: string; model: string }>;
+
+  const agentModels = new Map<string, string[]>();
+  for (const row of agentModelRows) {
+    const list = agentModels.get(row.agent) ?? [];
+    list.push(row.model);
+    agentModels.set(row.agent, list);
   }
-  const avgDurationMs =
-    durations.length > 0
-      ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
-      : null;
 
-  // Per-model breakdown
-  const modelMap = new Map<
-    string,
-    { runs: number; tokensIn: number; tokensOut: number; cost: number }
-  >();
-  for (const r of allRows) {
-    const model = r.resolvedModel ?? r.model ?? 'unknown';
-    const existing = modelMap.get(model) ?? { runs: 0, tokensIn: 0, tokensOut: 0, cost: 0 };
-    modelMap.set(model, {
-      runs: existing.runs + 1,
-      tokensIn: existing.tokensIn + (r.tokensIn ?? 0),
-      tokensOut: existing.tokensOut + (r.tokensOut ?? 0),
-      cost: existing.cost + (r.cost ?? 0),
-    });
-  }
-  const modelRows = [...modelMap.entries()]
-    .map(([model, v]) => ({ model, ...v }))
-    .sort((a, b) => b.tokensIn - a.tokensIn);
-
-  // Per-agent breakdown
-  const agentMap = new Map<
-    string,
-    {
-      runs: number;
-      succeeded: number;
-      failed: number;
-      tokensIn: number;
-      tokensOut: number;
-      cost: number;
-      durationSum: number;
-      durationCount: number;
-      models: Set<string>;
-    }
-  >();
-  for (const r of allRows) {
-    const agent = r.agent ?? 'unknown';
-    const existing = agentMap.get(agent) ?? {
-      runs: 0,
-      succeeded: 0,
-      failed: 0,
-      tokensIn: 0,
-      tokensOut: 0,
-      cost: 0,
-      durationSum: 0,
-      durationCount: 0,
-      models: new Set<string>(),
-    };
-    existing.runs++;
-    if (r.phase === 'Succeeded') existing.succeeded++;
-    else if (r.phase === 'Failed') existing.failed++;
-    existing.tokensIn += r.tokensIn ?? 0;
-    existing.tokensOut += r.tokensOut ?? 0;
-    existing.cost += r.cost ?? 0;
-    if (r.startedAt && r.completedAt) {
-      const ms = new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime();
-      if (!Number.isNaN(ms)) {
-        existing.durationSum += ms;
-        existing.durationCount++;
-      }
-    }
-    if (r.model) existing.models.add(r.model);
-    agentMap.set(agent, existing);
-  }
-  const agentSummaries = [...agentMap.entries()]
-    .map(([agent, v]) => ({
-      agent,
+  const agentSummaries = agentRows
+    .map((v) => ({
+      agent: v.agent,
       runs: v.runs,
       succeeded: v.succeeded,
       failed: v.failed,
@@ -502,29 +560,17 @@ stats.get('/sessions', auth(), (c) => {
       totalTokensOut: v.tokensOut,
       totalCost: v.cost,
       avgTokensPerRun: v.runs > 0 ? Math.round((v.tokensIn + v.tokensOut) / v.runs) : 0,
-      avgDurationMs: v.durationCount > 0 ? Math.round(v.durationSum / v.durationCount) : null,
-      models: [...v.models],
+      avgDurationMs: v.avgDurationMs != null ? Math.round(v.avgDurationMs) : null,
+      models: agentModels.get(v.agent) ?? [],
     }))
     .sort((a, b) => b.runs - a.runs);
-
-  // Paginate sessions for the table
-  const sessions = allRows.slice(offset, offset + limit);
 
   return c.json({
     sessions,
     total,
     limit,
     offset,
-    summary: {
-      total,
-      succeeded,
-      failed,
-      successRate: total > 0 ? Math.round((succeeded / total) * 100) : null,
-      totalTokensIn,
-      totalTokensOut,
-      totalCost,
-      avgDurationMs,
-    },
+    summary,
     agentSummaries,
     modelRows,
   });
