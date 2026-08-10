@@ -1324,6 +1324,12 @@ curl .../api/stats/export | llm "find patterns in agent tool usage and prompt ef
 The export is a JSON array; each element is a session with nested `messages`,
 `toolCalls`, and `fileOps` arrays.
 
+The export is capped at **200 sessions** per request (`EXPORT_MAX_SESSIONS`,
+env-overridable on the `percussionist-web` Deployment). The cap applies inside
+the window — `days=0` returns the whole table **truncated to the 200 most
+recent sessions**, and the truncation is logged to the web pod's stdout. Raise
+`EXPORT_MAX_SESSIONS` if a large-window LLM analysis needs more sessions.
+
 ### Retention
 
 Sessions are deleted after **30 days** by an hourly cleanup job in the web pod.
@@ -1341,6 +1347,7 @@ Override via `RETENTION_DAYS` on the `percussionist-web` Deployment (`0` = keep 
 |---------|---------|-------------|
 | `DATA_DIR` | `/app/data` | Directory for `percussionist.db` |
 | `RETENTION_DAYS` | `30` | Days to retain session data (`0` = forever) |
+| `EXPORT_MAX_SESSIONS` | `200` | Max sessions returned by `GET /api/stats/export` (`days=0` truncates to the most recent N) |
 
 The PVC (`percussionist-web-db`, 1 Gi) is created by `k8s/deploy/web.yaml` and
 survives pod restarts and redeployments.

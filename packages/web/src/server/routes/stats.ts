@@ -18,7 +18,7 @@
 //     days=N   — look-back window in days (default: 30; 0 = all time)
 
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, gte, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { auth, scoped } from '../auth.js';
 import { fileOps, getDb, messages, metricSnapshots, runs, toolCalls } from '../db.js';
@@ -330,6 +330,26 @@ stats.patch('/session', scoped('stats', 'write'), async (c) => {
 // Returns a JSON array where each element is a session with nested messages,
 // tool calls, and file operations. Intended to be saved to disk and fed to
 // an LLM wholesale: jq . sessions.json | llm "find patterns in agent usage".
+//
+// The session set is capped at EXPORT_MAX_SESSIONS (default 200,
+// env-overridable). The cap applies inside the window: days=0 means "whole
+// table capped at EXPORT_MAX_SESSIONS" — without it the entire (potentially
+// unbounded, when RETENTION_DAYS=0 disables retention) table would be loaded
+// into memory. When the window exceeds the cap the most recent sessions are
+// kept (ordered by startedAt DESC) and the truncation is logged via
+// console.warn.
+
+// Env-overridable cap on exported sessions. Read per-request so operators can
+// change it (and tests can override it) without restarting the server.
+function exportMaxSessions(): number {
+  return parseInt(process.env.EXPORT_MAX_SESSIONS ?? '200', 10);
+}
+
+// Chunk size for the batched child fetches below. SQLite's default
+// bound-parameter limit is 999 (32766 on modern builds); chunking at 500
+// session ids keeps the IN clause well under the limit on any SQLite version.
+const EXPORT_FETCH_CHUNK = 500;
+
 stats.get('/export', auth(), (c) => {
   const daysParam = c.req.query('days') ?? '30';
   const days = parseInt(daysParam, 10);
@@ -338,22 +358,78 @@ stats.get('/export', auth(), (c) => {
 
   const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
 
-  const runRows = cutoff
-    ? db.select().from(runs).where(gte(runs.startedAt, cutoff)).all()
-    : db.select().from(runs).all();
+  const cap = exportMaxSessions();
 
+  // Bounded read: LIMIT is pushed into SQL, plus one probe row to detect
+  // truncation. Ordering by startedAt DESC keeps the most recent sessions
+  // when the window exceeds the cap.
+  const rows = cutoff
+    ? db
+        .select()
+        .from(runs)
+        .where(gte(runs.startedAt, cutoff))
+        .orderBy(desc(runs.startedAt))
+        .limit(cap + 1)
+        .all()
+    : db
+        .select()
+        .from(runs)
+        .orderBy(desc(runs.startedAt))
+        .limit(cap + 1)
+        .all();
+
+  const truncated = rows.length > cap;
+  const runRows = truncated ? rows.slice(0, cap) : rows;
+
+  if (truncated) {
+    console.warn(
+      `[stats] export truncated: window contains ${rows.length} session(s), returning the most recent ${cap} ` +
+        `(EXPORT_MAX_SESSIONS=${cap}); raise EXPORT_MAX_SESSIONS to export more`,
+    );
+  }
+
+  // Batched child fetches — one IN-chunked pass per table, assembled by
+  // sessionId into the same nested shape the old per-session N+1 loop
+  // produced. The old loop issued O(sessions) queries per table; this issues
+  // O(ceil(sessions / EXPORT_FETCH_CHUNK)) queries per table. The session set
+  // is already bounded by the cap above, so the total work is proportional to
+  // the capped set, never the window.
   const sessionIds = runRows.map((r) => r.id);
 
-  // Fetch all related rows per session and assemble the nested result.
-  // Session count is bounded to ~10 concurrent runs so N+1 is fine.
+  const messagesBySession = new Map<string, Array<typeof messages.$inferSelect>>();
+  const toolCallsBySession = new Map<string, Array<typeof toolCalls.$inferSelect>>();
+  const fileOpsBySession = new Map<string, Array<typeof fileOps.$inferSelect>>();
+
+  for (let i = 0; i < sessionIds.length; i += EXPORT_FETCH_CHUNK) {
+    const chunk = sessionIds.slice(i, i + EXPORT_FETCH_CHUNK);
+
+    for (const row of db.select().from(messages).where(inArray(messages.sessionId, chunk)).all()) {
+      const list = messagesBySession.get(row.sessionId);
+      if (list) list.push(row);
+      else messagesBySession.set(row.sessionId, [row]);
+    }
+    for (const row of db
+      .select()
+      .from(toolCalls)
+      .where(inArray(toolCalls.sessionId, chunk))
+      .all()) {
+      const list = toolCallsBySession.get(row.sessionId);
+      if (list) list.push(row);
+      else toolCallsBySession.set(row.sessionId, [row]);
+    }
+    for (const row of db.select().from(fileOps).where(inArray(fileOps.sessionId, chunk)).all()) {
+      const list = fileOpsBySession.get(row.sessionId);
+      if (list) list.push(row);
+      else fileOpsBySession.set(row.sessionId, [row]);
+    }
+  }
+
   const result = runRows.map((r) => ({
     ...r,
-    messages: db.select().from(messages).where(eq(messages.sessionId, r.id)).all(),
-    toolCalls: db.select().from(toolCalls).where(eq(toolCalls.sessionId, r.id)).all(),
-    fileOps: db.select().from(fileOps).where(eq(fileOps.sessionId, r.id)).all(),
+    messages: messagesBySession.get(r.id) ?? [],
+    toolCalls: toolCallsBySession.get(r.id) ?? [],
+    fileOps: fileOpsBySession.get(r.id) ?? [],
   }));
-
-  void sessionIds; // unused after refactor — keep for future bulk query path
 
   return c.json(result);
 });

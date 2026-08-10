@@ -7,7 +7,7 @@
 // DATA_DIR is set to a temp directory before any request fires, so getDb()
 // creates a fresh in-memory-equivalent DB for each test run.
 
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createApp } from '../src/server/app.js';
@@ -313,13 +313,23 @@ describe('stats API', () => {
     expect(res.status).toBe(200);
   });
 
-  it('GET /api/stats/export → array includes posted session', async () => {
+  it('GET /api/stats/export → array includes posted session with nested children', async () => {
     const res = await req('/api/stats/export?days=0');
     expect(res.status).toBe(200);
-    const body = (await res.json()) as Array<{ id: string }>;
+    const body = (await res.json()) as Array<{
+      id: string;
+      messages: Array<{ id: string }>;
+      toolCalls: unknown[];
+      fileOps: unknown[];
+    }>;
     expect(Array.isArray(body)).toBe(true);
     const found = body.find((s) => s.id === SESSION_ID);
     expect(found).toBeDefined();
+    // Nested children present for the returned session — the batched fetch
+    // must reassemble the same nested shape the old per-session N+1 loop did.
+    expect(found?.messages.some((m) => m.id === `${SESSION_ID}-0`)).toBe(true);
+    expect(found?.toolCalls.length).toBe(1);
+    expect(found?.fileOps.length).toBe(1);
   });
 
   it('GET /api/stats/sessions → paginated result with summary/agents/models', async () => {
@@ -506,6 +516,102 @@ describe('stats API', () => {
 
     // agentSummaries sorted by runs DESC (builder first).
     expect(body.agentSummaries[0]?.agent).toBe('builder');
+  });
+
+  it('GET /api/stats/export respects EXPORT_MAX_SESSIONS and logs truncation', async () => {
+    // Cap the export to 2 sessions and insert 3 fresh ones (newest startedAt
+    // last). The DB already holds the baseline + paging sessions from earlier
+    // tests, so the window exceeds the cap and the export must truncate to the
+    // 2 most recent sessions with a console.warn. Placed after the paging test
+    // so the hand-computed baseline (total === 1) above stays stable.
+    const prevCap = process.env.EXPORT_MAX_SESSIONS;
+    process.env.EXPORT_MAX_SESSIONS = '2';
+
+    const warn = mock(() => {});
+    const originalWarn = console.warn;
+    console.warn = warn;
+
+    try {
+      const now = Date.now();
+      const inserts = [
+        {
+          sessionID: `smoke-export-cap-1-${now}`,
+          run: {
+            name: 'cap-run-1',
+            agent: 'builder',
+            phase: 'Succeeded',
+            startedAt: '2025-04-01T00:00:00Z',
+            completedAt: '2025-04-01T00:05:00Z',
+            tokensIn: 100,
+            tokensOut: 50,
+          },
+          messages: [{ id: `cap-1-m-${now}`, idx: 0, role: 'user', content: '[]' }],
+          toolCalls: [],
+          fileOps: [],
+        },
+        {
+          sessionID: `smoke-export-cap-2-${now}`,
+          run: {
+            name: 'cap-run-2',
+            agent: 'builder',
+            phase: 'Succeeded',
+            startedAt: '2025-04-02T00:00:00Z',
+            completedAt: '2025-04-02T00:05:00Z',
+            tokensIn: 100,
+            tokensOut: 50,
+          },
+          messages: [{ id: `cap-2-m-${now}`, idx: 0, role: 'user', content: '[]' }],
+          toolCalls: [],
+          fileOps: [],
+        },
+        {
+          sessionID: `smoke-export-cap-3-${now}`,
+          run: {
+            name: 'cap-run-3',
+            agent: 'builder',
+            phase: 'Succeeded',
+            startedAt: '2025-04-03T00:00:00Z',
+            completedAt: '2025-04-03T00:05:00Z',
+            tokensIn: 100,
+            tokensOut: 50,
+          },
+          messages: [{ id: `cap-3-m-${now}`, idx: 0, role: 'user', content: '[]' }],
+          toolCalls: [],
+          fileOps: [],
+        },
+      ];
+      for (const payload of inserts) {
+        expect((await json('/api/stats/session', payload)).status).toBe(200);
+      }
+
+      const res = await req('/api/stats/export?days=0');
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Array<{
+        name: string;
+        messages: Array<{ id: string }>;
+      }>;
+      expect(Array.isArray(body)).toBe(true);
+
+      // Cap respected: only the 2 most recent sessions (by startedAt DESC) are
+      // returned, never more than EXPORT_MAX_SESSIONS.
+      expect(body.length).toBe(2);
+      expect(body.map((s) => s.name)).toEqual(['cap-run-3', 'cap-run-2']);
+
+      // Nested children present for the returned sessions.
+      expect(body[0]?.messages.length).toBe(1);
+      expect(body[0]?.messages[0]?.id).toBe(`cap-3-m-${now}`);
+      expect(body[1]?.messages.length).toBe(1);
+
+      // Truncation logged via console.warn.
+      expect(warn).toHaveBeenCalled();
+      const args = warn.mock.calls[0] as [string];
+      expect(args[0]).toContain('export truncated');
+      expect(args[0]).toContain('EXPORT_MAX_SESSIONS=2');
+    } finally {
+      console.warn = originalWarn;
+      if (prevCap !== undefined) process.env.EXPORT_MAX_SESSIONS = prevCap;
+      else delete process.env.EXPORT_MAX_SESSIONS;
+    }
   });
 
   it('POST /api/stats/session missing sessionID → 400', async () => {
