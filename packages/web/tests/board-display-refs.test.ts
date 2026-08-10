@@ -177,6 +177,7 @@ describe('GET /api/projects/:project/board display refs', () => {
           childProgress?: {
             childRefs: string[];
             childDisplayRefs: string[];
+            childPhases: string[];
             total: number;
             completed: number;
           };
@@ -189,5 +190,73 @@ describe('GET /api/projects/:project/board display refs', () => {
     expect(planTask?.childProgress?.completed).toBe(1);
     expect(planTask?.childProgress?.childRefs).toEqual([childA, childB]);
     expect(planTask?.childProgress?.childDisplayRefs).toEqual(['Implement API', 'Add tests']);
+    // childPhases is parallel to childRefs: 'done' sits at B's index, not A's.
+    expect(planTask?.childProgress?.childPhases).toEqual(['pending', 'done']);
+  });
+
+  it('aligns childProgress.childPhases by index for children in mixed phases', async () => {
+    const planName = `${PROJECT_NAME}-plan-abcd07`;
+    const childA = `${PROJECT_NAME}-build-abcd08`;
+    const childB = `${PROJECT_NAME}-build-abcd09`;
+    const childC = `${PROJECT_NAME}-build-abcd10`;
+
+    listTasksSpy.mockResolvedValue([
+      makeTask({
+        name: planName,
+        type: 'PLAN',
+        title: 'Plan rollout',
+        phase: 'awaiting-children',
+      }),
+      makeTask({
+        name: childA,
+        type: 'BUILD',
+        title: 'Implement API',
+        parentTaskRef: planName,
+        phase: 'running',
+      }),
+      makeTask({
+        name: childB,
+        type: 'BUILD',
+        title: 'Add tests',
+        parentTaskRef: planName,
+        phase: 'done',
+      }),
+      makeTask({
+        name: childC,
+        type: 'BUILD',
+        title: 'Write docs',
+        parentTaskRef: planName,
+        phase: 'failed',
+      }),
+    ]);
+
+    const res = await app.request(`/api/projects/${PROJECT_NAME}/board`);
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as {
+      columns: {
+        blocked?: Array<{
+          childProgress?: {
+            childRefs: string[];
+            childDisplayRefs: string[];
+            childPhases: string[];
+            total: number;
+            completed: number;
+          };
+        }>;
+      };
+    };
+
+    const planTask = body.columns.blocked?.[0];
+    expect(planTask?.childProgress?.total).toBe(3);
+    expect(planTask?.childProgress?.completed).toBe(1); // 'done' only
+    expect(planTask?.childProgress?.childRefs).toEqual([childA, childB, childC]);
+    expect(planTask?.childProgress?.childDisplayRefs).toEqual([
+      'Implement API',
+      'Add tests',
+      'Write docs',
+    ]);
+    // Each child's phase at its own index; non-done phases keep their real value.
+    expect(planTask?.childProgress?.childPhases).toEqual(['running', 'done', 'failed']);
   });
 });

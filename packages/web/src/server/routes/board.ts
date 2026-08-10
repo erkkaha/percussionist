@@ -137,7 +137,13 @@ board.get('/:project/board', auth(), async (c) => {
     // Build a map of child progress for PLAN tasks in awaiting-children phase.
     const childProgressMap = new Map<
       string,
-      { total: number; completed: number; childRefs: string[]; childDisplayRefs: string[] }
+      {
+        total: number;
+        completed: number;
+        childRefs: string[];
+        childDisplayRefs: string[];
+        childPhases: TaskPhase[];
+      }
     >();
     for (const task of tasks) {
       if (task.spec.type === 'PLAN' && task.status?.phase === 'awaiting-children') {
@@ -153,6 +159,9 @@ board.get('/:project/board', auth(), async (c) => {
           childDisplayRefs: children.map((t) =>
             resolveTaskDisplayLabel(t.metadata.name, tasksByName, titleCounts),
           ) as string[],
+          // Parallel to childRefs — each child's phase (pending when absent), so
+          // the client can render per-child completion without re-deriving it.
+          childPhases: children.map((t) => t.status?.phase ?? 'pending'),
         });
       }
     }

@@ -4,7 +4,13 @@
 // derived from the server schema, plus a few client-specific view models.
 
 // Re-export server types so components import from a single place.
-import type { AgentCapability, AgentRef, DiffContext, DiffFinding } from '@percussionist/api';
+import type {
+  AgentCapability,
+  AgentRef,
+  DiffContext,
+  DiffFinding,
+  TaskPhase,
+} from '@percussionist/api';
 
 export type {
   AgentCapability,
@@ -19,6 +25,7 @@ export type {
   Project,
   Run,
   TaskDiffFindings,
+  TaskPhase,
   TaskType,
   WorkerStatus,
 } from '@percussionist/api';
@@ -45,6 +52,8 @@ export interface Task extends _Task {
     completed: number;
     childRefs: string[];
     childDisplayRefs?: string[];
+    /** Per-child phase, parallel to childRefs — lets the client render per-child completion. */
+    childPhases?: TaskPhase[];
   };
   // Server-computed view fields on the board response (like childProgress):
   // the phase/message of the task's worker run, so the client can tell
