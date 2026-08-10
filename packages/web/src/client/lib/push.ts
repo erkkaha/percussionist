@@ -12,22 +12,29 @@
 // service worker only registers in production — and on non-secure origins.
 
 import { authHeaders } from './auth';
-import { getServiceWorkerRegistration } from './pwa';
+import { waitForServiceWorkerRegistration } from './pwa';
 
 const BASE = '/api/push';
 
-/** True when this browser/origin can do Web Push and the worker registered. */
+/**
+ * Cheap synchronous capability guard: this browser/origin can do Web Push.
+ *
+ * Deliberately does NOT include the registration — that resolves asynchronously
+ * via waitForServiceWorkerRegistration() (the worker may still be registering
+ * right after `load`), so callers must await that before reading pushManager.
+ */
 export function isPushSupported(): boolean {
   return (
     typeof Notification !== 'undefined' &&
     'PushManager' in window &&
-    getServiceWorkerRegistration() !== null
+    'serviceWorker' in navigator &&
+    !import.meta.env.DEV
   );
 }
 
 /** The device's current subscription, or null when push is off or unsupported. */
 export async function getPushSubscription(): Promise<PushSubscription | null> {
-  const reg = getServiceWorkerRegistration();
+  const reg = await waitForServiceWorkerRegistration();
   if (!reg) return null;
   try {
     return await reg.pushManager.getSubscription();
@@ -52,7 +59,7 @@ function urlBase64ToUint8Array(base64url: string): Uint8Array {
  * the server. Throws with a user-presentable message on any failure.
  */
 export async function subscribeToPush(): Promise<void> {
-  const reg = getServiceWorkerRegistration();
+  const reg = await waitForServiceWorkerRegistration();
   if (!reg)
     throw new Error('Push is unavailable: no service worker (dev build or insecure origin)');
 

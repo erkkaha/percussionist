@@ -31,7 +31,7 @@ const {
 const { getRawDb, vecUnavailableReason } = await import('../db.js');
 
 // Every suite here needs the sqlite-vec extension — handleHealth included, since
-// it calls getDb() to assert the database initialises. Its prebuilt binary is
+// it calls getRawDb() to assert the database initialises. Its prebuilt binary is
 // glibc-only — it cannot dlopen on musl, so a whole-monorepo
 // `pnpm test` from an Alpine runner pod used to fail here and take the husky
 // pre-commit hook down with it. Skip with the reason instead of failing: on any

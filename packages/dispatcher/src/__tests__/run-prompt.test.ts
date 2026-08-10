@@ -4,6 +4,7 @@ import {
   FatalRunError,
   type PromptPostResult,
   type RunPromptDeps,
+  resolveHardTimeoutMs,
   runInteractive,
   runPrompt,
 } from '../polling.js';
@@ -20,8 +21,10 @@ import type { RawMessage } from '../session.js';
 // The runPrompt SSE stream and periodic-snapshot background loops hit global
 // fetch; the 503 stub keeps them spinning quietly until terminate is set.
 
-// FIRST_RESPONSE_TIMEOUT_MS from polling.ts (module-private; kept in sync).
+// FIRST_RESPONSE_TIMEOUT_MS / HARD_TIMEOUT_MS from polling.ts (module-private;
+// kept in sync).
 const FIRST_RESPONSE_TIMEOUT_MS = 3_600_000;
+const HARD_TIMEOUT_MS = FIRST_RESPONSE_TIMEOUT_MS + 300_000;
 
 const okPost = async (): Promise<PromptPostResult> => ({
   ok: true,
@@ -149,6 +152,39 @@ const succeededPatch = (patches: object[]): { message?: string } | undefined =>
   patches.find((p) => (p as { phase?: string }).phase === 'Succeeded') as
     | { message?: string }
     | undefined;
+
+describe('resolveHardTimeoutMs', () => {
+  it('derives the deadline from timeoutSeconds minus the grace lead', () => {
+    expect(resolveHardTimeoutMs('3600')).toBe(3_540_000);
+    expect(resolveHardTimeoutMs('120')).toBe(60_000);
+  });
+
+  it('floors tiny timeouts at the 30s boot window', () => {
+    expect(resolveHardTimeoutMs('30')).toBe(30_000);
+    expect(resolveHardTimeoutMs('1')).toBe(30_000);
+  });
+
+  it('falls back to the legacy HARD_TIMEOUT_MS for missing or invalid values', () => {
+    // envSeconds === undefined reads process.env.RUN_TIMEOUT_SECONDS, which is
+    // unset at module scope in this file (each env test restores it).
+    expect(resolveHardTimeoutMs(undefined)).toBe(HARD_TIMEOUT_MS);
+    expect(resolveHardTimeoutMs('')).toBe(HARD_TIMEOUT_MS);
+    expect(resolveHardTimeoutMs('abc')).toBe(HARD_TIMEOUT_MS);
+    expect(resolveHardTimeoutMs('0')).toBe(HARD_TIMEOUT_MS);
+    expect(resolveHardTimeoutMs('-5')).toBe(HARD_TIMEOUT_MS);
+  });
+
+  it('reads RUN_TIMEOUT_SECONDS from the environment when no arg is given', () => {
+    const prev = process.env.RUN_TIMEOUT_SECONDS;
+    process.env.RUN_TIMEOUT_SECONDS = '1800';
+    try {
+      expect(resolveHardTimeoutMs()).toBe(1_740_000);
+    } finally {
+      if (prev === undefined) delete process.env.RUN_TIMEOUT_SECONDS;
+      else process.env.RUN_TIMEOUT_SECONDS = prev;
+    }
+  });
+});
 
 describe('runPrompt race outcomes', () => {
   it('patches Succeeded with the agent summary, reports Succeeded stats and snapshots when complete_run wins', async () => {
@@ -364,6 +400,45 @@ describe('runPrompt hard-timeout guard (regression)', () => {
       exitSpy.mockRestore();
     }
   });
+
+  it('derives the deadline from RUN_TIMEOUT_SECONDS — the first-response cap shrinks and the run fails via the normal path', async () => {
+    // RUN_TIMEOUT_SECONDS=30 → resolveHardTimeoutMs() floors at 30_000, so the
+    // poll loop's firstResponseTimeoutMs is capped at min(3_600_000, 28_000)
+    // = 28_000. A now()-jump past 28s trips the poll loop — with the legacy
+    // 65-min fallback it would not. This proves the env reached the deadline
+    // without waiting for the (30s-floored) hard-timeout timer.
+    const prev = process.env.RUN_TIMEOUT_SECONDS;
+    process.env.RUN_TIMEOUT_SECONDS = '30';
+    try {
+      const exitSpy = spyOn(process, 'exit');
+      try {
+        // now() call order: runStartedAt, poll startedAt, per-tick elapsed check.
+        let calls = 0;
+        const h = makeHarness({
+          now: () => {
+            calls++;
+            if (calls <= 2) return 1_000_000;
+            return 1_000_000 + 28_001;
+          },
+        });
+        const err = await h.run().catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(FatalRunError);
+        expect((err as Error).message).toContain(
+          'did not produce an assistant response within 28s',
+        );
+        expect(h.stats).toContainEqual(expect.objectContaining({ phase: 'Failed' }));
+        expect(h.patches).toContainEqual(expect.objectContaining({ phase: 'Failed' }));
+        expect(h.snapshotCalls).toBeGreaterThanOrEqual(1);
+        expect(exitSpy).not.toHaveBeenCalled();
+      } finally {
+        exitSpy.mockRestore();
+      }
+    } finally {
+      if (prev === undefined) delete process.env.RUN_TIMEOUT_SECONDS;
+      else process.env.RUN_TIMEOUT_SECONDS = prev;
+    }
+  });
 });
 
 describe('runInteractive (smoke)', () => {
@@ -400,6 +475,24 @@ describe('runInteractive (smoke)', () => {
       patchNamespacedConfigMap: async () => {},
     } as unknown as CoreV1Api;
 
+    // Spy on sendStats to assert the termination-path flush. The first session
+    // id ('s1') is discovered before shutdown, so the flush is keyed on it.
+    const statsCalls: Array<{
+      sessionID: string;
+      phase: string;
+      startedAt: string;
+      completedAt: string | undefined;
+    }> = [];
+    const before = new Date().toISOString();
+    const sendStatsSpy = async (
+      sessionID: string,
+      phase: string,
+      startedAt: string,
+      completedAt: string | undefined,
+    ): Promise<void> => {
+      statsCalls.push({ sessionID, phase, startedAt, completedAt });
+    };
+
     let shuttingDown = false;
     setTimeout(() => {
       shuttingDown = true;
@@ -419,6 +512,7 @@ describe('runInteractive (smoke)', () => {
         'run-1',
         'ns',
         'uid',
+        { sendStats: sendStatsSpy },
       );
     } finally {
       (globalThis as { fetch: unknown }).fetch = origFetch;
@@ -430,5 +524,16 @@ describe('runInteractive (smoke)', () => {
     );
     // A session snapshot ConfigMap was written (on discovery and/or first idle).
     expect(cmCreates.length).toBeGreaterThanOrEqual(1);
+    // Termination flushed a final full sendStats keyed on the first session,
+    // in Running phase (interactive termination is not a failure), spanning
+    // the whole interactive run (startedAt no earlier than test start).
+    expect(statsCalls.length).toBe(1);
+    expect(statsCalls[0]?.sessionID).toBe('s1');
+    expect(statsCalls[0]?.phase).toBe('Running');
+    expect(statsCalls[0]?.startedAt).toBeDefined();
+    expect(statsCalls[0]?.startedAt >= before).toBe(true);
+    expect(Number.isNaN(Date.parse(statsCalls[0]?.startedAt ?? ''))).toBe(false);
+    expect(statsCalls[0]?.completedAt).toBeDefined();
+    expect(Number.isNaN(Date.parse(statsCalls[0]?.completedAt ?? ''))).toBe(false);
   });
 });

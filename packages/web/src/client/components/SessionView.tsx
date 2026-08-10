@@ -20,6 +20,7 @@ import { useShiki } from '../hooks/useShiki';
 import type { FilePart, SessionMessage, SubtaskPart, TextPart, ToolPart } from '../lib/types';
 import { skeletonKeys } from '../lib/utils';
 import { CodeBlock } from './CodeBlock';
+import ErrorBoundary from './ErrorBoundary';
 import { FileDiff } from './FileDiff';
 import { TaskList } from './TaskList';
 
@@ -35,7 +36,27 @@ interface SessionViewProps {
   eventTick: number;
 }
 
-export default function SessionView({
+export default function SessionView(props: SessionViewProps) {
+  // The session payload is proxied from the runner without validation, so a
+  // single malformed part must not unmount the run/session page. The boundary
+  // catches the whole view and falls back to a message while the surrounding
+  // header/cards keep rendering.
+  return (
+    <ErrorBoundary fallback={<SessionViewFallback />}>
+      <SessionViewContent {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function SessionViewFallback() {
+  return (
+    <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-4 text-sm text-phase-failed">
+      Could not render this session — a malformed message part was received.
+    </div>
+  );
+}
+
+function SessionViewContent({
   name,
   hasSession,
   active,
@@ -332,7 +353,10 @@ function MessageBubble({
 
         {/* Todowrite tools rendered as task lists */}
         {todowriteParts.map((part) => {
-          const todos = part.state.input.todos;
+          // The payload is unvalidated proxied JSON — `state` or `state.input`
+          // may be missing, so optional-chain down to `todos` and rely on the
+          // Array.isArray check to skip anything that is not a real list.
+          const todos = part.state?.input?.todos;
           // Validate that todos is an array before rendering
           if (Array.isArray(todos) && todos.length > 0) {
             return (

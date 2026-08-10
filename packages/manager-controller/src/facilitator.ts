@@ -1,9 +1,10 @@
-// facilitator.ts — builds and parses facilitator agent runs.
+// facilitator.ts — builds facilitator agent runs.
 //
-// When a worker task fails, the manager spawns a facilitator run that analyzes
-// the failure and recommends an escalation action. When a worker task succeeds,
-// the manager spawns a success-review facilitator that approves the result or
-// redirects it to another agent.
+// When a worker task succeeds, the manager spawns a success-review facilitator
+// that approves the result or redirects it to another agent. Approved PLAN
+// tasks also spawn a build-task-generator facilitator that breaks the plan into
+// BUILD tasks. Failed worker runs are handled inline by the reconciler
+// (decideFailed → awaiting-human/failed) — no facilitator run is spawned.
 
 import {
   API_GROUP_VERSION,
@@ -19,11 +20,9 @@ import {
 } from '@percussionist/api';
 import {
   core,
-  fetchSessionMessages,
   getClusterSettings,
   listClusterAgents,
   readPlanFromConfigMap,
-  readPodLog,
   validateModelAuth,
 } from '@percussionist/kube';
 import { resolveParentBranch, resolveTaskBranch } from './branch-resolver.js';
@@ -104,83 +103,6 @@ async function resolveEligibleBuildAgents(
   );
 
   return roster.filter((name) => name !== facilitatorAgentName && eligibleFromLive.has(name));
-}
-
-// Build the facilitator Run spec for a FAILED worker run.
-export async function buildFacilitationRun(
-  project: Project,
-  task: Task,
-  failedRunName: string,
-  failedRunStatus: RunStatus,
-  sessionSummary: string,
-  runName: string,
-  facilitatorAgentName: string,
-  allTasks: Task[] = [],
-): Promise<Run> {
-  const clusterSettings = await getOptionalClusterSettings('buildFacilitationRun');
-  const resolved = resolveRunConfig(project.spec, undefined, undefined, {
-    runner: {
-      image: clusterSettings?.spec?.runner?.image,
-      resources: clusterSettings?.spec?.runner?.resources,
-    },
-    secrets: clusterSettings?.spec?.secrets,
-  });
-
-  const facilitationSpec: FacilitationSpec = {
-    targetRunName: failedRunName,
-    targetTaskId: task.metadata.name,
-    failureReason: failedRunStatus.message ?? 'Unknown failure',
-    sessionSummary,
-    successReview: false,
-  };
-
-  const alternativeAgents = (project.spec.agents ?? [])
-    .map((a) => a.name)
-    .filter((n) => n !== facilitatorAgentName);
-
-  const promptLines = [
-    `You are a facilitator agent that analyzes failed worker runs and recommends actions.`,
-    '',
-    `TASK: ${task.metadata.name} — ${task.spec.title}`,
-    `WORKER RUN: ${failedRunName}`,
-    `FAILURE: ${facilitationSpec.failureReason}`,
-    '',
-    `RECENT SESSION MESSAGES:`,
-    sessionSummary || '(none available)',
-    '',
-    ...(alternativeAgents.length > 0
-      ? [
-          `AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(', ')}`,
-          `NOTE: If the failure is due to the specific worker agent refusing or being incapable, `,
-          `recommend retry_alternative with one of the available alternative agents.`,
-          `Only recommend skip if the task itself is inherently impossible or harmful.`,
-          '',
-        ]
-      : []),
-    project.spec.runner?.packages?.length
-      ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(', ')}`
-      : 'RUNNER PACKAGES: (base image only)',
-    '',
-    `Analyze the failure above and output ONLY valid JSON (no markdown, no explanation):`,
-    JSON.stringify({
-      diagnosis: '(root cause in 1-2 sentences)',
-      recommendedAction: '(retry_same | retry_alternative | skip)',
-      alternativeAgent:
-        '(required if recommendedAction is retry_alternative — must be one of the AVAILABLE ALTERNATIVE AGENTS listed above)',
-      suggestion: '(optional — fix suggestion for next attempt)',
-    }),
-  ].join('\n');
-
-  return await buildFacilitatorRun(
-    project,
-    task,
-    runName,
-    facilitationSpec,
-    promptLines,
-    resolved,
-    facilitatorAgentName,
-    allTasks,
-  );
 }
 
 // Build the facilitator Run spec for generating BUILD tasks from an approved PLAN task.
@@ -438,8 +360,7 @@ export async function buildReviewRun(
             `This is a PLAN task. Do not review code implementation quality.`,
             `Review the plan artifact at ${planPath}.`,
             `Approve only if the plan file exists and contains enough context to generate BUILD tasks: scope, assumptions, risks, acceptance criteria, and a concrete implementation breakdown.`,
-            `Use request_changes if the plan artifact is missing, vague, or lacks enough context for builders.`,
-            `Use escalate only for cases that require human judgment beyond improving the plan artifact.`,
+            `If the plan artifact is missing, vague, or lacks enough context for builders, use request_changes and explain exactly what the plan must add; there is no 'escalate' verdict — substantive human judgment is requested through the task's awaiting-human flow after rework attempts.`,
             '',
           ]
         : [
@@ -591,124 +512,4 @@ async function buildFacilitatorRun(
       ...(resolved.injectFiles?.length ? { injectFiles: resolved.injectFiles } : {}),
     },
   };
-}
-
-// Parse the final messages from a facilitation run to extract the recommendation.
-export async function parseFacilitationResult(
-  runName: string,
-  ns: string,
-  serviceName?: string,
-  sessionID?: string,
-): Promise<{
-  diagnosis: string;
-  recommendedAction:
-    | 'retry_same'
-    | 'retry_alternative'
-    | 'skip'
-    | 'approve'
-    | 'request_changes'
-    | 'escalate';
-  alternativeAgent?: string;
-  suggestion?: string;
-} | null> {
-  // Primary: try the session ConfigMap snapshot saved by the dispatcher.
-  // This works even after the pod has exited.
-  try {
-    const cm = await core().readNamespacedConfigMap({
-      name: `${runName}-session`,
-      namespace: ns,
-    });
-    const data = cm.data ?? {};
-    for (const [key, value] of Object.entries(data)) {
-      if (!key.startsWith('messages-')) continue;
-      const messages: Array<{
-        info: { role: string };
-        parts: Array<{ type: string; text?: string }>;
-      }> = JSON.parse(value);
-      // Walk messages in reverse to find the last assistant text.
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i];
-        if (msg?.info.role !== 'assistant') continue;
-        for (const part of msg.parts) {
-          if (part.type === 'text' && part.text) {
-            const result = extractFacilitationJson(part.text);
-            if (result) return result;
-          }
-        }
-      }
-    }
-  } catch {
-    // ConfigMap not yet available — fall through to live API.
-  }
-
-  // Fallback: live OpenCode API (works while pod is still running).
-  let runStatus: unknown = null;
-  if (serviceName && sessionID) {
-    try {
-      runStatus = await fetchSessionMessages(serviceName, sessionID, ns);
-    } catch {
-      runStatus = null;
-    }
-  }
-  if (runStatus && typeof runStatus === 'object' && 'messages' in runStatus) {
-    const messages = (
-      runStatus.messages as Array<{
-        role: string;
-        content: string;
-      }>
-    ).filter((m) => m.role === 'assistant');
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
-      if (!message) continue;
-      const result = extractFacilitationJson(message.content);
-      if (result) return result;
-    }
-  }
-
-  // Last resort: pod log.
-  try {
-    const logs = await readPodLog(runName, 'opencode', undefined, ns);
-    const result = extractFacilitationJson(logs);
-    if (result) return result;
-  } catch {
-    // Ignore
-  }
-
-  return null;
-}
-
-// Extract a JSON object from a string that may contain surrounding text.
-function extractFacilitationJson(text: string) {
-  // Find JSON object in the text
-  const jsonMatch = text.match(/\{[^{}]*"diagnosis"[^{}]*"recommendedAction"[^{}]*\}/s);
-  if (!jsonMatch) return null;
-
-  try {
-    const parsed = JSON.parse(jsonMatch[0]);
-    const action = parsed.recommendedAction as string;
-    if (
-      action === 'retry_same' ||
-      action === 'retry_alternative' ||
-      action === 'skip' ||
-      action === 'approve' ||
-      action === 'request_changes' ||
-      action === 'escalate'
-    ) {
-      return {
-        diagnosis: parsed.diagnosis ?? '',
-        recommendedAction: action as
-          | 'retry_same'
-          | 'retry_alternative'
-          | 'skip'
-          | 'approve'
-          | 'request_changes'
-          | 'escalate',
-        alternativeAgent: parsed.alternativeAgent,
-        suggestion: parsed.suggestion,
-      };
-    }
-  } catch {
-    // Invalid JSON
-  }
-  return null;
 }

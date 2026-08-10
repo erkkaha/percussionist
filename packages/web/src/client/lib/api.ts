@@ -19,6 +19,7 @@ import type {
   ProjectMemory,
   Run,
   SessionResponse,
+  StatSession,
   Task,
   TaskDiffResponse,
   UpdateMemoryRequest,
@@ -109,6 +110,15 @@ export async function fetchLogs(
 
 export async function fetchSession(name: string): Promise<SessionResponse> {
   return fetchJSON<SessionResponse>(`/runs/${encodeURIComponent(name)}/session`);
+}
+
+/**
+ * Fetch a single session's stats-DB row by run name. The DB row outlives the
+ * Run CR (deleted after runTTLDays), so this is the durable source of truth
+ * for the session detail page.
+ */
+export async function fetchSessionStat(name: string): Promise<StatSession> {
+  return fetchJSON<StatSession>(`/stats/sessions/${encodeURIComponent(name)}`);
 }
 
 export async function fetchPlan(project: string, taskId: string): Promise<PlanResponse> {

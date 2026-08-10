@@ -618,6 +618,48 @@ describe('stats API', () => {
     const res = await json('/api/stats/session', { run: { name: 'x' } });
     expect(res.status).toBe(400);
   });
+
+  it('GET /api/stats/sessions/:name → returns the posted session row', async () => {
+    const res = await req(`/api/stats/sessions/smoke-run-1`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string; name: string; phase: string };
+    expect(body.name).toBe('smoke-run-1');
+    expect(body.phase).toBe('Succeeded');
+    expect(body.id).toBe(SESSION_ID);
+  });
+
+  it('GET /api/stats/sessions/:name unknown → 404', async () => {
+    const res = await req('/api/stats/sessions/no-such-run');
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBeDefined();
+  });
+
+  it('GET /api/stats/sessions/:name/messages → replays stored messages from the DB', async () => {
+    const res = await req('/api/stats/sessions/smoke-run-1/messages');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      sessionID: string;
+      messages: Array<{
+        info: { id: string; role: string; sessionID: string };
+        parts: Array<{ type: string; text?: string }>;
+      }>;
+    };
+    expect(body.sessionID).toBe(SESSION_ID);
+    expect(body.messages.length).toBe(2);
+    const first = body.messages[0];
+    expect(first?.info.role).toBe('user');
+    expect(first?.info.sessionID).toBe(SESSION_ID);
+    // The dispatcher persists the full parts array as JSON in `content`, so the
+    // replay reconstructs SessionView-compatible parts verbatim.
+    expect(first?.parts[0]?.type).toBe('text');
+    expect(first?.parts[0]?.text).toBe('Hello');
+  });
+
+  it('GET /api/stats/sessions/:name/messages unknown → 404', async () => {
+    const res = await req('/api/stats/sessions/no-such-run/messages');
+    expect(res.status).toBe(404);
+  });
 });
 
 // ===========================================================================

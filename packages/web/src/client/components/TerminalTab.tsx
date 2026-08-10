@@ -106,7 +106,6 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
     }
 
     clearRetryTimer();
-    retryCountRef.current = 0;
     setError(null);
     setClosed(false);
 
@@ -182,6 +181,9 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
 
     ws.onopen = () => {
       readinessRef.current = false;
+      // Backoff only resets on a successful attach — a failed attach keeps
+      // growing the retry delay so we stop hammering the server.
+      retryCountRef.current = 0;
       setConnected(true);
       setError(null);
       // Send initial terminal size.

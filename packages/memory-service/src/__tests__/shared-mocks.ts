@@ -8,5 +8,4 @@ const FAKE_EMBEDDING = new Float32Array(Array.from({ length: 768 }, (_, i) => Ma
 
 mock.module('../embed.js', () => ({
   getEmbedding: async (_text: string) => FAKE_EMBEDDING,
-  getEmbeddings: async (texts: string[]) => texts.map(() => FAKE_EMBEDDING),
 }));

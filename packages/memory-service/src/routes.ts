@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { getDb, getRawDb } from './db.js';
+import { getRawDb } from './db.js';
 import { getEmbedding } from './embed.js';
 import { normalizeModelName } from './model-warmup.js';
 
@@ -393,7 +393,7 @@ const OLLAMA_BASE_URL =
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? 'nomic-embed-text';
 
 export async function handleHealth(): Promise<{ ok: boolean }> {
-  getDb(); // ensure DB is initialised
+  getRawDb(); // ensure DB is initialised
 
   try {
     const tagsUrl = `${OLLAMA_BASE_URL}/api/tags`;

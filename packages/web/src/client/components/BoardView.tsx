@@ -1,16 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useIsMobile } from '../hooks/use-mobile';
 import { useBoardEvents } from '../hooks/useBoardEvents';
 import { useBoardNotifications } from '../hooks/useBoardNotifications';
-import {
-  approveTask,
-  deleteBoardTask,
-  fetchBoard,
-  requestChangesTask,
-  retryEscalatedTask,
-} from '../lib/api';
+import { fetchBoard } from '../lib/api';
 import { ideUrl, useIdeUrlTemplate } from '../lib/code-server-url';
 import { projectColor } from '../lib/project-color';
 import type { ManagerMetrics, Task } from '../lib/types';
@@ -93,33 +87,6 @@ export default function BoardView() {
   const handleCloseAddTaskMobile = () => setShowAddTaskMobile(false);
 
   const allTasks: Task[] = data ? Object.values(data.columns).flat() : [];
-
-  const invalidateBoard = () => queryClient.invalidateQueries({ queryKey: ['board', projectName] });
-
-  const _deleteMutation = useMutation({
-    mutationFn: (taskName: string) => deleteBoardTask(projectName, taskName),
-    onSuccess: () => {
-      invalidateBoard();
-      setSearchParams({}, { replace: true });
-      setSheetOpen(false);
-    },
-  });
-
-  const _retryMutation = useMutation({
-    mutationFn: (taskName: string) => retryEscalatedTask(projectName, taskName),
-    onSuccess: invalidateBoard,
-  });
-
-  const _approveMutation = useMutation({
-    mutationFn: (taskName: string) => approveTask(projectName, taskName),
-    onSuccess: invalidateBoard,
-  });
-
-  const _requestChangesMutation = useMutation({
-    mutationFn: ({ taskId, comment }: { taskId: string; comment: string }) =>
-      requestChangesTask(projectName, taskId, comment),
-    onSuccess: invalidateBoard,
-  });
 
   useBoardNotifications(projectName, allTasks);
 
