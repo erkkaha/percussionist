@@ -12,6 +12,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { setHeaderOptions } from '@kubernetes/client-node';
 import {
   BoardStatusSchema,
+  computeBoardColumn,
   type Finding,
   FindingCategory,
   FindingSeverity,
@@ -37,6 +38,7 @@ import {
   getProject,
   getRun,
   getTask,
+  gitUrlHash,
   listClusterAgents,
   listPodsByLabels,
   listRuns,
@@ -61,8 +63,9 @@ import { inspectTaskFlow, type ObservedRuns } from '../reconciler/flow-introspec
 import { isValidTransition, TRANSITION_TABLE } from '../reconciler/transitions.js';
 import { getPauseStatus, setPaused } from '../reconciler-bridge.js';
 import { webHeaders } from '../web-headers.js';
-import { buildWorkerRun, workerRunName } from '../worker-builder.js';
+import { buildWorkerRun, resolveAgentModel, workerRunName } from '../worker-builder.js';
 import { MANAGER_NAMESPACE, MCP_PORT, MCP_TOKEN, OPENCODE_URL } from './config.js';
+import { detectFluxSource, pinFluxSourceTag, requestReconcile } from './gitops.js';
 import {
   deleteMemory,
   getContext,
@@ -530,6 +533,11 @@ const TOOLS = [
           description:
             'Skip shell injection sanitization (default: false). Only honored for callers authenticated with the MCP bearer token (the web backend); loopback/sidecar callers are always sanitized.',
         },
+        image: {
+          type: 'string',
+          description:
+            "Container image for the exec pod, overriding the project's spec.exec.image. Only honored for callers authenticated with the MCP bearer token (the web backend); loopback/sidecar callers cannot choose the image.",
+        },
       },
       required: ['project', 'command'],
     },
@@ -574,7 +582,9 @@ const TOOLS = [
     description:
       'Check the currently running Percussionist component versions against the latest available release on GHCR. ' +
       'Reads image tags from the live deployments (operator, manager, web) and queries the container registry ' +
-      'to find the newest semver tag. Returns current versions, the latest available tag, and whether an update is available.',
+      'to find the newest semver tag. Returns current versions, the latest available tag, and whether an update is available. ' +
+      "Also reports `mode`: 'gitops' when a Flux OCIRepository drives the install (its pinned tag is then the " +
+      "authoritative current version), or 'deployments' when upgrades patch container images directly.",
     inputSchema: {
       type: 'object',
       properties: {},
@@ -584,9 +594,11 @@ const TOOLS = [
   {
     name: 'apply_upgrade',
     description:
-      'Upgrade Percussionist deployments (operator, manager, web) to a specified target image tag. ' +
-      'Uses the currently running image registry prefix to construct the new image references and patches ' +
-      "each deployment in-place (rolling update). Requires 'patch' permission on deployments.",
+      'Upgrade Percussionist to a target release tag. On a Flux-managed install this pins the ' +
+      'OCIRepository to that tag and triggers reconciliation, which applies the CRDs before rolling ' +
+      'the Deployments. Otherwise it falls back to patching the operator, manager and web container ' +
+      'images in place — that fallback cannot upgrade CRDs, and says so in `warnings`. ' +
+      'Returns the `mode` used.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1019,11 +1031,7 @@ async function cleanupRunWorktree(
   const gitUrl = project.spec.source?.git?.url;
   if (!gitUrl) return;
   const mountPath = project.spec.data?.mountPath ?? '/data';
-  const hash = (() => {
-    let h = 5381;
-    for (let i = 0; i < gitUrl.length; i++) h = ((h << 5) + h + gitUrl.charCodeAt(i)) >>> 0;
-    return h.toString(16).padStart(8, '0');
-  })();
+  const hash = gitUrlHash(gitUrl);
   const quotedRun = runName.replace(/'/g, "'\\''");
   await execInWorkspace(
     projectName,
@@ -1049,7 +1057,8 @@ async function deleteRunsForTask(
   });
   const deletedNames: string[] = [];
   for (const run of taskRuns) {
-    const name = run.metadata.name!;
+    const name = run.metadata.name;
+    if (!name) continue;
     const phase = run.status?.phase;
     const terminal = phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled';
     const active =
@@ -1204,7 +1213,7 @@ async function callTool(
             type: t.spec.type,
             title: t.spec.title,
             phase: t.status?.phase,
-            column: t.status?.column,
+            column: computeBoardColumn(t.status?.phase ?? 'pending'),
             labels: t.metadata.labels,
           }));
         }
@@ -1364,8 +1373,16 @@ async function callTool(
         projectTasks,
       );
       const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
-      if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
-      if (modelOverride) workerRun.spec.model = modelOverride;
+      const effectiveAgent = agentOverride ?? phaseAgent;
+      if (effectiveAgent) workerRun.spec.agent = effectiveAgent;
+      if (modelOverride) {
+        workerRun.spec.model = modelOverride;
+      } else if (effectiveAgent && effectiveAgent !== task.spec.agent) {
+        // buildWorkerRun resolved the model for task.spec.agent — re-resolve
+        // for the agent actually running, falling back to the project default.
+        workerRun.spec.model =
+          (await resolveAgentModel(project, effectiveAgent)) ?? project.spec.model;
+      }
 
       // Validate auth before creating the run.
       const finalModel = workerRun.spec.model;
@@ -1524,8 +1541,16 @@ async function callTool(
           projectTasks,
         );
         const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
-        if (agentOverride ?? phaseAgent) workerRun.spec.agent = agentOverride ?? phaseAgent;
-        if (modelOverride) workerRun.spec.model = modelOverride;
+        const effectiveAgent = agentOverride ?? phaseAgent;
+        if (effectiveAgent) workerRun.spec.agent = effectiveAgent;
+        if (modelOverride) {
+          workerRun.spec.model = modelOverride;
+        } else if (effectiveAgent && effectiveAgent !== task.spec.agent) {
+          // buildWorkerRun resolved the model for task.spec.agent — re-resolve
+          // for the agent actually running, falling back to the project default.
+          workerRun.spec.model =
+            (await resolveAgentModel(project, effectiveAgent)) ?? project.spec.model;
+        }
 
         // Validate auth after model overrides.
         const finalModel = workerRun.spec.model;
@@ -1853,7 +1878,8 @@ async function callTool(
       const pods = await listPodsByLabels({ 'app.kubernetes.io/component': 'manager' }, resourceNs);
       if (pods.length === 0) throw new Error('No manager pods found');
 
-      const podName = pods[0]!.metadata!.name!;
+      const podName = pods[0]?.metadata?.name;
+      if (!podName) throw new Error('Manager pod is missing metadata.name');
       const logs = await readPodLog(podName, 'manager', tailLines, resourceNs);
       return { podName, container: 'manager', tailLines, logs };
     }
@@ -1992,6 +2018,20 @@ async function callTool(
         );
       }
 
+      // Choosing the exec pod image is trusted-only for the same reason: an
+      // agent that could name the image could run an arbitrary container with
+      // the project's data PVC mounted.
+      const imageOverride = typeof args.image === 'string' ? args.image : undefined;
+      if (imageOverride && !ctx.trustedBearer) {
+        logSecurityEvent('exec_in_workspace.rejected', {
+          project: projectName,
+          reason: 'image override requires bearer-token authentication',
+        });
+        throw new Error(
+          'image is only honored for callers authenticated with the MCP bearer token',
+        );
+      }
+
       if (skipSanitization) {
         logSecurityEvent('exec_in_workspace.sanitization_bypassed', {
           project: projectName,
@@ -2008,7 +2048,14 @@ async function callTool(
         }
       }
 
-      const result = await execInWorkspace(projectName, command, mountPath, timeoutMs, resourceNs);
+      const result = await execInWorkspace(
+        projectName,
+        command,
+        mountPath,
+        timeoutMs,
+        resourceNs,
+        imageOverride,
+      );
       return {
         project: projectName,
         podName: result.podName,
@@ -2049,11 +2096,7 @@ async function callTool(
       if (!isLocal && gitUrl) {
         const task = await getTask(taskName, resourceNs);
         const gitBranch = task.status?.worker?.gitBranch || `feature/${taskName}`;
-        let h = 5381;
-        for (let i = 0; i < gitUrl.length; i++) {
-          h = ((h << 5) + h + gitUrl.charCodeAt(i)) >>> 0;
-        }
-        const urlHash = h.toString(16).padStart(8, '0');
+        const urlHash = gitUrlHash(gitUrl);
         const mirrorPath = `${mountPath}/git-mirrors/${urlHash}`;
 
         const gitShowCmd = `cd '${mirrorPath}' && git show '${gitBranch}:${planPath}' 2>/dev/null`;
@@ -2214,7 +2257,11 @@ async function callTool(
         registryError = (e as Error).message;
       }
 
-      const currentTag = foundImage.tag;
+      // On a GitOps install the pinned source tag is authoritative: it is what
+      // an upgrade actually changes, and it is correct even mid-rollout when
+      // the Deployments still report the outgoing version.
+      const fluxSource = await detectFluxSource();
+      const currentTag = fluxSource?.tag ?? foundImage.tag;
       const updateAvailable = latestTag !== null && latestTag !== currentTag && !registryError;
 
       return {
@@ -2227,6 +2274,19 @@ async function callTool(
         latest: latestTag,
         updateAvailable,
         registryPrefix: foundImage.registryPrefix,
+        mode: fluxSource ? 'gitops' : 'deployments',
+        ...(fluxSource
+          ? {
+              source: {
+                name: fluxSource.name,
+                namespace: fluxSource.namespace,
+                tag: fluxSource.tag,
+                url: fluxSource.url,
+                semverRange: fluxSource.semverRange,
+                suspended: fluxSource.suspended,
+              },
+            }
+          : {}),
         ...(registryError ? { error: registryError } : {}),
       };
     }
@@ -2234,6 +2294,52 @@ async function callTool(
     case 'apply_upgrade': {
       const targetTag = String(args.targetTag ?? '');
       if (!targetTag) throw new Error('targetTag is required');
+
+      // Preferred path: move the pin and let Flux apply the whole release —
+      // CRDs first, then the Deployments, then the runner and dispatcher image
+      // defaults that the direct-patch path below cannot reach.
+      const fluxSource = await detectFluxSource();
+      if (fluxSource) {
+        if (fluxSource.suspended) {
+          return {
+            patched: [],
+            errors: [
+              `Flux source ${fluxSource.namespace}/${fluxSource.name} is suspended — ` +
+                `resume it (flux resume source oci ${fluxSource.name}) before upgrading.`,
+            ],
+            targetTag,
+            mode: 'gitops',
+          };
+        }
+
+        try {
+          await pinFluxSourceTag(fluxSource, targetTag);
+        } catch (e) {
+          return {
+            patched: [],
+            errors: [`ocirepository/${fluxSource.name}: ${(e as Error).message}`],
+            targetTag,
+            mode: 'gitops',
+          };
+        }
+
+        const reconcileFailures = await requestReconcile(fluxSource, new Date().toISOString());
+        return {
+          patched: [`ocirepository/${fluxSource.name}`],
+          errors: [],
+          targetTag,
+          mode: 'gitops',
+          ...(reconcileFailures.length
+            ? {
+                warnings: [
+                  `Pinned to ${targetTag}, but could not trigger immediate reconciliation of ` +
+                    `${reconcileFailures.join(', ')}. Flux will pick the change up at its next ` +
+                    `interval.`,
+                ],
+              }
+            : {}),
+        };
+      }
 
       const DEPLOYMENT_NAMES = [
         'percussionist-operator',
@@ -2284,17 +2390,22 @@ async function callTool(
           {
             name: containerName,
             image: newImage,
+            ...(depName === 'percussionist-operator'
+              ? {
+                  env: [
+                    {
+                      name: 'DISPATCHER_IMAGE',
+                      value: `${registryPrefix}/dispatcher:${targetTag}`,
+                    },
+                    {
+                      name: 'MEMORY_SERVICE_IMAGE',
+                      value: `${registryPrefix}/memory:${targetTag}`,
+                    },
+                  ],
+                }
+              : {}),
           },
         ];
-
-        if (depName === 'percussionist-operator') {
-          const dispatcherNewImage = `${registryPrefix}/dispatcher:${targetTag}`;
-          const memoryNewImage = `${registryPrefix}/memory:${targetTag}`;
-          containers[0]!.env = [
-            { name: 'DISPATCHER_IMAGE', value: dispatcherNewImage },
-            { name: 'MEMORY_SERVICE_IMAGE', value: memoryNewImage },
-          ];
-        }
 
         const patchBody = {
           spec: {
@@ -2321,7 +2432,24 @@ async function callTool(
         }
       }
 
-      return { patched, errors, targetTag };
+      // This path swaps container images and nothing else. CRDs are left at
+      // whatever version was installed, so any field the new release writes
+      // that the old schema does not declare is pruned by the API server on
+      // write — silently, with a 200 response. Say so rather than reporting an
+      // unqualified success.
+      return {
+        patched,
+        errors,
+        targetTag,
+        mode: 'deployments',
+        warnings: [
+          'CRDs were not upgraded — this install is not managed by Flux, and the manager ' +
+            'has no permission to modify CustomResourceDefinitions. If this release changes ' +
+            'the CRD schemas, apply them from a checkout of the tag ' +
+            `(kubectl apply -f k8s/crds/ at ${targetTag}) or switch to a GitOps install ` +
+            'with `beatctl deploy --gitops`.',
+        ],
+      };
     }
 
     case 'list_models': {
@@ -2531,7 +2659,8 @@ async function callTool(
 
       if (!canonicalUF) throw new Error(`Finding "${findingIdUF}" not found`);
 
-      const clusterIdUF = canonicalUF.clusterId!;
+      const clusterIdUF = canonicalUF.clusterId;
+      if (!clusterIdUF) throw new Error(`Finding "${findingIdUF}" is missing clusterId`);
       const updatedUF: Finding = { ...canonicalUF };
 
       if (args.status) {
@@ -2613,7 +2742,8 @@ async function callTool(
             taskTypeCT === 'PLAN'
               ? a.name.toLowerCase().includes('planner')
               : a.name.toLowerCase().includes('builder'),
-          )?.name ?? (agentsCT.length > 0 ? agentsCT[0]!.name : 'default'));
+          )?.name ?? (agentsCT.length > 0 ? agentsCT[0]?.name : 'default'));
+      const agentNameCT = defaultAgentCT ?? 'default';
 
       const taskPriorityCT = args.priority
         ? (String(args.priority) as 'high' | 'medium' | 'low')
@@ -2634,7 +2764,7 @@ async function callTool(
           type: taskTypeCT,
           title: `[Finding] ${findingCT.title.slice(0, 240)}`,
           description: `Created from finding ${findingCT.id}:\n\n${findingCT.description}${findingCT.filePath ? `\n\nFile: ${findingCT.filePath}` : ''}`,
-          agent: defaultAgentCT,
+          agent: agentNameCT,
           priority: taskPriorityCT,
         },
       });
@@ -2666,7 +2796,8 @@ async function callTool(
         if (triagedCT) {
           triagedCT.taskRef = taskNameCT;
           triagedCT.status = 'in-progress';
-          const clusterIdCT = triagedCT.clusterId!;
+          const clusterIdCT = triagedCT.clusterId;
+          if (!clusterIdCT) throw new Error(`Finding "${findingIdCT}" is missing clusterId`);
           const patchDataCT: Record<string, string | null> = {};
           patchDataCT[triagedFindingKey(clusterIdCT)] = JSON.stringify(triagedCT);
           await patchFindingsConfigMap(projectNameCT, patchDataCT, resourceNsCT).catch(() => {
@@ -2694,7 +2825,7 @@ async function callTool(
         taskName: taskNameCT,
         findingId: findingCT.id,
         type: taskTypeCT,
-        agent: defaultAgentCT,
+        agent: agentNameCT,
         priority: taskPriorityCT,
       };
     }

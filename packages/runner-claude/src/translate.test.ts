@@ -262,6 +262,52 @@ describe('TranscriptBuilder', () => {
     expect(b.snapshot()[0]?.info.tokens).toMatchObject({ input: 7, output: 9 });
   });
 
+  // polling.ts settles a run 10s after it sees `completed` on the last transcript
+  // message, but the retry budget spans 5s + 20s + 60s. Stamping a turn that is
+  // about to be retried therefore had the dispatcher terminate the pod
+  // mid-backoff: six runs died with "session ended without completion signal"
+  // after doing real work, and the captured runner log ends on
+  // "retry 1/3 in 5000ms" with no second attempt because the pod was gone.
+  test('does not mark a retried turn completed', () => {
+    const b = new TranscriptBuilder(SESSION);
+    b.push(assistant([{ type: 'text', text: 'partial' }]));
+    b.push(
+      {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'res-1',
+        session_id: 'x',
+        is_error: false,
+        stop_reason: 'stop_sequence',
+        result: 'API Error: Connection closed mid-response.',
+        usage: {},
+      },
+      { suppressError: true },
+    );
+
+    // No completed stamp anywhere, so the dispatcher's settle timer never starts.
+    for (const m of b.snapshot()) {
+      expect(m.info.time?.completed).toBeUndefined();
+    }
+    // The attempt still happened and was billed, so its step-finish is recorded.
+    expect(b.snapshot()[0]?.parts.some((p) => p.type === 'step-finish')).toBe(true);
+  });
+
+  test('marks the turn completed once it is not being retried', () => {
+    const b = new TranscriptBuilder(SESSION);
+    b.push(assistant([{ type: 'text', text: 'done' }]));
+    b.push({
+      type: 'result',
+      subtype: 'success',
+      uuid: 'res-1',
+      session_id: 'x',
+      is_error: false,
+      usage: {},
+    });
+
+    expect(b.snapshot()[0]?.info.time?.completed).toBeNumber();
+  });
+
   test('records an error on the assistant message when the run fails', () => {
     const b = new TranscriptBuilder(SESSION);
     b.push(assistant([{ type: 'text', text: 'partial' }]));

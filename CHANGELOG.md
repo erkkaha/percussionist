@@ -1,6 +1,318 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.13] - 2026-08-07
+
+### <!-- 0 -->🚀 Features
+
+- Add GitOps upgrade path so CRDs upgrade with images _(deploy)_
+## [v0.2.12] - 2026-08-07
+
+### <!-- 0 -->🚀 Features
+
+- Show AI review in-flight badge in board review column _(web)_
+- Show ai approved badge with robot icon in board review column _(web)_
+- Attach worker run phase to board tasks _(web)_
+- Show waiting-for-input badge instead of failed for parked runs _(web)_
+- Board answer flow for runs waiting for user input _(web)_
+- Add Terminal sub-tab to task runs panel _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Zod-validate Run/Project specs at reconcile entry, fail with status message _(operator)_
+- Treat claude-code as a cloud provider in validateModelAuth and reuse api parseModelRef _(kube)_
+- Unify code-server image default on the published ghcr image _(api,web)_
+- Pass git url/ref/parentRef via env vars in workspace-init _(operator)_
+- Park BUILD tasks on waiting-for-input with dead-run exits _(manager)_
+- Avoid duplicate failed task badges _(web)_
+
+### <!-- 10 -->💼 Other
+
+- Rev18 validation gaps, claude-code auth, code-server image default, codegen drift
+
+### <!-- 2 -->🚜 Refactor
+
+- Extract callManagerTool shared MCP client _(web)_
+- Use gitUrlHash from @percussionist/kube _(manager-controller)_
+- Extract shared upsertSecret helper _(web)_
+- Extract shared port-forward module _(cli)_
+- Deduplicate reconcileProject upserts into shared helpers _(operator)_
+- Extract shared SSE stream helper; fix interactive usage undercount _(dispatcher)_
+- Single shared worktree-setup shell in pod-builder _(operator)_
+
+### <!-- 3 -->📚 Documentation
+
+- Plan board review-stage AI review visibility
+- Update plan board review-stage AI review visibility (rev 2)
+- Move spec.engine description into Zod describe() so codegen preserves it _(api)_
+- Deduplicate copy-pasted infra across packages (rev23 plan)
+- Plan for board showing failed when run waits for input _(plans)_
+- Plan for board active-run terminal tab _(plans)_
+- Revise board active-run terminal plan (gate from live run CR) _(plans)_
+
+### <!-- 6 -->🧪 Testing
+
+- Cover TaskRow ai review state badges _(web)_
+- Add component tests for board terminal gating _(web)_
+- Stabilize CI-flaky retry and agent-model fallbacks
+- Respect configured shared web token _(operator)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Migrate biome config
+- Clear biome warnings
+- Release v0.2.12
+## [v0.2.11] - 2026-08-06
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.11
+## [v0.2.10] - 2026-08-05
+
+### <!-- 0 -->🚀 Features
+
+- Extract runPollStatusLoop with scripted-stream tests _(dispatcher)_
+- Add humanFolder schema and regenerate CRDs _(api)_
+- Clone and open human folder in code-server _(operator)_
+- Add human folder toggle to project form _(web)_
+- Unify agent auth into one agent-auth Secret _(cli)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Give human-folder bootstrap commit an identity and stop clobbering human git config _(operator)_
+- Allow disabling human folder via edit form _(web)_
+- Wait exits 3 on first-poll 404 instead of claiming deletion _(cli)_
+- Repoint board task move to sanctioned phase transitions and drop task add --column _(cli)_
+- Bind --agent-name to the preceding --agent-file _(cli)_
+- Merge project agent/image/timeout/resources defaults into submit _(cli)_
+- Stop -n default from overriding file namespaces on submit/project create _(cli)_
+- Honor project roster agent models in facilitator and agent-swap runs _(manager)_
+
+### <!-- 2 -->🚜 Refactor
+
+- Extract runWorkerOnce with injectable queue seams (rev24 BUILD 3) _(operator)_
+
+### <!-- 3 -->📚 Documentation
+
+- Document recording fake-kube helper pattern in testing strategy
+- Add plan for human repo folder on project pvc _(plans)_
+- Revise human repo folder plan — clone from spec on project default branch _(plans)_
+- Beatctl CLI correctness plan rev19 (percussionist-dev-plan-rev19)
+
+### <!-- 5 -->🎨 Styling
+
+- Drop non-null assertions in fake-kube helper (rev24 BUILD 1) _(kube,operator)_
+
+### <!-- 6 -->🧪 Testing
+
+- Plan regression coverage for reconcile/kube/dispatcher paths (rev24)
+- Pin non-happy-path reconcile regressions (rev24 BUILD 6) _(manager)_
+- RunPrompt race-path/retry tests and hard-timeout guard fix _(dispatcher)_
+- Add recording fake-kube test helper (rev24 BUILD 1) _(kube,operator)_
+- Write-path regression tests for kube write helpers (rev24 BUILD 2) _(kube)_
+- Cover run-key-client, agent-resolver, pvc-helper, ttl flows (rev24 BUILD 5) _(operator)_
+- Table-driven reconcile() + safeReconcileProject flow tests (rev24 BUILD 4) _(operator)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Enable human folder on percussionist-dev and document _(self-dev)_
+- Release v0.2.10
+## [v0.2.9] - 2026-08-04
+
+### <!-- 0 -->🚀 Features
+
+- Add shared GitHub URL helpers and board integration-mode/repoWebUrl
+- Surface PR chip, merge error, and PR-open indicator in task UI
+- Show integration mode in BoardHeader
+- Plumb per-agent roster models through project form state _(web)_
+- Add dedicated Agents tab with per-agent model selection _(web)_
+- Resolve IDE links from ClusterSettings.codeServerUrlTemplate _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Stop worktree-cleanup pods racing rm -rf on the done transition _(manager)_
+
+### <!-- 10 -->💼 Other
+
+- Surface PR-gated integration state in web UI (percussionist-dev-plan-0d07a0)
+- Dedicated project Agents tab with per-agent model selection (percussionist-dev-plan-27ac8a)
+- Dedicated project Agents tab with per-agent model selection (percussionist-dev-plan-27ac8a)
+
+### <!-- 6 -->🧪 Testing
+
+- Add mergeProjectPatch roster-model persistence tests _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.9
+## [v0.2.8] - 2026-08-03
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Respect PR integration mode on merge retry; compose PR body from plan and reviews _(manager)_
+- Opt run pods out of Claude commit attribution trailers _(operator)_
+- Resolve high-severity audit findings failing scheduled CI _(deps)_
+
+### <!-- 5 -->🎨 Styling
+
+- Apply biome formatting to PR-open builder and operator test imports
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.8
+## [v0.2.7] - 2026-08-02
+
+### <!-- 0 -->🚀 Features
+
+- Add abandoned field to WorkerStatusSchema _(api)_
+- Add child-completion.ts shared gate predicate _(manager-controller)_
+- Wire task-done worktree cleanup for aux runs _(manager)_
+- Add url deep-link support to in-tab notification core _(web)_
+- Emit deep links from board and run notification producers _(web)_
+- Render bell notifications as clickable links _(web)_
+- Deep-link task push notifications to the task detail panel _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Stub gitCheck.isClean in complete_run availability test _(dispatcher)_
+- Mark worker.abandoned on TaskAbandoned status patch _(manager-controller)_
+- Escalate ChildrenDoneWithoutMerge instead of deadlocking _(manager-controller)_
+- Resume PLAN-approve at integration step after ChildrenDoneWithoutMerge _(manager-controller)_
+- Use shared child-completion gate in decidePending and canSchedule _(manager-controller)_
+- ExplainAwaitingChildren uses shared child-completion gate _(manager-controller)_
+- Honor per-run ttlSecondsAfterFinished in TTL expiry _(operator)_
+- Make ttlSecondsAfterFinished optional, regen CRD; operator: prefer per-run TTL _(api)_
+- Add RBAC for run deletion and batch/v1 jobs _(operator)_
+- Dequeue terminal runs from resync loop once pod is gone _(operator)_
+- Replace ownerless cleanup Pod with a TTL'd batch/v1 Job _(operator)_
+- Trigger worktree cleanup Job from Run delete event _(operator)_
+- Stop crash-loop on bad Project CRs, surface status.reconcile _(operator)_
+- Clear stale reconcile message, prevent stale project retries _(operator)_
+- Derive Project reconcile status constraints from Zod, not hand-edited CRD _(api)_
+- Fail fast on permanent Run credentials misconfiguration _(operator)_
+- Stop accepting auth tokens via ?token= query param and redact token= from request logs _(web)_
+- Survive a missing sqlite-vec instead of failing every test _(memory-service)_
+- Restore Agents table vertical scroll on medium screens _(web)_
+- Apply unified table-scroll wrapper to remaining route table views _(web)_
+- Replace stale terminal runs when retrying a merge _(manager)_
+- Consume nested null delete-markers when editing a project _(web)_
+
+### <!-- 10 -->💼 Other
+
+- Percussionist-dev-plan-rev03 — operator crash-loop and silent Run validation retries
+
+### <!-- 2 -->🚜 Refactor
+
+- Extract decideChildrenCompleteNext helper _(manager-controller)_
+
+### <!-- 3 -->📚 Documentation
+
+- Percussionist-dev-plan-rev02 — fix awaiting-children mergedAt deadlock _(plan)_
+- Add plan for run TTL & cleanup lifecycle fixes (percussionist-dev-plan-rev05) _(plan)_
+- Update run TTL precedence and worktree cleanup description
+- Percussionist-dev-plan-rev10 — remove ?token= query-param auth and redact token from request logs _(plan)_
+- Add plan for notification deep links _(plan)_
+- Add percussionist-dev-plan-8b3e46 _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Mock gitCheck.isClean in complete_run happy-path test _(dispatcher)_
+- Add unit tests for notification core deep links _(web)_
+- Add regression coverage for table scroll wrappers _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Sync pnpm-lock.yaml with committed devDependency bumps
+- Release v0.2.7
+## [v0.2.6] - 2026-07-31
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Fail with the missing parent branch instead of a bare exit 128 _(operator)_
+- Show board chat context button on tablets without hover _(web)_
+- Keep a retried turn from settling the run _(runner-claude)_
+- Tell workers the run ends when they stop _(manager)_
+- Tell reviewers where findings go, rename report_finding _(agents)_
+- Survive a missing sqlite-vec instead of failing every test _(memory-service)_
+- Merge from the local source branch instead of origin/<source> _(manager)_
+- Promote ideas to the backlog without a worker status _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Plan for tablet-visible board chat context button _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.6
+## [v0.2.5] - 2026-07-31
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Load jest-dom after happy-dom installs document _(web)_
+- Install bun and pnpm so agents and initScripts can build _(runner-claude)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.5
+## [v0.2.4] - 2026-07-31
+
+### <!-- 0 -->🚀 Features
+
+- Add project color field to spec, CRD, and routes _(api)_
+- Add project color hash helper and client type support _(web)_
+- Render project color chip in sidebar _(web)_
+- Add color picker to project create/edit form _(web)_
+- Render project color strip on board view _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Make project edits resettable _(web)_
+- Mount known_hosts outside the read-only git-ssh secret _(operator)_
+- Render task diffs when the project pins a git-less exec image _(web)_
+- Render claude-engine subtask parts without crashing _(web)_
+
+### <!-- 10 -->💼 Other
+
+- Project identity colors for sidebar and board (percussionist-dev-plan-580f71)
+
+### <!-- 6 -->🧪 Testing
+
+- Isolate test files so module mocks stop leaking across them _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update bun to 1.3.14 in CI workflow
+- Release v0.2.4
+## [v0.2.3] - 2026-07-29
+
+### <!-- 0 -->🚀 Features
+
+- Expose codeServer.enabled on board API _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Gate board-level code-server links on spec.codeServer.enabled _(web)_
+- Persist project merge behavior edits _(web)_
+- Count every message's usage, not just the transcript tail _(dispatcher)_
+- Retry a truncated turn that reports itself successful _(runner-claude)_
+- Load run-pod images under the reference the cluster asks for _(scripts)_
+- Detect a truncated turn on the assistant message _(runner-claude)_
+
+### <!-- 3 -->📚 Documentation
+
+- Hide code-server board link when code-server not enabled _(plan)_
+- Add LXD MicroK8s Tailscale playbook
+
+### <!-- 6 -->🧪 Testing
+
+- Cover codeServerEnabled gating in BoardHeader tests _(web)_
+- Cover BoardView's code-server enabled gate, not just BoardHeader's ternary _(web)_
+- Stop the auth bypass test creating a real Project _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Log the shape of a turn that ends without retrying _(runner-claude)_
+- Release v0.2.3
 ## [v0.2.2] - 2026-07-29
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -12,6 +324,10 @@ All notable changes to Percussionist are documented here.
 - Stop board-view's BoardHeader stub leaking into other suites _(web)_
 - Stop board-view's react-query stub leaking into other suites _(web)_
 - Give the board suites a real router instead of stubbing Link _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.2
 ## [v0.2.1] - 2026-07-26
 
 ### <!-- 0 -->🚀 Features

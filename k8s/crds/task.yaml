@@ -19,9 +19,6 @@ spec:
         - name: Phase
           type: string
           jsonPath: .status.phase
-        - name: Column
-          type: string
-          jsonPath: .status.column
         - name: Type
           type: string
           jsonPath: .spec.type
@@ -130,16 +127,6 @@ spec:
                   maxLength: 4096
                 lastFailureDuration:
                   type: number
-                column:
-                  type: string
-                  enum:
-                    - backlog
-                    - ready
-                    - in-progress
-                    - review
-                    - rework
-                    - done
-                    - blocked
                 worker:
                   type: object
                   properties:
@@ -200,6 +187,8 @@ spec:
                     mergeError:
                       type: string
                       maxLength: 4096
+                    abandoned:
+                      type: boolean
                   required:
                     - status
                     - retryCount

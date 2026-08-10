@@ -19,6 +19,7 @@ import type {
   ProjectMemory,
   Run,
   SessionResponse,
+  StatSession,
   Task,
   TaskDiffResponse,
   UpdateMemoryRequest,
@@ -111,6 +112,15 @@ export async function fetchSession(name: string): Promise<SessionResponse> {
   return fetchJSON<SessionResponse>(`/runs/${encodeURIComponent(name)}/session`);
 }
 
+/**
+ * Fetch a single session's stats-DB row by run name. The DB row outlives the
+ * Run CR (deleted after runTTLDays), so this is the durable source of truth
+ * for the session detail page.
+ */
+export async function fetchSessionStat(name: string): Promise<StatSession> {
+  return fetchJSON<StatSession>(`/stats/sessions/${encodeURIComponent(name)}`);
+}
+
 export async function fetchPlan(project: string, taskId: string): Promise<PlanResponse> {
   return fetchJSON<PlanResponse>(
     `/projects/${encodeURIComponent(project)}/plans/${encodeURIComponent(taskId)}`,
@@ -142,6 +152,20 @@ export async function deleteRun(name: string): Promise<void> {
     headers: authHeaders(),
   });
   if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
+// Forward a human reply into a run's opencode session. Used by the board
+// answer flow to resume a run parked on WaitingForInput.
+export async function replyToRun(runName: string, message: string): Promise<void> {
+  const res = await fetch(`${BASE}/runs/${encodeURIComponent(runName)}/reply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ message }),
+  });
+  if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
@@ -266,7 +290,15 @@ export async function deleteAgent(name: string): Promise<void> {
 // Board (embedded in Project)
 
 export async function fetchBoard(project: string): Promise<{
-  settings: { maxParallel: number; agents: Array<{ name: string }>; phase: string };
+  settings: {
+    maxParallel: number;
+    agents: Array<{ name: string }>;
+    phase: string;
+    codeServer?: { enabled?: boolean };
+    color?: string | null;
+    repoWebUrl?: string;
+    integrationMode?: string;
+  };
   columns: Record<string, Task[]>;
   approvals?: Record<string, { approved: boolean; requestChanges: boolean }>;
   status: BoardStatus;
@@ -396,6 +428,24 @@ export async function retryReviewTask(project: string, taskName: string): Promis
   }
 }
 
+// Write the percussionist.dev/action-answer annotation the reconciler consumes
+// (decideWaitingForInput) to resume a task parked on WaitingForInput. Call
+// replyToRun first so the agent actually sees the human's answer.
+export async function answerTask(project: string, taskName: string, answer: string): Promise<void> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/answer`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ answer }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Settings
 
@@ -459,6 +509,9 @@ export async function deleteSecret(name: string): Promise<void> {
   }
 }
 
+/** See UpgradeMode in server/routes/upgrade.ts. */
+export type UpgradeMode = 'gitops' | 'deployments';
+
 export interface UpdateStatus {
   current: {
     operator: string | null;
@@ -469,6 +522,15 @@ export interface UpdateStatus {
   latest: string | null;
   updateAvailable: boolean;
   registryPrefix?: string;
+  mode?: UpgradeMode;
+  source?: {
+    name: string;
+    namespace: string;
+    tag: string | null;
+    url: string;
+    semverRange: string | null;
+    suspended: boolean;
+  };
   error?: string;
 }
 
@@ -480,6 +542,8 @@ export interface UpgradeResult {
   patched: string[];
   errors: string[];
   targetTag: string;
+  mode?: UpgradeMode;
+  warnings?: string[];
 }
 
 export async function postUpgradeApply(targetTag: string): Promise<UpgradeResult> {

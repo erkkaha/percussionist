@@ -29,6 +29,42 @@ const FATAL_STATUS = new Set([400, 401, 403, 404, 405, 413, 422]);
 const RETRYABLE_TEXT =
   /\b(overloaded|rate.?limit|connection closed|connection error|connection reset|socket hang up|timed? ?out|econnreset|epipe|etimedout|service unavailable|bad gateway|internal server error)\b/i;
 
+/**
+ * The harness's own error banner, which it emits as the result text. This is the
+ * one signal that a result claiming success is actually a truncated turn, so it
+ * is matched anchored and case-sensitively in the prefix position rather than
+ * anywhere in the prose.
+ */
+const API_ERROR_PREFIX = /^\s*API Error:/;
+
+/** Reason string for a turn cut short mid-response, for logs and the retry prompt. */
+export const TRUNCATED_DETAIL = 'the response was cut short mid-stream';
+
+/**
+ * True when an SDK `assistant` message is the harness's own error banner rather
+ * than the model talking.
+ *
+ * This is the only place a dropped connection is visible: the banner arrives as
+ * assistant text, and the `result` message that follows reports subtype success
+ * with is_error false and api_error_status null. Four runs failed with "session
+ * ended without completion signal" for want of this check, each having already
+ * produced 18k-47k output tokens of real work.
+ *
+ * Anchored at the start of the first text block so an agent that merely mentions
+ * an API error while summarising its work cannot trigger a retry.
+ */
+export function hasApiErrorBanner(raw: unknown): boolean {
+  const content = (raw as { message?: { content?: unknown } })?.message?.content;
+  if (typeof content === 'string') return API_ERROR_PREFIX.test(content);
+  if (!Array.isArray(content)) return false;
+  for (const block of content) {
+    const b = block as { type?: string; text?: string };
+    if (b?.type !== 'text' || typeof b.text !== 'string') continue;
+    return API_ERROR_PREFIX.test(b.text);
+  }
+  return false;
+}
+
 type ResultLike = {
   is_error?: boolean;
   result?: string;
@@ -44,7 +80,19 @@ type ResultLike = {
  */
 export function isRetryableResultError(raw: unknown): boolean {
   const msg = raw as ResultLike;
-  if (!msg?.is_error) return false;
+  if (!msg) return false;
+  // A dropped connection can arrive as a *successful* result whose text is the
+  // apology: is_error false, api_error_status null, stop_reason "stop_sequence",
+  // and result "API Error: Connection closed mid-response. The response above
+  // may be incomplete." Observed on four separate runs, each of which had
+  // already committed 20k-47k output tokens of real work and then failed with
+  // "session ended without completion signal" because the is_error gate below
+  // rejected them before any retry could happen.
+  //
+  // Only the explicit API-error prefix qualifies, not a bare text match: an
+  // agent legitimately discussing a connection error in its own summary must not
+  // trigger a retry.
+  if (!msg.is_error && !API_ERROR_PREFIX.test(msg.result ?? '')) return false;
 
   const status = msg.api_error_status;
   if (typeof status === 'number') return RETRYABLE_STATUS.has(status);

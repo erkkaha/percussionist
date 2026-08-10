@@ -1,7 +1,7 @@
 // board/FindingsPanel.tsx — board-level findings panel.
 //
 // Displays agent-reported findings (bugs, security, performance, debt) surfaced
-// via the report_finding MCP tool. Shows severity badges, categories, and action buttons.
+// via the report_unrelated_issue MCP tool. Shows severity badges, categories, and action buttons.
 
 import {
   BookOpen,
@@ -19,7 +19,7 @@ import { useState } from 'react';
 import type { Finding } from '../../lib/types';
 
 const FINDING_SEVERITIES: Finding['severity'][] = ['critical', 'high', 'medium', 'low'];
-const FINDING_CATEGORIES: Finding['category'][] = [
+const _FINDING_CATEGORIES: Finding['category'][] = [
   'bug',
   'security',
   'performance',
@@ -27,7 +27,7 @@ const FINDING_CATEGORIES: Finding['category'][] = [
   'docs',
   'other',
 ];
-const FINDING_STATUSES: Finding['status'][] = [
+const _FINDING_STATUSES: Finding['status'][] = [
   'triaged',
   'in-progress',
   'resolved',
@@ -65,7 +65,7 @@ const CATEGORY_ICON: Record<Finding['category'], typeof Bug> = {
   other: CircleDot,
 };
 
-const CATEGORY_LABEL: Record<Finding['category'], string> = {
+const _CATEGORY_LABEL: Record<Finding['category'], string> = {
   bug: 'Bug',
   security: 'Security',
   performance: 'Performance',
@@ -101,7 +101,7 @@ interface FindingsPanelProps {
   onClose?: () => void;
 }
 
-export function FindingsPanel({ findings, projectName, onClose }: FindingsPanelProps) {
+export function FindingsPanel({ findings, onClose }: FindingsPanelProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Finding['severity'] | 'all'>('all');
 
@@ -162,8 +162,11 @@ export function FindingsPanel({ findings, projectName, onClose }: FindingsPanelP
             <Bug className="h-8 w-8 mx-auto text-text-dim/30 mb-2" />
             <p className="text-sm text-text-dim">No findings reported yet.</p>
             <p className="text-xs text-text-dim/60 mt-1">
-              Agents report off-task issues via the{' '}
-              <code className="text-xs bg-surface-overlay px-1 rounded">report_finding</code> tool.
+              Agents report issues outside their own task via the{' '}
+              <code className="text-xs bg-surface-overlay px-1 rounded">
+                report_unrelated_issue
+              </code>{' '}
+              tool. Comments a reviewer left on a diff are not here — they are on the task.
             </p>
           </div>
         ) : filtered.length === 0 ? (

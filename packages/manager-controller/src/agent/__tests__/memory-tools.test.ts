@@ -128,9 +128,9 @@ describe('memory tool schema definitions', () => {
   it('should define list_memories tool with project, task, limit, offset', () => {
     const props = extractToolProperties('list_memories');
     expect(props).not.toBeNull();
-    expect(props!).toContain('task');
-    expect(props!).toContain('limit');
-    expect(props!).toContain('offset');
+    expect(props ?? '').toContain('task');
+    expect(props ?? '').toContain('limit');
+    expect(props ?? '').toContain('offset');
 
     const req = extractToolRequired('list_memories');
     expect(req).toBe("'project'");
@@ -139,7 +139,7 @@ describe('memory tool schema definitions', () => {
   it('should define get_memory tool with project and id', () => {
     const props = extractToolProperties('get_memory');
     expect(props).not.toBeNull();
-    expect(props!).toContain('id');
+    expect(props ?? '').toContain('id');
 
     const req = extractToolRequired('get_memory');
     expect(req).toContain("'project'");
@@ -149,8 +149,8 @@ describe('memory tool schema definitions', () => {
   it('should define update_memory tool with project, id, content, metadata', () => {
     const props = extractToolProperties('update_memory');
     expect(props).not.toBeNull();
-    expect(props!).toContain('content');
-    expect(props!).toContain('metadata');
+    expect(props ?? '').toContain('content');
+    expect(props ?? '').toContain('metadata');
 
     const req = extractToolRequired('update_memory');
     expect(req).toContain("'project'");
@@ -160,7 +160,7 @@ describe('memory tool schema definitions', () => {
   it('should define delete_memory tool with project and id', () => {
     const props = extractToolProperties('delete_memory');
     expect(props).not.toBeNull();
-    expect(props!).toContain('id');
+    expect(props ?? '').toContain('id');
 
     const req = extractToolRequired('delete_memory');
     expect(req).toContain("'project'");
@@ -170,7 +170,7 @@ describe('memory tool schema definitions', () => {
   it('should preserve existing store_memory tool definition', () => {
     const props = extractToolProperties('store_memory');
     expect(props).not.toBeNull();
-    expect(props!).toContain('content');
+    expect(props ?? '').toContain('content');
 
     const req = extractToolRequired('store_memory');
     expect(req).toContain("'project'");
@@ -180,7 +180,7 @@ describe('memory tool schema definitions', () => {
   it('should preserve existing query_memory tool definition', () => {
     const props = extractToolProperties('query_memory');
     expect(props).not.toBeNull();
-    expect(props!).toContain('query');
+    expect(props ?? '').toContain('query');
 
     const req = extractToolRequired('query_memory');
     expect(req).toContain("'project'");
@@ -190,7 +190,7 @@ describe('memory tool schema definitions', () => {
   it('should preserve existing get_context tool definition', () => {
     const props = extractToolProperties('get_context');
     expect(props).not.toBeNull();
-    expect(props!).toContain('query');
+    expect(props ?? '').toContain('query');
 
     const req = extractToolRequired('get_context');
     expect(req).toContain("'project'");

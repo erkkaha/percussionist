@@ -7,8 +7,8 @@
 // reconfigure independently.
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import path from 'node:path';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import path from 'path';
 import React from 'react';
 
 // ---------------------------------------------------------------------------
@@ -631,8 +631,8 @@ describe('UsageBar warning cues', () => {
     expect(barContainer).toBeTruthy();
 
     // 3400/7200 ≈ 47% — no warning ring
-    expect(barContainer!.className).not.toContain('ring-red');
-    expect(barContainer!.className).not.toContain('ring-amber');
+    expect(barContainer?.className).not.toContain('ring-red');
+    expect(barContainer?.className).not.toContain('ring-amber');
   });
 
   it('shows amber warning between 60% and 85%', async () => {
@@ -650,7 +650,7 @@ describe('UsageBar warning cues', () => {
     );
 
     const barContainer = container.querySelector('.overflow-hidden');
-    expect(barContainer!.className).toContain('ring-amber');
+    expect(barContainer?.className).toContain('ring-amber');
   });
 
   it('shows red warning at or above 85%', async () => {
@@ -668,6 +668,6 @@ describe('UsageBar warning cues', () => {
     );
 
     const barContainer = container.querySelector('.overflow-hidden');
-    expect(barContainer!.className).toContain('ring-red');
+    expect(barContainer?.className).toContain('ring-red');
   });
 });

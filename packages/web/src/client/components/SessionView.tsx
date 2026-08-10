@@ -11,22 +11,16 @@ import {
   Clock,
   Copy,
   FolderOpen,
+  Users,
   XCircle,
   Zap,
 } from 'lucide-react';
-import { useInViewport } from '../hooks/useInViewport';
 import { useSession } from '../hooks/useSession';
 import { useShiki } from '../hooks/useShiki';
-import type {
-  FilePart,
-  SessionMessage,
-  SessionPart,
-  SubtaskPart,
-  TextPart,
-  ToolPart,
-} from '../lib/types';
+import type { FilePart, SessionMessage, SubtaskPart, TextPart, ToolPart } from '../lib/types';
 import { skeletonKeys } from '../lib/utils';
 import { CodeBlock } from './CodeBlock';
+import ErrorBoundary from './ErrorBoundary';
 import { FileDiff } from './FileDiff';
 import { TaskList } from './TaskList';
 
@@ -42,7 +36,27 @@ interface SessionViewProps {
   eventTick: number;
 }
 
-export default function SessionView({
+export default function SessionView(props: SessionViewProps) {
+  // The session payload is proxied from the runner without validation, so a
+  // single malformed part must not unmount the run/session page. The boundary
+  // catches the whole view and falls back to a message while the surrounding
+  // header/cards keep rendering.
+  return (
+    <ErrorBoundary fallback={<SessionViewFallback />}>
+      <SessionViewContent {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function SessionViewFallback() {
+  return (
+    <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-4 text-sm text-phase-failed">
+      Could not render this session — a malformed message part was received.
+    </div>
+  );
+}
+
+function SessionViewContent({
   name,
   hasSession,
   active,
@@ -128,7 +142,10 @@ function MessageBubble({
   message: SessionMessage;
   messageRefsMap: React.MutableRefObject<Map<string, HTMLDivElement>>;
 }) {
-  const { info, parts } = message;
+  const { info } = message;
+  // The session payload is proxied straight from the runner without validation,
+  // so treat a missing `parts` as an empty message rather than a blank page.
+  const parts = message.parts ?? [];
   const isUser = info.role === 'user';
 
   // Store ref for scroll target
@@ -322,14 +339,24 @@ function MessageBubble({
           </div>
         )}
 
-        {/* Task lists */}
-        {subtaskParts.map((part) => (
-          <TaskList key={part.id} todos={part.todos} />
-        ))}
+        {/* Subtasks — a todo checklist (opencode) or a spawned subagent (claude) */}
+        {subtaskParts.map((part, i) => {
+          // The claude runner leaves `id` unset when the SDK gives the tool call
+          // no id, so fall back to position for the key.
+          const key = part.id ?? `subtask-${i}`;
+          return part.todos && part.todos.length > 0 ? (
+            <TaskList key={key} todos={part.todos} />
+          ) : (
+            <SubagentRow key={key} part={part} />
+          );
+        })}
 
         {/* Todowrite tools rendered as task lists */}
         {todowriteParts.map((part) => {
-          const todos = part.state.input.todos;
+          // The payload is unvalidated proxied JSON — `state` or `state.input`
+          // may be missing, so optional-chain down to `todos` and rely on the
+          // Array.isArray check to skip anything that is not a real list.
+          const todos = part.state?.input?.todos;
           // Validate that todos is an array before rendering
           if (Array.isArray(todos) && todos.length > 0) {
             return (
@@ -395,6 +422,20 @@ function MessageBubble({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Subagent row — the claude engine's `subtask` part, which names a spawned
+// subagent instead of carrying a todo checklist.
+
+function SubagentRow({ part }: { part: SubtaskPart }) {
+  return (
+    <div className="flex items-start gap-2 rounded border border-border-muted bg-surface px-3 py-2 text-xs">
+      <Users className="h-3.5 w-3.5 mt-0.5 shrink-0 text-phase-running" />
+      <span className="font-mono text-text shrink-0">{part.agentType ?? 'subagent'}</span>
+      {part.description && <span className="text-text-muted break-words">{part.description}</span>}
     </div>
   );
 }
@@ -509,6 +550,7 @@ function ToolCall({ part }: { part: ToolPart }) {
             <div className="text-xs text-text-dim mb-1">Command</div>
             <div
               className="text-xs font-mono bg-surface-raised rounded p-2 overflow-x-auto"
+              // biome-ignore lint/security/noDangerouslySetInnerHtml: Command text is rendered through escaped ANSI-to-HTML conversion.
               dangerouslySetInnerHTML={{ __html: commandHtml }}
             />
           </div>
@@ -550,6 +592,7 @@ function ToolCall({ part }: { part: ToolPart }) {
             {outputHtml ? (
               <div
                 className="text-xs font-mono bg-surface-raised rounded p-2 overflow-x-auto max-h-96"
+                // biome-ignore lint/security/noDangerouslySetInnerHtml: Tool output is rendered through escaped ANSI-to-HTML conversion.
                 dangerouslySetInnerHTML={{ __html: outputHtml }}
               />
             ) : (
@@ -587,7 +630,9 @@ function formatToolInput(input: Record<string, unknown>): string {
   // Show common tool fields nicely.
   const entries = Object.entries(input);
   if (entries.length === 1) {
-    const [key, val] = entries[0]!;
+    const onlyEntry = entries[0];
+    if (!onlyEntry) return '';
+    const [key, val] = onlyEntry;
     if (typeof val === 'string') {
       // Single string input — show directly.
       if (val.length > 2000) return `${key}: ${val.slice(0, 2000)}... (truncated)`;
@@ -595,6 +640,6 @@ function formatToolInput(input: Record<string, unknown>): string {
     }
   }
   const json = JSON.stringify(input, null, 2);
-  if (json.length > 2000) return json.slice(0, 2000) + '\n... (truncated)';
+  if (json.length > 2000) return `${json.slice(0, 2000)}\n... (truncated)`;
   return json;
 }

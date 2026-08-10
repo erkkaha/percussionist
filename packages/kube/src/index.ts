@@ -25,6 +25,7 @@ import {
   SelfDecodingBody,
   ServerConfiguration,
   setHeaderOptions,
+  type V1ObjectMeta,
   type V1Pod,
   wrapHttpLibrary,
 } from '@kubernetes/client-node';
@@ -36,6 +37,7 @@ import {
   type BoardStatus,
   type ClusterAgent,
   type ClusterSettings,
+  DEFAULT_EXEC_IMAGE,
   type Finding,
   KIND_CLUSTER_AGENT,
   KIND_CLUSTER_SETTINGS,
@@ -49,6 +51,7 @@ import {
   PLURAL_RUN,
   PLURAL_TASK,
   type Project,
+  parseModelRef,
   type Run,
   type RunStatus,
   type Task,
@@ -209,22 +212,26 @@ function init() {
 
 export function kubeConfig(): KubeConfig {
   init();
-  return _kc!;
+  if (!_kc) throw new Error('Kubernetes client was not initialized');
+  return _kc;
 }
 
 export function core(): CoreV1Api {
   init();
-  return _core!;
+  if (!_core) throw new Error('Kubernetes CoreV1Api client was not initialized');
+  return _core;
 }
 
 export function custom(): CustomObjectsApi {
   init();
-  return _custom!;
+  if (!_custom) throw new Error('Kubernetes CustomObjectsApi client was not initialized');
+  return _custom;
 }
 
 export function apps(): AppsV1Api {
   init();
-  return _apps!;
+  if (!_apps) throw new Error('Kubernetes AppsV1Api client was not initialized');
+  return _apps;
 }
 
 // For CLI use — loads from kubeconfig only (no in-cluster fallback).
@@ -264,12 +271,17 @@ const MERGE_PATCH = () => setHeaderOptions('Content-Type', PatchStrategy.MergePa
 // ---------------------------------------------------------------------------
 // Run helpers
 
-export async function listRuns(ns: string = NAMESPACE, client = custom()): Promise<Run[]> {
+export async function listRuns(
+  ns: string = NAMESPACE,
+  client = custom(),
+  labelSelector?: string,
+): Promise<Run[]> {
   const res = (await client.listNamespacedCustomObject({
     group: API_GROUP,
     version: API_VERSION,
     namespace: ns,
     plural: PLURAL_RUN,
+    ...(labelSelector ? { labelSelector } : {}),
   })) as { items: Run[] };
   return res.items ?? [];
 }
@@ -317,11 +329,12 @@ export async function patchRunStatus(
   statusPatch: Partial<RunStatus>,
   ns: string = NAMESPACE,
   maxRetries = 3,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
 ): Promise<Run> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
+      await sleep(100 * 2 ** (attempt - 1));
     }
     try {
       return (await custom().patchNamespacedCustomObjectStatus(
@@ -350,11 +363,12 @@ export async function patchRunAnnotations(
   annotations: Record<string, string | undefined>,
   ns: string = NAMESPACE,
   maxRetries = 3,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
 ): Promise<Run> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
+      await sleep(100 * 2 ** (attempt - 1));
     }
     try {
       return (await custom().patchNamespacedCustomObject(
@@ -1098,7 +1112,7 @@ export async function readSessionConfigMap(
     if (!sessionsRaw) return null;
     const sessions: string[] = JSON.parse(sessionsRaw);
     if (!sessions.includes(sessionID)) return null;
-    const raw = cm.data![`messages-${sessionID}.json`];
+    const raw = cm.data?.[`messages-${sessionID}.json`];
     if (!raw) return null;
     return {
       messages: JSON.parse(raw),
@@ -1167,7 +1181,7 @@ export async function getPlansConfigMap(
 ): Promise<{
   apiVersion: string;
   kind: string;
-  metadata: Record<string, unknown>;
+  metadata: V1ObjectMeta;
   data?: Record<string, string>;
 } | null> {
   try {
@@ -1178,7 +1192,7 @@ export async function getPlansConfigMap(
     return {
       apiVersion: cm.apiVersion ?? 'v1',
       kind: cm.kind ?? 'ConfigMap',
-      metadata: cm.metadata as unknown as Record<string, unknown>,
+      metadata: cm.metadata ?? {},
       data: cm.data,
     };
   } catch (e: unknown) {
@@ -1227,6 +1241,16 @@ export async function writePlanToConfigMap(
     warning = `ConfigMap data size (${Math.round(totalSize / 1024)}KB) approaching 1MB limit. Consider removing old plans.`;
   }
 
+  const metadata: V1ObjectMeta = {
+    name: existing.metadata.name ?? cmName,
+    namespace: existing.metadata.namespace ?? ns,
+    labels: existing.metadata.labels,
+    annotations: existing.metadata.annotations,
+  };
+  if (existing.metadata.resourceVersion) {
+    metadata.resourceVersion = existing.metadata.resourceVersion;
+  }
+
   if (!existing.metadata.resourceVersion) {
     // Create new ConfigMap
     await core().createNamespacedConfigMap({
@@ -1234,7 +1258,7 @@ export async function writePlanToConfigMap(
       body: {
         apiVersion: 'v1',
         kind: 'ConfigMap',
-        metadata: existing.metadata as any,
+        metadata,
         data: newData,
       },
     });
@@ -1246,9 +1270,7 @@ export async function writePlanToConfigMap(
       body: {
         apiVersion: 'v1',
         kind: 'ConfigMap',
-        metadata: {
-          ...existing.metadata,
-        } as any,
+        metadata,
         data: newData,
       },
     });
@@ -1263,7 +1285,7 @@ export async function readPlanFromConfigMap(
   ns: string = NAMESPACE,
 ): Promise<string | null> {
   const cm = await getPlansConfigMap(projectName, ns);
-  if (!cm || !cm.data) return null;
+  if (!cm?.data) return null;
   return cm.data[`${taskName}.md`] ?? null;
 }
 
@@ -1281,7 +1303,7 @@ const FINDINGS_COMPONENT = 'findings';
 /**
  * A ConfigMap data key must match `[-._a-zA-Z0-9]+`. `/` is not in that set, so
  * the original `inbox/<id>.json` layout was rejected by the API server with a
- * 422 on every single write — no finding was ever stored, and `report_finding`
+ * 422 on every single write — no finding was ever stored, and `report_unrelated_issue`
  * returned an MCP error to every agent that called it. The parse helpers were
  * unit-tested against hand-built maps, which is why nothing caught it: no test
  * ever asked the API server to accept a key.
@@ -1831,15 +1853,22 @@ export async function execInWorkspace(
   mountPath = '/data',
   timeoutMs = 120_000,
   ns: string = NAMESPACE,
+  imageOverride?: string,
+  client = core(),
+  getProjectFn: (name: string, ns: string) => Promise<Project> = getProject,
+  pollIntervalMs = 2_000,
 ): Promise<WorkspaceExecResult> {
   const podName = `ws-exec-${projectName}-${Date.now()}`.slice(0, 63).replace(/[^a-z0-9-]/g, '-');
 
   // Resolve project-level overrides (image + PVC name) with safe fallbacks.
-  let execImage = 'alpine/git:v2.54.0';
+  // imageOverride wins over spec.exec.image: callers running a script with hard
+  // tool requirements (e.g. the dashboard's git-based task diff) must not be at
+  // the mercy of a project-configured image that may lack those tools.
+  let execImage = imageOverride ?? DEFAULT_EXEC_IMAGE;
   let pvcName = `${projectName}-data`;
   try {
-    const project = await getProject(projectName, ns);
-    execImage = project.spec.exec?.image ?? 'alpine/git:v2.54.0';
+    const project = await getProjectFn(projectName, ns);
+    execImage = imageOverride ?? project.spec.exec?.image ?? DEFAULT_EXEC_IMAGE;
     pvcName = project.spec.data?.pvcName ?? `${projectName}-data`;
   } catch {
     // Project not found or inaccessible — use defaults (backward compatible).
@@ -1876,7 +1905,7 @@ export async function execInWorkspace(
     },
   };
 
-  await core().createNamespacedPod({ namespace: ns, body: pod });
+  await client.createNamespacedPod({ namespace: ns, body: pod });
 
   // Poll until the pod reaches a terminal phase or timeout
   const deadline = Date.now() + timeoutMs;
@@ -1884,10 +1913,10 @@ export async function execInWorkspace(
   let finalPhase = 'Unknown';
 
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 2_000));
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
     let podStatus: V1Pod;
     try {
-      podStatus = await core().readNamespacedPod({ name: podName, namespace: ns });
+      podStatus = await client.readNamespacedPod({ name: podName, namespace: ns });
     } catch {
       break;
     }
@@ -1901,7 +1930,7 @@ export async function execInWorkspace(
   // Collect logs before deletion (best-effort)
   let stdout = '';
   try {
-    const logRes = await core().readNamespacedPodLog({
+    const logRes = await client.readNamespacedPodLog({
       name: podName,
       namespace: ns,
       container: 'exec',
@@ -1912,11 +1941,9 @@ export async function execInWorkspace(
   }
 
   // Delete the pod (best-effort)
-  core()
-    .deleteNamespacedPod({ name: podName, namespace: ns })
-    .catch(() => {
-      /* ignore */
-    });
+  client.deleteNamespacedPod({ name: podName, namespace: ns }).catch(() => {
+    /* ignore */
+  });
 
   return { stdout, exitCode, podName };
 }
@@ -2028,6 +2055,7 @@ const CLOUD_PROVIDERS = new Set([
   'google-genai',
   'github-copilot',
   'azure',
+  'claude-code',
   'aws',
   'bedrock',
   'together',
@@ -2060,19 +2088,9 @@ export type AuthValidationResult = AuthValidationSuccess | AuthValidationFailure
  * model name starts with a recognized cloud prefix.
  */
 export function requiresCloudAuth(model: string): boolean {
-  const slashIdx = model.indexOf('/');
-  if (slashIdx === -1) return false;
-  const provider = model.slice(0, slashIdx).toLowerCase();
-  return CLOUD_PROVIDERS.has(provider);
-}
-
-/**
- * Parse the provider prefix from a `providerID/modelID` model string.
- */
-export function parseModelProvider(model: string): string | undefined {
-  const slashIdx = model.indexOf('/');
-  if (slashIdx === -1) return undefined;
-  return model.slice(0, slashIdx);
+  const { providerID } = parseModelRef(model);
+  if (!providerID) return false;
+  return CLOUD_PROVIDERS.has(providerID.toLowerCase());
 }
 
 /**
@@ -2094,19 +2112,29 @@ export function validateModelAuth(
 ): AuthValidationResult {
   if (!model) return { ok: true };
 
-  const provider = parseModelProvider(model);
-  if (!provider) return { ok: true };
+  const { providerID } = parseModelRef(model);
+  if (!providerID) return { ok: true };
 
-  const lowerProvider = provider.toLowerCase();
+  const lowerProvider = providerID.toLowerCase();
   if (LOCAL_PROVIDERS.has(lowerProvider)) return { ok: true };
   if (!CLOUD_PROVIDERS.has(lowerProvider)) return { ok: true };
 
   if (secrets?.authSecret || secrets?.llmKeysSecret) return { ok: true };
 
+  if (lowerProvider === 'claude-code') {
+    return {
+      ok: false,
+      error:
+        `Model "${model}" uses provider "claude-code" which requires authentication. ` +
+        `Set spec.secrets.authSecret to a Secret whose key holds the ` +
+        `CLAUDE_CODE_OAUTH_TOKEN subscription token (e.g. produced by \`claude setup-token\`).`,
+    };
+  }
+
   return {
     ok: false,
     error:
-      `Model "${model}" uses provider "${provider}" which requires authentication, ` +
+      `Model "${model}" uses provider "${providerID}" which requires authentication, ` +
       `but neither spec.secrets.authSecret nor spec.secrets.llmKeysSecret is configured. ` +
       `Run \`beatctl auth import\` to import opencode auth, or set llmKeysSecret to a Secret ` +
       `containing the provider's API key (e.g. ANTHROPIC_API_KEY).`,

@@ -37,6 +37,7 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 - **Manager agent** — the manager controller embeds an OpenCode agent (opencode-web sidecar) with K8s tool access, a decision engine that diagnoses failures and parses ambiguous output, and an interactive chat API. Chat via the web dashboard or `beatctl chat`.
 - **Vector memory** — per-project semantic memory service with LLM-powered context injection (`RELEVANT PROJECT CONTEXT:` in worker prompts) and automatic session summarization on run completion; summaries are stored in ConfigMaps and the vector database for use by BUILD task generators.
 - **Runner packages** — declare Alpine packages (`spec.runner.packages`) that get installed at pod init time; the manager injects `AVAILABLE SYSTEM TOOLS:` into agent prompts so agents know what's available.
+- **GitOps upgrades** — `beatctl deploy --gitops` puts the control plane behind Flux, pinned to an exact release. Upgrades stay on-demand (dashboard button or one patched field) but apply CRDs before rolling the Deployments, which the in-place upgrade path cannot do. Manifests ship as an OCI artifact alongside the images on every release.
 
 ## Repo layout
 
@@ -54,6 +55,7 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 │   │   ├── manager-controller.yaml
 │   │   ├── agent-config.yaml  # opencode.json config + agent skill for manager decision engine
 │   │   └── web.yaml
+│   ├── flux/           # GitOps bootstrap (OCIRepository + Kustomizations)
 │   ├── agents/         # Production ClusterAgent definitions
 │   ├── samples/        # Example manifests and smoke test
 │   └── tests/          # E2E test manifests
@@ -135,6 +137,14 @@ kubectl apply -f k8s/deploy/web.yaml
 kubectl -n percussionist rollout status deploy/percussionist-operator
 kubectl -n percussionist rollout status deploy/percussionist-manager
 kubectl -n percussionist rollout status deploy/percussionist-web
+```
+
+Or hand the control plane to Flux, so that later upgrades apply CRDs as well as
+images (the in-place upgrade path cannot — see
+[docs/guide/gitops.md](docs/guide/gitops.md)):
+
+```sh
+beatctl deploy --gitops
 ```
 
 To uninstall everything:
@@ -463,7 +473,8 @@ pnpm bundle
 | Command | What it does |
 |---------|-------------|
 | `beatctl deploy` | Install CRDs and apply operator + manager controller + web manifests; waits for rollouts. |
-| `beatctl deploy --down` | Delete all operator/web/manager resources and CRDs. |
+| `beatctl deploy --gitops` | Install the same manifests via Flux, pinned to a release, so later upgrades apply CRDs too. Add `--release <tag>` to pin a version other than the checkout's. |
+| `beatctl deploy --down` | Delete all operator/web/manager resources and CRDs. Removes the Flux bootstrap first if present. |
 | `beatctl web` | Port-forward the dashboard to `localhost` and open it in your browser. `localhost` is a secure context so browser notifications and drum audio work without HTTPS. |
 | `beatctl submit -t "<task>" --project <name>` | Create an `Run` with an inline task prompt (requires a project name). |
 | `beatctl submit -i --project <name>` | Interactive run — no prompt; runner stays alive for `beatctl attach`. |
@@ -823,7 +834,7 @@ Then add tasks to the board:
 # Add ClusterAgents (team roster) first — reference cluster-scoped agent definitions.
 beatctl agent create --name code-reviewer -f agents/code-reviewer.yaml
 
-# Add a task. It starts in the "ready" column.
+# Add a task. It starts in the "backlog" column.
 beatctl board task add my-project \
   --title "Implement login" \
   --description "Add OAuth login with GitHub provider" \
@@ -833,8 +844,8 @@ beatctl board task add my-project \
 beatctl board get my-project
 ```
 
-The manager controller automatically picks up tasks in "ready", creates worker
-runs, and moves them across columns as they progress.
+The manager controller automatically picks up tasks in "backlog", creates worker
+runs, and moves them across phases as they progress.
 
 ### Human-in-the-loop
 
@@ -1139,8 +1150,14 @@ opencode auth login github-copilot     # opens https://github.com/login/device
 beatctl auth import
 ```
 
-This creates a Secret called `opencode-auth` in the `percussionist` namespace.
-Re-run after re-authenticating locally; the Secret is replaced wholesale.
+This creates a Secret called `agent-auth` in the `percussionist` namespace.
+Re-run after re-authenticating locally; only the `auth.json` key is replaced,
+so other keys in the Secret survive. That matters because `agent-auth` is
+also where the claude engine's subscription token lives (key
+`CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token` — see
+`k8s/samples/claude-engine.yaml`). One Secret serves both engines: the
+operator injects the engine-appropriate key per run, so a project whose
+agents mix `claude-code/*` and opencode models needs no per-engine wiring.
 
 ### Referencing from a run
 
@@ -1149,8 +1166,8 @@ spec:
   task: "Say hi"
   model: github-copilot/claude-sonnet-4.5
   secrets:
-    opencodeAuthSecret:
-      name: opencode-auth
+    authSecret:
+      name: agent-auth
 ```
 
 Or with inline flags:
@@ -1159,12 +1176,14 @@ Or with inline flags:
 beatctl submit \
   -t "Say hi" \
   -m github-copilot/claude-sonnet-4.5 \
-  --auth-secret opencode-auth
+  --auth-secret agent-auth
 ```
 
-`llmKeysSecret` (static API keys) and `opencodeAuthSecret` (OAuth tokens) are
+`llmKeysSecret` (static API keys) and `authSecret` (OAuth tokens) are
 orthogonal — both may be set. If both configure the same provider, the
-auth.json entry wins.
+auth.json entry wins. The exception is the claude engine, which refuses a
+run configured with both: `ANTHROPIC_API_KEY` silently overrides
+subscription auth while looking like it's on the subscription.
 
 ### Config file injection (`opencodeConfigMap`)
 
@@ -1305,6 +1324,12 @@ curl .../api/stats/export | llm "find patterns in agent tool usage and prompt ef
 The export is a JSON array; each element is a session with nested `messages`,
 `toolCalls`, and `fileOps` arrays.
 
+The export is capped at **200 sessions** per request (`EXPORT_MAX_SESSIONS`,
+env-overridable on the `percussionist-web` Deployment). The cap applies inside
+the window — `days=0` returns the whole table **truncated to the 200 most
+recent sessions**, and the truncation is logged to the web pod's stdout. Raise
+`EXPORT_MAX_SESSIONS` if a large-window LLM analysis needs more sessions.
+
 ### Retention
 
 Sessions are deleted after **30 days** by an hourly cleanup job in the web pod.
@@ -1322,6 +1347,7 @@ Override via `RETENTION_DAYS` on the `percussionist-web` Deployment (`0` = keep 
 |---------|---------|-------------|
 | `DATA_DIR` | `/app/data` | Directory for `percussionist.db` |
 | `RETENTION_DAYS` | `30` | Days to retain session data (`0` = forever) |
+| `EXPORT_MAX_SESSIONS` | `200` | Max sessions returned by `GET /api/stats/export` (`days=0` truncates to the most recent N) |
 
 The PVC (`percussionist-web-db`, 1 Gi) is created by `k8s/deploy/web.yaml` and
 survives pod restarts and redeployments.

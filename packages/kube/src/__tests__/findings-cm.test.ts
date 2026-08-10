@@ -45,7 +45,7 @@ describe('parseInboxFindings', () => {
     const data = { [inboxFindingKey('f1')]: JSON.stringify(finding) };
     const result = parseInboxFindings(data);
     expect(result).toHaveLength(1);
-    expect(result[0]!.id).toBe('f1');
+    expect(result[0]?.id).toBe('f1');
   });
 
   it('parses multiple inbox findings sorted by createdAt ascending', () => {
@@ -59,9 +59,9 @@ describe('parseInboxFindings', () => {
     };
     const result = parseInboxFindings(data);
     expect(result).toHaveLength(3);
-    expect(result[0]!.id).toBe('f2');
-    expect(result[1]!.id).toBe('f1');
-    expect(result[2]!.id).toBe('f3');
+    expect(result[0]?.id).toBe('f2');
+    expect(result[1]?.id).toBe('f1');
+    expect(result[2]?.id).toBe('f3');
   });
 
   it('skips malformed JSON entries', () => {
@@ -73,7 +73,7 @@ describe('parseInboxFindings', () => {
     };
     const result = parseInboxFindings(data);
     expect(result).toHaveLength(1);
-    expect(result[0]!.id).toBe('f1');
+    expect(result[0]?.id).toBe('f1');
   });
 
   it('ignores non-inbox keys', () => {
@@ -114,8 +114,8 @@ describe('parseTriagedFindings', () => {
     const data = { [triagedFindingKey('c1')]: JSON.stringify(finding) };
     const result = parseTriagedFindings(data);
     expect(result.size).toBe(1);
-    expect(result.get('c1')!.id).toBe('f1');
-    expect(result.get('c1')!.clusterId).toBe('c1');
+    expect(result.get('c1')?.id).toBe('f1');
+    expect(result.get('c1')?.clusterId).toBe('c1');
   });
 
   it('parses multiple triaged findings', () => {
@@ -127,8 +127,8 @@ describe('parseTriagedFindings', () => {
     };
     const result = parseTriagedFindings(data);
     expect(result.size).toBe(2);
-    expect(result.get('c1')!.id).toBe('f1');
-    expect(result.get('c2')!.id).toBe('f2');
+    expect(result.get('c1')?.id).toBe('f1');
+    expect(result.get('c2')?.id).toBe('f2');
   });
 
   it('skips triaged findings without clusterId', () => {
@@ -170,7 +170,7 @@ describe('parseTriagedFindings', () => {
 
 // The original layout was `inbox/<id>.json`. Every write of it was rejected by
 // the API server with a 422 — `/` is not in the ConfigMap data key charset — so
-// no finding was ever stored and `report_finding` failed for every agent that
+// no finding was ever stored and `report_unrelated_issue` failed for every agent that
 // called it. The parse tests above passed throughout, because they only ever
 // fed hand-built maps to a parser. This is the assertion that was missing.
 describe('findings ConfigMap data keys', () => {

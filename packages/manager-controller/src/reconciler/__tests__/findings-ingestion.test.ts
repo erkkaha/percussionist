@@ -165,19 +165,21 @@ describe('ingestFindings', () => {
     await ingestFindings(project, namespace);
 
     expect(patchFindingsConfigMapSpy).toHaveBeenCalledTimes(1);
-    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
+    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]?.[1] as Record<string, string | null>;
     expect(patchArg[kube.triagedFindingKey('f1')]).toBeDefined();
     expect(patchArg[kube.inboxFindingKey('f1')]).toBeNull();
 
-    const triaged = JSON.parse(patchArg[kube.triagedFindingKey('f1')]!);
+    const triaged = JSON.parse(patchArg[kube.triagedFindingKey('f1')] ?? '{}');
     expect(triaged.status).toBe('triaged');
     expect(triaged.clusterId).toBe('f1');
     expect(triaged.id).toBe('f1');
 
     expect(patchProjectStatusSpy).toHaveBeenCalledTimes(1);
-    const statusArg = patchProjectStatusSpy.mock.calls[0]![1] as { board: { findings: Finding[] } };
+    const statusArg = patchProjectStatusSpy.mock.calls[0]?.[1] as {
+      board: { findings: Finding[] };
+    };
     expect(statusArg.board.findings).toHaveLength(1);
-    expect(statusArg.board.findings[0]!.status).toBe('triaged');
+    expect(statusArg.board.findings[0]?.status).toBe('triaged');
   });
 
   it('deduplicates by exact dedupKey (Layer 1)', async () => {
@@ -194,10 +196,10 @@ describe('ingestFindings', () => {
     await ingestFindings(project, namespace);
 
     expect(patchFindingsConfigMapSpy).toHaveBeenCalledTimes(1);
-    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
+    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]?.[1] as Record<string, string | null>;
     expect(patchArg[kube.inboxFindingKey('f1')]).toBeNull();
     expect(patchArg[kube.triagedFindingKey('c0')]).toBeDefined();
-    const updatedTriaged = JSON.parse(patchArg[kube.triagedFindingKey('c0')]!);
+    const updatedTriaged = JSON.parse(patchArg[kube.triagedFindingKey('c0')] ?? '{}');
     expect(updatedTriaged.occurrences).toBe(2);
   });
 
@@ -221,9 +223,9 @@ describe('ingestFindings', () => {
     const project = makeProject();
     await ingestFindings(project, namespace);
 
-    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
+    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]?.[1] as Record<string, string | null>;
     expect(patchArg[kube.inboxFindingKey('f1')]).toBeNull();
-    const updatedTriaged = JSON.parse(patchArg[kube.triagedFindingKey('c0')]!);
+    const updatedTriaged = JSON.parse(patchArg[kube.triagedFindingKey('c0')] ?? '{}');
     expect(updatedTriaged.occurrences).toBe(2);
   });
 
@@ -248,9 +250,9 @@ describe('ingestFindings', () => {
     const project = makeProject({ embeddingEnabled: true });
     await ingestFindings(project, namespace);
 
-    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
+    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]?.[1] as Record<string, string | null>;
     expect(patchArg[kube.inboxFindingKey('f1')]).toBeNull();
-    const updatedTriaged = JSON.parse(patchArg[kube.triagedFindingKey('c0')]!);
+    const updatedTriaged = JSON.parse(patchArg[kube.triagedFindingKey('c0')] ?? '{}');
     expect(updatedTriaged.occurrences).toBe(2);
   });
 
@@ -266,10 +268,10 @@ describe('ingestFindings', () => {
     const project = makeProject({ embeddingEnabled: false });
     await ingestFindings(project, namespace);
 
-    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
+    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]?.[1] as Record<string, string | null>;
     expect(patchArg[kube.triagedFindingKey('f1')]).toBeDefined();
     expect(patchArg[kube.inboxFindingKey('f1')]).toBeNull();
-    const triaged = JSON.parse(patchArg[kube.triagedFindingKey('f1')]!);
+    const triaged = JSON.parse(patchArg[kube.triagedFindingKey('f1')] ?? '{}');
     expect(triaged.status).toBe('triaged');
   });
 
@@ -287,7 +289,7 @@ describe('ingestFindings', () => {
     const project = makeProject({ embeddingEnabled: true });
     await ingestFindings(project, namespace);
 
-    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
+    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]?.[1] as Record<string, string | null>;
     expect(patchArg[kube.triagedFindingKey('f1')]).toBeDefined();
   });
 
@@ -312,7 +314,7 @@ describe('ingestFindings', () => {
     const project = makeProject({ embeddingEnabled: true });
     await ingestFindings(project, namespace);
 
-    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]![1] as Record<string, string | null>;
+    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]?.[1] as Record<string, string | null>;
     expect(patchArg[kube.triagedFindingKey('f1')]).toBeDefined();
   });
 
@@ -347,7 +349,7 @@ describe('ingestFindings', () => {
     await ingestFindings(project, namespace);
 
     expect(buildTaskSpy).toHaveBeenCalledTimes(1);
-    const buildCall = buildTaskSpy.mock.calls[0]![0];
+    const buildCall = buildTaskSpy.mock.calls[0]?.[0];
     expect(buildCall.spec.type).toBe('PLAN');
   });
 
@@ -438,7 +440,9 @@ describe('ingestFindings', () => {
     const project = makeProject();
     await ingestFindings(project, namespace);
 
-    const statusArg = patchProjectStatusSpy.mock.calls[0]![1] as { board: { findings: Finding[] } };
+    const statusArg = patchProjectStatusSpy.mock.calls[0]?.[1] as {
+      board: { findings: Finding[] };
+    };
     expect(statusArg.board.findings).toHaveLength(2);
   });
 
@@ -494,6 +498,6 @@ describe('ingestFindings', () => {
     await ingestFindings(project, namespace);
 
     expect(buildTaskSpy).toHaveBeenCalledTimes(1);
-    expect(buildTaskSpy.mock.calls[0]![0].spec.priority).toBe('high');
+    expect(buildTaskSpy.mock.calls[0]?.[0].spec.priority).toBe('high');
   });
 });

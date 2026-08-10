@@ -1,12 +1,14 @@
 // Effect types and executor — applies reconciler decisions to Kubernetes.
 
 import type { Project, Run, Task, TaskPhase } from '@percussionist/api';
+import { LABELS } from '@percussionist/api';
 import {
   createRun,
   createTask,
   deleteRun,
   getRun,
   getTask,
+  listRuns,
   patchProject,
   patchTask,
   patchTaskStatus,
@@ -199,6 +201,19 @@ export async function executeEffects(
           } catch (e: unknown) {
             const msg = (e as Error).message;
             if (!/already exists/i.test(msg)) throw e;
+            // Merge run names are deterministic and merge retries do not bump
+            // retryCount, so a retry regenerates the name of the previous
+            // attempt. Unlike buildgen, a terminal leftover must be replaced
+            // even when Succeeded: merge agents signal completion (phase
+            // Succeeded) for failure verdicts too, and the stale verdict would
+            // be re-observed as this attempt's outcome, wedging the task in a
+            // retry loop. A Pending/Running run is adopted as-is.
+            const existing = await getRun(effect.mergeRunName, namespace).catch(() => undefined);
+            const phase = existing?.status?.phase;
+            if (phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled') {
+              await deleteRun(effect.mergeRunName, namespace);
+              await createRun(mergeRun, namespace);
+            }
           }
           break;
         }
@@ -218,6 +233,14 @@ export async function executeEffects(
           } catch (e: unknown) {
             const msg = (e as Error).message;
             if (!/already exists/i.test(msg)) throw e;
+            // Same hazard as ScheduleMergeRun: the pr-open name is static per
+            // task, so a retry collides with the previous attempt's run.
+            const existing = await getRun(effect.prOpenRunName, namespace).catch(() => undefined);
+            const phase = existing?.status?.phase;
+            if (phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled') {
+              await deleteRun(effect.prOpenRunName, namespace);
+              await createRun(prRun, namespace);
+            }
           }
           break;
         }
@@ -279,6 +302,12 @@ export async function executeEffects(
             console.warn(
               `[effects] CleanupWorktree: no project context for ${effect.runName}, skipping`,
             );
+            break;
+          }
+          if (toPhase === 'done') {
+            // The task-level cleanup pod spawned on the "done" transition
+            // removes every run worktree of the task, including this one.
+            // Spawning both makes the two pods race rm -rf on the same tree.
             break;
           }
           const projectName = project.metadata.name;
@@ -393,6 +422,33 @@ export async function executeEffects(
       }
       throw e;
     }
+  }
+
+  // Task-level worktree cleanup, wired centrally rather than as a per-site
+  // effect: on a transition to "done", clean up the worker worktree plus any
+  // review/buildgen/merge auxiliary worktrees whose Run CRs still exist.
+  // Fire-and-forget — never blocks the reconcile cycle.
+  if (toPhase === 'done' && project) {
+    const projectName = project.metadata.name;
+    const gitUrl = (project.spec.source as { git?: { url?: string } } | undefined)?.git?.url;
+    const runnerImage = (project.spec.runner as { image?: string } | undefined)?.image;
+    const image = runnerImage ?? project.spec.image ?? 'alpine/git';
+    (async () => {
+      const runs = await listRuns(namespace, undefined, `${LABELS.taskId}=${taskName}`);
+      const runNames = runs.map((r) => r.metadata.name);
+      const { spawnTaskWorktreeCleanupPod } = await import('../worktree-cleanup.js');
+      await spawnTaskWorktreeCleanupPod({
+        task: currentTask,
+        projectName,
+        namespace,
+        image,
+        gitUrl,
+        dataPvcName: project.spec.data?.pvcName,
+        runNames,
+      });
+    })().catch((e: Error) =>
+      console.warn(`[effects] task-done worktree cleanup failed for ${taskName}:`, e.message),
+    );
   }
 
   return {

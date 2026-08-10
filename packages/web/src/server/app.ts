@@ -14,7 +14,6 @@ import agentKeys from './routes/agent-keys.js';
 import agents from './routes/agents.js';
 import board from './routes/board.js';
 import boardDb from './routes/board-db.js';
-import findingsRoute from './routes/findings.js';
 import logs from './routes/logs.js';
 import metrics from './routes/metrics.js';
 import plans from './routes/plans.js';
@@ -32,10 +31,21 @@ import upgrade from './routes/upgrade.js';
 import usage from './routes/usage.js';
 import { usageLockMiddleware } from './usage-lock-middleware.js';
 
+// Masks the value of a `token` query param in a logger line. Defense in depth
+// against a token ending up in a URL (e.g. the legacy WS attach `?token=`
+// path) and being printed by hono/logger — see auth.ts for why `?token=` is
+// not accepted as a credential on regular HTTP routes at all.
+export function redactTokenParam(line: string): string {
+  return line.replace(/([?&]token=)[^\s&]+/g, '$1[REDACTED]');
+}
+
 export function createApp() {
   const app = new Hono();
 
-  app.use('*', logger());
+  app.use(
+    '*',
+    logger((line) => console.log(redactTokenParam(line))),
+  );
   app.use('*', compress());
 
   // better-auth owns /api/auth/* (GitHub OAuth callback, session, device grant,
@@ -59,7 +69,6 @@ export function createApp() {
   app.route('/api/projects', projects);
   app.route('/api/agents', agents);
   app.route('/api/projects', board);
-  app.route('/api/projects', findingsRoute);
   app.route('/api/board', boardDb);
   app.route('/api/metrics', metrics);
   app.route('/api/agent', agentChat);

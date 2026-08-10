@@ -109,9 +109,12 @@ function buildProjectFromFlags(opts: ProjectCreateOpts): Project {
   return { ...project, spec: withDefaultLocalSource(project.spec) };
 }
 
-function buildProjectFromFile(path: string, opts: ProjectCreateOpts): Project {
+export function buildProjectFromFile(path: string, opts: ProjectCreateOpts): Project {
   const doc = YAML.parse(readFileSync(path, 'utf8'));
   if (opts.name) doc.metadata = { ...(doc.metadata ?? {}), name: opts.name };
+  // opts.namespace is only set when -n was explicitly passed (the option has no
+  // commander default), so the file's metadata.namespace survives unless the
+  // user overrides it.
   if (opts.namespace) {
     doc.metadata = { ...(doc.metadata ?? {}), namespace: opts.namespace };
   }

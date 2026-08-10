@@ -4,6 +4,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchAgents, submitProject, updateProject } from '../lib/api';
 import type { CreateProjectRequest, ProjectDetail } from '../lib/types';
 import AdvancedTab from './project-form/AdvancedTab';
+import AgentsTab from './project-form/AgentsTab';
 import ExecutionTab from './project-form/ExecutionTab';
 // Tab components
 import GeneralTab from './project-form/GeneralTab';
@@ -22,6 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 
 type ProjectTabId =
   | 'general'
+  | 'agents'
   | 'source-auth'
   | 'execution'
   | 'workspace-services'
@@ -30,6 +32,7 @@ type ProjectTabId =
 
 const TABS: Array<{ id: ProjectTabId; label: string }> = [
   { id: 'general', label: 'General' },
+  { id: 'agents', label: 'Agents' },
   { id: 'source-auth', label: 'Source & Auth' },
   { id: 'execution', label: 'Execution' },
   { id: 'workspace-services', label: 'Workspace & Services' },
@@ -89,7 +92,7 @@ export default function CreateProjectForm({
   const initialSpec = initialProject?.spec;
   const form = useProjectForm(initialSpec, initialProject);
 
-  // Fetch available agents for roster picker (needed by AdvancedTab)
+  // Fetch available ClusterAgents for the roster picker (needed by AgentsTab)
   const { data: clusterAgents = [] } = useQuery({
     queryKey: ['agents'],
     queryFn: fetchAgents,
@@ -128,6 +131,7 @@ export default function CreateProjectForm({
     form: {
       name: form.name,
       displayName: form.displayName,
+      color: form.color,
       model: form.model,
       agent: form.agent,
       maxParallel: form.maxParallel,
@@ -136,6 +140,7 @@ export default function CreateProjectForm({
       phase: form.phase,
       setName: form.setName,
       setDisplayName: form.setDisplayName,
+      setColor: form.setColor,
       setModel: form.setModel,
       setAgent: form.setAgent,
       setMaxParallel: form.setMaxParallel,
@@ -226,6 +231,7 @@ export default function CreateProjectForm({
     form: {
       codeServerEnabled: form.codeServerEnabled,
       codeServerImage: form.codeServerImage,
+      humanFolderEnabled: form.humanFolderEnabled,
       csCpuRequest: form.csCpuRequest,
       csMemRequest: form.csMemRequest,
       csCpuLimit: form.csCpuLimit,
@@ -240,6 +246,7 @@ export default function CreateProjectForm({
       execImage: form.execImage,
       setCodeServerEnabled: form.setCodeServerEnabled,
       setCodeServerImage: form.setCodeServerImage,
+      setHumanFolderEnabled: form.setHumanFolderEnabled,
       setCSCpuRequest: form.setCSCpuRequest,
       setCSMemRequest: form.setCSMemRequest,
       setCSCpuLimit: form.setCSCpuLimit,
@@ -260,8 +267,6 @@ export default function CreateProjectForm({
       sidecars: form.sidecars,
       injectFiles: form.injectFiles,
       initScript: form.initScript,
-      rosterAgents: form.rosterAgents,
-      rosterPickerValue: form.rosterPickerValue,
       sidecarErrors: form.sidecarErrors,
       hasSidecarErrors: form.hasSidecarErrors,
       injectFileErrors: form.injectFileErrors,
@@ -269,8 +274,6 @@ export default function CreateProjectForm({
       setSidecars: form.setSidecars,
       setInjectFiles: form.setInjectFiles,
       setInitScript: form.setInitScript,
-      setRosterAgents: form.setRosterAgents,
-      setRosterPickerValue: form.setRosterPickerValue,
       addSidecar: form.addSidecar,
       removeSidecar: form.removeSidecar,
       updateSidecar: form.updateSidecar,
@@ -278,6 +281,18 @@ export default function CreateProjectForm({
       removeInjectFile: form.removeInjectFile,
       updateInjectFile: form.updateInjectFile,
     },
+  };
+
+  const agentsProps = {
+    form: {
+      rosterAgents: form.rosterAgents,
+      rosterPickerValue: form.rosterPickerValue,
+      setRosterPickerValue: form.setRosterPickerValue,
+      setRosterAgents: form.setRosterAgents,
+      addRosterAgent: form.addRosterAgent,
+      updateRosterAgentModel: form.updateRosterAgentModel,
+    },
+    clusterAgents,
   };
 
   return (
@@ -318,6 +333,11 @@ export default function CreateProjectForm({
             <GeneralTab form={generalProps.form} isEdit={generalProps.isEdit} />
           </TabsContent>
 
+          {/* Agents tab */}
+          <TabsContent value="agents" className="space-y-5">
+            <AgentsTab form={agentsProps.form} clusterAgents={agentsProps.clusterAgents} />
+          </TabsContent>
+
           {/* Source & Auth tab */}
           <TabsContent value="source-auth" className="space-y-5">
             <SourceAuthTab form={sourceAuthProps.form} />
@@ -340,7 +360,7 @@ export default function CreateProjectForm({
 
           {/* Advanced tab */}
           <TabsContent value="advanced" className="space-y-5">
-            <AdvancedTab form={advancedProps.form} clusterAgents={clusterAgents} />
+            <AdvancedTab form={advancedProps.form} />
           </TabsContent>
         </Tabs>
 

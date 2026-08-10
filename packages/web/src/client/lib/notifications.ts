@@ -12,38 +12,6 @@ import { useNotificationStore } from '../stores/settingsStore';
 export type DrumSound = 'success' | 'failure' | 'cancelled' | 'escalated' | 'running';
 
 // ---------------------------------------------------------------------------
-// Notification preferences (localStorage)
-
-const NOTIFICATION_PREFS_KEY = 'percussionist:notifications';
-
-export interface NotificationPreferences {
-  soundEnabled: boolean; // default: true — backward compatible
-}
-
-/** Read notification preferences from localStorage. Returns defaults if not set or invalid. */
-export function getNotificationPreferences(): NotificationPreferences {
-  try {
-    const raw = localStorage.getItem(NOTIFICATION_PREFS_KEY);
-    if (!raw) return { soundEnabled: true };
-    const parsed = JSON.parse(raw);
-    if (typeof parsed.soundEnabled !== 'boolean') return { soundEnabled: true };
-    return { soundEnabled: parsed.soundEnabled };
-  } catch {
-    return { soundEnabled: true };
-  }
-}
-
-/** Merge partial preferences and write to localStorage. */
-export function setNotificationPreferences(prefs: Partial<NotificationPreferences>): void {
-  const existing = getNotificationPreferences();
-  try {
-    localStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify({ ...existing, ...prefs }));
-  } catch {
-    // Non-fatal — localStorage may be full or unavailable.
-  }
-}
-
-// ---------------------------------------------------------------------------
 // History store
 
 export interface NotificationEntry {
@@ -52,6 +20,8 @@ export interface NotificationEntry {
   body?: string;
   sound: DrumSound;
   at: number; // Date.now()
+  /** App-relative destination URL to navigate to on click, if any. */
+  url?: string;
 }
 
 const HISTORY_CAP = 50;
@@ -237,6 +207,8 @@ export interface NotifyOptions {
   /** Unique key — if we've already notified for this key, skip. */
   key: string;
   sound: DrumSound;
+  /** App-relative destination URL to navigate to on click (optional). */
+  url?: string;
 }
 
 /**
@@ -255,6 +227,7 @@ export function notify(opts: NotifyOptions): void {
     body: opts.body,
     sound: opts.sound,
     at: Date.now(),
+    url: opts.url,
   };
   _history.unshift(entry);
   if (_history.length > HISTORY_CAP) _history.length = HISTORY_CAP;
@@ -277,7 +250,16 @@ export function notify(opts: NotifyOptions): void {
       body: opts.body,
       tag: opts.key,
       icon: '/icon-192.png',
+      ...(opts.url !== undefined ? { data: { url: opts.url } } : {}),
     });
+    // Navigate to the linked content when the OS notification is clicked.
+    if (opts.url !== undefined) {
+      const url = opts.url;
+      n.onclick = () => {
+        window.focus();
+        window.location.assign(url);
+      };
+    }
     // Auto-close after 6 s.
     setTimeout(() => n.close(), 6_000);
   } catch {

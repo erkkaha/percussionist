@@ -18,6 +18,7 @@ import {
   updateProject,
 } from '../kube.js';
 import { isKubeNotFound, kubeStatusCode } from '../lib/kube-errors.js';
+import { upsertConfigMap, upsertSecret } from '../lib/kube-upsert.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
 const projects = new Hono();
@@ -47,22 +48,11 @@ function injectFileSecretName(projectName: string, filename: string): string {
  * content.  Creates it if absent, patches it if present.
  */
 async function upsertProjectConfigCm(projectName: string, content: string): Promise<void> {
-  const name = projectConfigCmName(projectName);
-  const ns = NAMESPACE;
-  const body = {
-    apiVersion: 'v1',
-    kind: 'ConfigMap',
-    metadata: { name, namespace: ns, labels: { 'percussionist.dev/project': projectName } },
-    data: { [CONFIG_CM_KEY]: content },
-  };
-  try {
-    await core().readNamespacedConfigMap({ name, namespace: ns });
-    // exists — replace
-    await core().replaceNamespacedConfigMap({ name, namespace: ns, body });
-  } catch {
-    // not found — create
-    await core().createNamespacedConfigMap({ namespace: ns, body });
-  }
+  await upsertConfigMap(
+    projectConfigCmName(projectName),
+    { [CONFIG_CM_KEY]: content },
+    { 'percussionist.dev/project': projectName },
+  );
 }
 
 async function deleteProjectConfigCm(projectName: string): Promise<void> {
@@ -72,6 +62,43 @@ async function deleteProjectConfigCm(projectName: string): Promise<void> {
   } catch {
     // ignore not-found
   }
+}
+
+async function readProjectConfig(project: Awaited<ReturnType<typeof getProject>>): Promise<string> {
+  const configMap = project.spec.secrets?.configMap;
+  if (!configMap) return '';
+  const cm = await core().readNamespacedConfigMap({
+    name: configMap.name,
+    namespace: NAMESPACE,
+  });
+  return cm.data?.[configMap.key] ?? '';
+}
+
+export function mergeProjectPatch(
+  existing: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = { ...existing };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete merged[key];
+    } else if (typeof value === 'object' && !Array.isArray(value)) {
+      // Recurse even when the existing side has no counterpart: nested nulls
+      // are delete-markers from the UI ("clear this override") and must be
+      // consumed here, never copied into the spec — ProjectSpecSchema rejects
+      // null. Editing a project whose spec lacked e.g. `flow.humanApproval`
+      // used to fail validation because the null-laden patch object was
+      // assigned verbatim.
+      const base =
+        typeof merged[key] === 'object' && merged[key] !== null && !Array.isArray(merged[key])
+          ? (merged[key] as Record<string, unknown>)
+          : {};
+      merged[key] = mergeProjectPatch(base, value as Record<string, unknown>);
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
 }
 
 /**
@@ -84,19 +111,13 @@ async function upsertInjectFileSecret(
   content: string,
 ): Promise<InjectFileRef> {
   const name = injectFileSecretName(projectName, filename);
-  const ns = NAMESPACE;
-  const body = {
-    apiVersion: 'v1',
-    kind: 'Secret',
-    metadata: { name, namespace: ns, labels: { 'percussionist.dev/project': projectName } },
-    stringData: { [INJECT_FILE_SECRET_KEY]: content },
-  };
-  try {
-    await core().readNamespacedSecret({ name, namespace: ns });
-    await core().replaceNamespacedSecret({ name, namespace: ns, body });
-  } catch {
-    await core().createNamespacedSecret({ namespace: ns, body });
-  }
+  await upsertSecret(
+    name,
+    { [INJECT_FILE_SECRET_KEY]: content },
+    {
+      'percussionist.dev/project': projectName,
+    },
+  );
   return { filename, secretRef: { name, key: INJECT_FILE_SECRET_KEY } };
 }
 
@@ -171,6 +192,7 @@ projects.get('/events', auth(), async (c) => {
           name: p.metadata.name,
           namespace: p.metadata.namespace,
           displayName: p.spec.displayName,
+          color: p.spec.color,
           model: p.spec.model,
           agent: p.spec.agent,
           authWarning: validateModelAuth(p.spec.model, p.spec.secrets).ok,
@@ -234,6 +256,7 @@ projects.get('/:name', auth(), async (c) => {
     return c.json({
       ...project,
       injectFileContents,
+      opencodeConfig: await readProjectConfig(project),
       authWarning: authResult.ok ? undefined : authResult.error,
     });
   } catch (e: unknown) {
@@ -324,6 +347,7 @@ projects.put('/:name', adminAuth(), async (c) => {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
+  const hasOpencodeConfig = Object.hasOwn(body as object, 'opencodeConfig');
   const opencodeConfig = (body as { opencodeConfig?: string }).opencodeConfig ?? '';
   // Out-of-band inject files: [{ filename, content }]
   const rawInjectFiles =
@@ -353,7 +377,7 @@ projects.put('/:name', adminAuth(), async (c) => {
   // For sidecars: deep-merge by name so that fields the UI doesn't know about
   // (e.g. securityContext.privileged, resources) are preserved from the existing
   // spec when a matching sidecar name is found.
-  const mergedSpec = { ...existingSpec, ...specBody2 };
+  const mergedSpec = mergeProjectPatch(existingSpec, specBody2);
   if (
     Array.isArray((specBody2 as Record<string, unknown>).sidecars) &&
     Array.isArray((existingSpec as Record<string, unknown>).sidecars)
@@ -366,7 +390,21 @@ projects.put('/:name', adminAuth(), async (c) => {
     >;
     mergedSpec.sidecars = incomingSidecars.map((incoming) => {
       const existing = existingSidecars.find((e) => e.name === incoming.name);
-      return existing ? { ...existing, ...incoming } : incoming;
+      return existing ? mergeProjectPatch(existing, incoming) : incoming;
+    });
+  }
+  if (
+    Array.isArray((specBody2 as Record<string, unknown>).agents) &&
+    Array.isArray((existingSpec as Record<string, unknown>).agents)
+  ) {
+    const existingAgents = (existingSpec as Record<string, unknown>).agents as Array<
+      Record<string, unknown>
+    >;
+    mergedSpec.agents = (
+      (specBody2 as Record<string, unknown>).agents as Array<Record<string, unknown>>
+    ).map((incoming) => {
+      const existing = existingAgents.find((agent) => agent.name === incoming.name);
+      return existing ? mergeProjectPatch(existing, incoming) : incoming;
     });
   }
 
@@ -379,13 +417,13 @@ projects.put('/:name', adminAuth(), async (c) => {
   const spec = withDefaultLocalSource(parsed.data);
 
   // Manage per-project configmap.
-  if (opencodeConfig.trim()) {
+  if (hasOpencodeConfig && opencodeConfig.trim()) {
     await upsertProjectConfigCm(name, opencodeConfig.trim());
     spec.secrets = {
       ...spec.secrets,
       configMap: { name: projectConfigCmName(name), key: CONFIG_CM_KEY },
     };
-  } else {
+  } else if (hasOpencodeConfig) {
     // Clear: remove configmap and unset the field.
     await deleteProjectConfigCm(name);
     if (spec.secrets?.configMap) {

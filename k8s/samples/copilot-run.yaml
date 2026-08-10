@@ -19,6 +19,6 @@ spec:
   project: my-project   # references Project for git/secrets/model defaults
   secrets:
     authSecret:
-      name: opencode-auth
+      name: agent-auth
       # key: auth.json    # default; override only if your Secret uses a different key
   timeoutSeconds: 300

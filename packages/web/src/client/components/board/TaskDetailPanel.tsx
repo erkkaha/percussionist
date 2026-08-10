@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   ArrowRight,
+  Bot,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -15,6 +16,7 @@ import {
   FileText,
   Flag,
   GitCommit as GitCommitIcon,
+  GitPullRequest,
   History,
   MousePointerClick,
   RefreshCw,
@@ -31,10 +33,12 @@ import remarkGfm from 'remark-gfm';
 import { useTaskDiff } from '../../hooks/useTaskDiff';
 import { useTaskRuns } from '../../hooks/useTaskRuns';
 import {
+  answerTask,
   approveTask,
   deleteBoardTask,
   fetchPlan,
   moveTask,
+  replyToRun,
   requestChangesTask,
   retryEscalatedTask,
   retryReviewTask,
@@ -65,6 +69,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from '../ui/switch';
 import { Textarea } from '../ui/textarea';
 import { getChildRefPresentation } from './display-refs';
+import { getPrPresentation } from './pr-presentation';
 import TaskEventsPanel from './TaskEventsPanel';
 import TaskRunsPanel from './TaskRunsPanel';
 
@@ -100,6 +105,7 @@ interface TaskDetailPanelProps {
   projectName: string;
   approvals: Record<string, { approved: boolean; requestChanges: boolean }> | undefined;
   codeServerUrl?: string;
+  repoWebUrl?: string;
   onDeleted: () => void;
 }
 
@@ -542,13 +548,16 @@ function OverviewContent({
   col,
   projectName,
   codeServerUrl,
+  repoWebUrl,
 }: {
   task: Task;
   col: string;
   projectName: string;
   codeServerUrl?: string;
+  repoWebUrl?: string;
 }) {
   const worker = task.status?.worker;
+  const pr = getPrPresentation(task, repoWebUrl);
   const { data: runsData } = useTaskRuns(task.metadata.name);
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [showReviews, setShowReviews] = useState(false);
@@ -616,9 +625,56 @@ function OverviewContent({
             )}
           </div>
         )}
+        {pr && (
+          <div>
+            <p className="text-label-md font-mono uppercase text-text-dim">Pull Request</p>
+            {pr.url ? (
+              <a
+                href={pr.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded border border-border-muted bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text truncate max-w-full hover:text-accent hover:border-accent/30 transition-colors"
+                title={`Open PR #${pr.prNumber} on GitHub`}
+              >
+                <GitPullRequest className="h-3 w-3 shrink-0" />
+                PR #{pr.prNumber}
+                <span
+                  className={
+                    pr.state === 'merged'
+                      ? 'text-phase-succeeded'
+                      : pr.state === 'closed'
+                        ? 'text-phase-failed'
+                        : 'text-accent'
+                  }
+                >
+                  {pr.state}
+                </span>
+              </a>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded border border-border-muted bg-surface-overlay px-2 py-0.5 text-xs font-mono text-text truncate max-w-full">
+                <GitPullRequest className="h-3 w-3 shrink-0" />
+                PR #{pr.prNumber}
+                <span
+                  className={
+                    pr.state === 'merged'
+                      ? 'text-phase-succeeded'
+                      : pr.state === 'closed'
+                        ? 'text-phase-failed'
+                        : 'text-accent'
+                  }
+                >
+                  {pr.state}
+                </span>
+              </span>
+            )}
+          </div>
+        )}
         {worker?.reviewApproved !== undefined && (
           <div>
-            <p className="text-label-md font-mono uppercase text-text-dim">Agent review</p>
+            <p className="text-label-md font-mono uppercase text-text-dim flex items-center gap-1">
+              <Bot className="h-3 w-3" />
+              Agent review
+            </p>
             <span
               className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
                 worker.reviewApproved
@@ -650,6 +706,14 @@ function OverviewContent({
           >
             {worker.reviewFeedback}
           </p>
+        </div>
+      )}
+
+      {/* Merge error */}
+      {worker?.mergeError && (
+        <div>
+          <p className="text-label-md font-mono uppercase text-text-dim mb-1.5">Merge Error</p>
+          <p className="text-phase-failed/80 text-sm whitespace-pre-wrap">{worker.mergeError}</p>
         </div>
       )}
 
@@ -901,6 +965,7 @@ function TaskDetailPanelInner({
   projectName,
   approvals,
   codeServerUrl,
+  repoWebUrl,
   onDeleted,
 }: TaskDetailPanelProps) {
   const queryClient = useQueryClient();
@@ -908,11 +973,19 @@ function TaskDetailPanelInner({
   const [showRequestChanges, setShowRequestChanges] = useState(false);
   const [requestChangesComment, setRequestChangesComment] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [answerText, setAnswerText] = useState('');
 
   const taskName = task.metadata.name;
   const worker = task.status?.worker;
+  // The board response attaches the worker run's phase (server-computed view
+  // field, see GET /api/projects/:project/board). WaitingForInput means the run
+  // pod is still alive and parked on a human — not a failure.
+  const isWaitingForInput = task.workerRunPhase === 'WaitingForInput';
   const isBuild = task.spec.type === 'BUILD';
   const isPlan = task.spec.type === 'PLAN';
+  // The worker run is parked on a human prompt — show "waiting for input"
+  // instead of the raw worker.status, and hide Retry while the run is alive.
+  const isWaiting = task.workerRunPhase === 'WaitingForInput';
   const canShowDiff =
     task.status?.phase === 'done' ||
     task.status?.phase === 'awaiting-human' ||
@@ -948,6 +1021,29 @@ function TaskDetailPanelInner({
   const retryReviewMutation = useMutation({
     mutationFn: () => retryReviewTask(projectName, taskName),
     onSuccess: invalidateBoard,
+  });
+
+  const answerMutation = useMutation({
+    mutationFn: async (answer: string) => {
+      // 1. Forward the human's reply into the opencode session so the parked
+      //    agent sees it, then 2. write the percussionist.dev/action-answer
+      //    annotation that decideWaitingForInput consumes to resume the task
+      //    (run back in Running + answer annotation → task running).
+      //
+      // Limitation (plan risk, unverified on a live cluster): posting a
+      //    session message reliably resumes an aborted-message wait, but
+      //    whether it dismisses an opencode *permission* prompt is unknown.
+      //    The answer annotation is written either way, so the task resumes
+      //    once the session picks the message up — the box is safe to use.
+      if (worker?.runName) {
+        await replyToRun(worker.runName, answer);
+      }
+      await answerTask(projectName, taskName, answer);
+    },
+    onSuccess: () => {
+      invalidateBoard();
+      setAnswerText('');
+    },
   });
 
   const promoteIdeaMutation = useMutation({
@@ -994,10 +1090,19 @@ function TaskDetailPanelInner({
 
         {/* Meta badges */}
         <div className="flex items-center gap-2 flex-wrap">
-          {worker?.status && (
-            <span className="text-label-md font-mono uppercase text-text-dim bg-surface-overlay px-2 py-0.5 rounded">
-              {worker.status}
+          {isWaiting ? (
+            <span
+              className="text-label-md font-mono uppercase text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded"
+              title="Run is waiting for user input"
+            >
+              waiting for input
             </span>
+          ) : (
+            worker?.status && (
+              <span className="text-label-md font-mono uppercase text-text-dim bg-surface-overlay px-2 py-0.5 rounded">
+                {worker.status}
+              </span>
+            )
           )}
           {task.spec.priority && task.spec.priority !== 'medium' && (
             <span
@@ -1071,7 +1176,7 @@ function TaskDetailPanelInner({
             </>
           )}
 
-          {(worker?.status === 'Failed' || worker?.status === 'Escalated') && (
+          {(worker?.status === 'Failed' || worker?.status === 'Escalated') && !isWaiting && (
             <button
               onClick={() => retryMutation.mutate()}
               disabled={retryMutation.isPending}
@@ -1108,6 +1213,14 @@ function TaskDetailPanelInner({
             </div>
           )}
         </div>
+
+        {/* Waiting hint — run is parked on a human prompt */}
+        {isWaiting && (
+          <p className="text-xs text-amber-400/90">
+            Run is waiting for user input — retry is unavailable until the run completes or is
+            answered.
+          </p>
+        )}
 
         {/* Request Changes inline form */}
         {showRequestChanges && (
@@ -1166,6 +1279,53 @@ function TaskDetailPanelInner({
             </div>
           </div>
         )}
+
+        {/* Answer box — the worker run is parked waiting for user input */}
+        {isWaitingForInput && (
+          <div className="space-y-2 border border-phase-pending/30 rounded-md p-3 bg-surface">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-label-md font-mono uppercase text-phase-pending">
+                Answer — run is waiting for input
+              </p>
+              {worker?.runName && (
+                <span
+                  className="font-mono text-[10px] text-text-dim truncate"
+                  title={worker.runName}
+                >
+                  {worker.runName}
+                </span>
+              )}
+            </div>
+            <Textarea
+              placeholder="Type your answer for the agent…"
+              value={answerText}
+              onChange={(e) => setAnswerText(e.target.value)}
+              rows={3}
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setAnswerText('')}
+                disabled={answerMutation.isPending || !answerText.trim()}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-text-dim hover:text-text transition-colors disabled:opacity-40"
+              >
+                Clear
+              </button>
+              <button
+                onClick={() => {
+                  const answer = answerText.trim();
+                  if (answer) answerMutation.mutate(answer);
+                }}
+                disabled={answerMutation.isPending || !answerText.trim()}
+                className="rounded-md bg-surface-container-high hover:bg-surface-container-highest disabled:opacity-40 px-3 py-1.5 text-xs font-medium text-text transition-colors"
+              >
+                {answerMutation.isPending ? 'Sending…' : 'Send Answer'}
+              </button>
+            </div>
+            {answerMutation.isError && (
+              <p className="text-xs text-phase-failed">{(answerMutation.error as Error).message}</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -1195,6 +1355,7 @@ function TaskDetailPanelInner({
             col={col}
             projectName={projectName}
             codeServerUrl={codeServerUrl}
+            repoWebUrl={repoWebUrl}
           />
         )}
         {activeTab === 'runs' && <TaskRunsPanel projectName={projectName} taskName={taskName} />}
@@ -1222,6 +1383,7 @@ export const TaskDetailPanel = memo(TaskDetailPanelInner, (prev, next) => {
     prev.col === next.col &&
     prev.projectName === next.projectName &&
     prev.approvals === next.approvals &&
+    prev.repoWebUrl === next.repoWebUrl &&
     prev.onDeleted === next.onDeleted
   );
 });

@@ -27,10 +27,10 @@ export const OPERATOR_NS = 'percussionist';
  * `createLLMSecret` only knows how to build a secret from API-key env vars
  * (ANTHROPIC_API_KEY / OPENAI_API_KEY / GITHUB_TOKEN). Workstations that
  * authenticate via a device-code flow instead (GitHub Copilot, Claude Pro,
- * ChatGPT) keep their credential in the cluster's `opencode-auth` Secret,
+ * ChatGPT) keep their credential in the cluster's `agent-auth` Secret,
  * created by `beatctl auth import`.
  *
- * Set E2E_AUTH_SECRET=opencode-auth to make the harness copy that Secret into
+ * Set E2E_AUTH_SECRET=agent-auth to make the harness copy that Secret into
  * the test namespace and reference it from the generated Project, so runs
  * authenticate via OPENCODE_AUTH_CONTENT. Unset (the CI default) changes
  * nothing.
@@ -498,7 +498,7 @@ ${priorityLine}\
  * disables auth so tests can call endpoints without a token.
  */
 export async function applyWebDeployment(ns: string): Promise<void> {
-  const image = process.env['E2E_WEB_IMAGE'] ?? 'ghcr.io/erkkaha/percussionist/web:latest';
+  const image = process.env.E2E_WEB_IMAGE ?? 'ghcr.io/erkkaha/percussionist/web:latest';
   console.log(`==> Deploy web watcher into ${ns} (${image})`);
   await kubectlApply(`\
 apiVersion: v1

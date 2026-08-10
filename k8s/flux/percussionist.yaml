@@ -1,0 +1,152 @@
+# GitOps bootstrap for the percussionist control plane.
+#
+# Apply this once and every subsequent upgrade — CRDs included — becomes a
+# change to a single field: `.spec.ref.tag` on the OCIRepository below.
+#
+#   kubectl apply -f k8s/flux/percussionist.yaml
+#
+# or let beatctl fill in the cluster-specific values and apply it for you:
+#
+#   beatctl deploy --gitops
+#
+# The tag is pinned deliberately. Flux reconciles on an interval, but a pinned
+# tag makes that reconciliation a no-op that only repairs drift — nothing
+# upgrades until someone changes the tag. That is what keeps "install updates
+# at will" working while still getting continuous drift correction. Do not
+# replace `tag:` with a `semver:` range unless you actually want unattended
+# upgrades.
+#
+# Requires the Flux source-controller and kustomize-controller in flux-system:
+#
+#   flux install --components=source-controller,kustomize-controller
+#
+---
+# Let the manager move the pin, so the dashboard's Upgrade button keeps
+# working. This is the entire privilege an in-cluster upgrade needs under
+# GitOps: patch two resources in one namespace. No create, no delete, and
+# nothing cluster-scoped — in particular no access to
+# customresourcedefinitions, which the direct-patch upgrade path would
+# otherwise have to be granted to fix its CRD blind spot.
+#
+# Lives here rather than in k8s/deploy/ because it is namespaced to
+# flux-system, which only exists on a GitOps install.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: percussionist-manager-flux
+  namespace: flux-system
+rules:
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["ocirepositories"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources: ["kustomizations"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: percussionist-manager-flux
+  namespace: flux-system
+subjects:
+  - kind: ServiceAccount
+    name: percussionist-manager
+    namespace: percussionist
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: percussionist-manager-flux
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: percussionist
+  namespace: flux-system
+spec:
+  interval: 10m
+  # Published by .github/workflows/images.yml on every release tag, from the
+  # same k8s/ directory that ships in the repo.
+  url: oci://ghcr.io/erkkaha/percussionist/manifests
+  ref:
+    tag: v0.2.13
+---
+# CRDs, applied first and waited on.
+#
+# prune is deliberately false. Flux prunes by inventory, so it would only ever
+# remove CRDs this Kustomization itself applied — but removing a CRD
+# cascade-deletes every Project, Run and Task in the cluster. There is no
+# upgrade path where that is the desired outcome, so the safety is worth more
+# than the tidiness.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: percussionist-crds
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  timeout: 5m
+  path: ./crds
+  prune: false
+  wait: true
+  sourceRef:
+    kind: OCIRepository
+    name: percussionist
+---
+# Control plane: operator, manager, web, agent-config, network policy.
+#
+# `dependsOn` plus `wait: true` on the CRD Kustomization above is what fixes
+# the silent-pruning bug in the pre-GitOps upgrade path: new controllers never
+# start against a schema that does not yet know about the fields they write.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: percussionist
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  timeout: 10m
+  path: ./deploy
+  prune: true
+  wait: true
+  dependsOn:
+    - name: percussionist-crds
+  sourceRef:
+    kind: OCIRepository
+    name: percussionist
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: percussionist-operator
+      namespace: percussionist
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: percussionist-manager
+      namespace: percussionist
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: percussionist-web
+      namespace: percussionist
+  # Cluster-specific values live here rather than in k8s/deploy/, so that
+  # directory stays valid for a plain `kubectl apply` on non-GitOps installs.
+  # Strategic merge patches key env entries by name, so this survives any
+  # reordering of the env list upstream.
+  #
+  # beatctl deploy --gitops rewrites the ingress URL below to match the
+  # detected node IP; edit it by hand if you apply this file yourself.
+  patches:
+    - patch: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: percussionist-operator
+          namespace: percussionist
+        spec:
+          template:
+            spec:
+              containers:
+                - name: operator
+                  env:
+                    - name: PERCUSSIONIST_INGRESS_BASE_URL
+                      value: http://192.168.49.2.nip.io:30080

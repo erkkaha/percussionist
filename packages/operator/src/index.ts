@@ -5,6 +5,7 @@ import {
   API_GROUP,
   API_VERSION,
   type ClusterSettings,
+  LABELS,
   PLURAL_CLUSTER_SETTINGS,
   PLURAL_PROJECT,
   PLURAL_RUN,
@@ -12,6 +13,7 @@ import {
   type Run,
 } from '@percussionist/api';
 import {
+  cancelProjectRetry,
   cleanupCodeServer,
   cleanupMemoryService,
   co,
@@ -19,12 +21,13 @@ import {
   enqueue,
   kc,
   NAMESPACE,
+  projectKey,
   reconcileClusterSettings,
-  reconcileProject,
   runWorker,
+  safeReconcileProject,
   startPeriodicResync,
 } from './reconciler.js';
-import { startTTLCleanup } from './ttl.js';
+import { spawnWorktreeCleanupJob, startTTLCleanup } from './ttl.js';
 
 const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
@@ -34,6 +37,28 @@ process.on('unhandledRejection', (reason) => {
   err('unhandledRejection:', reason);
   process.exit(1);
 });
+
+/**
+ * Run informer `delete` handler: dequeues the run from the resync set and,
+ * for git-source runs only, fire-and-forget spawns the worktree cleanup Job.
+ * This is the single trigger path for worktree cleanup — it covers TTL
+ * expiry (the TTL loop deletes the Run CR, which raises this same event),
+ * `kubectl delete run`, dashboard delete, and the manager's `delete_run`
+ * tool alike. Local-source runs use the shared `workspace/` subPath
+ * (pod-builder.ts) and must not be touched.
+ */
+export function handleRunDelete(obj: unknown): void {
+  const run = obj as Run;
+  const md = run.metadata;
+  const key = `${md?.namespace}/${md?.name}`;
+  dequeue(key);
+
+  if (run.spec?.source?.git && md?.labels?.[LABELS.projectName]) {
+    spawnWorktreeCleanupJob(run).catch((e) => {
+      err(`worktree cleanup for ${key}:`, (e as Error).message);
+    });
+  }
+}
 
 async function main(): Promise<void> {
   log(`watching ${API_GROUP}/${API_VERSION}/${PLURAL_RUN} in namespace=${NAMESPACE}`);
@@ -53,10 +78,7 @@ async function main(): Promise<void> {
   const runInformer = makeInformer(kc, runPath, listRunsFn as never);
   runInformer.on('add', (obj) => enqueue(obj as unknown as Run));
   runInformer.on('update', (obj) => enqueue(obj as unknown as Run));
-  runInformer.on('delete', (obj) => {
-    const md = (obj as { metadata?: { namespace?: string; name?: string } }).metadata;
-    dequeue(`${md?.namespace}/${md?.name}`);
-  });
+  runInformer.on('delete', handleRunDelete);
   runInformer.on('error', (e) => {
     err('run informer error:', (e as Error).message);
     setTimeout(() => runInformer.start().catch(console.error), 2000);
@@ -76,10 +98,14 @@ async function main(): Promise<void> {
 
   const csInformer = makeInformer(kc, csPath, listCsFn as never);
   csInformer.on('add', (obj) => {
-    void reconcileClusterSettings(obj as unknown as ClusterSettings);
+    reconcileClusterSettings(obj as unknown as ClusterSettings).catch((e) => {
+      err('reconcileClusterSettings(add) failed:', (e as Error).message);
+    });
   });
   csInformer.on('update', (obj) => {
-    void reconcileClusterSettings(obj as unknown as ClusterSettings);
+    reconcileClusterSettings(obj as unknown as ClusterSettings).catch((e) => {
+      err('reconcileClusterSettings(update) failed:', (e as Error).message);
+    });
   });
   csInformer.on('error', (e) => {
     err('cluster-settings informer error:', (e as Error).message);
@@ -101,14 +127,27 @@ async function main(): Promise<void> {
 
   const projectInformer = makeInformer(kc, projectPath, listProjectsFn as never);
   projectInformer.on('add', (obj) => {
-    void reconcileProject(obj as unknown as Project);
+    // safeReconcileProject already catches and surfaces every error into
+    // status.reconcile; this .catch is a belt-and-suspenders backstop so a
+    // genuine bug in that wrapper still can't reach unhandledRejection/exit(1).
+    safeReconcileProject(obj as unknown as Project).catch((e) => {
+      err('safeReconcileProject(add) failed:', (e as Error).message);
+    });
   });
   projectInformer.on('update', (obj) => {
-    void reconcileProject(obj as unknown as Project);
+    safeReconcileProject(obj as unknown as Project).catch((e) => {
+      err('safeReconcileProject(update) failed:', (e as Error).message);
+    });
   });
   projectInformer.on('delete', (obj) => {
-    void cleanupCodeServer(obj as unknown as Project);
-    void cleanupMemoryService(obj as unknown as Project);
+    const project = obj as unknown as Project;
+    cancelProjectRetry(projectKey(project));
+    cleanupCodeServer(project).catch((e) => {
+      err('cleanupCodeServer failed:', (e as Error).message);
+    });
+    cleanupMemoryService(project).catch((e) => {
+      err('cleanupMemoryService failed:', (e as Error).message);
+    });
   });
   projectInformer.on('error', (e) => {
     err('project informer error:', (e as Error).message);
@@ -122,7 +161,9 @@ async function main(): Promise<void> {
   await runWorker();
 }
 
-main().catch((e) => {
-  err('fatal:', e);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((e) => {
+    err('fatal:', e);
+    process.exit(1);
+  });
+}

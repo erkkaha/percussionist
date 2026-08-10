@@ -25,14 +25,14 @@ describe('buildTlsOptions', () => {
     const caPem = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----';
     const result = buildTlsOptions({ caData: Buffer.from(caPem).toString('base64') } as any);
     expect(result).toBeDefined();
-    expect(result!.ca).toBeInstanceOf(Buffer);
-    expect(result!.ca!.toString()).toBe(caPem);
+    expect(result?.ca).toBeInstanceOf(Buffer);
+    expect(result?.ca?.toString()).toBe(caPem);
   });
 
   it('sets rejectUnauthorized: false when skipTLSVerify is true', () => {
     const result = buildTlsOptions({ skipTLSVerify: true } as any);
     expect(result).toBeDefined();
-    expect(result!.rejectUnauthorized).toBe(false);
+    expect(result?.rejectUnauthorized).toBe(false);
   });
 
   it('combines CA and skipTLSVerify', () => {
@@ -42,8 +42,8 @@ describe('buildTlsOptions', () => {
       skipTLSVerify: true,
     } as any);
     expect(result).toBeDefined();
-    expect(result!.ca).toBeInstanceOf(Buffer);
-    expect(result!.rejectUnauthorized).toBe(false);
+    expect(result?.ca).toBeInstanceOf(Buffer);
+    expect(result?.rejectUnauthorized).toBe(false);
   });
 
   it('includes client cert and key from base64 data', () => {
@@ -54,10 +54,10 @@ describe('buildTlsOptions', () => {
       keyData: Buffer.from(key).toString('base64'),
     } as any);
     expect(result).toBeDefined();
-    expect(result!.cert).toBeInstanceOf(Buffer);
-    expect(result!.cert!.toString()).toBe(cert);
-    expect(result!.key).toBeInstanceOf(Buffer);
-    expect(result!.key!.toString()).toBe(key);
+    expect(result?.cert).toBeInstanceOf(Buffer);
+    expect(result?.cert?.toString()).toBe(cert);
+    expect(result?.key).toBeInstanceOf(Buffer);
+    expect(result?.key?.toString()).toBe(key);
   });
 });
 
@@ -204,8 +204,8 @@ describe('BunWsWrapper', () => {
 
     // Simulate failure: onerror fires first (no detail), then onclose with 1006
     const mock = wsRef(wrapper);
-    mock.onerror!(new Event('error'));
-    mock.onclose!({ code: 1006, reason: '' } as any);
+    mock.onerror?.(new Event('error'));
+    mock.onclose?.({ code: 1006, reason: '' } as any);
 
     const msg = await errorPromise;
     expect(msg).toContain('1006');
@@ -222,7 +222,7 @@ describe('BunWsWrapper', () => {
     });
 
     const mock = wsRef(wrapper);
-    mock.onclose!({ code: 4001, reason: 'pod not found' } as any);
+    mock.onclose?.({ code: 4001, reason: 'pod not found' } as any);
 
     const msg = await errorPromise;
     expect(msg).toContain('4001');
@@ -239,10 +239,10 @@ describe('BunWsWrapper', () => {
 
     // Simulate successful connection
     const mock = wsRef(wrapper);
-    mock.onopen!(new Event('open'));
+    mock.onopen?.(new Event('open'));
 
     // Now simulate a normal close
-    mock.onclose!({ code: 1000, reason: 'normal' } as any);
+    mock.onclose?.({ code: 1000, reason: 'normal' } as any);
 
     // Should not have emitted any errors
     expect(errors).toHaveLength(0);
@@ -252,7 +252,7 @@ describe('BunWsWrapper', () => {
     const wrapper = new BunWsWrapper('wss://k8s.example.com/exec', 'my-token');
 
     const mock = wsRef(wrapper);
-    mock.onopen!(new Event('open'));
+    mock.onopen?.(new Event('open'));
 
     expect(wrapper.protocol).toBe('v5.channel.k8s.io');
   });
@@ -268,7 +268,7 @@ describe('BunWsWrapper', () => {
 
     const frame = Buffer.from([1, 65, 66, 67]);
     const mock = wsRef(wrapper);
-    mock.onmessage!({ data: frame } as any);
+    mock.onmessage?.({ data: frame } as any);
 
     expect(await messagePromise).toBe(frame);
   });
@@ -284,7 +284,7 @@ describe('BunWsWrapper', () => {
 
     const frame = new Uint8Array([1, 65, 66, 67]);
     const mock = wsRef(wrapper);
-    mock.onmessage!({ data: frame } as any);
+    mock.onmessage?.({ data: frame } as any);
 
     expect((await messagePromise).toString('utf8')).toBe('\u0001ABC');
   });

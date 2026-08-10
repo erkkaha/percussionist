@@ -141,8 +141,8 @@ Explain the current lifecycle state of a task in the context of its project flow
 | `exec_in_workspace` | Run commands in the project's data PVC workspace |
 | `list_available_packages` | List Alpine packages declared for a project |
 | `install_packages` | Install ad-hoc Alpine packages |
-| `check_for_updates` | Check the latest Percussionist release version |
-| `apply_upgrade` | Upgrade Percussionist deployments |
+| `check_for_updates` | Check the latest Percussionist release version; reports whether upgrades run in `gitops` or `deployments` mode |
+| `apply_upgrade` | Upgrade Percussionist. Pins the Flux source when one exists (CRDs included), otherwise patches Deployment images and warns that CRDs were skipped |
 | `list_models` | List available LLM providers and models |
 | `list_task_events` | List task lifecycle audit events |
 
@@ -154,6 +154,8 @@ The dispatcher sidecar runs an in-process MCP server on port 4097 within each ru
 |------|-------------|
 | `complete_run` | Signal successful BUILD task completion |
 | `complete_plan` | Signal successful PLAN task completion |
+| `complete_merge` | Submit a structured merge verdict for a merge run |
+| `complete_review` | Submit a review verdict, plus optional findings anchored to the diff |
 | `fail_run` | Signal task failure with reason |
 | `get_status` | Return current run state (phase, session ID, token usage) |
 | `create_task` | Create a new BUILD Task CR |
@@ -161,11 +163,38 @@ The dispatcher sidecar runs an in-process MCP server on port 4097 within each ru
 | `write_plan` | Persist a plan artifact |
 | `read_plan` | Read a plan artifact |
 | `read_session` | Read session messages from another run's ConfigMap snapshot |
-| `report_finding` | Report an off-task issue (bug, security, performance, debt) for manager triage |
+| `report_unrelated_issue` | Report an issue outside the agent's own task (bug, security, performance, debt) for manager triage |
 
-### `report_finding`
+### `complete_review`
 
-Report an off-task issue discovered while working — a bug, security problem, performance trap, or tech debt that is **outside** the agent's assigned task. The manager triages it, de-duplicates against existing findings, and may auto-create a Task CR.
+Submits a review verdict for a completed worker run. Requires `approved` (boolean) and `diagnosis` (1–2 sentence assessment); accepts optional `feedback`, `suggestion`, and `findings`.
+
+The verdict is written to the review Run's `percussionist.dev/review-verdict` annotation, which is the reconciler's only source of truth — it never reads the agent's prose. `findings` are normalized onto the reviewed **task** at `status.diffFindings` and render inline in the board's diff view.
+
+**`findings`** — up to 25 items, each anchored to lines of the diff under review:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | yes | Unique within the call; duplicates are dropped |
+| `severity` | yes | One of: `critical`, `high`, `medium`, `low`, `info` |
+| `title` | yes | ≤160 chars |
+| `comment` | yes | ≤2000 chars |
+| `anchors` | yes | 1–3 × `{ path, side: "old"\|"new", line, endLine?, hunkHeader? }` |
+| `context` | yes | `{ baseSha, headSha, forkSha, diffFingerprint }` — see below |
+| `score` | no | 0–100, breaks ties within a severity when ranking |
+| `category` | no | Free-form, ≤64 chars |
+
+Every finding in one call must carry an identical `context`; the first finding's context becomes the batch context and any finding disagreeing with it is silently dropped. Invalid findings are dropped without failing the verdict.
+
+`diffFingerprint` is `sha256(forkSha + "\n" + headSha + "\n" + unifiedDiff.trim())`, where `forkSha` is `git merge-base <base> <head>` and `unifiedDiff` is `git diff --no-color --find-renames --binary <forkSha>..<head> --`. The board recomputes it in `packages/web/src/server/routes/task-diff.ts` and marks findings whose fingerprint no longer matches as **stale** rather than discarding them, so a mismatch degrades presentation but never loses the comment.
+
+The reviewer prompt built by `buildReviewRun` (`packages/manager-controller/src/facilitator.ts`) states this contract, including the base branch to diff against.
+
+### `report_unrelated_issue`
+
+Report an issue discovered while working that is **outside** the agent's assigned task — a bug, security problem, performance trap, or tech debt. The manager triages it, de-duplicates against existing findings, and may auto-create a Task CR.
+
+Named `report_finding` before 2026-07. The old name still dispatches (so a run holding a cached tool list keeps working) but is no longer advertised in `tools/list`. It was renamed because agents conflated it with `complete_review`'s `findings` array: that one carries review comments anchored to lines of the diff under review and lands on the task at `status.diffFindings`, while this one files a separate issue into the project's `{project}-findings` inbox. The test is whether fixing it would have been part of the assigned task.
 
 **Inputs**
 

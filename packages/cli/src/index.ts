@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+
 // beatctl — the percussionist CLI.
 //
 // Subcommands are thin: each one does argument parsing here and delegates to
 // a focused module. Global flags (--namespace) are repeated on every command
 // rather than hoisted so `beatctl logs foo -n ns` reads naturally.
 
+import type { TaskPhase } from '@percussionist/api';
 import { Command } from 'commander';
 import { runAgentCreate, runAgentDelete, runAgentGet, runAgentList } from './agent.js';
 import { runAttach } from './attach.js';
@@ -44,7 +46,7 @@ import { DEFAULT_NAMESPACE } from './kube.js';
 import { runLogs } from './logs.js';
 import { runProjectCreate, runProjectDelete, runProjectGet, runProjectList } from './project.js';
 import { runSshKeyCreate } from './ssh-key.js';
-import { runSubmit } from './submit.js';
+import { createAgentFileAccumulator, runSubmit } from './submit.js';
 import { runValidateAgents } from './validate.js';
 import { runGet, runLs } from './view.js';
 import { runWait } from './wait.js';
@@ -65,6 +67,12 @@ program
   .option('--repo-root <path>', 'repo root containing k8s/crds and k8s/deploy', process.cwd())
   .option('--down', 'remove deployed resources', false)
   .option('--no-wait', "don't wait for deployment rollout")
+  .option(
+    '--gitops',
+    'install via Flux so upgrades include CRDs (installs source- and kustomize-controller)',
+    false,
+  )
+  .option('--release <tag>', 'release tag to pin under --gitops (default: this checkout)')
   .action(runDeploy);
 
 // web -----------------------------------------------------------------------
@@ -79,6 +87,13 @@ program
   .action(runWeb);
 
 // submit --------------------------------------------------------------------
+// Shared accumulator for the repeatable inline-agent flags: --agent-file
+// collects { path } entries in argv order and --agent-name binds to the last
+// entry that has no name yet — the "preceding --agent-file" the help text
+// promises. A --agent-name with no preceding unnamed file is a usage error
+// (see createAgentFileAccumulator in submit.ts).
+const inlineAgentFiles = createAgentFileAccumulator();
+
 program
   .command('submit')
   .description('create a new Run')
@@ -89,7 +104,9 @@ program
   )
   .option('-a, --attach', 'after submit, wait for Running and attach automatically')
   .option('--name <name>', 'run name (auto-generated if omitted)')
-  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  // No default for -n: with -f, a namespace in the file wins unless -n is
+  // explicitly passed, and the fallback below honors $PERCUSSIONIST_NAMESPACE.
+  .option('-n, --namespace <ns>', 'namespace')
   .option('-f, --file <path>', 'read run YAML from file')
   .option('--image <image>', 'override runner image')
   .option('--agent <agent>', 'agent name')
@@ -121,12 +138,12 @@ program
   .option(
     '--agent-file <path>',
     'path to an agent .md file (repeatable)',
-    (val: string, prev: string[] = []) => [...prev, val],
+    inlineAgentFiles.pushFile,
   )
   .option(
     '--agent-name <name>',
     'override the agent name for the preceding --agent-file (repeatable)',
-    (val: string, prev: string[] = []) => [...prev, val],
+    inlineAgentFiles.bindName,
   )
   .action(runSubmit);
 
@@ -237,7 +254,7 @@ auth
   .command('import')
   .description('copy your local opencode auth.json into a cluster Secret')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
-  .option('--name <name>', 'Secret name to create/update', 'opencode-auth')
+  .option('--name <name>', 'Secret name to create/update', 'agent-auth')
   .option('--key <key>', 'key inside the Secret that holds auth.json', 'auth.json')
   .option(
     '-p, --provider <id>',
@@ -389,7 +406,9 @@ project
   .command('create')
   .description('create a new project from flags or a YAML file')
   .option('--name <name>', 'project name (required unless -f)')
-  .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+  // No default for -n: with -f, a namespace in the file wins unless -n is
+  // explicitly passed, and the fallback below honors $PERCUSSIONIST_NAMESPACE.
+  .option('-n, --namespace <ns>', 'namespace')
   .option('-f, --file <path>', 'read project YAML from file')
   .option('--display-name <name>', 'human-readable label')
   .option('--git-url <url>', 'git repository URL')
@@ -491,7 +510,6 @@ boardTask
   .option('--type <type>', 'task type: PLAN or BUILD', 'PLAN')
   .option('--priority <level>', 'priority: high, medium, low', 'medium')
   .option('--agent <agent>', 'agent name (must be in project agents list)')
-  .option('--column <name>', 'target column (default: ready)', 'ready')
   .action((projectName: string, opts) => {
     if (!opts.title || !opts.agent) {
       console.error('beatctl: --title and --agent are required');
@@ -504,16 +522,15 @@ boardTask
       type: opts.type as 'PLAN' | 'BUILD',
       priority: opts.priority as 'high' | 'medium' | 'low',
       agent: opts.agent,
-      column: opts.column,
     });
   });
 
 boardTask
   .command('move <project>')
-  .description('move a task between columns')
+  .description('move a task between phases (validated against the transition table)')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
   .option('--task-name <name>', 'task CR name to move')
-  .option('--to <column>', 'target column name (required)')
+  .option('--to <phase>', 'target phase name (required)')
   .action((projectName: string, opts) => {
     if (!opts.taskName || !opts.to) {
       console.error('beatctl: --task-name and --to are required');
@@ -522,7 +539,7 @@ boardTask
     runBoardTaskMove(projectName, {
       namespace: opts.namespace,
       taskName: opts.taskName,
-      to: opts.to,
+      to: opts.to as TaskPhase,
     });
   });
 

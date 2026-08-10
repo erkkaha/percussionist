@@ -18,7 +18,7 @@ boardDb.get('/:project/events', scoped('board', 'read'), (c) => {
     .select()
     .from(taskEvents)
     .where(eq(taskEvents.project, project))
-    .orderBy(desc(taskEvents.createdAt))
+    .orderBy(desc(taskEvents.id))
     .limit(limit)
     .all();
 
@@ -37,7 +37,7 @@ boardDb.get('/:project/tasks/:taskName/events', scoped('board', 'read'), (c) => 
     .select()
     .from(taskEvents)
     .where(and(eq(taskEvents.project, project), eq(taskEvents.taskName, taskName)))
-    .orderBy(desc(taskEvents.createdAt))
+    .orderBy(desc(taskEvents.id))
     .limit(limit)
     .all();
 

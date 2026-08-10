@@ -4,7 +4,7 @@
 # agent/<task-name> branches; integrator merges to main.
 #
 # Prerequisites (see secrets/README.md):
-#   kubectl get secret git-ssh-key git-github-token opencode-auth -n percussionist
+#   kubectl get secret git-ssh-key git-github-token agent-auth -n percussionist
 #
 # Apply:
 #   kubectl apply -f k8s/self-dev/projects/percussionist-dev.yaml
@@ -45,7 +45,7 @@ spec:
 
   secrets:
     authSecret:
-      name: opencode-auth
+      name: agent-auth
 
   # 2 hours — enough time for image builds and e2e smoke tests.
   timeoutSeconds: 7200
@@ -76,6 +76,13 @@ spec:
   # Per-project code-server for interactive workspace access.
   codeServer:
     enabled: true
+    # Persistent human repo folder on the data PVC (/data/code): a clone of the
+    # project repo checked out on the project default branch (source.git.ref =
+    # main), opened by default in code-server. The clone runs in the code-server
+    # init container using source.git.sshSecret (mounted in the init container
+    # only — not in the main code-server container).
+    humanFolder:
+      enabled: true
 
   # Use a richer image for maintenance/exec pods (e.g. exec_in_workspace).
   # Falls back to alpine/git:v2.54.0 when unset.
@@ -84,11 +91,23 @@ spec:
 
   # Pre-warm pnpm store on startup so agent's pnpm install finishes within
   # the 120s bash tool timeout. Cache persists on the data PVC across runs.
+  #
+  # Name the missing binary instead of a bare "skipped". This script runs in the
+  # workspace-init container, which uses the run's engine image — and for as long
+  # as runner-claude shipped without pnpm, `|| echo "skipped"` reported success
+  # while warming nothing, on every claude-engine run.
+  # No `exit` here: the operator eval's this script in the workspace-init shell,
+  # so exiting would end that container early and skip whatever follows.
   initScript: |
-    echo "[init] warming pnpm store"
-    CI=true pnpm install --frozen-lockfile --config.strict-dep-builds=false 2>&1 || echo "[init] pnpm install skipped"
-    echo "[init] pruning pnpm store"
-    CI=true pnpm store prune 2>&1 || echo "[init] pnpm store prune skipped"
+    if command -v pnpm >/dev/null 2>&1; then
+      echo "[init] warming pnpm store"
+      CI=true pnpm install --frozen-lockfile --config.strict-dep-builds=false 2>&1 || echo "[init] pnpm install failed (see output above)"
+      echo "[init] pruning pnpm store"
+      CI=true pnpm store prune 2>&1 || echo "[init] pnpm store prune failed (see output above)"
+    else
+      echo "[init] WARNING: pnpm not found in the runner image — skipping store warmup"
+      echo "[init] agents in this run cannot run pnpm scripts either"
+    fi
     echo "[init] init complete"
 
   # Feature branching: each task works on its own branch to prevent

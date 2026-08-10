@@ -6,7 +6,7 @@
 // Subcommands:
 //   get <project>                  — show board state (columns, workers, escalations)
 //   task add <project>             — create a new Task CR
-//   task move <project>            — patch task status.column
+//   task move <project>            — patch task status.phase (validated against the transition table)
 //   task remove <project>          — delete the Task CR
 //   task approve <project>         — approve an awaiting-human task
 //   task request-changes <project> — send an awaiting-human task back for rework
@@ -19,9 +19,9 @@ import {
   type Finding,
   type Project,
   type Task,
-  type TaskColumn,
   type TaskPhase,
   type TaskStatus,
+  validateTransition,
 } from '@percussionist/api';
 import {
   buildTask,
@@ -138,7 +138,6 @@ export interface BoardTaskAddOpts {
   type: 'PLAN' | 'BUILD';
   priority?: 'high' | 'medium' | 'low';
   agent: string;
-  column?: string;
 }
 
 export async function runBoardTaskAdd(projectName: string, opts: BoardTaskAddOpts): Promise<void> {
@@ -199,11 +198,41 @@ export async function runBoardTaskAdd(projectName: string, opts: BoardTaskAddOpt
 
 // ---------------------------------------------------------------------------
 // board task move
+//
+// A generic escape hatch: `--to` takes a TaskPhase, validated against the same
+// transition table the manager's reconciler uses (hoisted to @percussionist/api).
+// The patch touches status.phase only — the legacy status.column is never
+// written. For the common human-in-the-loop moves the annotation-driven
+// commands (approve / request-changes / retry) remain the preferred path;
+// `move` is for the raw cases they do not cover.
 
 export interface BoardTaskMoveOpts {
   namespace?: string;
   taskName: string;
-  to: string;
+  to: TaskPhase;
+}
+
+export type TaskMoveResult =
+  | { ok: true; patch: Partial<TaskStatus> }
+  | { ok: false; error: string };
+
+/**
+ * Resolve a `board task move` against the sanctioned transition table.
+ *
+ * Returns the status patch (phase only) on success, or an error message that
+ * lists the allowed target phases on an illegal transition. Pure — no cluster
+ * access — so it is unit-testable in isolation.
+ */
+export function resolveTaskMove(
+  currentPhase: TaskPhase | undefined,
+  to: TaskPhase,
+): TaskMoveResult {
+  if (!currentPhase) {
+    return { ok: false, error: 'task has no recorded phase — cannot validate a move' };
+  }
+  const err = validateTransition(currentPhase, to);
+  if (err) return { ok: false, error: err };
+  return { ok: true, patch: { phase: to } };
 }
 
 export async function runBoardTaskMove(
@@ -213,9 +242,26 @@ export async function runBoardTaskMove(
   const ns = opts.namespace ?? NAMESPACE;
   void projectName;
 
+  let task: Task;
   try {
-    await patchTaskStatus(opts.taskName, { column: opts.to as TaskColumn }, ns);
-    console.log(`task ${opts.taskName} moved to "${opts.to}"`);
+    task = await getTask(opts.taskName, ns);
+  } catch (e) {
+    fatal('get task failed', e);
+  }
+
+  const currentPhase = task.status?.phase;
+  const result = resolveTaskMove(currentPhase, opts.to);
+  if (!result.ok) {
+    console.error(
+      `beatctl: cannot move task ${opts.taskName} from "${currentPhase ?? 'unknown'}" to "${opts.to}".`,
+    );
+    console.error(`  ${result.error}`);
+    process.exit(1);
+  }
+
+  try {
+    await patchTaskStatus(opts.taskName, result.patch, ns);
+    console.log(`task ${opts.taskName} moved to phase "${opts.to}"`);
   } catch (e) {
     fatal('task move failed', e);
   }
@@ -270,7 +316,7 @@ export interface BoardPlanOpts {
 // ---------------------------------------------------------------------------
 // board findings
 //
-// This is the off-task findings inbox: an agent's `report_finding` writes
+// This is the off-task findings inbox: an agent's `report_unrelated_issue` writes
 // `inbox.<id>.json` into the project's findings ConfigMap, the manager triages
 // those into `triaged.<clusterId>.json`, and only the triaged half reaches
 // `status.board.findings`. So the board can show nothing while reports are
@@ -313,9 +359,9 @@ export async function runBoardFindings(
 
   if (inbox.length === 0 && triaged.length === 0) {
     console.log(`No off-task findings recorded for ${projectName}.`);
-    console.log('  Agents report these with percussionist_dispatcher_report_finding, which is');
-    console.log('  deliberately optional and held to a high bar — an empty list is a normal');
-    console.log('  result, not evidence that reporting is broken.');
+    console.log('  Agents report these with percussionist_dispatcher_report_unrelated_issue,');
+    console.log('  which is deliberately optional and held to a high bar — an empty list is a');
+    console.log('  normal result, not evidence that reporting is broken.');
     console.log();
     console.log('  Note that reviewers also emit "findings" of a different kind: the diff');
     console.log('  findings passed to complete_review, which rank a diff by review priority');

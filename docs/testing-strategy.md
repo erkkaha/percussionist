@@ -17,6 +17,32 @@ Percussionist uses a **four-layer testing model** to balance speed, confidence, 
 
 **Responsibility:** Verify correctness of isolated code paths. Fast feedback (< 30s total).
 
+#### Recording fake-kube helper (API-interaction tests)
+
+Reconcile loops and kube write helpers talk to the Kubernetes API through
+lazy-singleton clients; unit tests that need to exercise those paths (rather
+than pure logic) use a small **recording fake** installed via `spyOn` /
+`defineProperty` swaps:
+
+- `packages/kube/src/__tests__/helpers/fake-kube.ts` — installs on the
+  `core()` / `custom()` singleton instances used by the kube package's write
+  helpers.
+- `packages/operator/src/test-helpers/fake-kube.ts` — installs on
+  `CoreV1Api.prototype` / `CustomObjectsApi.prototype` etc., so it intercepts
+  both the operator's own clients and the shared kube singletons.
+
+Contract: `installFakeKube(script)` returns `{ calls, restore }` where `calls`
+is the recorded `{ method, args }` log and `script` maps method names to
+scripted responses — `{ value }`, `{ error }` (an Error carrying
+`statusCode`, see `kubeError`/`notFound`/`conflict`/`tooManyRequests`/
+`serverError`), or `{ once }` sequences. Scripted failures cover
+404/409/429/5xx so fallback, "already exists", retry/backoff and transient
+failure paths are all testable without a cluster.
+
+The helper is **deliberately duplicated** between the two packages (per the
+rev24 plan) — test-only code, no shared workspace package. If the pattern
+grows a third consumer, consolidate into a shared test package.
+
 ### Layer 2 — Integration / Smoke Tests (`packages/*/tests/smoke.test.ts`)
 
 **Scope:** Full application components wired together, exercising real APIs and data stores without a live cluster.
@@ -34,7 +60,7 @@ Percussionist uses a **four-layer testing model** to balance speed, confidence, 
 
 - Run via `pnpm e2e:core`.
 - Framework: Bun test with shared harness in `tests/e2e/helpers/`.
-- **Deterministic control points only**: tests use ClusterAgent fixtures that instruct the agent to call specific MCP tools (`complete_run`, `complete_plan`, `fail_run`, `report_finding`) rather than relying on LLM-generated prose.
+- **Deterministic control points only**: tests use ClusterAgent fixtures that instruct the agent to call specific MCP tools (`complete_run`, `complete_plan`, `fail_run`, `report_unrelated_issue`) rather than relying on LLM-generated prose.
 - Assertions are exclusively on CR status fields (`Run.status.phase`, `Task.status.phase`, board JSON columns) — never on model output text or summaries.
 
 **Current test suites:**

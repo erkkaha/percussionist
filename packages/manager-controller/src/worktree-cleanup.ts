@@ -95,6 +95,12 @@ export interface TaskWorktreeCleanupOptions {
   dataPvcName?: string;
   /** Git URL, used to derive the mirror directory hash. Omit for local workspaces. */
   gitUrl?: string;
+  /**
+   * Exact run names to remove in addition to the worker-prefix glob match.
+   * Covers auxiliary runs (review/buildgen/merge) whose names don't match the
+   * deterministic worker-run suffix pattern.
+   */
+  runNames?: string[];
 }
 
 /**
@@ -126,7 +132,9 @@ export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Pro
     'set -e',
     `echo "[cleanup] removing worktree ${worktreeDir}"`,
     `BRANCH=$(git -C ${shQuote(worktreeDir)} symbolic-ref HEAD 2>/dev/null || true)`,
-    `rm -rf ${shQuote(worktreeDir)}`,
+    // A task-level cleanup pod may be deleting the same tree concurrently;
+    // entries vanishing mid-rm make rm exit non-zero, which is still success.
+    `rm -rf ${shQuote(worktreeDir)} 2>/dev/null || true`,
     ...(mirrorDir
       ? [
           `if [ -d "${mirrorDir}" ]; then`,
@@ -199,8 +207,12 @@ export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Pro
  * Used when a task moves to "done" to clean up all runs (retries/rework).
  *
  * The pod:
- *  1. Removes all /data/worktrees/{projectName}-* directories matching the task
- *  2. Calls `git worktree prune` on the bare mirror (if gitUrl is set)
+ *  1. Removes all /data/worktrees/{projectName}-* directories matching the
+ *     deterministic worker-run suffix pattern for this task
+ *  2. Removes each exact /data/worktrees/{name} directory in `runNames` —
+ *     covers auxiliary (review/buildgen/merge) runs, whose names don't match
+ *     the worker-prefix glob
+ *  3. Calls `git worktree prune` on the bare mirror (if gitUrl is set)
  *
  * Fire-and-forget — errors are logged but not surfaced to avoid blocking task transitions.
  */
@@ -213,6 +225,7 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
     dataMountPath = '/data',
     dataPvcName = `${projectName}-data`,
     gitUrl,
+    runNames = [],
   } = opts;
 
   const taskName = task.metadata.name;
@@ -240,8 +253,21 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
     `    BRANCH="\${BRANCH#refs/heads/}"`,
     `    [ -n "$BRANCH" ] && BRANCHES="$BRANCHES $BRANCH"`,
     `    echo "[cleanup] removing $dir"`,
-    `    rm -rf "$dir"`,
+    // Concurrent run-level cleanup pods may race on the same tree — see above.
+    `    rm -rf "$dir" 2>/dev/null || true`,
     `done`,
+    ...(runNames.length > 0
+      ? [
+          `for dir in ${runNames.map((name) => shQuote(`${worktreeDir}/${name}`)).join(' ')}; do`,
+          `  [ -e "$dir" ] || continue`,
+          `  BRANCH=$(git -C "$dir" symbolic-ref HEAD 2>/dev/null || true)`,
+          `  BRANCH="\${BRANCH#refs/heads/}"`,
+          `  [ -n "$BRANCH" ] && BRANCHES="$BRANCHES $BRANCH"`,
+          `  echo "[cleanup] removing $dir"`,
+          `  rm -rf "$dir" 2>/dev/null || true`,
+          `done`,
+        ]
+      : []),
     ...(mirrorDir
       ? [
           `if [ -d "${mirrorDir}" ]; then`,

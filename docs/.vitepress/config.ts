@@ -52,6 +52,11 @@ export default defineConfig({
           items: [
             { text: 'Getting Started', link: '/guide/getting-started' },
             { text: 'Installation', link: '/guide/installation' },
+            { text: 'GitOps Upgrades', link: '/guide/gitops' },
+            {
+              text: 'LXD + MicroK8s + Tailscale',
+              link: '/guide/lxd-microk8s-tailscale',
+            },
             { text: 'Configuration', link: '/guide/configuration' },
           ],
         },

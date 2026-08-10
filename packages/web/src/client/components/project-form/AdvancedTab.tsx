@@ -1,5 +1,4 @@
 import { Input } from '../ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Textarea } from '../ui/textarea';
 import type { ProjectFormHookReturn } from './useProjectForm';
 
@@ -9,8 +8,6 @@ interface AdvancedTabProps {
     | 'sidecars'
     | 'injectFiles'
     | 'initScript'
-    | 'rosterAgents'
-    | 'rosterPickerValue'
     | 'sidecarErrors'
     | 'hasSidecarErrors'
     | 'injectFileErrors'
@@ -21,8 +18,6 @@ interface AdvancedTabProps {
       | 'setSidecars'
       | 'setInjectFiles'
       | 'setInitScript'
-      | 'setRosterAgents'
-      | 'setRosterPickerValue'
       | 'addSidecar'
       | 'removeSidecar'
       | 'updateSidecar'
@@ -30,10 +25,9 @@ interface AdvancedTabProps {
       | 'removeInjectFile'
       | 'updateInjectFile'
     >;
-  clusterAgents: Array<{ name: string; content: string }>;
 }
 
-export default function AdvancedTab({ form, clusterAgents }: AdvancedTabProps) {
+export default function AdvancedTab({ form }: AdvancedTabProps) {
   return (
     <div className="space-y-5">
       {/* Sidecars */}
@@ -223,60 +217,6 @@ export default function AdvancedTab({ form, clusterAgents }: AdvancedTabProps) {
           placeholder={'npm ci\nnpm run build'}
           className="font-mono text-xs leading-5"
         />
-      </fieldset>
-
-      {/* Agent roster */}
-      <fieldset className="space-y-3 rounded-md border border-border p-4">
-        <legend className="px-1 text-sm font-medium text-text-muted">Agent roster</legend>
-        <p className="text-xs text-text-dim">
-          ClusterAgents available to tasks in this project. Tasks must reference an agent from this
-          list.
-        </p>
-        {form.rosterAgents.length > 0 && (
-          <ul className="space-y-1">
-            {form.rosterAgents.map((agentName) => (
-              <li
-                key={agentName}
-                className="flex items-center justify-between rounded border border-border bg-surface-raised px-3 py-1.5 text-sm"
-              >
-                <span className="font-mono">{agentName}</span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    form.setRosterAgents((prev) => prev.filter((n) => n !== agentName))
-                  }
-                  className="text-text-dim hover:text-phase-failed transition-colors text-xs ml-4"
-                >
-                  remove
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="flex items-center gap-2">
-          <Select
-            value={form.rosterPickerValue}
-            onValueChange={(v) => {
-              if (v && !form.rosterAgents.includes(v)) {
-                form.setRosterAgents((prev) => [...prev, v]);
-              }
-              form.setRosterPickerValue('');
-            }}
-          >
-            <SelectTrigger className="flex-1">
-              <SelectValue placeholder="— add agent —" />
-            </SelectTrigger>
-            <SelectContent>
-              {clusterAgents
-                .filter((a) => !form.rosterAgents.includes(a.name))
-                .map((a) => (
-                  <SelectItem key={a.name} value={a.name}>
-                    {a.name}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
-        </div>
       </fieldset>
     </div>
   );

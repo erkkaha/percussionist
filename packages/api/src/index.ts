@@ -2,7 +2,10 @@
 //
 // CRD YAML in crds/ is generated from these schemas via `pnpm run codegen`
 // in the scripts/ package. When they disagree the Zod definition wins at
-// admission time inside the operator.
+// reconcile time inside the operator: Run/Project specs are re-validated
+// against the Zod schemas on every reconcile, because the generated CRDs carry
+// no CEL equivalents of the .refine() rules. CRD defaults are authoritative at
+// admission (the apiserver stamps them onto every CR).
 //
 // Five CRDs:
 //   ClusterAgent       — cluster-scoped agent role definitions
@@ -207,16 +210,38 @@ export const ResourceRequirementsSchema = z
 
 export type ResourceRequirements = z.infer<typeof ResourceRequirementsSchema>;
 
+// Persistent human workspace folder on the project data PVC, cloned from the
+// project repo for humans opening code-server.
+export const HumanFolderSpecSchema = z.object({
+  enabled: z.boolean().default(false),
+  name: z.string().default('code'),
+  branch: z.string().optional(),
+  remoteUrl: z.string().optional(),
+});
+export type HumanFolderSpec = z.infer<typeof HumanFolderSpecSchema>;
+
+// The published, tooled code-server image (bun/pnpm/node/npm/ripgrep/jq on
+// top of codercom). Single source of truth for the CRD default; the operator
+// falls back to the same constant when spec.codeServer.image is unset.
+export const CODE_SERVER_DEFAULT_IMAGE = 'ghcr.io/erkkaha/percussionist/code-server:latest';
+
 // Code-server configuration for interactive workspace access.
 export const CodeServerSpecSchema = z.object({
   /** Enable per-project code-server for interactive workspace access. */
   enabled: z.boolean().default(false),
   /** code-server container image. */
-  image: z.string().default('codercom/code-server:4.96.4'),
+  image: z.string().default(CODE_SERVER_DEFAULT_IMAGE),
   /** Pod resource requirements for code-server container. */
   resources: ResourceRequirementsSchema.optional(),
   /** Alpine/APT packages to install in the code-server init container. */
   packages: z.array(z.string()).max(50).optional(),
+  /**
+   * Opt-in persistent human workspace folder (named `code` by default) on the
+   * project data PVC. When enabled, the folder is cloned from the project repo
+   * (spec.source.git) on the project default branch (spec.source.git.ref) and
+   * code-server opens it by default.
+   */
+  humanFolder: HumanFolderSpecSchema.optional(),
 });
 export type CodeServerSpec = z.infer<typeof CodeServerSpecSchema>;
 
@@ -579,16 +604,6 @@ export type ClusterSettings = z.infer<typeof ClusterSettingsSchema>;
 // ---------------------------------------------------------------------------
 // Facilitation types — must come before OpenCodeRunSpec which references them.
 
-export const FacilitationAction = {
-  RetrySame: 'retry_same',
-  RetryAlternative: 'retry_alternative',
-  Skip: 'skip',
-  Approve: 'approve',
-  RequestChanges: 'request_changes',
-  Escalate: 'escalate',
-} as const;
-export type FacilitationAction = (typeof FacilitationAction)[keyof typeof FacilitationAction];
-
 export const FacilitationSpecSchema = z.object({
   targetRunName: z.string().min(1),
   targetTaskId: z.string().min(1),
@@ -599,22 +614,6 @@ export const FacilitationSpecSchema = z.object({
 });
 
 export type FacilitationSpec = z.infer<typeof FacilitationSpecSchema>;
-
-export const FacilitationResultSchema = z.object({
-  diagnosis: z.string().max(1024),
-  recommendedAction: z.enum([
-    FacilitationAction.RetrySame,
-    FacilitationAction.RetryAlternative,
-    FacilitationAction.Skip,
-    FacilitationAction.Approve,
-    FacilitationAction.RequestChanges,
-    FacilitationAction.Escalate,
-  ]),
-  alternativeAgent: z.string().max(63).optional(),
-  suggestion: z.string().max(4096).optional(),
-});
-
-export type FacilitationResult = z.infer<typeof FacilitationResultSchema>;
 
 // ---------------------------------------------------------------------------
 // Run — the core CRD reconciled by the operator.
@@ -640,10 +639,14 @@ export const RunSpecSchema = z
     // Set by manager-controller when this run was spawned by a board task.
     boardTask: z.string().optional(),
 
-    // Which agent runtime serves this run. Defaults to opencode; `claude` swaps
-    // in the runner-claude image, which speaks the same runner HTTP contract
-    // backed by the Claude Agent SDK.
-    engine: z.enum(RUNNER_ENGINES).optional(),
+    // Agent runtime for this run — full description text lives in .describe()
+    // below so codegen emits it into the CRD (comments do not survive codegen).
+    engine: z
+      .enum(RUNNER_ENGINES)
+      .describe(
+        'Agent runtime for this run. "opencode" (default) uses the opencode runner; "claude" uses the runner-claude image, which serves the same runner HTTP contract backed by the Claude Agent SDK and authenticates via spec.secrets.authSecret holding a CLAUDE_CODE_OAUTH_TOKEN.',
+      )
+      .optional(),
 
     // What the agent should do. Required unless interactive: true.
     task: z.string().min(1).optional(),
@@ -694,11 +697,7 @@ export const RunSpecSchema = z
     initScript: z.string().optional(),
 
     timeoutSeconds: z.number().int().positive().default(3600),
-    ttlSecondsAfterFinished: z
-      .number()
-      .int()
-      .nonnegative()
-      .default(7 * 86400),
+    ttlSecondsAfterFinished: z.number().int().nonnegative().optional(),
 
     // Data PVC configuration — backs package manager caches, git mirrors,
     // worktrees, and local workspaces for the project.
@@ -852,7 +851,7 @@ export const TaskPhase = z.enum([
   'scheduled', // Scheduler picked it, run being created
   'initializing', // Pod starting, git checkout in progress
   'running', // Agent actively working
-  'waiting-for-input', // PLAN-only: agent asked a question
+  'waiting-for-input', // agent asked a question (parked for human input)
   // Post-work
   'succeeded', // Run completed successfully
   'reviewing', // AI reviewer evaluating (optional)
@@ -884,17 +883,47 @@ export function computeBoardColumn(phase: TaskPhase): BoardColumn {
   return 'in-progress';
 }
 
-// Legacy task column enum — kept for backwards compatibility during migration
-export const TaskColumn = {
-  Backlog: 'backlog',
-  Ready: 'ready',
-  InProgress: 'in-progress',
-  Review: 'review',
-  Rework: 'rework',
-  Done: 'done',
-  Blocked: 'blocked',
-} as const;
-export type TaskColumn = (typeof TaskColumn)[keyof typeof TaskColumn];
+// ---------------------------------------------------------------------------
+// Task phase transition table — single source of truth for allowed phase
+// transitions. Shared by the manager's reconciler (decision/effects/MCP tools)
+// and the CLI's `board task move` so both validate against the same table.
+
+export const TRANSITION_TABLE: Record<TaskPhase, TaskPhase[]> = {
+  idea: ['pending'],
+  pending: ['scheduled'],
+  scheduled: ['initializing', 'failed'],
+  initializing: ['running', 'succeeded', 'failed'],
+  running: ['waiting-for-input', 'succeeded', 'failed'],
+  'waiting-for-input': ['running', 'succeeded', 'failed'],
+  succeeded: ['reviewing', 'awaiting-human', 'done'],
+  reviewing: ['awaiting-human', 'rework-requested'],
+  'awaiting-human': [
+    'awaiting-merge',
+    'generating-builds',
+    'awaiting-feature-merge',
+    'rework-requested',
+    'done',
+    'failed',
+  ],
+  'awaiting-merge': ['done', 'awaiting-human', 'failed'],
+  'rework-requested': ['scheduled'],
+  'generating-builds': ['awaiting-children', 'awaiting-human', 'failed'],
+  'awaiting-children': ['awaiting-feature-merge', 'awaiting-human', 'done', 'failed'],
+  'awaiting-feature-merge': ['done', 'awaiting-human', 'failed'],
+  failed: ['pending', 'awaiting-human', 'awaiting-merge'],
+  done: [],
+};
+
+export function isValidTransition(from: TaskPhase, to: TaskPhase): boolean {
+  return TRANSITION_TABLE[from]?.includes(to) ?? false;
+}
+
+export function validateTransition(from: TaskPhase, to: TaskPhase): string | null {
+  const allowed = TRANSITION_TABLE[from];
+  if (!allowed) return `Unknown source phase: ${from}`;
+  if (allowed.includes(to)) return null;
+  return `Invalid transition: ${from} → ${to}. Allowed: ${allowed.join(', ') || '(none, terminal)'}`;
+}
 
 // Per-worker execution tracking — now lives in Task.status.worker.
 export const WorkerStatusSchema = z.object({
@@ -923,6 +952,9 @@ export const WorkerStatusSchema = z.object({
   mergeRunName: z.string().optional(),
   mergedAt: z.string().optional(),
   mergeError: z.string().max(4096).optional(),
+  // True when a human intentionally abandoned this task from `awaiting-human`
+  // (distinct from normal completion, both of which end `status: 'Succeeded'`).
+  abandoned: z.boolean().optional(),
 });
 
 export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;
@@ -1025,7 +1057,6 @@ export const BoardStatusSchema = z.object({
   activeWorkers: z.number().int().min(0).default(0),
   escalations: z.string().array().optional(),
   pendingQuestions: PendingQuestionSchema.array().optional(),
-  facilitations: FacilitationResultSchema.array().optional(),
   lastEventAt: z.string().optional(),
   /** Manager reconciliation metrics — written by manager-controller. */
   managerMetrics: ManagerMetricsSchema.optional(),
@@ -1041,6 +1072,12 @@ export type BoardStatus = z.infer<typeof BoardStatusSchema>;
 export const ProjectSpecSchema = z.object({
   // Human-readable label for the UI. Falls back to metadata.name.
   displayName: z.string().optional(),
+
+  // Accent color for UI identification (hex). Falls back to a name-derived color.
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .optional(),
 
   // Git workspace — cloned by all runs and board workers for this project.
   source: SourceSchema.optional(),
@@ -1227,6 +1264,16 @@ export type ProjectSpec = z.infer<typeof ProjectSpecSchema>;
 // Project status — summary only; full task state lives in Task CRs.
 export const ProjectStatusSchema = z.object({
   board: BoardStatusSchema.optional(),
+  // Operator-owned reconcile outcome for this Project's code-server/memory-service
+  // resources. The operator owns this key; the manager owns `board`. Neither
+  // side may clobber the other's key — status patches must be scoped merges.
+  reconcile: z
+    .object({
+      state: z.enum(['Ready', 'Error']),
+      message: z.string().max(2048).optional(),
+      observedGeneration: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
 });
 
 export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
@@ -1730,11 +1777,6 @@ export const TaskStatusSchema = z
     lastFailureReason: z.string().max(4096).optional(),
     lastFailureDuration: z.number().optional(),
 
-    // Legacy column field — kept for backwards compatibility, never written by new code.
-    column: z
-      .enum(['backlog', 'ready', 'in-progress', 'review', 'rework', 'done', 'blocked'])
-      .optional(),
-
     // Worker execution state — set when phase is scheduled or beyond.
     worker: WorkerStatusSchema.optional(),
 
@@ -1832,7 +1874,15 @@ export const DISPATCHER_CONTAINER = 'dispatcher';
 export const GIT_CLONE_CONTAINER = 'workspace-init';
 export const CODE_SERVER_CONTAINER = 'code-server';
 export const CODE_SERVER_PORT = 8080;
-export const CODE_SERVER_DEFAULT_IMAGE = 'ghcr.io/erkkaha/percussionist/code-server:latest';
+/**
+ * Image for maintenance/exec pods when `Project.spec.exec.image` is unset.
+ *
+ * Also the image backend-generated git scripts must pin explicitly: a project
+ * may override `spec.exec.image` with something that has no git at all (plain
+ * `ubuntu:24.04` does not), which would otherwise make every git command in
+ * those scripts silently fail.
+ */
+export const DEFAULT_EXEC_IMAGE = 'alpine/git:v2.54.0';
 
 // ---------------------------------------------------------------------------
 // Config resolution helpers.
@@ -1901,4 +1951,48 @@ export function resolveRunConfig(
     gitCache: runOverrides?.gitCache ?? project.gitCache,
     packages: runOverrides?.packages ?? project.runner?.packages,
   };
+}
+
+// ---------------------------------------------------------------------------
+// GitHub URL helpers.
+//
+// Shared between manager-controller (PR-mode integration polling) and the web
+// server (building PR links in the board payload) so the two never drift.
+
+export interface ParsedGitHubRepo {
+  owner: string;
+  repo: string;
+}
+
+/**
+ * Parse a GitHub repository URL into {owner, repo}. Supports both SSH
+ * (`git@github.com:owner/repo.git`) and HTTPS (`https://github.com/owner/repo.git`)
+ * forms. Returns undefined for non-GitHub URLs or unparseable inputs.
+ */
+export function parseGitHubUrl(url: string): ParsedGitHubRepo | undefined {
+  if (!url || typeof url !== 'string') return undefined;
+
+  // SSH form: git@github.com:owner/repo.git
+  const sshMatch = url.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (sshMatch?.[1] && sshMatch[2]) {
+    return { owner: sshMatch[1], repo: sshMatch[2] };
+  }
+
+  // HTTPS form: https://github.com/owner/repo.git[.extra]
+  const httpsMatch = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/.*)?$/);
+  if (httpsMatch?.[1] && httpsMatch[2]) {
+    return { owner: httpsMatch[1], repo: httpsMatch[2] };
+  }
+
+  return undefined;
+}
+
+/**
+ * Build the GitHub web URL for a repository from its git remote URL (SSH or
+ * HTTPS). Returns undefined for non-GitHub or unparseable URLs.
+ */
+export function buildRepoWebUrl(url: string): string | undefined {
+  const parsed = parseGitHubUrl(url);
+  if (!parsed) return undefined;
+  return `https://github.com/${parsed.owner}/${parsed.repo}`;
 }

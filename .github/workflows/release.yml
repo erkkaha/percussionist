@@ -45,7 +45,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.3.12"
+          bun-version: "1.3.14"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --config.strict-dep-builds=false
@@ -118,6 +118,13 @@ jobs:
               fs.writeFileSync('$pkg', JSON.stringify(pkg, null, 2) + '\n');
             "
           done
+
+          # Pin the GitOps bootstrap to the version being released, so a fresh
+          # checkout of the tag installs manifests matching its images.
+          sed -i -E "s|^(    tag: )v[0-9]+\.[0-9]+\.[0-9]+.*\$|\1${VERSION}|" \
+            k8s/flux/percussionist.yaml
+          grep -q "    tag: ${VERSION}$" k8s/flux/percussionist.yaml \
+            || { echo "failed to pin k8s/flux/percussionist.yaml to ${VERSION}" >&2; exit 1; }
 
       - name: Commit and tag
         run: |

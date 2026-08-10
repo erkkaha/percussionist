@@ -112,7 +112,7 @@ function seedConfigMap(runName: string, sessionID: string, messages: unknown[]) 
     name: `${runName}-session`,
     namespace: 'percussionist',
     data: {
-      [`sessions.json`]: JSON.stringify([sessionID]),
+      'sessions.json': JSON.stringify([sessionID]),
       [`messages-${sessionID}.json`]: JSON.stringify(messages),
     },
   });
@@ -168,8 +168,8 @@ describe('summarizeSession — memory-write failure', () => {
     const cmKey = `percussionist/plan-worker-1-session`;
     const cm = mockConfigMaps.get(cmKey);
     expect(cm).toBeDefined();
-    expect(cm!.data?.['summary-sess-abc123']).toBeDefined();
-    expect(typeof cm!.data!['summary-sess-abc123']).toBe('string');
+    expect(cm?.data?.['summary-sess-abc123']).toBeDefined();
+    expect(typeof cm?.data?.['summary-sess-abc123']).toBe('string');
   });
 
   it('logs a warning containing project/run/session/error when storeMemory fails', async () => {
@@ -233,7 +233,7 @@ describe('summarizeSession — memory-write failure', () => {
       name: 'plan-worker-1-session',
       namespace: 'percussionist',
       data: {
-        [`summary-sess-exists`]: 'existing summary content',
+        'summary-sess-exists': 'existing summary content',
       },
     });
 
@@ -290,7 +290,7 @@ describe('summarizeSession — memory-write failure', () => {
     // Should still succeed and log warning with error details.
     const cmKey = `percussionist/timeout-worker-session`;
     const cm = mockConfigMaps.get(cmKey);
-    expect(cm!.data?.['summary-sess-timeout1']).toBeDefined();
+    expect(cm?.data?.['summary-sess-timeout1']).toBeDefined();
 
     // The warning should contain the project/run/session identifiers and error message.
     const memoryWarning = errorLogs.find(

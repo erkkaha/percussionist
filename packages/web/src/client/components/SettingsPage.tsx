@@ -50,7 +50,7 @@ export default function SettingsPage() {
     queryFn: fetchSettings,
   });
 
-  const { data: opencodeConfig, isLoading: configLoading } = useQuery({
+  const { data: opencodeConfig } = useQuery({
     queryKey: ['opencode-config'],
     queryFn: fetchOpencodeConfig,
   });
@@ -230,7 +230,7 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
     | { name?: string }
     | undefined;
   const [authSecretName, setAuthSecretName] = useState(authSecretObj?.name ?? '');
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [_showCreateModal, _setShowCreateModal] = useState(false);
 
   // Pre-populate from cluster config
   const llmSecretData: Record<string, string> = {};
@@ -569,6 +569,9 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
     (runner.resources as Record<string, Record<string, string>> | undefined)?.limits?.memory ?? '',
   );
   const [runTTLDays, setRunTTLDays] = useState(String((spec.runTTLDays as number) ?? 7));
+  const [codeServerUrlTemplate, setCodeServerUrlTemplate] = useState(
+    (spec.codeServerUrlTemplate as string | undefined) ?? '',
+  );
 
   return (
     <Card>
@@ -653,6 +656,23 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
             </p>
           </div>
         </div>
+        <div className="border-t border-border pt-4">
+          <p className="text-sm font-medium mb-2">Code-server</p>
+          <div>
+            <label className="text-xs text-text-dim block mb-1">
+              IDE URL template ({'{project}'} placeholder)
+            </label>
+            <Input
+              value={codeServerUrlTemplate}
+              onChange={(e) => setCodeServerUrlTemplate(e.target.value)}
+              placeholder="https://ide-{project}.example.com"
+            />
+            <p className="text-xs text-text-dim mt-1">
+              Where the browser reaches per-project code-server ingresses. Leave empty to derive
+              from the dashboard hostname (ide-{'{project}'}.&lt;dashboard domain&gt;).
+            </p>
+          </div>
+        </div>
       </CardContent>
       <CardFooter className="sm:flex-row flex-col gap-2">
         <Button
@@ -671,6 +691,7 @@ function RunnerPanel({ spec, onSave, saving }: RunnerPanelProps) {
             onSave({
               ...spec,
               runTTLDays: parseInt(runTTLDays, 10) || 7,
+              codeServerUrlTemplate: codeServerUrlTemplate.trim() || undefined,
               runner: {
                 image: image.trim() || undefined,
                 timeoutSeconds: parseInt(timeoutSeconds, 10) || undefined,
@@ -784,6 +805,18 @@ function UpdatesPanel() {
           </p>
         )}
 
+        {upgradeMutation.data?.errors?.map((err) => (
+          <p key={err} className="text-phase-failed text-sm">
+            {err}
+          </p>
+        ))}
+
+        {upgradeMutation.data?.warnings?.map((warning) => (
+          <p key={warning} className="text-text-dim text-sm">
+            {warning}
+          </p>
+        ))}
+
         {(upgradeMutation.isPending || (upgradeMutation.isSuccess && !upgradeComplete)) && (
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2 text-sm text-text-dim">
@@ -820,6 +853,43 @@ function UpdatesPanel() {
               ))}
             </div>
 
+            {/* How an upgrade will actually be delivered. Worth stating up
+                front: the two modes differ in whether CRDs come along, which
+                is invisible until a release changes a schema. */}
+            <div className="flex flex-col gap-1 text-sm">
+              <span className="text-text-dim">
+                {data.mode === 'gitops' ? (
+                  <>
+                    Managed by Flux — upgrades apply CRDs and manifests together
+                    {data.source?.tag && (
+                      <>
+                        {' '}
+                        (pinned to <span className="font-mono">{data.source.tag}</span>)
+                      </>
+                    )}
+                    .
+                  </>
+                ) : (
+                  <>
+                    Upgrades patch container images only — CRDs are not included. Run{' '}
+                    <span className="font-mono">beatctl deploy --gitops</span> to have Flux manage
+                    them.
+                  </>
+                )}
+              </span>
+              {data.source?.suspended && (
+                <span className="text-phase-failed">
+                  Flux source is suspended — upgrades will not apply until it is resumed.
+                </span>
+              )}
+              {data.source?.semverRange && (
+                <span className="text-text-dim">
+                  Source tracks <span className="font-mono">{data.source.semverRange}</span> —
+                  upgrading pins it to an exact tag.
+                </span>
+              )}
+            </div>
+
             <div className="border-t border-border pt-4">
               {data.updateAvailable && data.latest ? (
                 <div className="flex flex-col gap-1">
@@ -839,7 +909,9 @@ function UpdatesPanel() {
                     <Button
                       variant="default"
                       size="sm"
-                      onClick={() => upgradeMutation.mutate(data.latest!)}
+                      onClick={() => {
+                        if (data.latest) upgradeMutation.mutate(data.latest);
+                      }}
                       disabled={upgradeMutation.isPending}
                     >
                       {upgradeMutation.isPending ? 'Upgrading...' : 'Upgrade'}

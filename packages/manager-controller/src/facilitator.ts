@@ -1,9 +1,10 @@
-// facilitator.ts — builds and parses facilitator agent runs.
+// facilitator.ts — builds facilitator agent runs.
 //
-// When a worker task fails, the manager spawns a facilitator run that analyzes
-// the failure and recommends an escalation action. When a worker task succeeds,
-// the manager spawns a success-review facilitator that approves the result or
-// redirects it to another agent.
+// When a worker task succeeds, the manager spawns a success-review facilitator
+// that approves the result or redirects it to another agent. Approved PLAN
+// tasks also spawn a build-task-generator facilitator that breaks the plan into
+// BUILD tasks. Failed worker runs are handled inline by the reconciler
+// (decideFailed → awaiting-human/failed) — no facilitator run is spawned.
 
 import {
   API_GROUP_VERSION,
@@ -19,17 +20,14 @@ import {
 } from '@percussionist/api';
 import {
   core,
-  fetchSessionMessages,
-  getClusterAgent,
   getClusterSettings,
   listClusterAgents,
   readPlanFromConfigMap,
-  readPodLog,
   validateModelAuth,
 } from '@percussionist/kube';
 import { resolveParentBranch, resolveTaskBranch } from './branch-resolver.js';
 import { getErrorStatusCode, isKubeNotFoundError } from './kube-errors.js';
-import { truncateK8sName } from './worker-builder.js';
+import { resolveAgentModel, truncateK8sName } from './worker-builder.js';
 
 const FACILITATION_TIMEOUT_SECONDS = 4 * 60 * 60; // 4 hours
 
@@ -105,83 +103,6 @@ async function resolveEligibleBuildAgents(
   );
 
   return roster.filter((name) => name !== facilitatorAgentName && eligibleFromLive.has(name));
-}
-
-// Build the facilitator Run spec for a FAILED worker run.
-export async function buildFacilitationRun(
-  project: Project,
-  task: Task,
-  failedRunName: string,
-  failedRunStatus: RunStatus,
-  sessionSummary: string,
-  runName: string,
-  facilitatorAgentName: string,
-  allTasks: Task[] = [],
-): Promise<Run> {
-  const clusterSettings = await getOptionalClusterSettings('buildFacilitationRun');
-  const resolved = resolveRunConfig(project.spec, undefined, undefined, {
-    runner: {
-      image: clusterSettings?.spec?.runner?.image,
-      resources: clusterSettings?.spec?.runner?.resources,
-    },
-    secrets: clusterSettings?.spec?.secrets,
-  });
-
-  const facilitationSpec: FacilitationSpec = {
-    targetRunName: failedRunName,
-    targetTaskId: task.metadata.name,
-    failureReason: failedRunStatus.message ?? 'Unknown failure',
-    sessionSummary,
-    successReview: false,
-  };
-
-  const alternativeAgents = (project.spec.agents ?? [])
-    .map((a) => a.name)
-    .filter((n) => n !== facilitatorAgentName);
-
-  const promptLines = [
-    `You are a facilitator agent that analyzes failed worker runs and recommends actions.`,
-    '',
-    `TASK: ${task.metadata.name} — ${task.spec.title}`,
-    `WORKER RUN: ${failedRunName}`,
-    `FAILURE: ${facilitationSpec.failureReason}`,
-    '',
-    `RECENT SESSION MESSAGES:`,
-    sessionSummary || '(none available)',
-    '',
-    ...(alternativeAgents.length > 0
-      ? [
-          `AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(', ')}`,
-          `NOTE: If the failure is due to the specific worker agent refusing or being incapable, `,
-          `recommend retry_alternative with one of the available alternative agents.`,
-          `Only recommend skip if the task itself is inherently impossible or harmful.`,
-          '',
-        ]
-      : []),
-    project.spec.runner?.packages?.length
-      ? `RUNNER PACKAGES: ${project.spec.runner.packages.join(', ')}`
-      : 'RUNNER PACKAGES: (base image only)',
-    '',
-    `Analyze the failure above and output ONLY valid JSON (no markdown, no explanation):`,
-    JSON.stringify({
-      diagnosis: '(root cause in 1-2 sentences)',
-      recommendedAction: '(retry_same | retry_alternative | skip)',
-      alternativeAgent:
-        '(required if recommendedAction is retry_alternative — must be one of the AVAILABLE ALTERNATIVE AGENTS listed above)',
-      suggestion: '(optional — fix suggestion for next attempt)',
-    }),
-  ].join('\n');
-
-  return await buildFacilitatorRun(
-    project,
-    task,
-    runName,
-    facilitationSpec,
-    promptLines,
-    resolved,
-    facilitatorAgentName,
-    allTasks,
-  );
 }
 
 // Build the facilitator Run spec for generating BUILD tasks from an approved PLAN task.
@@ -302,14 +223,6 @@ export async function buildBuildTaskGeneratorRun(
     `- Do NOT output JSON or prose — just call the tools.`,
   ].join('\n');
 
-  // Validate auth for the resolved model.
-  const authValidation = validateModelAuth(resolved.model, resolved.secrets);
-  if (!authValidation.ok) {
-    throw new Error(
-      `Auth validation failed for buildgen run (task="${planTask.metadata.name}"): ${authValidation.error}`,
-    );
-  }
-
   return await buildFacilitatorRun(
     project,
     planTask,
@@ -320,6 +233,58 @@ export async function buildBuildTaskGeneratorRun(
     facilitatorAgentName,
     allTasks,
   );
+}
+
+/**
+ * Where a reviewer's output is supposed to go.
+ *
+ * Without this block the prompt only ever named `approved` and `diagnosis`, so a
+ * reviewer learned about complete_review's `findings` array from the tool schema
+ * at best and could not construct a matching `context` at all — line-specific
+ * review points came back as unanchored prose in `feedback`, which the board
+ * never renders next to the code. It also had no route for issues that are real
+ * but not about this diff, so those were smuggled into the verdict prose too.
+ *
+ * The diffFingerprint recipe mirrors `computeDiffFingerprint` and the git
+ * invocation in packages/web/src/server/routes/task-diff.ts. Keep them in step:
+ * if the board's diff command changes, a reviewer following these instructions
+ * computes a fingerprint that no longer matches and every finding renders stale.
+ */
+export function reviewOutputPromptLines(baseBranch: string, branch: string): string[] {
+  return [
+    `REVIEW FINDINGS — inline comments on the diff:`,
+    `complete_review takes an optional findings array (max 25) alongside the verdict. Anything you`,
+    `want to say about a specific line belongs there, not in feedback: findings are anchored to a`,
+    `path and line and render inline in the board's diff view, while feedback prose is not anchored`,
+    `and is easily missed. Emit findings whether you approve or request changes — an approval`,
+    `carrying medium/low findings is the normal outcome for work that is correct but leaves a`,
+    `caveat behind. Keep feedback for the overall verdict narrative.`,
+    '',
+    `Each finding needs: id (unique within this call), severity (critical|high|medium|low|info),`,
+    `title (<=160 chars), comment (<=2000 chars), 1-3 anchors, and a context object.`,
+    `An anchor is { path, side: "new" | "old", line, endLine?, hunkHeader? } — use side "new" and`,
+    `post-image line numbers unless you are pointing at a deleted line.`,
+    '',
+    `Every finding in one call must carry the SAME context object, computed from git in your`,
+    `workspace (findings whose context disagrees with the first one are dropped):`,
+    `  FORK_SHA   = git merge-base ${baseBranch} ${branch}`,
+    `  BASE_SHA   = git rev-parse ${baseBranch}^{commit}`,
+    `  HEAD_SHA   = git rev-parse ${branch}^{commit}`,
+    `  DIFF       = git diff --no-color --find-renames --binary $FORK_SHA..${branch} --`,
+    `  diffFingerprint = sha256 of the string "$FORK_SHA\\n$HEAD_SHA\\n" followed by DIFF with`,
+    `                    leading and trailing whitespace stripped (python3/node, not shell echo).`,
+    `Prefer origin/<branch> for either ref when it resolves — the board computes its fingerprint`,
+    `against the pushed refs. A fingerprint that disagrees with the board's only marks the finding`,
+    `stale, it is still stored and read, so never drop a finding because you are unsure of it.`,
+    '',
+    `UNRELATED ISSUES — problems that are not about this diff:`,
+    `A pre-existing bug you happened to notice, or a broken toolchain unrelated to this work, is`,
+    `not a review finding. Report each one once with the percussionist_dispatcher_report_unrelated_issue`,
+    `tool (title, description, severity, category, optional filePath/snippet) and carry on with the`,
+    `review — it lands in the project's issue inbox for triage. Do not smuggle it into the verdict`,
+    `prose as a caveat, and do not let it change approve/request_changes for this task.`,
+    '',
+  ];
 }
 
 // Build a review Run spec without session summary.
@@ -345,6 +310,15 @@ export async function buildReviewRun(
 
   const completionMessage = succeededRunStatus.message ?? 'session completed';
   const branch = branchName ?? `feat/${task.metadata.name}`;
+  // The board's diff view resolves the review base exactly this way
+  // (packages/web/src/server/routes/task-diff.ts). The reviewer has to diff
+  // against the same base, or the diffFingerprint it computes for its findings
+  // will not match the board's and every finding renders as stale.
+  const baseBranch =
+    task.status?.worker?.mergeIntoBranch ??
+    task.status?.worker?.parentBranch ??
+    project.spec.source?.git?.ref ??
+    'main';
   const taskTypeLabel = task.spec.type ? `TASK TYPE: ${task.spec.type}` : '';
   const isBuildTask = task.spec.type === 'BUILD';
   const isPlanTask = task.spec.type === 'PLAN';
@@ -362,6 +336,7 @@ export async function buildReviewRun(
     `TASK DESCRIPTION: ${task.spec.description ?? '(none)'}`,
     `WORKER RUN: ${succeededRunName}`,
     `BRANCH: ${branch}`,
+    `BASE BRANCH: ${baseBranch}`,
     `COMPLETION MESSAGE: ${completionMessage}`,
     '',
     `SESSION DATA: Use the percussionist_dispatcher_read_session MCP tool (runName="${succeededRunName}") to read the full session.`,
@@ -385,8 +360,7 @@ export async function buildReviewRun(
             `This is a PLAN task. Do not review code implementation quality.`,
             `Review the plan artifact at ${planPath}.`,
             `Approve only if the plan file exists and contains enough context to generate BUILD tasks: scope, assumptions, risks, acceptance criteria, and a concrete implementation breakdown.`,
-            `Use request_changes if the plan artifact is missing, vague, or lacks enough context for builders.`,
-            `Use escalate only for cases that require human judgment beyond improving the plan artifact.`,
+            `If the plan artifact is missing, vague, or lacks enough context for builders, use request_changes and explain exactly what the plan must add; there is no 'escalate' verdict — substantive human judgment is requested through the task's awaiting-human flow after rework attempts.`,
             '',
           ]
         : [
@@ -421,6 +395,7 @@ export async function buildReviewRun(
     ...(alternativeAgents.length > 0
       ? [`AVAILABLE ALTERNATIVE AGENTS: ${alternativeAgents.join(', ')}`, '']
       : []),
+    ...reviewOutputPromptLines(baseBranch, branch),
     `Call the percussionist_dispatcher_complete_review MCP tool to submit your review verdict.`,
     `Use approved: true to approve, or approved: false to request changes.`,
   ].join('\n');
@@ -432,14 +407,6 @@ export async function buildReviewRun(
     sessionSummary: '',
     successReview: true,
   };
-
-  // Validate auth for the resolved model.
-  const authValidation = validateModelAuth(resolved.model, resolved.secrets);
-  if (!authValidation.ok) {
-    throw new Error(
-      `Auth validation failed for review run (task="${task.metadata.name}"): ${authValidation.error}`,
-    );
-  }
 
   return await buildFacilitatorRun(
     project,
@@ -464,14 +431,20 @@ async function buildFacilitatorRun(
   facilitatorAgentName: string,
   allTasks: Task[] = [],
 ): Promise<Run> {
-  // Resolve agent-level model override, same as buildWorkerRun does.
-  try {
-    const agent = await getClusterAgent(facilitatorAgentName);
-    if (agent.spec.model) {
-      resolved.model = agent.spec.model;
-    }
-  } catch {
-    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
+  // Per-agent model resolution, same as buildWorkerRun:
+  // project roster model → ClusterAgent model → project/cluster default.
+  const agentModel = await resolveAgentModel(project, facilitatorAgentName);
+  if (agentModel) {
+    resolved.model = agentModel;
+  }
+
+  // Validate auth against the model the run will actually use — after the
+  // per-agent override, not before it.
+  const authValidation = validateModelAuth(resolved.model, resolved.secrets);
+  if (!authValidation.ok) {
+    throw new Error(
+      `Auth validation failed for facilitator run (task="${task.metadata.name}", agent="${facilitatorAgentName}"): ${authValidation.error}`,
+    );
   }
   const source = resolved.source
     ? { ...resolved.source, ...(resolved.source.git ? { git: { ...resolved.source.git } } : {}) }
@@ -539,124 +512,4 @@ async function buildFacilitatorRun(
       ...(resolved.injectFiles?.length ? { injectFiles: resolved.injectFiles } : {}),
     },
   };
-}
-
-// Parse the final messages from a facilitation run to extract the recommendation.
-export async function parseFacilitationResult(
-  runName: string,
-  ns: string,
-  serviceName?: string,
-  sessionID?: string,
-): Promise<{
-  diagnosis: string;
-  recommendedAction:
-    | 'retry_same'
-    | 'retry_alternative'
-    | 'skip'
-    | 'approve'
-    | 'request_changes'
-    | 'escalate';
-  alternativeAgent?: string;
-  suggestion?: string;
-} | null> {
-  // Primary: try the session ConfigMap snapshot saved by the dispatcher.
-  // This works even after the pod has exited.
-  try {
-    const cm = await core().readNamespacedConfigMap({
-      name: `${runName}-session`,
-      namespace: ns,
-    });
-    const data = cm.data ?? {};
-    for (const [key, value] of Object.entries(data)) {
-      if (!key.startsWith('messages-')) continue;
-      const messages: Array<{
-        info: { role: string };
-        parts: Array<{ type: string; text?: string }>;
-      }> = JSON.parse(value);
-      // Walk messages in reverse to find the last assistant text.
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i];
-        if (msg?.info.role !== 'assistant') continue;
-        for (const part of msg.parts) {
-          if (part.type === 'text' && part.text) {
-            const result = extractFacilitationJson(part.text);
-            if (result) return result;
-          }
-        }
-      }
-    }
-  } catch {
-    // ConfigMap not yet available — fall through to live API.
-  }
-
-  // Fallback: live OpenCode API (works while pod is still running).
-  let runStatus: unknown = null;
-  if (serviceName && sessionID) {
-    try {
-      runStatus = await fetchSessionMessages(serviceName, sessionID, ns);
-    } catch {
-      runStatus = null;
-    }
-  }
-  if (runStatus && typeof runStatus === 'object' && 'messages' in runStatus) {
-    const messages = (
-      runStatus.messages as Array<{
-        role: string;
-        content: string;
-      }>
-    ).filter((m) => m.role === 'assistant');
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
-      if (!message) continue;
-      const result = extractFacilitationJson(message.content);
-      if (result) return result;
-    }
-  }
-
-  // Last resort: pod log.
-  try {
-    const logs = await readPodLog(runName, 'opencode', undefined, ns);
-    const result = extractFacilitationJson(logs);
-    if (result) return result;
-  } catch {
-    // Ignore
-  }
-
-  return null;
-}
-
-// Extract a JSON object from a string that may contain surrounding text.
-function extractFacilitationJson(text: string) {
-  // Find JSON object in the text
-  const jsonMatch = text.match(/\{[^{}]*"diagnosis"[^{}]*"recommendedAction"[^{}]*\}/s);
-  if (!jsonMatch) return null;
-
-  try {
-    const parsed = JSON.parse(jsonMatch[0]);
-    const action = parsed.recommendedAction as string;
-    if (
-      action === 'retry_same' ||
-      action === 'retry_alternative' ||
-      action === 'skip' ||
-      action === 'approve' ||
-      action === 'request_changes' ||
-      action === 'escalate'
-    ) {
-      return {
-        diagnosis: parsed.diagnosis ?? '',
-        recommendedAction: action as
-          | 'retry_same'
-          | 'retry_alternative'
-          | 'skip'
-          | 'approve'
-          | 'request_changes'
-          | 'escalate',
-        alternativeAgent: parsed.alternativeAgent,
-        suggestion: parsed.suggestion,
-      };
-    }
-  } catch {
-    // Invalid JSON
-  }
-  return null;
 }

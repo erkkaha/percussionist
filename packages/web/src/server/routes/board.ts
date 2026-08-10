@@ -13,7 +13,9 @@
 
 import { randomBytes } from 'node:crypto';
 import {
+  buildRepoWebUrl,
   computeBoardColumn,
+  type RunPhase,
   type Task,
   type TaskPhase,
   type TaskSpec,
@@ -30,6 +32,7 @@ import {
   deleteTask,
   getProject,
   getTask,
+  listRuns,
   listTasks,
   NAMESPACE,
   patchProjectSpec,
@@ -37,6 +40,7 @@ import {
   patchTaskStatus,
   validateAgentTaskCapability,
 } from '../kube.js';
+import { resolveIntegrationMode } from '../lib/integration-mode.js';
 import { isKubeNotFound } from '../lib/kube-errors.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
@@ -103,12 +107,59 @@ export async function appendTaskEvent(
   }
 }
 
+/**
+ * Resolve a Task CR scoped to its project's namespace, verifying it actually
+ * belongs to the project.
+ *
+ * Task action routes (approve, request-changes, retry-review, answer, ...)
+ * previously called getTask(taskName) with the default namespace and never
+ * verified task.spec.projectRef. That broke tasks in non-default namespaces
+ * (the default-ns lookup 404s) and — worse — when a task with the same name
+ * existed in the default namespace, the annotation was patched on the wrong
+ * task and appendTaskEvent recorded the event under the URL project,
+ * corrupting the activity feed.
+ *
+ * Resolves the namespace from the project (project.metadata.namespace ??
+ * NAMESPACE, same as the delete/move routes) and cross-checks both
+ * task.spec.projectRef (required by TaskSpecSchema, authoritative) and the
+ * percussionist.dev/project label before any patch/annotation/event write.
+ * Throws a 404-shaped error (mapped by the route's existing errStatus/errMsg
+ * handling) when the task doesn't belong to the project.
+ */
+async function getProjectTask(
+  projectName: string,
+  taskName: string,
+): Promise<{ task: Task; ns: string }> {
+  const project = await getProject(projectName);
+  const ns = project.metadata.namespace ?? NAMESPACE;
+  const task = await getTask(taskName, ns);
+  const projectRef = task.spec.projectRef;
+  const labelProject = task.metadata.labels?.['percussionist.dev/project'];
+  if (projectRef !== projectName || (labelProject !== undefined && labelProject !== projectName)) {
+    throw Object.assign(new Error('Task not found in project'), { statusCode: 404 });
+  }
+  return { task, ns };
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/projects/:project/board
 board.get('/:project/board', auth(), async (c) => {
   const name = c.req.param('project');
   try {
     const [project, tasks] = await Promise.all([getProject(name), listTasks(name)]);
+    const ns = project.metadata.namespace ?? NAMESPACE;
+    // Build a name → phase map for the project's runs. A task whose worker run
+    // is parked on a human (WaitingForInput) must be distinguishable from a
+    // genuinely failed one — worker.status alone can't tell them apart. This is
+    // a server-computed view field on the board response, not a Task status field.
+    const runs = await listRuns(ns, undefined, `percussionist.dev/project=${name}`);
+    const runPhaseMap = new Map<string, RunPhase>();
+    const runMessageMap = new Map<string, string>();
+    for (const run of runs) {
+      if (!run.metadata.name || !run.status?.phase) continue;
+      runPhaseMap.set(run.metadata.name, run.status.phase);
+      if (run.status.message) runMessageMap.set(run.metadata.name, run.status.message);
+    }
     const tasksByName = new Map(tasks.map((task) => [task.metadata.name, task]));
     const titleCounts = new Map<string, number>();
     for (const task of tasks) {
@@ -175,10 +226,16 @@ board.get('/:project/board', auth(), async (c) => {
       };
 
       // Attach child progress if available.
+      const workerRunName = task.status?.worker?.runName;
       const taskWithProgress = {
         ...task,
         childProgress: childProgressMap.get(task.metadata.name),
         displayRefs,
+        // Worker run phase/message (e.g. WaitingForInput) — lets the client tell
+        // "failed" from "parked on a human". Absent when the task has no run or
+        // the run isn't in the project's run list (JSON.stringify drops undefined).
+        workerRunPhase: workerRunName ? runPhaseMap.get(workerRunName) : undefined,
+        workerRunMessage: workerRunName ? runMessageMap.get(workerRunName) : undefined,
       };
       columns[col]?.push(taskWithProgress);
     }
@@ -197,6 +254,11 @@ board.get('/:project/board', auth(), async (c) => {
       maxParallel: project.spec.maxParallel ?? 2,
       agents: project.spec.agents ?? [],
       phase: project.spec.phase ?? 'Active',
+      codeServer: project.spec.codeServer,
+      displayName: project.spec.displayName,
+      color: project.spec.color,
+      repoWebUrl: buildRepoWebUrl(project.spec.source?.git?.url ?? ''),
+      integrationMode: resolveIntegrationMode(project),
     };
 
     const authResult = validateModelAuth(project.spec.model, project.spec.secrets);
@@ -408,11 +470,16 @@ board.post('/:project/board/tasks/:taskName/move', adminAuth(), async (c) => {
     // When resetting to backlog/pending, increment retryCount so the
     // reconciler generates a new unique run name (workerRunName hashes
     // retryCount into the name), preserving the old failed Run and its history.
+    // A task that never ran (an idea) has no worker status, and
+    // WorkerStatusSchema requires `status` — patching a bare { retryCount }
+    // would fail validation, so leave worker untouched in that case.
     const resetTargets = ['ready', 'pending', 'backlog'];
     if (resetTargets.includes(column)) {
       const task = await getTask(taskName, ns);
-      const retryCount = (task.status?.worker?.retryCount ?? 0) + 1;
-      patch.worker = { ...task.status?.worker, retryCount };
+      const worker = task.status?.worker;
+      if (worker?.status) {
+        patch.worker = { ...worker, retryCount: (worker.retryCount ?? 0) + 1 };
+      }
     }
 
     const parsedPatch = TaskStatusSchema.partial().safeParse(patch);
@@ -442,18 +509,22 @@ board.post('/:project/board/tasks/:taskName/approve', adminAuth(), async (c) => 
   const taskName = c.req.param('taskName');
   try {
     // Write approval as Task annotation (new format).
-    const task = await getTask(taskName);
+    const { task, ns } = await getProjectTask(name, taskName);
     const currentAnnotations = task.metadata.annotations ?? {};
-    await patchTask(taskName, {
-      metadata: {
-        ...task.metadata,
-        annotations: {
-          ...currentAnnotations,
-          'percussionist.dev/action-approved': 'true',
-          'percussionist.dev/action-request-changes': 'false',
+    await patchTask(
+      taskName,
+      {
+        metadata: {
+          ...task.metadata,
+          annotations: {
+            ...currentAnnotations,
+            'percussionist.dev/action-approved': 'true',
+            'percussionist.dev/action-request-changes': 'false',
+          },
         },
       },
-    });
+      ns,
+    );
     await appendTaskEvent(name, taskName, 'unknown', 'approved', {});
     return c.json({ success: true });
   } catch (e) {
@@ -480,18 +551,22 @@ board.post('/:project/board/tasks/:taskName/request-changes', adminAuth(), async
   }
   try {
     // Write rework as Task annotation (new format).
-    const task = await getTask(taskName);
+    const { task, ns } = await getProjectTask(name, taskName);
     const currentAnnotations = task.metadata.annotations ?? {};
-    await patchTask(taskName, {
-      metadata: {
-        ...task.metadata,
-        annotations: {
-          ...currentAnnotations,
-          'percussionist.dev/action-request-changes': 'true',
-          'percussionist.dev/action-rework-feedback': feedback.trim(),
+    await patchTask(
+      taskName,
+      {
+        metadata: {
+          ...task.metadata,
+          annotations: {
+            ...currentAnnotations,
+            'percussionist.dev/action-request-changes': 'true',
+            'percussionist.dev/action-rework-feedback': feedback.trim(),
+          },
         },
       },
-    });
+      ns,
+    );
     await appendTaskEvent(name, taskName, 'unknown', 'request-changes', {
       feedback: feedback.trim(),
     });
@@ -513,7 +588,7 @@ board.post('/:project/board/tasks/:taskName/retry-review', adminAuth(), async (c
   const projectName = c.req.param('project');
   const taskName = c.req.param('taskName');
   try {
-    const task = await getTask(taskName);
+    const { task, ns } = await getProjectTask(projectName, taskName);
     const phase = task.status?.phase;
     const reviewRunName = task.status?.worker?.reviewRunName;
     if (phase !== 'awaiting-human') {
@@ -522,7 +597,6 @@ board.post('/:project/board/tasks/:taskName/retry-review', adminAuth(), async (c
     if (!reviewRunName) {
       return c.json({ error: 'Task has no reviewRunName to retry' }, 400);
     }
-    const ns = task.metadata.namespace ?? NAMESPACE;
     const currentAiReworkCount = (task.status?.worker?.aiReworkCount ?? 0) + 1;
     const patch: Record<string, unknown> = {
       phase: 'succeeded',
@@ -551,33 +625,6 @@ board.post('/:project/board/tasks/:taskName/retry-review', adminAuth(), async (c
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/projects/:project/board/tasks/:taskName/abandon
-
-board.post('/:project/board/tasks/:taskName/abandon', adminAuth(), async (c) => {
-  const name = c.req.param('project');
-  const taskName = c.req.param('taskName');
-  try {
-    // Write abandon as Task annotation (new format).
-    const task = await getTask(taskName);
-    const currentAnnotations = task.metadata.annotations ?? {};
-    await patchTask(taskName, {
-      metadata: {
-        ...task.metadata,
-        annotations: {
-          ...currentAnnotations,
-          'percussionist.dev/action-abandon': 'true',
-        },
-      },
-    });
-    await appendTaskEvent(name, taskName, 'unknown', 'abandoned', {});
-    return c.json({ success: true });
-  } catch (e) {
-    const ke = e as KubeError;
-    return c.json({ error: errMsg(ke) }, errStatus(ke));
-  }
-});
-
-// ---------------------------------------------------------------------------
 // POST /api/projects/:project/board/tasks/:taskName/answer
 
 board.post('/:project/board/tasks/:taskName/answer', adminAuth(), async (c) => {
@@ -595,17 +642,21 @@ board.post('/:project/board/tasks/:taskName/answer', adminAuth(), async (c) => {
   }
   try {
     // Answer is written as a Task annotation (not Project).
-    const task = await getTask(taskName);
+    const { task, ns } = await getProjectTask(name, taskName);
     const currentAnnotations = task.metadata.annotations ?? {};
-    await patchTask(taskName, {
-      metadata: {
-        ...task.metadata,
-        annotations: {
-          ...currentAnnotations,
-          'percussionist.dev/action-answer': answer.trim(),
+    await patchTask(
+      taskName,
+      {
+        metadata: {
+          ...task.metadata,
+          annotations: {
+            ...currentAnnotations,
+            'percussionist.dev/action-answer': answer.trim(),
+          },
         },
       },
-    });
+      ns,
+    );
     await appendTaskEvent(name, taskName, 'PLAN', 'answered', { answer: answer.trim() });
     return c.json({ success: true });
   } catch (e) {

@@ -8,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bu
 import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import type { DiffFinding, Project, Task } from '@percussionist/api';
+import { DEFAULT_EXEC_IMAGE, type DiffFinding, type Project, type Task } from '@percussionist/api';
 import type { Hono } from 'hono';
 import * as kube from '../src/server/kube.js';
 
@@ -444,7 +444,7 @@ describe('GET /api/projects/:project/tasks/:taskName/diff', () => {
     getTaskSpy.mockResolvedValue(makeTask());
 
     let capturedCommand = '';
-    fetchSpy.mockImplementation((url: URL | string, init?: RequestInit) => {
+    fetchSpy.mockImplementation((_url: URL | string, init?: RequestInit) => {
       const body = JSON.parse(init?.body as string) as {
         params?: { arguments?: { command?: string } };
       };
@@ -459,5 +459,52 @@ describe('GET /api/projects/:project/tasks/:taskName/diff', () => {
     expect(capturedCommand).toContain('origin/$1^{commit}');
     expect(capturedCommand).toContain('BASE_REF=$(RESOLVE');
     expect(capturedCommand).toContain('HEAD_REF=$(RESOLVE');
+  });
+  // Regression: the exec pod used to inherit Project.spec.exec.image, so a
+  // project pinning a git-less image (plain ubuntu:24.04) made every git
+  // command fail quietly and the route answered 404 base_missing.
+  it('pins a git-capable exec image instead of inheriting the project image', async () => {
+    getTaskSpy.mockResolvedValue(makeTask());
+
+    let capturedArgs: { image?: string; skipSanitization?: boolean } = {};
+    fetchSpy.mockImplementation((_url: URL | string, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as {
+        params?: { arguments?: { image?: string; skipSanitization?: boolean } };
+      };
+      capturedArgs = body.params?.arguments ?? {};
+      return Promise.resolve(makeMcpResponse(makeGitOutput(SAMPLE_DIFF)));
+    });
+
+    const res = await getDiff();
+    expect(res.status).toBe(200);
+
+    expect(capturedArgs.image).toBe(DEFAULT_EXEC_IMAGE);
+    expect(capturedArgs.skipSanitization).toBe(true);
+  });
+
+  it('reports a git-less exec image as git_missing rather than a missing branch', async () => {
+    getTaskSpy.mockResolvedValue(makeTask());
+
+    let capturedCommand = '';
+    fetchSpy.mockImplementation((_url: URL | string, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as {
+        params?: { arguments?: { command?: string } };
+      };
+      capturedCommand = body.params?.arguments?.command ?? '';
+      return Promise.resolve(
+        makeMcpResponse('__PERCUSSIONIST_ERROR__ git_missing the exec image has no git'),
+      );
+    });
+
+    const res = await getDiff();
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { reason?: string };
+    expect(body.reason).toContain('git_missing');
+
+    // The guard has to run before any git command, or it never fires.
+    expect(capturedCommand).toContain('command -v git');
+    expect(capturedCommand.indexOf('command -v git')).toBeLessThan(
+      capturedCommand.indexOf('RESOLVE()'),
+    );
   });
 });

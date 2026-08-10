@@ -7,6 +7,7 @@ import {
   DEFAULT_RUNNER_ENGINE,
   DISPATCHER_CONTAINER,
   deriveEngine,
+  type GitSource,
   KIND_RUN,
   LABELS,
   MANAGED_BY,
@@ -46,21 +47,112 @@ import {
  * This avoids stale baselines caused by the mirror's refs/heads sync skipping
  * branches that have active worktree checkouts.
  */
-function parentBaselineResolve(git: { ref?: string; parentRef?: string }): string {
-  const ref = git.ref;
-  if (!ref) throw new Error('git.ref is required');
-  const parentRef = git.parentRef;
-  if (!parentRef) throw new Error('git.parentRef is required');
+function parentBaselineResolve(): string {
   return `  # Resolve parent branch baseline: prefer remote-tracking ref for freshness,
   # fall back to local ref if remote-tracking doesn't exist yet (first BUILD).
-  _PARENT_REMOTE_REF="refs/remotes/origin/${parentRef}"
-  _PARENT_BASE_REF="${parentRef}"
+  _PARENT_REMOTE_REF="refs/remotes/origin/$GIT_PARENT_REF"
+  _PARENT_BASE_REF="$GIT_PARENT_REF"
   if git -C "$MIRROR_DIR" rev-parse "$_PARENT_REMOTE_REF" >/dev/null 2>&1; then
     _PARENT_BASE_REF="$_PARENT_REMOTE_REF"
-    echo "[workspace-init] using remote-tracking ref $_PARENT_REMOTE_REF as parent baseline for ${ref}"
+    echo "[workspace-init] using remote-tracking ref $_PARENT_REMOTE_REF as parent baseline for $GIT_REF"
+  elif git -C "$MIRROR_DIR" rev-parse "refs/heads/$GIT_PARENT_REF" >/dev/null 2>&1; then
+    echo "[workspace-init] falling back to local ref $GIT_PARENT_REF as parent baseline for $GIT_REF"
   else
-    echo "[workspace-init] falling back to local ref ${parentRef} as parent baseline for ${ref}"
+    # Neither ref exists, so the worktree add below would fail on an unresolvable
+    # baseline — as a bare "git worktree add" fatal, i.e. exit 128 with nothing
+    # naming the missing branch. Diagnosing that took a mirror-by-mirror ref
+    # comparison; say it outright instead.
+    #
+    # The way this happens in practice: the mirror path is derived from
+    # source.git.url, so editing the URL (https -> ssh) points runs at a brand
+    # new mirror cloned from the remote. Any branch that only ever existed in the
+    # old mirror — because a push failed for want of credentials — is simply not
+    # there.
+    echo "[workspace-init] error: parent branch $GIT_PARENT_REF not found in mirror $MIRROR_DIR" >&2
+    echo "[workspace-init] looked for refs/remotes/origin/$GIT_PARENT_REF and refs/heads/$GIT_PARENT_REF" >&2
+    echo "[workspace-init] it is on neither the remote nor this mirror; if source.git.url changed, the branch may only exist in the mirror for the previous URL" >&2
+    exit 1
   fi`;
+}
+
+/**
+ * Re-sync the mirror's refs/heads/ from refs/remotes/origin/ so `git worktree
+ * add` can resolve branches that are not currently checked out in a worktree.
+ * Skipping HEAD avoids the symbolic-ref conflict that makes HEAD ambiguous.
+ * Prunes stale worktree metadata first so a removed worktree never blocks the
+ * ref sync. Shared verbatim by the worktreeReuse and freshWorktree modes.
+ */
+function renderRefSyncSnippet(): string[] {
+  return [
+    `  git -C "$MIRROR_DIR" worktree prune --expire=now 2>/dev/null || true`,
+    '  # Re-sync refs/heads from remotes/origin',
+    "  # Skip HEAD — it's a symbolic ref, not a real branch.",
+    '  for _REMOTE_REF in $(git -C "$MIRROR_DIR" for-each-ref --format=\'%(refname)\' refs/remotes/origin/ 2>/dev/null || true); do',
+    '    _BRANCH="${_REMOTE_REF#refs/remotes/origin/}"',
+    '    [ "$_BRANCH" = "HEAD" ] && continue',
+    '    if ! git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null | grep -qF "branch refs/heads/$_BRANCH"; then',
+    '      git -C "$MIRROR_DIR" update-ref "refs/heads/$_BRANCH" "$_REMOTE_REF" 2>/dev/null || true',
+    '    fi',
+    '  done',
+  ];
+}
+
+/**
+ * Reset the worktree to the tip of origin/<ref> so the run always starts from
+ * the latest committed code, skipping when the remote-tracking branch does not
+ * exist yet (e.g. a freshly created feature branch that has not been pushed).
+ * Rendered exactly once per script, after the worktree is in place, so every
+ * path (resume, force-add, normal-add, parent-baseline create) flows through
+ * it — except the exit-1 error path, which must not reset.
+ */
+function renderResetToRemoteTip(): string[] {
+  return [
+    `if git -C "$WORKTREE_DIR" rev-parse "origin/$GIT_REF" >/dev/null 2>&1; then`,
+    `  git -C "$WORKTREE_DIR" reset --hard "origin/$GIT_REF" && echo "[workspace-init] reset to origin/$GIT_REF"`,
+    `else`,
+    `  echo "[workspace-init] no remote tracking branch for $GIT_REF, skipping reset"`,
+    `fi`,
+  ];
+}
+
+/**
+ * Add (or force-add) the run's worktree on the mirror: force-add when the
+ * branch is already checked out elsewhere, normal-add otherwise, create from
+ * the resolved parent baseline when the branch does not exist yet, and error
+ * out (exit 1) when no parent baseline is available either. Shared verbatim by
+ * the worktreeReuse and freshWorktree modes — the caller supplies the
+ * mode-specific prologue.
+ */
+function renderAddWorktree(git: GitSource): string[] {
+  return git.ref
+    ? [
+        ...renderRefSyncSnippet(),
+        `  # Try normal add; if branch already checked out elsewhere (e.g. BUILD worktree during review),`,
+        `  # force-add instead — detaches old worktree from the branch but preserves its files on disk.`,
+        `  # Note: bare mirrors store branches as refs/heads/<name> — no origin/ prefix needed`,
+        `  _BRANCH_LINE="branch refs/heads/$GIT_REF"`,
+        `  if git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null | grep -qF "$_BRANCH_LINE"; then`,
+        `    echo "[workspace-init] branch $GIT_REF checked out elsewhere — force-adding worktree"`,
+        `    git -C "$MIRROR_DIR" worktree add --force "$WORKTREE_DIR" "$GIT_REF"`,
+        `    echo "[workspace-init] worktree force-added with branch $GIT_REF"`,
+        `  elif git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "$GIT_REF" 2>/dev/null; then`,
+        `    echo "[workspace-init] worktree added with branch $GIT_REF"`,
+        ...(git.parentRef
+          ? [
+              `  else`,
+              parentBaselineResolve(),
+              `    # Create new branch from resolved parent baseline`,
+              `    git -C "$MIRROR_DIR" worktree add -b "$GIT_REF" "$WORKTREE_DIR" "$_PARENT_BASE_REF"`,
+              `    echo "[workspace-init] created new branch $GIT_REF from $_PARENT_BASE_REF"`,
+            ]
+          : [
+              `  else`,
+              `    echo "[workspace-init] error: failed to add worktree with branch $GIT_REF"`,
+              `    exit 1`,
+            ]),
+        `  fi`,
+      ]
+    : [`  git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR"`];
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +440,22 @@ export function renderPod(
   // use it. This prevents man-in-the-middle attacks on git over SSH.
   const sshHostKeyVerification: SshHostKeyVerificationMode = git?.sshHostKeyVerification ?? 'no';
   const knownHostsSecret = git?.known_hostsSecret;
+  const verifyHostKeys =
+    sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new';
+
+  // known_hosts gets its own mount directory and must NOT live under
+  // /etc/git-ssh. That path is a read-only secret tmpfs, so a nested subPath
+  // mount at /etc/git-ssh/known_hosts fails at container creation — runc cannot
+  // create the target file inside a read-only volume, and the kubelet reports
+  // `error mounting ... not a directory` (exit 128 in workspace-init).
+  const knownHostsDir = '/etc/git-known-hosts';
+  const knownHostsPath = `${knownHostsDir}/known_hosts`;
+  const sshHostKeyOpts = verifyHostKeys
+    ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=${knownHostsPath}`
+    : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null';
+  const knownHostsVolumeMount = verifyHostKeys
+    ? [{ name: 'git-known-hosts', mountPath: knownHostsDir, readOnly: true }]
+    : [];
 
   const initContainers =
     git || localGit
@@ -378,10 +486,10 @@ export function renderPod(
                     '',
                     '# SSH key setup',
                     'if [ -f /etc/git-ssh/id ]; then',
-                    `  export GIT_SSH_COMMAND="ssh -i /etc/git-ssh/id -o IdentitiesOnly=yes${sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new' ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=/etc/git-ssh/known_hosts` : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'}"`,
+                    `  export GIT_SSH_COMMAND="ssh -i /etc/git-ssh/id -o IdentitiesOnly=yes${sshHostKeyOpts}"`,
                     '  echo "[workspace-init] using ssh key from secret"',
                     'else',
-                    `  export GIT_SSH_COMMAND="ssh${sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new' ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=/etc/git-ssh/known_hosts` : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'}"`,
+                    `  export GIT_SSH_COMMAND="ssh${sshHostKeyOpts}"`,
                     'fi',
                     '',
                     '# GitHub token',
@@ -413,8 +521,8 @@ export function renderPod(
                     '      fi',
                     '    done',
                     '  else',
-                    `    echo "[workspace-init] cloning mirror from ${git.url}"`,
-                    `    git clone --mirror "${git.url}" "$MIRROR_DIR"`,
+                    `    echo "[workspace-init] cloning mirror from $GIT_URL"`,
+                    `    git clone --mirror "$GIT_URL" "$MIRROR_DIR"`,
                     '  fi',
                     "  # Remove any refs/heads/HEAD synced by previous versions (causes 'HEAD is ambiguous')",
                     '  git -C "$MIRROR_DIR" update-ref -d refs/heads/HEAD 2>/dev/null || true',
@@ -436,26 +544,18 @@ export function renderPod(
                           ...(git.ref
                             ? [
                                 `  # Try to checkout ref; if it doesn't exist, create from parentRef (feature branching)`,
-                                `  if git -C "$WORKTREE_DIR" checkout "${git.ref}" 2>/dev/null; then`,
-                                `    echo "[workspace-init] checked out existing branch ${git.ref}"`,
-                                `  elif git -C "$WORKTREE_DIR" checkout -b "${git.ref}" "origin/${git.ref}" 2>/dev/null; then`,
-                                `    echo "[workspace-init] checked out remote branch ${git.ref}"`,
+                                `  if git -C "$WORKTREE_DIR" checkout "$GIT_REF" 2>/dev/null; then`,
+                                `    echo "[workspace-init] checked out existing branch $GIT_REF"`,
+                                `  elif git -C "$WORKTREE_DIR" checkout -b "$GIT_REF" "origin/$GIT_REF" 2>/dev/null; then`,
+                                `    echo "[workspace-init] checked out remote branch $GIT_REF"`,
                                 ...(git.parentRef
                                   ? [
-                                      `  elif git -C "$WORKTREE_DIR" checkout -b "${git.ref}" "${git.parentRef}" 2>/dev/null; then`,
-                                      `    echo "[workspace-init] created new branch ${git.ref} from ${git.parentRef}"`,
+                                      `  elif git -C "$WORKTREE_DIR" checkout -b "$GIT_REF" "$GIT_PARENT_REF" 2>/dev/null; then`,
+                                      `    echo "[workspace-init] created new branch $GIT_REF from $GIT_PARENT_REF"`,
                                     ]
                                   : []),
                                 `  else`,
-                                `    echo "[workspace-init] warning: could not checkout or create branch ${git.ref}"`,
-                                `  fi`,
-                                `  # Reset to remote tip so the worktree always starts with the latest committed code.`,
-                                `  # Uses origin/<ref> if available (worktree fetch sets up remote tracking),`,
-                                `  # otherwise falls back to the mirror's ref directly.`,
-                                `  if git -C "$WORKTREE_DIR" rev-parse "origin/${git.ref}" >/dev/null 2>&1; then`,
-                                `    git -C "$WORKTREE_DIR" reset --hard "origin/${git.ref}" && echo "[workspace-init] reset to origin/${git.ref}"`,
-                                `  else`,
-                                `    echo "[workspace-init] no remote tracking branch for ${git.ref}, skipping reset"`,
+                                `    echo "[workspace-init] warning: could not checkout or create branch $GIT_REF"`,
                                 `  fi`,
                               ]
                             : [
@@ -467,56 +567,7 @@ export function renderPod(
                               ]),
                           `else`,
                           `  echo "[workspace-init] creating worktree $WORKTREE_DIR"`,
-                          ...(git.ref
-                            ? [
-                                `  git -C "$MIRROR_DIR" worktree prune --expire=now 2>/dev/null || true`,
-                                '  # Re-sync refs/heads from remotes/origin',
-                                "  # Skip HEAD — it's a symbolic ref, not a real branch.",
-                                '  for _REMOTE_REF in $(git -C "$MIRROR_DIR" for-each-ref --format=\'%(refname)\' refs/remotes/origin/ 2>/dev/null || true); do',
-                                '    _BRANCH="${_REMOTE_REF#refs/remotes/origin/}"',
-                                '    [ "$_BRANCH" = "HEAD" ] && continue',
-                                '    if ! git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null | grep -qF "branch refs/heads/$_BRANCH"; then',
-                                '      git -C "$MIRROR_DIR" update-ref "refs/heads/$_BRANCH" "$_REMOTE_REF" 2>/dev/null || true',
-                                '    fi',
-                                '  done',
-                                `  # Try normal add; if branch already checked out elsewhere (e.g. BUILD worktree during review),`,
-                                `  # force-add instead — detaches old worktree from the branch but preserves its files on disk.`,
-                                `  # Note: bare mirrors store branches as refs/heads/<name> — no origin/ prefix needed`,
-                                `  _BRANCH_LINE="branch refs/heads/${git.ref}"`,
-                                `  if git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null | grep -qF "$_BRANCH_LINE"; then`,
-                                `    echo "[workspace-init] branch ${git.ref} checked out elsewhere — force-adding worktree"`,
-                                `    git -C "$MIRROR_DIR" worktree add --force "$WORKTREE_DIR" "${git.ref}"`,
-                                `    echo "[workspace-init] worktree force-added with branch ${git.ref}"`,
-                                `    # Reset to remote tip (refs/heads/ may be stale when another worktree has the branch checked out)`,
-                                `    if git -C "$WORKTREE_DIR" rev-parse "origin/${git.ref}" >/dev/null 2>&1; then`,
-                                `      git -C "$WORKTREE_DIR" reset --hard "origin/${git.ref}" && echo "[workspace-init] reset to origin/${git.ref}"`,
-                                `    else`,
-                                `      echo "[workspace-init] no remote tracking branch for ${git.ref}, skipping reset"`,
-                                `    fi`,
-                                `  elif git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
-                                `    echo "[workspace-init] worktree added with branch ${git.ref}"`,
-                                `    # Reset to remote tip (refs/heads/ may be stale when another worktree has the branch checked out)`,
-                                `    if git -C "$WORKTREE_DIR" rev-parse "origin/${git.ref}" >/dev/null 2>&1; then`,
-                                `      git -C "$WORKTREE_DIR" reset --hard "origin/${git.ref}" && echo "[workspace-init] reset to origin/${git.ref}"`,
-                                `    else`,
-                                `      echo "[workspace-init] no remote tracking branch for ${git.ref}, skipping reset"`,
-                                `    fi`,
-                                ...(git.parentRef
-                                  ? [
-                                      `  else`,
-                                      parentBaselineResolve(git),
-                                      `    # Create new branch from resolved parent baseline`,
-                                      `    git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "$_PARENT_BASE_REF"`,
-                                      `    echo "[workspace-init] created new branch ${git.ref} from $_PARENT_BASE_REF"`,
-                                    ]
-                                  : [
-                                      `  else`,
-                                      `    echo "[workspace-init] error: failed to add worktree with branch ${git.ref}"`,
-                                      `    exit 1`,
-                                    ]),
-                                `  fi`,
-                              ]
-                            : [`  git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR"`]),
+                          ...renderAddWorktree(git),
                           `fi`,
                         ]
                       : [
@@ -524,60 +575,17 @@ export function renderPod(
                           `if [ -d "$WORKTREE_DIR" ]; then`,
                           `  git -C "$MIRROR_DIR" worktree remove --force "$WORKTREE_DIR" 2>/dev/null || rm -rf "$WORKTREE_DIR"`,
                           `fi`,
-                          ...(git.ref
-                            ? [
-                                `git -C "$MIRROR_DIR" worktree prune --expire=now 2>/dev/null || true`,
-                                '# Re-sync refs/heads from remotes/origin',
-                                "# Skip HEAD — it's a symbolic ref, not a real branch.",
-                                'for _REMOTE_REF in $(git -C "$MIRROR_DIR" for-each-ref --format=\'%(refname)\' refs/remotes/origin/ 2>/dev/null || true); do',
-                                '  _BRANCH="${_REMOTE_REF#refs/remotes/origin/}"',
-                                '  [ "$_BRANCH" = "HEAD" ] && continue',
-                                '  if ! git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null | grep -qF "branch refs/heads/$_BRANCH"; then',
-                                '    git -C "$MIRROR_DIR" update-ref "refs/heads/$_BRANCH" "$_REMOTE_REF" 2>/dev/null || true',
-                                '  fi',
-                                'done',
-                                `# Try normal add; if branch already checked out elsewhere (e.g. BUILD worktree during review),`,
-                                `# force-add instead — detaches old worktree from the branch but preserves its files on disk.`,
-                                `# Note: bare mirrors store branches as refs/heads/<name> — no origin/ prefix needed`,
-                                `_BRANCH_LINE="branch refs/heads/${git.ref}"`,
-                                `if git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null | grep -qF "$_BRANCH_LINE"; then`,
-                                `  echo "[workspace-init] branch ${git.ref} checked out elsewhere — force-adding worktree"`,
-                                `  git -C "$MIRROR_DIR" worktree add --force "$WORKTREE_DIR" "${git.ref}"`,
-                                `  echo "[workspace-init] worktree force-added with branch ${git.ref}"`,
-                                `  # Reset to remote tip (refs/heads/ may be stale when another worktree has the branch checked out)`,
-                                `  if git -C "$WORKTREE_DIR" rev-parse "origin/${git.ref}" >/dev/null 2>&1; then`,
-                                `    git -C "$WORKTREE_DIR" reset --hard "origin/${git.ref}" && echo "[workspace-init] reset to origin/${git.ref}"`,
-                                `  else`,
-                                `    echo "[workspace-init] no remote tracking branch for ${git.ref}, skipping reset"`,
-                                `  fi`,
-                                `elif git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR" "${git.ref}" 2>/dev/null; then`,
-                                `  echo "[workspace-init] worktree added with branch ${git.ref}"`,
-                                `  # Reset to remote tip (refs/heads/ may be stale when another worktree has the branch checked out)`,
-                                `  if git -C "$WORKTREE_DIR" rev-parse "origin/${git.ref}" >/dev/null 2>&1; then`,
-                                `    git -C "$WORKTREE_DIR" reset --hard "origin/${git.ref}" && echo "[workspace-init] reset to origin/${git.ref}"`,
-                                `  else`,
-                                `    echo "[workspace-init] no remote tracking branch for ${git.ref}, skipping reset"`,
-                                `  fi`,
-                                ...(git.parentRef
-                                  ? [
-                                      `else`,
-                                      parentBaselineResolve(git),
-                                      `  # Create new branch from resolved parent baseline`,
-                                      `  git -C "$MIRROR_DIR" worktree add -b "${git.ref}" "$WORKTREE_DIR" "$_PARENT_BASE_REF"`,
-                                      `  echo "[workspace-init] created new branch ${git.ref} from $_PARENT_BASE_REF"`,
-                                    ]
-                                  : [
-                                      `else`,
-                                      `  echo "[workspace-init] error: failed to add worktree with branch ${git.ref}"`,
-                                      `  exit 1`,
-                                    ]),
-                                `fi`,
-                              ]
-                            : [`git -C "$MIRROR_DIR" worktree add "$WORKTREE_DIR"`]),
+                          ...renderAddWorktree(git),
                         ]),
+                    // The reset-to-remote-tip stanza is rendered exactly once per
+                    // script, after the worktree is in place, so it covers every
+                    // path: resumed worktrees (checkout above), force-adds, normal
+                    // adds and parent-baseline creates alike. The exit-1 error
+                    // path inside renderAddWorktree never reaches it.
+                    ...(git.ref ? renderResetToRemoteTip() : []),
                     '',
                     '# Ensure remote URL points to real remote (not file://) so agent can push',
-                    `git -C "$WORKTREE_DIR" remote set-url origin "${git.url}" 2>/dev/null || true`,
+                    `git -C "$WORKTREE_DIR" remote set-url origin "$GIT_URL" 2>/dev/null || true`,
                     '# Unset mirror=true inherited from bare mirror so agent can push individual branches',
                     `git -C "$WORKTREE_DIR" config --local remote.origin.mirror false 2>/dev/null || true`,
                     '# Use standard fetch refspec so git fetch origin goes to refs/remotes/origin/* instead of refs/heads/* (avoids worktree conflicts)',
@@ -675,6 +683,17 @@ export function renderPod(
               ...(git
                 ? [{ name: 'GIT_TERMINAL_PROMPT', value: '0' }, ...gitAuthorEnv]
                 : gitAuthorEnv),
+              // Pass git.url/ref/parentRef via env vars so hostile values (a ref
+              // containing ', $(), or ;) cannot execute arbitrary shell when
+              // interpolated into the sh -c scripts below. INIT_SCRIPT already
+              // ships this way; git fields follow the same pattern.
+              ...(git
+                ? [
+                    { name: 'GIT_URL', value: git.url },
+                    ...(git.ref ? [{ name: 'GIT_REF', value: git.ref }] : []),
+                    ...(git.parentRef ? [{ name: 'GIT_PARENT_REF', value: git.parentRef }] : []),
+                  ]
+                : []),
               ...(initScript ? [{ name: 'INIT_SCRIPT', value: initScript }] : []),
               // Cache env vars so init scripts (e.g. pnpm install) use the data PVC
               { name: 'PNPM_HOME', value: `${dataMountPath}/cache/pnpm` },
@@ -694,19 +713,10 @@ export function renderPod(
               ...(githubTokenSecret
                 ? [{ name: 'git-github', mountPath: '/etc/git-github', readOnly: true }]
                 : []),
-              // Mount known_hosts for SSH host key verification (read-only).
-              // When sshHostKeyVerification is strict/accept-new and a known_hostsSecret
-              // is provided, this mounts the secret as /etc/git-ssh/known_hosts.
-              ...(sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new'
-                ? [
-                    {
-                      name: 'git-known-hosts',
-                      mountPath: '/etc/git-ssh/known_hosts',
-                      subPath: 'known_hosts',
-                      readOnly: true,
-                    },
-                  ]
-                : []),
+              // Mount known_hosts for SSH host key verification (read-only) as its
+              // own directory — never nested under the read-only /etc/git-ssh
+              // secret mount (see knownHostsDir above).
+              ...knownHostsVolumeMount,
             ],
             resources: initContainerResources,
           },
@@ -776,7 +786,7 @@ export function renderPod(
           },
         ]
       : []),
-    ...(sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new'
+    ...(verifyHostKeys
       ? knownHostsSecret
         ? [
             {
@@ -788,10 +798,11 @@ export function renderPod(
             },
           ]
         : [
-            // No known_hostsSecret provided but strict mode requested — create an empty
-            // file so SSH doesn't fail on missing file. Host keys will be accepted via
-            // accept-new (first connect) or rejected (strict). This is a safety net for
-            // clusters that haven't provisioned known hosts yet.
+            // No known_hostsSecret provided but verification requested — mount an
+            // empty directory so SSH has a readable parent for UserKnownHostsFile.
+            // A missing known_hosts file reads as empty: host keys are accepted on
+            // first connect under accept-new, rejected under strict. This is a
+            // safety net for clusters that haven't provisioned known hosts yet.
             { name: 'git-known-hosts', emptyDir: {} },
           ]
       : []),
@@ -888,11 +899,11 @@ export function renderPod(
             sshSecret
               ? {
                   name: 'GIT_SSH_COMMAND',
-                  value: `ssh -i /etc/git-ssh/id${sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new' ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=/etc/git-ssh/known_hosts` : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'}${sshHostKeyVerification !== 'strict' && sshHostKeyVerification !== 'accept-new' ? ' -o IdentitiesOnly=yes' : ''}`,
+                  value: `ssh -i /etc/git-ssh/id${sshHostKeyOpts}${verifyHostKeys ? '' : ' -o IdentitiesOnly=yes'}`,
                 }
               : {
                   name: 'GIT_SSH_COMMAND',
-                  value: `ssh${sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new' ? ` -o StrictHostKeyChecking=${sshHostKeyVerification} -o UserKnownHostsFile=/etc/git-ssh/known_hosts` : ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'}`,
+                  value: `ssh${sshHostKeyOpts}`,
                 },
             ...(spec.secrets?.authSecret
               ? [
@@ -995,19 +1006,10 @@ export function renderPod(
             ...(githubTokenSecret
               ? [{ name: 'git-github', mountPath: '/etc/git-github', readOnly: true }]
               : []),
-            // Mount known_hosts for SSH host key verification (read-only).
-            // When sshHostKeyVerification is strict/accept-new and a known_hostsSecret
-            // is provided, this mounts the secret as /etc/git-ssh/known_hosts.
-            ...(sshHostKeyVerification === 'strict' || sshHostKeyVerification === 'accept-new'
-              ? [
-                  {
-                    name: 'git-known-hosts',
-                    mountPath: '/etc/git-ssh/known_hosts',
-                    subPath: 'known_hosts',
-                    readOnly: true,
-                  },
-                ]
-              : []),
+            // Mount known_hosts for SSH host key verification (read-only) as its
+            // own directory — never nested under the read-only /etc/git-ssh
+            // secret mount (see knownHostsDir above).
+            ...knownHostsVolumeMount,
             ...(hasAgents
               ? [
                   {

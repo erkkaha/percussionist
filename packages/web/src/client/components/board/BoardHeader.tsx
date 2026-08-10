@@ -25,7 +25,7 @@ function formatRelative(iso: string): string {
   return `${h}h ago`;
 }
 
-const SEVERITY_DOT: Record<string, string> = {
+const _SEVERITY_DOT: Record<string, string> = {
   critical: 'bg-red-500',
   high: 'bg-orange-500',
   medium: 'bg-yellow-500',
@@ -47,7 +47,12 @@ interface BoardHeaderProps {
   authWarning?: string;
   codeServerUrl?: string;
   isMobile?: boolean;
+  integrationMode?: string;
 }
+
+const INTEGRATION_MODE_TITLE: Record<string, string> = {
+  pr: 'Plan merges open a GitHub PR; a human must merge it',
+};
 
 export function BoardHeader({
   projectName,
@@ -64,6 +69,7 @@ export function BoardHeader({
   authWarning,
   codeServerUrl,
   isMobile = false,
+  integrationMode,
 }: BoardHeaderProps) {
   if (isMobile) {
     return (
@@ -138,6 +144,14 @@ export function BoardHeader({
           <span>Parallel: {maxParallel ?? 2}</span>
           <span className="text-text-dim/50">·</span>
           <span>Phase: {phase ?? 'Active'}</span>
+          {integrationMode && (
+            <>
+              <span className="text-text-dim/50">·</span>
+              <span title={INTEGRATION_MODE_TITLE[integrationMode]}>
+                Integration: {integrationMode}
+              </span>
+            </>
+          )}
           {authWarning && (
             <>
               <span className="text-text-dim/50">·</span>

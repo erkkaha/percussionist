@@ -1,17 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useIsMobile } from '../hooks/use-mobile';
 import { useBoardEvents } from '../hooks/useBoardEvents';
 import { useBoardNotifications } from '../hooks/useBoardNotifications';
-import {
-  approveTask,
-  deleteBoardTask,
-  fetchBoard,
-  requestChangesTask,
-  retryEscalatedTask,
-} from '../lib/api';
-import { deriveIdeUrl } from '../lib/code-server-url';
+import { fetchBoard } from '../lib/api';
+import { ideUrl, useIdeUrlTemplate } from '../lib/code-server-url';
+import { projectColor } from '../lib/project-color';
 import type { ManagerMetrics, Task } from '../lib/types';
 import { AddTaskForm } from './board/AddTaskForm';
 import { BoardHeader } from './board/BoardHeader';
@@ -51,7 +46,6 @@ export default function BoardView() {
   const [mobileDefaultColumn, setMobileDefaultColumn] = useState('backlog');
   const [showFindings, setShowFindings] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
-  const codeServerUrl = projectName ? deriveIdeUrl(projectName) : undefined;
   const selectedTaskName = searchParams.get('task') ?? null;
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -94,33 +88,6 @@ export default function BoardView() {
 
   const allTasks: Task[] = data ? Object.values(data.columns).flat() : [];
 
-  const invalidateBoard = () => queryClient.invalidateQueries({ queryKey: ['board', projectName] });
-
-  const _deleteMutation = useMutation({
-    mutationFn: (taskName: string) => deleteBoardTask(projectName, taskName),
-    onSuccess: () => {
-      invalidateBoard();
-      setSearchParams({}, { replace: true });
-      setSheetOpen(false);
-    },
-  });
-
-  const _retryMutation = useMutation({
-    mutationFn: (taskName: string) => retryEscalatedTask(projectName, taskName),
-    onSuccess: invalidateBoard,
-  });
-
-  const _approveMutation = useMutation({
-    mutationFn: (taskName: string) => approveTask(projectName, taskName),
-    onSuccess: invalidateBoard,
-  });
-
-  const _requestChangesMutation = useMutation({
-    mutationFn: ({ taskId, comment }: { taskId: string; comment: string }) =>
-      requestChangesTask(projectName, taskId, comment),
-    onSuccess: invalidateBoard,
-  });
-
   useBoardNotifications(projectName, allTasks);
 
   const handleSelectTask = (name: string) => {
@@ -143,6 +110,8 @@ export default function BoardView() {
   const rawApprovals = data?.approvals;
   const approvals = useMemo(() => rawApprovals, [rawApprovals]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const { template: ideTemplate } = useIdeUrlTemplate();
+
   if (!name) return null;
 
   if (isLoading && !data) return <p className="text-sm text-text-dim p-4">Loading board…</p>;
@@ -151,6 +120,9 @@ export default function BoardView() {
 
   const { settings, columns, status, authWarning } = data;
   const roster = (settings.agents ?? []).map((a: { name: string }) => a.name);
+  const codeServerUrl =
+    settings.codeServer?.enabled && projectName ? ideUrl(projectName, ideTemplate) : undefined;
+  const color = projectColor(projectName, settings.color);
 
   const selectedTask: Task | undefined = selectedTaskName
     ? allTasks.find((t) => t.metadata.name === selectedTaskName)
@@ -170,6 +142,7 @@ export default function BoardView() {
         projectName={projectName}
         approvals={approvals}
         codeServerUrl={codeServerUrl}
+        repoWebUrl={settings.repoWebUrl}
         onDeleted={() => {
           setSearchParams({}, { replace: true });
           setSheetOpen(false);
@@ -180,6 +153,12 @@ export default function BoardView() {
   return (
     // Pull out of the parent p-6 padding so the board can fill the viewport correctly.
     <div className="-m-6 flex flex-col" style={{ height: 'calc(100svh - 3.5rem)' }}>
+      <div
+        data-testid="board-color-strip"
+        className="h-0.5 shrink-0"
+        style={{ backgroundColor: color }}
+        aria-hidden
+      />
       {/* Header */}
       <div
         data-testid="board-header-container"
@@ -200,6 +179,7 @@ export default function BoardView() {
           authWarning={authWarning}
           codeServerUrl={codeServerUrl}
           isMobile={isMobile}
+          integrationMode={settings.integrationMode}
         />
       </div>
 

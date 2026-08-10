@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import type { Task } from '@percussionist/api';
 import * as kube from '@percussionist/kube';
+import * as events from '../../events.js';
+import { resolveFlow } from '../flow.js';
 import { reconcileProject } from '../index.js';
-import { makeProject, makeTask } from './fixtures.js';
+import * as observations from '../observations.js';
+import { makeProject, makeRun, makeTask } from './fixtures.js';
 
 describe('buildTask default phase', () => {
   it('creates tasks with status.phase = pending by default', () => {
@@ -168,5 +171,134 @@ describe('reconciler auto-heal', () => {
       { phase: 'pending' },
       'percussionist',
     );
+  });
+});
+
+describe('reconciler non-happy-path loop isolation', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let listTasksSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let patchTaskStatusSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let getTaskSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let getRunSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let listRunsSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let getFindingsConfigMapSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let observeSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let emitEventSpy: any;
+
+  const makeKubeError = (statusCode: number): Error & { statusCode: number } =>
+    Object.assign(new Error(`kube error ${statusCode}`), { statusCode });
+
+  beforeEach(() => {
+    listTasksSpy = spyOn(kube, 'listTasks');
+    patchTaskStatusSpy = spyOn(kube, 'patchTaskStatus');
+    getTaskSpy = spyOn(kube, 'getTask');
+    getRunSpy = spyOn(kube, 'getRun').mockResolvedValue(undefined as any);
+    listRunsSpy = spyOn(kube, 'listRuns').mockResolvedValue([] as any);
+    getFindingsConfigMapSpy = spyOn(kube, 'getFindingsConfigMap').mockResolvedValue(null);
+    observeSpy = spyOn(observations, 'observe');
+    emitEventSpy = spyOn(events, 'emitEvent').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    listTasksSpy.mockRestore();
+    patchTaskStatusSpy.mockRestore();
+    getTaskSpy.mockRestore();
+    getRunSpy.mockRestore();
+    listRunsSpy.mockRestore();
+    getFindingsConfigMapSpy.mockRestore();
+    observeSpy.mockRestore();
+    emitEventSpy.mockRestore();
+  });
+
+  it('poison task (observe throws) does not prevent the next task transition or findings ingestion', async () => {
+    const project = makeProject('test-project');
+    const poisonTask = makeTask('poison', 'test-project', {
+      phase: 'running',
+      type: 'BUILD',
+      runName: 'run-poison',
+    });
+    const normalTask = makeTask('normal', 'test-project', {
+      phase: 'running',
+      type: 'BUILD',
+      runName: 'run-normal',
+    });
+    listTasksSpy.mockResolvedValue([poisonTask, normalTask]);
+    getTaskSpy.mockImplementation(async (name: string) =>
+      name === 'normal' ? normalTask : poisonTask,
+    );
+    observeSpy.mockImplementation(async (task: Task) => {
+      if (task.metadata.name === 'poison') {
+        throw new Error('poison task observe failure');
+      }
+      return {
+        task,
+        project,
+        allTasks: [poisonTask, normalTask],
+        observed: { worker: makeRun('run-normal', { phase: 'Failed' }) },
+        manualActions: {},
+        flow: resolveFlow(project),
+        capacity: { activeCount: 0, maxParallel: 2 },
+        now: '2026-05-29T00:00:00.000Z',
+      };
+    });
+    patchTaskStatusSpy.mockImplementation(
+      async () => ({ status: { phase: 'failed' } }) as unknown as Task,
+    );
+
+    await reconcileProject(project, 'percussionist');
+
+    // The task after the poison task still transitioned (running → failed).
+    const normalPatch = patchTaskStatusSpy.mock.calls.find(
+      (call: unknown[]) => call[0] === 'normal',
+    );
+    expect(normalPatch).toBeDefined();
+    expect((normalPatch?.[1] as Record<string, unknown> | undefined)?.phase).toBe('failed');
+    // Findings ingestion still ran after the poison task was isolated.
+    expect(getFindingsConfigMapSpy).toHaveBeenCalledWith('test-project', 'percussionist');
+  });
+
+  it('heal failure is tolerated — a rejected heal patch does not abort the cycle', async () => {
+    const project = makeProject('test-project');
+    const limboTask = makeTask('limbo', 'test-project', { noStatus: true });
+    listTasksSpy.mockResolvedValue([limboTask]);
+    patchTaskStatusSpy.mockRejectedValue(new Error('api server unreachable'));
+
+    await expect(reconcileProject(project, 'percussionist')).resolves.toBeUndefined();
+    // The heal was attempted and failed without aborting the cycle.
+    expect(patchTaskStatusSpy).toHaveBeenCalledWith('limbo', { phase: 'pending' }, 'percussionist');
+  });
+
+  it('patchTaskStatus 409 on heal → tolerated (conflict, retried next cycle)', async () => {
+    const project = makeProject('test-project');
+    const limboTask = makeTask('limbo', 'test-project', { noStatus: true });
+    listTasksSpy.mockResolvedValue([limboTask]);
+    patchTaskStatusSpy.mockRejectedValue(makeKubeError(409));
+
+    await expect(reconcileProject(project, 'percussionist')).resolves.toBeUndefined();
+    expect(patchTaskStatusSpy).toHaveBeenCalledWith('limbo', { phase: 'pending' }, 'percussionist');
+  });
+
+  it('listTasks 429 → reconcileProject rejects; caller loop survives to next cycle', async () => {
+    const project = makeProject('test-project');
+    // Cycle 1: listTasks rejects with 429 (Too Many Requests). reconcileProject
+    // propagates the rejection (the initial list is outside any per-task
+    // try/catch), so the runWorker loop's catch re-enqueues the project with
+    // backoff instead of hanging or corrupting state.
+    listTasksSpy.mockResolvedValue([makeTask('t1', 'test-project', { phase: 'done' })]);
+    listTasksSpy.mockRejectedValueOnce(makeKubeError(429));
+
+    await expect(reconcileProject(project, 'percussionist')).rejects.toMatchObject({
+      statusCode: 429,
+    });
+
+    // Cycle 2: the next cycle recovers and completes normally.
+    await expect(reconcileProject(project, 'percussionist')).resolves.toBeUndefined();
   });
 });

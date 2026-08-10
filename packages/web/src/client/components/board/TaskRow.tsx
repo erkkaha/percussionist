@@ -1,6 +1,17 @@
 // TaskRow.tsx — compact clickable task row for the list panel.
 
-import { Check, FileText, Flag, MessageSquarePlus, RotateCcw, User, Wrench } from 'lucide-react';
+import {
+  Bot,
+  Check,
+  FileText,
+  Flag,
+  GitPullRequest,
+  Loader2,
+  MessageSquarePlus,
+  RotateCcw,
+  User,
+  Wrench,
+} from 'lucide-react';
 import { useChat } from '../../lib/chat-context';
 import type { Task } from '../../lib/types';
 import { getBlockedReasonPresentation, getParentRefPresentation } from './display-refs';
@@ -39,7 +50,18 @@ interface TaskRowProps {
 
 export function TaskRow({ task, col, isSelected, onClick, projectName, approvals }: TaskRowProps) {
   const worker = task.status?.worker;
+  const phase = task.status?.phase;
   const isBuild = task.spec.type === 'BUILD';
+  // A run parked on a human (WaitingForInput), or a task parked in
+  // waiting-for-input phase, must show an amber "waiting for input" badge —
+  // never the red "failed" badge, even when worker.status is 'Failed'.
+  const isWaiting = task.workerRunPhase === 'WaitingForInput' || phase === 'waiting-for-input';
+  const showPhaseBadge =
+    (col === 'in-progress' || col === 'review') &&
+    phase &&
+    phase !== 'reviewing' &&
+    !isWaiting &&
+    worker?.status !== 'Failed';
   const colColor = COLUMN_COLORS[col] ?? 'bg-surface-overlay text-text-dim';
   const lastActivity = worker?.completedAt ?? worker?.startedAt ?? task.metadata.creationTimestamp;
   const parentRef = getParentRefPresentation(task);
@@ -97,10 +119,46 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
               </span>
             )}
 
-            {/* Phase badge (in-progress column) */}
-            {col === 'in-progress' && task.status?.phase && (
-              <span className="text-label-md font-mono uppercase text-phase-running flex items-center gap-0.5">
-                {task.status.phase}
+            {/* Phase badge (in-progress / review column; "reviewing" is superseded by the AI review badge below) */}
+            {showPhaseBadge && (
+              <span
+                className={`text-label-md font-mono uppercase flex items-center gap-0.5 ${
+                  col === 'in-progress' ? 'text-phase-running' : 'text-accent'
+                }`}
+              >
+                {phase}
+              </span>
+            )}
+
+            {/* AI review in-flight (review lane) */}
+            {col === 'review' && task.status?.phase === 'reviewing' && (
+              <span className="text-label-md font-mono uppercase flex items-center gap-0.5 text-accent">
+                <Bot className="h-2.5 w-2.5" />
+                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                ai review…
+              </span>
+            )}
+
+            {/* AI approved (review lane) — robot icon marks the check as the AI reviewer's verdict */}
+            {col === 'review' && worker?.reviewApproved === true && (
+              <span className="text-label-md font-mono uppercase flex items-center gap-0.5 text-phase-succeeded">
+                <Bot className="h-2.5 w-2.5" />
+                <Check className="h-2.5 w-2.5" />
+                ai approved
+              </span>
+            )}
+
+            {/* Waiting for input — run is parked on a human prompt */}
+            {col !== 'in-progress' && isWaiting && (
+              <span
+                className="text-label-md font-mono uppercase text-amber-400"
+                title={
+                  task.workerRunPhase === 'WaitingForInput'
+                    ? 'Run is waiting for user input'
+                    : 'Task is waiting for user input'
+                }
+              >
+                waiting for input
               </span>
             )}
 
@@ -117,7 +175,7 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
             )}
 
             {/* Failed */}
-            {col !== 'in-progress' && worker?.status === 'Failed' && (
+            {col !== 'in-progress' && worker?.status === 'Failed' && !isWaiting && (
               <span className="text-label-md font-mono uppercase text-phase-failed">failed</span>
             )}
 
@@ -136,6 +194,16 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
                 changes requested
               </span>
             )}
+
+            {/* PR open (awaiting-feature-merge, human must merge on GitHub) */}
+            {worker?.prNumber !== undefined &&
+              task.status?.phase === 'awaiting-feature-merge' &&
+              !worker.mergedAt && (
+                <span className="text-label-md font-mono uppercase px-1.5 py-0.5 rounded-sm bg-accent/20 text-accent flex items-center gap-0.5">
+                  <GitPullRequest className="h-2.5 w-2.5" />
+                  PR open
+                </span>
+              )}
 
             {/* Waiting for prerequisite */}
             {blockedReason.text && (
@@ -187,7 +255,9 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
           {task.status?.phase === 'awaiting-feature-merge' && (
             <div className="pt-0.5">
               <span className="text-label-md font-mono text-text-dim/60">
-                Merging feature branch to target
+                {worker?.prNumber !== undefined
+                  ? `Waiting for PR #${worker.prNumber} to be merged on GitHub`
+                  : 'Merging feature branch to target'}
               </span>
             </div>
           )}
@@ -201,7 +271,7 @@ export function TaskRow({ task, col, isSelected, onClick, projectName, approvals
               e.stopPropagation();
               injectTask(task, projectName);
             }}
-            className="opacity-70 group-hover:opacity-60 hover:opacity-100 transition-opacity p-0.5 rounded text-text-dim hover:text-accent md:opacity-0 md:group-hover:opacity-60 md:hover:opacity-100"
+            className="opacity-70 group-hover:opacity-60 hover:opacity-100 focus-visible:opacity-100 transition-opacity p-0.5 rounded text-text-dim hover:text-accent hover-capable:md:opacity-0 hover-capable:md:group-hover:opacity-60 hover-capable:md:hover:opacity-100"
             title="Inject task into chat"
             aria-label="Inject task into chat"
           >

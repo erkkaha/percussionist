@@ -25,9 +25,7 @@ export function parseOptionBlocks(text: string): { options: OptionDef[]; cleanTe
   const blockRegex = /\[!options\]([\s\S]*?)\[\/!options\]/g;
 
   let cleanText = text;
-  let match: RegExpExecArray | null;
-
-  while ((match = blockRegex.exec(text)) !== null) {
+  for (let match = blockRegex.exec(text); match !== null; match = blockRegex.exec(text)) {
     const blockContent = match[1];
     if (!blockContent) continue;
 
@@ -63,9 +61,7 @@ function parseOptionLine(line: string): OptionDef | null {
 
   // Match quoted attribute patterns: key="value"
   const attrRegex = /(\w+)="([^"]*)"/g;
-  let attrMatch: RegExpExecArray | null;
-
-  while ((attrMatch = attrRegex.exec(line)) !== null) {
+  for (let attrMatch = attrRegex.exec(line); attrMatch !== null; attrMatch = attrRegex.exec(line)) {
     const [, key, value] = attrMatch;
     if (key === 'key' || key === 'label' || key === 'description') {
       result[key as keyof OptionDef] = value;

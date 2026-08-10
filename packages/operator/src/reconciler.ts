@@ -8,7 +8,9 @@ import {
   NetworkingV1Api,
   PatchStrategy,
   setHeaderOptions,
+  type V1Deployment,
   type V1Pod,
+  type V1Service,
 } from '@kubernetes/client-node';
 import {
   API_GROUP,
@@ -19,13 +21,18 @@ import {
   PLURAL_PROJECT,
   PLURAL_RUN,
   type Project,
+  type ProjectStatus,
   type Run,
   RunPhase,
   type RunStatus,
   TERMINAL_PHASES,
 } from '@percussionist/api';
 import { makeNodeApiClient } from '@percussionist/kube';
-import { assertCredentialsUnambiguous, resolveRunnerSpec } from './adapters/opencode-config.js';
+import {
+  assertCredentialsUnambiguous,
+  resolveRunnerSpec,
+  ValidationError,
+} from './adapters/opencode-config.js';
 import { resolveAgents } from './agent-resolver.js';
 import {
   ideDeploymentName,
@@ -59,10 +66,18 @@ import {
 } from './pod-builder.js';
 import { ensureDataPVC } from './pvc-helper.js';
 import { mintRunKey, revokeRunKey } from './run-key-client.js';
+import { validateProjectSpec, validateRunSpec } from './spec-validation.js';
 
 const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
   console.error(`[operator ${new Date().toISOString()}]`, ...args);
+
+// Extracts a loggable message from a caught value without throwing, even when
+// the value is null/undefined or not an Error (e.g. a rejected promise with
+// no reason at all).
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 // ---------------------------------------------------------------------------
 // K8s clients
@@ -91,7 +106,45 @@ async function patchStatus(run: Run, patch: RunStatus): Promise<void> {
       setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
     );
   } catch (e) {
-    err(`patchStatus(${run.metadata.name}):`, (e as Error).message);
+    err(`patchStatus(${run.metadata.name}):`, errorMessage(e));
+  }
+}
+
+// Merge-patches Project.status.reconcile only — never touches status.board,
+// which is owned by the manager. Modeled on patchStatus above; never throws.
+async function patchProjectReconcileStatus(
+  project: Project,
+  reconcile: NonNullable<ProjectStatus['reconcile']>,
+): Promise<void> {
+  const ns = project.metadata.namespace ?? '';
+  const name = project.metadata.name;
+  try {
+    await co.patchNamespacedCustomObjectStatus(
+      {
+        group: API_GROUP,
+        version: API_VERSION,
+        namespace: ns,
+        plural: PLURAL_PROJECT,
+        name,
+        // A JSON merge patch (RFC 7386) leaves keys absent from the patch
+        // untouched, so omitting `message` when it's undefined (the Ready
+        // path) would leave a stale error message in place forever. Sending
+        // `null` explicitly tells the apiserver to delete the key. `next`
+        // (the typed value used for the unchanged-status comparison) stays
+        // `string | undefined` — only the wire body needs the `null` cast.
+        body: {
+          status: {
+            reconcile: {
+              ...reconcile,
+              message: (reconcile.message ?? null) as unknown as string | undefined,
+            },
+          },
+        },
+      },
+      setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
+    );
+  } catch (e) {
+    err(`patchProjectReconcileStatus(${ns}/${name}):`, errorMessage(e));
   }
 }
 
@@ -230,7 +283,7 @@ export async function reconcileClusterSettings(cs: ClusterSettings): Promise<voi
   const decisionContent =
     spec.manager?.decisionAgentContent ??
     `---
-description: Manager decision agent — analyzes failures, parses facilitation output, and assists operators.
+description: Manager decision agent — analyzes failures and assists operators.
 mode: subagent
 permission:
   edit: allow
@@ -240,21 +293,10 @@ permission:
 You are the decision-making agent for a Percussionist kanban board manager running in Kubernetes.
 The manager provides full failure context inline in the prompt.
 
-When analyzing a failure, produce structured JSON output:
-{
-  "action": "retry_same | retry_alternative | skip | escalate",
-  "agent": "(name if retry_alternative)",
-  "reason": "(1-2 sentence explanation)"
-}
-
-- retry_same: The same agent should try again (intermittent issue)
-- retry_alternative: A different agent would be better suited
-- skip: The task is impossible or harmful; mark it done
-- escalate: Human expertise is needed
-
-When parsing facilitator output, extract the structured diagnosis
-from the raw session text. Output valid JSON matching the expected
-FacilitationResult schema.
+When analyzing a failure, keep the manager's live failure flow in mind:
+failed runs are retried automatically up to the task's retry ceiling, and
+tasks that exhaust retries or otherwise need human judgment move to
+awaiting-human for a human decision.
 
 When you are uncertain about a task's current phase or whether a
 lifecycle-changing tool call is valid, call inspect_task_flow first.
@@ -262,8 +304,9 @@ It returns the current phase, allowed transitions, resolved project
 flow, and expected next action, which helps avoid invalid
 set_task_state or force_retry calls.
 
-Workers can report off-task findings (bugs, security issues, tech debt)
-via the report_finding tool. The findings system auto-triages high/critical
+Workers can report issues unrelated to their own task (bugs, security
+issues, tech debt) via the report_unrelated_issue tool, which files them
+into this project's findings inbox. The findings system auto-triages high/critical
 bugs and security issues into tasks. Use list_findings to see all reported
 findings, update_finding to change their status or severity, and
 create_task_from_finding to promote lower-severity issues to tasks manually.
@@ -391,8 +434,28 @@ export async function reconcile(run: Run): Promise<void> {
       await core.readNamespacedPod({ name, namespace: ns });
       await cleanupChildResources(run, ns);
     } catch {
-      // Pod already gone — nothing to clean up.
+      // Pod already gone — child resources confirmed cleaned up. Drop the run
+      // from the resync set so it stops being re-enqueued every 10s for the
+      // rest of its TTL retention window. The TTL loop (ttl.ts) lists runs
+      // directly from the API, so this does not affect TTL-based deletion.
+      log(`dequeuing terminal run ${ns}/${name}: pod confirmed gone`);
+      dequeue(`${ns}/${name}`);
     }
+    return;
+  }
+
+  // Re-validate the spec against the Zod schema. The generated CRDs have no CEL
+  // equivalents of the .refine() rules (z.toJSONSchema drops them), so a spec
+  // violating an invariant is admitted and would otherwise be reconciled into
+  // an undefined state (e.g. a dispatcher auto-prompting with no task, or a
+  // pod-builder getting a contradictory source). Failing here — before any pod
+  // work — mirrors the assertCredentialsUnambiguous catch below. RunPhase.Failed
+  // is terminal, so the guard above short-circuits every future reconcile: no
+  // retry storm.
+  const specCheck = validateRunSpec(run.spec);
+  if (!specCheck.ok) {
+    err(`reconcile(${ns}/${name}):`, specCheck.error);
+    await patchStatus(run, { phase: RunPhase.Failed, message: specCheck.error });
     return;
   }
 
@@ -408,12 +471,19 @@ export async function reconcile(run: Run): Promise<void> {
     .catch(() => undefined);
   const engine = deriveEngine(run.spec);
   const runnerSpec = resolveRunnerSpec(cs, engine);
-  assertCredentialsUnambiguous({
-    engine,
-    llmKeysSecret: run.spec.secrets?.llmKeysSecret,
-    authSecretName: run.spec.secrets?.authSecret?.name,
-    runName: `${run.metadata.namespace}/${run.metadata.name}`,
-  });
+  try {
+    assertCredentialsUnambiguous({
+      engine,
+      llmKeysSecret: run.spec.secrets?.llmKeysSecret,
+      authSecretName: run.spec.secrets?.authSecret?.name,
+      runName: `${run.metadata.namespace}/${run.metadata.name}`,
+    });
+  } catch (e) {
+    if (!(e instanceof ValidationError)) throw e;
+    err(`reconcile(${ns}/${name}):`, e.message);
+    await patchStatus(run, { phase: RunPhase.Failed, message: e.message });
+    return;
+  }
   const dispatcherImage = run.spec.dispatcher?.image ?? cs?.spec?.dispatcher?.image;
 
   // Resolve agents from ClusterAgent CRs + inline escape hatch.
@@ -706,6 +776,19 @@ const processing = new Set<string>();
 const dirty = new Set<string>();
 const seen = new Map<string, Run>();
 
+/** Idle sleep between queue drains when the queue is empty (ms). */
+export const IDLE_SLEEP_MS = 250;
+/** Delay before a transiently-failed run is re-enqueued (ms). */
+export const ERROR_REQUEUE_DELAY_MS = 5000;
+
+/** Injectable idle sleep (defaults to `setTimeout`). */
+export type IdleSleep = (ms: number) => Promise<void>;
+/** Injectable requeue scheduler for transient reconcile failures (defaults to `setTimeout`). */
+export type RequeueScheduler = (callback: () => void, delayMs: number) => unknown;
+
+const defaultIdleSleep: IdleSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const defaultRequeue: RequeueScheduler = (callback, delayMs) => setTimeout(callback, delayMs);
+
 export function enqueue(run: Run): void {
   const key = `${run.metadata.namespace}/${run.metadata.name}`;
   seen.set(key, run);
@@ -728,49 +811,78 @@ export function dequeue(key: string): void {
   if (idx !== -1) queue.splice(idx, 1);
 }
 
-export async function runWorker(): Promise<void> {
-  while (true) {
-    const key = queue.shift();
-    if (!key) {
-      await new Promise((r) => setTimeout(r, 250));
-      continue;
-    }
-    pending.delete(key);
-    const run = seen.get(key);
-    if (!run) continue;
-    processing.add(key);
-    try {
-      const [namespace, name] = key.split('/');
-      const fresh =
-        namespace && name
-          ? ((await co.getNamespacedCustomObject({
-              group: API_GROUP,
-              version: API_VERSION,
-              namespace,
-              plural: PLURAL_RUN,
-              name,
-            })) as Run)
-          : run;
-      seen.set(key, fresh);
-      await reconcile(fresh);
-    } catch (e) {
-      err(`reconcile(${key}) failed:`, (e as Error).message);
-      if (isNotFound(e)) {
-        // Run CR was deleted — remove from state to prevent indefinite re-enqueue.
-        dequeue(key);
-      } else {
-        setTimeout(() => {
-          const current = seen.get(key);
-          if (current) enqueue(current);
-        }, 5000);
-      }
-    } finally {
-      processing.delete(key);
-      if (dirty.delete(key)) {
+/**
+ * Processes a single work-queue entry: shifts one key, fetches the fresh Run
+ * CR via `co.getNamespacedCustomObject` (falling back to the cached run when
+ * the key carries no namespace/name split), and reconciles it. Returns true
+ * when a key was processed (including the skip and error paths), false when
+ * the queue was empty and the caller slept `delay(IDLE_SLEEP_MS)`.
+ *
+ * `delay` and `scheduleRequeue` are injectable seams whose defaults reproduce
+ * the original `runWorker` `setTimeout` behavior (250ms idle sleep, 5s
+ * error-requeue) — they exist so queue-semantics tests can drive the loop
+ * without spawning the infinite `runWorker` loop or real timers.
+ */
+export async function runWorkerOnce(
+  delay: IdleSleep = defaultIdleSleep,
+  scheduleRequeue: RequeueScheduler = defaultRequeue,
+): Promise<boolean> {
+  const key = queue.shift();
+  if (!key) {
+    await delay(IDLE_SLEEP_MS);
+    return false;
+  }
+  pending.delete(key);
+  const run = seen.get(key);
+  if (!run) {
+    // Key queued without a `seen` entry (defensive: enqueue always sets
+    // `seen`, so this only guards against direct queue manipulation).
+    return true;
+  }
+  processing.add(key);
+  try {
+    const [namespace, name] = key.split('/');
+    const fresh =
+      namespace && name
+        ? ((await co.getNamespacedCustomObject({
+            group: API_GROUP,
+            version: API_VERSION,
+            namespace,
+            plural: PLURAL_RUN,
+            name,
+          })) as Run)
+        : run;
+    seen.set(key, fresh);
+    await reconcile(fresh);
+    return true;
+  } catch (e) {
+    err(`reconcile(${key}) failed:`, (e as Error).message);
+    if (isNotFound(e)) {
+      // Run CR was deleted — remove from state to prevent indefinite re-enqueue.
+      dequeue(key);
+    } else {
+      scheduleRequeue(() => {
         const current = seen.get(key);
         if (current) enqueue(current);
-      }
+      }, ERROR_REQUEUE_DELAY_MS);
     }
+    return true;
+  } finally {
+    processing.delete(key);
+    if (dirty.delete(key)) {
+      const current = seen.get(key);
+      if (current) enqueue(current);
+    }
+  }
+}
+
+/** The operator's main reconcile loop: one `runWorkerOnce` iteration per pass. */
+export async function runWorker(
+  delay: IdleSleep = defaultIdleSleep,
+  scheduleRequeue: RequeueScheduler = defaultRequeue,
+): Promise<void> {
+  while (true) {
+    await runWorkerOnce(delay, scheduleRequeue);
   }
 }
 
@@ -780,11 +892,130 @@ export function startPeriodicResync(): void {
   }, 10_000).unref();
 }
 
+// Test-only access to the in-memory work queue. Production code never calls
+// this; queue.test.ts uses it to reset state between scenarios and to assert
+// on the resulting queue/pending/processing/dirty/seen contents. The queue
+// itself stays module-private otherwise.
+export interface WorkQueueStateForTests {
+  queue: string[];
+  pending: Set<string>;
+  processing: Set<string>;
+  dirty: Set<string>;
+  seen: Map<string, Run>;
+}
+
+export function __queueStateForTests(): WorkQueueStateForTests {
+  return { queue, pending, processing, dirty, seen };
+}
+
 // ---------------------------------------------------------------------------
 // Project reconciliation — code-server Deployment and Service
 //
 // Called by the project informer on add/update. Creates or updates code-server
 // resources when spec.codeServer.enabled is true and a source is configured.
+
+// Shared read → SSA-patch → on-NotFound-create upsert for the project's
+// Deployment resources (code-server and memory-service). The method order
+// (read → patch → create) and log strings are pinned by reconciler-flow.test.ts
+// via the recording fake kube client, so they must not drift.
+async function upsertDeployment(
+  project: Project,
+  ns: string,
+  logPrefix: string,
+  name: string,
+  render: (p: Project) => V1Deployment,
+): Promise<void> {
+  try {
+    await apps.readNamespacedDeployment({ name, namespace: ns });
+    // Exists — patch it via SSA
+    await apps.patchNamespacedDeployment(
+      {
+        name,
+        namespace: ns,
+        body: render(project),
+        fieldManager: 'percussionist-operator',
+        force: true,
+      },
+      setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
+    );
+    log(`${logPrefix} patched deployment ${name}`);
+  } catch (e) {
+    if (isNotFound(e)) {
+      await apps.createNamespacedDeployment({
+        namespace: ns,
+        body: render(project),
+      });
+      log(`${logPrefix} created deployment ${name}`);
+    } else {
+      err(`${logPrefix} deployment error:`, (e as Error).message);
+      throw e;
+    }
+  }
+}
+
+// Shared read → SSA-patch → on-NotFound-create upsert for the project's
+// Service resources (code-server and memory-service). Method order and log
+// strings are pinned by reconciler-flow.test.ts, same as upsertDeployment.
+async function upsertService(
+  project: Project,
+  ns: string,
+  logPrefix: string,
+  name: string,
+  render: (p: Project) => V1Service,
+): Promise<void> {
+  try {
+    await core.readNamespacedService({ name, namespace: ns });
+    // Exists — patch it via SSA
+    await core.patchNamespacedService(
+      {
+        name,
+        namespace: ns,
+        body: render(project),
+        fieldManager: 'percussionist-operator',
+        force: true,
+      },
+      setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
+    );
+    log(`${logPrefix} patched service ${name}`);
+  } catch (e) {
+    if (isNotFound(e)) {
+      await core.createNamespacedService({
+        namespace: ns,
+        body: render(project),
+      });
+      log(`${logPrefix} created service ${name}`);
+    } else {
+      err(`${logPrefix} service error:`, (e as Error).message);
+      throw e;
+    }
+  }
+}
+
+// Ensures the project's data PVC exists before resource creation that mounts
+// it (code-server and memory-service both need it). Returns false when the PVC
+// could not be ensured — the caller must bail (nothing can mount without it).
+async function ensureDataPvcOrBail(
+  project: Project,
+  ns: string,
+  logPrefix: string,
+): Promise<boolean> {
+  const name = project.metadata.name ?? '';
+  const projectUid = project.metadata.uid ?? '';
+  const pvcName = project.spec.data?.pvcName ?? `${name}-data`;
+  try {
+    await ensureDataPVC({
+      projectName: name,
+      namespace: ns,
+      projectUid,
+      storageClass: project.spec.data?.storageClass,
+      pvcName,
+    });
+    return true;
+  } catch (e) {
+    err(`${logPrefix} failed to ensure data PVC:`, (e as Error).message);
+    return false; // Cannot proceed without PVC
+  }
+}
 
 export async function reconcileProject(project: Project): Promise<void> {
   const name = project.metadata.name;
@@ -797,78 +1028,11 @@ export async function reconcileProject(project: Project): Promise<void> {
     log(`${logPrefix} reconciling code-server resources`);
 
     // Ensure data PVC exists first (code-server needs it).
-    const projectUid = project.metadata.uid ?? '';
-    const pvcName = project.spec.data?.pvcName ?? `${name}-data`;
-    try {
-      await ensureDataPVC({
-        projectName: name,
-        namespace: ns,
-        projectUid,
-        storageClass: project.spec.data?.storageClass,
-        pvcName,
-      });
-    } catch (e) {
-      err(`${logPrefix} failed to ensure data PVC:`, (e as Error).message);
-      return; // Cannot proceed without PVC
-    }
+    if (!(await ensureDataPvcOrBail(project, ns, logPrefix))) return;
 
-    // Upsert Deployment
-    const deployName = ideDeploymentName(project);
-    try {
-      await apps.readNamespacedDeployment({ name: deployName, namespace: ns });
-      // Exists — patch it via SSA
-      await apps.patchNamespacedDeployment(
-        {
-          name: deployName,
-          namespace: ns,
-          body: renderIdeDeployment(project),
-          fieldManager: 'percussionist-operator',
-          force: true,
-        },
-        setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
-      );
-      log(`${logPrefix} patched deployment ${deployName}`);
-    } catch (e) {
-      if (isNotFound(e)) {
-        await apps.createNamespacedDeployment({
-          namespace: ns,
-          body: renderIdeDeployment(project),
-        });
-        log(`${logPrefix} created deployment ${deployName}`);
-      } else {
-        err(`${logPrefix} deployment error:`, (e as Error).message);
-        throw e;
-      }
-    }
-
-    // Upsert Service
-    const svcName = ideServiceName(project);
-    try {
-      await core.readNamespacedService({ name: svcName, namespace: ns });
-      // Exists — patch it via SSA
-      await core.patchNamespacedService(
-        {
-          name: svcName,
-          namespace: ns,
-          body: renderIdeService(project),
-          fieldManager: 'percussionist-operator',
-          force: true,
-        },
-        setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
-      );
-      log(`${logPrefix} patched service ${svcName}`);
-    } catch (e) {
-      if (isNotFound(e)) {
-        await core.createNamespacedService({
-          namespace: ns,
-          body: renderIdeService(project),
-        });
-        log(`${logPrefix} created service ${svcName}`);
-      } else {
-        err(`${logPrefix} service error:`, (e as Error).message);
-        throw e;
-      }
-    }
+    // Upsert Deployment + Service
+    await upsertDeployment(project, ns, logPrefix, ideDeploymentName(project), renderIdeDeployment);
+    await upsertService(project, ns, logPrefix, ideServiceName(project), renderIdeService);
 
     // Upsert Ingress (only when INGRESS_BASE_URL is set).
     const ingressName = ideIngressName(project);
@@ -901,84 +1065,175 @@ export async function reconcileProject(project: Project): Promise<void> {
     log(`${logPrefix} reconciling memory-service resources`);
 
     // Ensure data PVC exists first (memory-service needs it).
-    const projectUid = project.metadata.uid ?? '';
-    const pvcName = project.spec.data?.pvcName ?? `${name}-data`;
-    try {
-      await ensureDataPVC({
-        projectName: name,
-        namespace: ns,
-        projectUid,
-        storageClass: project.spec.data?.storageClass,
-        pvcName,
-      });
-    } catch (e) {
-      err(`${logPrefix} failed to ensure data PVC:`, (e as Error).message);
-      return; // Cannot proceed without PVC
-    }
+    if (!(await ensureDataPvcOrBail(project, ns, logPrefix))) return;
 
-    // Upsert Deployment
-    const memDeployName = memoryServiceDeploymentName(project);
-    try {
-      await apps.readNamespacedDeployment({ name: memDeployName, namespace: ns });
-      // Exists — patch it via SSA
-      await apps.patchNamespacedDeployment(
-        {
-          name: memDeployName,
-          namespace: ns,
-          body: renderMemoryServiceDeployment(project),
-          fieldManager: 'percussionist-operator',
-          force: true,
-        },
-        setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
-      );
-      log(`${logPrefix} patched deployment ${memDeployName}`);
-    } catch (e) {
-      if (isNotFound(e)) {
-        await apps.createNamespacedDeployment({
-          namespace: ns,
-          body: renderMemoryServiceDeployment(project),
-        });
-        log(`${logPrefix} created deployment ${memDeployName}`);
-      } else {
-        err(`${logPrefix} deployment error:`, (e as Error).message);
-        throw e;
-      }
-    }
-
-    // Upsert Service
-    const memSvcName = memoryServiceServiceName(project);
-    try {
-      await core.readNamespacedService({ name: memSvcName, namespace: ns });
-      // Exists — patch it via SSA
-      await core.patchNamespacedService(
-        {
-          name: memSvcName,
-          namespace: ns,
-          body: renderMemoryServiceService(project),
-          fieldManager: 'percussionist-operator',
-          force: true,
-        },
-        setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
-      );
-      log(`${logPrefix} patched service ${memSvcName}`);
-    } catch (e) {
-      if (isNotFound(e)) {
-        await core.createNamespacedService({
-          namespace: ns,
-          body: renderMemoryServiceService(project),
-        });
-        log(`${logPrefix} created service ${memSvcName}`);
-      } else {
-        err(`${logPrefix} service error:`, (e as Error).message);
-        throw e;
-      }
-    }
+    // Upsert Deployment + Service
+    await upsertDeployment(
+      project,
+      ns,
+      logPrefix,
+      memoryServiceDeploymentName(project),
+      renderMemoryServiceDeployment,
+    );
+    await upsertService(
+      project,
+      ns,
+      logPrefix,
+      memoryServiceServiceName(project),
+      renderMemoryServiceService,
+    );
 
     log(`${logPrefix} memory-service resources reconciled`);
   } else {
     // memory-service disabled or no source — clean up if exists
     await cleanupMemoryService(project);
   }
+}
+
+// ---------------------------------------------------------------------------
+// safeReconcileProject — crash-safe wrapper around reconcileProject
+//
+// The informer calls this instead of reconcileProject directly. It never
+// throws: every error is logged and surfaced into status.reconcile instead of
+// propagating to an unhandled rejection (which would exit(1) the operator —
+// see index.ts's `unhandledRejection` handler). A single bad Project CR (e.g.
+// an invalid spec.codeServer.resources value rejected by the apiserver) must
+// not stall reconciliation for every other Project/Run in the cluster.
+
+const PROJECT_RECONCILE_MESSAGE_MAX_LENGTH = 2048; // must match k8s/crds/project.yaml maxLength
+const PROJECT_RETRY_DELAY_MS = 30_000;
+
+// Classifies an error from reconcileProject for retry purposes. HTTP 4xx
+// (e.g. the apiserver rejecting a garbage resources.limits.memory value with
+// 422) reflects a permanent spec problem — retrying won't help until the
+// spec changes, so it is not requeued. Everything else (5xx, network errors,
+// or no numeric code at all) is treated as transient and gets one retry.
+export function classifyProjectReconcileError(e: unknown): 'permanent' | 'transient' {
+  const code =
+    (e as { statusCode?: number; code?: number } | null)?.statusCode ??
+    (e as { code?: number } | null)?.code;
+  if (typeof code === 'number' && code >= 400 && code < 500) return 'permanent';
+  return 'transient';
+}
+
+// True when `next` differs from the Project's current status.reconcile.
+// Patching Project status re-triggers the informer's `update` callback, so an
+// unconditional patch would hot-loop; callers must skip the patch when this
+// returns false. `next` must never include a timestamp or other always-
+// changing field, or every reconcile would "differ" and the loop would never
+// converge. A missing `message` and an explicit `null`/`undefined` one are
+// treated as equivalent, since patchProjectReconcileStatus sends `null` (RFC
+// 7386 delete) for an absent message and the apiserver may reflect that back
+// as either a deleted key or a `null` value.
+export function hasReconcileStatusChanged(
+  current: ProjectStatus['reconcile'] | undefined,
+  next: NonNullable<ProjectStatus['reconcile']>,
+): boolean {
+  const normalize = (message: string | null | undefined) => message ?? undefined;
+  return (
+    current?.state !== next.state ||
+    normalize(current?.message) !== normalize(next.message) ||
+    current?.observedGeneration !== next.observedGeneration
+  );
+}
+
+// Canonical `namespace/name` key for a Project, shared between reconciler.ts
+// (retry-timer map) and index.ts (delete-path timer cancellation) so the two
+// can never disagree about a project's key when a metadata field is missing.
+export function projectKey(project: Project): string {
+  return `${project.metadata.namespace ?? ''}/${project.metadata.name ?? ''}`;
+}
+
+function truncateReconcileMessage(message: string): string {
+  return message.length > PROJECT_RECONCILE_MESSAGE_MAX_LENGTH
+    ? message.slice(0, PROJECT_RECONCILE_MESSAGE_MAX_LENGTH)
+    : message;
+}
+
+// One pending retry timer per project key, so retries never stack.
+const projectRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+// Cancels any pending delayed retry for a project key. Called on the Project
+// delete path so a retry never fires for (and re-reconciles) a deleted Project.
+export function cancelProjectRetry(key: string): void {
+  const timer = projectRetryTimers.get(key);
+  if (timer) {
+    clearTimeout(timer);
+    projectRetryTimers.delete(key);
+  }
+}
+
+function scheduleProjectRetry(key: string, project: Project): void {
+  if (projectRetryTimers.has(key)) return; // already scheduled — don't stack
+  const timer = setTimeout(() => {
+    projectRetryTimers.delete(key);
+    // The retry itself does not schedule a further retry on failure — it
+    // waits for the next informer event/relist, so a persistently transient
+    // error doesn't turn into an unbounded retry chain.
+    void reconcileProjectOnce(project, false);
+  }, PROJECT_RETRY_DELAY_MS);
+  projectRetryTimers.set(key, timer);
+}
+
+async function reconcileProjectOnce(project: Project, allowRetry: boolean): Promise<void> {
+  const ns = project.metadata.namespace ?? '';
+  const name = project.metadata.name ?? '';
+  const key = projectKey(project);
+  const logPrefix = `[project/${ns}/${name}]`;
+  // Any event that reaches a real reconcile (a fresh informer add/update, or
+  // this project's own retry firing) supersedes a still-pending retry armed
+  // against an older snapshot of this Project — otherwise a stale retry could
+  // fire later and silently re-apply an outdated spec over a newer, already-
+  // successful reconcile.
+  cancelProjectRetry(key);
+  // Re-validate the spec against the Zod schema before reconciling. The CRD
+  // admits specs the generated schema cannot express (the .refine() rules have
+  // no CEL equivalents), and a Project violating one (e.g. both source.git and
+  // source.local set) cannot be meaningfully reconciled — pod-builder and
+  // code-server would each pick an arbitrary side. Surface it as a permanent
+  // Error, exactly like the 4xx classification in the catch below: no retry,
+  // no hot-loop — the guard above the patch keeps this from re-firing.
+  const specCheck = validateProjectSpec(project.spec);
+  if (!specCheck.ok) {
+    err(`${logPrefix} invalid spec:`, specCheck.error);
+    const next: NonNullable<ProjectStatus['reconcile']> = {
+      state: 'Error',
+      message: truncateReconcileMessage(specCheck.error),
+      observedGeneration: project.metadata.generation,
+    };
+    if (hasReconcileStatusChanged(project.status?.reconcile, next)) {
+      await patchProjectReconcileStatus(project, next);
+    }
+    return;
+  }
+  try {
+    await reconcileProject(project);
+    const next: NonNullable<ProjectStatus['reconcile']> = {
+      state: 'Ready',
+      observedGeneration: project.metadata.generation,
+    };
+    if (hasReconcileStatusChanged(project.status?.reconcile, next)) {
+      await patchProjectReconcileStatus(project, next);
+    }
+  } catch (e) {
+    const message = truncateReconcileMessage(errorMessage(e));
+    err(`${logPrefix} reconcile failed:`, message);
+    const next: NonNullable<ProjectStatus['reconcile']> = {
+      state: 'Error',
+      message,
+      observedGeneration: project.metadata.generation,
+    };
+    if (hasReconcileStatusChanged(project.status?.reconcile, next)) {
+      await patchProjectReconcileStatus(project, next);
+    }
+    if (allowRetry && classifyProjectReconcileError(e) === 'transient') {
+      scheduleProjectRetry(key, project);
+    }
+  }
+}
+
+export async function safeReconcileProject(project: Project): Promise<void> {
+  await reconcileProjectOnce(project, true);
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import { byPriority, canSchedule, isActivePhase } from '../scheduler.js';
-import { makeProject, makeTask } from './fixtures.js';
+import { byPriority, isActivePhase } from '../scheduler.js';
+import { makeTask } from './fixtures.js';
 
 describe('isActivePhase', () => {
   const activePhases = [
@@ -29,107 +29,6 @@ describe('isActivePhase', () => {
 
   it.each(inactivePhases)('returns false for %s', (phase) => {
     expect(isActivePhase(phase)).toBe(false);
-  });
-});
-
-describe('canSchedule', () => {
-  const project = makeProject('test-project', { maxParallel: 2 });
-
-  it('schedules when capacity is available', () => {
-    const task = makeTask('task-1', 'test-project', { phase: 'pending' });
-    const allTasks: ReturnType<typeof makeTask>[] = [task];
-    expect(canSchedule(task, project, allTasks, 0)).toBe(true);
-  });
-
-  it('blocks when activeCount >= maxParallel', () => {
-    const task = makeTask('task-1', 'test-project', { phase: 'pending' });
-    const allTasks: ReturnType<typeof makeTask>[] = [task];
-    expect(canSchedule(task, project, allTasks, 2)).toBe(false);
-    expect(canSchedule(task, project, allTasks, 3)).toBe(false);
-  });
-
-  it('schedules when activeCount < maxParallel', () => {
-    const task = makeTask('task-1', 'test-project', { phase: 'pending' });
-    const allTasks: ReturnType<typeof makeTask>[] = [task];
-    expect(canSchedule(task, project, allTasks, 1)).toBe(true);
-  });
-
-  it('blocks when predecessor is not done', () => {
-    const pred = makeTask('pred-1', 'test-project', { phase: 'running' });
-    const task = makeTask('task-1', 'test-project', {
-      phase: 'pending',
-      predecessorRef: 'pred-1',
-    });
-    const allTasks = [pred, task];
-    expect(canSchedule(task, project, allTasks, 0)).toBe(false);
-  });
-
-  it('allows scheduling when predecessor is done', () => {
-    const pred = makeTask('pred-1', 'test-project', { phase: 'done' });
-    const task = makeTask('task-1', 'test-project', {
-      phase: 'pending',
-      predecessorRef: 'pred-1',
-    });
-    const allTasks = [pred, task];
-    expect(canSchedule(task, project, allTasks, 0)).toBe(true);
-  });
-
-  it('blocks when predecessor is done but not merged (feature branching)', () => {
-    const fbProject = makeProject('test-project', {
-      maxParallel: 2,
-      featureBranchingEnabled: true,
-    });
-    const pred = makeTask('pred-1', 'test-project', { phase: 'done' });
-    const task = makeTask('task-1', 'test-project', {
-      phase: 'pending',
-      predecessorRef: 'pred-1',
-    });
-    const allTasks = [pred, task];
-    expect(canSchedule(task, fbProject, allTasks, 0)).toBe(false);
-  });
-
-  it('allows scheduling when predecessor is done and merged (feature branching)', () => {
-    const fbProject = makeProject('test-project', {
-      maxParallel: 2,
-      featureBranchingEnabled: true,
-    });
-    const pred = makeTask('pred-1', 'test-project', {
-      phase: 'done',
-      mergedAt: '2026-05-29T00:00:00.000Z',
-    });
-    const task = makeTask('task-1', 'test-project', {
-      phase: 'pending',
-      predecessorRef: 'pred-1',
-    });
-    const allTasks = [pred, task];
-    expect(canSchedule(task, fbProject, allTasks, 0)).toBe(true);
-  });
-
-  it('blocks when retryAfter is in the future', () => {
-    const task = makeTask('task-1', 'test-project', {
-      phase: 'pending',
-      retryAfter: '2099-01-01T00:00:00.000Z',
-    });
-    const allTasks = [task];
-    expect(canSchedule(task, project, allTasks, 0)).toBe(false);
-  });
-
-  it('allows scheduling when retryAfter is in the past', () => {
-    const task = makeTask('task-1', 'test-project', {
-      phase: 'pending',
-      retryAfter: '2020-01-01T00:00:00.000Z',
-    });
-    const allTasks = [task];
-    expect(canSchedule(task, project, allTasks, 0)).toBe(true);
-  });
-
-  it('blocks when predecessor is missing', () => {
-    const task = makeTask('task-1', 'test-project', {
-      phase: 'pending',
-      predecessorRef: 'nonexistent',
-    });
-    const allTasks = [task];
-    expect(canSchedule(task, project, allTasks, 0)).toBe(false);
   });
 });
 

@@ -8,6 +8,7 @@ import {
   compactMessagesForSnapshot,
   fetchMessages,
   listSessions,
+  type RawMessage,
 } from './session.js';
 import { incrementalFlush, sendStats } from './stats-reporter.js';
 
@@ -109,8 +110,33 @@ const TASK = process.env.RUN_TASK ?? '';
 // poll loop to enforce this first-response deadline.
 const FIRST_RESPONSE_TIMEOUT_MS = 3_600_000;
 const HARD_TIMEOUT_MS = FIRST_RESPONSE_TIMEOUT_MS + 300_000;
+// Lead time over the pod's activeDeadlineSeconds (spec.timeoutSeconds) so the
+// dispatcher's graceful snapshot → sendStats(Failed) → patchStatus(Failed)
+// path completes before the kubelet SIGTERMs/SIGKILLs the pod.
+const HARD_TIMEOUT_GRACE_MS = 60_000;
+// Floor for the env-derived hard timeout so tiny configured timeouts still
+// get a boot window before the deadline guard fires.
+const MIN_HARD_TIMEOUT_MS = 30_000;
 const SETTLE_MS = 10_000;
 const IDLE_TIMEOUT_MS = 900_000;
+
+/**
+ * Resolve the run's overall hard-timeout delay from RUN_TIMEOUT_SECONDS
+ * (injected by the operator from Run.spec.timeoutSeconds). The deadline fires
+ * HARD_TIMEOUT_GRACE_MS before the pod's activeDeadlineSeconds so the graceful
+ * failure path wins the race with the kubelet, floored at MIN_HARD_TIMEOUT_MS
+ * so tiny timeouts still get a boot window. Falls back to the legacy
+ * HARD_TIMEOUT_MS (65 min) when the env is missing or invalid (local runs,
+ * tests, legacy pods).
+ */
+export function resolveHardTimeoutMs(envSeconds?: string): number {
+  const seconds = envSeconds === undefined ? process.env.RUN_TIMEOUT_SECONDS : envSeconds;
+  const n = seconds ? Number(seconds) : NaN;
+  if (Number.isFinite(n) && n > 0) {
+    return Math.max(MIN_HARD_TIMEOUT_MS, n * 1000 - HARD_TIMEOUT_GRACE_MS);
+  }
+  return HARD_TIMEOUT_MS; // legacy fallback: 65 min
+}
 
 // ---------------------------------------------------------------------------
 // Token aggregator
@@ -215,6 +241,54 @@ export class TokenAggregator {
   }
 }
 
+/**
+ * Feed every assistant message's usage into the aggregator.
+ *
+ * Safe to call on every poll with the whole transcript: the aggregator keys on
+ * message id and keeps the max within an id, so repeats converge on each
+ * message's final counts rather than adding up.
+ *
+ * A message with no usage and no cost is skipped so it cannot mint an entry that
+ * contributes nothing but occupies an id.
+ */
+export function recordUsage(
+  tokens: TokenAggregator,
+  sessionID: string,
+  msgs: readonly {
+    info?: {
+      id?: string;
+      role?: string;
+      cost?: number;
+      tokens?: {
+        input?: number;
+        output?: number;
+        reasoning?: number;
+        cache?: { read?: number; write?: number };
+      };
+    };
+  }[],
+): void {
+  for (let i = 0; i < msgs.length; i++) {
+    const info = msgs[i]?.info;
+    if (info?.role !== 'assistant') continue;
+    const t = info.tokens;
+    const cost = info.cost ?? 0;
+    if (!t?.input && !t?.output && !t?.cache?.read && !t?.cache?.write && cost <= 0) continue;
+    // Index is the fallback id so two usage-bearing messages without ids stay
+    // distinct instead of collapsing into one entry.
+    tokens.update(
+      sessionID,
+      info.id ?? `${sessionID}-idx-${i}`,
+      t?.input ?? 0,
+      t?.output ?? 0,
+      t?.reasoning,
+      t?.cache?.read,
+      t?.cache?.write,
+      cost,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Session snapshot
 
@@ -302,7 +376,93 @@ export async function snapshotAllSessions(
 }
 
 // ---------------------------------------------------------------------------
+// Shared SSE transport
+//
+// Both runInteractive and runPrompt tail opencode's /event stream. The
+// transport machinery — fetch with Accept: text/event-stream, reconnect
+// counting, !ok/!body backoff, the \n\n buffer split / data: line filter /
+// JSON.parse loop, logEvent, reader.cancel(), the 5-error fatal threshold and
+// the 1 s inter-reconnect delay (the reconnect-storm fix per AGENTS.md) — is
+// identical in both modes; only the per-event handlers differ. The wrappers
+// supply mode/isTerminated/sleep and their own onEvent handler.
+
+export interface SseStreamOptions {
+  mode: 'interactive' | 'prompt';
+  isTerminated: () => boolean;
+  sleep: (ms: number) => Promise<void>;
+  onEvent: (evt: { type?: string; properties?: Record<string, unknown> }) => void | Promise<void>;
+}
+
+export async function streamSseEvents(opts: SseStreamOptions): Promise<void> {
+  const { mode, isTerminated, sleep, onEvent } = opts;
+  let streamErrors = 0;
+  let reconnects = 0;
+  while (!isTerminated()) {
+    try {
+      if (reconnects > 0) maybeLogStreamReconnect(mode, reconnects);
+      const evtRes = await fetch(`${BASE_URL}/event`, {
+        headers: { Accept: 'text/event-stream' },
+      });
+      reconnects++;
+      if (!evtRes.ok || !evtRes.body) {
+        await sleep(5000);
+        continue;
+      }
+      streamErrors = 0;
+      const reader = evtRes.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (!isTerminated()) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // biome-ignore lint/suspicious/noImplicitAnyLet: idx is inferred from indexOf
+        let idx;
+        // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic SSE parse loop
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const raw = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const dataLines = raw
+            .split('\n')
+            .filter((l) => l.startsWith('data:'))
+            .map((l) => l.slice(5).trimStart());
+          if (dataLines.length === 0) continue;
+          let evt: { type?: string; properties?: Record<string, unknown> };
+          try {
+            evt = JSON.parse(dataLines.join('\n'));
+          } catch {
+            continue;
+          }
+          logEvent(evt);
+          await onEvent(evt);
+        }
+      }
+      try {
+        await reader.cancel();
+      } catch {
+        /* ignore */
+      }
+    } catch (e) {
+      if (isTerminated()) return;
+      streamErrors++;
+      err('SSE stream error:', (e as Error).message, `(${streamErrors}/5)`);
+      if (streamErrors >= 5) {
+        throw new Error('opencode server unreachable: stream disconnected');
+      }
+      await sleep(5000);
+    }
+    // Add delay between all reconnection attempts (success or error) to prevent runaway loops
+    if (!isTerminated()) await sleep(1000);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Interactive mode
+
+export interface RunInteractiveDeps {
+  /** Injectable sendStats for tests; defaults to the real implementation. */
+  sendStats?: typeof sendStats;
+}
 
 export async function runInteractive(
   patchStatus: (p: object) => Promise<void>,
@@ -312,6 +472,7 @@ export async function runInteractive(
   runName: string,
   runNamespace: string,
   runUid: string,
+  deps?: RunInteractiveDeps,
 ): Promise<void> {
   await patchStatus({
     phase: RunPhase.Running,
@@ -359,22 +520,7 @@ export async function runInteractive(
         }
       }
       for (const sessionID of knownSessions) {
-        const msgs = await fetchMessages(sessionID);
-        for (const msg of msgs) {
-          const t = msg.info?.tokens;
-          const cost = (msg.info as { cost?: number })?.cost ?? 0;
-          if (t?.input || t?.output || cost > 0)
-            tokens.update(
-              sessionID,
-              msg.info?.id ?? `${sessionID}-idx`,
-              t?.input ?? 0,
-              t?.output ?? 0,
-              t?.reasoning,
-              t?.cache?.read,
-              t?.cache?.write,
-              cost,
-            );
-        }
+        recordUsage(tokens, sessionID, await fetchMessages(sessionID));
       }
       await tokens.flush(patchStatus);
       await sleep(3000);
@@ -382,117 +528,66 @@ export async function runInteractive(
   };
 
   const streamEvents = async (): Promise<void> => {
-    let streamErrors = 0;
-    let reconnects = 0;
-    while (!terminate) {
-      try {
-        if (reconnects > 0) maybeLogStreamReconnect('interactive', reconnects);
-        const evtRes = await fetch(`${BASE_URL}/event`, {
-          headers: { Accept: 'text/event-stream' },
-        });
-        reconnects++;
-        if (!evtRes.ok || !evtRes.body) {
-          await sleep(5000);
-          continue;
-        }
-        streamErrors = 0;
-        const reader = evtRes.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (!terminate) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          // biome-ignore lint/suspicious/noImplicitAnyLet: idx is inferred from indexOf
-          let idx;
-          // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic SSE parse loop
-          while ((idx = buffer.indexOf('\n\n')) >= 0) {
-            const raw = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 2);
-            const dataLines = raw
-              .split('\n')
-              .filter((l) => l.startsWith('data:'))
-              .map((l) => l.slice(5).trimStart());
-            if (dataLines.length === 0) continue;
-            let evt: { type?: string; properties?: Record<string, unknown> };
-            try {
-              evt = JSON.parse(dataLines.join('\n'));
-            } catch {
-              continue;
-            }
-            logEvent(evt);
-            if (evt.type === 'session.idle') {
-              // Snapshot after the first assistant turn completes.
-              if (!hasSnapshotted) maybeSnapshot('first idle');
-              // Incremental DB flush on each completed turn.
-              if (firstSessionID) {
-                const sid = firstSessionID;
-                const totals = tokens.totals();
-                incrementalFlush(sid, interactiveStartedAt, totals, interactiveFlushCursor)
-                  .then((newCursor) => {
-                    interactiveFlushCursor = newCursor;
-                  })
-                  .catch((e) =>
-                    err('interactive incrementalFlush failed (non-fatal):', (e as Error).message),
-                  );
-              }
-            }
-            if (evt.type === 'message.updated') {
-              const p = (evt.properties ?? {}) as {
-                info?: {
-                  sessionID?: string;
-                  id?: string;
-                  tokens?: {
-                    input?: number;
-                    output?: number;
-                    reasoning?: number;
-                    cache?: { read?: number; write?: number };
-                  };
-                  cost?: number;
-                };
-              };
-              const sid = p.info?.sessionID;
-              if (sid) {
-                if (!knownSessions.has(sid)) {
-                  knownSessions.add(sid);
-                  if (!firstSessionID) {
-                    firstSessionID = sid;
-                    await patchStatus({ sessionID: firstSessionID, message: 'session active' });
-                  }
-                }
-                if (typeof p.info?.tokens?.input === 'number' || typeof p.info?.cost === 'number')
-                  tokens.update(
-                    sid,
-                    p.info.id ?? `${sid}-live`,
-                    p.info.tokens?.input ?? 0,
-                    p.info.tokens?.output ?? 0,
-                    p.info.tokens?.reasoning,
-                    p.info.tokens?.cache?.read,
-                    p.info.tokens?.cache?.write,
-                    p.info.cost,
-                  );
-                await tokens.flush(patchStatus);
-              }
-            }
+    await streamSseEvents({
+      mode: 'interactive',
+      isTerminated: () => terminate,
+      sleep,
+      onEvent: async (evt) => {
+        if (evt.type === 'session.idle') {
+          // Snapshot after the first assistant turn completes.
+          if (!hasSnapshotted) maybeSnapshot('first idle');
+          // Incremental DB flush on each completed turn.
+          if (firstSessionID) {
+            const sid = firstSessionID;
+            const totals = tokens.totals();
+            incrementalFlush(sid, interactiveStartedAt, totals, interactiveFlushCursor)
+              .then((newCursor) => {
+                interactiveFlushCursor = newCursor;
+              })
+              .catch((e) =>
+                err('interactive incrementalFlush failed (non-fatal):', (e as Error).message),
+              );
           }
         }
-        try {
-          await reader.cancel();
-        } catch {
-          /* ignore */
+        if (evt.type === 'message.updated') {
+          const p = (evt.properties ?? {}) as {
+            info?: {
+              sessionID?: string;
+              id?: string;
+              tokens?: {
+                input?: number;
+                output?: number;
+                reasoning?: number;
+                cache?: { read?: number; write?: number };
+              };
+              cost?: number;
+            };
+          };
+          const sid = p.info?.sessionID;
+          if (sid) {
+            if (!knownSessions.has(sid)) {
+              knownSessions.add(sid);
+              if (!firstSessionID) {
+                firstSessionID = sid;
+                await patchStatus({ sessionID: firstSessionID, message: 'session active' });
+              }
+            }
+            if (typeof p.info?.tokens?.input === 'number' || typeof p.info?.cost === 'number')
+              tokens.update(
+                sid,
+                p.info.id ?? `${sid}-live`,
+                p.info.tokens?.input ?? 0,
+                p.info.tokens?.output ?? 0,
+                p.info.tokens?.reasoning,
+                p.info.tokens?.cache?.read,
+                p.info.tokens?.cache?.write,
+                p.info.cost,
+              );
+            await tokens.flush(patchStatus);
+          }
         }
-      } catch (e) {
-        if (terminate) return;
-        streamErrors++;
-        err('SSE stream error:', (e as Error).message, `(${streamErrors}/5)`);
-        if (streamErrors >= 5) {
-          throw new Error('opencode server unreachable: stream disconnected');
-        }
-        await sleep(5000);
-      }
-      // Add delay between all reconnection attempts (success or error) to prevent runaway loops
-      if (!terminate) await sleep(1000);
-    }
+      },
+    });
   };
 
   const shutdown = new Promise<void>((resolve) => {
@@ -520,6 +615,22 @@ export async function runInteractive(
   terminate = true;
 
   await tokens.flush(patchStatus, true);
+  // Final full analytics flush so interactive-run deltas that the incremental
+  // flush lost (failed PATCHes, missed turns) are not permanently dropped.
+  // Best-effort: sendStats swallows all failures internally. Keyed on
+  // firstSessionID — the same session the incremental flush uses; interactive
+  // multi-session analytics are a pre-existing limitation, out of scope.
+  const doSendStats = deps?.sendStats ?? sendStats;
+  const totals = tokens.totals();
+  if (firstSessionID) {
+    await doSendStats(
+      firstSessionID,
+      RunPhase.Running,
+      interactiveStartedAt,
+      new Date().toISOString(),
+      totals,
+    );
+  }
   log('interactive session ending — snapshotting');
   await snapshotAllSessions(coreApi, runName, runNamespace, runUid);
   await patchStatus({ message: 'dispatcher terminated' });
@@ -576,7 +687,266 @@ async function httpJsonPost(
 }
 
 // ---------------------------------------------------------------------------
+// Poll status loop
+//
+// Extracted from runPrompt so the message stream, timing and health-check
+// behavior can be unit-tested with scripted deps. The loop owns its transient
+// state (sawBusy, idle/completing timers, published phase) while the three
+// fields that runPrompt's other actors (SSE stream handler, completion/failure
+// signals, hard timeout) read and write stay in the shared `state` object.
+
+export interface PollLoopSharedState {
+  /** Set true to stop the loop; also set by the completion/failure signals. */
+  terminate: boolean;
+  /**
+   * "The session is parked" — drives the idle timeout and the
+   * don't-terminate-yet logic. Set by session.idle, which fires after EVERY
+   * completed assistant turn — so it is not evidence that a human is needed.
+   */
+  waitingForInput: boolean;
+  /**
+   * The narrower question: is the run actually blocked on a person? Only a
+   * permission prompt or a user-aborted message mean that. This is what gets
+   * published as RunPhase.WaitingForInput, because the manager fails any
+   * non-PLAN task that reports it ("BUILD tasks cannot wait for input").
+   */
+  needsHumanInput: boolean;
+}
+
+export interface RunPollStatusConstants {
+  pollMs: number;
+  firstResponseTimeoutMs: number;
+  settleMs: number;
+  idleTimeoutMs: number;
+  healthFailThreshold: number;
+}
+
+export interface RunPollStatusDeps {
+  fetchMessages: (sessionID: string) => Promise<RawMessage[]>;
+  checkHealth: () => Promise<boolean>;
+  patchStatus: (p: object) => Promise<void>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  isShuttingDown: () => boolean;
+  sessionID: string;
+  state: PollLoopSharedState;
+  tokens: TokenAggregator;
+  constants: RunPollStatusConstants;
+}
+
+export async function runPollStatusLoop(deps: RunPollStatusDeps): Promise<void> {
+  const {
+    fetchMessages,
+    checkHealth,
+    patchStatus,
+    sleep,
+    now,
+    isShuttingDown,
+    sessionID,
+    state,
+    tokens,
+    constants,
+  } = deps;
+  const { pollMs, firstResponseTimeoutMs, settleMs, idleTimeoutMs, healthFailThreshold } =
+    constants;
+
+  const startedAt = now();
+  await sleep(1000);
+  let iter = 0;
+  let unhealthyCount = 0;
+  // Set true only when the poll loop sees its first assistant message (and is
+  // what keeps the first-response timeout from firing once the model is
+  // mid-stream). Note it is deliberately NOT consulted by the zero-token guard
+  // below — a zero-token first response must still throw FatalRunError.
+  let sawBusy = false;
+  // Last value of `needsHumanInput` published to the CR. The dispatcher is the
+  // only component that can observe an agent pausing for clarification, so if
+  // it doesn't write RunPhase.WaitingForInput nobody does.
+  let publishedWaiting = false;
+  let lastMessageId: string | undefined;
+  let idleSince: number | undefined;
+  let completingSince: number | undefined;
+
+  while (!state.terminate && !isShuttingDown()) {
+    iter++;
+    try {
+      const msgs = await fetchMessages(sessionID);
+      const last = msgs.length > 0 ? msgs[msgs.length - 1] : undefined;
+
+      // Periodic health check every 10s (5 iterations). If opencode is
+      // OOM-killed this detects it faster than waiting for stream failure.
+      if (iter % 5 === 0) {
+        const healthy = await checkHealth();
+        if (!healthy) {
+          unhealthyCount++;
+          if (unhealthyCount >= healthFailThreshold) {
+            throw new FatalRunError('opencode server unreachable: health check failed');
+          }
+        } else {
+          unhealthyCount = 0;
+        }
+      }
+
+      const elapsedSinceStart = now() - startedAt;
+      if (!sawBusy && elapsedSinceStart > firstResponseTimeoutMs) {
+        throw new FatalRunError(
+          `opencode did not produce an assistant response within ${firstResponseTimeoutMs / 1000}s of dispatch`,
+        );
+      }
+
+      // Activity detection — any new message (user or assistant) resets
+      // the idle timer and settling counter.
+      if (last?.info?.id && last.info.id !== lastMessageId) {
+        lastMessageId = last.info.id;
+        idleSince = undefined;
+        completingSince = undefined;
+      }
+
+      if (last?.info?.role === 'assistant') {
+        sawBusy = true;
+        // Record every message, not just the newest. This used to sample only
+        // the tail, so a run's reported usage depended on how many distinct
+        // messages happened to be last at a poll boundary: anything that
+        // arrived and was superseded inside one 2s tick was never counted at
+        // all. A build task that finished quickly reported 2 in / 56 out
+        // because the tail was sampled about once, while a long one that
+        // failed reported 1457 / 22943 from the same code — the difference was
+        // poll cadence, not usage.
+        //
+        // Idempotent to repeat: the aggregator keys on message id and takes
+        // the max within an id, so re-reading the whole list every tick
+        // converges on each message's final counts instead of accumulating
+        // them.
+        recordUsage(tokens, sessionID, msgs);
+        await tokens.flush(patchStatus);
+
+        // Check for errors regardless of time.completed — OpenCode may set
+        // a MessageAbortedError on the message without setting the completed
+        // timestamp (aborted messages are never fully "completed").
+        if (last.info.error) {
+          if (isMessageAbortedError(last.info.error)) {
+            if (!state.waitingForInput) {
+              log('assistant message aborted by user — waiting for input');
+              state.waitingForInput = true;
+            }
+            // A user-cancelled message genuinely leaves the run blocked on a
+            // person deciding what to do next.
+            state.needsHumanInput = true;
+          } else {
+            throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
+          }
+        }
+
+        if (last.info.time?.completed) {
+          const totalTokens = tokens.totals();
+          if (state.waitingForInput) {
+            // Don't reset waitingForInput for abort errors on the current
+            // message.  Only reset when a new non-aborted message arrives.
+            if (!last.info.error && (totalTokens.tokensIn > 0 || totalTokens.tokensOut > 0)) {
+              state.waitingForInput = false;
+              // Work resumed, so whatever the human was needed for is done.
+              state.needsHumanInput = false;
+            }
+            // If still waiting (aborted or idle), fall through without
+            // terminating — the poll loop keeps running.
+          } else if (totalTokens.tokensIn === 0 && totalTokens.tokensOut === 0) {
+            // A completed assistant message with zero recorded usage means
+            // opencode "answered" without producing anything. For the first
+            // response this is fatal. (Regression: `sawBusy = true` used to be
+            // set before this check, making the guard unreachable, so an empty
+            // first response silently fell through to waitingForInput. Once
+            // any usage has been recorded totalTokens is > 0, so this branch
+            // can only ever fire on the first assistant message.)
+            throw new FatalRunError(
+              'opencode produced an assistant response with zero token usage before any work was done',
+            );
+          } else if (completingSince && now() - completingSince >= settleMs) {
+            log('last assistant message completed — settled, done');
+            state.terminate = true;
+            return;
+          } else if (!completingSince) {
+            completingSince = now();
+          }
+        }
+      }
+
+      // --- idle timeout: terminate if session is idle for too long ---
+      if (state.waitingForInput) {
+        if (idleSince === undefined) idleSince = now();
+        if (now() - idleSince >= idleTimeoutMs) {
+          log('session idle for too long — terminating');
+          state.terminate = true;
+          return;
+        }
+      } else {
+        idleSince = undefined;
+      }
+
+      // --- publish WaitingForInput <-> Running transitions to the CR ---
+      // Done here rather than at each mutation site so it also picks up flips
+      // made by the SSE handler, which runs outside this loop.
+      if (state.needsHumanInput !== publishedWaiting) {
+        publishedWaiting = state.needsHumanInput;
+        const phase = state.needsHumanInput ? RunPhase.WaitingForInput : RunPhase.Running;
+        log(`phase -> ${phase}`);
+        await patchStatus({ phase });
+      }
+    } catch (e) {
+      if (state.terminate) return;
+      // Unrecoverable conditions must escape the loop so main() can snapshot,
+      // report stats and patch Failed. Everything else is treated as a
+      // transient blip and retried on the next tick.
+      if (e instanceof FatalRunError) {
+        err('pollStatus fatal:', e.message);
+        throw e;
+      }
+      if ((e as Error).message?.startsWith('session error:')) throw e;
+      err('pollStatus iter error:', (e as Error).message);
+    }
+    await sleep(pollMs);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Prompt-driven mode
+
+export interface PromptPostResult {
+  ok: boolean;
+  status: number;
+  json(): Promise<unknown>;
+  text(): Promise<string>;
+}
+
+/**
+ * Injectable seams for runPrompt. Every field defaults to the real
+ * implementation (the caller-provided patchStatus/sleep, the session.js
+ * helpers, snapshotAllSessions, sendStats, the live /session POST), so passing
+ * no deps is behavior-identical to the pre-seam code. Tests override the
+ * fields to drive the race outcomes, the prompt-POST retry matrix and the
+ * hard-timeout path deterministically.
+ */
+export interface RunPromptDeps {
+  /** POST the prompt to the session; default hits opencode's /session/{id}/message. */
+  postMessage?: (sessionID: string, body: Record<string, unknown>) => Promise<PromptPostResult>;
+  /** Read messages for a session (poll loop + retry "already has messages" check). */
+  fetchMessages?: typeof fetchMessages;
+  /** opencode health probe (poll loop). */
+  checkHealth?: typeof checkHealth;
+  /** Sleep; default is the caller-provided sleep. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Clock for the poll loop and timestamps; default Date.now. */
+  now?: () => number;
+  /** Status patcher; default is the caller-provided patchStatus. */
+  patchStatus?: (p: object) => Promise<void>;
+  /** Session snapshot; default snapshotAllSessions with the caller-provided coreApi. */
+  snapshot?: typeof snapshotAllSessions;
+  /** Full analytics flush on run completion; default sendStats. */
+  sendStats?: typeof sendStats;
+  /** Create the opencode session; default POSTs /session. */
+  createSession?: () => Promise<{ id: string }>;
+  /** Hard-timeout delay in ms; default resolveHardTimeoutMs() (derived from RUN_TIMEOUT_SECONDS, falling back to HARD_TIMEOUT_MS). */
+  hardTimeoutMs?: number;
+}
 
 export async function runPrompt(
   patchStatus: (p: object) => Promise<void>,
@@ -589,20 +959,41 @@ export async function runPrompt(
   failureSignal: Promise<string>,
   completionSignal: Promise<string>,
   planSignal?: Promise<string>,
+  deps?: RunPromptDeps,
 ): Promise<{ sessionID: string; startedAt: string }> {
+  const d = deps ?? {};
   const tokens = new TokenAggregator();
 
-  const sessionRes = await fetch(`${BASE_URL}/session`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: `run/${runName}` }),
-  });
-  if (!sessionRes.ok) throw new Error(`Failed to create session: HTTP ${sessionRes.status}`);
-  const sessionData = (await sessionRes.json()) as { id: string };
+  const doCreateSession =
+    d.createSession ??
+    (async () => {
+      const sessionRes = await fetch(`${BASE_URL}/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: `run/${runName}` }),
+      });
+      if (!sessionRes.ok) throw new Error(`Failed to create session: HTTP ${sessionRes.status}`);
+      return (await sessionRes.json()) as { id: string };
+    });
+  const doNow = d.now ?? (() => Date.now());
+  const doSleep = d.sleep ?? sleep;
+  const doPatchStatus = d.patchStatus ?? patchStatus;
+  const doFetchMessages = d.fetchMessages ?? fetchMessages;
+  const doCheckHealth = d.checkHealth ?? checkHealth;
+  const doSendStats = d.sendStats ?? sendStats;
+  const doSnapshot =
+    d.snapshot ?? ((c, rn, ns, ru, sid) => snapshotAllSessions(c, rn, ns, ru, sid));
+
+  // Overall run deadline. deps.hardTimeoutMs (tests) wins; otherwise derive
+  // from RUN_TIMEOUT_SECONDS lazily so the env is read at call time, not
+  // module scope (falls back to the legacy 65-min HARD_TIMEOUT_MS).
+  const hardTimeoutMs = d.hardTimeoutMs ?? resolveHardTimeoutMs();
+
+  const sessionData = await doCreateSession();
   const sessionID = sessionData.id;
   log(`created session ${sessionID}`);
-  const runStartedAt = new Date().toISOString();
-  await patchStatus({
+  const runStartedAt = new Date(doNow()).toISOString();
+  await doPatchStatus({
     phase: RunPhase.Running,
     sessionID,
     startedAt: runStartedAt,
@@ -623,28 +1014,23 @@ export async function runPrompt(
     }
   }
 
-  let sawBusy = false; // set true only when poll loop sees first assistant message
+  // Shared state for the poll-status loop (extracted into runPollStatusLoop).
   // `waitingForInput` means "the session is parked" and drives the idle timeout
   // and the don't-terminate-yet logic. It is set by session.idle, which fires
   // after EVERY completed assistant turn — so it is not evidence that a human
   // is needed.
-  let waitingForInput = false;
   // `needsHumanInput` is the narrower question: is the run actually blocked on a
   // person? Only a permission prompt or a user-aborted message mean that. This
   // is what gets published as RunPhase.WaitingForInput, because the manager
   // fails any non-PLAN task that reports it ("BUILD tasks cannot wait for
   // input"). Publishing on session.idle failed every BUILD task at the end of
   // its first turn.
-  let needsHumanInput = false;
-  // Last value of `needsHumanInput` published to the CR. The dispatcher is the
-  // only component that can observe an agent pausing for clarification, so if
-  // it doesn't write RunPhase.WaitingForInput nobody does.
-  let publishedWaiting = false;
-  let terminate = false;
+  const pollState: PollLoopSharedState = {
+    terminate: false,
+    waitingForInput: false,
+    needsHumanInput: false,
+  };
   let promptFlushCursor = 0;
-  let completingSince: number | undefined;
-  let idleSince: number | undefined;
-  let lastMessageId: string | undefined;
 
   // Transient error codes that warrant a retry of the prompt POST.
   const RETRYABLE_CODES = new Set([
@@ -657,6 +1043,15 @@ export async function runPrompt(
   const MAX_PROMPT_RETRIES = 3;
 
   const promptPostController = new AbortController();
+  const doPostMessage =
+    d.postMessage ??
+    ((sid: string, body: Record<string, unknown>) =>
+      httpJsonPost(
+        `${BASE_URL}/session/${sid}/message`,
+        body,
+        FIRST_RESPONSE_TIMEOUT_MS,
+        promptPostController.signal,
+      ));
 
   // Retry wrapper around httpJsonPost: on transient network errors, wait for
   // opencode to become healthy, check whether the session already has messages
@@ -665,12 +1060,7 @@ export async function runPrompt(
     let attempt = 0;
     while (true) {
       try {
-        const syncRes = await httpJsonPost(
-          `${BASE_URL}/session/${sessionID}/message`,
-          promptBody,
-          FIRST_RESPONSE_TIMEOUT_MS,
-          promptPostController.signal,
-        );
+        const syncRes = await doPostMessage(sessionID, promptBody);
         if (!syncRes.ok) {
           throw new Error(`prompt failed: HTTP ${syncRes.status} ${await syncRes.text()}`);
         }
@@ -703,12 +1093,12 @@ export async function runPrompt(
             syncTokensCacheWrite,
             syncCost,
           );
-          await tokens.flush(patchStatus);
+          await tokens.flush(doPatchStatus);
         }
         log('prompt completed (sync)', JSON.stringify(syncData.info));
         return;
       } catch (e) {
-        if (terminate || promptPostController.signal.aborted) return;
+        if (pollState.terminate || promptPostController.signal.aborted) return;
         const code = (e as NodeJS.ErrnoException).code ?? '';
         const isRetryable =
           RETRYABLE_CODES.has(code) || (e as Error).message?.includes('socket hang up');
@@ -718,11 +1108,11 @@ export async function runPrompt(
           `prompt POST failed (${(e as Error).message}), retrying (${attempt}/${MAX_PROMPT_RETRIES})…`,
         );
         // Wait for opencode to be healthy before re-checking / re-posting.
-        await sleep(5000);
+        await doSleep(5000);
         // Check whether the prompt was already received (session has messages).
         // If so there's nothing to re-POST — the poll loop will handle completion.
         try {
-          const existingMsgs = await fetchMessages(sessionID);
+          const existingMsgs = await doFetchMessages(sessionID);
           if (existingMsgs.length > 0) {
             log(
               `prompt POST failed but session already has ${existingMsgs.length} message(s) — skipping re-POST`,
@@ -738,297 +1128,139 @@ export async function runPrompt(
   })();
   const promptPostFailure = promptPost.then(() => new Promise<void>(() => {}));
 
-  const pollStatus = async (): Promise<void> => {
-    const POLL_MS = 2000;
-    const startedAt = Date.now();
-    await sleep(1000);
-    let iter = 0;
-    let unhealthyCount = 0;
-    while (!terminate && !isShuttingDown()) {
-      iter++;
-      try {
-        const msgs = await fetchMessages(sessionID);
-        const last = msgs.length > 0 ? msgs[msgs.length - 1] : undefined;
-
-        // Periodic health check every 10s (5 iterations). If opencode is
-        // OOM-killed this detects it faster than waiting for stream failure.
-        if (iter % 5 === 0) {
-          const healthy = await checkHealth();
-          if (!healthy) {
-            unhealthyCount++;
-            if (unhealthyCount >= 3) {
-              throw new FatalRunError('opencode server unreachable: health check failed');
-            }
-          } else {
-            unhealthyCount = 0;
-          }
-        }
-
-        const elapsedSinceStart = Date.now() - startedAt;
-        if (!sawBusy && elapsedSinceStart > FIRST_RESPONSE_TIMEOUT_MS) {
-          throw new FatalRunError(
-            `opencode did not produce an assistant response within ${FIRST_RESPONSE_TIMEOUT_MS / 1000}s of dispatch`,
-          );
-        }
-
-        // Activity detection — any new message (user or assistant) resets
-        // the idle timer and settling counter.
-        if (last?.info?.id && last.info.id !== lastMessageId) {
-          lastMessageId = last.info.id;
-          idleSince = undefined;
-          completingSince = undefined;
-        }
-
-        if (last?.info?.role === 'assistant') {
-          sawBusy = true;
-          const t = last.info.tokens;
-          const cost = (last.info as { cost?: number }).cost ?? 0;
-          if (t?.input || t?.output || cost > 0)
-            tokens.update(
-              sessionID,
-              last.info.id ?? `${sessionID}-last`,
-              t?.input ?? 0,
-              t?.output ?? 0,
-              t?.reasoning,
-              t?.cache?.read,
-              t?.cache?.write,
-              cost,
-            );
-          await tokens.flush(patchStatus);
-
-          // Check for errors regardless of time.completed — OpenCode may set
-          // a MessageAbortedError on the message without setting the completed
-          // timestamp (aborted messages are never fully "completed").
-          if (last.info.error) {
-            if (isMessageAbortedError(last.info.error)) {
-              if (!waitingForInput) {
-                log('assistant message aborted by user — waiting for input');
-                waitingForInput = true;
-              }
-              // A user-cancelled message genuinely leaves the run blocked on a
-              // person deciding what to do next.
-              needsHumanInput = true;
-            } else {
-              throw new Error(`session error: ${JSON.stringify(last.info.error)}`);
-            }
-          }
-
-          if (last.info.time?.completed) {
-            const totalTokens = tokens.totals();
-            if (waitingForInput) {
-              // Don't reset waitingForInput for abort errors on the current
-              // message.  Only reset when a new non-aborted message arrives.
-              if (!last.info.error && (totalTokens.tokensIn > 0 || totalTokens.tokensOut > 0)) {
-                waitingForInput = false;
-                // Work resumed, so whatever the human was needed for is done.
-                needsHumanInput = false;
-              }
-              // If still waiting (aborted or idle), fall through without
-              // terminating — the poll loop keeps running.
-            } else if (totalTokens.tokensIn === 0 && totalTokens.tokensOut === 0) {
-              if (!sawBusy) {
-                throw new FatalRunError(
-                  'opencode produced an assistant response with zero token usage before any work was done',
-                );
-              }
-              waitingForInput = true;
-              idleSince ??= Date.now();
-            } else if (completingSince && Date.now() - completingSince >= SETTLE_MS) {
-              log('last assistant message completed — settled, done');
-              terminate = true;
-              return;
-            } else if (!completingSince) {
-              completingSince = Date.now();
-            }
-          }
-        }
-
-        // --- idle timeout: terminate if session is idle for too long ---
-        if (waitingForInput) {
-          if (idleSince === undefined) idleSince = Date.now();
-          if (Date.now() - idleSince >= IDLE_TIMEOUT_MS) {
-            log('session idle for too long — terminating');
-            terminate = true;
-            return;
-          }
-        } else {
-          idleSince = undefined;
-        }
-
-        // --- publish WaitingForInput <-> Running transitions to the CR ---
-        // Done here rather than at each mutation site so it also picks up flips
-        // made by the SSE handler, which runs outside this loop.
-        if (needsHumanInput !== publishedWaiting) {
-          publishedWaiting = needsHumanInput;
-          const phase = needsHumanInput ? RunPhase.WaitingForInput : RunPhase.Running;
-          log(`phase -> ${phase}`);
-          await patchStatus({ phase });
-        }
-      } catch (e) {
-        if (terminate) return;
-        // Unrecoverable conditions must escape the loop so main() can snapshot,
-        // report stats and patch Failed. Everything else is treated as a
-        // transient blip and retried on the next tick.
-        if (e instanceof FatalRunError) {
-          err('pollStatus fatal:', e.message);
-          throw e;
-        }
-        if ((e as Error).message?.startsWith('session error:')) throw e;
-        err('pollStatus iter error:', (e as Error).message);
-      }
-      await sleep(POLL_MS);
-    }
-  };
+  const pollStatus = (): Promise<void> =>
+    runPollStatusLoop({
+      fetchMessages: doFetchMessages,
+      checkHealth: doCheckHealth,
+      patchStatus: doPatchStatus,
+      sleep: doSleep,
+      now: doNow,
+      isShuttingDown,
+      sessionID,
+      state: pollState,
+      tokens,
+      constants: {
+        pollMs: 2000,
+        // Cap the first-response window at the effective deadline minus one
+        // poll tick so a run whose configured timeout is under 1 h fails with
+        // the precise "no assistant response" message instead of the generic
+        // hard-timeout message. The 1s floor keeps tiny injected hardTimeoutMs
+        // (tests) from making the window negative.
+        firstResponseTimeoutMs: Math.min(
+          FIRST_RESPONSE_TIMEOUT_MS,
+          Math.max(1000, hardTimeoutMs - 2000),
+        ),
+        settleMs: SETTLE_MS,
+        idleTimeoutMs: IDLE_TIMEOUT_MS,
+        healthFailThreshold: 3,
+      },
+    });
 
   const streamEvents = async (): Promise<void> => {
-    let streamErrors = 0;
-    let reconnects = 0;
-    while (!terminate) {
-      try {
-        if (reconnects > 0) maybeLogStreamReconnect('prompt', reconnects);
-        const evtRes = await fetch(`${BASE_URL}/event`, {
-          headers: { Accept: 'text/event-stream' },
-        });
-        reconnects++;
-        if (!evtRes.ok || !evtRes.body) {
-          await sleep(5000);
-          continue;
+    await streamSseEvents({
+      mode: 'prompt',
+      isTerminated: () => pollState.terminate,
+      sleep: doSleep,
+      onEvent: async (evt) => {
+        if (
+          (evt.type === 'permission.updated' || evt.type === 'session.idle') &&
+          !pollState.waitingForInput
+        ) {
+          pollState.waitingForInput = true;
+          // Snapshot sessions immediately when parking so the manager can
+          // read the conversation context even if this pod is killed while
+          // waiting.
+          doSnapshot(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
+            err('WaitingForInput snapshot failed:', (e as Error).message),
+          );
         }
-        streamErrors = 0;
-        const reader = evtRes.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (!terminate) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          // biome-ignore lint/suspicious/noImplicitAnyLet: idx is inferred from indexOf
-          let idx;
-          // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic SSE parse loop
-          while ((idx = buffer.indexOf('\n\n')) >= 0) {
-            const raw = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 2);
-            const dataLines = raw
-              .split('\n')
-              .filter((l) => l.startsWith('data:'))
-              .map((l) => l.slice(5).trimStart());
-            if (dataLines.length === 0) continue;
-            let evt: { type?: string; properties?: Record<string, unknown> };
-            try {
-              evt = JSON.parse(dataLines.join('\n'));
-            } catch {
-              continue;
-            }
-            logEvent(evt);
-            if (
-              (evt.type === 'permission.updated' || evt.type === 'session.idle') &&
-              !waitingForInput
-            ) {
-              waitingForInput = true;
-              // Snapshot sessions immediately when parking so the manager can
-              // read the conversation context even if this pod is killed while
-              // waiting.
-              snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
-                err('WaitingForInput snapshot failed:', (e as Error).message),
-              );
-            }
-            // Only a permission prompt means a person has to act. session.idle
-            // fires after every completed turn (see the flush below), so it
-            // must not surface as RunPhase.WaitingForInput.
-            if (evt.type === 'permission.updated') {
-              needsHumanInput = true;
-            }
-            if (evt.type === 'session.idle') {
-              // Incremental DB flush after each completed assistant turn.
-              const totals = tokens.totals();
-              incrementalFlush(sessionID, runStartedAt, totals, promptFlushCursor)
-                .then((newCursor) => {
-                  promptFlushCursor = newCursor;
-                })
-                .catch((e) =>
-                  err('prompt incrementalFlush failed (non-fatal):', (e as Error).message),
-                );
-            }
-            if (evt.type === 'message.updated') {
-              const p = (evt.properties ?? {}) as {
-                info?: {
-                  sessionID?: string;
-                  id?: string;
-                  tokens?: {
-                    input?: number;
-                    output?: number;
-                    reasoning?: number;
-                    cache?: { read?: number; write?: number };
-                  };
-                  cost?: number;
-                };
+        // Only a permission prompt means a person has to act. session.idle
+        // fires after every completed turn (see the flush below), so it
+        // must not surface as RunPhase.WaitingForInput.
+        if (evt.type === 'permission.updated') {
+          pollState.needsHumanInput = true;
+        }
+        if (evt.type === 'session.idle') {
+          // Incremental DB flush after each completed assistant turn.
+          const totals = tokens.totals();
+          incrementalFlush(sessionID, runStartedAt, totals, promptFlushCursor)
+            .then((newCursor) => {
+              promptFlushCursor = newCursor;
+            })
+            .catch((e) => err('prompt incrementalFlush failed (non-fatal):', (e as Error).message));
+        }
+        if (evt.type === 'message.updated') {
+          const p = (evt.properties ?? {}) as {
+            info?: {
+              sessionID?: string;
+              id?: string;
+              tokens?: {
+                input?: number;
+                output?: number;
+                reasoning?: number;
+                cache?: { read?: number; write?: number };
               };
-              if (p.info?.sessionID === sessionID) {
-                if (typeof p.info.tokens?.input === 'number' || typeof p.info.cost === 'number')
-                  tokens.update(
-                    sessionID,
-                    p.info.id ?? `${sessionID}-live`,
-                    p.info.tokens?.input ?? 0,
-                    p.info.tokens?.output ?? 0,
-                    p.info.tokens?.reasoning,
-                    p.info.tokens?.cache?.read,
-                    p.info.tokens?.cache?.write,
-                    p.info.cost,
-                  );
-                await tokens.flush(patchStatus);
-              }
-            }
+              cost?: number;
+            };
+          };
+          if (p.info?.sessionID === sessionID) {
+            if (typeof p.info.tokens?.input === 'number' || typeof p.info.cost === 'number')
+              tokens.update(
+                sessionID,
+                p.info.id ?? `${sessionID}-live`,
+                p.info.tokens?.input ?? 0,
+                p.info.tokens?.output ?? 0,
+                p.info.tokens?.reasoning,
+                p.info.tokens?.cache?.read,
+                p.info.tokens?.cache?.write,
+                p.info.cost,
+              );
+            await tokens.flush(doPatchStatus);
           }
         }
-        try {
-          await reader.cancel();
-        } catch {
-          /* ignore */
-        }
-      } catch (e) {
-        if (terminate) return;
-        streamErrors++;
-        err('SSE stream error:', (e as Error).message, `(${streamErrors}/5)`);
-        if (streamErrors >= 5) {
-          throw new Error('opencode server unreachable: stream disconnected');
-        }
-        await sleep(5000);
-      }
-      // Add delay between all reconnection attempts (success or error) to prevent runaway loops
-      if (!terminate) await sleep(1000);
-    }
+      },
+    });
   };
 
-  const hardTimeout = setTimeout(() => {
-    if (waitingForInput) {
-      err('dispatcher timeout guard — waiting for input, exiting cleanly');
-      process.exit(0);
-    } else {
-      err('dispatcher timeout guard');
-      process.exit(3);
-    }
-  }, HARD_TIMEOUT_MS);
-  hardTimeout.unref();
+  // Hard-timeout guard. Previously this called process.exit(0)/process.exit(3)
+  // directly, which skipped the session snapshot, sendStats and the
+  // RunPhase.Failed patch — exactly the failure mode FatalRunError was
+  // introduced to prevent (see the class comment above). Instead the timer
+  // rejects a promise the Promise.race observes, so the run exits through the
+  // normal snapshot → stats → Failed path and main()'s handler only has to do
+  // the final (idempotent) status patch and process exit.
+  let hardTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const hardTimeout = new Promise<never>((_resolve, reject) => {
+    hardTimeoutHandle = setTimeout(() => {
+      if (pollState.waitingForInput) {
+        err('dispatcher timeout guard — waiting for input, failing run via normal path');
+      } else {
+        err('dispatcher timeout guard — hard timeout exceeded');
+      }
+      reject(new FatalRunError(`dispatcher hard timeout exceeded (${hardTimeoutMs}ms)`));
+    }, hardTimeoutMs);
+    hardTimeoutHandle.unref();
+  });
   void streamEvents().catch((e) => {
-    if (!terminate) err('streamEvents fatal:', (e as Error).message);
+    if (!pollState.terminate) err('streamEvents fatal:', (e as Error).message);
   });
 
   // Periodic snapshot every 30s for visibility during long-running tasks.
   // First iteration fires immediately (no initial delay) to capture early state.
   const periodicSnapshot = async (): Promise<void> => {
     let first = true;
-    while (!terminate) {
-      if (!first) await sleep(30_000);
+    while (!pollState.terminate) {
+      if (!first) await doSleep(30_000);
       first = false;
-      if (!terminate) {
-        snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
+      if (!pollState.terminate) {
+        doSnapshot(coreApi, runName, runNamespace, runUid, sessionID).catch((e) =>
           err('periodic snapshot failed:', (e as Error).message),
         );
       }
     }
   };
   void periodicSnapshot().catch((e) => {
-    if (!terminate) err('periodicSnapshot fatal:', (e as Error).message);
+    if (!pollState.terminate) err('periodicSnapshot fatal:', (e as Error).message);
   });
 
   // Race the normal poll loop against:
@@ -1041,16 +1273,16 @@ export async function runPrompt(
   // patches Succeeded with the agent's summary as the completion message.
   let agentCompletionSummary: string | undefined;
   const failureRaced = failureSignal.then((reason) => {
-    terminate = true;
+    pollState.terminate = true;
     throw new Error(`session error: agent signalled failure — ${reason}`);
   });
   const completionRaced = completionSignal.then((summary) => {
-    terminate = true;
+    pollState.terminate = true;
     agentCompletionSummary = summary;
     log(`complete_run called by agent: ${summary}`);
   });
   const planRaced = planSignal?.then((summary) => {
-    terminate = true;
+    pollState.terminate = true;
     agentCompletionSummary = summary;
     log(`complete_plan called by agent: ${summary}`);
   });
@@ -1060,7 +1292,14 @@ export async function runPrompt(
   let aborting = false;
   try {
     await Promise.race(
-      [pollStatus(), promptPostFailure, failureRaced, completionRaced, planRaced].filter(Boolean),
+      [
+        pollStatus(),
+        promptPostFailure,
+        failureRaced,
+        completionRaced,
+        planRaced,
+        hardTimeout,
+      ].filter(Boolean),
     );
   } catch (e) {
     if ((e as Error).name === 'AbortError') {
@@ -1072,25 +1311,34 @@ export async function runPrompt(
       raceError = e as Error;
     }
   }
-  terminate = true;
+  pollState.terminate = true;
   promptPostController.abort();
-  clearTimeout(hardTimeout);
+  if (hardTimeoutHandle) clearTimeout(hardTimeoutHandle);
 
   if (isShuttingDown()) {
     log('shutting down mid-run');
-    await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
-    await patchStatus({ message: 'dispatcher terminated' });
+    await doSnapshot(coreApi, runName, runNamespace, runUid, sessionID);
+    await doPatchStatus({ message: 'dispatcher terminated' });
     return { sessionID, startedAt: runStartedAt };
   }
 
   // If the race was won by an aborted message, keep the run in Running
   // phase and exit cleanly instead of crashing with Failed status.
   if (aborting) {
-    await tokens.flush(patchStatus, true);
-    await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
+    await tokens.flush(doPatchStatus, true);
+    await doSnapshot(coreApi, runName, runNamespace, runUid, sessionID);
     const totals = tokens.totals();
-    await sendStats(sessionID, RunPhase.Running, runStartedAt, new Date().toISOString(), totals);
-    await patchStatus({ phase: RunPhase.Running, message: 'waiting for input (message aborted)' });
+    await doSendStats(
+      sessionID,
+      RunPhase.Running,
+      runStartedAt,
+      new Date(doNow()).toISOString(),
+      totals,
+    );
+    await doPatchStatus({
+      phase: RunPhase.Running,
+      message: 'waiting for input (message aborted)',
+    });
     log('done (waiting for input after abort)');
     return { sessionID, startedAt: runStartedAt };
   }
@@ -1098,14 +1346,14 @@ export async function runPrompt(
   // Always flush tokens, snapshot, and persist stats — whether the run
   // succeeded or failed.  This ensures the manager always has a ConfigMap
   // to read for facilitation context and SQLite always has a record.
-  await tokens.flush(patchStatus, true);
-  await snapshotAllSessions(coreApi, runName, runNamespace, runUid, sessionID);
+  await tokens.flush(doPatchStatus, true);
+  await doSnapshot(coreApi, runName, runNamespace, runUid, sessionID);
 
-  const completedAt = new Date().toISOString();
+  const completedAt = new Date(doNow()).toISOString();
   const totals = tokens.totals();
 
   if (raceError) {
-    await sendStats(
+    await doSendStats(
       sessionID,
       RunPhase.Failed,
       runStartedAt,
@@ -1113,12 +1361,17 @@ export async function runPrompt(
       totals,
       raceError.message,
     );
+    // Patch Failed here so the run's terminal phase is recorded even before
+    // the error propagates to main()'s catch (which re-patches idempotently).
+    // The hard-timeout guard relies on this path: previously it called
+    // process.exit directly, leaving the run stuck in Running with no snapshot.
+    await doPatchStatus({ phase: RunPhase.Failed, message: raceError.message, completedAt });
     throw raceError;
   }
 
   if (agentCompletionSummary) {
-    await sendStats(sessionID, RunPhase.Succeeded, runStartedAt, completedAt, totals);
-    await patchStatus({
+    await doSendStats(sessionID, RunPhase.Succeeded, runStartedAt, completedAt, totals);
+    await doPatchStatus({
       phase: RunPhase.Succeeded,
       message: `agent signalled completion — ${agentCompletionSummary}`,
       completedAt,
@@ -1126,8 +1379,8 @@ export async function runPrompt(
     log('done');
   } else {
     const msg = 'session ended without completion signal';
-    await sendStats(sessionID, RunPhase.Failed, runStartedAt, completedAt, totals, msg);
-    await patchStatus({ phase: RunPhase.Failed, message: msg, completedAt });
+    await doSendStats(sessionID, RunPhase.Failed, runStartedAt, completedAt, totals, msg);
+    await doPatchStatus({ phase: RunPhase.Failed, message: msg, completedAt });
     log('done (failed — no explicit completion signal)');
   }
 
