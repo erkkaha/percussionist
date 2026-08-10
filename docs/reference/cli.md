@@ -212,6 +212,90 @@ Manage GitHub token Secrets for gh CLI auth in runners.
 beatctl github-token create [--token <token>]
 ```
 
+## Diagnostics Commands
+
+### doctor
+
+Read-only cluster diagnostics for the whole control plane. `beatctl doctor`
+audits CRDs, RBAC wiring, NetworkPolicy enforcement, DNS, storage,
+credentials, providers, models, the dashboard origin, and component health,
+then prints a per-category `pass`/`warn`/`fail` report with remediation hints.
+
+```bash
+beatctl doctor                               # full report (all 10 checks)
+beatctl doctor --check crds --check storage  # run only the named checks
+beatctl doctor --json                        # machine-readable JSON report
+beatctl doctor --probe-dns                   # exec getent hosts into a pod
+beatctl doctor --timeout 60                  # 60s per-probe timeout
+```
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--namespace` | `-n` | Namespace to inspect (default: `percussionist`) |
+| `--check` | | Run only the named check category (repeatable) |
+| `--json` | | Emit a machine-readable JSON report |
+| `--probe-dns` | | Exec `getent hosts` into a ready pod to verify in-cluster DNS (opt-in, best-effort) |
+| `--timeout` | | Per-probe timeout in seconds (default: `30`) |
+
+Exit codes:
+
+- `0` — all checks pass
+- `1` — at least one check failed
+- `2` — cluster unreachable / fatal connection error (no report produced)
+
+The ten check categories (`--check <name>` filters by these names):
+
+1. `crds` — the 5 `percussionist.dev/v1alpha1` CRDs (`runs`, `projects`,
+   `tasks`, `clusteragents`, `clustersettings`) exist and are `Established`.
+2. `rbac` — ServiceAccounts, (Cluster)Roles and (Cluster)RoleBindings exist
+   and reference the right subject/roleRef names.
+3. `network-policy` — the `manager-ingress` and `memory-service-ingress`
+   NetworkPolicies exist; a warning is reported when the CNI cannot enforce
+   them.
+4. `dns` — CoreDNS is Available; control-plane Services (`percussionist-manager`,
+   `percussionist-web`, `ollama`) have ready endpoints; with `--probe-dns`,
+   execs `getent hosts` into a ready pod.
+5. `storage` — a default StorageClass exists; the web PVC and each
+   `{project}-data` PVC are `Bound` (`Pending` → warning, `Lost`/`Failed` →
+   error); the operator's `DEFAULT_STORAGE_CLASS` env resolves.
+6. `credentials` — required Secrets (`operator-api-key`, `manager-api-key`,
+   `manager-mcp-token`, `web-auth`) are present with expected keys; optional
+   Secrets (`opencode-auth`, `llm-keys`) warn with remediation hints.
+7. `providers` — provider authentication via the manager MCP `list_models`
+   tool (port-forward); zero connected providers with credentials configured
+   is an error (dev mode downgrades to a warning).
+8. `models` — at least one connected provider exposes ≥1 model; the effective
+   default model (opencode-config / ClusterSettings / Project specs) resolves
+   to a connected provider; prints the provider → model table.
+9. `dashboard` — `WEB_BASE_URL` matches the Ingress host (not the
+   `http://localhost:8080` port-forward fallback); GitHub App client id
+   configured; web `/api/health` answers `ok:true` with the expected namespace.
+10. `health` — control-plane Deployments have ready replicas; `ollama` is
+    healthy iff a Project enables `spec.embedding`; manager MCP answers a
+    `tools/list` probe; web `/api/health` is reachable.
+
+**Read-only guarantee.** `beatctl doctor` only issues `get`/`list` API verbs
+plus bounded network probes (every call times out per `--timeout`). It never
+creates, patches, or deletes anything. The only in-pod action is the opt-in
+`--probe-dns` exec of a read-only `getent hosts`, which is best-effort and
+downgraded to a warning on RBAC/exec failures. The command diagnoses and
+prints remediation hints (e.g. `beatctl auth import`, `beatctl deploy`) but
+never mutates the cluster.
+
+**NetworkPolicy/CNI warning semantics.** NetworkPolicy enforcement depends on
+the CNI. With the default minikube/kind CNI (which does not enforce),
+`network-policy` reports a **warning**, not an error — documented as acceptable
+because the manager's bearer token is the effective access control (see the
+header comment in `k8s/deploy/networkpolicy.yaml`). CNI detection is a
+name-based heuristic that looks for `calico`, `cilium`, `antrea`, or `weave`
+DaemonSets in `kube-system`; unknown CNIs (GKE Dataplane V2, Azure NPM, …) are
+treated as non-enforcing and downgrade to a warning, never an error.
+
+**Out of scope.** `beatctl validate` remains a separate command (config/agent
+audit of ClusterAgent capabilities and Project rosters). No server-side health
+endpoints or web-UI equivalents were added — all data comes from existing
+Kubernetes APIs, the manager MCP, and the web `/api/health` endpoint.
+
 ## Global Flags
 
 | Flag | Alias | Description |

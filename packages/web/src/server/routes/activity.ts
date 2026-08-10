@@ -23,11 +23,16 @@ activity.get('/', auth(), (c) => {
     if (!Number.isNaN(beforeId)) conditions.push(lt(taskEvents.id, beforeId));
   }
 
+  // Order by the same key the `before` cursor filters on (id DESC, not
+  // createdAt): taskEvents.createdAt is datetime('now') at second resolution,
+  // so events written in the same second share a createdAt while their ids
+  // (autoincrement) diverge from it — ordering by createdAt would make cursor
+  // pages skip/repeat events.
   const rows = db
     .select()
     .from(taskEvents)
     .where(conditions.length > 0 ? and(...(conditions as [ReturnType<typeof eq>])) : undefined)
-    .orderBy(desc(taskEvents.createdAt))
+    .orderBy(desc(taskEvents.id))
     .limit(limit)
     .all();
 

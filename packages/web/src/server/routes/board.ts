@@ -107,6 +107,40 @@ export async function appendTaskEvent(
   }
 }
 
+/**
+ * Resolve a Task CR scoped to its project's namespace, verifying it actually
+ * belongs to the project.
+ *
+ * Task action routes (approve, request-changes, retry-review, answer, ...)
+ * previously called getTask(taskName) with the default namespace and never
+ * verified task.spec.projectRef. That broke tasks in non-default namespaces
+ * (the default-ns lookup 404s) and — worse — when a task with the same name
+ * existed in the default namespace, the annotation was patched on the wrong
+ * task and appendTaskEvent recorded the event under the URL project,
+ * corrupting the activity feed.
+ *
+ * Resolves the namespace from the project (project.metadata.namespace ??
+ * NAMESPACE, same as the delete/move routes) and cross-checks both
+ * task.spec.projectRef (required by TaskSpecSchema, authoritative) and the
+ * percussionist.dev/project label before any patch/annotation/event write.
+ * Throws a 404-shaped error (mapped by the route's existing errStatus/errMsg
+ * handling) when the task doesn't belong to the project.
+ */
+async function getProjectTask(
+  projectName: string,
+  taskName: string,
+): Promise<{ task: Task; ns: string }> {
+  const project = await getProject(projectName);
+  const ns = project.metadata.namespace ?? NAMESPACE;
+  const task = await getTask(taskName, ns);
+  const projectRef = task.spec.projectRef;
+  const labelProject = task.metadata.labels?.['percussionist.dev/project'];
+  if (projectRef !== projectName || (labelProject !== undefined && labelProject !== projectName)) {
+    throw Object.assign(new Error('Task not found in project'), { statusCode: 404 });
+  }
+  return { task, ns };
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/projects/:project/board
 board.get('/:project/board', auth(), async (c) => {
@@ -484,18 +518,22 @@ board.post('/:project/board/tasks/:taskName/approve', adminAuth(), async (c) => 
   const taskName = c.req.param('taskName');
   try {
     // Write approval as Task annotation (new format).
-    const task = await getTask(taskName);
+    const { task, ns } = await getProjectTask(name, taskName);
     const currentAnnotations = task.metadata.annotations ?? {};
-    await patchTask(taskName, {
-      metadata: {
-        ...task.metadata,
-        annotations: {
-          ...currentAnnotations,
-          'percussionist.dev/action-approved': 'true',
-          'percussionist.dev/action-request-changes': 'false',
+    await patchTask(
+      taskName,
+      {
+        metadata: {
+          ...task.metadata,
+          annotations: {
+            ...currentAnnotations,
+            'percussionist.dev/action-approved': 'true',
+            'percussionist.dev/action-request-changes': 'false',
+          },
         },
       },
-    });
+      ns,
+    );
     await appendTaskEvent(name, taskName, 'unknown', 'approved', {});
     return c.json({ success: true });
   } catch (e) {
@@ -522,18 +560,22 @@ board.post('/:project/board/tasks/:taskName/request-changes', adminAuth(), async
   }
   try {
     // Write rework as Task annotation (new format).
-    const task = await getTask(taskName);
+    const { task, ns } = await getProjectTask(name, taskName);
     const currentAnnotations = task.metadata.annotations ?? {};
-    await patchTask(taskName, {
-      metadata: {
-        ...task.metadata,
-        annotations: {
-          ...currentAnnotations,
-          'percussionist.dev/action-request-changes': 'true',
-          'percussionist.dev/action-rework-feedback': feedback.trim(),
+    await patchTask(
+      taskName,
+      {
+        metadata: {
+          ...task.metadata,
+          annotations: {
+            ...currentAnnotations,
+            'percussionist.dev/action-request-changes': 'true',
+            'percussionist.dev/action-rework-feedback': feedback.trim(),
+          },
         },
       },
-    });
+      ns,
+    );
     await appendTaskEvent(name, taskName, 'unknown', 'request-changes', {
       feedback: feedback.trim(),
     });
@@ -555,7 +597,7 @@ board.post('/:project/board/tasks/:taskName/retry-review', adminAuth(), async (c
   const projectName = c.req.param('project');
   const taskName = c.req.param('taskName');
   try {
-    const task = await getTask(taskName);
+    const { task, ns } = await getProjectTask(projectName, taskName);
     const phase = task.status?.phase;
     const reviewRunName = task.status?.worker?.reviewRunName;
     if (phase !== 'awaiting-human') {
@@ -564,7 +606,6 @@ board.post('/:project/board/tasks/:taskName/retry-review', adminAuth(), async (c
     if (!reviewRunName) {
       return c.json({ error: 'Task has no reviewRunName to retry' }, 400);
     }
-    const ns = task.metadata.namespace ?? NAMESPACE;
     const currentAiReworkCount = (task.status?.worker?.aiReworkCount ?? 0) + 1;
     const patch: Record<string, unknown> = {
       phase: 'succeeded',
@@ -593,33 +634,6 @@ board.post('/:project/board/tasks/:taskName/retry-review', adminAuth(), async (c
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/projects/:project/board/tasks/:taskName/abandon
-
-board.post('/:project/board/tasks/:taskName/abandon', adminAuth(), async (c) => {
-  const name = c.req.param('project');
-  const taskName = c.req.param('taskName');
-  try {
-    // Write abandon as Task annotation (new format).
-    const task = await getTask(taskName);
-    const currentAnnotations = task.metadata.annotations ?? {};
-    await patchTask(taskName, {
-      metadata: {
-        ...task.metadata,
-        annotations: {
-          ...currentAnnotations,
-          'percussionist.dev/action-abandon': 'true',
-        },
-      },
-    });
-    await appendTaskEvent(name, taskName, 'unknown', 'abandoned', {});
-    return c.json({ success: true });
-  } catch (e) {
-    const ke = e as KubeError;
-    return c.json({ error: errMsg(ke) }, errStatus(ke));
-  }
-});
-
-// ---------------------------------------------------------------------------
 // POST /api/projects/:project/board/tasks/:taskName/answer
 
 board.post('/:project/board/tasks/:taskName/answer', adminAuth(), async (c) => {
@@ -637,17 +651,21 @@ board.post('/:project/board/tasks/:taskName/answer', adminAuth(), async (c) => {
   }
   try {
     // Answer is written as a Task annotation (not Project).
-    const task = await getTask(taskName);
+    const { task, ns } = await getProjectTask(name, taskName);
     const currentAnnotations = task.metadata.annotations ?? {};
-    await patchTask(taskName, {
-      metadata: {
-        ...task.metadata,
-        annotations: {
-          ...currentAnnotations,
-          'percussionist.dev/action-answer': answer.trim(),
+    await patchTask(
+      taskName,
+      {
+        metadata: {
+          ...task.metadata,
+          annotations: {
+            ...currentAnnotations,
+            'percussionist.dev/action-answer': answer.trim(),
+          },
         },
       },
-    });
+      ns,
+    );
     await appendTaskEvent(name, taskName, 'PLAN', 'answered', { answer: answer.trim() });
     return c.json({ success: true });
   } catch (e) {

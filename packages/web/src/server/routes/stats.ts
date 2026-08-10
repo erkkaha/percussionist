@@ -18,7 +18,7 @@
 //     days=N   — look-back window in days (default: 30; 0 = all time)
 
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, gte, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { auth, scoped } from '../auth.js';
 import { fileOps, getDb, messages, metricSnapshots, runs, toolCalls } from '../db.js';
@@ -325,19 +325,31 @@ stats.patch('/session', scoped('stats', 'write'), async (c) => {
   return c.json({ ok: true });
 });
 
-// GET /api/stats/exists/:sessionID — check if a session row exists (for backfill guard).
-stats.get('/exists/:sessionID', auth(), (c) => {
-  const { sessionID } = c.req.param();
-  const db = getDb();
-  const row = db.select({ id: runs.id }).from(runs).where(eq(runs.id, sessionID)).get();
-  return c.json({ exists: row !== undefined });
-});
-
 // GET /api/stats/export?days=30 — full dump for LLM analysis.
 //
 // Returns a JSON array where each element is a session with nested messages,
 // tool calls, and file operations. Intended to be saved to disk and fed to
 // an LLM wholesale: jq . sessions.json | llm "find patterns in agent usage".
+//
+// The session set is capped at EXPORT_MAX_SESSIONS (default 200,
+// env-overridable). The cap applies inside the window: days=0 means "whole
+// table capped at EXPORT_MAX_SESSIONS" — without it the entire (potentially
+// unbounded, when RETENTION_DAYS=0 disables retention) table would be loaded
+// into memory. When the window exceeds the cap the most recent sessions are
+// kept (ordered by startedAt DESC) and the truncation is logged via
+// console.warn.
+
+// Env-overridable cap on exported sessions. Read per-request so operators can
+// change it (and tests can override it) without restarting the server.
+function exportMaxSessions(): number {
+  return parseInt(process.env.EXPORT_MAX_SESSIONS ?? '200', 10);
+}
+
+// Chunk size for the batched child fetches below. SQLite's default
+// bound-parameter limit is 999 (32766 on modern builds); chunking at 500
+// session ids keeps the IN clause well under the limit on any SQLite version.
+const EXPORT_FETCH_CHUNK = 500;
+
 stats.get('/export', auth(), (c) => {
   const daysParam = c.req.query('days') ?? '30';
   const days = parseInt(daysParam, 10);
@@ -346,22 +358,78 @@ stats.get('/export', auth(), (c) => {
 
   const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
 
-  const runRows = cutoff
-    ? db.select().from(runs).where(gte(runs.startedAt, cutoff)).all()
-    : db.select().from(runs).all();
+  const cap = exportMaxSessions();
 
+  // Bounded read: LIMIT is pushed into SQL, plus one probe row to detect
+  // truncation. Ordering by startedAt DESC keeps the most recent sessions
+  // when the window exceeds the cap.
+  const rows = cutoff
+    ? db
+        .select()
+        .from(runs)
+        .where(gte(runs.startedAt, cutoff))
+        .orderBy(desc(runs.startedAt))
+        .limit(cap + 1)
+        .all()
+    : db
+        .select()
+        .from(runs)
+        .orderBy(desc(runs.startedAt))
+        .limit(cap + 1)
+        .all();
+
+  const truncated = rows.length > cap;
+  const runRows = truncated ? rows.slice(0, cap) : rows;
+
+  if (truncated) {
+    console.warn(
+      `[stats] export truncated: window contains ${rows.length} session(s), returning the most recent ${cap} ` +
+        `(EXPORT_MAX_SESSIONS=${cap}); raise EXPORT_MAX_SESSIONS to export more`,
+    );
+  }
+
+  // Batched child fetches — one IN-chunked pass per table, assembled by
+  // sessionId into the same nested shape the old per-session N+1 loop
+  // produced. The old loop issued O(sessions) queries per table; this issues
+  // O(ceil(sessions / EXPORT_FETCH_CHUNK)) queries per table. The session set
+  // is already bounded by the cap above, so the total work is proportional to
+  // the capped set, never the window.
   const sessionIds = runRows.map((r) => r.id);
 
-  // Fetch all related rows per session and assemble the nested result.
-  // Session count is bounded to ~10 concurrent runs so N+1 is fine.
+  const messagesBySession = new Map<string, Array<typeof messages.$inferSelect>>();
+  const toolCallsBySession = new Map<string, Array<typeof toolCalls.$inferSelect>>();
+  const fileOpsBySession = new Map<string, Array<typeof fileOps.$inferSelect>>();
+
+  for (let i = 0; i < sessionIds.length; i += EXPORT_FETCH_CHUNK) {
+    const chunk = sessionIds.slice(i, i + EXPORT_FETCH_CHUNK);
+
+    for (const row of db.select().from(messages).where(inArray(messages.sessionId, chunk)).all()) {
+      const list = messagesBySession.get(row.sessionId);
+      if (list) list.push(row);
+      else messagesBySession.set(row.sessionId, [row]);
+    }
+    for (const row of db
+      .select()
+      .from(toolCalls)
+      .where(inArray(toolCalls.sessionId, chunk))
+      .all()) {
+      const list = toolCallsBySession.get(row.sessionId);
+      if (list) list.push(row);
+      else toolCallsBySession.set(row.sessionId, [row]);
+    }
+    for (const row of db.select().from(fileOps).where(inArray(fileOps.sessionId, chunk)).all()) {
+      const list = fileOpsBySession.get(row.sessionId);
+      if (list) list.push(row);
+      else fileOpsBySession.set(row.sessionId, [row]);
+    }
+  }
+
   const result = runRows.map((r) => ({
     ...r,
-    messages: db.select().from(messages).where(eq(messages.sessionId, r.id)).all(),
-    toolCalls: db.select().from(toolCalls).where(eq(toolCalls.sessionId, r.id)).all(),
-    fileOps: db.select().from(fileOps).where(eq(fileOps.sessionId, r.id)).all(),
+    messages: messagesBySession.get(r.id) ?? [],
+    toolCalls: toolCallsBySession.get(r.id) ?? [],
+    fileOps: fileOpsBySession.get(r.id) ?? [],
   }));
-
-  void sessionIds; // unused after refactor — keep for future bulk query path
 
   return c.json(result);
 });
@@ -397,9 +465,15 @@ const sessionRowSelect = {
 
 // GET /api/stats/sessions?days=30&limit=50&offset=0 — lightweight session listing for UI.
 //
-// Returns flat run rows (no nested messages/toolCalls/fileOps) plus server-side
-// aggregated summary, agent breakdown, and model breakdown. Pagination via
-// limit/offset.
+// Returns flat run rows (no nested messages/toolCalls/fileOps) plus aggregated
+// summary, agent breakdown, and model breakdown. Pagination via limit/offset.
+//
+// The page query runs with SQL LIMIT/OFFSET so the correlated resolvedModel
+// subquery only executes for the page rows; the summary/agentSummaries/modelRows
+// aggregates are computed in SQL over the full retention window (days=0 = the
+// whole table), never materialised in JS. The response shape is fixed — the
+// clients (SessionList with PAGE_SIZE=50, StatsView with STATS_LIMIT=500) parse
+// sessions/total/summary/agentSummaries/modelRows strictly.
 stats.get('/sessions', auth(), (c) => {
   const daysParam = c.req.query('days') ?? '30';
   const days = parseInt(daysParam, 10);
@@ -409,98 +483,180 @@ stats.get('/sessions', auth(), (c) => {
   const db = getDb();
 
   const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
+  const whereClause = cutoff ? gte(runs.startedAt, cutoff) : undefined;
 
-  const baseQuery = db.select(sessionRowSelect).from(runs).orderBy(desc(runs.startedAt));
+  // Resolve model: runs.model first, fallback to first user message's model.
+  // Note: `runs.id` must be written as a raw identifier, not ${runs.id} —
+  // drizzle renders an interpolated column unqualified ("id") inside a raw sql
+  // template, so the subquery would bind "id" to messages.id instead of the
+  // outer runs row and the fallback would never resolve.
+  const resolvedModel = sql<string>`
+    COALESCE(${runs.model}, (
+      SELECT ${messages.model} FROM ${messages}
+      WHERE ${messages.sessionId} = runs.id
+        AND ${messages.role} = 'user'
+        AND ${messages.model} IS NOT NULL
+      LIMIT 1
+    ), 'unknown')
+  `;
 
-  const allRows = cutoff ? baseQuery.where(gte(runs.startedAt, cutoff)).all() : baseQuery.all();
+  // Page query — LIMIT/OFFSET pushed into SQL so the resolvedModel subquery
+  // runs only for the page rows, not every row in the window.
+  const sessions = db
+    .select({
+      id: runs.id,
+      name: runs.name,
+      namespace: runs.namespace,
+      task: runs.task,
+      model: runs.model,
+      agent: runs.agent,
+      phase: runs.phase,
+      startedAt: runs.startedAt,
+      completedAt: runs.completedAt,
+      tokensIn: runs.tokensIn,
+      tokensOut: runs.tokensOut,
+      cost: runs.cost,
+      error: runs.error,
+      createdAt: runs.createdAt,
+      resolvedModel,
+    })
+    .from(runs)
+    .where(whereClause)
+    .orderBy(desc(runs.startedAt))
+    .limit(limit)
+    .offset(offset)
+    .all() as Array<{
+    id: string;
+    name: string;
+    namespace: string | null;
+    task: string | null;
+    model: string | null;
+    agent: string | null;
+    phase: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    tokensIn: number | null;
+    tokensOut: number | null;
+    cost: number | null;
+    error: string | null;
+    createdAt: string | null;
+    resolvedModel: string;
+  }>;
 
-  const total = allRows.length;
+  // Full-window aggregates — total + summary over the entire retention window
+  // (days=0 = whole table), independent of the page.
+  const agg = db
+    .select({
+      total: sql<number>`COUNT(*)`.as('total'),
+      succeeded: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Succeeded' THEN 1 ELSE 0 END)`.as(
+        'succeeded',
+      ),
+      failed: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Failed' THEN 1 ELSE 0 END)`.as('failed'),
+      totalTokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('total_tokens_in'),
+      totalTokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('total_tokens_out'),
+      totalCost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as('total_cost'),
+      avgDurationMs:
+        sql<number>`AVG(CASE WHEN ${runs.startedAt} IS NOT NULL AND ${runs.completedAt} IS NOT NULL
+        THEN (julianday(${runs.completedAt}) - julianday(${runs.startedAt})) * 86400000 ELSE NULL END)`.as(
+          'avg_duration_ms',
+        ),
+    })
+    .from(runs)
+    .where(whereClause)
+    .get();
 
-  // Summary
-  const succeeded = allRows.filter((r) => r.phase === 'Succeeded').length;
-  const failed = allRows.filter((r) => r.phase === 'Failed').length;
-  const totalTokensIn = allRows.reduce((a, r) => a + (r.tokensIn ?? 0), 0);
-  const totalTokensOut = allRows.reduce((a, r) => a + (r.tokensOut ?? 0), 0);
-  const totalCost = allRows.reduce((a, r) => a + (r.cost ?? 0), 0);
+  const total = agg?.total ?? 0;
+  const succeeded = agg?.succeeded ?? 0;
+  const failed = agg?.failed ?? 0;
 
-  const durations: number[] = [];
-  for (const r of allRows) {
-    if (r.startedAt && r.completedAt) {
-      const ms = new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime();
-      if (!Number.isNaN(ms)) durations.push(ms);
-    }
+  const summary = {
+    total,
+    succeeded,
+    failed,
+    successRate: total > 0 ? Math.round((succeeded / total) * 100) : null,
+    totalTokensIn: agg?.totalTokensIn ?? 0,
+    totalTokensOut: agg?.totalTokensOut ?? 0,
+    totalCost: agg?.totalCost ?? 0,
+    avgDurationMs: agg?.avgDurationMs != null ? Math.round(agg.avgDurationMs) : null,
+  };
+
+  // Per-model breakdown — GROUP BY the resolved model, ordered by tokens in
+  // (matches the previous JS sort).
+  const modelRows = db
+    .select({
+      model: resolvedModel,
+      runs: sql<number>`COUNT(*)`.as('runs'),
+      tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('tokens_in'),
+      tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('tokens_out'),
+      cost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as('cost'),
+    })
+    .from(runs)
+    .where(whereClause)
+    .groupBy(resolvedModel)
+    .orderBy(sql`COALESCE(SUM(${runs.tokensIn}), 0) DESC`)
+    .all() as Array<{
+    model: string;
+    runs: number;
+    tokensIn: number;
+    tokensOut: number;
+    cost: number;
+  }>;
+
+  // Per-agent breakdown — grouped in SQL; only the derived fields
+  // (successRate/avgTokensPerRun/avgDurationMs) and the runs-desc sort are JS.
+  const agentRows = db
+    .select({
+      agent: sql<string>`COALESCE(${runs.agent}, 'unknown')`.as('agent'),
+      runs: sql<number>`COUNT(*)`.as('runs'),
+      succeeded: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Succeeded' THEN 1 ELSE 0 END)`.as(
+        'succeeded',
+      ),
+      failed: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Failed' THEN 1 ELSE 0 END)`.as('failed'),
+      tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('tokens_in'),
+      tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('tokens_out'),
+      cost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as('cost'),
+      avgDurationMs:
+        sql<number>`AVG(CASE WHEN ${runs.startedAt} IS NOT NULL AND ${runs.completedAt} IS NOT NULL
+        THEN (julianday(${runs.completedAt}) - julianday(${runs.startedAt})) * 86400000 ELSE NULL END)`.as(
+          'avg_duration_ms',
+        ),
+    })
+    .from(runs)
+    .where(whereClause)
+    .groupBy(sql`COALESCE(${runs.agent}, 'unknown')`)
+    .all() as Array<{
+    agent: string;
+    runs: number;
+    succeeded: number;
+    failed: number;
+    tokensIn: number;
+    tokensOut: number;
+    cost: number;
+    avgDurationMs: number | null;
+  }>;
+
+  // Per-agent model lists — from runs.model only (matches the previous JS,
+  // which added r.model, not the resolved model, to each agent's models[]).
+  const agentModelRows = db
+    .select({
+      agent: sql<string>`COALESCE(${runs.agent}, 'unknown')`.as('agent'),
+      model: runs.model,
+    })
+    .from(runs)
+    .where(and(whereClause, sql`${runs.model} IS NOT NULL`))
+    .groupBy(sql`COALESCE(${runs.agent}, 'unknown')`, runs.model)
+    .all() as Array<{ agent: string; model: string }>;
+
+  const agentModels = new Map<string, string[]>();
+  for (const row of agentModelRows) {
+    const list = agentModels.get(row.agent) ?? [];
+    list.push(row.model);
+    agentModels.set(row.agent, list);
   }
-  const avgDurationMs =
-    durations.length > 0
-      ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
-      : null;
 
-  // Per-model breakdown
-  const modelMap = new Map<
-    string,
-    { runs: number; tokensIn: number; tokensOut: number; cost: number }
-  >();
-  for (const r of allRows) {
-    const model = r.resolvedModel ?? r.model ?? 'unknown';
-    const existing = modelMap.get(model) ?? { runs: 0, tokensIn: 0, tokensOut: 0, cost: 0 };
-    modelMap.set(model, {
-      runs: existing.runs + 1,
-      tokensIn: existing.tokensIn + (r.tokensIn ?? 0),
-      tokensOut: existing.tokensOut + (r.tokensOut ?? 0),
-      cost: existing.cost + (r.cost ?? 0),
-    });
-  }
-  const modelRows = [...modelMap.entries()]
-    .map(([model, v]) => ({ model, ...v }))
-    .sort((a, b) => b.tokensIn - a.tokensIn);
-
-  // Per-agent breakdown
-  const agentMap = new Map<
-    string,
-    {
-      runs: number;
-      succeeded: number;
-      failed: number;
-      tokensIn: number;
-      tokensOut: number;
-      cost: number;
-      durationSum: number;
-      durationCount: number;
-      models: Set<string>;
-    }
-  >();
-  for (const r of allRows) {
-    const agent = r.agent ?? 'unknown';
-    const existing = agentMap.get(agent) ?? {
-      runs: 0,
-      succeeded: 0,
-      failed: 0,
-      tokensIn: 0,
-      tokensOut: 0,
-      cost: 0,
-      durationSum: 0,
-      durationCount: 0,
-      models: new Set<string>(),
-    };
-    existing.runs++;
-    if (r.phase === 'Succeeded') existing.succeeded++;
-    else if (r.phase === 'Failed') existing.failed++;
-    existing.tokensIn += r.tokensIn ?? 0;
-    existing.tokensOut += r.tokensOut ?? 0;
-    existing.cost += r.cost ?? 0;
-    if (r.startedAt && r.completedAt) {
-      const ms = new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime();
-      if (!Number.isNaN(ms)) {
-        existing.durationSum += ms;
-        existing.durationCount++;
-      }
-    }
-    if (r.model) existing.models.add(r.model);
-    agentMap.set(agent, existing);
-  }
-  const agentSummaries = [...agentMap.entries()]
-    .map(([agent, v]) => ({
-      agent,
+  const agentSummaries = agentRows
+    .map((v) => ({
+      agent: v.agent,
       runs: v.runs,
       succeeded: v.succeeded,
       failed: v.failed,
@@ -509,29 +665,17 @@ stats.get('/sessions', auth(), (c) => {
       totalTokensOut: v.tokensOut,
       totalCost: v.cost,
       avgTokensPerRun: v.runs > 0 ? Math.round((v.tokensIn + v.tokensOut) / v.runs) : 0,
-      avgDurationMs: v.durationCount > 0 ? Math.round(v.durationSum / v.durationCount) : null,
-      models: [...v.models],
+      avgDurationMs: v.avgDurationMs != null ? Math.round(v.avgDurationMs) : null,
+      models: agentModels.get(v.agent) ?? [],
     }))
     .sort((a, b) => b.runs - a.runs);
-
-  // Paginate sessions for the table
-  const sessions = allRows.slice(offset, offset + limit);
 
   return c.json({
     sessions,
     total,
     limit,
     offset,
-    summary: {
-      total,
-      succeeded,
-      failed,
-      successRate: total > 0 ? Math.round((succeeded / total) * 100) : null,
-      totalTokensIn,
-      totalTokensOut,
-      totalCost,
-      avgDurationMs,
-    },
+    summary,
     agentSummaries,
     modelRows,
   });

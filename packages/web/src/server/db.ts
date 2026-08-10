@@ -30,6 +30,12 @@ let _sqlite: Database | null = null;
 function openDatabase(dbPath: string): Database {
   const db = new Database(dbPath, { create: true });
   db.exec('PRAGMA journal_mode=WAL;');
+  // Retry transient writer contention instead of surfacing SQLITE_BUSY: the
+  // stats-POST path and the housekeeping loops (pruneExpiredRunKeys,
+  // runRetentionCleanup) share this single connection, and a busy error used to
+  // crash the whole pod via the unhandledRejection handler. 5000ms matches
+  // SQLite's default busy timeout and Bun's Database `timeout` option.
+  db.exec('PRAGMA busy_timeout=5000;');
   db.exec('PRAGMA foreign_keys=ON;');
   // Checkpoint every 200 pages (~800KB) instead of default 1000 (~4MB) to
   // keep WAL small and reduce data loss on unclean shutdown.
