@@ -48,6 +48,8 @@ describe('isValidTransition', () => {
     expect(isValidTransition('awaiting-human', 'done')).toBe(true);
     expect(isValidTransition('rework-requested', 'scheduled')).toBe(true);
     expect(isValidTransition('failed', 'pending')).toBe(true);
+    expect(isValidTransition('failed', 'awaiting-feature-merge')).toBe(true);
+    expect(isValidTransition('failed', 'awaiting-merge')).toBe(true);
   });
 
   it('rejects invalid transitions', () => {

@@ -496,12 +496,63 @@ describe('decide — awaiting-human', () => {
     (task.status as any).worker = {
       mergeRunName: 'merge-stale',
       mergeError: 'conflict detected',
+      prNumber: 42,
     };
     const result = decide(makeInput(task, { manualActions: { approved: true } }));
     expect(result.toPhase).toBe('awaiting-feature-merge');
     expect((result.statusPatch?.worker as any).mergeRunName).toBeNull();
     expect((result.statusPatch?.worker as any).mergeError).toBeNull();
+    expect((result.statusPatch?.worker as any).prNumber).toBeNull();
     expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(true);
+  });
+
+  it('awaiting-human + PLAN merge-retry approval → fresh PR-open run, not re-poll (loop regression)', () => {
+    // Bug 1: a closed-unmerged PR left worker.prNumber set; approving cleared
+    // mergeError but not prNumber, so the next cycle re-polled the dead PR and
+    // bounced straight back to awaiting-human — infinite approve loop.
+    const prProject = makeProject('test-project', { featureBranchingEnabled: true });
+    prProject.spec.flow = { ...prProject.spec.flow, integration: { mode: 'pr' } };
+    const prFlow = resolveFlow(prProject);
+    const task = makeTask('t1', 'test-project', { phase: 'awaiting-human', type: 'PLAN' });
+    (task.status as any).worker = {
+      mergeRunName: 'pr-open-stale',
+      mergeError: 'PR #42 was closed without merging',
+      prNumber: 42,
+    };
+    const approved = decide({
+      task,
+      project: prProject,
+      allTasks: [task],
+      observed: {},
+      manualActions: { approved: true },
+      flow: prFlow,
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(approved.toPhase).toBe('awaiting-feature-merge');
+    expect((approved.statusPatch?.worker as any).prNumber).toBeNull();
+
+    // Feed the patch semantics back: prNumber is now null and no merge run is
+    // active — the next cycle must schedule a fresh PR-open run, not poll.
+    (task.status as any).phase = 'awaiting-feature-merge';
+    (task.status as any).worker = {
+      mergeRunName: null,
+      mergeError: null,
+      prNumber: null,
+    };
+    const next = decide({
+      task,
+      project: prProject,
+      allTasks: [task],
+      observed: {},
+      manualActions: {},
+      flow: prFlow,
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(next.effects.some((e) => e.type === 'SchedulePrOpenRun')).toBe(true);
+    expect(next.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(false);
+    expect((next.statusPatch?.worker as any).mergeRunName).toBeDefined();
   });
 });
 
@@ -588,6 +639,96 @@ describe('decide — failed', () => {
       now,
     });
     expect(result.toPhase).toBeUndefined();
+  });
+
+  it('failed + approve PLAN + merge failure → awaiting-feature-merge (not awaiting-merge)', () => {
+    // Bug 2: a failed feature-branch merge on a PLAN task must be re-routed
+    // through the feature-merge gate (awaiting-feature-merge), which in PR
+    // mode opens a PR — never a direct buildMergeRun to the target.
+    const task = makeTask('t1', 'test-project', { phase: 'failed', type: 'PLAN' });
+    (task.status as any).worker = { mergeError: 'conflict', mergeRunName: 'merge-1' };
+    const result = decide(makeInput(task, { manualActions: { approved: true } }));
+    expect(result.toPhase).toBe('awaiting-feature-merge');
+    expect((result.statusPatch?.worker as any).mergeRunName).toBeNull();
+    expect((result.statusPatch?.worker as any).mergeError).toBeNull();
+    expect((result.statusPatch?.worker as any).prNumber).toBeNull();
+    expect(result.events[0]?.reason).toBe('MergeRetryApproved');
+    expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(true);
+  });
+
+  it('failed + approve PLAN + merge failure ignores capacity gate', () => {
+    // Mirror of the awaiting-human PLAN branch: awaiting-feature-merge is not
+    // an active/WIP phase, so the capacity gate must not block the approval.
+    const task = makeTask('t1', 'test-project', { phase: 'failed', type: 'PLAN' });
+    (task.status as any).worker = { mergeError: 'conflict', mergeRunName: 'merge-1' };
+    const result = decide(
+      makeInput(task, {
+        manualActions: { approved: true },
+        capacity: { activeCount: 2, maxParallel: 2 },
+      }),
+    );
+    expect(result.toPhase).toBe('awaiting-feature-merge');
+  });
+
+  it('failed + approve BUILD + merge failure → awaiting-merge (behavior preserved)', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'failed', type: 'BUILD' });
+    (task.status as any).worker = { mergeError: 'conflict', mergeRunName: 'merge-1' };
+    const result = decide(makeInput(task, { manualActions: { approved: true } }));
+    expect(result.toPhase).toBe('awaiting-merge');
+    expect((result.statusPatch?.worker as any).mergeRunName).toBeNull();
+    expect((result.statusPatch?.worker as any).mergeError).toBeNull();
+    expect(result.events[0]?.reason).toBe('MergeRetryApproved');
+  });
+
+  it('failed + approve BUILD + merge failure + no capacity → no-op (gate kept)', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'failed', type: 'BUILD' });
+    (task.status as any).worker = { mergeError: 'conflict', mergeRunName: 'merge-1' };
+    const result = decide(
+      makeInput(task, {
+        manualActions: { approved: true },
+        capacity: { activeCount: 2, maxParallel: 2 },
+      }),
+    );
+    expect(result.toPhase).toBeUndefined();
+  });
+
+  it('failed + approve PLAN + merge failure + PR mode → follow-up schedules PR-open run, never merge run', () => {
+    const prProject = makeProject('test-project', { featureBranchingEnabled: true });
+    prProject.spec.flow = { ...prProject.spec.flow, integration: { mode: 'pr' } };
+    const prFlow = resolveFlow(prProject);
+    const task = makeTask('t1', 'test-project', { phase: 'failed', type: 'PLAN' });
+    (task.status as any).worker = {
+      mergeError: 'branch protection rejected',
+      mergeRunName: 'merge-1',
+    };
+    const approved = decide({
+      task,
+      project: prProject,
+      allTasks: [task],
+      observed: {},
+      manualActions: { approved: true },
+      flow: prFlow,
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(approved.toPhase).toBe('awaiting-feature-merge');
+
+    // Next reconcile cycle: prNumber/mergeRunName cleared → schedule a fresh
+    // PR-open run, never a direct buildMergeRun to the target.
+    (task.status as any).phase = 'awaiting-feature-merge';
+    (task.status as any).worker = { mergeRunName: null, mergeError: null, prNumber: null };
+    const next = decide({
+      task,
+      project: prProject,
+      allTasks: [task],
+      observed: {},
+      manualActions: {},
+      flow: prFlow,
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(next.effects.some((e) => e.type === 'SchedulePrOpenRun')).toBe(true);
+    expect(next.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(false);
   });
 });
 
@@ -1359,6 +1500,9 @@ describe('decide — awaiting-feature-merge', () => {
     );
     expect(result.toPhase).toBe('awaiting-human');
     expect((result.statusPatch?.worker as any).mergeError).toContain('closed without merging');
+    // The dead PR number must be cleared so a later approval schedules a fresh
+    // PR-open run instead of re-polling the closed PR (infinite bounce loop).
+    expect((result.statusPatch?.worker as any).prNumber).toBeNull();
     expect(result.events[0]?.reason).toBe('PullRequestClosedWithoutMerge');
   });
 

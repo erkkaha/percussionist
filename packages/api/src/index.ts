@@ -910,7 +910,7 @@ export const TRANSITION_TABLE: Record<TaskPhase, TaskPhase[]> = {
   'generating-builds': ['awaiting-children', 'awaiting-human', 'failed'],
   'awaiting-children': ['awaiting-feature-merge', 'awaiting-human', 'done', 'failed'],
   'awaiting-feature-merge': ['done', 'awaiting-human', 'failed'],
-  failed: ['pending', 'awaiting-human', 'awaiting-merge'],
+  failed: ['pending', 'awaiting-human', 'awaiting-merge', 'awaiting-feature-merge'],
   done: [],
 };
 

@@ -893,7 +893,10 @@ function decideAwaitingHuman(input: ReconcileInput): ReconcileDecision {
           taskName,
           fromPhase,
           toPhase: 'awaiting-feature-merge',
-          statusPatch: { worker: { mergeRunName: null, mergeError: null } },
+          // Clear prNumber too: if the mergeError came from a closed-unmerged
+          // PR, keeping the number would re-poll the dead PR on the next
+          // cycle and bounce straight back to awaiting-human.
+          statusPatch: { worker: { mergeRunName: null, mergeError: null, prNumber: null } },
           effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
           events: [
             makeEvent(
@@ -1784,7 +1787,10 @@ function decidePrStateOutcome(
       fromPhase,
       toPhase: 'awaiting-human',
       statusPatch: {
-        worker: { mergeError: `PR #${prNumber} was closed without merging` },
+        // Clear prNumber: the PR is dead, so any later approval must schedule
+        // a fresh PR-open run instead of re-polling this closed PR (which
+        // would bounce the task straight back here — infinite approve loop).
+        worker: { mergeError: `PR #${prNumber} was closed without merging`, prNumber: null },
       },
       effects: [],
       events: [
@@ -1814,8 +1820,30 @@ function decideFailed(input: ReconcileInput): ReconcileDecision {
     const worker = task.status?.worker;
 
     if (worker?.mergeError || worker?.mergeRunName) {
-      // Merge failure — clear old mergeRunName so decideAwaitingMerge()
-      // generates a fresh, uniquely-named merge run.
+      // Merge failure — route PLAN tasks through the feature-merge gate (in
+      // PR mode this opens a PR instead of pushing directly to the target),
+      // mirroring the awaiting-human PLAN branch below. BUILD tasks keep the
+      // single-branch awaiting-merge retry regardless of integration mode.
+      if (task.spec.type === 'PLAN') {
+        return {
+          taskName,
+          fromPhase,
+          toPhase: 'awaiting-feature-merge',
+          statusPatch: { worker: { mergeRunName: null, mergeError: null, prNumber: null } },
+          effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
+          events: [
+            makeEvent(
+              input,
+              fromPhase,
+              'awaiting-feature-merge',
+              'MergeRetryApproved',
+              'Human approved retry of failed feature merge',
+            ),
+          ],
+        };
+      }
+      // Clear old mergeRunName so decideAwaitingMerge() generates a fresh,
+      // uniquely-named merge run.
       if (capacity.activeCount >= capacity.maxParallel) {
         return { taskName, fromPhase, effects: [], events: [] };
       }
