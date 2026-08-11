@@ -1613,7 +1613,7 @@ async function callTool(
                 aiReworkCount: 0,
               }),
               status: 'Failed',
-              runName: undefined,
+              runName: null as unknown as undefined,
               retryCount,
             },
           },
@@ -1772,7 +1772,7 @@ async function callTool(
             phase: targetPhase as 'scheduled' | 'running',
             worker: {
               ...(existingWorker ?? {}),
-              runName: undefined,
+              runName: null as unknown as undefined,
               status: 'Running',
               ...workerBranchPatch(project, task, projectTasks),
               retryCount,
@@ -1794,7 +1794,7 @@ async function callTool(
                 status: 'Succeeded' as const,
               }),
               status: 'Succeeded',
-              runName: undefined,
+              runName: null as unknown as undefined,
               completedAt: new Date().toISOString(),
             },
           },
@@ -1807,7 +1807,7 @@ async function callTool(
           {
             phase: targetPhase as 'pending' | 'rework-requested',
             worker: existingWorker
-              ? { ...existingWorker, status: 'Failed', runName: undefined }
+              ? { ...existingWorker, status: 'Failed', runName: null as unknown as undefined }
               : undefined,
           },
           resourceNs,
@@ -1819,7 +1819,7 @@ async function callTool(
           {
             phase: 'failed',
             worker: existingWorker
-              ? { ...existingWorker, status: 'Failed', runName: undefined }
+              ? { ...existingWorker, status: 'Failed', runName: null as unknown as undefined }
               : { status: 'Failed' as const, retryCount: 0, aiReworkCount: 0 },
           },
           resourceNs,
