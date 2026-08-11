@@ -1,24 +1,25 @@
-# beatctl deploy --platform microk8s — native MicroK8s deployment support
+# beatctl deploy — native MicroK8s support (first-class citizen, Traefik ingress)
 
 Task ID: `idea-microk8s-platform-deploy`
 Branch: `feature/idea-microk8s-platform-deploy`
+Revision: 2 (retry 1/3)
 
 ## Context
 
 `beatctl deploy` (`packages/cli/src/deploy.ts`) installs the whole control plane
-(CRDs + operator + manager + web + NetworkPolicies), and is currently written
-against one reference topology — minikube:
+(CRDs + operator + manager + web + NetworkPolicies) but is written against one
+reference topology — minikube with the ingress-nginx addon:
 
-- **TLS setup is always attempted and is minikube/ingress-nginx-specific.**
-  `setupTls()` hardcodes the `ingress-nginx` namespace, the
-  `ingress-nginx-controller` Deployment, and patches its args with
-  `--default-ssl-certificate=ingress-nginx/percussionist-tls-wildcard`; it pins
-  the HTTPS NodePort to 30443 and the HTTP one to 30080 (`scripts/minikube-load.sh`
-  does the same).
+- **TLS setup is always attempted and hardcodes ingress-nginx.** `setupTls()`
+  targets the `ingress-nginx` namespace, the `ingress-nginx-controller`
+  Deployment and Service, patches its args with
+  `--default-ssl-certificate=ingress-nginx/percussionist-tls-wildcard`, and pins
+  the HTTPS NodePort to 30443. ~30 literal `ingress-nginx` / `ingress-nginx-*`
+  strings live in `deploy.ts` alone.
 - **nip.io is assumed.** `setupTls()`, `patchedOperatorManifest()`,
-  `applyGitopsBootstrap()`, and the final summary all build
-  `https://{nodeIP}.nip.io:30443`. `patchedOperatorManifest`'s regex only
-  replaces `value:` lines that already contain `nip.io`.
+  `applyGitopsBootstrap()` and the summary banner all build
+  `https://{nodeIP}.nip.io:30443`; `patchedOperatorManifest` only replaces
+  `value:` lines that already contain `nip.io`.
 - **Checked-in manifests carry minikube defaults.** `k8s/deploy/operator.yaml`
   sets `DEFAULT_STORAGE_CLASS=standard` and
   `PERCUSSIONIST_INGRESS_BASE_URL=http://192.168.49.2.nip.io:30080`;
@@ -26,124 +27,198 @@ against one reference topology — minikube:
   `ingressClassName: nginx` and `WEB_BASE_URL=http://app.192.168.49.2.nip.io`.
   `beatctl deploy` never patches web.yaml — it relies on those checked-in
   defaults matching the cluster, which only holds for minikube.
+- **Nginx references leak into shared surfaces:** `scripts/minikube-load.sh`
+  pins the ingress-nginx NodePort via `kubectl -n ingress-nginx …`;
+  `README.md` tells users the deploy "patches `ingress-nginx-controller`" and
+  documents `PERCUSSIONIST_INGRESS_CLASS=nginx` + nginx annotations as *the*
+  way; `docs/guide/lxd-microk8s-tailscale.md` says "Do not use `beatctl deploy`
+  for this topology … Apply the manifests directly instead" and hand-rolls a
+  `standard` StorageClass alias.
 
 The operator side is already platform-agnostic: `packages/operator/src/config.ts`
-reads `DEFAULT_STORAGE_CLASS` (data PVCs), `PERCUSSIONIST_INGRESS_BASE_URL` and
-`PERCUSSIONIST_INGRESS_CLASS` (code-server + per-project Ingresses) from env, so
-a deploy that patches those env values needs **zero operator code changes**.
+consumes `DEFAULT_STORAGE_CLASS`, `PERCUSSIONIST_INGRESS_BASE_URL`,
+`PERCUSSIONIST_INGRESS_CLASS` and `PERCUSSIONIST_INGRESS_ANNOTATIONS` from env
+(data PVCs, per-run + code-server Ingresses), so **zero operator code changes
+are needed** — the deploy just has to set the right env values.
 
-MicroK8s differs from minikube in five ways the deploy must account for:
+### Verified MicroK8s facts (official docs, microk8s.io/docs/addon-ingress)
 
-1. **Addons** — `microk8s enable dns rbac hostpath-storage ingress`. `dns`
-   deploys CoreDNS; `rbac` switches the API server from its default
-   `--authorization-mode=AlwaysAllow` to real RBAC (Percussionist relies on
-   dedicated ServiceAccounts + scoped RoleBindings, and MicroK8s' default Calico
-   CNI then enforces `k8s/deploy/networkpolicy.yaml`); `hostpath-storage` creates
-   the default `microk8s-hostpath` StorageClass (node-local, single-node only);
-   `ingress` deploys the ingress controller.
-2. **Ingress controller identity differs by MicroK8s version.** Before 1.35 the
-   addon is NGINX: namespace `ingress`, Deployment
-   `nginx-ingress-microk8s-controller`, Service `ingress`. Since 1.35 the addon
-   ships **Traefik** (namespace `ingress`, Helm chart), with IngressClasses
-   `public` (default), `traefik`, and `nginx` (backward-compat — existing
-   `ingressClassName: nginx` resources keep working). The current hardcoded
-   `ingress-nginx` namespace breaks on both.
-3. **RBAC** — off by default on MicroK8s; must be enabled or the security model
-   (NetworkPolicy enforcement, scoped service accounts) silently degrades.
-4. **Storage** — the operator's `DEFAULT_STORAGE_CLASS` must become
-   `microk8s-hostpath` (the `lxd-microk8s-tailscale.md` playbook currently
-   creates a `standard` alias SC as a workaround).
-5. **kubectl access** — kubectl reaches MicroK8s through a kubeconfig exported
-   from `microk8s config`; the workstation may not have the `microk8s` CLI
-   (e.g. MicroK8s running inside an LXD VM). The deploy must not require the
-   `microk8s` binary.
+1. **Addons** — `microk8s enable dns rbac hostpath-storage ingress`. `rbac`
+   switches the API server from `AlwaysAllow` to real RBAC (Percussionist relies
+   on dedicated ServiceAccounts + scoped RoleBindings, and MicroK8s' default
+   Calico CNI then enforces `k8s/deploy/networkpolicy.yaml`);
+   `hostpath-storage` creates the `microk8s-hostpath` StorageClass
+   (`WaitForFirstConsumer`, node-local, single-node only).
+2. **Ingress backend differs by MicroK8s version.** Since **1.35 the ingress
+   addon ships Traefik** (Helm chart in the `ingress` namespace) with three
+   IngressClasses: **`public` (default), `traefik`, and `nginx`**
+   (backward-compat: existing `ingressClassName: nginx` resources keep working,
+   routed through Traefik's `kubernetesIngressNginx` provider). Before 1.35 the
+   addon is NGINX (`nginx-ingress-microk8s-controller` in the `ingress`
+   namespace). `microk8s disable ingress` removes Traefik, Gateway API CRDs, and
+   cleans up legacy NGINX resources.
+3. **Traefik default TLS cert** is set by re-enabling the addon with an option:
+   `microk8s enable ingress --default-ssl-certificate <namespace>/<secret>` —
+   the documented, idempotent mechanism (the Secret must exist first).
+4. **kubectl access** — the workstation talks to MicroK8s through a kubeconfig
+   exported from `microk8s config`; the `microk8s` binary may not exist on the
+   workstation (LXD-VM topology) and may need `sudo` when it does. The deploy
+   must not require the `microk8s` CLI.
 
-`docs/guide/lxd-microk8s-tailscale.md` documents this gap explicitly: *"Do not
-use `beatctl deploy` for this topology … Apply the manifests directly instead"*
-plus manual `kubectl set env` overrides. This task closes that gap.
+### Retry feedback (this revision)
+
+1. **Make MicroK8s a first-class citizen** — not a bolt-on `--platform
+   microk8s` flag bolted onto a minikube-first design. MicroK8s must get the
+   same out-of-the-box experience minikube has today: `beatctl deploy` with no
+   flags should work on MicroK8s (auto-detect), docs give MicroK8s equal
+   billing, and the LXD playbook's "apply manifests by hand" workaround must go
+   away.
+2. **Traefik is the de facto ingress class** — on MicroK8s 1.35+ Percussionist
+   Ingresses must use the native Traefik path (`public` IngressClass), not the
+   `nginx` backward-compat class; `ingressClassName: nginx` is only for legacy
+   <1.35 installs. TLS uses the documented `--default-ssl-certificate` addon
+   mechanism.
+3. **Clean up nginx references and code** — every *unconditional* nginx
+   assumption must be removed from shared code, manifests, scripts and docs.
+   (minikube's addon *is* ingress-nginx, so the minikube profile legitimately
+   keeps nginx handling — but nothing else in the repo should assume it.)
 
 ## Approach
 
-Introduce a **platform profile** abstraction in the CLI, defaulting to today's
-exact minikube behavior, plus a `microk8s` profile that parameterizes every
-minikube-specific assumption and a `generic` profile that makes no ingress/TLS
-assumptions at all (covers the Tailscale/LXD topology).
+Introduce a **platform layer** in the CLI: platform profiles + best-effort
+**auto-detection** (default), with explicit `--platform` override. MicroK8s
+gets a full peer profile of minikube (addons, storage, ingress backend
+detection, TLS, URL construction), Traefik-first on 1.35+, and the nginx
+references are swept out of the shared deploy path and docs.
 
 ### Key decisions
 
-1. **`--platform <minikube|microk8s|generic>` flag** (default `minikube`, so
-   existing behavior is a pure regression target). Platform selection is
-   explicit — no brittle auto-detection as a gating mechanism. A best-effort
-   *warning* when the current context looks like MicroK8s but `--platform
-   minikube` was passed is a nice-to-have, never a blocker.
+1. **`--platform auto|minikube|microk8s|generic`** — **default `auto`**:
+   resolve from the cluster, print the result, never silently guess wrong in a
+   destructive way (detection feeds *which preflight checks run and which
+   defaults are patched*, and `--platform` always overrides). Detection order:
+   - kubeconfig context name (`kubectl config current-context`) containing
+     `microk8s` → microk8s; containing `minikube` → minikube;
+   - else cluster probes: `microk8s-hostpath` StorageClass exists → microk8s;
+     node names start with `minikube` → minikube;
+   - else `generic` (no ingress/TLS assumptions — covers LXD/Tailscale and
+     real clusters). `generic` implies `--skip-tls`.
+   - On a minikube cluster, `auto` **must** resolve to the minikube profile so
+     existing no-flag behavior is byte-for-byte preserved (regression target).
 2. **Platform profile struct** in a new `packages/cli/src/deploy-platform.ts`:
-   `{ namespace, service, deployment, ingressClass, defaultStorageClass,
-   httpNodePort, httpsNodePort, defaultDomain(ip), controllerKind }`. The TLS
-   helpers (`applyTlsSecret`, `patchIngressNginxDefaultCert`, `pinHttpsNodePort`,
-   rollout wait) all take the profile instead of the hardcoded strings.
-3. **`--domain <host>`** decouples the base URL from nip.io. Default is still
-   `{ip}.nip.io` for minikube (and as a MicroK8s convenience), but a user can
-   pass a real DNS name (or `192.168.1.5.nip.io` explicitly). The wildcard cert
-   becomes `*.{domain}` and the operator/web URLs follow. **`--http-port` /
-   `--https-port`** override NodePorts (defaults per profile: 30080/30443).
-4. **`--skip-tls`** skips cert generation + controller default-cert patch +
-   NodePort pinning; the `generic` platform implies it. This is the Tailscale /
-   real-ingress / no-ingress escape hatch.
-5. **MicroK8s addon handling is CLI-optional, verification-mandatory.**
-   - If the `microk8s` binary is on PATH: run `microk8s status --wait-ready`,
-     then `microk8s enable dns rbac hostpath-storage ingress` (idempotent),
-     then `microk8s status --wait-ready`.
-   - If not (LXD-VM case): verify effects through kubectl — `microk8s-hostpath`
-     StorageClass exists, an ingress controller is present in the `ingress`
-     namespace, CoreDNS is Available — and fail with the exact `microk8s enable
-     ...` command to run on the host if any is missing. RBAC enablement cannot
-     be verified externally without probing unprivileged requests; emit a
-     warning with instructions instead of guessing.
-6. **Ingress backend detection on MicroK8s** at deploy time: if
-   `nginx-ingress-microk8s-controller` exists → legacy NGINX path (patch
-   deployment args `--default-ssl-certificate=ingress/percussionist-tls-wildcard`,
-   keep `ingressClassName: nginx`); if a Traefik deployment exists in `ingress`
-   → prefer `microk8s enable ingress --default-ssl-certificate
-   percussionist/percussionist-tls-wildcard` semantics via a deployment-args
-   patch fallback (`--default-ssl-certificate=...` works on Traefik too), and
-   set `ingressClassName: public`. `ingressClassName: nginx` is documented to
-   keep working on Traefik, so the `nginx` class remains a safe cross-version
-   fallback. The Secret must exist before the controller consumes it — apply the
-   Secret first, then patch / re-enable.
-7. **Manifest patching is generalized and extended to web.yaml** (today only
-   operator.yaml is patched):
-   - `patchedOperatorManifest(operatorYaml, baseUrl, storageClass, ingressClass)`
-     — replace any existing `value:` under `PERCUSSIONIST_INGRESS_BASE_URL`
-     (drop the nip.io-specific regex), replace `DEFAULT_STORAGE_CLASS`'s value,
-     and set `PERCUSSIONIST_INGRESS_CLASS`.
-   - New `patchedWebManifest(webYaml, domain, ingressClass, httpsPort)` —
-     replaces the Ingress `host: app.<old>` line, `ingressClassName`, and the
-     `WEB_BASE_URL` env value, so the dashboard origin always matches the
-     Ingress (this is what `checkDashboard` in `doctor-platform.ts` verifies).
-   - `patchFluxManifest` in `gitops-manifest.ts` already matches the
-     name/value pair (not nip.io) — only the operator.yaml regex in `deploy.ts`
-     needs generalizing.
-8. **`ensureNamespace()`** — create the target namespace if missing (all
-   platforms benefit; the playbook currently hand-rolls this).
+   `{ name, ingressNamespace, controllerDeployment, controllerService,
+   ingressClass, storageClass, httpNodePort, httpsNodePort, defaultDomain(ip),
+   controllerKind: 'nginx' | 'traefik' | 'none' }`. All TLS helpers in
+   `deploy.ts` take the profile instead of hardcoded strings.
+   - minikube: `ingress-nginx` / `ingress-nginx-controller` / `nginx` /
+     `standard` / 30080 + 30443 / `{ip}.nip.io` — exactly today's behavior.
+   - microk8s: `ingress` namespace, backend detected at deploy time (Traefik
+     `traefik` Deployment → **`ingressClass: public`**, `controllerKind:
+     'traefik'`; legacy `nginx-ingress-microk8s-controller` → `nginx` /
+     `'nginx'`), `storageClass: microk8s-hostpath`, HTTPS NodePort pin 30443
+     (only when the controller Service is NodePort — see risks), domain
+     `{ip}.nip.io` default, overridable.
+   - generic: no TLS, no ingress namespace/class assumptions, storage class
+     left as the manifest default unless `--storage-class` is given.
+3. **`--domain <host>`** decouples the base URL from nip.io (default
+   `{ip}.nip.io` per profile); wildcard cert becomes `*.{domain}`.
+   **`--http-port` / `--https-port`** override NodePorts (profile defaults).
+   **`--storage-class <name>`** overrides `DEFAULT_STORAGE_CLASS` (also useful
+   for longhorn/rwx clusters on any platform). **`--skip-tls`** skips cert
+   generation, controller default-cert config and port pinning; `generic`
+   implies it. `--tls-secret <ns>/<name>` names the Secret (default
+   `percussionist-tls-wildcard` in the deploy namespace).
+4. **MicroK8s addon handling is CLI-optional, verification-mandatory.**
+   - `microk8s` on PATH → `microk8s status --wait-ready` →
+     `microk8s enable dns rbac hostpath-storage ingress` →
+     `microk8s status --wait-ready`. Addons are idempotent; re-enabling
+     `ingress` with `--default-ssl-certificate percussionist/<secret>` after
+     applying the Secret is the documented Traefik TLS mechanism.
+   - No CLI (LXD-VM) → verify effects through kubectl: `microk8s-hostpath`
+     StorageClass exists, a controller is present in the `ingress` namespace,
+     CoreDNS Available; fail with the exact `microk8s enable …` command to run
+     on the host if anything is missing. RBAC enablement is not externally
+     verifiable → best-effort warning with instructions (never a silent skip).
+   - Never shell out to `sudo microk8s` implicitly.
+5. **Traefik-first TLS on MicroK8s:**
+   - Secret applied to the deploy namespace **before** any controller config
+     (both backends require the Secret to exist first).
+   - Traefik backend: prefer `microk8s enable ingress
+     --default-ssl-certificate percussionist/percussionist-tls-wildcard`
+     (CLI present); fallback for the no-CLI path is patching the Traefik
+     Deployment args with the default-certificate flag, **documented as
+     best-effort** (flag name verified live — see risks).
+   - Legacy NGINX backend: arg patch
+     `--default-ssl-certificate=ingress/percussionist-tls-wildcard` + NodePort
+     pin (same mechanics as minikube, different namespace/deployment).
+   - Ingress class choice: `public` on Traefik, `nginx` on legacy NGINX.
+     Traefik's backward-compat `nginx` class remains the cross-version safe
+     fallback when backend detection is inconclusive.
+6. **Manifest patching generalized and extended to web.yaml** (pure functions
+   in a new `packages/cli/src/deploy-manifests.ts` so they are unit-testable):
+   - `patchedOperatorManifest(yaml, { baseUrl, storageClass, ingressClass })`
+     — replace the `value:` under `PERCUSSIONIST_INGRESS_BASE_URL` (drop the
+     nip.io-specific regex), replace `DEFAULT_STORAGE_CLASS`, set
+     `PERCUSSIONIST_INGRESS_CLASS`. Keep the warn-and-apply-unmodified
+     fallback.
+   - `patchedWebManifest(yaml, { host, ingressClass, webBaseUrl })` — replace
+     the Ingress `host:` line, `ingressClassName`, and `WEB_BASE_URL` env value
+     so the dashboard origin always matches the Ingress (this is what
+     `checkDashboard` in `doctor-platform.ts` verifies).
+   - `patchFluxManifest` (`gitops-manifest.ts`) gains optional `storageClass`
+     and `ingressClass` substitutions (same name/value-pair regex style); the
+     gitops path threads the computed `baseUrl` instead of the hardcoded
+     nip.io URL.
+7. **Nginx cleanup (shared code/docs/scripts), enumerated:**
+   - `packages/cli/src/deploy.ts` — remove every literal `ingress-nginx` /
+     `ingress-nginx-controller` string; TLS helpers become profile-driven
+     (functionally identical output on the minikube profile).
+   - `scripts/minikube-load.sh` (lines ~409-421) — the NodePort pin block stays
+     (it is a minikube+nginx script) but its comments must not present nginx
+     pinning as the generic path; wording updated.
+   - `k8s/deploy/operator.yaml` — the commented `PERCUSSIONIST_INGRESS_*`
+     example (lines ~249-252) switches from nginx annotations to a
+     controller-neutral note + a Traefik example; the "minikube with nip.io"
+     comment (line ~229) gains the microk8s variant.
+   - `k8s/deploy/web.yaml` — comment block (lines ~305-315) rewritten;
+     `ingressClassName: nginx` stays as the *checked-in* default (it works on
+     minikube, on MicroK8s legacy, and on MicroK8s 1.35+ via the
+     backward-compat class, so plain `kubectl apply -k` keeps working
+     everywhere) but the comment states the deploy patches it per platform.
+   - `k8s/local.example/tailnet-ingress.yaml` — nginx comment tidied; class
+     stays `nginx` (minikube example).
+   - `README.md` — minikube setup paragraph no longer describes the deploy as
+     nginx-specific; ingress-controller table and operator-config examples gain
+     MicroK8s/Traefik variants; `PERCUSSIONIST_INGRESS_ANNOTATIONS` example
+     becomes Traefik-aware.
+   - `docs/guide/installation.md` — line ~111 nginx mention generalized.
+   - `docs/guide/lxd-microk8s-tailscale.md` — "Do not use `beatctl deploy`"
+     section replaced with `beatctl deploy --platform microk8s --skip-tls`;
+     the `standard` StorageClass alias workaround and the "fails looking for
+     nginx" failure row are removed.
+8. **`ensureNamespace(ns)`** — create the target namespace if missing (all
+   platforms benefit; the LXD playbook currently hand-rolls this).
 9. **`--down`** — unchanged resource deletion; optionally delete the TLS Secret
    from the profile's namespace. Addons are never disabled on teardown
-   (conservative: they are cluster-level state the user may share).
-10. **MicroK8s TLS on the API server is out of scope** — kubectl reaches
-    MicroK8s via the exported kubeconfig (API server on :16443 with its own
-    certs); `beatctl` never touches it.
+   (conservative: cluster-level state the user may share).
+10. **MicroK8s API-server TLS is out of scope** — kubectl reaches MicroK8s via
+    the exported kubeconfig (:16443 with its own certs); `beatctl` never
+    touches it.
 
 ## Scope boundaries
 
-- **CLI + checked-in deploy manifests only.** No changes to
+- **CLI + checked-in deploy manifests + docs/scripts only.** No changes to
   `packages/operator`, `packages/web`, `packages/manager-controller`,
-  `packages/api`, or the CRDs. The operator already consumes all the env knobs
-  (`DEFAULT_STORAGE_CLASS`, `PERCUSSIONIST_INGRESS_BASE_URL`,
-  `PERCUSSIONIST_INGRESS_CLASS`) that the deploy sets.
-- **No microk8s image-load script.** `scripts/minikube-load.sh` is untouched;
-  loading locally-built dev images into MicroK8s (`microk8s ctr images import`
-  / `sideload`) is a separate concern and out of scope.
+  `packages/api`, or the CRDs. The operator already consumes every env knob the
+  deploy sets.
+- **No microk8s image-load script.** `scripts/minikube-load.sh` is untouched
+  functionally; loading locally-built images into MicroK8s (`microk8s ctr
+  images import` / `sideload`) is a separate concern.
 - **No E2E suite in CI** — CI has no MicroK8s cluster. Verification is unit
   tests (pure functions) + the documented manual playbook run.
+- **minikube profile keeps nginx** — nginx is minikube's addon; "cleanup" means
+  removing *unconditional* nginx assumptions and stale references, not deleting
+  nginx support.
 - **RBAC enforcement** is enabled/verified best-effort (warning), never
   silently disabled.
 - `--platform generic` is included because the LXD/Tailscale playbook is the
@@ -152,128 +227,160 @@ assumptions at all (covers the Tailscale/LXD topology).
 
 ## Tasks (BUILD breakdown)
 
-1. **BUILD: platform profiles + CLI wiring**
+1. **BUILD: platform profiles, auto-detection, CLI flags**
    - New `packages/cli/src/deploy-platform.ts`:
-     `DeployPlatform = 'minikube' | 'microk8s' | 'generic'`, `PlatformProfile`
-     interface, `platformProfile(platform)` resolver with the three profiles
-     (defaults above), `baseUrl(profile, domain, port)`, and
-     `detectMicroK8sIngressBackend()` (returns `'nginx' | 'traefik' | undefined`
-     by probing deployments in the `ingress` namespace).
-   - `packages/cli/src/index.ts`: add `--platform <p>`, `--domain <host>`,
-     `--http-port <n>`, `--https-port <n>`, `--skip-tls` to the `deploy`
-     command; pass through in `DeployOpts` (`deploy.ts`).
-   - Behavior-preserving default: no flags ⇒ identical to today's minikube path.
+     `DeployPlatform = 'auto' | 'minikube' | 'microk8s' | 'generic'`,
+     `PlatformProfile` interface, `platformProfile(platform)` resolver,
+     `resolvePlatform(clusterHints)` auto-detection (context name, then
+     StorageClass/node probes — see decision 1), `baseUrl(profile, domain,
+     port)`, `detectMicroK8sIngressBackend()` (probe `ingress` namespace for
+     `traefik` vs `nginx-ingress-microk8s-controller`), and the three concrete
+     profiles.
+   - `packages/cli/src/index.ts`: add `--platform`, `--domain`, `--http-port`,
+     `--https-port`, `--storage-class`, `--skip-tls`, `--tls-secret` to the
+     `deploy` command; extend `DeployOpts` in `deploy.ts`.
+   - Behavior-preserving guarantee: `auto` on a minikube cluster resolves to
+     the minikube profile; no flags ⇒ identical flow to today.
 
-2. **BUILD: parameterize TLS/ingress setup**
+2. **BUILD: parameterize TLS/ingress setup (deploy.ts)**
    - Refactor `setupTls()` / `applyTlsSecret()` / `patchIngressNginxDefaultCert()`
-     / `pinHttpsNodePort()` in `deploy.ts` to take the `PlatformProfile`
-     (namespace, service, deployment, ports). `generateCert(ip, domain, dir)`
-     uses `*.{domain}`.
-   - `--skip-tls` and `platform === 'generic'`: skip the whole TLS block; use
-     the profile's/default base URL for patching and the summary (with a clear
-     "TLS not configured" note).
-   - MicroK8s backend handling: legacy-NGINX arg patch vs Traefik default-cert
-     patch (see decision 6), Secret applied to the correct namespace *before*
-     the controller patch.
+     / `pinHttpsNodePort()` to take the `PlatformProfile` (namespace, deployment,
+     service, ports, controller kind). `generateCert(ip, domain, dir)` uses
+     `*.{domain}`. No literal `ingress-nginx` strings remain.
+   - `--skip-tls` and `platform === 'generic'`: skip the whole TLS block; patch
+     with the profile/default base URL and print a "TLS not configured" note.
+   - MicroK8s backend dispatch: Traefik (default-cert via addon re-enable or
+     deployment-args fallback) vs legacy NGINX (arg patch + port pin) — decision
+     5; Secret applied to the correct namespace *before* controller config.
+   - NodePort pin only when the controller Service type is NodePort; when
+     LoadBalancer, detect the LB address for the summary URL (see risks).
    - `ensureNamespace(ns)` helper (create-if-missing, ignore already-exists).
 
-3. **BUILD: generalize manifest patching (+ web.yaml)**
-   - `patchedOperatorManifest(operatorYaml, { baseUrl, storageClass,
-     ingressClass })` in `deploy.ts`: replace the nip.io-specific regex with one
-     matching any existing `value:` under `PERCUSSIONIST_INGRESS_BASE_URL`;
-     replace `DEFAULT_STORAGE_CLASS` and `PERCUSSIONIST_INGRESS_CLASS` values.
-   - New `patchedWebManifest(webYaml, { domain, ingressClass, port })` (in
-     `deploy.ts` or a small manifest-patch module) replacing the Ingress host
-     line, `ingressClassName`, and `WEB_BASE_URL` env value; write to a temp
-     file and apply like the operator patch. Keep the current
-     warn-and-apply-unmodified fallback semantics.
-   - `applyGitopsBootstrap()` already passes a computed URL through
-     `patchFluxManifest` — thread `baseUrl` instead of the hardcoded nip.io URL;
-     confirm `gitops-manifest.test.ts` still passes (regex is name/value based).
+3. **BUILD: MicroK8s preflight (addons, RBAC, storage, ingress backend)**
+   - New `packages/cli/src/deploy-microk8s.ts`: `ensureMicroK8sPrereqs()`
+     (CLI path vs kubectl-verification path, decision 4) and
+     `configureMicroK8sDefaultCert()` (addon re-enable vs fallback patch).
+   - Wire into `runDeploy()` before TLS setup, microk8s platform only; resolve
+     `detectMicroK8sIngressBackend()` and use it to pick
+     `DEFAULT_STORAGE_CLASS=microk8s-hostpath` + the ingress class (`public` on
+     Traefik, `nginx` on legacy).
 
-4. **BUILD: MicroK8s preflight (addons, RBAC, storage, ingress)**
-   - `ensureMicroK8sPrereqs(profile)`: if `microk8s` on PATH → `microk8s status
-     --wait-ready` → `microk8s enable dns rbac hostpath-storage ingress` →
-     `microk8s status --wait-ready`; else → kubectl verification of
-     `microk8s-hostpath` StorageClass, `ingress` namespace controller presence,
-     CoreDNS Availability; clear fatal errors with the exact host command when
-     something is missing. Best-effort RBAC warning (unverifiable externally).
-   - Wire into `runDeploy()` before TLS setup, microk8s platform only.
-   - Detect the ingress backend (decision 6) and choose
-     `DEFAULT_STORAGE_CLASS=microk8s-hostpath` + the right ingress class.
+4. **BUILD: generalize manifest patching (+ web.yaml, + gitops)**
+   - New `packages/cli/src/deploy-manifests.ts`:
+     `patchedOperatorManifest(yaml, { baseUrl, storageClass, ingressClass })`
+     (nip.io-agnostic regex; idempotent; warn-and-apply-unmodified fallback
+     kept) and `patchedWebManifest(yaml, { host, ingressClass, webBaseUrl })`.
+   - `deploy.ts` applies the patched web.yaml next to the patched operator.yaml
+     (temp file, `finally` cleanup, same pattern as today's operator patch).
+   - `gitops-manifest.ts`: `patchFluxManifest` gains optional `storageClass` /
+     `ingressClass` fields (name/value-pair regexes, throw-on-drift as today);
+     `applyGitopsBootstrap()` threads the computed `baseUrl`/storage/class.
+   - Extend `k8s/flux/percussionist.yaml` patch block to also carry the
+     `DEFAULT_STORAGE_CLASS` and `PERCUSSIONIST_INGRESS_CLASS` env entries so
+     gitops mode reaches MicroK8s parity (web Ingress under gitops keeps the
+     `nginx` backward-compat class until backend detection lands in the flux
+     path — documented decision, see risks).
 
-5. **BUILD: unit tests**
-   - `packages/cli/test/deploy-platform.test.ts` (bun:test, mirrors
-     `gitops-manifest.test.ts` pure-function style): profile resolution
-     (minikube/microk8s/generic), `baseUrl()` / domain handling (default nip.io
-     vs `--domain`), `patchedOperatorManifest` (storage class + base URL +
-     ingress class substitution, idempotency on re-run, unknown-value warning
-     path), `patchedWebManifest` (host / ingressClassName / WEB_BASE_URL),
-     `--skip-tls` flag plumbing, ingress-backend detection with stubbed kubectl
-     output.
-   - Run `pnpm typecheck && pnpm test` from repo root; `packages/cli` suite
-     green; existing `gitops-manifest.test.ts` untouched or extended only if the
-     INGRESS_RE changes.
+5. **BUILD: nginx cleanup sweep**
+   - `scripts/minikube-load.sh` comment tidying (lines ~409-421).
+   - `k8s/deploy/operator.yaml` commented examples (Traefik-aware annotations,
+     microk8s base-URL comment); `k8s/deploy/web.yaml` comment block;
+     `k8s/local.example/tailnet-ingress.yaml` comment.
+   - `README.md`: minikube setup paragraph, ingress-controller table, operator
+     config examples (`PERCUSSIONIST_INGRESS_CLASS` + annotations) — add
+     MicroK8s/Traefik variants; add a MicroK8s quickstart block
+     (`microk8s enable dns rbac hostpath-storage ingress`, export kubeconfig,
+     `beatctl deploy`).
+   - `docs/guide/installation.md` nginx mention → controller-neutral.
 
 6. **BUILD: docs**
-   - `docs/guide/installation.md`: document `--platform`, `--domain`,
-     `--skip-tls`, and a MicroK8s quickstart (`microk8s enable dns rbac
-     hostpath-storage ingress`, export kubeconfig, `beatctl deploy --platform
-     microk8s`).
-   - `docs/reference/cli.md`: extend the `deploy` section with the new flags.
+   - `docs/guide/installation.md`: add a "Platforms" section — `--platform
+     auto` detection, MicroK8s quickstart (Traefik path + legacy path), the new
+     flags (`--domain`, `--storage-class`, `--skip-tls`, ports, `--tls-secret`).
+   - `docs/reference/cli.md`: extend the `deploy` section with the new flags
+     and one microk8s example.
    - `docs/guide/lxd-microk8s-tailscale.md`: replace the "Do not use `beatctl
-     deploy` for this topology" + manual `kubectl set env` steps with
-     `beatctl deploy --platform microk8s --skip-tls` (ingress addon disabled /
-     Tailscale Serve termination), and update the "Common failures" row for the
-     old nginx assumption. Keep the StorageClass note (no longer needs the
-     `standard` alias when deploying via the CLI).
+     deploy` for this topology" + manual `kubectl set env` + `standard` SC alias
+     steps with `beatctl deploy --platform microk8s --skip-tls` (ingress addon
+     disabled / Tailscale Serve termination); update the "Common failures" nginx
+     row; keep the hostpath single-node caveat.
+
+7. **BUILD: unit tests**
+   - `packages/cli/test/deploy-platform.test.ts` (bun:test, pure-function style
+     like `gitops-manifest.test.ts`): `auto` detection (context-name hits,
+     StorageClass-probe hit, fallback to generic), profile resolution
+     (minikube/microk8s/generic), `baseUrl()` / domain handling, backend
+     detection with stubbed probe output.
+   - `packages/cli/test/deploy-manifests.test.ts`: `patchedOperatorManifest`
+     (base URL + storage class + ingress class substitution, idempotency on
+     re-run, unknown-value warning path), `patchedWebManifest` (host /
+     ingressClassName / WEB_BASE_URL) — both against the real checked-in
+     manifests (repo-root read, same trick as `gitops-manifest.test.ts`).
+   - Extend `gitops-manifest.test.ts` for the new `storageClass`/`ingressClass`
+     substitutions (throw-on-drift covered).
+   - `--skip-tls` flag plumbing asserted at the `DeployOpts` mapping level.
+   - Gate: `pnpm typecheck && pnpm test` from repo root; `packages/cli` suite
+     green.
 
 ## Acceptance criteria
 
-- `beatctl deploy --platform microk8s` runs end-to-end on a MicroK8s cluster
-  (1.35+ Traefik and <1.35 NGINX paths both handled or explicitly detected):
-  addons enabled when the CLI is present / verified with actionable errors when
-  not; operator deployed with `DEFAULT_STORAGE_CLASS=microk8s-hostpath`,
+- `beatctl deploy` **with no flags** works end-to-end on MicroK8s 1.35+
+  (auto-detection resolves microk8s; `dns rbac hostpath-storage ingress`
+  enabled when the CLI is present, verified with actionable errors when not;
+  operator deployed with `DEFAULT_STORAGE_CLASS=microk8s-hostpath`,
   `PERCUSSIONIST_INGRESS_BASE_URL=https://{domain}:{https-port}`,
-  `PERCUSSIONIST_INGRESS_CLASS` matching the backend; web Ingress host +
-  `WEB_BASE_URL` patched to `app.{domain}`; wildcard TLS cert installed on the
-  MicroK8s ingress controller (or `--skip-tls` honored); dashboard reachable at
-  the printed URL.
-- Data PVCs bind on MicroK8s without creating a `standard` alias SC.
+  `PERCUSSIONIST_INGRESS_CLASS=public`; web Ingress host + `WEB_BASE_URL`
+  patched to `app.{domain}`; wildcard TLS Secret installed and wired to Traefik
+  via the documented `--default-ssl-certificate` mechanism; dashboard
+  reachable at the printed URL).
+- MicroK8s <1.35 (legacy NGINX backend) is detected and handled with
+  `ingressClass: nginx` + the arg-patch path — no manual manifest surgery.
+- `ingressClassName: public` (Traefik native) is what MicroK8s Ingresses get on
+  1.35+; `nginx` is used only for legacy backends.
+- Data PVCs bind on MicroK8s without a `standard` alias StorageClass.
 - `beatctl deploy --platform generic` applies manifests without touching any
   ingress controller / TLS state (LXD + Tailscale topology works).
-- Default `beatctl deploy` (no flags) is byte-for-byte behavior-preserving for
-  minikube (regression-checked against the current flow).
-- No `ingress-nginx` or `nip.io` string is required by the microk8s/generic
-  paths; `--domain` fully overrides the base URL.
-- `pnpm typecheck && pnpm test` pass; `deploy-platform.test.ts` covers profile
+- No literal `ingress-nginx` string remains in `packages/cli/src/deploy.ts`;
+  the remaining nginx references in the repo are confined to the minikube
+  profile/script or clearly labeled minikube examples.
+- Default behavior on minikube is unchanged (auto → minikube profile; same
+  commands, same URLs, same TLS flow).
+- `pnpm typecheck && pnpm test` pass; new unit tests cover detection, profile
   resolution, URL building, and both manifest-patch functions deterministically
   without a cluster.
-- Docs updated (installation.md, cli.md, lxd-microk8s-tailscale.md).
+- Docs updated (installation.md, cli.md, lxd-microk8s-tailscale.md, README.md).
 
 ## Risks / open questions
 
-- **MicroK8s 1.35+ Traefik specifics need live verification**: exact
-  Deployment/Service names in the `ingress` namespace and whether
-  `--default-ssl-certificate` on the Traefik deployment args behaves like the
-  NGINX flag. Implementation should probe for both backends and prefer the
-  documented `microk8s enable ingress --default-ssl-certificate
-  <ns>/<secret>` path for Traefik (ordering: Secret first, then re-enable/patch),
-  falling back to arg patching; `ingressClassName: nginx` is the documented
-  backward-compat class and works on both backends.
+- **Traefik details need live verification on a real MicroK8s 1.35+ cluster**:
+  exact Deployment/Service names in the `ingress` namespace, the controller
+  Service type (NodePort vs LoadBalancer/metallb) and its NodePorts, and the
+  correct Traefik deployment-arg flag for the default certificate on the no-CLI
+  path. The plan's primary TLS path is the documented addon option
+  (`microk8s enable ingress --default-ssl-certificate …`); the arg-patch
+  fallback is marked best-effort until verified. Backend detection must probe
+  before choosing class/TLS strategy.
+- **NodePort pinning may be impossible or unnecessary** on MicroK8s if the
+  ingress Service is LoadBalancer; the pin step must detect Service type and
+  skip gracefully, and the summary URL must use the actual detected
+  port/address.
+- **GitOps parity for the web Ingress** is deferred: `patchFluxManifest` will
+  carry storage/ingress-class into the operator patch, but the web Ingress
+  under `--gitops` keeps the backward-compat `nginx` class until backend-aware
+  web patching is added to the flux manifest — documented, not silently broken
+  (the class works on both backends).
 - **`microk8s` CLI may not exist on the workstation** (LXD-VM topology) and may
   need `sudo` when it does; the verification-only path plus clear fatal
   messages must cover both. Never shell out to `sudo microk8s` implicitly.
 - **RBAC enablement is not externally verifiable** — best-effort warning only.
-- **NodePort pinning** may be unnecessary or impossible if the MicroK8s ingress
-  Service is LoadBalancer (metallb) rather than NodePort; the pin step must
-  detect the service type and skip gracefully, and the summary URL must use the
-  actual detected port.
 - **`WEB_BASE_URL`/GitHub App coupling**: changing the domain/port changes the
   OAuth callback; docs must state that `--domain`/`--https-port` must match the
   registered callback.
-- **hostpath-storage is node-local** — single-node only, not HA; the playbook
-  already says this and the docs should repeat it.
+- **hostpath-storage is node-local** — single-node only, not HA; docs repeat
+  the caveat.
+- **Auto-detection is advisory** — `--platform` always overrides, and the
+  detected platform is always printed; detection never gates destructive
+  actions.
 - **Deterministic E2E coverage is not possible in CI** (no MicroK8s); manual
   playbook verification is the gate. Keep every testable pure function isolated
   from kubectl so unit coverage is meaningful.
