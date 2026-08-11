@@ -1,11 +1,74 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.14] - 2026-08-11
+
+### <!-- 0 -->🚀 Features
+
+- Derive runPrompt hard timeout from RUN_TIMEOUT_SECONDS _(dispatcher)_
+- Add childPhases to board childProgress _(web)_
+- Show green checkmark for done children in task detail _(web)_
+- Add beatctl doctor scaffolding and report plumbing _(cli)_
+- Add static cluster checks to beatctl doctor _(cli)_
+- Add credentials, providers, models checks to beatctl doctor _(cli)_
+- Add dashboard origin and component health checks to beatctl doctor _(cli)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Resolve push toggle service-worker race via navigator.serviceWorker.ready _(web)_
+- Guard SessionView todowrite parts and add ErrorBoundary _(web)_
+- Key CreateRunForm agent rows by stable id _(web)_
+- Content-overlap diff for LogViewer tail writes _(web)_
+- Append older activity events on Load more _(web)_
+- Remove dead default notification sound control _(web)_
+- Give chat messages stable identity and fix auto-scroll _(web)_
+- Grow TerminalTab reconnect backoff on failed attaches _(web)_
+- Render SessionDetail from stats DB so TTL-deleted runs stay viewable _(web)_
+- Hold incrementalFlush cursor on failed PATCH _(dispatcher)_
+- Flush final sendStats on runInteractive termination _(dispatcher)_
+- Make housekeeping loops crash-proof and set busy_timeout _(web)_
+- Scope board task actions to the project's namespace _(web)_
+- Push /api/stats/sessions pagination and aggregation into SQL _(web)_
+- Order activity feed by id DESC to match before cursor _(web)_
+- Cap /api/stats/export at EXPORT_MAX_SESSIONS with batched child fetches _(web)_
+
+### <!-- 2 -->🚜 Refactor
+
+- Remove dead drizzle layer and getEmbeddings _(memory-service)_
+- Remove dead status.column + facilitation result types _(api)_
+- Remove dead BoardView mutations and legacy notification prefs _(web)_
+- Remove dead canSchedule and fix tautological ternary _(manager-controller)_
+- Remove unreachable failure-facilitation flow _(manager)_
+- Remove dead product surface routes _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add plan for rev20 dashboard bug sweep _(plans)_
+- Plan for configurable run deadline and analytics cursor fix _(dispatcher)_
+- Document per-run RUN_TIMEOUT_SECONDS deadline _(dispatcher)_
+- Add rev22 dead-code removal plan _(plans)_
+- Add child task checkmark plan (percussionist-dev-plan-906e19) _(plan)_
+- Add plan for beatctl doctor diagnostics _(plans)_
+- Document beatctl doctor diagnostics command _(cli)_
+- Plan web server robustness fixes (rev21)
+
+### <!-- 6 -->🧪 Testing
+
+- Add deterministic unit tests for beatctl doctor _(cli)_
+- Pin Lost PVC phase as an error in doctor storage check _(cli)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Remove stale manager Dockerfile, fix ghcr-delete and minikube-load scripts _(scripts)_
 ## [v0.2.13] - 2026-08-07
 
 ### <!-- 0 -->🚀 Features
 
 - Add GitOps upgrade path so CRDs upgrade with images _(deploy)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.13
 ## [v0.2.12] - 2026-08-07
 
 ### <!-- 0 -->🚀 Features
