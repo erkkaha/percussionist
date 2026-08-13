@@ -64,7 +64,7 @@ When the pod enters Running → operator sets `Run.status.phase = Running` → m
 Manager polls `Run.status.phase`:
 - `Succeeded` → `succeeded`
 - `Failed` → `failed`
-- `WaitingForInput` → `waiting-for-input` (PLAN only; BUILD tasks go straight to `failed`)
+- `WaitingForInput` → `waiting-for-input` (any task type parks when a human is genuinely required)
 - Running but no events beyond `flow.timeouts.runningStaleSeconds` (default 1800s/30min) → `failed` (staleness guard)
 
 When the run completes (`Succeeded` or `Failed`), if `project.spec.embedding.enabled`
@@ -75,8 +75,10 @@ memory database.
 
 The agent is working during this phase. It calls `complete_run` or `complete_plan` on the dispatcher when done. The dispatcher records the signal and exits 0. The pod reaches Succeeded, the operator mirrors it, and the manager picks it up on the next reconcile.
 
-### `waiting-for-input` *(PLAN only)*
+### `waiting-for-input`
 Manager polls for an answer annotation (`percussionist.dev/action-answer`) on the Task CR (with legacy fallback to Project CR annotations). When a human posts an answer via the web UI, the dispatcher injects it into the live session. Once the run resumes to `Running` the task goes back to `running`. The annotation is cleared.
+
+A parked task also supports the same annotation-driven exits as `awaiting-human`: `percussionist.dev/action-abandon: "true"` → `done` (worker marked `abandoned`), and `percussionist.dev/action-request-changes` (+ `percussionist.dev/action-rework-feedback`) → `rework-requested` with capped feedback and `retryCount + 1`.
 
 ### `succeeded`
 Manager's decision engine checks flow configuration:
@@ -158,7 +160,7 @@ Terminal. Manager never touches it again. Task CR persists until the parent Proj
 | | PLAN | BUILD |
 |---|---|---|
 | Created by | Human | Manager (buildgen) or human |
-| Can enter `waiting-for-input` | Yes | No — goes to `failed` |
+| Can enter `waiting-for-input` | Yes | Yes (parks when a human is genuinely required) |
 | Completion signal | `complete_plan` (plan artifact committed) | `complete_run` (work committed) |
 | On human approval | → `generating-builds` | → `awaiting-merge` |
 | Feature branch | `feature/{plan-id}` (from main) | `feature/{plan-id}--{build-id}` (from PLAN branch) |

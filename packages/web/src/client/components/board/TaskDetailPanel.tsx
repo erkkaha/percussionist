@@ -1,6 +1,6 @@
 // TaskDetailPanel.tsx — tabbed detail view for a selected task.
 // Shows: Overview, Runs (with per-run Session/Logs), Events, Plan (PLAN tasks only).
-// Actions: Approve, Request Changes, Retry, Delete.
+// Actions: Approve, Request Changes, Abandon, Retry, Delete.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -33,6 +33,7 @@ import remarkGfm from 'remark-gfm';
 import { useTaskDiff } from '../../hooks/useTaskDiff';
 import { useTaskRuns } from '../../hooks/useTaskRuns';
 import {
+  abandonTask,
   answerTask,
   approveTask,
   deleteBoardTask,
@@ -981,6 +982,7 @@ function TaskDetailPanelInner({
   const [showRequestChanges, setShowRequestChanges] = useState(false);
   const [requestChangesComment, setRequestChangesComment] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmAbandon, setConfirmAbandon] = useState(false);
   const [answerText, setAnswerText] = useState('');
 
   const taskName = task.metadata.name;
@@ -1010,6 +1012,14 @@ function TaskDetailPanelInner({
   const approveMutation = useMutation({
     mutationFn: () => approveTask(projectName, taskName),
     onSuccess: invalidateBoard,
+  });
+
+  const abandonMutation = useMutation({
+    mutationFn: () => abandonTask(projectName, taskName),
+    onSuccess: () => {
+      invalidateBoard();
+      setConfirmAbandon(false);
+    },
   });
 
   const requestChangesMutation = useMutation({
@@ -1181,6 +1191,34 @@ function TaskDetailPanelInner({
                     {retryReviewMutation.isPending ? 'Retrying…' : 'Retry Review'}
                   </button>
                 )}
+
+              {(task.status?.phase === 'waiting-for-input' ||
+                task.status?.phase === 'awaiting-human') &&
+                (!confirmAbandon ? (
+                  <button
+                    onClick={() => setConfirmAbandon(true)}
+                    className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-phase-failed hover:border-phase-failed/40 transition-colors"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Abandon
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-text-dim">Abandon task?</span>
+                    <button
+                      onClick={() => abandonMutation.mutate()}
+                      disabled={abandonMutation.isPending}
+                      className="rounded-md bg-phase-failed/20 border border-phase-failed/40 px-2 py-1 text-xs text-phase-failed hover:bg-phase-failed/30 transition-colors disabled:opacity-50"
+                    >
+                      {abandonMutation.isPending ? 'Abandoning…' : 'Confirm'}
+                    </button>
+                    <button
+                      onClick={() => setConfirmAbandon(false)}
+                      className="text-xs text-text-dim hover:text-text transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ))}
             </>
           )}
 
@@ -1225,8 +1263,8 @@ function TaskDetailPanelInner({
         {/* Waiting hint — run is parked on a human prompt */}
         {isWaiting && (
           <p className="text-xs text-amber-400/90">
-            Run is waiting for user input — retry is unavailable until the run completes or is
-            answered.
+            Run is waiting for user input — retry is unavailable until the run completes, is
+            answered, or is abandoned.
           </p>
         )}
 

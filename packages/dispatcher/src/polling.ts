@@ -847,25 +847,38 @@ export async function runPollStatusLoop(deps: RunPollStatusDeps): Promise<void> 
               // Work resumed, so whatever the human was needed for is done.
               state.needsHumanInput = false;
             }
-            // If still waiting (aborted or idle), fall through without
-            // terminating — the poll loop keeps running.
-          } else if (totalTokens.tokensIn === 0 && totalTokens.tokensOut === 0) {
-            // A completed assistant message with zero recorded usage means
-            // opencode "answered" without producing anything. For the first
-            // response this is fatal. (Regression: `sawBusy = true` used to be
-            // set before this check, making the guard unreachable, so an empty
-            // first response silently fell through to waitingForInput. Once
-            // any usage has been recorded totalTokens is > 0, so this branch
-            // can only ever fire on the first assistant message.)
+            // If still waiting (aborted or permission prompt), fall through
+            // without terminating — the poll loop keeps running until the
+            // person responds or the idle timeout fires.
+          }
+          // A completed assistant message with zero recorded usage means
+          // opencode "answered" without producing anything. For the first
+          // response this is fatal. Gate on `needsHumanInput` rather than
+          // `waitingForInput`: the SSE handler parks waitingForInput on every
+          // `session.idle` event, which fires after EVERY completed turn and
+          // usually beats the next poll tick — an idle-parked run with a
+          // zero-token first response used to skip the guard and sit for the
+          // full idle timeout before failing. A real permission prompt or a
+          // user-aborted message still sets needsHumanInput, which must keep
+          // suppressing the guard. (Regression history: `sawBusy = true` used
+          // to be set before this check, making the guard unreachable; once
+          // any usage has been recorded totalTokens is > 0, so this branch can
+          // only ever fire on the first assistant message.)
+          if (!state.needsHumanInput && totalTokens.tokensIn === 0 && totalTokens.tokensOut === 0) {
             throw new FatalRunError(
               'opencode produced an assistant response with zero token usage before any work was done',
             );
-          } else if (completingSince && now() - completingSince >= settleMs) {
-            log('last assistant message completed — settled, done');
-            state.terminate = true;
-            return;
-          } else if (!completingSince) {
-            completingSince = now();
+          }
+          // Settle logic only while the session is actually running — never
+          // while parked on a person (aborted message / permission prompt).
+          if (!state.waitingForInput) {
+            if (completingSince && now() - completingSince >= settleMs) {
+              log('last assistant message completed — settled, done');
+              state.terminate = true;
+              return;
+            } else if (!completingSince) {
+              completingSince = now();
+            }
           }
         }
       }

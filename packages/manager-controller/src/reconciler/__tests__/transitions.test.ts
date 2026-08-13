@@ -39,6 +39,9 @@ describe('isValidTransition', () => {
     expect(isValidTransition('scheduled', 'initializing')).toBe(true);
     expect(isValidTransition('running', 'succeeded')).toBe(true);
     expect(isValidTransition('running', 'failed')).toBe(true);
+    expect(isValidTransition('waiting-for-input', 'running')).toBe(true);
+    expect(isValidTransition('waiting-for-input', 'done')).toBe(true);
+    expect(isValidTransition('waiting-for-input', 'rework-requested')).toBe(true);
     expect(isValidTransition('succeeded', 'reviewing')).toBe(true);
     expect(isValidTransition('succeeded', 'awaiting-human')).toBe(true);
     expect(isValidTransition('awaiting-human', 'awaiting-merge')).toBe(true);

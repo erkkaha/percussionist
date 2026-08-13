@@ -165,6 +165,12 @@ describe('board routes', () => {
     expect(res.status).toBe(400);
   });
 
+  it('POST /api/projects/:project/board/tasks/:taskName/abandon reaches its handler', async () => {
+    await expectHandledNotRouterMiss(
+      await req(`/api/projects/${PROJECT}/board/tasks/t1/abandon`, { method: 'POST' }),
+    );
+  });
+
   it('GET /api/board/:project/events → 200 with empty events list', async () => {
     const res = await req(`/api/board/${PROJECT}/events`);
     expect(res.status).toBe(200);
@@ -668,12 +674,13 @@ describe('stats API', () => {
 // ===========================================================================
 
 describe('removed product surface → API 404 catch-all', () => {
-  // These were deleted as dead product surface: the board task /abandon route,
-  // the four findings-triage routes, and GET /stats/exists/:sessionID. A
-  // reviewer of the guard itself should note the wiring check above — the
-  // flip of expectHandledNotRouterMiss is asserted per path here.
+  // These were deleted as dead product surface: the four findings-triage
+  // routes and GET /stats/exists/:sessionID. (The board task /abandon route
+  // was among them but was re-added by the waiting-for-input exit work — it is
+  // asserted as wired in the board routes block above.) A reviewer of the
+  // guard itself should note the wiring check above — the flip of
+  // expectHandledNotRouterMiss is asserted per path here.
   const removedPaths: Array<{ method: string; path: string; body?: unknown }> = [
-    { method: 'POST', path: `/api/projects/${PROJECT}/board/tasks/t1/abandon` },
     { method: 'GET', path: `/api/projects/${PROJECT}/findings` },
     { method: 'GET', path: `/api/projects/${PROJECT}/findings/f1` },
     {
