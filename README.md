@@ -868,7 +868,10 @@ When a worker asks the agent for clarification, the run enters `WaitingForInput`
 phase and the task transitions to `waiting-for-input`. Reply via the web UI's
 `/runs/:name/reply` endpoint, which writes the answer to a Task annotation
 (`percussionist.dev/action-answer`). The reconciler picks it up and transitions
-back to `running`.
+back to `running`. A parked task can also be exited directly: the
+`percussionist.dev/action-abandon` and `percussionist.dev/action-request-changes`
+annotations transition it to `done` / `rework-requested` respectively, mirroring
+the `awaiting-human` exits.
 
 ### Status fields
 

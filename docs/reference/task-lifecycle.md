@@ -11,7 +11,7 @@ Tasks in Percussionist follow a defined state machine with 16 phases.
 | `scheduled` | in-progress | Scheduler picked it, run being created |
 | `initializing` | in-progress | Pod starting, git checkout in progress |
 | `running` | in-progress | Agent actively working |
-| `waiting-for-input` | review | PLAN-only: agent asked a question |
+| `waiting-for-input` | review | Agent asked a question (parked for human input) |
 | `succeeded` | review | Run completed successfully |
 | `reviewing` | review | AI reviewer evaluating |
 | `awaiting-human` | review | Needs human decision |
@@ -32,7 +32,7 @@ Tasks in Percussionist follow a defined state machine with 16 phases.
 | `scheduled` | `initializing`, `failed` |
 | `initializing` | `running`, `succeeded`, `failed` |
 | `running` | `waiting-for-input`, `succeeded`, `failed` |
-| `waiting-for-input` | `running`, `failed` |
+| `waiting-for-input` | `running`, `succeeded`, `failed`, `done`, `rework-requested` |
 | `succeeded` | `reviewing`, `awaiting-human`, `done` |
 | `reviewing` | `awaiting-human`, `rework-requested` |
 | `awaiting-human` | `awaiting-merge`, `generating-builds`, `awaiting-feature-merge`, `rework-requested`, `done`, `failed` |
