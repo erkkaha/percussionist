@@ -987,9 +987,12 @@ gitGraph
    - Reconciler blocks start until predecessor is `done` AND `mergedAt` exists
    - Ensures correct build order
 
-5. **Feature merge** (manual)
+5. **Feature merge** (`flow.integration.mode`)
    - PLAN's `feature/{plan-id}` branch contains all BUILD changes
-   - Manual merge to `main` when feature is complete
+   - `auto-merge` (default): a merge run merges the feature branch directly to the target branch — no human in the loop
+   - `pr`: a run opens a GitHub PR from the feature branch; the manager polls the PR state (15-min cache interval) and auto-transitions the task to `done` when merged, or `awaiting-human` if the PR is closed without merging (requires `source.git.githubTokenSecret`)
+   - `manual`: the task parks in `awaiting-human`; a human merges the branch to the target outside the system and marks the task done
+   - `disabled`: no integration merge; the task goes to `done` once all BUILD children are done
 
 ### Benefits
 

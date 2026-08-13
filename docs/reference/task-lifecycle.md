@@ -53,7 +53,7 @@ Projects configure their task lifecycle via `spec.flow.preset`:
 | Preset | Behavior |
 |--------|----------|
 | `simple` | Minimal: pending → scheduled → running → succeeded → done |
-| `review` | Adds AI review between succeeded and done |
+| `review` | Adds a human review step between succeeded and done — no AI review |
 | `plan-build` | PLAN creates BUILD tasks; no AI review |
 | `plan-build-review-merge` | Full pipeline with review + merge (default) |
 

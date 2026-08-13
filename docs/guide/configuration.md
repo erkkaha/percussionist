@@ -102,7 +102,7 @@ Projects configure their task lifecycle via `spec.flow.preset`:
 | Preset | Flow |
 |--------|------|
 | `simple` | Direct: scheduled → running → succeeded → done |
-| `review` | Adds AI review step after completion |
+| `review` | Adds a human review step after completion — no AI review |
 | `plan-build` | PLAN→BUILD workflow without review |
 | `plan-build-review-merge` | Full pipeline with PLAN→BUILD, review, and merge (default) |
 
@@ -122,7 +122,22 @@ flow:
     maxAutoReworks: 2
   merge:
     mode: auto                          # auto | manual | disabled
+  integration:
+    mode: auto-merge                    # auto-merge | pr | manual | disabled
 ```
+
+The `integration` block controls how a PLAN's feature branch lands on the target
+branch (`project.spec.source.git.ref ?? "main"` by default) when
+`featureBranchingEnabled: true`:
+
+| Mode | Behavior |
+|------|----------|
+| `auto-merge` (default) | A merge run merges the feature branch directly to the target branch. No human in the loop. |
+| `pr` | A short-lived run opens a GitHub PR from the feature branch to the target. The manager polls the PR state (15-minute cache interval) and auto-transitions the task to `done` when the PR is merged. If the PR is closed without merging, the task goes to `awaiting-human`. Requires `source.git.githubTokenSecret` to be configured so the manager can read the PR state via the GitHub API. Detection latency is up to 15 minutes after merge. |
+| `manual` | The task parks in `awaiting-human`; a human merges the feature branch to the target entirely outside the system, then marks the task done in Percussionist. |
+| `disabled` | No integration merge; the task goes to `done` once all BUILD children are done. |
+
+The feature branch is kept indefinitely in all modes.
 
 ## Data PVC
 

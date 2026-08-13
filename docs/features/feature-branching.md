@@ -42,6 +42,29 @@ Each run gets its own worktree at `/data/worktrees/{run-name}/` checking out the
 - BUILD tasks with `predecessorRef` wait for predecessor to merge
 - Reconciler blocks task from starting until predecessor is in `done` column AND has `mergedAt` timestamp
 
+### 5. Feature Branch Merge
+
+When all BUILD tasks under a PLAN are done, the PLAN's `feature/{plan-id}` branch
+contains all merged BUILD changes. The `flow.integration.mode` setting controls
+how it lands on the target branch (`project.spec.source.git.ref ?? "main"` by default):
+
+```yaml
+spec:
+  featureBranchingEnabled: true
+  flow:
+    integration:
+      mode: auto-merge   # auto-merge (default) | pr | manual | disabled
+```
+
+| Mode | Behavior |
+|------|----------|
+| `auto-merge` (default) | A merge run merges the feature branch directly to the target branch. No human in the loop. |
+| `pr` | A short-lived run opens a GitHub PR from the feature branch to the target. The manager polls the PR state (15-minute cache interval) and auto-transitions the task to `done` when the PR is merged. If the PR is closed without merging, the task goes to `awaiting-human`. Requires `source.git.githubTokenSecret` to be configured so the manager can read the PR state via the GitHub API. Detection latency is up to 15 minutes after merge. |
+| `manual` | The task parks in `awaiting-human`; a human merges the feature branch to the target entirely outside the system, then marks the task done in Percussionist. |
+| `disabled` | No integration merge; the task goes to `done` once all BUILD children are done. |
+
+The feature branch is kept indefinitely in all modes.
+
 ## Enable
 
 ```yaml
