@@ -62,12 +62,17 @@ function makeHarness(
     clock?: { t: number };
     terminateAfterSleeps?: number;
     constants?: Partial<RunPollStatusConstants>;
+    // Initial shared state — lets tests start already-parked (waitingForInput)
+    // to simulate the SSE handler's session.idle having won the race against
+    // the next poll tick.
+    state?: Partial<PollLoopSharedState>;
   } = {},
 ): Harness {
   const state: PollLoopSharedState = {
     terminate: false,
     waitingForInput: false,
     needsHumanInput: false,
+    ...opts.state,
   };
   const patches: object[] = [];
   const clock = opts.clock ?? { t: 0 };
@@ -163,6 +168,42 @@ describe('runPollStatusLoop', () => {
     const err = await runPollStatusLoop(h.deps).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(FatalRunError);
     expect((err as Error).message).toContain('zero token usage');
+  });
+
+  it('throws FatalRunError for a zero-usage first response even when session.idle parked the session first (regression: guard was masked by waitingForInput)', async () => {
+    // Simulates the SSE handler's session.idle parking: it fires after every
+    // completed turn and sets waitingForInput = true, so it beats the next
+    // poll tick. The zero-token guard must still fail fast — needsHumanInput
+    // is false because no person is actually blocked on the run.
+    const h = makeHarness({
+      state: { waitingForInput: true, needsHumanInput: false },
+      messages: () => [assistantMsg('m1', { completed: true })],
+      terminateAfterSleeps: 3,
+    });
+    const err = await runPollStatusLoop(h.deps).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FatalRunError);
+    expect((err as Error).message).toContain('zero token usage');
+  });
+
+  it('does not fire the zero-usage guard while genuinely blocked on a person (permission prompt / aborted message)', async () => {
+    // needsHumanInput = true means a real person must act (permission prompt
+    // or user-aborted message). A zero-usage completed message must not
+    // trip the guard: the run stays parked and terminates via the idle
+    // timeout, not a FatalRunError.
+    const clock = { t: 0 };
+    const h = makeHarness({
+      clock,
+      state: { waitingForInput: true, needsHumanInput: true },
+      messages: (c, call) => {
+        // Second delivery jumps the clock past the idle timeout.
+        if (call === 2) c.t = DEFAULT_CONSTANTS.idleTimeoutMs;
+        return [assistantMsg('m1', { completed: true })];
+      },
+    });
+    await runPollStatusLoop(h.deps);
+    expect(h.state.terminate).toBe(true);
+    expect(h.state.waitingForInput).toBe(true);
+    expect(h.state.needsHumanInput).toBe(true);
   });
 
   it('terminates when the session has been waiting for input past IDLE_TIMEOUT_MS', async () => {
