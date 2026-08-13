@@ -181,8 +181,10 @@ Reply from the dashboard or via `beatctl submit --attach`.
 beatctl attach hello
 ```
 
-Forwards the run's Service port, reads the auth Secret, and drops you into the
-opencode TUI. Port-forward is torn down automatically on exit.
+Execs into the run's pod and drops you into the opencode TUI attached to the
+live agent session. It runs `kubectl exec` into the pod's `opencode` container
+(which serves the headless agent API on `http://127.0.0.1:4096`) and launches
+`opencode attach` against it — no port-forward or Secret read involved.
 
 Or combine submit + attach in one step:
 
@@ -485,7 +487,7 @@ pnpm bundle
 | `beatctl ls` | Table of runs with phase, session ID, token totals, age. |
 | `beatctl get <name>` | Detailed view of a single run (`-o yaml` / `-o json` supported). |
 | `beatctl logs <name> [-f]` | Stream container logs. `-c dispatcher` to watch the sidecar. |
-| `beatctl attach <name>` | Port-forward the run's Service and launch `opencode attach`; cleans up on exit. |
+| `beatctl attach <name>` | Exec into the run's pod and launch `opencode attach` against the in-pod agent server (`kubectl exec -it pod/<pod> -c opencode`). |
 | `beatctl chat` | Port-forward the manager agent and start an interactive chat REPL. |
 | `beatctl wait <name>` | Block until terminal phase. Exit 0 = Succeeded, 1 = other terminal or deleted, 2 = timeout, 3 = API error. `--for <phase>` to await a specific phase. |
 | `beatctl cancel <name>` | Delete the run and all owned resources. |
