@@ -33,11 +33,17 @@ beatctl get <run-name> [-o yaml|json]
 
 ### attach
 
-Port-forward to a run and launch `opencode attach`.
+Exec into the run's pod and open the opencode TUI attached to the live agent
+session.
 
 ```bash
-beatctl attach <run-name> [--continue]
+beatctl attach <run-name> [-n <namespace>]
 ```
+
+`beatctl attach` runs `kubectl exec -it pod/<pod> -c opencode -- opencode attach
+http://127.0.0.1:4096`: it execs into the pod's `opencode` container — where the
+runner serves the headless agent API on `:4096` — and attaches to the session
+with a full TUI. No port-forward or auth-Secret read is involved.
 
 ### logs
 

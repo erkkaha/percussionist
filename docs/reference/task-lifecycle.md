@@ -32,7 +32,7 @@ Tasks in Percussionist follow a defined state machine with 16 phases.
 | `scheduled` | `initializing`, `failed` |
 | `initializing` | `running`, `succeeded`, `failed` |
 | `running` | `waiting-for-input`, `succeeded`, `failed` |
-| `waiting-for-input` | `running`, `failed` |
+| `waiting-for-input` | `running`, `succeeded`, `failed` |
 | `succeeded` | `reviewing`, `awaiting-human`, `done` |
 | `reviewing` | `awaiting-human`, `rework-requested` |
 | `awaiting-human` | `awaiting-merge`, `generating-builds`, `awaiting-feature-merge`, `rework-requested`, `done`, `failed` |
@@ -41,7 +41,7 @@ Tasks in Percussionist follow a defined state machine with 16 phases.
 | `generating-builds` | `awaiting-children`, `awaiting-human`, `failed` |
 | `awaiting-children` | `awaiting-feature-merge`, `awaiting-human`, `done`, `failed` |
 | `awaiting-feature-merge` | `done`, `awaiting-human`, `failed` |
-| `failed` | `pending`, `awaiting-human`, `awaiting-merge` |
+| `failed` | `pending`, `awaiting-human`, `awaiting-merge`, `awaiting-feature-merge` |
 | `done` | — |
 
 `done` is a terminal phase with no outgoing transitions.

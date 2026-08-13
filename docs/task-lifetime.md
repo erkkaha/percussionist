@@ -202,10 +202,12 @@ A task has up to three live Runs at once:
 
 | Run type | Created in phase | Name scheme |
 |---|---|---|
-| Worker | `scheduled` | `workerRunName(project, task, retryCount)` — deterministic SHA-256 hash |
-| Review | `succeeded` | `{project}-review-{task}-{retryCount+aiReworkCount}` (`auxiliaryRunName`) |
-| Merge (BUILD) | `awaiting-human` (BUILD approval) | `{project}-merge-{task}-{retryCount}` (`auxiliaryRunName`) |
-| Merge (feature branch) | `awaiting-children` (auto-merge mode) | `{project}-merge-{task}-{retryCount}` (`auxiliaryRunName`) |
-| Buildgen | `generating-builds` | `{project}-buildgen-{task}-0` (`auxiliaryRunName`) |
+| Worker | `scheduled` | `workerRunName(project, task, retryCount, aiReworkCount)` — `{project}-{task}-{sha256:10}`; deterministic hash of `project:task:retryCount:aiReworkCount` (`worker-builder.ts` `workerRunName`) |
+| Review | `succeeded` | `auxiliaryRunName(project, 'review', task, suffix)` — `{project}-review-{task}-{sha256:8}`; hash of `project:task:review:retryCount:aiReworkCount` |
+| Merge (BUILD) | `awaiting-human` (BUILD approval) | `auxiliaryRunName(project, 'merge', task, suffix)` — `{project}-merge-{task}-{sha256:8}`; hash of `project:task:retryCount` |
+| Merge (feature branch) | `awaiting-children` (auto-merge mode) | `auxiliaryRunName(project, 'merge', task, suffix)` — `{project}-merge-{task}-{sha256:10}`; hash of `project:task:merge` |
+| Buildgen | `generating-builds` | `auxiliaryRunName(project, 'buildgen', task, suffix)` — `{project}-buildgen-{task}-{sha256:10}`; hash of `project:task:buildgen` |
+
+All review/merge/buildgen runs are named via `auxiliaryRunName()` (`worker-builder.ts`): a truncated SHA-256 hash of the run's context (project, task, kind, retry counters) is appended as the suffix — the suffix is not a plain retry counter. Only worker runs use `workerRunName()`, whose deterministic hash keeps the name stable across reconcile cycles.
 
 Old Runs are never deleted by state transitions — they persist as history until the TTL controller removes them. A Run's own `spec.ttlSecondsAfterFinished`, when set, takes precedence over the cluster-wide `runTTLDays` default (default 7 days); `runTTLDays` only applies to Runs that don't set the per-run field. Deleting a Run — whether by TTL expiry, `kubectl delete run`, the dashboard, or the manager — triggers a `batch/v1` Job that cleans up the Run's worktree.
