@@ -263,6 +263,19 @@ function isConflictError(err: unknown): boolean {
   return getErrorStatusCode(err) === 409;
 }
 
+/**
+ * True when a kube call failed in a way that is safe (and worth) retrying with
+ * backoff: request timeouts (408), conflicts (409), rate limits (429), any 5xx,
+ * and transport/network failures that carry no statusCode at all. Other 4xx
+ * errors (400/401/403/404/422) are deterministic — retrying them identically is
+ * pointless — so they throw immediately.
+ */
+function isRetryableKubeError(err: unknown): boolean {
+  const status = getErrorStatusCode(err);
+  if (status === undefined) return true;
+  return status === 408 || status === 409 || status === 429 || status >= 500;
+}
+
 // Merge-patch header for all CRD/ConfigMap PATCH calls via the shared CA-aware
 // client (`custom()` / `core()`). TLS trust comes from the loaded KubeConfig
 // rather than an ambient NODE_EXTRA_CA_CERTS env var.
@@ -350,7 +363,7 @@ export async function patchRunStatus(
       )) as Run;
     } catch (e) {
       lastErr = e;
-      if (isConflictError(e) && attempt < maxRetries) continue;
+      if (isRetryableKubeError(e) && attempt < maxRetries) continue;
       throw e;
     }
   }
@@ -384,7 +397,7 @@ export async function patchRunAnnotations(
       )) as Run;
     } catch (e) {
       lastErr = e;
-      if (isConflictError(e) && attempt < maxRetries) continue;
+      if (isRetryableKubeError(e) && attempt < maxRetries) continue;
       throw e;
     }
   }
@@ -680,11 +693,12 @@ export async function patchProjectStatus(
   statusPatch: { board?: Partial<BoardStatus> },
   ns: string = NAMESPACE,
   maxRetries = 3,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
 ): Promise<Project> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
+      await sleep(100 * 2 ** (attempt - 1));
     }
     try {
       return (await custom().patchNamespacedCustomObjectStatus(
@@ -700,7 +714,7 @@ export async function patchProjectStatus(
       )) as Project;
     } catch (e) {
       lastErr = e;
-      if (isConflictError(e) && attempt < maxRetries) continue;
+      if (isRetryableKubeError(e) && attempt < maxRetries) continue;
       throw e;
     }
   }
