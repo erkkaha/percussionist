@@ -170,6 +170,12 @@ spec:
   runTTLDays: 7
 ```
 
+## Run Timeout
+
+Each `Run` CR has a per-run deadline: `spec.timeoutSeconds` (default `3600`, i.e. 1 hour). The operator sets the run pod's `activeDeadlineSeconds` from this value and injects it into the dispatcher as the `RUN_TIMEOUT_SECONDS` environment variable.
+
+The dispatcher's hard-timeout guard derives its deadline from `RUN_TIMEOUT_SECONDS` and fires 60 s **before** the pod's `activeDeadlineSeconds` (grace period), so on expiry it fails the run gracefully — session snapshot → stats → `Failed` status patch — rather than exiting abruptly and racing the kubelet's SIGTERM/SIGKILL. When the env is missing or invalid (local runs, tests), it falls back to the legacy 65-minute hard timeout.
+
 ## Next
 
 - [Features](/features/git-workspace) — deep dives into each feature

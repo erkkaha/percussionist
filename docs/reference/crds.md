@@ -18,6 +18,7 @@ spec:
   project: my-project
   task: Implement the login endpoint
   agent: builder
+  timeoutSeconds: 3600
 status:
   phase: Running
   sessionID: sess_abc123
@@ -25,6 +26,8 @@ status:
 ```
 
 Run phases: `Pending`, `Initializing`, `Running`, `WaitingForInput`, `Succeeded`, `Failed`, `Cancelled`.
+
+`spec.timeoutSeconds` sets the per-run deadline (default `3600`, i.e. 1 hour). The operator derives the pod's `activeDeadlineSeconds` from it and injects it as `RUN_TIMEOUT_SECONDS`; the dispatcher's hard-timeout guard fires 60 s before the deadline and fails the run gracefully through the normal snapshot → stats → `Failed` path instead of exiting abruptly.
 
 ## Project
 
