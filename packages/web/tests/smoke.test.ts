@@ -518,6 +518,59 @@ describe('stats API', () => {
     expect(body.agentSummaries[0]?.agent).toBe('builder');
   });
 
+  it('GET /api/stats/sessions/:name resolves model from user message when runs.model is null', async () => {
+    // Regression for A1/B13: sessionRowSelect used ${runs.id} inside a raw sql
+    // template, which drizzle renders unqualified — the correlated subquery
+    // bound to messages.id instead of the outer runs row, so the user-message
+    // model fallback never resolved and the single-session detail route always
+    // reported 'unknown'. Seeded AFTER the paging test so its hand-computed
+    // totals (total === 1 baseline, 4-session window) stay stable.
+    const now = Date.now();
+    const sessionID = `smoke-resolved-detail-${now}`;
+    const seed = await json('/api/stats/session', {
+      sessionID,
+      run: {
+        name: 'resolved-detail-run',
+        agent: 'reviewer',
+        model: null,
+        phase: 'Succeeded',
+        startedAt: '2025-03-01T00:00:00Z',
+        completedAt: '2025-03-01T00:05:00Z',
+        tokensIn: 100,
+        tokensOut: 50,
+        cost: 0.005,
+      },
+      messages: [
+        {
+          id: `${sessionID}-m0`,
+          idx: 0,
+          role: 'user',
+          content: '[]',
+          model: 'openai/gpt-4o',
+        },
+      ],
+      toolCalls: [],
+      fileOps: [],
+    });
+    expect(seed.status).toBe(200);
+
+    // The single-session detail route is the one that carried the A1 bug.
+    const res = await req('/api/stats/sessions/resolved-detail-run');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { model: string | null; resolvedModel: string };
+    expect(body.model).toBeNull();
+    expect(body.resolvedModel).toBe('openai/gpt-4o');
+    expect(body.resolvedModel).not.toBe('unknown');
+
+    // The list route shares the same sessionRowSelect projection, so the model
+    // resolves identically there too.
+    const list = await req('/api/stats/sessions?days=0');
+    expect(list.status).toBe(200);
+    const listBody = (await list.json()) as SessionsResponse;
+    const row = listBody.sessions.find((s) => s.name === 'resolved-detail-run');
+    expect(row?.resolvedModel).toBe('openai/gpt-4o');
+  });
+
   it('GET /api/stats/export respects EXPORT_MAX_SESSIONS and logs truncation', async () => {
     // Cap the export to 2 sessions and insert 3 fresh ones (newest startedAt
     // last). The DB already holds the baseline + paging sessions from earlier
