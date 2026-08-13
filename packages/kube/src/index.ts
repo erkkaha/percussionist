@@ -1722,28 +1722,64 @@ export interface PodResourceSpec {
   podLimits: { cpu: string; memory: string; storage?: string };
 }
 
-function parseCpuRaw(raw: string): number {
-  const n = parseInt(raw, 10);
-  if (raw.endsWith('n')) return Math.round(n / 1_000_000);
-  if (raw.endsWith('u')) return Math.round(n / 1_000);
-  if (raw.endsWith('m')) return n;
-  return Math.round(n * 1000);
+// Kubernetes resource quantity parsers. The API expresses CPU as a decimal
+// quantity (nano/micro/milli cores or bare cores, e.g. "0.5") and memory as
+// bytes with binary (Ki/Mi/Gi/Ti) or SI (K/M/G/T) suffixes. parseInt() truncates
+// at the decimal point, so these use a regex that accepts fractional values.
+// Non-matching input yields 0 — that also protects the '0' defaults
+// listPodResources feeds in for missing requests/limits.
+
+/** Parse a CPU quantity into milli-cores ("0.5" → 500, "100m" → 100). */
+export function parseCpuRaw(raw: string): number {
+  const m = /^([0-9]+(?:\.[0-9]+)?)([num])?$/.exec(raw.trim());
+  if (!m?.[1]) return 0;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return 0;
+  switch (m[2]) {
+    case 'n':
+      return Math.round(n / 1_000_000);
+    case 'u':
+      return Math.round(n / 1_000);
+    case 'm':
+      return Math.round(n);
+    default:
+      return Math.round(n * 1000);
+  }
 }
 
-function parseMemoryRaw(raw: string): number {
-  const n = parseInt(raw, 10);
-  if (raw.endsWith('Ki')) return Math.round(n / 1024);
-  if (raw.endsWith('Mi')) return n;
-  if (raw.endsWith('Gi')) return n * 1024;
-  if (raw.endsWith('Ti')) return n * 1024 * 1024;
-  return Math.round(n / (1024 * 1024));
+/** Parse a memory quantity into MiB ("100Mi" → 100, "1.5G" → 1431). */
+export function parseMemoryRaw(raw: string): number {
+  const m = /^([0-9]+(?:\.[0-9]+)?)(Ki|Mi|Gi|Ti|K|M|G|T)?$/.exec(raw.trim());
+  if (!m?.[1]) return 0;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return 0;
+  switch (m[2]) {
+    case 'Ki':
+      return Math.round(n / 1024);
+    case 'Mi':
+      return Math.round(n);
+    case 'Gi':
+      return Math.round(n * 1024);
+    case 'Ti':
+      return Math.round(n * 1024 * 1024);
+    case 'K':
+      return Math.round((n * 1000) / (1024 * 1024));
+    case 'M':
+      return Math.round((n * 1_000_000) / (1024 * 1024));
+    case 'G':
+      return Math.round((n * 1_000_000_000) / (1024 * 1024));
+    case 'T':
+      return Math.round((n * 1_000_000_000_000) / (1024 * 1024));
+    default:
+      return Math.round(n / (1024 * 1024));
+  }
 }
 
-function addCpu(a: string, b: string): string {
+export function addCpu(a: string, b: string): string {
   return `${parseCpuRaw(a) + parseCpuRaw(b)}m`;
 }
 
-function addMemory(a: string, b: string): string {
+export function addMemory(a: string, b: string): string {
   return `${parseMemoryRaw(a) + parseMemoryRaw(b)}Mi`;
 }
 
@@ -2030,13 +2066,15 @@ function readServiceAccountToken(): string | undefined {
   }
 }
 
-function readKubeconfigToken(): string | undefined {
+// Resolve the current context's user token from the kubeconfig. Uses
+// getCurrentUser() (which resolves context → user) rather than
+// getUser(currentContext) — getUser() looks up by *user* name, so a context
+// whose name differs from its user (virtually all cloud kubeconfigs) returned
+// null and every metrics helper fell back to "No service account token
+// available" in local dev. kc is injectable so the fix is unit-testable.
+export function readKubeconfigToken(kc: KubeConfig = kubeConfig()): string | undefined {
   try {
-    const kc = kubeConfig();
-    const currentContext = kc.getCurrentContext();
-    if (!currentContext) return undefined;
-    const user = kc.getUser(currentContext);
-    return (user as unknown as Record<string, string>)?.token;
+    return kc.getCurrentUser()?.token?.trim();
   } catch {
     return undefined;
   }
