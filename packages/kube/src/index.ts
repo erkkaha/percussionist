@@ -1366,8 +1366,10 @@ function findingsConfigMapName(project: string): string {
 
 /**
  * Append a single finding to the project's findings ConfigMap using merge-patch.
- * Sets only `data["inbox.<finding.id>.json"]` — conflict-free across concurrent agents.
- * Creates the ConfigMap if it does not exist (404 → create).
+ * Sets only `data["inbox.<finding.id>.json"]` — conflict-free across concurrent
+ * agents. Creates the ConfigMap if it does not exist (404 → create); when two
+ * concurrent agents race the create, the loser's 409 falls back to retrying the
+ * merge-patch (the ConfigMap now exists) instead of dropping the finding.
  */
 export async function appendFindingToConfigMap(
   project: string,
@@ -1382,29 +1384,46 @@ export async function appendFindingToConfigMap(
     [LABELS.component]: FINDINGS_COMPONENT,
   };
 
-  // Try merge-patch first (fast path for existing ConfigMap). Sets only the
-  // single inbox key — conflict-free across concurrent agents.
-  try {
-    await core().patchNamespacedConfigMap(
-      { name: cmName, namespace: ns, body: { metadata: { labels }, data } },
-      MERGE_PATCH(),
-    );
-    return { written: true };
-  } catch (e) {
-    if (!isNotFoundError(e)) throw e;
+  // Conflict-free per-key write: a merge-patch sets only `data[key]`, so
+  // concurrent agents never clobber each other's findings. When the ConfigMap
+  // is missing the patch 404s and we create it; if a concurrent agent wins the
+  // create race the create 409s and we loop back to the patch (the ConfigMap
+  // now exists and our key is set atomically).
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // Try merge-patch first (fast path for existing ConfigMap). Sets only the
+    // single inbox key — conflict-free across concurrent agents.
+    try {
+      await core().patchNamespacedConfigMap(
+        { name: cmName, namespace: ns, body: { metadata: { labels }, data } },
+        MERGE_PATCH(),
+      );
+      return { written: true };
+    } catch (e) {
+      if (!isNotFoundError(e)) throw e;
+    }
+
+    // ConfigMap does not exist — create it.
+    try {
+      await core().createNamespacedConfigMap({
+        namespace: ns,
+        body: {
+          apiVersion: 'v1',
+          kind: 'ConfigMap',
+          metadata: { name: cmName, namespace: ns, labels },
+          data,
+        },
+      });
+      return { written: true };
+    } catch (e) {
+      if (isConflictError(e)) continue; // concurrent create won — retry the patch
+      throw e;
+    }
   }
 
-  // ConfigMap does not exist — create it.
-  await core().createNamespacedConfigMap({
-    namespace: ns,
-    body: {
-      apiVersion: 'v1',
-      kind: 'ConfigMap',
-      metadata: { name: cmName, namespace: ns, labels },
-      data,
-    },
-  });
-  return { written: true };
+  // Unreachable in practice: the loop returns on success and throws on any
+  // non-retryable error. This guards against a create-409 storm exhausting
+  // the bound without ever landing the finding.
+  throw new Error(`appendFindingToConfigMap: exhausted retries for ${cmName}`);
 }
 
 /**
