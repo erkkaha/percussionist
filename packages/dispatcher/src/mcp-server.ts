@@ -279,6 +279,17 @@ const TOOL_COMPLETE_REVIEW = {
   },
 };
 
+// All completion tools, advertised optimistically by tools/list when
+// authorization cannot be resolved yet (transient failure). The authoritative
+// gate stays at tools/call, which denies definitively when authorization is
+// resolved and the tool is not allowed for this run's context.
+const ALL_COMPLETION_TOOLS = [
+  TOOL_COMPLETE_RUN,
+  TOOL_COMPLETE_PLAN,
+  TOOL_COMPLETE_MERGE,
+  TOOL_COMPLETE_REVIEW,
+];
+
 const TOOL_GET_STATUS = {
   name: 'get_status',
   description:
@@ -531,28 +542,53 @@ async function handleSearchCode(
 
   const timeoutMs = 30_000;
 
-  // Check if rg (ripgrep) is available.
-  const useRg = await hasRipgrep();
   const isContextMode = mode === 'content';
 
+  let useRg: boolean;
   let stdout: string;
-  if (useRg) {
-    const rgArgs: string[] = ['--json', '-i', '--no-heading'];
-    if (isContextMode) rgArgs.push('-C', String(contextLines));
-    if (filePattern) rgArgs.push('-g', filePattern);
-    if (fixedStrings) rgArgs.push('-F');
-    rgArgs.push(query, searchPath);
-    const result = await execCommand('rg', rgArgs, timeoutMs);
-    stdout = result.stdout;
-  } else {
-    // Fallback to grep -rn
-    const grepArgs: string[] = ['-rn', '-i'];
-    if (fixedStrings) grepArgs.push('-F');
-    if (filePattern) grepArgs.push('--include', filePattern);
-    if (isContextMode && contextLines > 0) grepArgs.push('-C', String(contextLines));
-    grepArgs.push(query, searchPath);
-    const result = await execCommand('grep', grepArgs, timeoutMs);
-    stdout = result.stdout;
+  try {
+    // Check if rg (ripgrep) is available.
+    useRg = await hasRipgrep();
+
+    if (useRg) {
+      const rgArgs: string[] = ['--json', '-i', '--no-heading'];
+      if (isContextMode) rgArgs.push('-C', String(contextLines));
+      if (filePattern) rgArgs.push('-g', filePattern);
+      if (fixedStrings) rgArgs.push('-F');
+      rgArgs.push(query, searchPath);
+      const result = await execCommand('rg', rgArgs, timeoutMs);
+      stdout = result.stdout;
+    } else {
+      // Fallback to grep -rn
+      const grepArgs: string[] = ['-rn', '-i'];
+      if (fixedStrings) grepArgs.push('-F');
+      if (filePattern) grepArgs.push('--include', filePattern);
+      if (isContextMode && contextLines > 0) grepArgs.push('-C', String(contextLines));
+      grepArgs.push(query, searchPath);
+      const result = await execCommand('grep', grepArgs, timeoutMs);
+      stdout = result.stdout;
+    }
+  } catch (e) {
+    // execCommand tolerates exit 1 (no matches) but rejects on exit 2 (e.g.
+    // invalid regex like "[" or an unreadable path). Surface a structured
+    // error so the agent can fix its query instead of a 500/rejection.
+    const err = e as { code?: unknown; stderr?: unknown; message?: string };
+    return ok(id, {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            error: 'search failed',
+            query,
+            detail:
+              typeof err.stderr === 'string' && err.stderr
+                ? err.stderr
+                : (err.message ?? String(e)),
+            exitCode: typeof err.code === 'number' ? err.code : undefined,
+          }),
+        },
+      ],
+    });
   }
 
   // Parse output
@@ -910,23 +946,49 @@ function parseContextHint(value: string | undefined): RunCompletionContext | und
   }
 }
 
-async function inferRunCompletionContext(): Promise<RunCompletionContext> {
+/**
+ * Thrown when completion authorization could not be resolved because of a
+ * transient failure (a k8s/DNS lookup blip) rather than a definitive denial.
+ * The k8s client has no retry, so a one-off getClusterAgent failure must not
+ * permanently disable the completion tools for the rest of the run. Callers
+ * must not cache a denial derived from this error — the next tool call should
+ * retry the lookup. Definitive denials (missing RUN_AGENT, missing capability
+ * on a successfully fetched ClusterAgent) are returned as `allowed: false`,
+ * never thrown.
+ */
+export class TransientAuthError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'TransientAuthError';
+  }
+}
+
+async function inferRunCompletionContext(): Promise<{
+  context: RunCompletionContext;
+  sawError: boolean;
+}> {
   const explicit = parseContextHint(process.env.RUN_CONTEXT);
-  if (explicit) return explicit;
+  if (explicit) return { context: explicit, sawError: false };
 
   const runName = process.env.RUN_NAME ?? '';
   const boardTaskName = process.env.RUN_BOARD_TASK ?? '';
   const namespace = process.env.RUN_NAMESPACE ?? 'percussionist';
+
+  let sawError = false;
 
   try {
     if (runName) {
       const run = await getRun(runName, namespace);
       const facilitation = run.spec?.facilitation;
       if (facilitation) {
-        return facilitation.successReview === true ? 'review-facilitator' : 'build-worker';
+        return {
+          context: facilitation.successReview === true ? 'review-facilitator' : 'build-worker',
+          sawError,
+        };
       }
     }
   } catch {
+    sawError = true;
     // Fallback to task-type inference.
   }
 
@@ -934,18 +996,20 @@ async function inferRunCompletionContext(): Promise<RunCompletionContext> {
     try {
       const task = await getTask(boardTaskName, namespace);
       if (task.spec.type === 'PLAN') {
-        return 'plan-worker';
+        return { context: 'plan-worker', sawError };
       }
     } catch {
+      sawError = true;
       // Fall through to build-worker default.
     }
   }
 
-  return 'build-worker';
+  return { context: 'build-worker', sawError };
 }
 
 async function resolveCompletionAuthorization(): Promise<CompletionAuthorization> {
-  const context = await inferRunCompletionContext();
+  const explicitHint = parseContextHint(process.env.RUN_CONTEXT);
+  const { context, sawError } = await inferRunCompletionContext();
   const { allowedTool, requiredCapability } = completionPolicyForContext(context);
 
   const agentName = process.env.RUN_AGENT ?? '';
@@ -957,6 +1021,17 @@ async function resolveCompletionAuthorization(): Promise<CompletionAuthorization
       allowed: false,
       denialReason: `RUN_AGENT not set (requires capability "${requiredCapability}")`,
     };
+  }
+
+  // RUN_CONTEXT is only injected for merge/facilitation runs — normal worker
+  // runs depend on inference. If inference hit a transient k8s error, the
+  // fallback context may be wrong (e.g. a PLAN run cached as build-worker),
+  // which would permanently gate it for complete_run instead of complete_plan.
+  // Throw so the cache clears and the next tool call retries the inference.
+  if (sawError && !explicitHint) {
+    throw new TransientAuthError(
+      `failed to infer run completion context for agent "${agentName}" (transient lookup failure)`,
+    );
   }
 
   try {
@@ -973,13 +1048,14 @@ async function resolveCompletionAuthorization(): Promise<CompletionAuthorization
     }
     return { context, allowedTool, requiredCapability, allowed: true };
   } catch (e) {
-    return {
-      context,
-      allowedTool,
-      requiredCapability,
-      allowed: false,
-      denialReason: `failed to resolve cluster agent "${agentName}": ${(e as Error).message}`,
-    };
+    // Transient lookup failure (no retry in the k8s client) — never a cached
+    // denial. The cache clears on rejection so the next tool call retries.
+    throw new TransientAuthError(
+      `failed to resolve cluster agent "${agentName}": ${(e as Error).message}`,
+      {
+        cause: e,
+      },
+    );
   }
 }
 
@@ -1156,18 +1232,37 @@ async function handleMcp(
       return ok(req.id, {});
 
     case 'tools/list': {
-      const completionAuth = await getCompletionAuth();
-      const completionTools = completionAuth.allowed
-        ? [
-            completionAuth.allowedTool === 'complete_run'
-              ? TOOL_COMPLETE_RUN
-              : completionAuth.allowedTool === 'complete_plan'
-                ? TOOL_COMPLETE_PLAN
-                : completionAuth.allowedTool === 'complete_merge'
-                  ? TOOL_COMPLETE_MERGE
-                  : TOOL_COMPLETE_REVIEW,
-          ]
-        : [];
+      let completionAuth: CompletionAuthorization | undefined;
+      try {
+        completionAuth = await getCompletionAuth();
+      } catch (e) {
+        if (e instanceof TransientAuthError) {
+          // A transient lookup failure must not permanently hide the completion
+          // tools: this transport is request/response only (POST /mcp, no SSE),
+          // and the client lists tools once at session start — hiding them on a
+          // list-once client would re-create the reported symptom at the client
+          // cache even though the server cache is fixed. Advertise all completion
+          // tools optimistically; the authoritative gate stays at tools/call.
+          console.error(
+            `[mcp-server] tools/list: completion authorization failed transiently: ${(e as Error).message}`,
+          );
+        } else {
+          throw e;
+        }
+      }
+      const completionTools = completionAuth
+        ? completionAuth.allowed
+          ? [
+              completionAuth.allowedTool === 'complete_run'
+                ? TOOL_COMPLETE_RUN
+                : completionAuth.allowedTool === 'complete_plan'
+                  ? TOOL_COMPLETE_PLAN
+                  : completionAuth.allowedTool === 'complete_merge'
+                    ? TOOL_COMPLETE_MERGE
+                    : TOOL_COMPLETE_REVIEW,
+            ]
+          : []
+        : ALL_COMPLETION_TOOLS;
       return ok(req.id, {
         tools: [
           TOOL_FAIL_RUN,
@@ -1185,9 +1280,24 @@ async function handleMcp(
 
     case 'tools/call': {
       const toolName = (req.params?.name as string | undefined) ?? '';
-      const completionAuth = COMPLETION_TOOL_NAMES.has(toolName as CompletionToolName)
-        ? await getCompletionAuth()
-        : undefined;
+      let completionAuth: CompletionAuthorization | undefined;
+      if (COMPLETION_TOOL_NAMES.has(toolName as CompletionToolName)) {
+        try {
+          completionAuth = await getCompletionAuth();
+        } catch (e) {
+          if (e instanceof TransientAuthError) {
+            // Transient lookup failure — retryable, never the permanent
+            // "not allowed" denial. Once a definitive outcome is cached,
+            // the behavior below resumes unchanged.
+            return rpcError(
+              req.id,
+              -32000,
+              `completion authorization check failed transiently: ${(e as Error).message}; please retry the tool call`,
+            );
+          }
+          throw e;
+        }
+      }
       if (completionAuth) {
         if (!completionAuth.allowed) {
           return rpcError(
@@ -1485,7 +1595,53 @@ export const __test = {
   parseContextHint,
   computeDedupKey,
   normalizeFindingText,
+  createCompletionAuthCache,
+  TransientAuthError,
+  dispatchNotification,
 };
+
+/**
+ * Cache for completion authorization resolution. Stores the in-flight/definitive
+ * promise so a run resolves authorization at most once — but clears the cached
+ * slot when the resolution rejects. Rejections are transient by construction
+ * (see TransientAuthError): the k8s client has no retry, so a one-off lookup
+ * failure must not permanently disable the completion tools for the run. The
+ * next call retries the lookup; definitive outcomes (allowed, capability
+ * denial, missing RUN_AGENT) stay cached.
+ */
+export function createCompletionAuthCache(
+  resolve: () => Promise<CompletionAuthorization>,
+): () => Promise<CompletionAuthorization> {
+  let cached: Promise<CompletionAuthorization> | undefined;
+  return () => {
+    if (cached) return cached;
+    cached = resolve().catch((e) => {
+      cached = undefined; // transient — next call retries the lookup
+      throw e;
+    });
+    return cached;
+  };
+}
+
+/**
+ * Dispatch an id-less JSON-RPC notification (no response expected). The handler
+ * must never reject unhandled: index.ts converts unhandledRejection into
+ * process.exit(1), so a malformed notification (e.g. a tools/call whose
+ * handler throws) would kill the dispatcher mid-run. Log and continue — the
+ * root causes are fixed in the handlers, this is the safety net.
+ */
+function dispatchNotification(
+  rpc: JsonRpcRequest,
+  onFailRun: (reason: string) => void,
+  onCompleteRun: (summary: string) => void,
+  onCompletePlan: (summary: string) => void,
+  getStatus: () => RunStatus | null,
+  getCompletionAuth: () => Promise<CompletionAuthorization>,
+): void {
+  handleMcp(rpc, onFailRun, onCompleteRun, onCompletePlan, getStatus, getCompletionAuth).catch(
+    (e) => console.error('[mcp-server] notification handler failed:', (e as Error).message),
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Server lifecycle
@@ -1503,11 +1659,7 @@ export function startMcpServer(
   port: number = DISPATCHER_MCP_PORT,
 ): Promise<McpServer> {
   return new Promise((resolve, reject) => {
-    let completionAuthPromise: Promise<CompletionAuthorization> | undefined;
-    const getCompletionAuth = (): Promise<CompletionAuthorization> => {
-      completionAuthPromise ??= resolveCompletionAuthorization();
-      return completionAuthPromise;
-    };
+    const getCompletionAuth = createCompletionAuthCache(resolveCompletionAuthorization);
 
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       if (req.method !== 'POST' || req.url !== '/mcp') {
@@ -1530,7 +1682,14 @@ export function startMcpServer(
 
           // Notifications have no id — return 202 with empty body.
           if (rpc.id === undefined || rpc.id === null) {
-            handleMcp(rpc, onFailRun, onCompleteRun, onCompletePlan, getStatus, getCompletionAuth); // side-effects only (e.g. notifications/initialized)
+            dispatchNotification(
+              rpc,
+              onFailRun,
+              onCompleteRun,
+              onCompletePlan,
+              getStatus,
+              getCompletionAuth,
+            ); // side-effects only (e.g. notifications/initialized)
             res.writeHead(202);
             res.end();
             return;
