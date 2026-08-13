@@ -181,8 +181,10 @@ Reply from the dashboard or via `beatctl submit --attach`.
 beatctl attach hello
 ```
 
-Forwards the run's Service port, reads the auth Secret, and drops you into the
-opencode TUI. Port-forward is torn down automatically on exit.
+Execs into the run's pod and drops you into the opencode TUI attached to the
+live agent session. It runs `kubectl exec` into the pod's `opencode` container
+(which serves the headless agent API on `http://127.0.0.1:4096`) and launches
+`opencode attach` against it — no port-forward or Secret read involved.
 
 Or combine submit + attach in one step:
 
@@ -212,17 +214,15 @@ flowchart TD
     OP -->|creates / owns| SVC[Service\nClusterIP]
     OP -->|creates / owns| POD[Pod]
     OP -->|creates / owns\nif spec.agents set| AGCM[ConfigMap\nagents]
-    OP -->|creates / owns\nif INGRESS_BASE_URL set| ING[Ingress\nper-run web URL]
     OP -->|mirrors pod phase| CR
 
     POD --> INIT[git-clone init container\nif spec.source.git set]
-    POD --> OC[opencode container\nopencode web :4096]
+    POD --> OC[opencode container\nopencode serve :4096]
     POD --> DISP[dispatcher sidecar\nMCP + session driver]
     POD --> SC1[sidecar 1\ne.g. test database]
     POD --> SC2[sidecar N\ndefined in spec.sidecars]
 
     AGCM -->|volume mount\n/root/.config/opencode/agents| OC
-    ING -->|routes| SVC
     SVC -->|ClusterIP :4096| OC
 
     DISP -->|HTTP 127.0.0.1:4096| OC
@@ -233,15 +233,18 @@ flowchart TD
     SC2 -->|ports ready?\nnc -z polling| OC
 ```
 
-- **opencode container** runs `opencode web` on `:4096`. Network-isolated by
-  default; exposed via per-run Ingress when configured.
+- **opencode container** runs `opencode serve --hostname 0.0.0.0 --port 4096`
+  — a headless HTTP API server (no web UI). It is exposed only via the run's
+  ClusterIP Service; `beatctl attach` execs into the container to reach it.
 - **dispatcher sidecar** waits for the runner's health endpoint, creates a
   session, fires `POST /session/:id/prompt_async`, then concurrently polls
   `/session/:id/message` and consumes the SSE `/event` stream for low-latency
   token updates. Once the last assistant message's `time.completed` is set it
-  patches the CR to `Succeeded` (or `Failed` on error) and exits. A 1-hour
-  hard timeout guard exits with code 3 if the run stalls indefinitely. The
-  dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
+  patches the CR to `Succeeded` (or `Failed` on error) and exits. A per-run
+  hard-timeout guard (derived from `RUN_TIMEOUT_SECONDS` / `spec.timeoutSeconds`,
+  firing 60 s before the pod's deadline, legacy fallback 65 min) fails the run
+  gracefully through the normal snapshot → stats → `Failed` path if it stalls.
+  The dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
   - `complete_run(...)` — signal BUILD task completion
   - `complete_plan(...)` — signal PLAN task completion
   - `fail_run(reason)` — signal task failure, triggering facilitator analysis
@@ -379,17 +382,15 @@ flowchart TD
     OP -->|creates / owns| SVC[Service\nClusterIP]
     OP -->|creates / owns| POD[Pod]
     OP -->|creates / owns\nif ClusterAgents or inline agents set| AGCM[ConfigMap\nagents]
-    OP -->|creates / owns\nif INGRESS_BASE_URL set| ING[Ingress\nper-run web URL]
     OP -->|mirrors pod phase| CR
 
     POD --> INIT[git-clone init container\nif spec.source.git set]
-    POD --> OC[opencode container\nopencode web :4096]
+    POD --> OC[opencode container\nopencode serve :4096]
     POD --> DISP[dispatcher sidecar\nMCP + session driver]
     POD --> SC1[sidecar 1\ne.g. test database]
     POD --> SC2[sidecar N\ndefined in spec.sidecars]
 
     AGCM -->|volume mount\n/root/.config/opencode/agents| OC
-    ING -->|routes| SVC
     SVC -->|ClusterIP :4096| OC
 
     DISP -->|HTTP 127.0.0.1:4096| OC
@@ -402,15 +403,18 @@ flowchart TD
     PROJ[Project] -->|spec.project ref\ngit, sidecars, model| CR
 ```
 
-- **opencode container** runs `opencode web` on `:4096`. Network-isolated by
-  default; exposed via per-run Ingress when configured.
+- **opencode container** runs `opencode serve --hostname 0.0.0.0 --port 4096`
+  — a headless HTTP API server (no web UI). It is exposed only via the run's
+  ClusterIP Service; `beatctl attach` execs into the container to reach it.
 - **dispatcher sidecar** waits for the runner's health endpoint, creates a
   session, fires `POST /session/:id/prompt_async`, then concurrently polls
   `/session/:id/message` and consumes the SSE `/event` stream for low-latency
   token updates. Once the last assistant message's `time.completed` is set it
-  patches the CR to `Succeeded` (or `Failed` on error) and exits. A 1-hour
-  hard timeout guard exits with code 3 if the run stalls indefinitely. The
-  dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
+  patches the CR to `Succeeded` (or `Failed` on error) and exits. A per-run
+  hard-timeout guard (derived from `RUN_TIMEOUT_SECONDS` / `spec.timeoutSeconds`,
+  firing 60 s before the pod's deadline, legacy fallback 65 min) fails the run
+  gracefully through the normal snapshot → stats → `Failed` path if it stalls.
+  The dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
   - `complete_run(...)` — signal BUILD task completion
   - `complete_plan(...)` — signal PLAN task completion
   - `fail_run(reason)` — signal task failure, triggering facilitator analysis
@@ -483,7 +487,7 @@ pnpm bundle
 | `beatctl ls` | Table of runs with phase, session ID, token totals, age. |
 | `beatctl get <name>` | Detailed view of a single run (`-o yaml` / `-o json` supported). |
 | `beatctl logs <name> [-f]` | Stream container logs. `-c dispatcher` to watch the sidecar. |
-| `beatctl attach <name>` | Port-forward the run's Service and launch `opencode attach`; cleans up on exit. |
+| `beatctl attach <name>` | Exec into the run's pod and launch `opencode attach` against the in-pod agent server (`kubectl exec -it pod/<pod> -c opencode`). |
 | `beatctl chat` | Port-forward the manager agent and start an interactive chat REPL. |
 | `beatctl wait <name>` | Block until terminal phase. Exit 0 = Succeeded, 1 = other terminal or deleted, 2 = timeout, 3 = API error. `--for <phase>` to await a specific phase. |
 | `beatctl cancel <name>` | Delete the run and all owned resources. |
@@ -623,7 +627,8 @@ monorepos and repeated builds.
   `{project}-data` mounted at `/data` in run pods.
 - Operator defaults for this PVC are **50Gi** and **ReadWriteOnce (RWO)**.
 - `ReadWriteMany` is supported when your storage class supports RWX and you
-  override the access mode/class via `spec.data`.
+  override the access mode/class via the operator's storage overrides
+  (`DEFAULT_STORAGE_ACCESS_MODE`, `DEFAULT_STORAGE_CLASS`).
 - Package managers are automatically configured via environment variables to use
   the cache:
   - **pnpm**: `PNPM_HOME=/data/cache/pnpm`, `pnpm_config_store_dir=/data/cache/pnpm-store`
@@ -653,7 +658,8 @@ monorepos and repeated builds.
 
 Default configuration works on typical single-node setups (`ReadWriteOnce`).
 If you need true multi-writer RWX behavior, use an RWX-capable storage class and
-set access-mode/class overrides in `spec.data`.
+set the operator's storage overrides (`DEFAULT_STORAGE_ACCESS_MODE`,
+`DEFAULT_STORAGE_CLASS`, `DEFAULT_STORAGE_SIZE` — see below).
 
 | Cluster type | RWX solution |
 |--------------|--------------|
@@ -663,7 +669,8 @@ set access-mode/class overrides in `spec.data`.
 
 ### Configuration overrides
 
-Override defaults via `spec.data`:
+Override the PVC name, mount path, and storage class per project or run via
+`spec.data`:
 
 ```yaml
 apiVersion: percussionist.dev/v1alpha1
@@ -677,9 +684,16 @@ spec:
     pvcName: custom-data-pvc         # default: {project}-data
     mountPath: /custom-data          # default: /data
     storageClass: fast-ssd          # default: cluster default
-    accessMode: ReadWriteMany       # default: ReadWriteOnce
-    storageSize: 100Gi              # default: 50Gi
 ```
+
+Access mode and size are **not** `spec.data` fields — they are operator
+environment overrides applied when the data PVC is created:
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `DEFAULT_STORAGE_ACCESS_MODE` | `ReadWriteOnce` | PVC access mode (set to `ReadWriteMany` for RWX-capable storage) |
+| `DEFAULT_STORAGE_SIZE` | `50Gi` | PVC size |
+| `DEFAULT_STORAGE_CLASS` | `standard` | StorageClass for data PVCs (per-CR override via `spec.data.storageClass`) |
 
 ### Performance impact
 
@@ -868,7 +882,10 @@ When a worker asks the agent for clarification, the run enters `WaitingForInput`
 phase and the task transitions to `waiting-for-input`. Reply via the web UI's
 `/runs/:name/reply` endpoint, which writes the answer to a Task annotation
 (`percussionist.dev/action-answer`). The reconciler picks it up and transitions
-back to `running`.
+back to `running`. A parked task can also be exited directly: the
+`percussionist.dev/action-abandon` and `percussionist.dev/action-request-changes`
+annotations transition it to `done` / `rework-requested` respectively, mirroring
+the `awaiting-human` exits.
 
 ### Status fields
 
@@ -975,9 +992,12 @@ gitGraph
    - Reconciler blocks start until predecessor is `done` AND `mergedAt` exists
    - Ensures correct build order
 
-5. **Feature merge** (manual)
+5. **Feature merge** (`flow.integration.mode`)
    - PLAN's `feature/{plan-id}` branch contains all BUILD changes
-   - Manual merge to `main` when feature is complete
+   - `auto-merge` (default): a merge run merges the feature branch directly to the target branch — no human in the loop
+   - `pr`: a run opens a GitHub PR from the feature branch; the manager polls the PR state (15-min cache interval) and auto-transitions the task to `done` when merged, or `awaiting-human` if the PR is closed without merging (requires `source.git.githubTokenSecret`)
+   - `manual`: the task parks in `awaiting-human`; a human merges the branch to the target outside the system and marks the task done
+   - `disabled`: no integration merge; the task goes to `done` once all BUILD children are done
 
 ### Benefits
 
@@ -1068,67 +1088,19 @@ A day-range selector (7d / 30d / 90d / All) refetches from `/api/stats/export?da
 > in-cluster CA. `k8s/deploy/web.yaml` sets `NODE_EXTRA_CA_CERTS` to the service
 > account CA bundle path so Bun trusts the cluster API server certificate.
 
-## Per-run web UI (subdomains)
+## Web UI access
 
-Each run exposes the full opencode web UI via its ClusterIP Service on port
-4096. To make it browser-accessible, the operator can create a per-run Ingress
-that routes `http://<run>.<baseDomain>/` to the run's Service.
+Runs no longer expose a browser UI: the run pod's opencode container runs
+`opencode serve --hostname 0.0.0.0 --port 4096` — a headless HTTP API server
+(no web UI), reachable interactively via `beatctl attach`. The operator
+creates no Ingress for runs; the `PERCUSSIONIST_INGRESS_BASE_URL`,
+`PERCUSSIONIST_INGRESS_CLASS`, and `PERCUSSIONIST_INGRESS_ANNOTATIONS` operator
+env vars apply only to the per-project code-server IDE Ingress
+(`ide-{project}.<base host>`). There is no `spec.expose.web` opt-out — no such
+field exists in any schema.
 
-### Ingress controller setup
-
-| Cluster | Setup |
-|---------|-------|
-| **minikube** | `minikube addons enable ingress` + `scripts/minikube-load.sh` to pin NodePort |
-| **kind** | `extraPortMappings` for port 80 + install `ingress-nginx` |
-| **k3d** | `k3d cluster create --port 80:80@loadbalancer` — Traefik included |
-| **Docker Desktop** | Install `ingress-nginx` manually |
-
-### Operator configuration
-
-Set these environment variables on the operator Deployment (see commented-out
-examples in `k8s/deploy/operator.yaml`):
-
-```sh
-# Set automatically by `beatctl deploy` — shown here for manual overrides
-PERCUSSIONIST_INGRESS_BASE_URL=https://192.168.49.2.nip.io:30443
-
-# Optional: ingress class name
-PERCUSSIONIST_INGRESS_CLASS=nginx
-
-# Optional: extra annotations merged onto every Ingress (JSON)
-# The SSE /event endpoint needs long timeouts and no buffering:
-PERCUSSIONIST_INGRESS_ANNOTATIONS='{"nginx.ingress.kubernetes.io/proxy-read-timeout":"3600","nginx.ingress.kubernetes.io/proxy-buffering":"off"}'
-```
-
-DNS options for minikube:
-
-```sh
-# nip.io wildcard DNS (recommended — no local config needed)
-PERCUSSIONIST_INGRESS_BASE_URL=https://$(minikube ip).nip.io:30443
-
-# *.localhost (Linux with systemd-resolved, macOS Ventura+, Windows 11)
-PERCUSSIONIST_INGRESS_BASE_URL=http://percussionist.localhost
-```
-
-### Per-run opt-out
-
-```yaml
-spec:
-  task: "run the tests"
-  expose:
-    web: false
-```
-
-### URL format
-
-```
-https://<run-name>.<base-host>:<port>/
-# e.g. https://run-abc123.192.168.49.2.nip.io:30443/
-```
-
-> **Security note:** the opencode server runs without a password. The Ingress
-> is only reachable on your local network via the minikube IP. Do not bind the
-> ingress controller to a public interface without adding authentication.
+For browser access to a project workspace, enable the opt-in code-server — see
+[docs/features/code-server.md](docs/features/code-server.md).
 
 ## Provider auth
 
@@ -1514,4 +1486,4 @@ spec:
 
 Packages are installed on top of the runner image
 (`ghcr.io/erkkaha/percussionist/runner:latest`). The base image always
-includes git, openssh, node, npm, bash, curl, unzip, and github-cli.
+includes git, openssh, node, npm, pnpm, bun, bash, curl, unzip, and github-cli.

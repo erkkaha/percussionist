@@ -29,6 +29,8 @@ Packages are installed on top of the runner image (`ghcr.io/erkkaha/percussionis
 - openssh
 - node
 - npm
+- pnpm
+- bun
 - bash
 - curl
 - unzip

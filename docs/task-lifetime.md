@@ -64,7 +64,7 @@ When the pod enters Running → operator sets `Run.status.phase = Running` → m
 Manager polls `Run.status.phase`:
 - `Succeeded` → `succeeded`
 - `Failed` → `failed`
-- `WaitingForInput` → `waiting-for-input` (PLAN only; BUILD tasks go straight to `failed`)
+- `WaitingForInput` → `waiting-for-input` (any task type parks when a human is genuinely required)
 - Running but no events beyond `flow.timeouts.runningStaleSeconds` (default 1800s/30min) → `failed` (staleness guard)
 
 When the run completes (`Succeeded` or `Failed`), if `project.spec.embedding.enabled`
@@ -75,8 +75,10 @@ memory database.
 
 The agent is working during this phase. It calls `complete_run` or `complete_plan` on the dispatcher when done. The dispatcher records the signal and exits 0. The pod reaches Succeeded, the operator mirrors it, and the manager picks it up on the next reconcile.
 
-### `waiting-for-input` *(PLAN only)*
+### `waiting-for-input`
 Manager polls for an answer annotation (`percussionist.dev/action-answer`) on the Task CR (with legacy fallback to Project CR annotations). When a human posts an answer via the web UI, the dispatcher injects it into the live session. Once the run resumes to `Running` the task goes back to `running`. The annotation is cleared.
+
+A parked task also supports the same annotation-driven exits as `awaiting-human`: `percussionist.dev/action-abandon: "true"` → `done` (worker marked `abandoned`), and `percussionist.dev/action-request-changes` (+ `percussionist.dev/action-rework-feedback`) → `rework-requested` with capped feedback and `retryCount + 1`.
 
 ### `succeeded`
 Manager's decision engine checks flow configuration:
@@ -158,7 +160,7 @@ Terminal. Manager never touches it again. Task CR persists until the parent Proj
 | | PLAN | BUILD |
 |---|---|---|
 | Created by | Human | Manager (buildgen) or human |
-| Can enter `waiting-for-input` | Yes | No — goes to `failed` |
+| Can enter `waiting-for-input` | Yes | Yes (parks when a human is genuinely required) |
 | Completion signal | `complete_plan` (plan artifact committed) | `complete_run` (work committed) |
 | On human approval | → `generating-builds` | → `awaiting-merge` |
 | Feature branch | `feature/{plan-id}` (from main) | `feature/{plan-id}--{build-id}` (from PLAN branch) |
@@ -202,10 +204,12 @@ A task has up to three live Runs at once:
 
 | Run type | Created in phase | Name scheme |
 |---|---|---|
-| Worker | `scheduled` | `workerRunName(project, task, retryCount)` — deterministic SHA-256 hash |
-| Review | `succeeded` | `{project}-review-{task}-{retryCount+aiReworkCount}` (`auxiliaryRunName`) |
-| Merge (BUILD) | `awaiting-human` (BUILD approval) | `{project}-merge-{task}-{retryCount}` (`auxiliaryRunName`) |
-| Merge (feature branch) | `awaiting-children` (auto-merge mode) | `{project}-merge-{task}-{retryCount}` (`auxiliaryRunName`) |
-| Buildgen | `generating-builds` | `{project}-buildgen-{task}-0` (`auxiliaryRunName`) |
+| Worker | `scheduled` | `workerRunName(project, task, retryCount, aiReworkCount)` — `{project}-{task}-{sha256:10}`; deterministic hash of `project:task:retryCount:aiReworkCount` (`worker-builder.ts` `workerRunName`) |
+| Review | `succeeded` | `auxiliaryRunName(project, 'review', task, suffix)` — `{project}-review-{task}-{sha256:8}`; hash of `project:task:review:retryCount:aiReworkCount` |
+| Merge (BUILD) | `awaiting-human` (BUILD approval) | `auxiliaryRunName(project, 'merge', task, suffix)` — `{project}-merge-{task}-{sha256:8}`; hash of `project:task:retryCount` |
+| Merge (feature branch) | `awaiting-children` (auto-merge mode) | `auxiliaryRunName(project, 'merge', task, suffix)` — `{project}-merge-{task}-{sha256:10}`; hash of `project:task:merge` |
+| Buildgen | `generating-builds` | `auxiliaryRunName(project, 'buildgen', task, suffix)` — `{project}-buildgen-{task}-{sha256:10}`; hash of `project:task:buildgen` |
+
+All review/merge/buildgen runs are named via `auxiliaryRunName()` (`worker-builder.ts`): a truncated SHA-256 hash of the run's context (project, task, kind, retry counters) is appended as the suffix — the suffix is not a plain retry counter. Only worker runs use `workerRunName()`, whose deterministic hash keeps the name stable across reconcile cycles.
 
 Old Runs are never deleted by state transitions — they persist as history until the TTL controller removes them. A Run's own `spec.ttlSecondsAfterFinished`, when set, takes precedence over the cluster-wide `runTTLDays` default (default 7 days); `runTTLDays` only applies to Runs that don't set the per-run field. Deleting a Run — whether by TTL expiry, `kubectl delete run`, the dashboard, or the manager — triggers a `batch/v1` Job that cleans up the Run's worktree.

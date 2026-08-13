@@ -527,21 +527,80 @@ function decideWaitingForInput(input: ReconcileInput): ReconcileDecision {
     };
   }
 
+  // Human exits, mirroring decideAwaitingHuman's semantics for the shared
+  // actions. Precedence: abandon wins, then requestChanges, then answer — a
+  // human that both answers and abandons gets the abandon.
+  if (manualActions.abandon) {
+    const consumedKeys = getConsumedAnnotationKeys(manualActions);
+    return {
+      taskName,
+      fromPhase,
+      toPhase: 'done',
+      statusPatch: { worker: { status: 'Succeeded', completedAt: now, abandoned: true } },
+      effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
+      events: [makeEvent(input, fromPhase, 'done', 'TaskAbandoned')],
+    };
+  }
+
+  if (manualActions.requestChanges) {
+    const consumedKeys = getConsumedAnnotationKeys(manualActions);
+    return {
+      taskName,
+      fromPhase,
+      toPhase: 'rework-requested',
+      statusPatch: {
+        worker: {
+          // Human rework notes arrive via an annotation, which allows far more
+          // than this field does — cap here too, not just on the reviewer path.
+          reviewFeedback: capReviewFeedback(manualActions.reworkFeedback ?? 'No feedback provided'),
+          retryCount: (task.status?.worker?.retryCount ?? 0) + 1,
+          aiReworkCount: 0,
+        },
+      },
+      effects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'rework-requested',
+          'HumanRequestedChanges',
+          manualActions.reworkFeedback,
+        ),
+      ],
+    };
+  }
+
   if (!manualActions.answer) {
     return { taskName, fromPhase, effects: [], events: [] };
   }
+  // Narrowed after the guard above: `answer` is a non-empty string here.
+  const answer: string = manualActions.answer;
+
+  // Deliver the answer to the run's live session. When the run is already
+  // Running, transition back to running and consume the annotation; when it is
+  // still WaitingForInput, deliver without transitioning and KEEP the
+  // annotation — the run flips to Running once the dispatcher observes the
+  // agent respond, and the next reconcile consumes the annotation then.
+  // Forcing the transition immediately would bounce running ↔ waiting-for-input
+  // (decideRunning would see WaitingForInput and bounce back).
+  const deliverAnswer = (): ReconcileEffect[] => [
+    { type: 'DeliverAnswer', runName: run.metadata.name, text: answer },
+  ];
 
   if (runPhase === 'Running') {
     return {
       taskName,
       fromPhase,
       toPhase: 'running',
-      effects: [{ type: 'ClearTaskAnnotations', keys: ['percussionist.dev/action-answer'] }],
+      effects: [
+        ...deliverAnswer(),
+        { type: 'ClearTaskAnnotations', keys: ['percussionist.dev/action-answer'] },
+      ],
       events: [makeEvent(input, fromPhase, 'running', 'InputAnswered')],
     };
   }
 
-  return { taskName, fromPhase, effects: [], events: [] };
+  return { taskName, fromPhase, effects: deliverAnswer(), events: [] };
 }
 
 function decideSucceeded(input: ReconcileInput): ReconcileDecision {

@@ -543,6 +543,41 @@ board.post('/:project/board/tasks/:taskName/approve', adminAuth(), async (c) => 
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/projects/:project/board/tasks/:taskName/abandon
+//
+// Writes the percussionist.dev/action-abandon annotation so the manager can
+// transition the task to done (honored for waiting-for-input and
+// awaiting-human tasks by decideWaitingForInput / decideAwaitingHuman).
+
+board.post('/:project/board/tasks/:taskName/abandon', adminAuth(), async (c) => {
+  const name = c.req.param('project');
+  const taskName = c.req.param('taskName');
+  try {
+    // Write abandon as Task annotation (new format).
+    const { task, ns } = await getProjectTask(name, taskName);
+    const currentAnnotations = task.metadata.annotations ?? {};
+    await patchTask(
+      taskName,
+      {
+        metadata: {
+          ...task.metadata,
+          annotations: {
+            ...currentAnnotations,
+            'percussionist.dev/action-abandon': 'true',
+          },
+        },
+      },
+      ns,
+    );
+    await appendTaskEvent(name, taskName, task.spec.type, 'abandoned', {});
+    return c.json({ success: true });
+  } catch (e) {
+    const ke = e as KubeError;
+    return c.json({ error: errMsg(ke) }, errStatus(ke));
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/projects/:project/board/tasks/:taskName/request-changes
 
 board.post('/:project/board/tasks/:taskName/request-changes', adminAuth(), async (c) => {
