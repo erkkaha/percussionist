@@ -625,7 +625,8 @@ monorepos and repeated builds.
   `{project}-data` mounted at `/data` in run pods.
 - Operator defaults for this PVC are **50Gi** and **ReadWriteOnce (RWO)**.
 - `ReadWriteMany` is supported when your storage class supports RWX and you
-  override the access mode/class via `spec.data`.
+  override the access mode/class via the operator's storage overrides
+  (`DEFAULT_STORAGE_ACCESS_MODE`, `DEFAULT_STORAGE_CLASS`).
 - Package managers are automatically configured via environment variables to use
   the cache:
   - **pnpm**: `PNPM_HOME=/data/cache/pnpm`, `pnpm_config_store_dir=/data/cache/pnpm-store`
@@ -655,7 +656,8 @@ monorepos and repeated builds.
 
 Default configuration works on typical single-node setups (`ReadWriteOnce`).
 If you need true multi-writer RWX behavior, use an RWX-capable storage class and
-set access-mode/class overrides in `spec.data`.
+set the operator's storage overrides (`DEFAULT_STORAGE_ACCESS_MODE`,
+`DEFAULT_STORAGE_CLASS`, `DEFAULT_STORAGE_SIZE` — see below).
 
 | Cluster type | RWX solution |
 |--------------|--------------|
@@ -665,7 +667,8 @@ set access-mode/class overrides in `spec.data`.
 
 ### Configuration overrides
 
-Override defaults via `spec.data`:
+Override the PVC name, mount path, and storage class per project or run via
+`spec.data`:
 
 ```yaml
 apiVersion: percussionist.dev/v1alpha1
@@ -679,9 +682,16 @@ spec:
     pvcName: custom-data-pvc         # default: {project}-data
     mountPath: /custom-data          # default: /data
     storageClass: fast-ssd          # default: cluster default
-    accessMode: ReadWriteMany       # default: ReadWriteOnce
-    storageSize: 100Gi              # default: 50Gi
 ```
+
+Access mode and size are **not** `spec.data` fields — they are operator
+environment overrides applied when the data PVC is created:
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `DEFAULT_STORAGE_ACCESS_MODE` | `ReadWriteOnce` | PVC access mode (set to `ReadWriteMany` for RWX-capable storage) |
+| `DEFAULT_STORAGE_SIZE` | `50Gi` | PVC size |
+| `DEFAULT_STORAGE_CLASS` | `standard` | StorageClass for data PVCs (per-CR override via `spec.data.storageClass`) |
 
 ### Performance impact
 
