@@ -134,16 +134,28 @@ Non-sensitive configuration is stored in ConfigMaps. Session data is truncated t
 
 ### Recommended NetworkPolicies
 
+The rules below match the shipped `k8s/deploy/networkpolicy.yaml`, which
+implements them as ingress allowlists on the sensitive pods (manager MCP/chat
+and per-project memory services). Enforcement requires a CNI that implements
+NetworkPolicy (Calico, Cilium, etc.) — the default kind/minikube CNI does not
+enforce them, in which case the policies are documentation and the manager's
+bearer token remains the effective control.
+
 - Allow ingress to web pod only from ingress controller
-- Allow runner pods to reach manager MCP server
-- Allow manager to reach memory service pods
+- Deny runner pods access to the manager MCP port (4097): only the web pod and
+  the manager itself are allowed. Runner pods (`percussionist.dev/component: runner`)
+  are deliberately not selected by the policy, so they cannot reach the
+  destructive MCP tools (`exec_in_workspace`, `apply_upgrade`, `delete_run`)
+  over the pod network.
+- Allow manager to reach memory service pods (runner pods are denied, so they
+  cannot poison vector memory)
 - Deny all other inter-pod traffic by default
 
 ## Known Considerations
 
 | Item | Status |
 |------|--------|
-| MCP server has no auth layer | Cluster-internal access only |
+| Manager MCP enforces bearer-token auth for cross-pod callers | `MCP_TOKEN` (the `manager-mcp-token` Secret); loopback (`127.0.0.1`) callers are exempt |
 | Web auth is optional | Enable in production |
 | Manager is single-replica | No leader election race conditions |
 | Session data in ConfigMaps | Truncated to fit; not encrypted at rest |
