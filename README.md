@@ -212,17 +212,15 @@ flowchart TD
     OP -->|creates / owns| SVC[Service\nClusterIP]
     OP -->|creates / owns| POD[Pod]
     OP -->|creates / owns\nif spec.agents set| AGCM[ConfigMap\nagents]
-    OP -->|creates / owns\nif INGRESS_BASE_URL set| ING[Ingress\nper-run web URL]
     OP -->|mirrors pod phase| CR
 
     POD --> INIT[git-clone init container\nif spec.source.git set]
-    POD --> OC[opencode container\nopencode web :4096]
+    POD --> OC[opencode container\nopencode serve :4096]
     POD --> DISP[dispatcher sidecar\nMCP + session driver]
     POD --> SC1[sidecar 1\ne.g. test database]
     POD --> SC2[sidecar N\ndefined in spec.sidecars]
 
     AGCM -->|volume mount\n/root/.config/opencode/agents| OC
-    ING -->|routes| SVC
     SVC -->|ClusterIP :4096| OC
 
     DISP -->|HTTP 127.0.0.1:4096| OC
@@ -233,15 +231,18 @@ flowchart TD
     SC2 -->|ports ready?\nnc -z polling| OC
 ```
 
-- **opencode container** runs `opencode web` on `:4096`. Network-isolated by
-  default; exposed via per-run Ingress when configured.
+- **opencode container** runs `opencode serve --hostname 0.0.0.0 --port 4096`
+  — a headless HTTP API server (no web UI). It is exposed only via the run's
+  ClusterIP Service; `beatctl attach` execs into the container to reach it.
 - **dispatcher sidecar** waits for the runner's health endpoint, creates a
   session, fires `POST /session/:id/prompt_async`, then concurrently polls
   `/session/:id/message` and consumes the SSE `/event` stream for low-latency
   token updates. Once the last assistant message's `time.completed` is set it
-  patches the CR to `Succeeded` (or `Failed` on error) and exits. A 1-hour
-  hard timeout guard exits with code 3 if the run stalls indefinitely. The
-  dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
+  patches the CR to `Succeeded` (or `Failed` on error) and exits. A per-run
+  hard-timeout guard (derived from `RUN_TIMEOUT_SECONDS` / `spec.timeoutSeconds`,
+  firing 60 s before the pod's deadline, legacy fallback 65 min) fails the run
+  gracefully through the normal snapshot → stats → `Failed` path if it stalls.
+  The dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
   - `complete_run(...)` — signal BUILD task completion
   - `complete_plan(...)` — signal PLAN task completion
   - `fail_run(reason)` — signal task failure, triggering facilitator analysis
@@ -379,17 +380,15 @@ flowchart TD
     OP -->|creates / owns| SVC[Service\nClusterIP]
     OP -->|creates / owns| POD[Pod]
     OP -->|creates / owns\nif ClusterAgents or inline agents set| AGCM[ConfigMap\nagents]
-    OP -->|creates / owns\nif INGRESS_BASE_URL set| ING[Ingress\nper-run web URL]
     OP -->|mirrors pod phase| CR
 
     POD --> INIT[git-clone init container\nif spec.source.git set]
-    POD --> OC[opencode container\nopencode web :4096]
+    POD --> OC[opencode container\nopencode serve :4096]
     POD --> DISP[dispatcher sidecar\nMCP + session driver]
     POD --> SC1[sidecar 1\ne.g. test database]
     POD --> SC2[sidecar N\ndefined in spec.sidecars]
 
     AGCM -->|volume mount\n/root/.config/opencode/agents| OC
-    ING -->|routes| SVC
     SVC -->|ClusterIP :4096| OC
 
     DISP -->|HTTP 127.0.0.1:4096| OC
@@ -402,15 +401,18 @@ flowchart TD
     PROJ[Project] -->|spec.project ref\ngit, sidecars, model| CR
 ```
 
-- **opencode container** runs `opencode web` on `:4096`. Network-isolated by
-  default; exposed via per-run Ingress when configured.
+- **opencode container** runs `opencode serve --hostname 0.0.0.0 --port 4096`
+  — a headless HTTP API server (no web UI). It is exposed only via the run's
+  ClusterIP Service; `beatctl attach` execs into the container to reach it.
 - **dispatcher sidecar** waits for the runner's health endpoint, creates a
   session, fires `POST /session/:id/prompt_async`, then concurrently polls
   `/session/:id/message` and consumes the SSE `/event` stream for low-latency
   token updates. Once the last assistant message's `time.completed` is set it
-  patches the CR to `Succeeded` (or `Failed` on error) and exits. A 1-hour
-  hard timeout guard exits with code 3 if the run stalls indefinitely. The
-  dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
+  patches the CR to `Succeeded` (or `Failed` on error) and exits. A per-run
+  hard-timeout guard (derived from `RUN_TIMEOUT_SECONDS` / `spec.timeoutSeconds`,
+  firing 60 s before the pod's deadline, legacy fallback 65 min) fails the run
+  gracefully through the normal snapshot → stats → `Failed` path if it stalls.
+  The dispatcher also serves an MCP server on port 4097 exposing tools for agent use:
   - `complete_run(...)` — signal BUILD task completion
   - `complete_plan(...)` — signal PLAN task completion
   - `fail_run(reason)` — signal task failure, triggering facilitator analysis
@@ -1068,67 +1070,19 @@ A day-range selector (7d / 30d / 90d / All) refetches from `/api/stats/export?da
 > in-cluster CA. `k8s/deploy/web.yaml` sets `NODE_EXTRA_CA_CERTS` to the service
 > account CA bundle path so Bun trusts the cluster API server certificate.
 
-## Per-run web UI (subdomains)
+## Web UI access
 
-Each run exposes the full opencode web UI via its ClusterIP Service on port
-4096. To make it browser-accessible, the operator can create a per-run Ingress
-that routes `http://<run>.<baseDomain>/` to the run's Service.
+Runs no longer expose a browser UI: the run pod's opencode container runs
+`opencode serve --hostname 0.0.0.0 --port 4096` — a headless HTTP API server
+(no web UI), reachable interactively via `beatctl attach`. The operator
+creates no Ingress for runs; the `PERCUSSIONIST_INGRESS_BASE_URL`,
+`PERCUSSIONIST_INGRESS_CLASS`, and `PERCUSSIONIST_INGRESS_ANNOTATIONS` operator
+env vars apply only to the per-project code-server IDE Ingress
+(`ide-{project}.<base host>`). There is no `spec.expose.web` opt-out — no such
+field exists in any schema.
 
-### Ingress controller setup
-
-| Cluster | Setup |
-|---------|-------|
-| **minikube** | `minikube addons enable ingress` + `scripts/minikube-load.sh` to pin NodePort |
-| **kind** | `extraPortMappings` for port 80 + install `ingress-nginx` |
-| **k3d** | `k3d cluster create --port 80:80@loadbalancer` — Traefik included |
-| **Docker Desktop** | Install `ingress-nginx` manually |
-
-### Operator configuration
-
-Set these environment variables on the operator Deployment (see commented-out
-examples in `k8s/deploy/operator.yaml`):
-
-```sh
-# Set automatically by `beatctl deploy` — shown here for manual overrides
-PERCUSSIONIST_INGRESS_BASE_URL=https://192.168.49.2.nip.io:30443
-
-# Optional: ingress class name
-PERCUSSIONIST_INGRESS_CLASS=nginx
-
-# Optional: extra annotations merged onto every Ingress (JSON)
-# The SSE /event endpoint needs long timeouts and no buffering:
-PERCUSSIONIST_INGRESS_ANNOTATIONS='{"nginx.ingress.kubernetes.io/proxy-read-timeout":"3600","nginx.ingress.kubernetes.io/proxy-buffering":"off"}'
-```
-
-DNS options for minikube:
-
-```sh
-# nip.io wildcard DNS (recommended — no local config needed)
-PERCUSSIONIST_INGRESS_BASE_URL=https://$(minikube ip).nip.io:30443
-
-# *.localhost (Linux with systemd-resolved, macOS Ventura+, Windows 11)
-PERCUSSIONIST_INGRESS_BASE_URL=http://percussionist.localhost
-```
-
-### Per-run opt-out
-
-```yaml
-spec:
-  task: "run the tests"
-  expose:
-    web: false
-```
-
-### URL format
-
-```
-https://<run-name>.<base-host>:<port>/
-# e.g. https://run-abc123.192.168.49.2.nip.io:30443/
-```
-
-> **Security note:** the opencode server runs without a password. The Ingress
-> is only reachable on your local network via the minikube IP. Do not bind the
-> ingress controller to a public interface without adding authentication.
+For browser access to a project workspace, enable the opt-in code-server — see
+[docs/features/code-server.md](docs/features/code-server.md).
 
 ## Provider auth
 
