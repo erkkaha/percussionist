@@ -9,6 +9,7 @@
 //
 // Single env var for namespace: PERCUSSIONIST_NAMESPACE (default: "percussionist")
 
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
@@ -1008,12 +1009,13 @@ export async function fetchSessionMessages(
   const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session/${sessionID}/message`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
-  const res = await fetch(url, {
-    headers: { Accept: 'application/json' },
-    signal: controller.signal,
-  });
 
   try {
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+
     if (!res.ok) {
       throw new Error(`OpenCode API ${res.status}: ${await res.text().catch(() => '')}`);
     }
@@ -1023,7 +1025,9 @@ export async function fetchSessionMessages(
       throw new Error(`OpenCode session response too large (${contentLength} bytes)`);
     }
 
-    return readJsonWithLimit(res, 20_000_000);
+    // Await the body read inside the try so `finally` (clearTimeout) runs only
+    // after the stream is fully consumed — a slow/hung body is still aborted.
+    return await readJsonWithLimit(res, 20_000_000);
   } finally {
     clearTimeout(timeout);
   }
@@ -1079,7 +1083,7 @@ export async function fetchAllSessionMessages(
       `OpenCode session list API ${listRes.status}: ${await listRes.text().catch(() => '')}`,
     );
   }
-  const listData = (await listRes.json()) as unknown;
+  const listData = (await readJsonWithLimit(listRes, 20_000_000)) as unknown;
   const sessionList: Array<{ id: string }> = Array.isArray(listData)
     ? listData
     : (((listData as Record<string, unknown>).items ??
@@ -1097,7 +1101,9 @@ export async function fetchAllSessionMessages(
         signal: AbortSignal.timeout(10_000),
       });
       if (!msgRes.ok) continue;
-      const msgData = (await msgRes.json()) as unknown;
+      // Same 20MB cap as the single-session path; an oversized session body is
+      // swallowed here by the per-session catch (that session is skipped).
+      const msgData = (await readJsonWithLimit(msgRes, 20_000_000)) as unknown;
       const messages: unknown[] = Array.isArray(msgData)
         ? msgData
         : (((msgData as Record<string, unknown>).items ?? []) as unknown[]);
@@ -1938,7 +1944,15 @@ export async function execInWorkspace(
   getProjectFn: (name: string, ns: string) => Promise<Project> = getProject,
   pollIntervalMs = 2_000,
 ): Promise<WorkspaceExecResult> {
-  const podName = `ws-exec-${projectName}-${Date.now()}`.slice(0, 63).replace(/[^a-z0-9-]/g, '-');
+  // Pod names must be ≤63 chars and unique per invocation. A random suffix is
+  // generated FIRST and the project prefix is truncated (never the suffix), so
+  // long project names cannot chop the uniqueness suffix off and two calls in
+  // the same millisecond never collide (Date.now() is not used).
+  const suffix = randomUUID().replace(/-/g, '').slice(0, 12);
+  const prefix = `ws-exec-${projectName}`
+    .replace(/[^a-z0-9-]/g, '-')
+    .slice(0, 63 - 1 - suffix.length);
+  const podName = `${prefix}-${suffix}`;
 
   // Resolve project-level overrides (image + PVC name) with safe fallbacks.
   // imageOverride wins over spec.exec.image: callers running a script with hard
