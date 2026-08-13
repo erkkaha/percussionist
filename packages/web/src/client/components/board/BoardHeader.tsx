@@ -101,7 +101,12 @@ export function BoardHeader({
               Findings{findings && findings.length > 0 ? ` (${findings.length})` : ''}
             </span>
           </Button>
-          <Button onClick={onAddTask} variant="secondary" size="sm" className="gap-1">
+          <Button
+            onClick={onAddTask}
+            variant={showAddTask ? 'secondary' : 'default'}
+            size="sm"
+            className="gap-1"
+          >
             {showAddTask ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
             <span className="hidden sm:inline">{showAddTask ? 'Cancel' : '+ Add Task'}</span>
           </Button>
@@ -198,7 +203,7 @@ export function BoardHeader({
           <Bug className="h-3.5 w-3.5" />
           Findings{findings && findings.length > 0 ? ` (${findings.length})` : ''}
         </Button>
-        <Button onClick={onAddTask} variant="secondary" size="sm">
+        <Button onClick={onAddTask} variant={showAddTask ? 'secondary' : 'default'} size="sm">
           {showAddTask ? 'Cancel' : '+ Add Task'}
         </Button>
       </div>
