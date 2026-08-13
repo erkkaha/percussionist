@@ -1219,78 +1219,89 @@ export async function getPlansConfigMap(
   }
 }
 
+/**
+ * ConfigMap data key for a plan artifact: `{task}.md`. Task names are DNS-1123
+ * (`[a-z0-9]([-a-z0-9]*[a-z0-9])?`), so this sanitizer is a guard, not a
+ * transform — it prevents the silent-422 class of bug the findings ConfigMap
+ * hit when its keys contained `/` (ConfigMap data keys must match
+ * `[-._a-zA-Z0-9]+`). Substituting is deliberate: a plan written under a
+ * slightly mangled key is recoverable, whereas a rejected write loses the
+ * artifact outright — which is exactly the failure this replaces.
+ */
+export function plansDataKey(taskName: string): string {
+  return `${taskName.replace(CONFIGMAP_KEY_DISALLOWED, '_')}.md`;
+}
+
 export async function writePlanToConfigMap(
   projectName: string,
   taskName: string,
   content: string,
   ns: string = NAMESPACE,
 ): Promise<{ written: boolean; sizeBytes: number; warning?: string }> {
-  const key = `${taskName}.md`;
+  const key = plansDataKey(taskName);
   const cmName = `${projectName}-plans`;
-  let existing = await getPlansConfigMap(projectName, ns);
-
-  if (!existing) {
-    existing = {
-      apiVersion: 'v1',
-      kind: 'ConfigMap',
-      metadata: {
-        name: cmName,
-        namespace: ns,
-        labels: {
-          [LABELS.projectName]: projectName,
-          'percussionist.dev/component': 'plans',
-        },
-      },
-      data: {},
-    };
-  }
-
-  const newData = { ...existing.data, [key]: content };
-  const totalSize = Object.values(newData).reduce(
-    (sum, v) => sum + Buffer.byteLength(v, 'utf8'),
-    0,
-  );
-  let warning: string | undefined;
-  if (totalSize > CONFIGMAP_SIZE_WARN) {
-    warning = `ConfigMap data size (${Math.round(totalSize / 1024)}KB) approaching 1MB limit. Consider removing old plans.`;
-  }
-
-  const metadata: V1ObjectMeta = {
-    name: existing.metadata.name ?? cmName,
-    namespace: existing.metadata.namespace ?? ns,
-    labels: existing.metadata.labels,
-    annotations: existing.metadata.annotations,
+  const data = { [key]: content };
+  const labels = {
+    [LABELS.projectName]: projectName,
+    'percussionist.dev/component': 'plans',
   };
-  if (existing.metadata.resourceVersion) {
-    metadata.resourceVersion = existing.metadata.resourceVersion;
+
+  // Best-effort total-size check for the advisory 900KB warning. The read is
+  // wrapped in try/catch and never affects the write — write correctness
+  // never depends on a possibly-stale read succeeding.
+  let warning: string | undefined;
+  try {
+    const existing = await getPlansConfigMap(projectName, ns);
+    let totalSize = Buffer.byteLength(content, 'utf8');
+    for (const [k, v] of Object.entries(existing?.data ?? {})) {
+      if (k === key) continue; // overwritten by this write — no double count
+      totalSize += Buffer.byteLength(v ?? '', 'utf8');
+    }
+    if (totalSize > CONFIGMAP_SIZE_WARN) {
+      warning = `ConfigMap data size (${Math.round(totalSize / 1024)}KB) approaching 1MB limit. Consider removing old plans.`;
+    }
+  } catch {
+    // Best-effort only — a failed read skips the warning, never the write.
   }
 
-  if (!existing.metadata.resourceVersion) {
-    // Create new ConfigMap
-    await core().createNamespacedConfigMap({
-      namespace: ns,
-      body: {
-        apiVersion: 'v1',
-        kind: 'ConfigMap',
-        metadata,
-        data: newData,
-      },
-    });
-  } else {
-    // Update existing ConfigMap
-    await core().replaceNamespacedConfigMap({
-      name: cmName,
-      namespace: ns,
-      body: {
-        apiVersion: 'v1',
-        kind: 'ConfigMap',
-        metadata,
-        data: newData,
-      },
-    });
+  // Conflict-free per-key write: a merge-patch sets only `data[key]`, so
+  // concurrent plan writers never clobber each other's keys. When the
+  // ConfigMap is missing the patch 404s and we create it; if a concurrent
+  // writer wins the create race the create 409s and we loop back to the
+  // patch (the ConfigMap now exists and our key is set atomically).
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await core().patchNamespacedConfigMap(
+        { name: cmName, namespace: ns, body: { metadata: { labels }, data } },
+        MERGE_PATCH(),
+      );
+      return { written: true, sizeBytes: Buffer.byteLength(content, 'utf8'), warning };
+    } catch (e) {
+      if (!isNotFoundError(e)) throw e;
+    }
+
+    // ConfigMap does not exist — create it.
+    try {
+      await core().createNamespacedConfigMap({
+        namespace: ns,
+        body: {
+          apiVersion: 'v1',
+          kind: 'ConfigMap',
+          metadata: { name: cmName, namespace: ns, labels },
+          data,
+        },
+      });
+      return { written: true, sizeBytes: Buffer.byteLength(content, 'utf8'), warning };
+    } catch (e) {
+      if (isConflictError(e)) continue; // concurrent create won — retry the patch
+      throw e;
+    }
   }
 
-  return { written: true, sizeBytes: Buffer.byteLength(content, 'utf8'), warning };
+  // Unreachable in practice: the loop returns on success and throws on any
+  // non-retryable error. This guards against a create-409 storm exhausting
+  // the bound without ever landing the write.
+  throw new Error(`writePlanToConfigMap: exhausted retries for ${cmName}`);
 }
 
 export async function readPlanFromConfigMap(
@@ -1300,7 +1311,7 @@ export async function readPlanFromConfigMap(
 ): Promise<string | null> {
   const cm = await getPlansConfigMap(projectName, ns);
   if (!cm?.data) return null;
-  return cm.data[`${taskName}.md`] ?? null;
+  return cm.data[plansDataKey(taskName)] ?? null;
 }
 
 // ---------------------------------------------------------------------------
