@@ -100,29 +100,6 @@ describe('manager MCP capability enforcement', () => {
     expect(response.result?.content?.[0]?.text).toContain('missing required capability');
   });
 
-  it('create_run rejects incompatible override agent', async () => {
-    state.validationOk = false;
-    const response = (await __test.handleMcp({
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'tools/call',
-      params: {
-        name: 'create_run',
-        arguments: {
-          project: 'proj',
-          task: 'task-1',
-          agent: 'reviewer',
-        },
-      },
-    })) as {
-      result?: { isError?: boolean; content?: Array<{ text: string }> };
-    };
-
-    expect(state.validationCalls).toEqual([{ taskType: 'BUILD', selectedAgent: 'reviewer' }]);
-    expect(response.result?.isError).toBe(true);
-    expect(response.result?.content?.[0]?.text).toContain('missing required capability');
-  });
-
   it('force_retry rejects incompatible override agent', async () => {
     state.validationOk = false;
     const response = (await __test.handleMcp({

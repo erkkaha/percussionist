@@ -12,7 +12,7 @@ The manager runs an in-process MCP server on port 4097. OpenCode agents connect 
 |------|-------------|
 | `inspect_cr` | Get full details of a CR (Run, Project, Task, ClusterAgent) |
 | `list_crs` | List CRs of a given kind with optional labelSelector |
-| `create_run` | Create a new run for a ready task |
+| `create_run` | Schedule a backlog task now; the reconciler creates the run |
 | `create_task` | Create a new Task CR |
 | `delete_run` | Delete a Run by name |
 | `force_retry` | Restart a stuck task at an incremented retry count |
@@ -241,7 +241,7 @@ Disallowed completion calls are rejected with deterministic JSON-RPC `-32602` er
 
 Task/run assignment capability checks are enforced consistently in:
 
-- Manager MCP: `create_task`, `create_run` (agent override), `force_retry` (agent override)
+- Manager MCP: `create_task`, `force_retry` (agent override), `create_run` (schedule backlog)
 - Dispatcher MCP: `create_task` (BUILD task creation from worker runs)
 - Web board API: `POST /api/projects/:project/board/tasks`
 

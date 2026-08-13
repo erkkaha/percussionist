@@ -545,7 +545,7 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `read_session_live` | Incremental session messages with `since`/`nextSince` for polling (tries live API first, falls back to ConfigMap) |
 | `patch_board` | Merge-patch `Project.status.board` (escalations, pendingQuestions, facilitations, managerMetrics) |
 | `delete_run` | Delete an Run by name |
-| `create_run` | Create a new run for a ready task; resolves feature-branch metadata and updates `Task.status` |
+| `create_run` | Schedule a backlog (`pending`) or `rework-requested` task now; the reconciler creates the run on its next cycle |
 | `create_task` | Create a new Task CR from the manager |
 | `force_retry` | Restart a stuck task at an incremented retry count via `Task.status` (does not delete old runs) |
 | `set_task_state` | Move a task to a target column, optionally cancel running runs (runs preserved by default) |
@@ -574,13 +574,25 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `update_memory` | Update a memory's content and/or metadata (regenerates embedding if content changes) |
 | `delete_memory` | Delete a memory and its associated embedding vector atomically |
 
-**`create_run`** — Direct run creation without waiting for reconcile cycle.
+**`create_run`** — Schedule a task now (admin shortcut); the run is created by the reconciler.
 - Requires: `project`, `task` (Task CR name)
-- Optional: `agent`, `model`, `retryCount`, `reworkFeedback`, `namespace`
-- Validates the transition via `isValidTransition(currentPhase, "running")` — errors
-  if the current phase does not allow moving to `running` (use `force_retry` first)
-- Moves task to `running` and patches `Task.status.worker` with resolved `gitBranch`,
-  `parentBranch`, and `mergeIntoBranch` when feature branching is enabled
+- Optional: `namespace`
+- Moves a `pending` (backlog) or `rework-requested` task to `scheduled` via the standard
+  transition table (`pending → scheduled`, `rework-requested → scheduled`) and patches only
+  `Task.status.phase` — worker fields (`runName`/`status`/`gitBranch`/`parentBranch`/
+  `mergeIntoBranch`) are computed deterministically by the reconciler, not pre-populated
+- Does NOT create Run CRs itself — the reconciler creates the run on its next reconcile
+  cycle via the `ScheduleRun` effect (the Task informer enqueues the project on the phase
+  patch). All runs go through reconciliation; no transition-table holes are introduced
+- Idempotent: already-`scheduled`/`initializing` tasks return a no-op; a task whose phase
+  changed since the initial read is left to the reconciler (no lost-update clobber)
+- Returns `phase: 'Scheduled'` with `expectedRunName` (same formula the reconciler uses)
+  so callers can poll for the run
+- No `agent`/`model` overrides — overrides only make sense at run-build time, which is now
+  the reconciler's job (`force_retry` keeps the override capability for the restart path)
+- No capacity gate: a task flipped straight to `scheduled` gets its run created regardless
+  of `maxParallel` (intended "skip the queue" admin semantic)
+- For failed/stuck tasks use `force_retry`; for arbitrary phase moves use `set_task_state`
 
 **`force_retry`** — One-shot cleanup and restart for stuck tasks.
 - Requires: `project`, `task` (Task CR name)
