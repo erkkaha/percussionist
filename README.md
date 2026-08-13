@@ -1483,4 +1483,4 @@ spec:
 
 Packages are installed on top of the runner image
 (`ghcr.io/erkkaha/percussionist/runner:latest`). The base image always
-includes git, openssh, node, npm, bash, curl, unzip, and github-cli.
+includes git, openssh, node, npm, pnpm, bun, bash, curl, unzip, and github-cli.
