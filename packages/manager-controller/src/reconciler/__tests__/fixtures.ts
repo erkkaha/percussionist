@@ -140,6 +140,7 @@ export function makeRun(
     completedAt?: string;
     message?: string;
     sessionID?: string;
+    serviceName?: string;
     podPhase?: 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Unknown';
   },
 ): Run {
@@ -160,6 +161,7 @@ export function makeRun(
       ...(overrides?.completedAt ? { completedAt: overrides.completedAt } : {}),
       ...(overrides?.message ? { message: overrides.message } : {}),
       ...(overrides?.sessionID ? { sessionID: overrides.sessionID } : {}),
+      ...(overrides?.serviceName ? { serviceName: overrides.serviceName } : {}),
       ...(overrides?.podPhase ? { podPhase: overrides.podPhase } : {}),
     },
   } as Run;

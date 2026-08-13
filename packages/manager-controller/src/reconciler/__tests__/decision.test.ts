@@ -2076,7 +2076,7 @@ describe('decide — invalid transition rejection', () => {
 });
 
 describe('decide — waiting-for-input edge cases', () => {
-  it('waiting + answer but run not resumed → no-op', () => {
+  it('waiting + answer but run still WaitingForInput → deliver answer, keep annotation, no transition', () => {
     const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'PLAN' });
     const result = decide(
       makeInput(task, {
@@ -2084,8 +2084,112 @@ describe('decide — waiting-for-input edge cases', () => {
         manualActions: { answer: 'yes' },
       }),
     );
-    // Run is still WaitingForInput, not Running — should stay put.
+    // Run is still WaitingForInput, not Running — no phase transition.
     expect(result.toPhase).toBeUndefined();
+    // The answer is delivered to the live session and the annotation is kept
+    // so the next reconcile (after the run flips to Running) consumes it.
+    expect(result.effects).toEqual([{ type: 'DeliverAnswer', runName: 'run-1', text: 'yes' }]);
+    expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(false);
+  });
+
+  it('waiting + abandon + run WaitingForInput → done with abandoned worker', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = decide(
+      makeInput(task, {
+        observed: { worker: makeRun('run-1', { phase: 'WaitingForInput' }) },
+        manualActions: { abandon: true },
+      }),
+    );
+    expect(result.toPhase).toBe('done');
+    expect((result.statusPatch?.worker as any).status).toBe('Succeeded');
+    expect((result.statusPatch?.worker as any).completedAt).toBe(now);
+    expect((result.statusPatch?.worker as any).abandoned).toBe(true);
+    const clear = result.effects.find((e) => e.type === 'ClearTaskAnnotations') as
+      | {
+          keys: string[];
+        }
+      | undefined;
+    expect(clear?.keys).toContain('percussionist.dev/action-abandon');
+    expect(result.events[0]?.reason).toBe('TaskAbandoned');
+  });
+
+  it('waiting + requestChanges + reworkFeedback → rework-requested with capped feedback and retryCount + 1', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'waiting-for-input',
+      type: 'BUILD',
+      retryCount: 2,
+    });
+    const result = decide(
+      makeInput(task, {
+        observed: { worker: makeRun('run-1', { phase: 'WaitingForInput' }) },
+        manualActions: { requestChanges: true, reworkFeedback: 'please redo' },
+      }),
+    );
+    expect(result.toPhase).toBe('rework-requested');
+    expect((result.statusPatch?.worker as any).reviewFeedback).toBe('please redo');
+    expect((result.statusPatch?.worker as any).retryCount).toBe(3);
+    expect((result.statusPatch?.worker as any).aiReworkCount).toBe(0);
+    const clear = result.effects.find((e) => e.type === 'ClearTaskAnnotations') as
+      | {
+          keys: string[];
+        }
+      | undefined;
+    expect(clear?.keys).toEqual(
+      expect.arrayContaining([
+        'percussionist.dev/action-request-changes',
+        'percussionist.dev/action-rework-feedback',
+      ]),
+    );
+    expect(result.events[0]?.reason).toBe('HumanRequestedChanges');
+  });
+
+  it('waiting + requestChanges without feedback → default feedback text', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = decide(
+      makeInput(task, {
+        observed: { worker: makeRun('run-1', { phase: 'WaitingForInput' }) },
+        manualActions: { requestChanges: true },
+      }),
+    );
+    expect(result.toPhase).toBe('rework-requested');
+    expect((result.statusPatch?.worker as any).reviewFeedback).toBe('No feedback provided');
+  });
+
+  it('waiting + answer + run Running → running with DeliverAnswer + ClearTaskAnnotations', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'PLAN' });
+    const result = decide(
+      makeInput(task, {
+        observed: { worker: makeRun('run-1', { phase: 'Running' }) },
+        manualActions: { answer: 'yes' },
+      }),
+    );
+    expect(result.toPhase).toBe('running');
+    expect(result.effects).toEqual([
+      { type: 'DeliverAnswer', runName: 'run-1', text: 'yes' },
+      { type: 'ClearTaskAnnotations', keys: ['percussionist.dev/action-answer'] },
+    ]);
+    expect(result.events[0]?.reason).toBe('InputAnswered');
+  });
+
+  it('abandon takes precedence over answer when both are set', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'PLAN' });
+    const result = decide(
+      makeInput(task, {
+        observed: { worker: makeRun('run-1', { phase: 'WaitingForInput' }) },
+        manualActions: { abandon: true, answer: 'yes' },
+      }),
+    );
+    expect(result.toPhase).toBe('done');
+    expect((result.statusPatch?.worker as any).abandoned).toBe(true);
+    // The consumed keys include the answer annotation too.
+    const clear = result.effects.find((e) => e.type === 'ClearTaskAnnotations') as
+      | {
+          keys: string[];
+        }
+      | undefined;
+    expect(clear?.keys).toContain('percussionist.dev/action-abandon');
+    expect(clear?.keys).toContain('percussionist.dev/action-answer');
+    expect(result.effects.some((e) => e.type === 'DeliverAnswer')).toBe(false);
   });
 });
 

@@ -6,12 +6,14 @@ import {
   createRun,
   createTask,
   deleteRun,
+  fetchSessionMessages,
   getRun,
   getTask,
   listRuns,
   patchProject,
   patchTask,
   patchTaskStatus,
+  postSessionMessage,
 } from '@percussionist/kube';
 import { isKubeConflictError, isKubeNotFoundError } from '../kube-errors.js';
 import { buildMergeRun, buildPrOpenRun, buildWorkerRun } from '../worker-builder.js';
@@ -37,7 +39,8 @@ export type ReconcileEffect =
   | { type: 'ClearTaskAnnotations'; keys: string[] }
   | { type: 'ClearProjectAnnotations'; keys: string[] }
   | { type: 'CleanupWorktree'; runName: string }
-  | { type: 'SummarizeSession'; project: string; runName: string; sessionID: string };
+  | { type: 'SummarizeSession'; project: string; runName: string; sessionID: string }
+  | { type: 'DeliverAnswer'; runName: string; text: string };
 
 export interface ExecutionResult {
   applied: boolean;
@@ -346,6 +349,61 @@ export async function executeEffects(
                 e.message,
               ),
             );
+          break;
+        }
+        case 'DeliverAnswer': {
+          // Post a human answer into the run's live opencode session. Delivery
+          // is NON-FATAL: a missing/unreachable run must not stall the
+          // reconcile cycle — the dead-run exit in decideWaitingForInput fails
+          // the task on the next cycle instead. Dedupe against the session tail
+          // so the common UI path (client already posted via /reply before
+          // writing the annotation) does not deliver twice.
+          try {
+            const run = await getRun(effect.runName, namespace);
+            const serviceName = run.status?.serviceName;
+            const sessionID = run.status?.sessionID;
+            if (!serviceName || !sessionID) {
+              console.warn(
+                `[effects] DeliverAnswer: run ${effect.runName} has no serviceName/sessionID, skipping`,
+              );
+              break;
+            }
+            const raw = await fetchSessionMessages(serviceName, sessionID, namespace);
+            const messages = Array.isArray(raw) ? raw : [];
+            const answer = effect.text.trim();
+            // Walk backwards for the last user message; its combined text is
+            // compared trimmed so minor whitespace drift cannot defeat the dedupe.
+            let alreadyDelivered = false;
+            for (let i = messages.length - 1; i >= 0; i--) {
+              const m = messages[i] as {
+                info?: { role?: string };
+                parts?: Array<{ type?: string; text?: string }>;
+              };
+              if (m?.info?.role !== 'user') continue;
+              const text = (m.parts ?? [])
+                .filter((p) => p?.type === 'text' && typeof p.text === 'string')
+                .map((p) => p.text as string)
+                .join('')
+                .trim();
+              alreadyDelivered = text === answer;
+              break;
+            }
+            if (alreadyDelivered) {
+              console.log(
+                `[effects] DeliverAnswer: answer already in session tail for ${effect.runName}, skipping`,
+              );
+              break;
+            }
+            await postSessionMessage(serviceName, sessionID, effect.text, namespace);
+            console.log(
+              `[effects] DeliverAnswer: posted answer to ${effect.runName} (session ${sessionID})`,
+            );
+          } catch (e) {
+            console.warn(
+              `[effects] DeliverAnswer failed for ${effect.runName}:`,
+              (e as Error).message,
+            );
+          }
           break;
         }
         case 'CreateTask': {

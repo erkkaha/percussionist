@@ -198,6 +198,49 @@ function explainAwaitingHuman(
   };
 }
 
+function explainWaitingForInput(actions: ManualActionFlags): ExpectedNext {
+  if (actions.abandon) {
+    return {
+      primary: 'Task will be marked done (abandon)',
+      reason: 'action-abandon annotation is set on a waiting-for-input task',
+      blockingConditions: [],
+      suggestedActions: ['Remove action-abandon annotation to cancel'],
+    };
+  }
+
+  if (actions.requestChanges) {
+    return {
+      primary: 'Task will move to rework-requested',
+      reason: 'action-request-changes annotation is set on a waiting-for-input task',
+      blockingConditions: [],
+      suggestedActions: [
+        'Provide action-rework-feedback annotation for clarity',
+        'Remove action-request-changes to cancel',
+      ],
+    };
+  }
+
+  if (actions.answer) {
+    return {
+      primary: 'Answer will be delivered to the run session',
+      reason: 'action-answer annotation is set; the task resumes once the run is Running',
+      blockingConditions: ['Worker run must flip back to Running'],
+      suggestedActions: ['Wait for the run to observe the answer, or retry if the run died'],
+    };
+  }
+
+  return {
+    primary: 'Task is parked waiting for human input',
+    reason: 'worker run is in WaitingForInput; no human action annotation is set',
+    blockingConditions: ['Worker run needs a human response'],
+    suggestedActions: [
+      'Set action-answer annotation to reply to the run',
+      'Set action-abandon to skip the task',
+      'Set action-request-changes + action-rework-feedback to request rework',
+    ],
+  };
+}
+
 function explainReviewing(task: Task, flow: ResolvedFlow, observed: ObservedRuns): ExpectedNext {
   const reviewRunName = task.status?.worker?.reviewRunName;
   if (!reviewRunName) {
@@ -599,6 +642,8 @@ function buildExpectedNext(
       return explainAwaitingHuman(task, flow, actions);
     case 'reviewing':
       return explainReviewing(task, flow, observed);
+    case 'waiting-for-input':
+      return explainWaitingForInput(actions);
     case 'awaiting-merge':
       return explainAwaitingMerge(task, flow, observed);
     case 'awaiting-feature-merge':
