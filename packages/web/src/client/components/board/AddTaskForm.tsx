@@ -136,6 +136,7 @@ export function AddTaskForm({
               priority: taskPriority,
             });
           }}
+          variant="default"
           disabled={addMutation.isPending}
         >
           {addMutation.isPending ? 'Adding…' : 'Add'}
