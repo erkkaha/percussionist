@@ -150,7 +150,8 @@ kind: ClusterSettings
 metadata:
   name: default
 spec:
-  runnerImage: ghcr.io/erkkaha/percussionist/runner:latest
+  runner:
+    image: ghcr.io/erkkaha/percussionist/runner:latest
   runTTLDays: 7
 ```
 
