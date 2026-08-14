@@ -61,7 +61,7 @@ import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../b
 import { resolveFlow } from '../reconciler/flow.js';
 import { inspectTaskFlow, type ObservedRuns } from '../reconciler/flow-introspection.js';
 import { isValidTransition, TRANSITION_TABLE } from '../reconciler/transitions.js';
-import { getPauseStatus, setPaused } from '../reconciler-bridge.js';
+import { getLastReconcile, getPauseStatus, setPaused } from '../reconciler-bridge.js';
 import { webHeaders } from '../web-headers.js';
 import { buildWorkerRun, resolveAgentModel, workerRunName } from '../worker-builder.js';
 import { MANAGER_NAMESPACE, MCP_PORT, MCP_TOKEN, OPENCODE_URL } from './config.js';
@@ -453,10 +453,17 @@ const TOOLS = [
   {
     name: 'get_reconcile_status',
     description:
-      "Check whether the manager's reconciliation loop is paused or active, and when it was last paused.",
+      "Check whether the manager's reconciliation loop for a project is paused or active, how long is left before it auto-resumes, and when the project was last reconciled.",
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        project: { type: 'string', description: 'Project name' },
+        namespace: {
+          type: 'string',
+          description: 'Namespace (optional, defaults to percussionist)',
+        },
+      },
+      required: ['project'],
     },
   },
   {
@@ -1822,7 +1829,11 @@ async function callTool(
       const durationSeconds = args.durationSeconds ? Number(args.durationSeconds) : 300;
       const resourceNs = String(args.namespace ?? ns);
 
-      setPaused(true, durationSeconds * 1000);
+      if (!projectName) throw new Error('project is required');
+
+      // In-memory per-project pause (fast path) — the annotation written below
+      // is the durable source that survives a manager restart.
+      setPaused(projectName, true, durationSeconds * 1000, resourceNs);
 
       try {
         const { patchProject } = await import('@percussionist/kube');
@@ -1855,7 +1866,9 @@ async function callTool(
       const projectName = String(args.project ?? '');
       const resourceNs = String(args.namespace ?? ns);
 
-      setPaused(false);
+      if (!projectName) throw new Error('project is required');
+
+      setPaused(projectName, false, 0, resourceNs);
 
       try {
         const { patchProject } = await import('@percussionist/kube');
@@ -1883,11 +1896,19 @@ async function callTool(
     }
 
     case 'get_reconcile_status': {
-      const pauseInfo = getPauseStatus();
+      const projectName = String(args.project ?? '');
+      const resourceNs = String(args.namespace ?? ns);
+
+      if (!projectName) throw new Error('project is required');
+
+      const project = await getProject(projectName, resourceNs);
+      const pauseInfo = getPauseStatus(project);
       return {
+        project: projectName,
         paused: pauseInfo.paused,
         elapsedMs: pauseInfo.elapsedMs,
-        lastReconcile: new Date().toISOString(),
+        remainingMs: pauseInfo.remainingMs,
+        lastReconcile: getLastReconcile(project),
       };
     }
 

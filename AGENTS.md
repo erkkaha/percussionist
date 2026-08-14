@@ -560,7 +560,7 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `read_manager_logs` | Read logs from the manager controller pod |
 | `pause_reconciliation` | Pause the manager reconcile loop for a project (auto-resumes after timeout) |
 | `resume_reconciliation` | Resume a paused reconcile loop |
-| `get_reconcile_status` | Check whether the reconcile loop is paused and when it was last paused |
+| `get_reconcile_status` | Check whether a project's reconcile loop is paused, when it auto-resumes, and when it was last reconciled |
 | `list_available_packages` | List Alpine packages declared for a project's runner |
 | `install_packages` | Install ad-hoc Alpine packages via a maintenance pod |
 | `list_findings` | List agent-reported findings with optional status/severity/category filters |
@@ -642,6 +642,9 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 **`pause_reconciliation`** — Prevent the manager from overriding manual board patches.
 - Requires: `project`
 - Optional: `durationSeconds` (default: 300), `namespace`
+- Pause state is per project — pausing one project never freezes the others.
+- The pause is written to the project CR as `percussionist.dev/reconcile-paused`
+  annotations, which the reconciler reads directly, so it survives a manager restart.
 - Auto-resumes after the specified duration
 
 ## Dispatcher MCP Tools

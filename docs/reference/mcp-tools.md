@@ -122,9 +122,9 @@ Explain the current lifecycle state of a task in the context of its project flow
 | Tool | Description |
 |------|-------------|
 | `patch_board` | Merge-patch `Project.status.board` |
-| `pause_reconciliation` | Pause the manager reconcile loop |
+| `pause_reconciliation` | Pause the manager reconcile loop for a project |
 | `resume_reconciliation` | Resume a paused reconcile loop |
-| `get_reconcile_status` | Check reconcile loop state |
+| `get_reconcile_status` | Check a project's reconcile loop state (paused, elapsed/remaining, last reconciled) |
 
 ### Memory
 
