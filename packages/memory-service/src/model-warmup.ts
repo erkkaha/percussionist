@@ -134,18 +134,23 @@ async function pullModel(baseUrl: string, name: string, timeoutMs: number): Prom
 
     for (const line of lines) {
       if (!line.trim()) continue;
+      let event: PullStreamEvent;
       try {
-        const event: PullStreamEvent = JSON.parse(line);
-        console.log(`[memory] warmup pull: ${event.status ?? 'unknown'}`);
-        if (event.error) {
-          throw new Error(`pull error: ${event.error}`);
-        }
-        if (event.status === 'success' || event.status === 'done') {
-          return; // model pulled successfully
-        }
-      } catch (_e) {
-        // Non-JSON line or parse error — skip it.
+        event = JSON.parse(line);
+      } catch {
+        // Non-JSON line or parse error — skip it. Only the parse is guarded
+        // here: an Ollama `error` event below must throw out of the stream
+        // loop, not be swallowed by this catch (which used to turn a real
+        // pull failure into a generic "stream ended without success status").
         console.warn(`[memory] warmup pull: skipping non-JSON line`);
+        continue;
+      }
+      console.log(`[memory] warmup pull: ${event.status ?? 'unknown'}`);
+      if (event.error) {
+        throw new Error(`pull error: ${event.error}`);
+      }
+      if (event.status === 'success' || event.status === 'done') {
+        return; // model pulled successfully
       }
     }
   }

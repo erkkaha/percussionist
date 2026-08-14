@@ -47,7 +47,7 @@ interface StoreMemoryResponse {
 
 interface SearchRequest {
   query: string;
-  limit?: number;
+  limit?: unknown;
   task?: string;
 }
 
@@ -111,8 +111,46 @@ interface DeleteMemoryResponse {
 
 interface ListMemoriesRequest {
   task?: string;
-  limit?: number;
-  offset?: number;
+  limit?: unknown;
+  offset?: unknown;
+}
+
+/**
+ * Client input error — surfaced as a 400 by the HTTP entry points instead of a
+ * 500. The limit/offset parsers below throw it so neither a direct caller nor
+ * the entry points can ever hand SQLite a negative or non-numeric value: in
+ * SQLite a negative LIMIT means *no limit* (a client could pull the whole
+ * table) and NaN makes the bun:sqlite bind throw.
+ */
+export class ValidationError extends Error {}
+
+/**
+ * Coerce and validate a `limit` value: undefined/null/empty falls back to
+ * `fallback`, anything that is not an integer >= 1 is rejected, and values
+ * above `max` are capped. The entry points pass raw (string or number) values
+ * through, so a JSON `"abc"` or `?limit=abc` is rejected here rather than
+ * reaching the SQLite bind as NaN.
+ */
+export function parseLimit(value: unknown, fallback: number, max: number): number {
+  if (value === undefined || value === null || value === '') return fallback;
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new ValidationError(`limit must be an integer >= 1, got ${JSON.stringify(value)}`);
+  }
+  return Math.min(n, max);
+}
+
+/**
+ * Coerce and validate an `offset` value: undefined/null/empty becomes 0,
+ * anything that is not an integer >= 0 is rejected.
+ */
+export function parseOffset(value: unknown): number {
+  if (value === undefined || value === null || value === '') return 0;
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new ValidationError(`offset must be an integer >= 0, got ${JSON.stringify(value)}`);
+  }
+  return n;
 }
 
 interface ListMemoriesResponse {
@@ -147,8 +185,10 @@ export async function handleStoreMemory(body: StoreMemoryRequest): Promise<Store
 }
 
 export async function handleSearch(body: SearchRequest): Promise<SearchResult[]> {
+  // Validate limit before the embedding round-trip: a client sending garbage
+  // gets a 400 without us hitting Ollama first.
+  const limit = parseLimit(body.limit, 10, 100);
   const queryEmbedding = await getEmbedding(body.query);
-  const limit = Math.min(body.limit ?? 10, 100);
   const buf = new Uint8Array(queryEmbedding.buffer);
 
   const raw = getRawDb();
@@ -211,8 +251,8 @@ export async function handleContext(body: ContextRequest): Promise<ContextRespon
 // List memories
 
 export async function handleListMemories(body: ListMemoriesRequest): Promise<ListMemoriesResponse> {
-  const limit = Math.min(body.limit ?? 50, 200);
-  const offset = body.offset ?? 0;
+  const limit = parseLimit(body.limit, 50, 200);
+  const offset = parseOffset(body.offset);
   const raw = getRawDb();
 
   // Count total matching rows (without limit/offset)

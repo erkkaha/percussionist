@@ -27,6 +27,9 @@ const {
   handleUpdateMemory,
   handleDeleteMemory,
   inTransaction,
+  ValidationError,
+  parseLimit,
+  parseOffset,
 } = await import('../routes.js');
 const { getRawDb, vecUnavailableReason } = await import('../db.js');
 
@@ -367,11 +370,128 @@ describeVec('handleListMemories', () => {
     expect(result.memories).toEqual([]);
     expect(result.total).toBe(0);
   });
+});
 
-  it('caps limit at 200', async () => {
+// ---------------------------------------------------------------------------
+// limit/offset validation (A5) — negative/NaN/oversized values must never
+// reach SQLite, where a negative LIMIT means "no limit" (whole-table pull) and
+// NaN makes the bun:sqlite bind throw a 500. D8's old "caps limit at 200" test
+// seeded only 5 rows and passed with or without the cap; these seed >200.
+// ---------------------------------------------------------------------------
+
+describeVec('limit/offset validation — handleListMemories', () => {
+  beforeAll(() => seed(250));
+  afterAll(() => clear());
+
+  it('caps oversized limit at 200 (replaces the 5-row D8 tautology)', async () => {
     const result = await handleListMemories({ limit: 999 });
-    expect(result.memories.length).toBe(5); // only 5 exist
-    expect(result.total).toBe(5);
+    expect(result.memories.length).toBe(200);
+    expect(result.total).toBe(250);
+  });
+
+  it('rejects negative limit', async () => {
+    await expect(handleListMemories({ limit: -1 })).rejects.toThrow(
+      'limit must be an integer >= 1',
+    );
+  });
+
+  it('rejects NaN limit', async () => {
+    await expect(handleListMemories({ limit: NaN })).rejects.toThrow(
+      'limit must be an integer >= 1',
+    );
+  });
+
+  it('rejects non-numeric limit string', async () => {
+    await expect(handleListMemories({ limit: 'abc' })).rejects.toThrow(
+      'limit must be an integer >= 1',
+    );
+  });
+
+  it('rejects zero limit', async () => {
+    await expect(handleListMemories({ limit: 0 })).rejects.toThrow('limit must be an integer >= 1');
+  });
+
+  it('rejects negative offset', async () => {
+    await expect(handleListMemories({ offset: -1 })).rejects.toThrow(
+      'offset must be an integer >= 0',
+    );
+  });
+
+  it('rejects fractional offset', async () => {
+    await expect(handleListMemories({ offset: 1.5 })).rejects.toThrow(
+      'offset must be an integer >= 0',
+    );
+  });
+
+  it('coerces numeric strings and caps oversized (entry-point style params)', async () => {
+    const result = await handleListMemories({ limit: '999', offset: '0' });
+    expect(result.memories.length).toBe(200);
+    expect(result.total).toBe(250);
+  });
+});
+
+describeVec('limit validation — handleSearch', () => {
+  beforeAll(() => seed(150));
+  afterAll(() => clear());
+
+  it('caps oversized limit at 100', async () => {
+    const results = await handleSearch({ query: 'test', limit: 999 });
+    expect(results.length).toBe(100);
+  });
+
+  it('rejects negative limit', async () => {
+    await expect(handleSearch({ query: 'test', limit: -5 })).rejects.toThrow(
+      'limit must be an integer >= 1',
+    );
+  });
+
+  it('rejects NaN limit', async () => {
+    await expect(handleSearch({ query: 'test', limit: NaN })).rejects.toThrow(
+      'limit must be an integer >= 1',
+    );
+  });
+
+  it('rejects non-numeric limit string', async () => {
+    await expect(handleSearch({ query: 'test', limit: 'abc' })).rejects.toThrow(
+      'limit must be an integer >= 1',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseLimit / parseOffset coercion units — no DB required.
+// ---------------------------------------------------------------------------
+
+describe('parseLimit / parseOffset coercion', () => {
+  it('falls back when the value is undefined, null or empty', () => {
+    expect(parseLimit(undefined, 10, 100)).toBe(10);
+    expect(parseLimit(null, 10, 100)).toBe(10);
+    expect(parseLimit('', 10, 100)).toBe(10);
+    expect(parseOffset(undefined)).toBe(0);
+    expect(parseOffset(null)).toBe(0);
+    expect(parseOffset('')).toBe(0);
+  });
+
+  it('coerces numeric strings and accepts integers in range', () => {
+    expect(parseLimit('5', 10, 100)).toBe(5);
+    expect(parseLimit(5, 10, 100)).toBe(5);
+    expect(parseOffset('7')).toBe(7);
+    expect(parseOffset(0)).toBe(0);
+  });
+
+  it('caps values above max', () => {
+    expect(parseLimit(999, 10, 100)).toBe(100);
+    expect(parseLimit('999', 50, 200)).toBe(200);
+  });
+
+  it('rejects negative, zero, NaN and fractional values', () => {
+    expect(() => parseLimit(-1, 10, 100)).toThrow(ValidationError);
+    expect(() => parseLimit(0, 10, 100)).toThrow(ValidationError);
+    expect(() => parseLimit(NaN, 10, 100)).toThrow(ValidationError);
+    expect(() => parseLimit('abc', 10, 100)).toThrow(ValidationError);
+    expect(() => parseLimit(1.5, 10, 100)).toThrow(ValidationError);
+    expect(() => parseOffset(-1)).toThrow(ValidationError);
+    expect(() => parseOffset(1.5)).toThrow(ValidationError);
   });
 });
 
