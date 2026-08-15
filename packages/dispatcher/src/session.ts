@@ -70,6 +70,11 @@ export type RawMessage = MessagesEntry;
 
 export const SESSION_RESPONSE_MAX_BYTES = 20_000_000;
 
+// Snapshot compaction caps. Output above these lengths is sliced and flagged.
+export const SNAPSHOT_TOOL_OUTPUT_CAP = 4000;
+export const SNAPSHOT_TEXT_CONTENT_CAP = 20_000;
+export const SNAPSHOT_TRUNCATION_MARKER = '\n... (truncated for snapshot)';
+
 async function readJsonWithLimit(res: Response, maxBytes: number): Promise<unknown> {
   if (!res.body) return null;
 
@@ -102,24 +107,27 @@ export function compactMessagesForSnapshot(messages: RawMessage[]): RawMessage[]
     parts: (msg.parts ?? []).map((part) => {
       if (part.type === 'tool') {
         const p = part as ToolPart;
+        if (!p.state) return part;
+        const output = p.state.output;
+        const truncated = typeof output === 'string' && output.length > SNAPSHOT_TOOL_OUTPUT_CAP;
         return {
           ...p,
-          state: p.state
-            ? {
-                ...p.state,
-                output:
-                  typeof p.state.output === 'string' && p.state.output.length > 4000
-                    ? `${p.state.output.slice(0, 4000)}\n... (truncated for snapshot)`
-                    : p.state.output,
-                metadata: { ...p.state.metadata, truncated: true },
-              }
-            : p.state,
+          state: {
+            ...p.state,
+            output: truncated
+              ? `${output.slice(0, SNAPSHOT_TOOL_OUTPUT_CAP)}${SNAPSHOT_TRUNCATION_MARKER}`
+              : output,
+            metadata: truncated ? { ...p.state.metadata, truncated: true } : p.state.metadata,
+          },
         };
       }
       if (part.type === 'text') {
         const p = part as TextPart;
-        return p.text.length > 20_000
-          ? { ...p, text: `${p.text.slice(0, 20_000)}\n... (truncated for snapshot)` }
+        return p.text.length > SNAPSHOT_TEXT_CONTENT_CAP
+          ? {
+              ...p,
+              text: `${p.text.slice(0, SNAPSHOT_TEXT_CONTENT_CAP)}${SNAPSHOT_TRUNCATION_MARKER}`,
+            }
           : p;
       }
       return part;
