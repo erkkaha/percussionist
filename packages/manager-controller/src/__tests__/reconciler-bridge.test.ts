@@ -14,9 +14,19 @@
 //     reconcile, never fabricated.
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import type { Project } from '@percussionist/api';
+import * as kube from '@percussionist/kube';
 import { makeProject } from '../reconciler/__tests__/fixtures.js';
 import * as reconciler from '../reconciler/index.js';
-import { getLastReconcile, getPauseStatus, reconcile, setPaused } from '../reconciler-bridge.js';
+import {
+  dequeue,
+  enqueue,
+  getLastReconcile,
+  getPauseStatus,
+  reconcile,
+  runWorker,
+  setPaused,
+} from '../reconciler-bridge.js';
 
 const NS = 'percussionist';
 
@@ -225,5 +235,137 @@ describe('annotation-based pause survives a manager restart', () => {
       'percussionist.dev/reconcile-paused-duration': 'abc',
     });
     expect(getPauseStatus(badDuration).paused).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runWorker — worker loop behavior (404-vs-other-errors, pause gating).
+//
+// runWorker loops forever in production; the options object (injectable delays
+// + maxIterations) lets the tests drive it with tiny timings and terminate it
+// deterministically.
+// ---------------------------------------------------------------------------
+
+describe('runWorker — 404-vs-other backoff', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let getProjectSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let reconcileProjectSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let consoleLogSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let consoleErrorSpy: any;
+
+  const fast = { queueEmptyDelayMs: 1, errorBackoffMs: 1, interProjectDelayMs: 0 };
+
+  const logContains = (spy: { mock: { calls: unknown[][] } }, needle: string) =>
+    spy.mock.calls.some((call: unknown[]) => call.some((a) => String(a).includes(needle)));
+
+  beforeEach(() => {
+    getProjectSpy = spyOn(kube, 'getProject');
+    reconcileProjectSpy = spyOn(reconciler, 'reconcileProject').mockResolvedValue(undefined);
+    consoleLogSpy = spyOn(console, 'log');
+    consoleErrorSpy = spyOn(console, 'error');
+    // Clear any queue/pause residue between runs.
+    dequeue('percussionist/proj-a');
+    dequeue('percussionist/proj-b');
+    setPaused('proj-a', false, 0, NS);
+    setPaused('proj-b', false, 0, NS);
+  });
+
+  afterEach(() => {
+    getProjectSpy.mockRestore();
+    reconcileProjectSpy.mockRestore();
+    consoleLogSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+    dequeue('percussionist/proj-a');
+    dequeue('percussionist/proj-b');
+    setPaused('proj-a', false, 0, NS);
+    setPaused('proj-b', false, 0, NS);
+  });
+
+  it('drops a 404 project from the queue instead of retrying it', async () => {
+    enqueue(makeProject('proj-a'));
+    getProjectSpy.mockRejectedValue(Object.assign(new Error('gone'), { statusCode: 404 }));
+
+    await runWorker({ ...fast, maxIterations: 4 });
+
+    // Exactly one lookup — the key is forgotten, not re-enqueued.
+    expect(getProjectSpy).toHaveBeenCalledTimes(1);
+    expect(getProjectSpy).toHaveBeenCalledWith('proj-a', 'percussionist');
+    expect(reconcileProjectSpy).not.toHaveBeenCalled();
+    // Reported as a drop, not as an error.
+    expect(logContains(consoleLogSpy, 'dropping from queue')).toBe(true);
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it('drops a NotFound-by-reason error (no statusCode) the same way', async () => {
+    enqueue(makeProject('proj-a'));
+    getProjectSpy.mockRejectedValue({ body: { reason: 'NotFound' } });
+
+    await runWorker({ ...fast, maxIterations: 4 });
+
+    expect(getProjectSpy).toHaveBeenCalledTimes(1);
+    expect(logContains(consoleLogSpy, 'dropping from queue')).toBe(true);
+  });
+
+  it('skips (without error) when getProject returns undefined', async () => {
+    enqueue(makeProject('proj-a'));
+    getProjectSpy.mockResolvedValue(undefined as never);
+
+    await runWorker({ ...fast, maxIterations: 3 });
+
+    expect(getProjectSpy).toHaveBeenCalledTimes(1);
+    expect(reconcileProjectSpy).not.toHaveBeenCalled();
+    expect(logContains(consoleLogSpy, 'not found, skipping')).toBe(true);
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it('re-enqueues a project on a genuine error and backs off before retrying', async () => {
+    enqueue(makeProject('proj-a'));
+    getProjectSpy.mockRejectedValue(Object.assign(new Error('boom'), { statusCode: 500 }));
+
+    await runWorker({ ...fast, maxIterations: 4 });
+
+    // Re-enqueued after the error: the project is picked up again on a later iteration.
+    expect(getProjectSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(reconcileProjectSpy).not.toHaveBeenCalled();
+    expect(logContains(consoleErrorSpy, 'boom')).toBe(true);
+    expect(logContains(consoleLogSpy, 'dropping from queue')).toBe(false);
+  });
+
+  it('reconciles a healthy queued project and drops it from the queue', async () => {
+    enqueue(makeProject('proj-a'));
+    getProjectSpy.mockResolvedValue(makeProject('proj-a'));
+
+    await runWorker({ ...fast, maxIterations: 4 });
+
+    expect(getProjectSpy).toHaveBeenCalledTimes(1);
+    expect(reconcileProjectSpy).toHaveBeenCalledTimes(1);
+    expect(reconcileProjectSpy).toHaveBeenCalledWith(makeProject('proj-a'), 'percussionist');
+  });
+
+  it('skips a paused project inside the loop without freezing another project', async () => {
+    setPaused('proj-a', true, 60_000, NS);
+    enqueue(makeProject('proj-a'));
+    enqueue(makeProject('proj-b'));
+    getProjectSpy.mockImplementation(async (name: string) => makeProject(name) as Project);
+
+    await runWorker({ ...fast, maxIterations: 4 });
+
+    // proj-a was fetched but its reconcile was skipped by the pause gate;
+    // proj-b reconciled normally.
+    expect(getProjectSpy).toHaveBeenCalledTimes(2);
+    expect(reconcileProjectSpy).toHaveBeenCalledTimes(1);
+    expect(reconcileProjectSpy).toHaveBeenCalledWith(makeProject('proj-b'), 'percussionist');
+  });
+
+  it('polls quietly while the queue is empty, without touching the cluster', async () => {
+    getProjectSpy.mockResolvedValue(makeProject('proj-a'));
+
+    await runWorker({ queueEmptyDelayMs: 1, maxIterations: 3 });
+
+    expect(getProjectSpy).not.toHaveBeenCalled();
+    expect(reconcileProjectSpy).not.toHaveBeenCalled();
   });
 });

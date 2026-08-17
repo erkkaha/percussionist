@@ -156,13 +156,35 @@ export async function reconcile(project: Project): Promise<void> {
   lastReconcileAt.set(key, Date.now());
 }
 
+/**
+ * Options for the worker loop — injectable so tests can drive it with tiny
+ * delays and a bounded iteration count; production callers use the defaults.
+ */
+export interface RunWorkerOptions {
+  /** Sleep between polls while the queue is empty (default 1000ms). */
+  queueEmptyDelayMs?: number;
+  /** Backoff after a genuine (non-404) reconcile error (default 5000ms). */
+  errorBackoffMs?: number;
+  /** Delay between consecutive queue items (default 100ms). */
+  interProjectDelayMs?: number;
+  /** Test escape hatch: stop the loop after this many iterations. */
+  maxIterations?: number;
+}
+
 // Worker loop: processes the queue. Pausing is per project and enforced inside
 // reconcile(), so a paused project is skipped without freezing the others.
-export async function runWorker(): Promise<void> {
+export async function runWorker(opts: RunWorkerOptions = {}): Promise<void> {
+  const queueEmptyDelayMs = opts.queueEmptyDelayMs ?? 1000;
+  const errorBackoffMs = opts.errorBackoffMs ?? ERROR_BACKOFF_MS;
+  const interProjectDelayMs = opts.interProjectDelayMs ?? 100;
+  let iterations = 0;
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, no-constant-condition
   while (true) {
+    if (opts.maxIterations !== undefined && iterations >= opts.maxIterations) return;
+    iterations++;
+
     if (queue.size === 0) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, queueEmptyDelayMs));
       continue;
     }
 
@@ -200,11 +222,11 @@ export async function runWorker(): Promise<void> {
       // Genuine failure — retry, but back off so a persistently failing project
       // cannot saturate the loop either.
       queue.add(key);
-      await new Promise((resolve) => setTimeout(resolve, ERROR_BACKOFF_MS));
+      await new Promise((resolve) => setTimeout(resolve, errorBackoffMs));
     }
 
     // Small delay between projects.
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, interProjectDelayMs));
   }
 }
 
