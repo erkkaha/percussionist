@@ -1,135 +1,94 @@
 // findings-tools.test.ts — schema verification for list_findings, update_finding,
 // create_task_from_finding MCP tools.
 //
-// Follows the source-string-parsing pattern from approve-tool.test.ts.
+// Asserts against the actual inputSchema JSON served by tools/list — a real tool
+// definition can fail these (unlike the old source-string substring checks).
 
 import { describe, expect, it } from 'bun:test';
-import fs from 'node:fs';
-import pathMod from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const __dirname = pathMod.dirname(fileURLToPath(import.meta.url));
-const toolsSource = fs.readFileSync(pathMod.join(__dirname, '../tools.ts'), 'utf-8');
+const { __test } = await import('../tools.js');
 
-function extractToolBlock(name: string): string | null {
-  const nameIdx = toolsSource.indexOf(`name: '${name}'`);
-  if (nameIdx < 0) return null;
+type ToolEntry = {
+  name: string;
+  description?: string;
+  inputSchema?: { properties?: Record<string, unknown>; required?: string[] };
+};
 
-  let openBrace = -1;
-  for (let i = nameIdx - 1; i >= Math.max(0, nameIdx - 200); i--) {
-    if (toolsSource[i] === '{') {
-      openBrace = i;
-      break;
-    }
-  }
-  if (openBrace < 0) return null;
+async function listTools(): Promise<ToolEntry[]> {
+  const res = (await __test.handleMcp({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/list',
+  })) as { result?: { tools?: ToolEntry[] } };
+  return res.result?.tools ?? [];
+}
 
-  let depth = 0;
-  for (let i = openBrace; i < toolsSource.length; i++) {
-    if (toolsSource[i] === '{') depth++;
-    else if (toolsSource[i] === '}') {
-      depth--;
-      if (depth === 0) return toolsSource.slice(openBrace, i + 1);
-    }
-  }
-  return null;
+async function schemaOf(name: string): Promise<{
+  required: string[];
+  properties: Record<string, unknown>;
+}> {
+  const tools = await listTools();
+  const tool = tools.find((t) => t.name === name);
+  expect(tool, `tool "${name}" is registered in the TOOLS array`).toBeDefined();
+  return {
+    required: tool?.inputSchema?.required ?? [],
+    properties: tool?.inputSchema?.properties ?? {},
+  };
 }
 
 describe('list_findings tool schema', () => {
-  it('should define list_findings in the TOOLS array', () => {
-    const block = extractToolBlock('list_findings');
-    expect(block).not.toBeNull();
+  it('is registered in the TOOLS array', async () => {
+    expect((await listTools()).some((t) => t.name === 'list_findings')).toBe(true);
   });
 
-  it('should require project arg', () => {
-    const block = extractToolBlock('list_findings');
-    expect(block).toContain('project');
+  it('requires the project arg', async () => {
+    const { required } = await schemaOf('list_findings');
+    expect(required).toContain('project');
   });
 
-  it('should list status, severity, category, limit as optional filters', () => {
-    const block = extractToolBlock('list_findings');
-    expect(block).toContain('status');
-    expect(block).toContain('severity');
-    expect(block).toContain('category');
-    expect(block).toContain('limit');
-  });
-
-  it('should have a callTool switch case for list_findings', () => {
-    expect(toolsSource).toContain("case 'list_findings':");
+  it('declares status, severity, category, limit as optional filters', async () => {
+    const { required, properties } = await schemaOf('list_findings');
+    for (const key of ['status', 'severity', 'category', 'limit']) {
+      expect(properties, `property "${key}"`).toHaveProperty(key);
+      expect(required).not.toContain(key);
+    }
   });
 });
 
 describe('update_finding tool schema', () => {
-  it('should define update_finding in the TOOLS array', () => {
-    const block = extractToolBlock('update_finding');
-    expect(block).not.toBeNull();
+  it('is registered in the TOOLS array', async () => {
+    expect((await listTools()).some((t) => t.name === 'update_finding')).toBe(true);
   });
 
-  it('should require project and id args', () => {
-    const block = extractToolBlock('update_finding');
-    expect(block).toContain('project');
-    expect(block).toContain('id');
+  it('requires project and id args', async () => {
+    const { required } = await schemaOf('update_finding');
+    expect(required).toEqual(expect.arrayContaining(['project', 'id']));
   });
 
-  it('should list status, severity, category as optional update fields', () => {
-    const block = extractToolBlock('update_finding');
-    expect(block).toContain('status');
-    expect(block).toContain('severity');
-    expect(block).toContain('category');
-  });
-
-  it('should have a callTool switch case for update_finding', () => {
-    expect(toolsSource).toContain("case 'update_finding':");
+  it('declares status, severity, category as optional update fields', async () => {
+    const { required, properties } = await schemaOf('update_finding');
+    for (const key of ['status', 'severity', 'category']) {
+      expect(properties, `property "${key}"`).toHaveProperty(key);
+      expect(required).not.toContain(key);
+    }
   });
 });
 
 describe('create_task_from_finding tool schema', () => {
-  it('should define create_task_from_finding in the TOOLS array', () => {
-    const block = extractToolBlock('create_task_from_finding');
-    expect(block).not.toBeNull();
+  it('is registered in the TOOLS array', async () => {
+    expect((await listTools()).some((t) => t.name === 'create_task_from_finding')).toBe(true);
   });
 
-  it('should require project and id args', () => {
-    const block = extractToolBlock('create_task_from_finding');
-    expect(block).toContain('project');
-    expect(block).toContain('id');
+  it('requires project and id args', async () => {
+    const { required } = await schemaOf('create_task_from_finding');
+    expect(required).toEqual(expect.arrayContaining(['project', 'id']));
   });
 
-  it('should list agent and priority as optional args', () => {
-    const block = extractToolBlock('create_task_from_finding');
-    expect(block).toContain('agent');
-    expect(block).toContain('priority');
-  });
-
-  it('should have a callTool switch case for create_task_from_finding', () => {
-    expect(toolsSource).toContain("case 'create_task_from_finding':");
-  });
-});
-
-describe('imports', () => {
-  it('should import patchFindingsConfigMap from @percussionist/kube', () => {
-    expect(toolsSource).toContain('patchFindingsConfigMap');
-  });
-
-  it('should import getFindingsConfigMap from @percussionist/kube', () => {
-    expect(toolsSource).toContain('getFindingsConfigMap');
-  });
-
-  it('should import parseTriagedFindings from @percussionist/kube', () => {
-    expect(toolsSource).toContain('parseTriagedFindings');
-  });
-
-  it('should import FindingStatus, FindingSeverity, FindingCategory from @percussionist/api', () => {
-    expect(toolsSource).toContain('FindingStatus');
-    expect(toolsSource).toContain('FindingSeverity');
-    expect(toolsSource).toContain('FindingCategory');
-  });
-
-  it('should import createHash from node:crypto', () => {
-    expect(toolsSource).toContain('createHash');
-  });
-
-  it('should import type Finding from @percussionist/api', () => {
-    expect(toolsSource).toContain('type Finding');
+  it('declares agent and priority as optional args', async () => {
+    const { required, properties } = await schemaOf('create_task_from_finding');
+    for (const key of ['agent', 'priority']) {
+      expect(properties, `property "${key}"`).toHaveProperty(key);
+      expect(required).not.toContain(key);
+    }
   });
 });

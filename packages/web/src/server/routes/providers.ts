@@ -68,8 +68,11 @@ const CLAUDE_ENGINE_PROVIDER = {
  * It has to land in `connected` as well as `all` — ModelSelector filters `all`
  * down to connected providers, so an entry added to `all` alone is silently
  * dropped again.
+ *
+ * Exported so tests can assert against the real composition step instead of a
+ * local reimplementation.
  */
-function withClaudeEngine(data: ProvidersPayload): ProvidersPayload {
+export function withClaudeEngine(data: ProvidersPayload): ProvidersPayload {
   return {
     ...data,
     all: [...(data.all ?? []), CLAUDE_ENGINE_PROVIDER],

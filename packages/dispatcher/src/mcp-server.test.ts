@@ -75,27 +75,12 @@ describe('dispatcher completion-tool gating', () => {
     expect(tools).not.toContain('report_finding');
   });
 
-  it('rejects an unknown tool but still dispatches the legacy report_finding name', async () => {
+  it('rejects an unknown tool name', async () => {
     const unknown = await callMcp(
       { jsonrpc: '2.0', id: 11, method: 'tools/call', params: { name: 'report_findings' } },
       okAuth(),
     );
     expect((unknown.error as { message: string }).message).toContain('unknown tool');
-
-    // A run that cached the tool list before the rename keeps working: both names
-    // reach the same handler, so they fail identically on the request itself
-    // rather than on the tool name.
-    const messages = [];
-    for (const name of ['report_unrelated_issue', 'report_finding']) {
-      const res = await callMcp(
-        { jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name, arguments: {} } },
-        okAuth(),
-      );
-      const message = (res.error as { message?: string } | undefined)?.message ?? '';
-      expect(message).not.toContain('unknown tool');
-      messages.push(message);
-    }
-    expect(messages[0]).toBe(messages[1]);
   });
 
   it('tools/list hides completion tools when authorization is denied', async () => {

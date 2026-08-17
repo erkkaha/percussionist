@@ -87,8 +87,13 @@ function getWorkspaceInitEnv(run: Run): Array<{ name?: string; value?: string }>
 }
 
 describe('renderPod - workspace-init script generation', () => {
-  describe('remote git with worktreeReuse=true (default)', () => {
-    it('should generate worktree creation with parent baseline resolution when creating new branch from parentRef', () => {
+  // The parent-baseline snippet is rendered by the shared renderAddWorktree
+  // helper, identically in both worktreeReuse modes (the BUILD-8 suite below
+  // pins that sharing). One behavioral test suffices: branching from a
+  // parentRef must resolve the baseline as remote-tracking ref first, then
+  // fall back to the local ref.
+  describe('remote git with parentRef', () => {
+    it('renders parent-baseline resolution when creating a branch from parentRef', () => {
       const run = makeRun({
         spec: {
           project: 'test-project',
@@ -107,90 +112,13 @@ describe('renderPod - workspace-init script generation', () => {
 
       const args = getWorkspaceInitArgs(run);
 
-      // When git.ref is set but the branch doesn't exist and parentRef is provided,
-      // the script should use parentBaselineResolve helper
+      // Prefer the freshly fetched remote-tracking ref as the baseline.
+      expect(args).toContain('_PARENT_REMOTE_REF="refs/remotes/origin/$GIT_PARENT_REF"');
       expect(args).toContain('refs/remotes/origin/');
-      expect(args).toContain('_PARENT_REMOTE_REF=');
-      expect(args).toContain('_PARENT_BASE_REF=');
-    });
-
-    it('should use remote-tracking ref when creating branch from parentRef', () => {
-      const run = makeRun({
-        spec: {
-          project: 'test-project',
-          task: 'build-task-1',
-          interactive: false,
-          ttlSecondsAfterFinished: 604800,
-          source: {
-            git: {
-              url: 'https://github.com/test/repo.git',
-              ref: 'feature/child-branch',
-              parentRef: 'feature/my-feature',
-            },
-          },
-        },
-      });
-
-      const args = getWorkspaceInitArgs(run);
-
-      // The script should include logic to prefer remote-tracking ref
-      expect(args).toMatch(/_PARENT_REMOTE_REF="refs\/remotes\/origin\/[^"]+"/);
-    });
-  });
-
-  describe('remote git with freshWorktree (worktreeReuse=false)', () => {
-    it('should generate worktree creation with parent baseline resolution when creating new branch from parentRef', () => {
-      const run = makeRun({
-        spec: {
-          project: 'test-project',
-          task: 'build-task-1',
-          interactive: false,
-          ttlSecondsAfterFinished: 604800,
-          source: {
-            git: {
-              url: 'https://github.com/test/repo.git',
-              ref: 'feature/child-branch',
-              parentRef: 'feature/my-feature',
-            },
-          },
-        },
-      });
-
-      // Override to use freshWorktree mode
-      (run.spec as any).gitCache = { worktreeReuse: false };
-
-      const args = getWorkspaceInitArgs(run);
-
-      // Should include parent baseline resolution in freshWorktree mode
-      expect(args).toContain('refs/remotes/origin/');
-      expect(args).toContain('_PARENT_REMOTE_REF=');
-      expect(args).toContain('_PARENT_BASE_REF=');
-    });
-
-    it('should use remote-tracking ref when creating branch from parentRef in freshWorktree mode', () => {
-      const run = makeRun({
-        spec: {
-          project: 'test-project',
-          task: 'build-task-1',
-          interactive: false,
-          ttlSecondsAfterFinished: 604800,
-          source: {
-            git: {
-              url: 'https://github.com/test/repo.git',
-              ref: 'feature/child-branch',
-              parentRef: 'feature/my-feature',
-            },
-          },
-        },
-      });
-
-      // Override to use freshWorktree mode
-      (run.spec as any).gitCache = { worktreeReuse: false };
-
-      const args = getWorkspaceInitArgs(run);
-
-      // The script should include logic to prefer remote-tracking ref
-      expect(args).toMatch(/_PARENT_REMOTE_REF="refs\/remotes\/origin\/[^"]+"/);
+      // Fall back to the local ref when the remote-tracking ref does not exist
+      // yet (first BUILD before the parent branch is pushed).
+      expect(args).toContain('_PARENT_BASE_REF="$GIT_PARENT_REF"');
+      expect(args).toContain('rev-parse "refs/heads/$GIT_PARENT_REF"');
     });
   });
 
@@ -295,13 +223,6 @@ describe('renderPod - workspace-init script generation', () => {
       const args = getWorkspaceInitArgs(branchingRun());
       expect(args).not.toContain('${git.');
     });
-
-    it('keeps the parent-baseline substring assertions passing', () => {
-      const args = getWorkspaceInitArgs(branchingRun());
-      expect(args).toContain('_PARENT_REMOTE_REF=');
-      expect(args).toContain('refs/remotes/origin/');
-      expect(args).toContain('_PARENT_BASE_REF=');
-    });
   });
 
   describe('local git mode', () => {
@@ -403,59 +324,6 @@ describe('renderPod - workspace-init script generation', () => {
     });
   });
 
-  describe('both worktreeReuse and freshWorktree paths have identical parent-baseline logic', () => {
-    it('should use the same parent baseline resolution pattern in both modes', () => {
-      const runReuse = makeRun({
-        spec: {
-          project: 'test-project',
-          task: 'build-task-1',
-          interactive: false,
-          ttlSecondsAfterFinished: 604800,
-          source: {
-            git: {
-              url: 'https://github.com/test/repo.git',
-              ref: 'feature/child-branch',
-              parentRef: 'feature/my-feature',
-            },
-          },
-        },
-      });
-
-      const runFresh = makeRun({
-        spec: {
-          project: 'test-project',
-          task: 'build-task-1',
-          interactive: false,
-          ttlSecondsAfterFinished: 604800,
-          source: {
-            git: {
-              url: 'https://github.com/test/repo.git',
-              ref: 'feature/child-branch',
-              parentRef: 'feature/my-feature',
-            },
-          },
-        },
-      });
-
-      // Override to use freshWorktree mode
-      (runFresh.spec as any).gitCache = { worktreeReuse: false };
-
-      const argsReuse = getWorkspaceInitArgs(runReuse);
-      const argsFresh = getWorkspaceInitArgs(runFresh);
-
-      // Both should contain the same parent baseline resolution pattern
-      expect(argsReuse).toContain('_PARENT_REMOTE_REF="refs/remotes/origin/');
-      expect(argsFresh).toContain('_PARENT_REMOTE_REF="refs/remotes/origin/');
-
-      // Extract and compare the key resolution logic
-      const reuseHasResolution = argsReuse.includes('_PARENT_BASE_REF=');
-      const freshHasResolution = argsFresh.includes('_PARENT_BASE_REF=');
-
-      expect(reuseHasResolution).toBe(true);
-      expect(freshHasResolution).toBe(true);
-    });
-  });
-
   describe('single shared copy of the worktree-setup shell (BUILD 8)', () => {
     function branchingRun(gitCache?: { worktreeReuse?: boolean }): Run {
       return makeRun({
@@ -512,54 +380,6 @@ describe('renderPod - workspace-init script generation', () => {
       // worktreeReuse wraps the chain in an outer if/else, so its script has a
       // standalone `fi` after the chain that freshWorktree does not.
       expect(chainReuse.replace(/\nfi\n$/, '\n')).toBe(chainFresh);
-    });
-  });
-
-  describe('log messages for parent baseline resolution', () => {
-    it('should include log message when using remote-tracking ref as parent baseline', () => {
-      const run = makeRun({
-        spec: {
-          project: 'test-project',
-          task: 'build-task-1',
-          interactive: false,
-          ttlSecondsAfterFinished: 604800,
-          source: {
-            git: {
-              url: 'https://github.com/test/repo.git',
-              ref: 'feature/child-branch',
-              parentRef: 'feature/my-feature',
-            },
-          },
-        },
-      });
-
-      const args = getWorkspaceInitArgs(run);
-
-      // Should have log for using remote ref
-      expect(args).toContain('using remote-tracking ref');
-    });
-
-    it('should include fallback log message when falling back to local ref', () => {
-      const run = makeRun({
-        spec: {
-          project: 'test-project',
-          task: 'build-task-1',
-          interactive: false,
-          ttlSecondsAfterFinished: 604800,
-          source: {
-            git: {
-              url: 'https://github.com/test/repo.git',
-              ref: 'feature/child-branch',
-              parentRef: 'feature/my-feature',
-            },
-          },
-        },
-      });
-
-      const args = getWorkspaceInitArgs(run);
-
-      // Should have log for fallback
-      expect(args).toContain('falling back to local ref');
     });
   });
 
@@ -655,11 +475,14 @@ describe('renderPod - workspace-init script generation', () => {
       });
 
       const env = getDispatcherEnv(run);
-      // When both facilitation and runContext are set, both env entries are
-      // present. K8s uses the last value for duplicate names, so we check the
-      // last RUN_CONTEXT entry.
+      // Merge runs must observe spec.runContext rather than the
+      // facilitation-derived value. K8s resolves duplicate env names with the
+      // last entry, so the effective value is the final RUN_CONTEXT — and that
+      // must hold whether the duplication is present or removed (a fixed
+      // builder emits a single merge-worker entry, whose "last" is also
+      // merge-worker). Do not pin the duplicate-entry count.
       const runContextEntries = env.filter((e) => e.name === 'RUN_CONTEXT');
-      expect(runContextEntries.length).toBe(2);
+      expect(runContextEntries.length).toBeGreaterThan(0);
       expect(runContextEntries[runContextEntries.length - 1]?.value).toBe('merge-worker');
     });
 

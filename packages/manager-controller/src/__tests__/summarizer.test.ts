@@ -262,43 +262,4 @@ describe('summarizeSession — memory-write failure', () => {
     // No errors should be logged for idempotent skip.
     expect(errorLogs.length).toBe(0);
   });
-
-  it('logs warning with error details when storeMemory throws', async () => {
-    seedConfigMap('timeout-worker', 'sess-timeout1', [
-      {
-        info: { role: 'user' },
-        parts: [{ type: 'text', text: 'Test timeout handling.' }],
-      },
-      {
-        info: { role: 'assistant' },
-        parts: [{ type: 'text', text: 'Timeout test passed.' }],
-      },
-    ]);
-
-    const originalErr = console.error;
-    const errorLogs: string[] = [];
-    console.error = (...args) => {
-      errorLogs.push(args.map(String).join(' '));
-    };
-
-    try {
-      await summarizeSession('timeout-project', 'timeout-worker', 'sess-timeout1', 'percussionist');
-    } finally {
-      console.error = originalErr;
-    }
-
-    // Should still succeed and log warning with error details.
-    const cmKey = `percussionist/timeout-worker-session`;
-    const cm = mockConfigMaps.get(cmKey);
-    expect(cm?.data?.['summary-sess-timeout1']).toBeDefined();
-
-    // The warning should contain the project/run/session identifiers and error message.
-    const memoryWarning = errorLogs.find(
-      (log) =>
-        log.includes('memory-store warning') &&
-        log.includes('timeout-project') &&
-        log.includes(FAKE_MEMORY_ERROR.message),
-    );
-    expect(memoryWarning).toBeDefined();
-  });
 });

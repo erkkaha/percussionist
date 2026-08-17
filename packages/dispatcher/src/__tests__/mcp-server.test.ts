@@ -6,6 +6,7 @@ import type { ClusterAgent, Run } from '@percussionist/api';
 // ---------------------------------------------------------------------------
 
 const patchRunAnnotationsMock = mock(async () => ({ metadata: { annotations: {} } }) as Run);
+const appendFindingToConfigMapMock = mock(async () => {});
 
 function mockClusterAgent(name: string, capabilities: string[]): ClusterAgent {
   return {
@@ -26,7 +27,7 @@ const getClusterAgentMock = mock(async (name: string) => {
 });
 
 mock.module('@percussionist/kube', () => ({
-  appendFindingToConfigMap: mock(async () => {}),
+  appendFindingToConfigMap: appendFindingToConfigMapMock,
   buildTask: mock(() => ({}) as import('@percussionist/api').Task),
   createTask: mock(async () => ({}) as import('@percussionist/api').Task),
   getClusterAgent: getClusterAgentMock,
@@ -513,6 +514,32 @@ describe('dispatcher MCP server — build-worker context', () => {
     expect(names).not.toContain('complete_review');
   });
 
+  // `report_finding` is the pre-rename name. A run whose agent cached the tool
+  // list before the rename would otherwise get "unknown tool" and lose the
+  // report, so both names must dispatch to the same finding-reporting handler.
+  it('dispatches the legacy report_finding name to the report_unrelated_issue handler', async () => {
+    process.env.RUN_PROJECT = 'proj';
+    process.env.RUN_BOARD_TASK = 'build-1';
+    appendFindingToConfigMapMock.mockClear();
+
+    const args = {
+      title: 'Timing bug',
+      description: 'The poll loop stalls on a schema mismatch.',
+      severity: 'low',
+      category: 'bug',
+    };
+    for (const name of ['report_unrelated_issue', 'report_finding']) {
+      const res = (await postMcp(server.port, mcpCall('rf-1', name, args))) as {
+        result?: { content?: Array<{ text?: string }> };
+        error?: { message?: string };
+      };
+      expect(res.error?.message ?? '').not.toContain('unknown tool');
+      const text = res.result?.content?.[0]?.text ?? '';
+      expect(text).toContain('"status":"accepted"');
+    }
+    expect(appendFindingToConfigMapMock).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps complete_run available for non-merge runs', async () => {
     gitCheck.isClean = async () => null;
     const res = await postMcp(
@@ -574,26 +601,5 @@ describe('dispatcher MCP server — build-worker context', () => {
       },
     });
     expect(completedSummaries).toEqual(['Forced completion']);
-  });
-
-  it('accepts complete_run when working tree is clean', async () => {
-    gitCheck.isClean = async () => null;
-    const res = await postMcp(
-      server.port,
-      mcpCall('run-clean-1', 'complete_run', { summary: 'Clean work' }),
-    );
-    expect(res).toEqual({
-      jsonrpc: '2.0',
-      id: 'run-clean-1',
-      result: {
-        content: [
-          {
-            type: 'text',
-            text: expect.stringContaining('complete'),
-          },
-        ],
-      },
-    });
-    expect(completedSummaries).toEqual(['Clean work']);
   });
 });

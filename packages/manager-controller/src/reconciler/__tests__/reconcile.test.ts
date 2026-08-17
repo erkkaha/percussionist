@@ -113,8 +113,19 @@ describe('reconciler auto-heal', () => {
     const project = makeProject('test-project');
     await reconcileProject(project, 'percussionist');
 
-    // Reconciler heals twice: first loop (line 27) + second defense-in-depth loop (line 63).
-    expect(patchTaskStatusSpy).toHaveBeenCalledTimes(4);
+    // Both limbo tasks must end up healed to pending. Do not pin the call
+    // count — the heal runs in two passes today, but only the observable
+    // outcome (every phase-less task patched to pending) is the contract.
+    expect(patchTaskStatusSpy).toHaveBeenCalledWith(
+      'limbo-1',
+      { phase: 'pending' },
+      'percussionist',
+    );
+    expect(patchTaskStatusSpy).toHaveBeenCalledWith(
+      'limbo-2',
+      { phase: 'pending' },
+      'percussionist',
+    );
   });
 
   it('heals idea tasks that are missing phase (malformed)', async () => {

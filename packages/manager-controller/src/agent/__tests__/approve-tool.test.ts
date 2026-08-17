@@ -5,70 +5,54 @@
 // 2. Approval outcome logic (computeApproveMergeOutcome)
 
 import { describe, expect, it } from 'bun:test';
-import fs from 'node:fs';
-import pathMod from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { Task, TaskPhase } from '@percussionist/api';
 import { computeApproveMergeOutcome } from '../tools.js';
 
-const __dirname = pathMod.dirname(fileURLToPath(import.meta.url));
-const toolsSource = fs.readFileSync(pathMod.join(__dirname, '../tools.ts'), 'utf-8');
+const { __test } = await import('../tools.js');
 
 // ---------------------------------------------------------------------------
-// Tool schema definitions — verify TOOLS array contains manager_approve.
+// Tool schema definition — assert against the actual inputSchema JSON served by
+// tools/list (a real tool definition can fail these).
 // ---------------------------------------------------------------------------
 
 describe('manager_approve tool schema', () => {
-  function extractToolBlock(name: string): string | null {
-    const nameIdx = toolsSource.indexOf(`name: '${name}'`);
-    if (nameIdx < 0) return null;
-
-    let openBrace = -1;
-    for (let i = nameIdx - 1; i >= Math.max(0, nameIdx - 200); i--) {
-      if (toolsSource[i] === '{') {
-        openBrace = i;
-        break;
-      }
-    }
-    if (openBrace < 0) return null;
-
-    let depth = 0;
-    for (let i = openBrace; i < toolsSource.length; i++) {
-      if (toolsSource[i] === '{') depth++;
-      else if (toolsSource[i] === '}') {
-        depth--;
-        if (depth === 0) {
-          return toolsSource.slice(openBrace, i + 1);
-        }
-      }
-    }
-    return null;
+  async function toolSchema(): Promise<{
+    description?: string;
+    required: string[];
+    properties: Record<string, unknown>;
+  }> {
+    const res = (await __test.handleMcp({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/list',
+    })) as {
+      result?: { tools?: Array<{ name: string; description?: string; inputSchema?: unknown }> };
+    };
+    const tool = res.result?.tools?.find((t) => t.name === 'manager_approve');
+    expect(tool, 'manager_approve is registered in the TOOLS array').toBeDefined();
+    const schema = tool?.inputSchema as
+      | { properties?: Record<string, unknown>; required?: string[] }
+      | undefined;
+    return {
+      description: tool?.description,
+      required: schema?.required ?? [],
+      properties: schema?.properties ?? {},
+    };
   }
 
-  it('should define manager_approve in the TOOLS array', () => {
-    const block = extractToolBlock('manager_approve');
-    expect(block).not.toBeNull();
+  it('is registered in the TOOLS array', async () => {
+    const { required } = await toolSchema();
+    expect(required).toBeDefined();
   });
 
-  it('should require project and task args', () => {
-    const block = extractToolBlock('manager_approve');
-    expect(block).not.toBeNull();
-    expect(block).toContain("'project'");
-    expect(block).toContain("'task'");
+  it('requires project and task args', async () => {
+    const { required } = await toolSchema();
+    expect(required).toEqual(expect.arrayContaining(['project', 'task']));
   });
 
-  it('should mention canonical annotation behavior in description', () => {
-    const block = extractToolBlock('manager_approve');
-    expect(block).not.toBeNull();
-    expect(block).toContain('percussionist.dev/action-approved');
-  });
-
-  it('should have a callTool switch case for manager_approve', () => {
-    expect(toolsSource).toContain("case 'manager_approve':");
-  });
-
-  it('should import patchTask from @percussionist/kube', () => {
-    expect(toolsSource).toContain('patchTask,');
+  it('mentions canonical annotation behavior in description', async () => {
+    const { description } = await toolSchema();
+    expect(description).toContain('percussionist.dev/action-approved');
   });
 });
 
