@@ -40,7 +40,8 @@ export interface AuthImportOpts {
 type AuthEntry = Record<string, unknown>;
 type AuthFile = Record<string, AuthEntry>;
 
-function authJsonPath(override?: string): string {
+// Exported for unit tests.
+export function authJsonPath(override?: string): string {
   if (override) return override;
   // Honour $XDG_DATA_HOME first (opencode does the same), fall back to
   // the Linux/macOS default of ~/.local/share. Windows is outside
@@ -76,8 +77,8 @@ function readAuth(file: string): AuthFile {
 
 // Present a token safely — never print the raw value, but give enough
 // signal that the user can tell providers apart ("yes that's the right
-// Copilot account").
-function summarise(entry: AuthEntry): string {
+// Copilot account"). Exported for unit tests.
+export function summarise(entry: AuthEntry): string {
   const parts: string[] = [];
   const t = typeof entry.type === 'string' ? entry.type : 'unknown';
   parts.push(`type=${t}`);
@@ -97,7 +98,9 @@ function summarise(entry: AuthEntry): string {
   return parts.join(', ');
 }
 
-async function upsertSecret(
+// Exported for unit tests (created-vs-updated Secret semantics are exercised
+// with a fake CoreV1Api).
+export async function upsertSecret(
   core: CoreV1Api,
   namespace: string,
   name: string,

@@ -641,19 +641,19 @@ export function ideIngressName(project: Project): string {
   return `ide-${project.metadata.name}`;
 }
 
-export function ideURLFor(project: Project): string {
-  const url = new URL(INGRESS_BASE_URL);
+export function ideURLFor(project: Project, baseUrl: string = INGRESS_BASE_URL): string {
+  const url = new URL(baseUrl);
   return `http://ide-${project.metadata.name}.${url.host}`;
 }
 
 /**
  * Renders an Ingress for code-server when INGRESS_BASE_URL is configured.
  */
-export function renderIdeIngress(project: Project): V1Ingress {
+export function renderIdeIngress(project: Project, baseUrl: string = INGRESS_BASE_URL): V1Ingress {
   const name = project.metadata.name ?? '';
   const ns = project.metadata.namespace ?? '';
   const uid = project.metadata.uid ?? '';
-  const host = new URL(INGRESS_BASE_URL).hostname;
+  const host = new URL(baseUrl).hostname;
   const csHost = `ide-${name}.${host}`;
 
   const labels = {

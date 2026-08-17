@@ -361,8 +361,11 @@ async function setupTls(): Promise<string> {
  * Read operator.yaml, substitute the PERCUSSIONIST_INGRESS_BASE_URL value
  * with https://<ip>.nip.io:30443, write to a temp file and return its path.
  * Caller is responsible for deleting the temp file.
+ *
+ * Exported for unit testing; when no substitution is possible the input path
+ * is returned unchanged (the caller then applies the manifest unmodified).
  */
-function patchedOperatorManifest(operatorYaml: string, ip: string): string {
+export function patchedOperatorManifest(operatorYaml: string, ip: string): string {
   const original = readFileSync(operatorYaml, 'utf8');
   const httpsUrl = `https://${ip}.nip.io:30443`;
 

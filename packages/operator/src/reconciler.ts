@@ -147,8 +147,9 @@ async function patchProjectReconcileStatus(
 // Inject the percussionist-dispatcher MCP stanza into an opencode.json string.
 // Parses the raw JSON (defaults to {} on parse error), strips local/stdio MCP
 // entries that are unsafe in headless containers, then adds the dispatcher entry.
-// Exported so it can be called from ensureOpencodeConfig for the no-config case.
-function injectDispatcherMcpStanza(raw: string): string {
+// Exported so it can be called from ensureOpencodeConfig for the no-config case
+// and unit-tested without a cluster.
+export function injectDispatcherMcpStanza(raw: string): string {
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -386,7 +387,12 @@ Always include at least one actionable option when presenting choices.`;
 // from any prior field manager (kubectl, tofu, node-fetch, etc.). This is safe
 // because the operator is the authoritative source of truth for these ConfigMaps
 // and rebuilds them from ClusterSettings on every reconcile cycle.
-async function ssaConfigMap(ns: string, name: string, data: Record<string, string>): Promise<void> {
+// Exported for unit testing (the SSA request shape is asserted without a cluster).
+export async function ssaConfigMap(
+  ns: string,
+  name: string,
+  data: Record<string, string>,
+): Promise<void> {
   try {
     await core.patchNamespacedConfigMap(
       {

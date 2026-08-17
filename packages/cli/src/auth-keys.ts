@@ -118,12 +118,15 @@ export async function runAuthKeyRotate(component: string, opts: AuthKeyRotateOpt
 // ---------------------------------------------------------------------------
 // Secret plumbing for the values web reads at startup
 
-async function patchWebAuthSecret(
+// Exported for unit tests (create-vs-replace / key-preservation semantics are
+// exercised with an injected fake CoreV1Api).
+export async function patchWebAuthSecret(
   namespace: string,
   data: Record<string, string>,
   dryRun: boolean,
+  coreOverride?: import('@kubernetes/client-node').CoreV1Api,
 ): Promise<void> {
-  const { core } = loadKube();
+  const core = coreOverride ?? (await loadKube()).core;
 
   if (dryRun) {
     console.error(

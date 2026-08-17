@@ -273,15 +273,29 @@ function namespaceFromFile(path: string): string | undefined {
 // Poll the CR status until phase is Running (or terminal, which is fatal for
 // --attach). We prefer polling over a Watch here because submits are short
 // and one-shot; setting up an informer is overkill and adds RBAC surface.
-async function waitForRunning(namespace: string, name: string, timeoutMs = 120_000): Promise<Run> {
-  const { custom } = loadKube();
+//
+// Exported so the polling loop is unit-testable without a cluster: the last
+// parameter injects a `getRunFn` (defaulting to the kube-backed reader) that
+// the loop drives, mirroring wait.ts's waitForOutcome pattern.
+export async function waitForRunning(
+  namespace: string,
+  name: string,
+  timeoutMs = 120_000,
+  getRunFn?: (ns: string, n: string) => Promise<Run>,
+): Promise<Run> {
+  const readRun =
+    getRunFn ??
+    (async (ns: string, n: string) => {
+      const { custom } = loadKube();
+      return getRun(custom, ns, n);
+    });
   const deadline = Date.now() + timeoutMs;
   let lastPhase: string | undefined;
   // Small stderr spinner so the user knows we're alive. Keep it cheap —
   // a single line updated in place; no fancy spinner libs.
   const stamp = () => new Date().toISOString().slice(11, 19); // HH:MM:SS
   while (Date.now() < deadline) {
-    const run = await getRun(custom, namespace, name);
+    const run = await readRun(namespace, name);
     const phase = run.status?.phase;
     if (phase !== lastPhase) {
       process.stderr.write(`\rbeatctl: [${stamp()}] phase=${phase ?? '-'}   `);

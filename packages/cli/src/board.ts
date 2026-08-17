@@ -464,6 +464,63 @@ const ANNOTATION = {
 // after a dropped connection must not fail.
 const SETTLED_PHASES: readonly TaskPhase[] = ['awaiting-merge', 'done'];
 
+// ---------------------------------------------------------------------------
+// Pure patch builders — exported so the annotation semantics are unit-testable
+// without a cluster. The handlers below are thin wrappers around these.
+
+/**
+ * Build the metadata patch for `board task approve`: writes the canonical
+ * approval annotation and clears a stale request-changes marker, preserving
+ * every other annotation and the task's existing metadata.
+ */
+export function approveTaskMetadataPatch(task: Task): Pick<Task, 'metadata'> {
+  return {
+    metadata: {
+      ...task.metadata,
+      annotations: {
+        ...(task.metadata.annotations ?? {}),
+        [ANNOTATION.approved]: 'true',
+        [ANNOTATION.requestChanges]: 'false',
+      },
+    },
+  };
+}
+
+/**
+ * Build the metadata patch for `board task request-changes`: marks the task
+ * for rework with the human's feedback attached, preserving every other
+ * annotation and the task's existing metadata.
+ */
+export function requestChangesTaskMetadataPatch(
+  task: Task,
+  feedback: string,
+): Pick<Task, 'metadata'> {
+  return {
+    metadata: {
+      ...task.metadata,
+      annotations: {
+        ...(task.metadata.annotations ?? {}),
+        [ANNOTATION.requestChanges]: 'true',
+        [ANNOTATION.reworkFeedback]: feedback,
+      },
+    },
+  };
+}
+
+/**
+ * Build the status patch for `board task retry`. Re-dispatching a failed task
+ * must bump the worker retryCount so the next run gets a fresh name — otherwise
+ * the manager adopts the stale Failed run and the retry dies within a second.
+ * The review path needs no new run, so it leaves the counter alone.
+ */
+export function retryTaskStatusPatch(task: Task, review: boolean): Partial<TaskStatus> {
+  const target: TaskPhase = review ? 'awaiting-human' : 'pending';
+  const worker = task.status?.worker;
+  return review || !worker
+    ? { phase: target }
+    : { phase: target, worker: { ...worker, retryCount: (worker.retryCount ?? 0) + 1 } };
+}
+
 // Read the task and confirm it is actually waiting on a human. Exits non-zero
 // on any phase that a verdict cannot apply to.
 async function requireAwaitingHuman(
@@ -507,20 +564,7 @@ export async function runBoardTaskApprove(
   if (!task) return;
 
   try {
-    await patchTask(
-      opts.taskName,
-      {
-        metadata: {
-          ...task.metadata,
-          annotations: {
-            ...(task.metadata.annotations ?? {}),
-            [ANNOTATION.approved]: 'true',
-            [ANNOTATION.requestChanges]: 'false',
-          },
-        },
-      },
-      ns,
-    );
+    await patchTask(opts.taskName, approveTaskMetadataPatch(task), ns);
     console.log(`task ${opts.taskName} approved — the manager will schedule the next step`);
   } catch (e) {
     fatal('approve failed', e);
@@ -570,22 +614,8 @@ export async function runBoardTaskRetry(
     process.exit(1);
   }
 
-  const target: TaskPhase = opts.review ? 'awaiting-human' : 'pending';
-
-  // The worker run name is a hash of project, task, retryCount and
-  // aiReworkCount, so re-dispatching without bumping the counter asks for a run
-  // that already exists in phase Failed. The manager adopts that stale Run and
-  // marks the task failed again within a second — the retry looks like an
-  // instant init crash. Bumping the counter yields a fresh name. The review
-  // path needs no new run, so it leaves the counter alone.
-  const worker = task.status?.worker;
-  const statusPatch: Partial<TaskStatus> =
-    opts.review || !worker
-      ? { phase: target }
-      : { phase: target, worker: { ...worker, retryCount: (worker.retryCount ?? 0) + 1 } };
-
   try {
-    await patchTaskStatus(opts.taskName, statusPatch, ns);
+    await patchTaskStatus(opts.taskName, retryTaskStatusPatch(task, opts.review === true), ns);
     if (opts.review) {
       console.log(
         `task ${opts.taskName} moved to awaiting-human — review the work it already committed`,
@@ -624,20 +654,7 @@ export async function runBoardTaskRequestChanges(
   if (!task) return;
 
   try {
-    await patchTask(
-      opts.taskName,
-      {
-        metadata: {
-          ...task.metadata,
-          annotations: {
-            ...(task.metadata.annotations ?? {}),
-            [ANNOTATION.requestChanges]: 'true',
-            [ANNOTATION.reworkFeedback]: feedback,
-          },
-        },
-      },
-      ns,
-    );
+    await patchTask(opts.taskName, requestChangesTaskMetadataPatch(task, feedback), ns);
     console.log(`changes requested on task ${opts.taskName} — the manager will dispatch rework`);
   } catch (e) {
     fatal('request changes failed', e);

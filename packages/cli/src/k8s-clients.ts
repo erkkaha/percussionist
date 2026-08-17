@@ -30,14 +30,12 @@ export interface DoctorClients {
 let cached: DoctorClients | undefined;
 
 /**
- * Build (once) and return the K8s API clients the doctor command uses.
- * Construction only parses the kubeconfig — it never touches the network —
- * so a throw here means no cluster is configured at all (fatal, exit 2).
+ * Build the seven doctor API clients from a single KubeConfig. Pure — split
+ * out from doctorClients() so tests can drive it with an in-memory kubeconfig
+ * instead of the ambient one.
  */
-export function doctorClients(): DoctorClients {
-  if (cached) return cached;
-  const kc = kubeConfig();
-  cached = {
+export function buildDoctorClients(kc: ReturnType<typeof kubeConfig>): DoctorClients {
+  return {
     core: makeNodeApiClient(kc, CoreV1Api),
     apps: makeNodeApiClient(kc, AppsV1Api),
     custom: makeNodeApiClient(kc, CustomObjectsApi),
@@ -46,5 +44,15 @@ export function doctorClients(): DoctorClients {
     networking: makeNodeApiClient(kc, NetworkingV1Api),
     storage: makeNodeApiClient(kc, StorageV1Api),
   };
+}
+
+/**
+ * Build (once) and return the K8s API clients the doctor command uses.
+ * Construction only parses the kubeconfig — it never touches the network —
+ * so a throw here means no cluster is configured at all (fatal, exit 2).
+ */
+export function doctorClients(): DoctorClients {
+  if (cached) return cached;
+  cached = buildDoctorClients(kubeConfig());
   return cached;
 }

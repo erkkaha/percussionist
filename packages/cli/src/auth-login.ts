@@ -56,8 +56,11 @@ async function sleep(ms: number): Promise<void> {
  * Uses raw fetch rather than webRequest because the pending state is reported as
  * a 400 with `error: "authorization_pending"`, which is expected control flow
  * rather than a failure.
+ *
+ * Exported so the poller's branch handling (pending / slow_down / access_denied
+ * / expired_token / timeout) is unit-testable with a mocked fetch.
  */
-async function pollForToken(
+export async function pollForToken(
   baseUrl: string,
   deviceCode: string,
   intervalSeconds: number,
