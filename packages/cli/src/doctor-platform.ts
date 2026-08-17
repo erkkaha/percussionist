@@ -22,6 +22,7 @@
 
 import type { V1Deployment, V1Ingress, V1Secret } from '@kubernetes/client-node';
 import type { Project } from '@percussionist/api';
+import { errorMessage } from '@percussionist/kube';
 import type { DoctorCheck, DoctorCheckResult } from './doctor.js';
 import { withProbeTimeout } from './doctor-util.js';
 import type { DoctorClients } from './k8s-clients.js';
@@ -471,8 +472,4 @@ function secretValue(secret: V1Secret, key: string): string | undefined {
   } catch {
     return raw;
   }
-}
-
-function errorMessage(e: unknown): string {
-  return ((e as { message?: string }).message ?? String(e)).trim();
 }

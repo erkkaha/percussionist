@@ -63,17 +63,6 @@ function parseMemory(raw: string): number {
   return n;
 }
 
-/** Parse a Kubernetes storage quantity string to bytes. Handles Ki/Mi/Gi/Ti and plain integers. */
-function _parseStorageBytes(raw: string): number {
-  const n = parseInt(raw, 10);
-  if (raw.endsWith('Ki')) return n * 1024;
-  if (raw.endsWith('Mi')) return n * 1024 * 1024;
-  if (raw.endsWith('Gi')) return n * 1024 * 1024 * 1024;
-  if (raw.endsWith('Ti')) return n * 1024 * 1024 * 1024 * 1024;
-  // Plain integer — treat as bytes.
-  return n;
-}
-
 export function useMetrics(refetchInterval: number | false = 15_000) {
   return useQuery<{ nodes: NodeMetricRow[]; pods: PodMetricRow[] }>({
     queryKey: ['metrics'],

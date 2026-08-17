@@ -26,6 +26,7 @@ import {
   PLURAL_CLUSTER_SETTINGS,
   parseModelRef,
 } from '@percussionist/api';
+import { errorMessage } from '@percussionist/kube';
 import type { DoctorCheck, DoctorCheckResult } from './doctor.js';
 import { withProbeTimeout } from './doctor-util.js';
 import type { DoctorClients } from './k8s-clients.js';
@@ -611,7 +612,3 @@ export const RUNTIME_CHECKS: DoctorCheck[] = [
       }),
   },
 ];
-
-function errorMessage(e: unknown): string {
-  return ((e as { message?: string }).message ?? String(e)).trim();
-}

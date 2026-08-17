@@ -9,10 +9,11 @@
 // the chat port). We attach the token anyway when the Secret exists so the call
 // is robust if that loopback assumption ever changes.
 //
-// This mirrors the port-forward pattern in web-client.ts / chat.ts but is
-// generic over the MCP method, so every doctor check that probes the manager
-// (list_models, tools/list, …) shares one implementation. Every network step is
-// bounded by `AbortSignal.timeout` (`--timeout` on the doctor command).
+// This reuses the shared port-forward helpers from port-forward.ts (their
+// single home) but is generic over the MCP method, so every doctor check that
+// probes the manager (list_models, tools/list, …) shares one implementation.
+// Every network step is bounded by `AbortSignal.timeout` (`--timeout` on the
+// doctor command), and the port-forward itself by the same timeout bound.
 //
 // Two call shapes are exposed:
 //   - `managerMcpRequest(namespace, tool, args)` — `tools/call`, unwraps the
@@ -21,9 +22,10 @@
 //     descriptor array (used as a liveness probe by the health check).
 // Both share the generic `managerMcpJsonRpc` port-forward + fetch plumbing.
 
-import { type ChildProcess, spawn } from 'node:child_process';
-import { createServer } from 'node:net';
+import type { ChildProcess } from 'node:child_process';
+import { errorMessage } from '@percussionist/kube';
 import { loadKube } from './kube.js';
+import { pickFreePort, startPortForward } from './port-forward.js';
 
 const MANAGER_SERVICE = 'percussionist-manager';
 const MCP_PORT = 4097;
@@ -50,79 +52,6 @@ export class ManagerMcpError extends Error {
     this.name = 'ManagerMcpError';
     this.kind = kind;
   }
-}
-
-function pickFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.unref();
-    srv.on('error', reject);
-    srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address();
-      if (addr && typeof addr === 'object') {
-        const port = addr.port;
-        srv.close(() => resolve(port));
-      } else {
-        srv.close();
-        reject(new Error('could not determine free port'));
-      }
-    });
-  });
-}
-
-function startPortForward(
-  namespace: string,
-  localPort: number,
-  timeoutMs: number,
-): Promise<ChildProcess> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      'kubectl',
-      ['port-forward', '-n', namespace, `svc/${MANAGER_SERVICE}`, `${localPort}:${MCP_PORT}`],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-
-    let ready = false;
-    let settled = false;
-    const fail = (err: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(err);
-    };
-    const succeed = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(child);
-    };
-
-    const onChunk = (buf: Buffer) => {
-      const s = buf.toString();
-      if (s.includes('Forwarding from')) {
-        ready = true;
-        succeed();
-      } else if (
-        !ready &&
-        (s.toLowerCase().includes('error') || s.toLowerCase().includes('unable'))
-      ) {
-        fail(new Error(`kubectl port-forward: ${s.trim()}`));
-      }
-    };
-    child.stdout?.on('data', onChunk);
-    child.stderr?.on('data', onChunk);
-    child.on('error', (e) => fail(e));
-    child.on('exit', (code) => {
-      if (!ready) fail(new Error(`kubectl port-forward exited with code ${String(code)}`));
-    });
-
-    // The port-forward must not hang the doctor run — kill it if it never
-    // reports "Forwarding from" within the probe bound.
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      fail(new Error(`kubectl port-forward did not start within ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
 }
 
 /**
@@ -171,7 +100,7 @@ export async function managerMcpJsonRpc<T = unknown>(
 
   let pf: ChildProcess;
   try {
-    pf = await startPortForward(namespace, localPort, timeoutMs);
+    pf = await startPortForward(namespace, MANAGER_SERVICE, MCP_PORT, localPort, timeoutMs);
   } catch (e) {
     throw new ManagerMcpError(
       'unreachable',
@@ -294,8 +223,4 @@ function isTimeoutError(e: unknown): boolean {
     'name' in e &&
     (e as { name?: string }).name === 'TimeoutError'
   );
-}
-
-function errorMessage(e: unknown): string {
-  return ((e as { message?: string }).message ?? String(e)).trim();
 }

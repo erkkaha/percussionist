@@ -249,18 +249,34 @@ export function loadFromKubeconfig(): {
   };
 }
 
-function getErrorStatusCode(err: unknown): number | undefined {
+export function getErrorStatusCode(err: unknown): number | undefined {
   return (
     (err as { statusCode?: number; code?: number }).statusCode ?? (err as { code?: number }).code
   );
 }
 
-function isNotFoundError(err: unknown): boolean {
+export function isNotFoundError(err: unknown): boolean {
   return getErrorStatusCode(err) === 404;
 }
 
-function isConflictError(err: unknown): boolean {
+export function isConflictError(err: unknown): boolean {
   return getErrorStatusCode(err) === 409;
+}
+
+/**
+ * Extracts a loggable message from a caught value without throwing, even when
+ * the value is null/undefined or not an Error (e.g. a rejected promise with
+ * no reason at all).
+ */
+export function errorMessage(e: unknown): string {
+  if (e instanceof Error) {
+    return typeof e.message === 'string' ? e.message.trim() : String(e.message);
+  }
+  if (typeof e === 'object' && e !== null && 'message' in e) {
+    const m = (e as { message?: unknown }).message;
+    return typeof m === 'string' ? m.trim() : String(m);
+  }
+  return String(e).trim();
 }
 
 // Merge-patch header for all CRD/ConfigMap PATCH calls via the shared CA-aware

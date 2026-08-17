@@ -1186,20 +1186,17 @@ stats.get('/trends', auth(), (c) => {
     for (const model of dateMap.keys()) allModels.add(model);
   }
 
-  const sortedDates = [...pivotMap.keys()].sort();
-  const modelTrendPoints: ModelTrendPoint[] = sortedDates.map((date) => {
-    const entry: ModelTrendPoint = { date };
-    const dateMap = pivotMap.get(date);
-    if (!dateMap) {
-      const emptyMap = new Map<string, number>();
-      pivotMap.set(date, emptyMap);
-      return { date };
-    }
-    for (const model of allModels) {
-      entry[model] = dateMap.get(model) ?? 0;
-    }
-    return entry;
-  });
+  // Pivot dates sorted in place; each date is guaranteed to exist in pivotMap
+  // since the entries come straight from its keys (no missing-entry branch).
+  const modelTrendPoints: ModelTrendPoint[] = [...pivotMap.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([date, dateMap]) => {
+      const entry: ModelTrendPoint = { date };
+      for (const model of allModels) {
+        entry[model] = dateMap.get(model) ?? 0;
+      }
+      return entry;
+    });
 
   return c.json({ trendPoints, modelTrendPoints });
 });

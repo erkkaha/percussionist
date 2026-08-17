@@ -12,7 +12,7 @@ import {
   type Run,
   TERMINAL_PHASES,
 } from '@percussionist/api';
-import { gitUrlHash, makeNodeApiClient } from '@percussionist/kube';
+import { gitUrlHash, isNotFoundError, makeNodeApiClient } from '@percussionist/kube';
 import { co, kc, NAMESPACE } from './reconciler.js';
 
 const batchV1 = makeNodeApiClient(kc, BatchV1Api);
@@ -23,13 +23,6 @@ const log = (...args: unknown[]) => console.log(`[ttl ${new Date().toISOString()
 const err = (...args: unknown[]) => console.error(`[ttl ${new Date().toISOString()}]`, ...args);
 
 const RUN_TTL_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
-
-function isNotFound(e: unknown): boolean {
-  return (
-    ((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) ===
-    404
-  );
-}
 
 async function fetchRunTTLDays(): Promise<number> {
   try {
@@ -95,7 +88,7 @@ export async function runTTLCleanup(): Promise<void> {
       log(`deleted expired Run ${name} (past ${ttlDays}d TTL)`);
       deleted++;
     } catch (e: unknown) {
-      if (!isNotFound(e)) {
+      if (!isNotFoundError(e)) {
         err(`delete Run ${name}:`, (e as Error).message);
       }
     }

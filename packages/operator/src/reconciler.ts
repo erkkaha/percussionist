@@ -27,7 +27,7 @@ import {
   type RunStatus,
   TERMINAL_PHASES,
 } from '@percussionist/api';
-import { makeNodeApiClient } from '@percussionist/kube';
+import { errorMessage, isNotFoundError, makeNodeApiClient } from '@percussionist/kube';
 import {
   assertCredentialsUnambiguous,
   resolveRunnerSpec,
@@ -71,13 +71,6 @@ import { validateProjectSpec, validateRunSpec } from './spec-validation.js';
 const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
   console.error(`[operator ${new Date().toISOString()}]`, ...args);
-
-// Extracts a loggable message from a caught value without throwing, even when
-// the value is null/undefined or not an Error (e.g. a rejected promise with
-// no reason at all).
-function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 // ---------------------------------------------------------------------------
 // K8s clients
@@ -671,13 +664,6 @@ export async function reconcile(run: Run): Promise<void> {
   }
 }
 
-function isNotFound(e: unknown): boolean {
-  return (
-    ((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) ===
-    404
-  );
-}
-
 async function cleanupChildResources(run: Run, ns: string): Promise<void> {
   const name = run.metadata.name;
   // Revoke the run's stats key alongside its other child resources, so the pod
@@ -688,7 +674,7 @@ async function cleanupChildResources(run: Run, ns: string): Promise<void> {
     await core.deleteNamespacedPod({ name, namespace: ns });
     log(`deleted pod ${ns}/${name}`);
   } catch (e: unknown) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`delete pod ${ns}/${name}:`, (e as Error).message);
     }
   }
@@ -697,7 +683,7 @@ async function cleanupChildResources(run: Run, ns: string): Promise<void> {
     await core.deleteNamespacedService({ name, namespace: ns });
     log(`deleted service ${ns}/${name}`);
   } catch (e: unknown) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`delete service ${ns}/${name}:`, (e as Error).message);
     }
   }
@@ -857,7 +843,7 @@ export async function runWorkerOnce(
     return true;
   } catch (e) {
     err(`reconcile(${key}) failed:`, (e as Error).message);
-    if (isNotFound(e)) {
+    if (isNotFoundError(e)) {
       // Run CR was deleted — remove from state to prevent indefinite re-enqueue.
       dequeue(key);
     } else {
@@ -940,7 +926,7 @@ async function upsertDeployment(
     );
     log(`${logPrefix} patched deployment ${name}`);
   } catch (e) {
-    if (isNotFound(e)) {
+    if (isNotFoundError(e)) {
       await apps.createNamespacedDeployment({
         namespace: ns,
         body: render(project),
@@ -978,7 +964,7 @@ async function upsertService(
     );
     log(`${logPrefix} patched service ${name}`);
   } catch (e) {
-    if (isNotFound(e)) {
+    if (isNotFoundError(e)) {
       await core.createNamespacedService({
         namespace: ns,
         body: render(project),
@@ -1042,7 +1028,7 @@ export async function reconcileProject(project: Project): Promise<void> {
         // Exists — skip (SSA would reset infra-managed annotations).
         // TODO: reconcile spec.rules on drift (INGRESS_CLASS, host pattern, port).
       } catch (e) {
-        if (isNotFound(e)) {
+        if (isNotFoundError(e)) {
           await networking.createNamespacedIngress({
             namespace: ns,
             body: renderIdeIngress(project),
@@ -1250,7 +1236,7 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
     await core.deleteNamespacedService({ name: svcName, namespace: ns });
     log(`${logPrefix} deleted code-server service ${svcName}`);
   } catch (e) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`${logPrefix} failed to delete service:`, (e as Error).message);
     }
   }
@@ -1261,7 +1247,7 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
     await apps.deleteNamespacedDeployment({ name: deployName, namespace: ns });
     log(`${logPrefix} deleted code-server deployment ${deployName}`);
   } catch (e) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`${logPrefix} failed to delete deployment:`, (e as Error).message);
     }
   }
@@ -1272,7 +1258,7 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
     await networking.deleteNamespacedIngress({ name: ingName, namespace: ns });
     log(`${logPrefix} deleted code-server ingress ${ingName}`);
   } catch (e) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`${logPrefix} failed to delete ingress:`, (e as Error).message);
     }
   }
@@ -1292,7 +1278,7 @@ export async function cleanupMemoryService(project: Project): Promise<void> {
     await core.deleteNamespacedService({ name: svcName, namespace: ns });
     log(`${logPrefix} deleted memory-service service ${svcName}`);
   } catch (e) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`${logPrefix} failed to delete service:`, (e as Error).message);
     }
   }
@@ -1303,7 +1289,7 @@ export async function cleanupMemoryService(project: Project): Promise<void> {
     await apps.deleteNamespacedDeployment({ name: deployName, namespace: ns });
     log(`${logPrefix} deleted memory-service deployment ${deployName}`);
   } catch (e) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`${logPrefix} failed to delete deployment:`, (e as Error).message);
     }
   }
