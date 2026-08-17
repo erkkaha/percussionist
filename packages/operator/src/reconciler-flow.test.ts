@@ -500,6 +500,21 @@ const reconcileCases: ReconcileCase[] = [
     ],
   },
   {
+    name: 'a lost status patch rejects reconcile (A11) so runWorkerOnce re-enqueues the run from its own retry path',
+    run: makeRun('run-lost-patch', {
+      spec: {
+        project: 'test-project',
+        interactive: false,
+        image: 'ghcr.io/erkkaha/percussionist/runner:latest',
+        timeoutSeconds: 3600,
+        agents: [{ name: 'builder' }],
+      },
+    }),
+    script: { patchNamespacedCustomObjectStatus: { error: serverError() } },
+    expectedMethods: ['patchNamespacedCustomObjectStatus'],
+    rejectsWith: 500,
+  },
+  {
     name: 'terminal run + pod still exists → cleanupChildResources, no dequeue',
     run: makeRun('run-6', { status: { phase: RunPhase.Succeeded } }),
     script: {

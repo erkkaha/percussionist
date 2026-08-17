@@ -98,6 +98,21 @@ function generateName(): string {
   return `run-${Date.now().toString(16)}`;
 }
 
+/**
+ * Parse `--timeout` seconds. Commander hands us the raw string; `Number('abc')`
+ * is NaN, and a NaN/zero/negative value would silently fall back to the
+ * project default (up to an hour) — exactly the trap wait.ts and doctor.ts
+ * already guard against. Throws a clear usage error instead.
+ */
+export function parseTimeoutSeconds(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`invalid --timeout value: ${raw} (expected a positive number of seconds)`);
+  }
+  return n;
+}
+
 export function buildRunFromFlags(
   opts: SubmitOpts,
   projectDefaults?: import('@percussionist/api').ProjectSpec,
@@ -115,7 +130,7 @@ export function buildRunFromFlags(
   const pd = projectDefaults;
   const resolvedAgent = opts.agent ?? pd?.agent;
   const resolvedImage = opts.image ?? pd?.image;
-  const resolvedTimeoutSeconds = opts.timeout ? Number(opts.timeout) : pd?.timeoutSeconds;
+  const resolvedTimeoutSeconds = parseTimeoutSeconds(opts.timeout) ?? pd?.timeoutSeconds;
   const resolvedModel = opts.model ?? pd?.model;
   const resolvedLlmSecret = opts.llmKeysSecret ?? pd?.secrets?.llmKeysSecret;
   const resolvedAuthSecret = opts.authSecret ?? pd?.secrets?.authSecret?.name;

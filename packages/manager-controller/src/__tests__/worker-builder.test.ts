@@ -269,6 +269,26 @@ describe('buildWorkerRun — prompt and run shape', () => {
     expect(run.spec.task).toContain('TASK: build-123');
   });
 
+  // A13 — the UNRELATED ISSUES guard used to key off a BUILD description
+  // containing "merge", which suppressed the block for legitimate BUILD tasks
+  // while never firing for merge runs (built by buildMergeRun).
+  it('includes UNRELATED ISSUES even when a BUILD description mentions merge', async () => {
+    const base = makeTask('merge-adjacent', 'proj-a', { type: 'BUILD' });
+    const task: Task = {
+      ...base,
+      spec: { ...base.spec, description: 'fix the merge queue backlog' },
+    };
+    const run = await buildWorkerRun(featureProject(), task, 'run-1', 0);
+
+    expect(run.spec.task).toContain('UNRELATED ISSUES:');
+  });
+
+  it('includes UNRELATED ISSUES for PLAN tasks too', async () => {
+    const run = await buildWorkerRun(featureProject(), planTask(), 'run-1', 0);
+
+    expect(run.spec.task).toContain('UNRELATED ISSUES:');
+  });
+
   it('includes the PLAN CONTEXT block with the read_plan tool for BUILD tasks with a parent', async () => {
     const project = featureProject();
     const plan = planTask('plan-abc');

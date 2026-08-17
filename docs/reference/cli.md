@@ -125,9 +125,16 @@ Manage the kanban board embedded in a Project.
 ```bash
 beatctl board get <project>                   # show board state
 beatctl board task add <project> --title "..." --agent <name>
-beatctl board task move <project> --task-name <name> --to <column>
-beatctl board task remove <project> --task-name <name>
+beatctl board task move --task-name <name> --to <column>
+beatctl board task remove --task-name <name>
+beatctl board task approve --task-name <name>          # approve an awaiting-human task
+beatctl board task request-changes --task-name <name> --feedback "..."
+beatctl board task retry --task-name <name> [--review]
 ```
+
+`board task move|remove|approve|request-changes|retry` are addressed by
+`--task-name` only (Task CR names are unique within a namespace); no
+`<project>` positional is accepted.
 
 ### auth
 

@@ -65,8 +65,26 @@ export function parseMemory(raw: string): number {
   return n;
 }
 
+export interface MetricsResult {
+  nodes: NodeMetricRow[];
+  pods: PodMetricRow[];
+  /**
+   * Names of the endpoints that failed this cycle — `[]` when both succeeded,
+   * `['nodes']`/`['pods']` when exactly one failed. The successful side still
+   * carries live data so a broken metrics endpoint cannot masquerade as "no
+   * data"; callers should surface this signal (A16).
+   */
+  failures: Array<'nodes' | 'pods'>;
+}
+
+/**
+ * Fetch both node and pod metrics. When both endpoints fail the query rejects
+ * (the caller's `error` state); when exactly one fails, the failed side is
+ * reported as empty AND its name is exposed via `failures` so the UI can tell
+ * "endpoint down" apart from "genuinely no data".
+ */
 export function useMetrics(refetchInterval: number | false = 15_000) {
-  return useQuery<{ nodes: NodeMetricRow[]; pods: PodMetricRow[] }>({
+  return useQuery<MetricsResult>({
     queryKey: ['metrics'],
     queryFn: async () => {
       const [nodesRes, podsRes] = await Promise.all([
@@ -79,37 +97,46 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
         throw new Error(nodeErr.error ?? 'metrics unavailable');
       }
 
-      const nodesData = nodesRes.ok
-        ? ((await nodesRes.json()) as {
-            items: Array<{
-              name: string;
-              timestamp: string;
-              window: string;
-              usage: { cpu: string; memory: string };
-              capacity: { cpu: string; memory: string } | null;
-              allocatable: { cpu: string; memory: string } | null;
-              allocated: { cpu: string; memory: string } | null;
-              volume: {
-                usedBytes: number | null;
-                capacityBytes: number | null;
-                availableBytes: number | null;
-              } | null;
-            }>;
-          })
-        : { items: [] };
-      const podsData = podsRes.ok
-        ? ((await podsRes.json()) as {
-            items: Array<{
-              name: string;
-              namespace: string;
-              timestamp: string;
-              window: string;
-              containers: ContainerUsage[];
-              podRequests: { cpu: string; memory: string; storage: number | null } | null;
-              podLimits: { cpu: string; memory: string; storage: number | null } | null;
-            }>;
-          })
-        : { items: [] };
+      const failures: MetricsResult['failures'] = [];
+      let nodesData: {
+        items: Array<{
+          name: string;
+          timestamp: string;
+          window: string;
+          usage: { cpu: string; memory: string };
+          capacity: { cpu: string; memory: string } | null;
+          allocatable: { cpu: string; memory: string } | null;
+          allocated: { cpu: string; memory: string } | null;
+          volume: {
+            usedBytes: number | null;
+            capacityBytes: number | null;
+            availableBytes: number | null;
+          } | null;
+        }>;
+      };
+      if (nodesRes.ok) {
+        nodesData = (await nodesRes.json()) as typeof nodesData;
+      } else {
+        failures.push('nodes');
+        nodesData = { items: [] };
+      }
+      let podsData: {
+        items: Array<{
+          name: string;
+          namespace: string;
+          timestamp: string;
+          window: string;
+          containers: ContainerUsage[];
+          podRequests: { cpu: string; memory: string; storage: number | null } | null;
+          podLimits: { cpu: string; memory: string; storage: number | null } | null;
+        }>;
+      };
+      if (podsRes.ok) {
+        podsData = (await podsRes.json()) as typeof podsData;
+      } else {
+        failures.push('pods');
+        podsData = { items: [] };
+      }
 
       const nodes: NodeMetricRow[] = nodesData.items.map((n) => ({
         name: n.name,
@@ -159,7 +186,7 @@ export function useMetrics(refetchInterval: number | false = 15_000) {
         };
       });
 
-      return { nodes, pods };
+      return { nodes, pods, failures };
     },
     refetchInterval,
   });

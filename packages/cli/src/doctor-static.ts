@@ -356,8 +356,14 @@ export async function checkNetworkPolicy(
 // ---------------------------------------------------------------------------
 // dns — CoreDNS is Available, control-plane Services have ready Endpoints, and
 // (opt-in) `getent hosts` resolves the in-cluster DNS names from a live pod.
+//
+// `ollama` is intentionally NOT in DNS_SERVICES: like checkHealth, the ollama
+// Service is only required when a Project enables spec.embedding — a cluster
+// with no embedding projects must not fail the DNS check over a Service it
+// never uses.
 
-const DNS_SERVICES = ['percussionist-manager', 'percussionist-web', 'ollama'];
+const DNS_SERVICES = ['percussionist-manager', 'percussionist-web'];
+const OLLAMA_SERVICE = 'ollama';
 
 export interface ExecProbeOptions {
   namespace: string;
@@ -411,7 +417,22 @@ export async function checkDns(
   }
 
   // 2. Control-plane Services exist with ready Endpoints.
-  for (const name of DNS_SERVICES) {
+  //    ollama is checked only when required (a Project enables spec.embedding).
+  //    If Projects cannot be listed, fall back to requiring ollama (the
+  //    pre-optionality behaviour) rather than silently skipping the check.
+  let ollamaRequired = true;
+  try {
+    const projects = await withProbeTimeout(
+      listAllProjects(clients.custom),
+      timeoutMs,
+      'list projects (ollama DNS requirement)',
+    );
+    ollamaRequired = projects.some((p) => p.spec?.embedding?.enabled === true);
+  } catch {
+    // Projects unlistable (e.g. RBAC) — keep ollama required (fail-safe).
+  }
+  const dnsServices = ollamaRequired ? [...DNS_SERVICES, OLLAMA_SERVICE] : DNS_SERVICES;
+  for (const name of dnsServices) {
     let service: V1Service;
     try {
       service = await withProbeTimeout(
@@ -449,7 +470,7 @@ export async function checkDns(
     if (!pod) {
       warnings.push('--probe-dns: no ready percussionist pod to exec into; skipped');
     } else {
-      for (const name of DNS_SERVICES) {
+      for (const name of dnsServices) {
         const fqdn = `${name}.${namespace}.svc.cluster.local`;
         try {
           const result = await execProbe({
@@ -640,7 +661,8 @@ export async function checkStorage(
     const projectName = project.metadata?.name;
     const projectNs = project.metadata?.namespace ?? namespace;
     if (!projectName) continue;
-    const pvcName = `${projectName}-data`;
+    // honor the documented spec.data.pvcName override; default is `{project}-data`.
+    const pvcName = project.spec?.data?.pvcName ?? `${projectName}-data`;
     try {
       const pvc: V1PersistentVolumeClaim = await withProbeTimeout(
         clients.core.readNamespacedPersistentVolumeClaim({ name: pvcName, namespace: projectNs }),

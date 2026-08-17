@@ -6,7 +6,7 @@
 // to unbounded GitHub API usage.
 
 import { type ParsedGitHubRepo, type Project, parseGitHubUrl } from '@percussionist/api';
-import { core, NAMESPACE } from '@percussionist/kube';
+import { core, isNotFoundError, NAMESPACE } from '@percussionist/kube';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,6 +77,11 @@ export function __clearCache(): void {
  * Read the GitHub token for a project from its `source.git.githubTokenSecret`.
  * Cached per-project for `_tokenTtlMs`. Returns undefined if no token secret is
  * configured, the secret is missing, or the key is absent.
+ *
+ * Only a NotFound is cached as a miss. A transient read failure (503 /
+ * temporary API error) is NOT cached — the reconcile cycle re-reads on the next
+ * pass so a flaky API server cannot silently disable PR-mode polling for the
+ * full TTL window.
  */
 export async function readProjectGithubToken(project: Project): Promise<string | undefined> {
   const cacheKey = `${project.metadata.namespace ?? NAMESPACE}/${project.metadata.name}`;
@@ -104,6 +109,13 @@ export async function readProjectGithubToken(project: Project): Promise<string |
         `[github-client] Failed to read token secret ${secretRef.name} for ${cacheKey}:`,
         (e as Error).message,
       );
+      if (!isNotFoundError(e)) {
+        // Transient failure (503, temporary Secret read error) — do not cache;
+        // the next reconcile cycle re-reads.
+        return undefined;
+      }
+      // Secret genuinely missing — cache as a miss so we stop hammering the
+      // API server for the TTL window (matches the "no secret configured" case).
       token = undefined;
     }
   }

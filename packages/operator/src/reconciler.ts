@@ -85,6 +85,16 @@ const networking = makeNodeApiClient(kc, NetworkingV1Api);
 // ---------------------------------------------------------------------------
 // Status writer
 
+/**
+ * Merge-patch a Run's status subresource.
+ *
+ * Rethrows on failure: the run worker's `runWorkerOnce` catch treats a thrown
+ * reconcile as a transient failure and re-enqueues the key after
+ * `ERROR_REQUEUE_DELAY_MS`, which is the retry path for a lost status patch
+ * (pod-phase mirror, missing-agent warning, terminal-Failed claim). Swallowing
+ * the error (the old behaviour) left the informer with nothing to re-fire and
+ * the status patch permanently lost (A11).
+ */
 async function patchStatus(run: Run, patch: RunStatus): Promise<void> {
   try {
     await co.patchNamespacedCustomObjectStatus(
@@ -100,6 +110,7 @@ async function patchStatus(run: Run, patch: RunStatus): Promise<void> {
     );
   } catch (e) {
     err(`patchStatus(${run.metadata.name}):`, errorMessage(e));
+    throw e;
   }
 }
 

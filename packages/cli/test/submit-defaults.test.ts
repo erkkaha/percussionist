@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from 'bun:test';
 import type { ProjectSpec } from '@percussionist/api';
-import { buildRunFromFlags } from '../src/submit.ts';
+import { buildRunFromFlags, parseTimeoutSeconds } from '../src/submit.ts';
 
 function makeOpts(overrides: Record<string, unknown> = {}) {
   return {
@@ -78,5 +78,52 @@ describe('buildRunFromFlags project defaults merge', () => {
     // RunSchema defaults apply for the defaulted fields.
     expect(run.spec.image).toBe('ghcr.io/erkkaha/percussionist/runner:latest');
     expect(run.spec.timeoutSeconds).toBe(3600);
+  });
+});
+
+// A9 — a non-numeric/zero/negative --timeout must fail loudly instead of
+// silently falling back to the project default (up to an hour).
+describe('parseTimeoutSeconds', () => {
+  it('accepts a positive numeric string', () => {
+    expect(parseTimeoutSeconds('120')).toBe(120);
+  });
+
+  it('accepts floats', () => {
+    expect(parseTimeoutSeconds('90.5')).toBe(90.5);
+  });
+
+  it('returns undefined when the flag is absent', () => {
+    expect(parseTimeoutSeconds(undefined)).toBeUndefined();
+    expect(parseTimeoutSeconds('')).toBeUndefined();
+  });
+
+  it('throws on a non-numeric value', () => {
+    expect(() => parseTimeoutSeconds('abc')).toThrow(/invalid --timeout value: abc/);
+  });
+
+  it('throws on zero and negative values', () => {
+    expect(() => parseTimeoutSeconds('0')).toThrow(/invalid --timeout value: 0/);
+    expect(() => parseTimeoutSeconds('-5')).toThrow(/invalid --timeout value: -5/);
+  });
+});
+
+describe('buildRunFromFlags --timeout validation', () => {
+  it('rejects a non-numeric --timeout instead of silently ignoring it', () => {
+    expect(() =>
+      buildRunFromFlags(makeOpts({ timeout: 'abc' }), { timeoutSeconds: 600 } as ProjectSpec),
+    ).toThrow(/invalid --timeout value: abc/);
+  });
+
+  it('rejects a zero --timeout', () => {
+    expect(() =>
+      buildRunFromFlags(makeOpts({ timeout: '0' }), { timeoutSeconds: 600 } as ProjectSpec),
+    ).toThrow(/invalid --timeout value: 0/);
+  });
+
+  it('still applies numeric explicit timeouts over project defaults', () => {
+    const run = buildRunFromFlags(makeOpts({ timeout: '120' }), {
+      timeoutSeconds: 600,
+    } as ProjectSpec);
+    expect(run.spec.timeoutSeconds).toBe(120);
   });
 });

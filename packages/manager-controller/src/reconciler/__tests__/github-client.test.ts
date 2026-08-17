@@ -1,10 +1,14 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import type { Project } from '@percussionist/api';
+import * as kube from '@percussionist/kube';
 import {
   __clearCache,
   __setFetchImpl,
   __setPollTtlMs,
+  __setTokenTtlMs,
   getPrState,
   parseGitHubUrl,
+  readProjectGithubToken,
 } from '../github-client.js';
 
 describe('parseGitHubUrl', () => {
@@ -158,5 +162,90 @@ describe('getPrState', () => {
     }) as typeof fetch);
     const state = await getPrState('erkkaha', 'percussionist', 42, 'fake-token');
     expect(state).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readProjectGithubToken — A7: transient Secret read failures must NOT be
+// cached as a token miss for the full TTL window (which silently disabled
+// PR-mode polling); only NotFound / absent-key are cached.
+//
+// The secret read goes through @percussionist/kube's core() singleton, which
+// is replaced per-test via spyOn (ESM live binding) — the same pattern the
+// worker-builder tests use for getClusterSettings.
+
+describe('readProjectGithubToken', () => {
+  function makeProject(secretRef?: { name: string; key?: string }): Project {
+    return {
+      apiVersion: 'percussionist.dev/v1alpha1',
+      kind: 'Project',
+      metadata: { name: 'proj', namespace: 'percussionist' },
+      spec: {
+        source: secretRef
+          ? { git: { url: 'https://github.com/acme/proj.git', githubTokenSecret: secretRef } }
+          : { local: true },
+      },
+    } as Project;
+  }
+
+  beforeEach(() => {
+    __clearCache();
+    __setTokenTtlMs(15 * 60 * 1000);
+  });
+
+  it('decodes the base64 token from the secret data', async () => {
+    const coreSpy = spyOn(kube, 'core').mockReturnValue({
+      readNamespacedSecret: async () => ({
+        data: { token: Buffer.from('ghp_abc123').toString('base64') },
+      }),
+    } as never);
+
+    expect(await readProjectGithubToken(makeProject({ name: 'gh-token' }))).toBe('ghp_abc123');
+    expect(coreSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not cache a transient read failure — the next call re-reads', async () => {
+    let reads = 0;
+    spyOn(kube, 'core').mockReturnValue({
+      readNamespacedSecret: async () => {
+        reads++;
+        throw Object.assign(new Error('upstream 503'), { statusCode: 503 });
+      },
+    } as never);
+
+    const project = makeProject({ name: 'gh-token' });
+    expect(await readProjectGithubToken(project)).toBeUndefined();
+    expect(await readProjectGithubToken(project)).toBeUndefined();
+    expect(reads).toBe(2); // second call was NOT served from cache
+  });
+
+  it('caches a NotFound as a miss for the TTL window', async () => {
+    let reads = 0;
+    spyOn(kube, 'core').mockReturnValue({
+      readNamespacedSecret: async () => {
+        reads++;
+        throw Object.assign(new Error('not found'), { statusCode: 404 });
+      },
+    } as never);
+
+    const project = makeProject({ name: 'gh-token' });
+    expect(await readProjectGithubToken(project)).toBeUndefined();
+    expect(await readProjectGithubToken(project)).toBeUndefined();
+    expect(reads).toBe(1); // second call served from the cached miss
+  });
+
+  it('caches the miss when the secret exists but the key is absent', async () => {
+    let reads = 0;
+    spyOn(kube, 'core').mockReturnValue({
+      readNamespacedSecret: async () => {
+        reads++;
+        return { data: { other: 'value' } };
+      },
+    } as never);
+
+    const project = makeProject({ name: 'gh-token' });
+    expect(await readProjectGithubToken(project)).toBeUndefined();
+    expect(await readProjectGithubToken(project)).toBeUndefined();
+    expect(reads).toBe(1);
   });
 });

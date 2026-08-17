@@ -489,8 +489,8 @@ pnpm bundle
 | `beatctl cancel <name>` | Delete the run and all owned resources. |
 | `beatctl board get <project>` | Show the board state (columns, workers, escalations) for an Project. |
 | `beatctl board task add <project> --title "Task title" --agent <agent>` | Add a task to the project's board. |
-| `beatctl board task move <project> --task-name <task-name> --to <phase>` | Move a task between phases. |
-| `beatctl board task remove <project> --task-name <task-name>` | Remove a task from the board (spec + status). |
+| `beatctl board task move --task-name <task-name> --to <phase>` | Move a task between phases (Task CR names are unique within a namespace; no `<project>` positional). |
+| `beatctl board task remove --task-name <task-name>` | Remove a task from the board (spec + status). |
 | `beatctl project list` / `get` / `create` / `delete` | Manage Project templates. |
 | `beatctl agent list` / `get` / `create` / `delete` | Manage ClusterAgent resources (cluster-scoped). |
 

@@ -153,7 +153,7 @@ program
   .alias('list')
   .description('list Runs in a namespace')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
-  .option('-A, --all-namespaces', 'not yet implemented')
+  .option('-A, --all-namespaces', 'list Runs across all namespaces')
   .action(runLs);
 
 // get -----------------------------------------------------------------------
@@ -526,17 +526,17 @@ boardTask
   });
 
 boardTask
-  .command('move <project>')
+  .command('move')
   .description('move a task between phases (validated against the transition table)')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
   .option('--task-name <name>', 'task CR name to move')
   .option('--to <phase>', 'target phase name (required)')
-  .action((projectName: string, opts) => {
+  .action((opts) => {
     if (!opts.taskName || !opts.to) {
       console.error('beatctl: --task-name and --to are required');
       process.exit(1);
     }
-    runBoardTaskMove(projectName, {
+    runBoardTaskMove({
       namespace: opts.namespace,
       taskName: opts.taskName,
       to: opts.to as TaskPhase,
@@ -544,49 +544,49 @@ boardTask
   });
 
 boardTask
-  .command('remove <project>')
+  .command('remove')
   .description('remove a task from the board')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
   .option('--task-name <name>', 'task CR name to remove (required)')
-  .action((projectName: string, opts) => {
+  .action((opts) => {
     if (!opts.taskName) {
       console.error('beatctl: --task-name is required');
       process.exit(1);
     }
-    runBoardTaskRemove(projectName, {
+    runBoardTaskRemove({
       namespace: opts.namespace,
       taskName: opts.taskName,
     });
   });
 
 boardTask
-  .command('approve <project>')
+  .command('approve')
   .description('approve a task parked in awaiting-human')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
   .option('--task-name <name>', 'task CR name to approve (required)')
-  .action((projectName: string, opts) => {
+  .action((opts) => {
     if (!opts.taskName) {
       console.error('beatctl: --task-name is required');
       process.exit(1);
     }
-    runBoardTaskApprove(projectName, {
+    runBoardTaskApprove({
       namespace: opts.namespace,
       taskName: opts.taskName,
     });
   });
 
 boardTask
-  .command('request-changes <project>')
+  .command('request-changes')
   .description('send a task parked in awaiting-human back for rework')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
   .option('--task-name <name>', 'task CR name to rework (required)')
   .option('--feedback <text>', 'what needs to change — becomes the rework brief (required)')
-  .action((projectName: string, opts) => {
+  .action((opts) => {
     if (!opts.taskName || !opts.feedback) {
       console.error('beatctl: --task-name and --feedback are required');
       process.exit(1);
     }
-    runBoardTaskRequestChanges(projectName, {
+    runBoardTaskRequestChanges({
       namespace: opts.namespace,
       taskName: opts.taskName,
       feedback: opts.feedback,
@@ -594,17 +594,17 @@ boardTask
   });
 
 boardTask
-  .command('retry <project>')
+  .command('retry')
   .description('recover a failed task (re-run it, or send it straight to review)')
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
   .option('--task-name <name>', 'task CR name to retry (required)')
   .option('--review', 'the work already landed — go to human review instead of re-running')
-  .action((projectName: string, opts) => {
+  .action((opts) => {
     if (!opts.taskName) {
       console.error('beatctl: --task-name is required');
       process.exit(1);
     }
-    runBoardTaskRetry(projectName, {
+    runBoardTaskRetry({
       namespace: opts.namespace,
       taskName: opts.taskName,
       review: opts.review,

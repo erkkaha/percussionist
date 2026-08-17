@@ -28,8 +28,14 @@ import { setGloballyLocked } from './usage-lock-state';
 
 const BASE = '/api';
 
-async function fetchJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
+/**
+ * Shared response handling for every API call: 401 → bounce to /login, 423 →
+ * surface the global usage lock, any other non-OK status → throw the server's
+ * error message. Mutating helpers must go through this too (via requestJSON /
+ * requestVoid) so the daily usage lock and session expiry surface on every page,
+ * not just the read-only fetchJSON callers.
+ */
+async function handleResponse(res: Response): Promise<Response> {
   if (res.status === 401) {
     // The session cookie is gone or expired; the server has already cleared it.
     window.location.href = '/login';
@@ -44,7 +50,35 @@ async function fetchJSON<T>(path: string): Promise<T> {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
+  return res;
+}
+
+async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: {
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...authHeaders(),
+      ...(init?.headers as Record<string, string> | undefined),
+    },
+  });
+  return handleResponse(res);
+}
+
+async function fetchJSON<T>(path: string): Promise<T> {
+  const res = await apiFetch(path);
   return res.json() as Promise<T>;
+}
+
+/** Mutating helper returning a JSON body. */
+async function requestJSON<T>(path: string, init: RequestInit): Promise<T> {
+  const res = await apiFetch(path, init);
+  return res.json() as Promise<T>;
+}
+
+/** Mutating helper whose response body is not parsed (may be 204). */
+async function requestVoid(path: string, init?: RequestInit): Promise<void> {
+  await apiFetch(path, init);
 }
 
 export async function fetchRuns(): Promise<Run[]> {
@@ -134,41 +168,23 @@ export async function fetchTaskDiff(project: string, taskName: string): Promise<
 }
 
 export async function submitRun(req: CreateRunRequest): Promise<Run> {
-  const res = await fetch(`${BASE}/runs`, {
+  return requestJSON<Run>('/runs', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(req),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as Run;
 }
 
 export async function deleteRun(name: string): Promise<void> {
-  const res = await fetch(`${BASE}/runs/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-    headers: authHeaders(),
-  });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
+  await requestVoid(`/runs/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
 // Forward a human reply into a run's opencode session. Used by the board
 // answer flow to resume a run parked on WaitingForInput.
 export async function replyToRun(runName: string, message: string): Promise<void> {
-  const res = await fetch(`${BASE}/runs/${encodeURIComponent(runName)}/reply`, {
+  await requestVoid(`/runs/${encodeURIComponent(runName)}/reply`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ message }),
   });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -184,27 +200,14 @@ export async function fetchProject(name: string): Promise<ProjectDetail> {
 }
 
 export async function submitProject(req: CreateProjectRequest): Promise<Project> {
-  const res = await fetch(`${BASE}/projects`, {
+  return requestJSON<Project>('/projects', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(req),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as Project;
 }
 
 export async function deleteProject(name: string): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-    headers: authHeaders(),
-  });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
+  await requestVoid(`/projects/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
 export async function fetchProjectConfig(name: string): Promise<string> {
@@ -216,16 +219,10 @@ export async function fetchDefaultConfig(): Promise<string> {
 }
 
 export async function updateProject(name: string, req: CreateProjectRequest): Promise<Project> {
-  const res = await fetch(`${BASE}/projects/${encodeURIComponent(name)}`, {
+  return requestJSON<Project>(`/projects/${encodeURIComponent(name)}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(req),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as Project;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,40 +247,21 @@ export async function fetchAgent(name: string): Promise<ClusterAgent> {
 }
 
 export async function submitAgent(req: CreateAgentRequest): Promise<ClusterAgent> {
-  const res = await fetch(`${BASE}/agents`, {
+  return requestJSON<ClusterAgent>('/agents', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(req),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as ClusterAgent;
 }
 
 export async function updateAgent(name: string, req: CreateAgentRequest): Promise<ClusterAgent> {
-  const res = await fetch(`${BASE}/agents/${encodeURIComponent(name)}`, {
+  return requestJSON<ClusterAgent>(`/agents/${encodeURIComponent(name)}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(req),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as ClusterAgent;
 }
 
 export async function deleteAgent(name: string): Promise<void> {
-  const res = await fetch(`${BASE}/agents/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-    headers: authHeaders(),
-  });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
+  await requestVoid(`/agents/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
 // ---------------------------------------------------------------------------
@@ -318,84 +296,55 @@ export async function addBoardTask(
     column?: string;
   },
 ): Promise<{ task: Task }> {
-  const res = await fetch(`${BASE}/projects/${encodeURIComponent(project)}/board/tasks`, {
+  return requestJSON<{ task: Task }>(`/projects/${encodeURIComponent(project)}/board/tasks`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(task),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as { task: Task };
 }
 
 export async function deleteBoardTask(project: string, taskName: string): Promise<void> {
-  const res = await fetch(
+  await requestVoid(
     `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}`,
-    { method: 'DELETE', headers: authHeaders() },
+    { method: 'DELETE' },
   );
-  if (!res.ok && res.status !== 204) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
 }
 
 export async function retryEscalatedTask(project: string, taskName: string): Promise<void> {
   // Move the task back to ready via the board task move endpoint.
-  const res = await fetch(
-    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/move`,
+  await requestVoid(
+    `/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/move`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ column: 'ready' }),
     },
   );
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
 }
 
 export async function moveTask(project: string, taskName: string, column: string): Promise<void> {
-  const res = await fetch(
-    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/move`,
+  await requestVoid(
+    `/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/move`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ column }),
     },
   );
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
 }
 
 export async function patchBoardSpec(
   project: string,
   patch: Record<string, unknown>,
 ): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${encodeURIComponent(project)}/board/spec`, {
+  await requestVoid(`/projects/${encodeURIComponent(project)}/board/spec`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(patch),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
 }
 
 export async function approveTask(project: string, taskId: string): Promise<void> {
-  const res = await fetch(
-    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskId)}/approve`,
-    { method: 'POST', headers: authHeaders() },
+  await requestVoid(
+    `/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskId)}/approve`,
+    { method: 'POST' },
   );
-  if (!res.ok && res.status !== 204) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
 }
 
 export async function requestChangesTask(
@@ -403,47 +352,33 @@ export async function requestChangesTask(
   taskId: string,
   comment: string,
 ): Promise<void> {
-  const res = await fetch(
-    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskId)}/request-changes`,
+  await requestVoid(
+    `/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskId)}/request-changes`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ feedback: comment }),
     },
   );
-  if (!res.ok && res.status !== 204) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
 }
 
 export async function retryReviewTask(project: string, taskName: string): Promise<void> {
-  const res = await fetch(
-    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/retry-review`,
-    { method: 'POST', headers: authHeaders() },
+  await requestVoid(
+    `/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/retry-review`,
+    { method: 'POST' },
   );
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
 }
 
 // Write the percussionist.dev/action-answer annotation the reconciler consumes
 // (decideWaitingForInput) to resume a task parked on WaitingForInput. Call
 // replyToRun first so the agent actually sees the human's answer.
 export async function answerTask(project: string, taskName: string, answer: string): Promise<void> {
-  const res = await fetch(
-    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/answer`,
+  await requestVoid(
+    `/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/answer`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ answer }),
     },
   );
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -454,16 +389,10 @@ export async function fetchSettings(): Promise<ClusterSettings> {
 }
 
 export async function saveSettings(spec: Record<string, unknown>): Promise<ClusterSettings> {
-  const res = await fetch(`${BASE}/settings`, {
+  return requestJSON<ClusterSettings>('/settings', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ spec }),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as ClusterSettings;
 }
 
 export async function fetchOpencodeConfig(): Promise<string> {
@@ -475,38 +404,21 @@ export async function listSecrets(): Promise<{ items: Array<{ name: string; keys
 }
 
 export async function createSecret(name: string, data: Record<string, string>): Promise<void> {
-  const res = await fetch(`${BASE}/settings/secrets`, {
+  await requestVoid('/settings/secrets', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ name, data }),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
 }
 
 export async function updateSecret(name: string, data: Record<string, string>): Promise<void> {
-  const res = await fetch(`${BASE}/settings/secrets/${encodeURIComponent(name)}`, {
+  await requestVoid(`/settings/secrets/${encodeURIComponent(name)}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ data }),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
 }
 
 export async function deleteSecret(name: string): Promise<void> {
-  const res = await fetch(`${BASE}/settings/secrets/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-    headers: authHeaders(),
-  });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
+  await requestVoid(`/settings/secrets/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
 /** See UpgradeMode in server/routes/upgrade.ts. */
@@ -547,16 +459,10 @@ export interface UpgradeResult {
 }
 
 export async function postUpgradeApply(targetTag: string): Promise<UpgradeResult> {
-  const res = await fetch(`${BASE}/upgrade/apply`, {
+  return requestJSON<UpgradeResult>('/upgrade/apply', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ targetTag }),
   });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<UpgradeResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -624,16 +530,10 @@ export async function createProjectMemory(
   project: string,
   req: CreateMemoryRequest,
 ): Promise<CreateMemoryResponse> {
-  const res = await fetch(`${BASE}/projects/${encodeURIComponent(project)}/memories`, {
+  return requestJSON<CreateMemoryResponse>(`/projects/${encodeURIComponent(project)}/memories`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(req),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as CreateMemoryResponse;
 }
 
 export async function updateProjectMemory(
@@ -641,32 +541,21 @@ export async function updateProjectMemory(
   id: string,
   req: UpdateMemoryRequest,
 ): Promise<ProjectMemory> {
-  const res = await fetch(
-    `${BASE}/projects/${encodeURIComponent(project)}/memories/${encodeURIComponent(id)}`,
+  return requestJSON<ProjectMemory>(
+    `/projects/${encodeURIComponent(project)}/memories/${encodeURIComponent(id)}`,
     {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(req),
     },
   );
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return body as ProjectMemory;
 }
 
 export async function deleteProjectMemory(
   project: string,
   id: string,
 ): Promise<DeleteMemoryResponse> {
-  const res = await fetch(
-    `${BASE}/projects/${encodeURIComponent(project)}/memories/${encodeURIComponent(id)}`,
-    { method: 'DELETE', headers: authHeaders() },
-  );
-  if (!res.ok && res.status !== 204) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
+  await requestVoid(`/projects/${encodeURIComponent(project)}/memories/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
   return { deleted: true };
 }

@@ -417,14 +417,20 @@ describe('renderIdeIngress', () => {
 });
 
 describe('ideURLFor', () => {
-  it('builds the http://ide-<project>.<host> URL a browser can reach', () => {
+  it('builds the https://ide-<project>.<host> URL (A15) when the base URL is https', () => {
     // The port is part of the URL host, so it is carried through to the IDE URL.
-    expect(ideURLFor(makeProject(), BASE_URL)).toBe('http://ide-test-project.example.com:30443');
+    expect(ideURLFor(makeProject(), BASE_URL)).toBe('https://ide-test-project.example.com:30443');
   });
 
-  it('keeps the host (with port) from the base URL but never the scheme', () => {
+  it('keeps the scheme from the base URL — https stays https, http stays http', () => {
     expect(ideURLFor(makeProject(), 'https://cluster.example.com:30443')).toBe(
+      'https://ide-test-project.cluster.example.com:30443',
+    );
+    expect(ideURLFor(makeProject(), 'http://cluster.example.com:30443')).toBe(
       'http://ide-test-project.cluster.example.com:30443',
+    );
+    expect(ideURLFor(makeProject(), 'http://k8s.example.internal:8080')).toBe(
+      'http://ide-test-project.k8s.example.internal:8080',
     );
   });
 });

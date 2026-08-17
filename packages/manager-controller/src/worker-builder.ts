@@ -45,9 +45,18 @@ export async function resolveAgentModel(
   try {
     const agent = await getClusterAgentFn(agentName);
     return agent.spec.model || undefined;
-  } catch {
-    // Agent CR not found or inaccessible — fall back to project/cluster defaults.
-    return undefined;
+  } catch (e) {
+    if (isKubeNotFoundError(e)) {
+      // Agent CR not found — fall back to project/cluster defaults.
+      return undefined;
+    }
+    // Any other failure (503, API error) is not a "no model" signal — surface
+    // it so the run does not silently execute under an unintended model (A14).
+    console.error(
+      `[worker-builder] resolveAgentModel: ClusterAgent lookup for "${agentName}" failed status=${getErrorStatusCode(e) ?? 'unknown'}`,
+      e,
+    );
+    throw e;
   }
 }
 
@@ -230,25 +239,28 @@ export async function buildWorkerRun(
     );
   }
 
-  // Unrelated-issue reporting prompt — only for BUILD and PLAN runs, not merge.
-  if (task.spec.type !== 'BUILD' || !task.spec.description?.toLowerCase().includes('merge')) {
-    promptLines.push(
-      'UNRELATED ISSUES:',
-      '- Your job is the TASK above. Stay on it.',
-      '- If, while working, you notice a SEPARATE problem unrelated to your task — a security hole,',
-      '  a real bug, a performance trap, or notable tech debt — report it ONCE with the',
-      '  `percussionist_dispatcher_report_unrelated_issue` tool, then continue your task.',
-      '  Do not investigate it further.',
-      '- Provide: a one-line title, a short description (what is wrong + why it matters +',
-      '  suggested fix), severity (low/medium/high/critical), category',
-      '  (bug/security/performance/debt/docs/other), and filePath/snippet when you have them.',
-      '- Do NOT report: style nits, things already covered by your task, speculative',
-      '  "could be better" ideas, or anything you are not fairly confident about.',
-      '- One finding per distinct issue. The manager de-duplicates, so do not worry about',
-      '  repeats — but do not spam.',
-      '',
-    );
-  }
+  // Unrelated-issue reporting prompt. Once included unconditionally: the old
+  // guard (`task.spec.type !== 'BUILD' || !description.includes('merge')`) was
+  // aimed at merge runs, but merge runs are built by buildMergeRun (which never
+  // calls buildWorkerRun), so it could never fire for them — it only suppressed
+  // the block for BUILD tasks whose description happened to mention "merge"
+  // (A13). Include it for every worker run.
+  promptLines.push(
+    'UNRELATED ISSUES:',
+    '- Your job is the TASK above. Stay on it.',
+    '- If, while working, you notice a SEPARATE problem unrelated to your task — a security hole,',
+    '  a real bug, a performance trap, or notable tech debt — report it ONCE with the',
+    '  `percussionist_dispatcher_report_unrelated_issue` tool, then continue your task.',
+    '  Do not investigate it further.',
+    '- Provide: a one-line title, a short description (what is wrong + why it matters +',
+    '  suggested fix), severity (low/medium/high/critical), category',
+    '  (bug/security/performance/debt/docs/other), and filePath/snippet when you have them.',
+    '- Do NOT report: style nits, things already covered by your task, speculative',
+    '  "could be better" ideas, or anything you are not fairly confident about.',
+    '- One finding per distinct issue. The manager de-duplicates, so do not worry about',
+    '  repeats — but do not spam.',
+    '',
+  );
 
   // Feature branching: override git ref with task's branch.
   if (project.spec.featureBranchingEnabled && resolved.source?.git) {

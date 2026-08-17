@@ -9,7 +9,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { CoreV1Api } from '@kubernetes/client-node';
 import { authJsonPath, runAuthImport, summarise, upsertSecret } from '../src/auth.ts';
-import { patchWebAuthSecret, runGithubAllow } from '../src/auth-keys.ts';
+import {
+  assertRotatableComponent,
+  patchWebAuthSecret,
+  runAuthKeyRotate,
+  runGithubAllow,
+} from '../src/auth-keys.ts';
 import { pollForToken } from '../src/auth-login.ts';
 import { clearSession, readSession, writeSession } from '../src/web-client.ts';
 
@@ -462,6 +467,32 @@ describe('patchWebAuthSecret', () => {
     } finally {
       exitSpy.mockRestore();
     }
+  });
+
+  // E item — `auth key rotate <component>` interpolates the component into the
+  // web API path and a printed kubectl command; arbitrary input must be
+  // rejected up front instead of echoed into a shell command.
+  describe('auth key rotate component whitelist', () => {
+    it('accepts the standing components the web server knows', () => {
+      expect(() => assertRotatableComponent('operator')).not.toThrow();
+      expect(() => assertRotatableComponent('manager')).not.toThrow();
+    });
+
+    it('rejects anything outside the whitelist', () => {
+      expect(() => assertRotatableComponent('web')).toThrow(/unknown component 'web'/);
+      expect(() => assertRotatableComponent('; rm -rf /')).toThrow(
+        /unknown component '; rm -rf \/'/,
+      );
+    });
+
+    it('runAuthKeyRotate rejects before any network call for an unknown component', async () => {
+      const fetchSpy = spyOn(globalThis, 'fetch');
+      await expect(runAuthKeyRotate('$(whoami)', { namespace: 'ns' })).rejects.toThrow(
+        /unknown component/,
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
   });
 });
 

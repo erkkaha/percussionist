@@ -95,7 +95,24 @@ export interface AuthKeyRotateOpts {
   namespace?: string;
 }
 
+/**
+ * Components permitted for `auth key rotate` — mirrors the web server's
+ * COMPONENTS table (operator + manager standing keys). The component is
+ * interpolated into both the web API path AND the printed kubectl rollout
+ * command, so arbitrary input must be rejected rather than echoed (E item).
+ */
+const ROTATE_COMPONENT_WHITELIST = ['operator', 'manager'];
+
+export function assertRotatableComponent(component: string): void {
+  if (!ROTATE_COMPONENT_WHITELIST.includes(component)) {
+    throw new Error(
+      `unknown component '${component}'. Known: ${ROTATE_COMPONENT_WHITELIST.join(', ')}`,
+    );
+  }
+}
+
 export async function runAuthKeyRotate(component: string, opts: AuthKeyRotateOpts): Promise<void> {
+  assertRotatableComponent(component);
   await withWebApi(opts.namespace, async (baseUrl) => {
     try {
       const body = await webRequest<{ secret: string; message: string }>(

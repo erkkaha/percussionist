@@ -6,12 +6,17 @@
 // Subcommands:
 //   get <project>                  — show board state (columns, workers, escalations)
 //   task add <project>             — create a new Task CR
-//   task move <project>            — patch task status.phase (validated against the transition table)
-//   task remove <project>          — delete the Task CR
-//   task approve <project>         — approve an awaiting-human task
-//   task request-changes <project> — send an awaiting-human task back for rework
-//   task retry <project>           — recover a failed task
+//   task move                      — patch task status.phase (validated against the transition table)
+//   task remove                    — delete the Task CR
+//   task approve                   — approve an awaiting-human task
+//   task request-changes           — send an awaiting-human task back for rework
+//   task retry                     — recover a failed task
 //   plan <project>                 — read a PLAN artifact from the plans ConfigMap
+//
+// `move`/`remove`/`approve`/`request-changes`/`retry` are addressed by
+// --task-name only: Task CR names are unique within a namespace, so no
+// `<project>` positional is needed (one used to be accepted and silently
+// ignored).
 
 import {
   BoardColumn,
@@ -235,12 +240,8 @@ export function resolveTaskMove(
   return { ok: true, patch: { phase: to } };
 }
 
-export async function runBoardTaskMove(
-  projectName: string,
-  opts: BoardTaskMoveOpts,
-): Promise<void> {
+export async function runBoardTaskMove(opts: BoardTaskMoveOpts): Promise<void> {
   const ns = opts.namespace ?? NAMESPACE;
-  void projectName;
 
   let task: Task;
   try {
@@ -275,14 +276,8 @@ export interface BoardTaskRemoveOpts {
   taskName: string;
 }
 
-export async function runBoardTaskRemove(
-  projectName: string,
-  opts: BoardTaskRemoveOpts,
-): Promise<void> {
+export async function runBoardTaskRemove(opts: BoardTaskRemoveOpts): Promise<void> {
   const ns = opts.namespace ?? NAMESPACE;
-  const { custom } = loadFromKubeconfig();
-  void projectName;
-  void custom;
 
   try {
     await deleteTask(opts.taskName, ns);
@@ -553,12 +548,8 @@ export interface BoardTaskApproveOpts {
   taskName: string;
 }
 
-export async function runBoardTaskApprove(
-  projectName: string,
-  opts: BoardTaskApproveOpts,
-): Promise<void> {
+export async function runBoardTaskApprove(opts: BoardTaskApproveOpts): Promise<void> {
   const ns = opts.namespace ?? NAMESPACE;
-  void projectName;
 
   const task = await requireAwaitingHuman(opts.taskName, ns, 'approve');
   if (!task) return;
@@ -593,12 +584,8 @@ export interface BoardTaskRetryOpts {
   review?: boolean;
 }
 
-export async function runBoardTaskRetry(
-  projectName: string,
-  opts: BoardTaskRetryOpts,
-): Promise<void> {
+export async function runBoardTaskRetry(opts: BoardTaskRetryOpts): Promise<void> {
   const ns = opts.namespace ?? NAMESPACE;
-  void projectName;
 
   let task: Task;
   try {
@@ -636,12 +623,8 @@ export interface BoardTaskRequestChangesOpts {
   feedback: string;
 }
 
-export async function runBoardTaskRequestChanges(
-  projectName: string,
-  opts: BoardTaskRequestChangesOpts,
-): Promise<void> {
+export async function runBoardTaskRequestChanges(opts: BoardTaskRequestChangesOpts): Promise<void> {
   const ns = opts.namespace ?? NAMESPACE;
-  void projectName;
 
   const feedback = opts.feedback.trim();
   if (!feedback) {

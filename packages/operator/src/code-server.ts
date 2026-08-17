@@ -643,7 +643,11 @@ export function ideIngressName(project: Project): string {
 
 export function ideURLFor(project: Project, baseUrl: string = INGRESS_BASE_URL): string {
   const url = new URL(baseUrl);
-  return `http://ide-${project.metadata.name}.${url.host}`;
+  // Keep the base URL's scheme (https when the ingress is TLS-terminated) so
+  // the surfaced link is actually reachable — a hardcoded http:// pointed at an
+  // https-only ingress and produced a broken link (A15).
+  const scheme = url.protocol === 'https:' ? 'https' : 'http';
+  return `${scheme}://ide-${project.metadata.name}.${url.host}`;
 }
 
 /**
