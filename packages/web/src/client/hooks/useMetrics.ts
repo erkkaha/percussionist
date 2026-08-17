@@ -47,7 +47,9 @@ export interface NodeMetricRow {
   } | null;
 }
 
-function parseCpu(raw: string): number {
+// Exported for unit tests — the unit-conversion bugs here are silent and
+// visually plausible, so the conversions are pinned directly (C9).
+export function parseCpu(raw: string): number {
   const n = parseInt(raw, 10);
   if (raw.endsWith('n')) return Math.round(n / 1_000_000);
   if (raw.endsWith('u')) return Math.round(n / 1_000);
@@ -55,7 +57,7 @@ function parseCpu(raw: string): number {
   return n * 1000;
 }
 
-function parseMemory(raw: string): number {
+export function parseMemory(raw: string): number {
   const n = parseInt(raw, 10);
   if (raw.endsWith('Ki')) return n * 1024;
   if (raw.endsWith('Mi')) return n * 1024 * 1024;

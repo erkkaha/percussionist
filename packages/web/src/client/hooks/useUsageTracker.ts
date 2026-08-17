@@ -47,13 +47,19 @@ export function parseRouteUsage(path: string): RouteUsage {
 
   return { category: 'other' };
 }
+// Collect stale keys first, then remove — removing while iterating by index
+// shifts the remaining keys and skips one (visible with 2+ stale day keys).
 function cleanupOldKeys() {
   const todayKey = getTodayKey();
+  const staleKeys: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
     if (key?.startsWith(STORAGE_PREFIX) && key !== todayKey && !key.endsWith('-settings')) {
-      localStorage.removeItem(key);
+      staleKeys.push(key);
     }
+  }
+  for (const key of staleKeys) {
+    localStorage.removeItem(key);
   }
 }
 
