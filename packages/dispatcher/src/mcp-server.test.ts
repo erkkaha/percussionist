@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import { __test } from './mcp-server.js';
 
 type CompletionAuthorization = {
@@ -17,9 +17,9 @@ const okAuth = (overrides: Partial<CompletionAuthorization> = {}): CompletionAut
   ...overrides,
 });
 
-async function callMcp(
+async function callMcpWithAuth(
   req: Record<string, unknown>,
-  completionAuth: CompletionAuthorization,
+  getCompletionAuth: () => Promise<CompletionAuthorization>,
 ): Promise<Record<string, unknown>> {
   const failCalls: string[] = [];
   const completeCalls: string[] = [];
@@ -31,11 +31,18 @@ async function callMcp(
     (summary) => completeCalls.push(summary),
     (summary) => planCalls.push(summary),
     () => ({ phase: 'Running' }),
-    async () => completionAuth,
+    getCompletionAuth,
   )) as Record<string, unknown>;
 
   response.__calls = { failCalls, completeCalls, planCalls };
   return response;
+}
+
+async function callMcp(
+  req: Record<string, unknown>,
+  completionAuth: CompletionAuthorization,
+): Promise<Record<string, unknown>> {
+  return callMcpWithAuth(req, async () => completionAuth);
 }
 
 describe('dispatcher completion-tool gating', () => {
@@ -134,5 +141,193 @@ describe('dispatcher completion-tool gating', () => {
     expect((response.error as { message: string }).message).toContain(
       'missing required capability',
     );
+  });
+});
+
+describe('createCompletionAuthCache retry semantics', () => {
+  it('clears the cache on rejection so the next call re-resolves, then caches success', async () => {
+    let calls = 0;
+    const get = __test.createCompletionAuthCache(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('transient blip');
+      return okAuth();
+    });
+
+    await expect(get()).rejects.toThrow('transient blip');
+    expect(calls).toBe(1);
+
+    const first = await get();
+    expect(first.allowed).toBe(true);
+    expect(calls).toBe(2);
+
+    const second = await get();
+    expect(second.allowed).toBe(true);
+    expect(calls).toBe(2); // success cached — resolve did not run again
+  });
+
+  it('caches an allowed:true outcome (resolve runs once)', async () => {
+    let calls = 0;
+    const get = __test.createCompletionAuthCache(async () => {
+      calls += 1;
+      return okAuth();
+    });
+    await get();
+    await get();
+    await get();
+    expect(calls).toBe(1);
+  });
+
+  it('caches a capability-denial outcome (resolve runs once)', async () => {
+    let calls = 0;
+    const get = __test.createCompletionAuthCache(async () => {
+      calls += 1;
+      return okAuth({ allowed: false, denialReason: 'missing required capability' });
+    });
+    await get();
+    await get();
+    expect(calls).toBe(1);
+  });
+
+  it('caches a RUN_AGENT-missing denial (resolve runs once)', async () => {
+    let calls = 0;
+    const get = __test.createCompletionAuthCache(async () => {
+      calls += 1;
+      return okAuth({ allowed: false, denialReason: 'RUN_AGENT not set' });
+    });
+    await get();
+    await get();
+    expect(calls).toBe(1);
+  });
+
+  it('clears the cache on TransientAuthError (same as any rejection)', async () => {
+    let calls = 0;
+    const get = __test.createCompletionAuthCache(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new __test.TransientAuthError('failed to resolve cluster agent "builder": boom');
+      }
+      return okAuth();
+    });
+
+    await expect(get()).rejects.toBeInstanceOf(__test.TransientAuthError);
+    expect(calls).toBe(1);
+
+    const auth = await get();
+    expect(auth.allowed).toBe(true);
+    expect(calls).toBe(2); // cache was cleared — lookup retried
+  });
+});
+
+describe('handleMcp graceful degradation on transient auth failure', () => {
+  const throwingAuth = async (): Promise<CompletionAuthorization> => {
+    throw new __test.TransientAuthError('failed to resolve cluster agent "builder": boom');
+  };
+
+  it('tools/list resolves with completion tools included optimistically (no rejection)', async () => {
+    const list = await callMcpWithAuth(
+      { jsonrpc: '2.0', id: 20, method: 'tools/list' },
+      throwingAuth,
+    );
+    expect(list.error).toBeUndefined();
+    const tools = ((list.result as { tools: Array<{ name: string }> }).tools ?? []).map(
+      (t) => t.name,
+    );
+    expect(tools).toContain('complete_run');
+    expect(tools).toContain('complete_plan');
+    expect(tools).toContain('complete_review');
+    expect(tools).toContain('complete_merge');
+    expect(tools).toContain('fail_run');
+  });
+
+  it('tools/call complete_run returns -32000 with "transiently", not "not allowed"', async () => {
+    const response = await callMcpWithAuth(
+      {
+        jsonrpc: '2.0',
+        id: 21,
+        method: 'tools/call',
+        params: { name: 'complete_run', arguments: { summary: 'done' } },
+      },
+      throwingAuth,
+    );
+    expect((response.error as { code: number }).code).toBe(-32000);
+    const message = (response.error as { message: string }).message;
+    expect(message).toContain('transiently');
+    expect(message).toContain('please retry');
+    expect(message).not.toContain('not allowed');
+    const calls = response.__calls as {
+      failCalls: string[];
+      completeCalls: string[];
+      planCalls: string[];
+    };
+    expect(calls.completeCalls.length).toBe(0);
+  });
+
+  it('tools/list with a definitive denial hides completion tools (existing behavior preserved)', async () => {
+    const denied = await callMcp(
+      { jsonrpc: '2.0', id: 22, method: 'tools/list' },
+      okAuth({ allowed: false, denialReason: 'missing capability' }),
+    );
+    const tools = ((denied.result as { tools: Array<{ name: string }> }).tools ?? []).map(
+      (t) => t.name,
+    );
+    expect(tools).not.toContain('complete_run');
+    expect(tools).not.toContain('complete_plan');
+    expect(tools).not.toContain('complete_review');
+    expect(tools).not.toContain('complete_merge');
+    expect(tools).toContain('fail_run');
+  });
+});
+
+describe('handleSearchCode structured errors', () => {
+  it('invalid regex returns a structured result containing "search failed" (no rejection)', async () => {
+    const response = await callMcp(
+      {
+        jsonrpc: '2.0',
+        id: 30,
+        method: 'tools/call',
+        params: { name: 'search_code', arguments: { query: '[' } },
+      },
+      okAuth(),
+    );
+    expect(response.error).toBeUndefined();
+    const content = (response.result as { content: Array<{ type: string; text: string }> }).content;
+    const parsed = JSON.parse(content[0]?.text ?? '{}') as Record<string, unknown>;
+    expect(parsed.error).toBe('search failed');
+    expect(parsed.query).toBe('[');
+    expect(parsed.detail).toBeTruthy();
+  });
+});
+
+describe('dispatchNotification swallows handler rejections', () => {
+  it('a rejecting notification handler is caught and logged (no unhandled rejection)', async () => {
+    const spy = spyOn(console, 'error').mockImplementation(() => {});
+    const getCompletionAuth = async (): Promise<never> => {
+      throw new Error('plain unexpected failure');
+    };
+
+    // Notifications have no id; the handler must never reject unhandled.
+    let returned = false;
+    __test.dispatchNotification(
+      {
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        params: { name: 'complete_run', arguments: { summary: 'x' } },
+      } as never,
+      () => {},
+      () => {},
+      () => {},
+      () => ({ phase: 'Running' }),
+      getCompletionAuth,
+    );
+    returned = true;
+    expect(returned).toBe(true);
+
+    // Give the async rejection a chance to surface.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining('notification handler failed'),
+      'plain unexpected failure',
+    );
+    spy.mockRestore();
   });
 });

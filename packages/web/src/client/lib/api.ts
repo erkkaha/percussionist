@@ -347,6 +347,20 @@ export async function approveTask(project: string, taskId: string): Promise<void
   );
 }
 
+// Write the percussionist.dev/action-abandon annotation the reconciler consumes
+// (decideWaitingForInput / decideAwaitingHuman) to exit a task parked on
+// waiting-for-input or awaiting-human by moving it to done.
+export async function abandonTask(project: string, taskName: string): Promise<void> {
+  const res = await fetch(
+    `${BASE}/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/abandon`,
+    { method: 'POST', headers: authHeaders() },
+  );
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
 export async function requestChangesTask(
   project: string,
   taskId: string,

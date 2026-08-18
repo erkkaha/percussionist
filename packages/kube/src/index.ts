@@ -9,6 +9,7 @@
 //
 // Single env var for namespace: PERCUSSIONIST_NAMESPACE (default: "percussionist")
 
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
@@ -279,6 +280,19 @@ export function errorMessage(e: unknown): string {
   return String(e).trim();
 }
 
+/**
+ * True when a kube call failed in a way that is safe (and worth) retrying with
+ * backoff: request timeouts (408), conflicts (409), rate limits (429), any 5xx,
+ * and transport/network failures that carry no statusCode at all. Other 4xx
+ * errors (400/401/403/404/422) are deterministic — retrying them identically is
+ * pointless — so they throw immediately.
+ */
+function isRetryableKubeError(err: unknown): boolean {
+  const status = getErrorStatusCode(err);
+  if (status === undefined) return true;
+  return status === 408 || status === 409 || status === 429 || status >= 500;
+}
+
 // Merge-patch header for all CRD/ConfigMap PATCH calls via the shared CA-aware
 // client (`custom()` / `core()`). TLS trust comes from the loaded KubeConfig
 // rather than an ambient NODE_EXTRA_CA_CERTS env var.
@@ -366,7 +380,7 @@ export async function patchRunStatus(
       )) as Run;
     } catch (e) {
       lastErr = e;
-      if (isConflictError(e) && attempt < maxRetries) continue;
+      if (isRetryableKubeError(e) && attempt < maxRetries) continue;
       throw e;
     }
   }
@@ -400,7 +414,7 @@ export async function patchRunAnnotations(
       )) as Run;
     } catch (e) {
       lastErr = e;
-      if (isConflictError(e) && attempt < maxRetries) continue;
+      if (isRetryableKubeError(e) && attempt < maxRetries) continue;
       throw e;
     }
   }
@@ -696,11 +710,12 @@ export async function patchProjectStatus(
   statusPatch: { board?: Partial<BoardStatus> },
   ns: string = NAMESPACE,
   maxRetries = 3,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
 ): Promise<Project> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
+      await sleep(100 * 2 ** (attempt - 1));
     }
     try {
       return (await custom().patchNamespacedCustomObjectStatus(
@@ -716,7 +731,7 @@ export async function patchProjectStatus(
       )) as Project;
     } catch (e) {
       lastErr = e;
-      if (isConflictError(e) && attempt < maxRetries) continue;
+      if (isRetryableKubeError(e) && attempt < maxRetries) continue;
       throw e;
     }
   }
@@ -1010,12 +1025,13 @@ export async function fetchSessionMessages(
   const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session/${sessionID}/message`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
-  const res = await fetch(url, {
-    headers: { Accept: 'application/json' },
-    signal: controller.signal,
-  });
 
   try {
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+
     if (!res.ok) {
       throw new Error(`OpenCode API ${res.status}: ${await res.text().catch(() => '')}`);
     }
@@ -1025,7 +1041,9 @@ export async function fetchSessionMessages(
       throw new Error(`OpenCode session response too large (${contentLength} bytes)`);
     }
 
-    return readJsonWithLimit(res, 20_000_000);
+    // Await the body read inside the try so `finally` (clearTimeout) runs only
+    // after the stream is fully consumed — a slow/hung body is still aborted.
+    return await readJsonWithLimit(res, 20_000_000);
   } finally {
     clearTimeout(timeout);
   }
@@ -1081,7 +1099,7 @@ export async function fetchAllSessionMessages(
       `OpenCode session list API ${listRes.status}: ${await listRes.text().catch(() => '')}`,
     );
   }
-  const listData = (await listRes.json()) as unknown;
+  const listData = (await readJsonWithLimit(listRes, 20_000_000)) as unknown;
   const sessionList: Array<{ id: string }> = Array.isArray(listData)
     ? listData
     : (((listData as Record<string, unknown>).items ??
@@ -1099,7 +1117,9 @@ export async function fetchAllSessionMessages(
         signal: AbortSignal.timeout(10_000),
       });
       if (!msgRes.ok) continue;
-      const msgData = (await msgRes.json()) as unknown;
+      // Same 20MB cap as the single-session path; an oversized session body is
+      // swallowed here by the per-session catch (that session is skipped).
+      const msgData = (await readJsonWithLimit(msgRes, 20_000_000)) as unknown;
       const messages: unknown[] = Array.isArray(msgData)
         ? msgData
         : (((msgData as Record<string, unknown>).items ?? []) as unknown[]);
@@ -1221,78 +1241,89 @@ export async function getPlansConfigMap(
   }
 }
 
+/**
+ * ConfigMap data key for a plan artifact: `{task}.md`. Task names are DNS-1123
+ * (`[a-z0-9]([-a-z0-9]*[a-z0-9])?`), so this sanitizer is a guard, not a
+ * transform — it prevents the silent-422 class of bug the findings ConfigMap
+ * hit when its keys contained `/` (ConfigMap data keys must match
+ * `[-._a-zA-Z0-9]+`). Substituting is deliberate: a plan written under a
+ * slightly mangled key is recoverable, whereas a rejected write loses the
+ * artifact outright — which is exactly the failure this replaces.
+ */
+export function plansDataKey(taskName: string): string {
+  return `${taskName.replace(CONFIGMAP_KEY_DISALLOWED, '_')}.md`;
+}
+
 export async function writePlanToConfigMap(
   projectName: string,
   taskName: string,
   content: string,
   ns: string = NAMESPACE,
 ): Promise<{ written: boolean; sizeBytes: number; warning?: string }> {
-  const key = `${taskName}.md`;
+  const key = plansDataKey(taskName);
   const cmName = `${projectName}-plans`;
-  let existing = await getPlansConfigMap(projectName, ns);
-
-  if (!existing) {
-    existing = {
-      apiVersion: 'v1',
-      kind: 'ConfigMap',
-      metadata: {
-        name: cmName,
-        namespace: ns,
-        labels: {
-          [LABELS.projectName]: projectName,
-          'percussionist.dev/component': 'plans',
-        },
-      },
-      data: {},
-    };
-  }
-
-  const newData = { ...existing.data, [key]: content };
-  const totalSize = Object.values(newData).reduce(
-    (sum, v) => sum + Buffer.byteLength(v, 'utf8'),
-    0,
-  );
-  let warning: string | undefined;
-  if (totalSize > CONFIGMAP_SIZE_WARN) {
-    warning = `ConfigMap data size (${Math.round(totalSize / 1024)}KB) approaching 1MB limit. Consider removing old plans.`;
-  }
-
-  const metadata: V1ObjectMeta = {
-    name: existing.metadata.name ?? cmName,
-    namespace: existing.metadata.namespace ?? ns,
-    labels: existing.metadata.labels,
-    annotations: existing.metadata.annotations,
+  const data = { [key]: content };
+  const labels = {
+    [LABELS.projectName]: projectName,
+    'percussionist.dev/component': 'plans',
   };
-  if (existing.metadata.resourceVersion) {
-    metadata.resourceVersion = existing.metadata.resourceVersion;
+
+  // Best-effort total-size check for the advisory 900KB warning. The read is
+  // wrapped in try/catch and never affects the write — write correctness
+  // never depends on a possibly-stale read succeeding.
+  let warning: string | undefined;
+  try {
+    const existing = await getPlansConfigMap(projectName, ns);
+    let totalSize = Buffer.byteLength(content, 'utf8');
+    for (const [k, v] of Object.entries(existing?.data ?? {})) {
+      if (k === key) continue; // overwritten by this write — no double count
+      totalSize += Buffer.byteLength(v ?? '', 'utf8');
+    }
+    if (totalSize > CONFIGMAP_SIZE_WARN) {
+      warning = `ConfigMap data size (${Math.round(totalSize / 1024)}KB) approaching 1MB limit. Consider removing old plans.`;
+    }
+  } catch {
+    // Best-effort only — a failed read skips the warning, never the write.
   }
 
-  if (!existing.metadata.resourceVersion) {
-    // Create new ConfigMap
-    await core().createNamespacedConfigMap({
-      namespace: ns,
-      body: {
-        apiVersion: 'v1',
-        kind: 'ConfigMap',
-        metadata,
-        data: newData,
-      },
-    });
-  } else {
-    // Update existing ConfigMap
-    await core().replaceNamespacedConfigMap({
-      name: cmName,
-      namespace: ns,
-      body: {
-        apiVersion: 'v1',
-        kind: 'ConfigMap',
-        metadata,
-        data: newData,
-      },
-    });
+  // Conflict-free per-key write: a merge-patch sets only `data[key]`, so
+  // concurrent plan writers never clobber each other's keys. When the
+  // ConfigMap is missing the patch 404s and we create it; if a concurrent
+  // writer wins the create race the create 409s and we loop back to the
+  // patch (the ConfigMap now exists and our key is set atomically).
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await core().patchNamespacedConfigMap(
+        { name: cmName, namespace: ns, body: { metadata: { labels }, data } },
+        MERGE_PATCH(),
+      );
+      return { written: true, sizeBytes: Buffer.byteLength(content, 'utf8'), warning };
+    } catch (e) {
+      if (!isNotFoundError(e)) throw e;
+    }
+
+    // ConfigMap does not exist — create it.
+    try {
+      await core().createNamespacedConfigMap({
+        namespace: ns,
+        body: {
+          apiVersion: 'v1',
+          kind: 'ConfigMap',
+          metadata: { name: cmName, namespace: ns, labels },
+          data,
+        },
+      });
+      return { written: true, sizeBytes: Buffer.byteLength(content, 'utf8'), warning };
+    } catch (e) {
+      if (isConflictError(e)) continue; // concurrent create won — retry the patch
+      throw e;
+    }
   }
 
-  return { written: true, sizeBytes: Buffer.byteLength(content, 'utf8'), warning };
+  // Unreachable in practice: the loop returns on success and throws on any
+  // non-retryable error. This guards against a create-409 storm exhausting
+  // the bound without ever landing the write.
+  throw new Error(`writePlanToConfigMap: exhausted retries for ${cmName}`);
 }
 
 export async function readPlanFromConfigMap(
@@ -1302,7 +1333,7 @@ export async function readPlanFromConfigMap(
 ): Promise<string | null> {
   const cm = await getPlansConfigMap(projectName, ns);
   if (!cm?.data) return null;
-  return cm.data[`${taskName}.md`] ?? null;
+  return cm.data[plansDataKey(taskName)] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1357,8 +1388,10 @@ function findingsConfigMapName(project: string): string {
 
 /**
  * Append a single finding to the project's findings ConfigMap using merge-patch.
- * Sets only `data["inbox.<finding.id>.json"]` — conflict-free across concurrent agents.
- * Creates the ConfigMap if it does not exist (404 → create).
+ * Sets only `data["inbox.<finding.id>.json"]` — conflict-free across concurrent
+ * agents. Creates the ConfigMap if it does not exist (404 → create); when two
+ * concurrent agents race the create, the loser's 409 falls back to retrying the
+ * merge-patch (the ConfigMap now exists) instead of dropping the finding.
  */
 export async function appendFindingToConfigMap(
   project: string,
@@ -1373,29 +1406,46 @@ export async function appendFindingToConfigMap(
     [LABELS.component]: FINDINGS_COMPONENT,
   };
 
-  // Try merge-patch first (fast path for existing ConfigMap). Sets only the
-  // single inbox key — conflict-free across concurrent agents.
-  try {
-    await core().patchNamespacedConfigMap(
-      { name: cmName, namespace: ns, body: { metadata: { labels }, data } },
-      MERGE_PATCH(),
-    );
-    return { written: true };
-  } catch (e) {
-    if (!isNotFoundError(e)) throw e;
+  // Conflict-free per-key write: a merge-patch sets only `data[key]`, so
+  // concurrent agents never clobber each other's findings. When the ConfigMap
+  // is missing the patch 404s and we create it; if a concurrent agent wins the
+  // create race the create 409s and we loop back to the patch (the ConfigMap
+  // now exists and our key is set atomically).
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // Try merge-patch first (fast path for existing ConfigMap). Sets only the
+    // single inbox key — conflict-free across concurrent agents.
+    try {
+      await core().patchNamespacedConfigMap(
+        { name: cmName, namespace: ns, body: { metadata: { labels }, data } },
+        MERGE_PATCH(),
+      );
+      return { written: true };
+    } catch (e) {
+      if (!isNotFoundError(e)) throw e;
+    }
+
+    // ConfigMap does not exist — create it.
+    try {
+      await core().createNamespacedConfigMap({
+        namespace: ns,
+        body: {
+          apiVersion: 'v1',
+          kind: 'ConfigMap',
+          metadata: { name: cmName, namespace: ns, labels },
+          data,
+        },
+      });
+      return { written: true };
+    } catch (e) {
+      if (isConflictError(e)) continue; // concurrent create won — retry the patch
+      throw e;
+    }
   }
 
-  // ConfigMap does not exist — create it.
-  await core().createNamespacedConfigMap({
-    namespace: ns,
-    body: {
-      apiVersion: 'v1',
-      kind: 'ConfigMap',
-      metadata: { name: cmName, namespace: ns, labels },
-      data,
-    },
-  });
-  return { written: true };
+  // Unreachable in practice: the loop returns on success and throws on any
+  // non-retryable error. This guards against a create-409 storm exhausting
+  // the bound without ever landing the finding.
+  throw new Error(`appendFindingToConfigMap: exhausted retries for ${cmName}`);
 }
 
 /**
@@ -1738,28 +1788,64 @@ export interface PodResourceSpec {
   podLimits: { cpu: string; memory: string; storage?: string };
 }
 
-function parseCpuRaw(raw: string): number {
-  const n = parseInt(raw, 10);
-  if (raw.endsWith('n')) return Math.round(n / 1_000_000);
-  if (raw.endsWith('u')) return Math.round(n / 1_000);
-  if (raw.endsWith('m')) return n;
-  return Math.round(n * 1000);
+// Kubernetes resource quantity parsers. The API expresses CPU as a decimal
+// quantity (nano/micro/milli cores or bare cores, e.g. "0.5") and memory as
+// bytes with binary (Ki/Mi/Gi/Ti) or SI (K/M/G/T) suffixes. parseInt() truncates
+// at the decimal point, so these use a regex that accepts fractional values.
+// Non-matching input yields 0 — that also protects the '0' defaults
+// listPodResources feeds in for missing requests/limits.
+
+/** Parse a CPU quantity into milli-cores ("0.5" → 500, "100m" → 100). */
+export function parseCpuRaw(raw: string): number {
+  const m = /^([0-9]+(?:\.[0-9]+)?)([num])?$/.exec(raw.trim());
+  if (!m?.[1]) return 0;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return 0;
+  switch (m[2]) {
+    case 'n':
+      return Math.round(n / 1_000_000);
+    case 'u':
+      return Math.round(n / 1_000);
+    case 'm':
+      return Math.round(n);
+    default:
+      return Math.round(n * 1000);
+  }
 }
 
-function parseMemoryRaw(raw: string): number {
-  const n = parseInt(raw, 10);
-  if (raw.endsWith('Ki')) return Math.round(n / 1024);
-  if (raw.endsWith('Mi')) return n;
-  if (raw.endsWith('Gi')) return n * 1024;
-  if (raw.endsWith('Ti')) return n * 1024 * 1024;
-  return Math.round(n / (1024 * 1024));
+/** Parse a memory quantity into MiB ("100Mi" → 100, "1.5G" → 1431). */
+export function parseMemoryRaw(raw: string): number {
+  const m = /^([0-9]+(?:\.[0-9]+)?)(Ki|Mi|Gi|Ti|K|M|G|T)?$/.exec(raw.trim());
+  if (!m?.[1]) return 0;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return 0;
+  switch (m[2]) {
+    case 'Ki':
+      return Math.round(n / 1024);
+    case 'Mi':
+      return Math.round(n);
+    case 'Gi':
+      return Math.round(n * 1024);
+    case 'Ti':
+      return Math.round(n * 1024 * 1024);
+    case 'K':
+      return Math.round((n * 1000) / (1024 * 1024));
+    case 'M':
+      return Math.round((n * 1_000_000) / (1024 * 1024));
+    case 'G':
+      return Math.round((n * 1_000_000_000) / (1024 * 1024));
+    case 'T':
+      return Math.round((n * 1_000_000_000_000) / (1024 * 1024));
+    default:
+      return Math.round(n / (1024 * 1024));
+  }
 }
 
-function addCpu(a: string, b: string): string {
+export function addCpu(a: string, b: string): string {
   return `${parseCpuRaw(a) + parseCpuRaw(b)}m`;
 }
 
-function addMemory(a: string, b: string): string {
+export function addMemory(a: string, b: string): string {
   return `${parseMemoryRaw(a) + parseMemoryRaw(b)}Mi`;
 }
 
@@ -1874,7 +1960,15 @@ export async function execInWorkspace(
   getProjectFn: (name: string, ns: string) => Promise<Project> = getProject,
   pollIntervalMs = 2_000,
 ): Promise<WorkspaceExecResult> {
-  const podName = `ws-exec-${projectName}-${Date.now()}`.slice(0, 63).replace(/[^a-z0-9-]/g, '-');
+  // Pod names must be ≤63 chars and unique per invocation. A random suffix is
+  // generated FIRST and the project prefix is truncated (never the suffix), so
+  // long project names cannot chop the uniqueness suffix off and two calls in
+  // the same millisecond never collide (Date.now() is not used).
+  const suffix = randomUUID().replace(/-/g, '').slice(0, 12);
+  const prefix = `ws-exec-${projectName}`
+    .replace(/[^a-z0-9-]/g, '-')
+    .slice(0, 63 - 1 - suffix.length);
+  const podName = `${prefix}-${suffix}`;
 
   // Resolve project-level overrides (image + PVC name) with safe fallbacks.
   // imageOverride wins over spec.exec.image: callers running a script with hard
@@ -2046,13 +2140,15 @@ function readServiceAccountToken(): string | undefined {
   }
 }
 
-function readKubeconfigToken(): string | undefined {
+// Resolve the current context's user token from the kubeconfig. Uses
+// getCurrentUser() (which resolves context → user) rather than
+// getUser(currentContext) — getUser() looks up by *user* name, so a context
+// whose name differs from its user (virtually all cloud kubeconfigs) returned
+// null and every metrics helper fell back to "No service account token
+// available" in local dev. kc is injectable so the fix is unit-testable.
+export function readKubeconfigToken(kc: KubeConfig = kubeConfig()): string | undefined {
   try {
-    const kc = kubeConfig();
-    const currentContext = kc.getCurrentContext();
-    if (!currentContext) return undefined;
-    const user = kc.getUser(currentContext);
-    return (user as unknown as Record<string, string>)?.token;
+    return kc.getCurrentUser()?.token?.trim();
   } catch {
     return undefined;
   }

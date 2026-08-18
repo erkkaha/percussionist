@@ -660,6 +660,31 @@ export async function reconcile(run: Run): Promise<void> {
   }
 
   if (podPhase === 'Succeeded') {
+    // Terminal-phase fallback for the succeeded pod, mirroring the Failed
+    // branch below. The dispatcher normally owns terminal run phases (it
+    // patches Succeeded/Failed before exiting), but several exit-0 paths
+    // leave the phase non-terminal: the message-abort paths patch Running
+    // ("waiting for input (message aborted)"), and the shutdown / interactive-
+    // end paths patch only `message`. If we deleted the pod without claiming
+    // a terminal phase, the next resync would 404 on the pod, mint a new run
+    // key, recreate it, and re-run the whole task forever, burning tokens. So
+    // claim the terminal Succeeded phase here. The claim is guarded by a fresh
+    // read: a Succeeded pod does NOT imply a non-terminal run — the dispatcher
+    // can patch a terminal Failed and still exit 0 ("session ended without
+    // completion signal") — and blindly claiming Succeeded would clobber that
+    // Failed claim and mark a failed task done. Only claim when the fresh
+    // phase is still non-terminal; the reconcile guard then short-circuits
+    // future passes.
+    const fresh = await readFreshRun(run, ns);
+    const freshPhase = fresh?.status?.phase ?? currentPhase;
+    if (!freshPhase || !TERMINAL_PHASES.has(freshPhase)) {
+      await patchStatus(run, {
+        phase: RunPhase.Succeeded,
+        podPhase,
+        message: 'pod succeeded (operator claimed terminal phase; dispatcher exited without one)',
+        completedAt: new Date().toISOString(),
+      });
+    }
     await cleanupChildResources(run, ns);
   } else if (podPhase === 'Failed') {
     // Terminal-phase fallback. The dispatcher normally owns the terminal run
@@ -681,19 +706,56 @@ export async function reconcile(run: Run): Promise<void> {
   }
 }
 
+// Freshly re-reads the Run CR from the apiserver. The `run` passed to
+// reconcile()/cleanupChildResources is a snapshot taken by runWorkerOnce before
+// the pass and is stale after any patchStatus (patchStatus never mutates it),
+// so terminal-claim decisions must re-read. Returns undefined on read error —
+// callers decide whether to fall back (Succeeded-branch claim) or fail safe
+// (cleanup pod-delete guard). Same call shape as runWorkerOnce's fresh read.
+async function readFreshRun(run: Run, ns: string): Promise<Run | undefined> {
+  try {
+    return (await co.getNamespacedCustomObject({
+      group: API_GROUP,
+      version: API_VERSION,
+      namespace: ns,
+      plural: PLURAL_RUN,
+      name: run.metadata.name,
+    })) as Run;
+  } catch (e) {
+    err(`readFreshRun(${ns}/${run.metadata.name}):`, errorMessage(e));
+    return undefined;
+  }
+}
 async function cleanupChildResources(run: Run, ns: string): Promise<void> {
   const name = run.metadata.name;
   // Revoke the run's stats key alongside its other child resources, so the pod
   // failure paths don't wait for the next reconcile to invalidate it. Idempotent.
   await revokeRunKey(name);
+  // Never delete a run pod while the run phase is non-terminal: deletion makes
+  // the next resync 404 on the pod, mint a new run key, and recreate it,
+  // re-running the task (burning tokens). Re-read the Run CR fresh (the passed
+  // `run` is stale after patchStatus) and delete the pod only when the fresh
+  // phase is terminal. On a read error, skip the pod deletion too (fail-safe):
+  // the pod carries an ownerReference to the Run CR, so Kubernetes GC removes
+  // it if the Run CR is gone, and a transient error is retried next resync.
+  // Every cleanupChildResources caller (terminal guard, Failed branch,
+  // Succeeded branch) has a terminal phase by the time it runs, so this guard
+  // never blocks legitimate cleanup.
+  const fresh = await readFreshRun(run, ns);
+  const freshPhase = fresh?.status?.phase;
+  const podDeleteAllowed = !!freshPhase && TERMINAL_PHASES.has(freshPhase);
   // Delete Pod (best-effort).
-  try {
-    await core.deleteNamespacedPod({ name, namespace: ns });
-    log(`deleted pod ${ns}/${name}`);
-  } catch (e: unknown) {
-    if (!isNotFoundError(e)) {
-      err(`delete pod ${ns}/${name}:`, (e as Error).message);
+  if (podDeleteAllowed) {
+    try {
+      await core.deleteNamespacedPod({ name, namespace: ns });
+      log(`deleted pod ${ns}/${name}`);
+    } catch (e: unknown) {
+      if (!isNotFoundError(e)) {
+        err(`delete pod ${ns}/${name}:`, (e as Error).message);
+      }
     }
+  } else {
+    log(`cleanup(${ns}/${name}): run phase non-terminal or read failed — skipping pod delete`);
   }
   // Delete Service (best-effort).
   try {

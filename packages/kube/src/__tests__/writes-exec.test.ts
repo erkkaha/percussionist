@@ -91,6 +91,47 @@ describe('execInWorkspace — pod create body', () => {
     }
   });
 
+  it('long project names: consecutive calls produce unique pod names ≤63 chars', async () => {
+    // 60-char project name — pre-fix, `.slice(0, 63)` chops the 13-digit
+    // timestamp suffix off the right and every call yields the same name.
+    const longProject = `proj-${'x'.repeat(55)}`;
+    const fake = installFakeKube(podLifecycleScript('Succeeded', 0));
+    try {
+      const first = await execInWorkspace(
+        longProject,
+        'echo hi',
+        '/data',
+        120_000,
+        NS,
+        undefined,
+        core(),
+        async () => projectFixture(),
+        1,
+      );
+      const second = await execInWorkspace(
+        longProject,
+        'echo hi',
+        '/data',
+        120_000,
+        NS,
+        undefined,
+        core(),
+        async () => projectFixture(),
+        1,
+      );
+      expect(first.podName).not.toBe(second.podName);
+      for (const name of [first.podName, second.podName]) {
+        expect(name).toMatch(/^[a-z0-9-]+$/);
+        expect(name.length).toBeLessThanOrEqual(63);
+        expect(name.startsWith('ws-exec-')).toBe(true);
+        // The uniqueness suffix must survive even when the prefix is capped.
+        expect(name).toMatch(/[a-z0-9]$/);
+      }
+    } finally {
+      fake.restore();
+    }
+  });
+
   it('uses spec.data.pvcName when set, else {project}-data', async () => {
     const fake = installFakeKube(podLifecycleScript('Succeeded', 0));
     try {

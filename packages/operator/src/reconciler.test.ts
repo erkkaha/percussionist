@@ -3,7 +3,7 @@
 // 4xx-vs-transient error classifier and the status-unchanged skip check.
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import { CoreV1Api } from '@kubernetes/client-node';
+import { CoreV1Api, CustomObjectsApi } from '@kubernetes/client-node';
 import { type Project, type Run, RunPhase } from '@percussionist/api';
 import {
   classifyProjectReconcileError,
@@ -42,6 +42,7 @@ describe('reconcile() terminal branch', () => {
   let revokeRunKeySpy: ReturnType<typeof spyOn>;
   let deletePodSpy: ReturnType<typeof spyOn>;
   let deleteServiceSpy: ReturnType<typeof spyOn>;
+  let getRunSpy: ReturnType<typeof spyOn>;
   let dequeueSpy: ReturnType<typeof spyOn>;
   let reconciler: typeof import('./reconciler.js');
 
@@ -59,6 +60,7 @@ describe('reconcile() terminal branch', () => {
 
   afterEach(() => {
     readPodSpy?.mockRestore();
+    getRunSpy?.mockRestore();
     revokeRunKeySpy.mockRestore();
     deletePodSpy.mockRestore();
     deleteServiceSpy.mockRestore();
@@ -81,6 +83,12 @@ describe('reconcile() terminal branch', () => {
 
   it('does not dequeue while the Pod still exists (cleans up instead)', async () => {
     readPodSpy = spyOn(CoreV1Api.prototype, 'readNamespacedPod').mockResolvedValue({} as any);
+    // The terminal guard → cleanupChildResources path now re-reads the Run CR
+    // fresh (never delete a non-terminal run's pod). This file only fakes
+    // CoreV1Api, so without this spy the read would hit a real cluster.
+    getRunSpy = spyOn(CustomObjectsApi.prototype, 'getNamespacedCustomObject').mockResolvedValue(
+      makeTerminalRun() as never,
+    );
     const run = makeTerminalRun();
 
     await reconciler.reconcile(run);

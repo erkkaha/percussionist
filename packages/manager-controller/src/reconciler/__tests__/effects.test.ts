@@ -57,6 +57,8 @@ let spawnWorktreeCleanupPodSpy: ReturnType<typeof spyOn>;
 let spawnTaskWorktreeCleanupPodSpy: ReturnType<typeof spyOn>;
 let listRunsSpy: ReturnType<typeof spyOn>;
 let summarizeSessionSpy: ReturnType<typeof spyOn>;
+let fetchSessionMessagesSpy: ReturnType<typeof spyOn>;
+let postSessionMessageSpy: ReturnType<typeof spyOn>;
 
 const mockRun = makeRun('mock-run') as Run;
 
@@ -97,6 +99,10 @@ beforeEach(() => {
   summarizeSessionSpy = spyOn(sessionSummarizer, 'summarizeSession').mockResolvedValue(
     undefined as any,
   );
+
+  // answer delivery
+  fetchSessionMessagesSpy = spyOn(kube, 'fetchSessionMessages').mockResolvedValue([]);
+  postSessionMessageSpy = spyOn(kube, 'postSessionMessage').mockResolvedValue(undefined as any);
 });
 
 afterEach(() => {
@@ -117,6 +123,8 @@ afterEach(() => {
   spawnWorktreeCleanupPodSpy.mockRestore();
   spawnTaskWorktreeCleanupPodSpy.mockRestore();
   summarizeSessionSpy.mockRestore();
+  fetchSessionMessagesSpy.mockRestore();
+  postSessionMessageSpy.mockRestore();
 });
 
 // ===========================================================================
@@ -715,6 +723,91 @@ describe('executeEffects — SummarizeSession', () => {
       'session-abc',
       namespace,
     );
+  });
+});
+
+describe('executeEffects — DeliverAnswer', () => {
+  const answerRun = makeRun('answer-run', {
+    phase: 'WaitingForInput',
+    serviceName: 'answer-svc',
+    sessionID: 'sess-1',
+  }) as Run;
+  const effect: ReconcileEffect = { type: 'DeliverAnswer', runName: 'answer-run', text: 'yes' };
+
+  it('posts the answer when the session tail has no matching user message', async () => {
+    getRunSpy.mockResolvedValue(answerRun);
+    fetchSessionMessagesSpy.mockResolvedValue([
+      { info: { role: 'user' }, parts: [{ type: 'text', text: 'original prompt' }] },
+      { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'working...' }] },
+    ]);
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(fetchSessionMessagesSpy).toHaveBeenCalledWith('answer-svc', 'sess-1', namespace);
+    expect(postSessionMessageSpy).toHaveBeenCalledWith('answer-svc', 'sess-1', 'yes', namespace);
+  });
+
+  it('skips the post when the last user message text already equals the answer', async () => {
+    getRunSpy.mockResolvedValue(answerRun);
+    fetchSessionMessagesSpy.mockResolvedValue([
+      { info: { role: 'user' }, parts: [{ type: 'text', text: 'original prompt' }] },
+      { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'working...' }] },
+      { info: { role: 'user' }, parts: [{ type: 'text', text: 'yes' }] },
+    ]);
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(fetchSessionMessagesSpy).toHaveBeenCalledWith('answer-svc', 'sess-1', namespace);
+    expect(postSessionMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('dedupes with a trimmed comparison (whitespace drift)', async () => {
+    getRunSpy.mockResolvedValue(answerRun);
+    fetchSessionMessagesSpy.mockResolvedValue([
+      { info: { role: 'user' }, parts: [{ type: 'text', text: '  yes  \n' }] },
+    ]);
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(postSessionMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('run without serviceName/sessionID → applied, no throw, no post', async () => {
+    // Default mockRun has no serviceName/sessionID.
+    getRunSpy.mockResolvedValue(mockRun);
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(result.effectsApplied).toEqual(['DeliverAnswer']);
+    expect(fetchSessionMessagesSpy).not.toHaveBeenCalled();
+    expect(postSessionMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('getRun 404 → applied (non-fatal)', async () => {
+    const notFound = new Error('not found');
+    (notFound as any).statusCode = 404;
+    getRunSpy.mockRejectedValue(notFound);
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(result.effectsApplied).toEqual(['DeliverAnswer']);
+    expect(postSessionMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('postSessionMessage failure → applied (non-fatal)', async () => {
+    getRunSpy.mockResolvedValue(answerRun);
+    fetchSessionMessagesSpy.mockResolvedValue([]);
+    postSessionMessageSpy.mockRejectedValue(new Error('service unreachable'));
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(result.effectsApplied).toEqual(['DeliverAnswer']);
   });
 });
 

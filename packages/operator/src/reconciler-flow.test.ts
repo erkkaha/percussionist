@@ -5,7 +5,8 @@
 // Every branch of reconcile() is exercised: the non-terminal happy path
 // (Service / opencode-config / agents ConfigMap / PVC / Pod creation, with the
 // Initializing + pod-phase-mirror status patches), the Succeeded-vs-Failed
-// pod-phase asymmetry (pinned by name below), the missing-ClusterAgent warning,
+// pod-phase terminal-claim symmetry (Succeeded claim guarded by a fresh run
+// read, pinned by name below), the missing-ClusterAgent warning,
 // the credentials ValidationError abort, PVC failure (Failed patch + rethrow),
 // "already exists" tolerance on the create paths, and the terminal-run
 // cleanup/dequeue branches. safeReconcileProject is covered for the Ready
@@ -519,10 +520,22 @@ const reconcileCases: ReconcileCase[] = [
     run: makeRun('run-6', { status: { phase: RunPhase.Succeeded } }),
     script: {
       readNamespacedPod: { value: {} },
+      // cleanupChildResources re-reads the Run CR fresh before deleting the
+      // pod (never delete a non-terminal run's pod) — single response is fine,
+      // the terminal guard path never reaches the project read, so this is the
+      // only getNamespacedCustomObject call.
+      getNamespacedCustomObject: {
+        value: makeRun('run-6', { status: { phase: RunPhase.Succeeded } }),
+      },
       deleteNamespacedPod: { value: {} },
       deleteNamespacedService: { value: {} },
     },
-    expectedMethods: ['readNamespacedPod', 'deleteNamespacedPod', 'deleteNamespacedService'],
+    expectedMethods: [
+      'readNamespacedPod',
+      'getNamespacedCustomObject',
+      'deleteNamespacedPod',
+      'deleteNamespacedService',
+    ],
   },
   {
     name: 'terminal run + pod 404 → dequeue (dropped from the resync set)',
@@ -591,21 +604,121 @@ describe('reconcile() flow', () => {
     }
   });
 
-  // ── Succeeded/Failed asymmetry — pinned, not fixed ────────────────────────
-  // A Failed pod (restartPolicy: Never) can never make progress, so the
-  // operator claims the terminal Failed run phase itself before deleting the
-  // pod. A Succeeded pod, by contrast, is only cleaned up — the run phase is
-  // left untouched because the dispatcher owns terminal Succeeded claims. The
-  // documented consequence of that asymmetry: if the dispatcher dies between
-  // pod success and its status patch, the run stays non-terminal and the next
-  // resync recreates the pod and re-runs the task, burning tokens.
-  it('Succeeded/Failed asymmetry: Failed pod → operator claims Failed + cleanup; Succeeded pod → cleanup only, run phase untouched (non-terminal run + deleted pod → recreated next resync)', async () => {
-    // ── Failed pod → terminal Failed claim + cleanup ──
+  // ── Succeeded/Failed symmetry — terminal claim before cleanup ─────────────
+  // A terminal pod phase (restartPolicy: Never) means the pod can never make
+  // progress, so the operator claims the terminal run phase itself before
+  // deleting the pod — for BOTH Succeeded and Failed pods. The Succeeded claim
+  // is guarded by a fresh re-read of the Run CR: a Succeeded pod does NOT imply
+  // a non-terminal run (the dispatcher can patch terminal Failed and still exit
+  // 0 — "session ended without completion signal"), and the operator must not
+  // clobber an existing terminal claim. Without the claim, deleting the pod
+  // makes the next resync 404, mint a new run key, and re-run the task forever.
+  //
+  // Fake-kube scripting note: the Succeeded branch and cleanupChildResources
+  // each add one fresh getNamespacedCustomObject read, so every scenario here
+  // overrides happyPathScript's single-response project read with an ordered
+  // array in exact call order: (1) project read, (2) branch fresh read,
+  // (3) cleanup fresh read. The Failed branch patches via patchStatus (no read)
+  // so its scenario scripts only (1) project read, (2) cleanup fresh read.
+  //
+  // Hardening edge cases (beyond the three symmetric scenarios below): the
+  // cleanup guard refuses to delete a non-terminal run's pod even when the
+  // terminal-claim patch fails silently (patchStatus never throws), and the
+  // Succeeded-branch claim falls back to the pass snapshot when its fresh read
+  // errors (transient apiserver failures must not block the terminal claim).
+  it('Succeeded pod + non-terminal run phase → operator claims Succeeded (podPhase + completedAt) before deleting the pod, cleanup deletes it once', async () => {
+    fake = installFakeKube(
+      happyPathScript({
+        readNamespacedPod: { value: pod('Succeeded') },
+        deleteNamespacedPod: { value: {} },
+        deleteNamespacedService: { value: {} },
+        // (1) project read, (2) branch fresh read → Running (non-terminal →
+        // claim fires), (3) cleanup fresh read → Succeeded (terminal → pod
+        // delete allowed).
+        getNamespacedCustomObject: [
+          { value: projectWithUid('test-project', 'proj-uid') },
+          { value: makeRun('asym-succ', { status: { phase: RunPhase.Running } }) },
+          { value: makeRun('asym-succ', { status: { phase: RunPhase.Succeeded } }) },
+        ],
+      }),
+    );
+    try {
+      const run = makeRun('asym-succ', { status: { phase: RunPhase.Running } });
+      await reconciler.reconcile(run);
+
+      const patches = runStatusPatches(fake);
+      expect(patches).toContainEqual(
+        expect.objectContaining({
+          phase: RunPhase.Succeeded,
+          podPhase: 'Succeeded',
+          message: 'pod succeeded (operator claimed terminal phase; dispatcher exited without one)',
+          completedAt: expect.any(String),
+        }),
+      );
+      // The terminal claim lands before the pod delete (claim → cleanup).
+      const claimIdx = fake.calls.findIndex(
+        (c) =>
+          c.method === 'patchNamespacedCustomObjectStatus' &&
+          (c.args[0] as { body: { status: { phase?: string } } }).body.status.phase ===
+            RunPhase.Succeeded,
+      );
+      const deleteIdx = fake.calls.findIndex((c) => c.method === 'deleteNamespacedPod');
+      expect(claimIdx).toBeGreaterThanOrEqual(0);
+      expect(deleteIdx).toBeGreaterThan(claimIdx);
+      expect(fake.calls.filter((c) => c.method === 'deleteNamespacedPod')).toHaveLength(1);
+      expect(fake.calls.filter((c) => c.method === 'deleteNamespacedService')).toHaveLength(1);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('Succeeded pod + fresh read already terminal (dispatcher claimed Failed, exit 0) → no Succeeded claim, cleanup still deletes the pod', async () => {
+    fake = installFakeKube(
+      happyPathScript({
+        readNamespacedPod: { value: pod('Succeeded') },
+        deleteNamespacedPod: { value: {} },
+        deleteNamespacedService: { value: {} },
+        // (1) project read, (2) branch fresh read → Failed (terminal → no
+        // claim), (3) cleanup fresh read → Failed (terminal → pod delete
+        // allowed).
+        getNamespacedCustomObject: [
+          { value: projectWithUid('test-project', 'proj-uid') },
+          { value: makeRun('asym-clobber', { status: { phase: RunPhase.Failed } }) },
+          { value: makeRun('asym-clobber', { status: { phase: RunPhase.Failed } }) },
+        ],
+      }),
+    );
+    try {
+      const run = makeRun('asym-clobber', { status: { phase: RunPhase.Running } });
+      await reconciler.reconcile(run);
+
+      const patches = runStatusPatches(fake);
+      // The clobber guard: an existing terminal claim (the dispatcher's
+      // Failed) is never overwritten by a Succeeded claim.
+      expect(patches.some((p) => p.phase === RunPhase.Succeeded)).toBe(false);
+      expect(patches.some((p) => p.phase === RunPhase.Failed)).toBe(false);
+      // Cleanup still deletes the pod — the fresh read confirmed terminal.
+      expect(fake.calls.filter((c) => c.method === 'deleteNamespacedPod')).toHaveLength(1);
+      expect(fake.calls.filter((c) => c.method === 'deleteNamespacedService')).toHaveLength(1);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('Failed pod → operator claims Failed + cleanup (cleanup fresh read scripted so the pod delete is allowed)', async () => {
     fake = installFakeKube(
       happyPathScript({
         readNamespacedPod: { value: failedPod() },
         deleteNamespacedPod: { value: {} },
         deleteNamespacedService: { value: {} },
+        // (1) project read, (2) cleanup fresh read → Failed (terminal → pod
+        // delete allowed). Without scripting the cleanup read, the single-
+        // response project CR would make it see a non-terminal phase and skip
+        // the pod delete.
+        getNamespacedCustomObject: [
+          { value: projectWithUid('test-project', 'proj-uid') },
+          { value: makeRun('asym-fail', { status: { phase: RunPhase.Failed } }) },
+        ],
       }),
     );
     try {
@@ -623,26 +736,83 @@ describe('reconcile() flow', () => {
     } finally {
       fake.restore();
     }
+  });
 
-    // ── Succeeded pod → cleanup only, run phase never claimed ──
+  it('Succeeded pod + fresh read throws → falls back to the pass snapshot (non-terminal) and still claims Succeeded', async () => {
     fake = installFakeKube(
       happyPathScript({
         readNamespacedPod: { value: pod('Succeeded') },
         deleteNamespacedPod: { value: {} },
         deleteNamespacedService: { value: {} },
+        // (1) project read, (2) branch fresh read → throws (readFreshRun
+        // logs and returns undefined, so the claim falls back to the pass's
+        // currentPhase snapshot — Running, non-terminal → claim fires),
+        // (3) cleanup fresh read → terminal Succeeded → pod delete allowed.
+        getNamespacedCustomObject: [
+          { value: projectWithUid('test-project', 'proj-uid') },
+          { error: serverError('apiserver read timeout') },
+          { value: makeRun('asym-readerr', { status: { phase: RunPhase.Succeeded } }) },
+        ],
       }),
     );
     try {
-      const run = makeRun('asym-succ', { status: { phase: RunPhase.Running } });
+      const run = makeRun('asym-readerr', { status: { phase: RunPhase.Running } });
       await reconciler.reconcile(run);
 
-      const patches = runStatusPatches(fake);
-      // Only the podPhase mirror fires — no terminal Succeeded/Failed claim.
-      expect(patches.some((p) => p.phase === RunPhase.Succeeded)).toBe(false);
-      expect(patches.some((p) => p.phase === RunPhase.Failed)).toBe(false);
-      // Cleanup still happens for the succeeded pod.
+      // A transient read error must not block the terminal claim — the
+      // Succeeded-branch guard falls back to currentPhase and claims.
+      expect(runStatusPatches(fake)).toContainEqual(
+        expect.objectContaining({
+          phase: RunPhase.Succeeded,
+          podPhase: 'Succeeded',
+          message: 'pod succeeded (operator claimed terminal phase; dispatcher exited without one)',
+          completedAt: expect.any(String),
+        }),
+      );
+      // The cleanup fresh read (scripted separately) sees terminal → deletes.
       expect(fake.calls.filter((c) => c.method === 'deleteNamespacedPod')).toHaveLength(1);
       expect(fake.calls.filter((c) => c.method === 'deleteNamespacedService')).toHaveLength(1);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('hardening guard: Succeeded pod + fresh read non-terminal at cleanup time → pod delete skipped, service delete + key revoke still happen', async () => {
+    fake = installFakeKube(
+      happyPathScript({
+        readNamespacedPod: { value: pod('Succeeded') },
+        // No deleteNamespacedPod scripted on purpose: the guard must never
+        // call it here, and if it regresses the call is recorded (and rejects
+        // as unscripted) so the length-0 assertion below fails loudly.
+        deleteNamespacedService: { value: {} },
+        // (1) project read, (2) branch fresh read → Running (non-terminal →
+        // claim attempted), (3) cleanup fresh read → Running again — the run
+        // is still non-terminal at cleanup time, e.g. the terminal-claim
+        // patch failed silently (patchStatus logs and swallows) → the
+        // hardening guard skips the pod delete.
+        getNamespacedCustomObject: [
+          { value: projectWithUid('test-project', 'proj-uid') },
+          { value: makeRun('asym-guard', { status: { phase: RunPhase.Running } }) },
+          { value: makeRun('asym-guard', { status: { phase: RunPhase.Running } }) },
+        ],
+      }),
+    );
+    try {
+      const run = makeRun('asym-guard', { status: { phase: RunPhase.Running } });
+      await reconciler.reconcile(run);
+
+      // The branch guard is separate from the cleanup guard — the claim is
+      // still attempted even though the pod delete is refused.
+      expect(runStatusPatches(fake)).toContainEqual(
+        expect.objectContaining({ phase: RunPhase.Succeeded, podPhase: 'Succeeded' }),
+      );
+      // The hardening invariant: never delete a run pod while the run phase
+      // is non-terminal (deletion would make the next resync 404 and recreate
+      // the pod, re-running the task).
+      expect(fake.calls.filter((c) => c.method === 'deleteNamespacedPod')).toHaveLength(0);
+      // The service delete and the run-key revoke still happen in all cases.
+      expect(fake.calls.filter((c) => c.method === 'deleteNamespacedService')).toHaveLength(1);
+      expect(revokeKeySpy).toHaveBeenCalledWith('asym-guard');
     } finally {
       fake.restore();
     }

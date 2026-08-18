@@ -894,7 +894,7 @@ export const TRANSITION_TABLE: Record<TaskPhase, TaskPhase[]> = {
   scheduled: ['initializing', 'failed'],
   initializing: ['running', 'succeeded', 'failed'],
   running: ['waiting-for-input', 'succeeded', 'failed'],
-  'waiting-for-input': ['running', 'succeeded', 'failed'],
+  'waiting-for-input': ['running', 'succeeded', 'failed', 'done', 'rework-requested'],
   succeeded: ['reviewing', 'awaiting-human', 'done'],
   reviewing: ['awaiting-human', 'rework-requested'],
   'awaiting-human': [

@@ -68,6 +68,11 @@ export function serverError(message = 'fake kube: internal server error'): Error
   return kubeError(500, message);
 }
 
+/** Transport/network failure — a plain Error with no statusCode. */
+export function networkError(message = 'fake kube: network error'): Error {
+  return new Error(message);
+}
+
 // ---------------------------------------------------------------------------
 // Method universe — every method the package calls on the three singletons.
 // Kept in sync with packages/kube/src/index.ts. Methods named in a script are

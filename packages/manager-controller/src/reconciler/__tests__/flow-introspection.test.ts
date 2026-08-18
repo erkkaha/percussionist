@@ -126,6 +126,39 @@ describe('inspectTaskFlow — awaiting-human', () => {
   });
 });
 
+describe('inspectTaskFlow — waiting-for-input', () => {
+  it('no action annotation → parked, suggests answer/abandon/request-changes', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = inspectTaskFlow(task, project, [task]);
+    expect(result.expectedNext.primary).toContain('parked waiting for human input');
+    expect(result.expectedNext.suggestedActions.join(' ')).toContain('action-answer');
+    expect(result.expectedNext.suggestedActions.join(' ')).toContain('action-abandon');
+    expect(result.expectedNext.suggestedActions.join(' ')).toContain('action-request-changes');
+  });
+
+  it('answer annotation → answer delivery, blocking on run flip', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    (task.metadata as any).annotations = { 'percussionist.dev/action-answer': 'yes' };
+    const result = inspectTaskFlow(task, project, [task]);
+    expect(result.expectedNext.primary).toContain('delivered to the run session');
+    expect(result.expectedNext.blockingConditions[0]).toContain('flip back to Running');
+  });
+
+  it('abandon annotation → done', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    (task.metadata as any).annotations = { 'percussionist.dev/action-abandon': 'true' };
+    const result = inspectTaskFlow(task, project, [task]);
+    expect(result.expectedNext.primary).toContain('done (abandon)');
+  });
+
+  it('request-changes annotation → rework-requested', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    (task.metadata as any).annotations = { 'percussionist.dev/action-request-changes': 'true' };
+    const result = inspectTaskFlow(task, project, [task]);
+    expect(result.expectedNext.primary).toContain('rework-requested');
+  });
+});
+
 describe('inspectTaskFlow — reviewing', () => {
   it('no reviewRunName → fallback to human review', () => {
     const task = makeTask('t1', 'test-project', { phase: 'reviewing', type: 'BUILD' });

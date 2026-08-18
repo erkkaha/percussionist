@@ -167,7 +167,7 @@ spec:
 ### Access (Minikube / Vanilla K8s)
 
 ```bash
-kubectl -n percussionist port-forward svc/code-server-my-project 8080:8080
+kubectl -n percussionist port-forward svc/ide-my-project 8080:8080
 # Open http://localhost:8080
 ```
 
