@@ -7,7 +7,7 @@
 #   docker build -t percussionist/memory:dev -f images/memory/Dockerfile .
 
 ARG NODE_VERSION=24
-ARG BUN_VERSION=1.3.13
+ARG BUN_VERSION=1.4.0
 
 # --- deps stage ---------------------------------------------------------------
 FROM node:${NODE_VERSION}-alpine AS deps

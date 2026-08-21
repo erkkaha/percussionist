@@ -11,7 +11,7 @@
 # providers, and nothing here uses Bun FFI.
 
 ARG NODE_VERSION=24
-ARG BUN_VERSION=1.3.14
+ARG BUN_VERSION=1.4.0
 ARG PNPM_VERSION=11.1.2
 
 # --- deps: install the runner-claude workspace package -----------------------
