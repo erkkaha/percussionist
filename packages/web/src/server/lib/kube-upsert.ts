@@ -33,6 +33,41 @@ export async function upsertSecret(
 }
 
 /**
+ * Merge-in upsert for a Kubernetes Secret: read the existing Secret, decode its
+ * base64 `data` to UTF-8 plaintext, overlay the incoming plaintext keys, then
+ * re-upsert via `upsertSecret` (which stores them as `stringData`).
+ *
+ * Unlike `upsertSecret`, this preserves sibling keys already present in the
+ * Secret — a `PUT llm-keys` carrying only `{ OPENAI_API_KEY }` keeps any
+ * existing `ANTHROPIC_API_KEY`. If the read throws (e.g. the Secret does not
+ * exist yet), it falls through to a plain `upsertSecret` of the submitted data,
+ * preserving the original create-or-replace semantics exactly.
+ */
+export async function mergeUpsertSecret(
+  name: string,
+  data: Record<string, string>,
+  labels?: Record<string, string>,
+): Promise<void> {
+  let decodedExisting: Record<string, string> | undefined;
+  try {
+    const existing = await core().readNamespacedSecret({ name, namespace: NAMESPACE });
+    decodedExisting = {};
+    for (const [k, v] of Object.entries(existing.data ?? {})) {
+      decodedExisting[k] = Buffer.from(v ?? '', 'base64').toString('utf-8');
+    }
+  } catch {
+    // Read failed (not found or otherwise) → no existing data to merge.
+  }
+
+  if (decodedExisting === undefined) {
+    await upsertSecret(name, data, labels);
+    return;
+  }
+  const merged = { ...decodedExisting, ...data };
+  await upsertSecret(name, merged, labels);
+}
+
+/**
  * Upsert a Kubernetes ConfigMap: replace it if it exists, create it otherwise.
  * Same read → replace, catch-any → create semantics as `upsertSecret`.
  */

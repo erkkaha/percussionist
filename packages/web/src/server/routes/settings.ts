@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
 import { core, getClusterSettings, NAMESPACE, updateClusterSettings } from '../kube.js';
 import { isKubeNotFound } from '../lib/kube-errors.js';
-import { upsertSecret } from '../lib/kube-upsert.js';
+import { mergeUpsertSecret, upsertSecret } from '../lib/kube-upsert.js';
 
 const settings = new Hono();
 
@@ -151,7 +151,7 @@ settings.put('/secrets/:name', adminAuth(), async (c) => {
   }
 
   try {
-    await upsertSecret(name, data);
+    await mergeUpsertSecret(name, data);
     return c.json({ name, data: Object.keys(data) });
   } catch (e: unknown) {
     return c.json({ error: String(e) }, 500);
