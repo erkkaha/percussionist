@@ -349,6 +349,7 @@ projects.put('/:name', adminAuth(), async (c) => {
 
   const hasOpencodeConfig = Object.hasOwn(body as object, 'opencodeConfig');
   const opencodeConfig = (body as { opencodeConfig?: string }).opencodeConfig ?? '';
+  const hasInjectFiles = Object.hasOwn(body as object, 'injectFiles');
   // Out-of-band inject files: [{ filename, content }]
   const rawInjectFiles =
     (body as { injectFiles?: Array<{ filename: string; content: string }> }).injectFiles ?? [];
@@ -434,17 +435,23 @@ projects.put('/:name', adminAuth(), async (c) => {
   }
 
   // Manage inject-file Secrets: upsert new/updated, delete orphans.
-  const previousRefs = spec.injectFiles ?? [];
-  const validInjectFiles = rawInjectFiles.filter((f) => f.filename.trim());
-  const currentFilenames = new Set(validInjectFiles.map((f) => f.filename.trim()));
-  await deleteOrphanedInjectFileSecrets(name, previousRefs, currentFilenames);
-  if (validInjectFiles.length > 0) {
-    const refs = await Promise.all(
-      validInjectFiles.map((f) => upsertInjectFileSecret(name, f.filename.trim(), f.content)),
-    );
-    spec.injectFiles = refs;
-  } else {
-    spec.injectFiles = undefined;
+  // Only run when the request body explicitly includes `injectFiles`. When the
+  // field is absent (e.g. a partial PUT changing only `maxParallel`), leave the
+  // existing spec.injectFiles untouched — otherwise the default `[]` would
+  // delete every stored inject-file Secret as an "orphan".
+  if (hasInjectFiles) {
+    const previousRefs = spec.injectFiles ?? [];
+    const validInjectFiles = rawInjectFiles.filter((f) => f.filename.trim());
+    const currentFilenames = new Set(validInjectFiles.map((f) => f.filename.trim()));
+    await deleteOrphanedInjectFileSecrets(name, previousRefs, currentFilenames);
+    if (validInjectFiles.length > 0) {
+      const refs = await Promise.all(
+        validInjectFiles.map((f) => upsertInjectFileSecret(name, f.filename.trim(), f.content)),
+      );
+      spec.injectFiles = refs;
+    } else {
+      spec.injectFiles = undefined;
+    }
   }
 
   try {
