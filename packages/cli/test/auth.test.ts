@@ -456,6 +456,49 @@ describe('patchWebAuthSecret', () => {
     expect(body.stringData).toEqual({ 'session-secret': 'new-secret' });
   });
 
+  it('removes keys named in removeKeys while keeping siblings (stringData empty)', async () => {
+    const replaceCalls: unknown[] = [];
+    const core = fakeCore({
+      readNamespacedSecret: async () => ({
+        data: {
+          token: Buffer.from('keep-me').toString('base64'),
+          'session-secret': Buffer.from('ss').toString('base64'),
+          disabled: Buffer.from('1').toString('base64'),
+        },
+      }),
+      replaceNamespacedSecret: async (args: unknown) => {
+        replaceCalls.push(args);
+        return {};
+      },
+    });
+    await patchWebAuthSecret('ns', {}, false, core, ['disabled']);
+    expect(replaceCalls).toHaveLength(1);
+    const body = (replaceCalls[0] as { body: Record<string, unknown> }).body;
+    // disabled is gone; token and session-secret survive.
+    expect(body.data).toEqual({
+      token: Buffer.from('keep-me').toString('base64'),
+      'session-secret': Buffer.from('ss').toString('base64'),
+    });
+    expect(body.data).not.toHaveProperty('disabled');
+    expect(body.stringData).toEqual({});
+  });
+
+  it('does not create an empty Secret when enabling on a missing Secret', async () => {
+    const createCalls: unknown[] = [];
+    const core = fakeCore({
+      readNamespacedSecret: async () => {
+        throw notFound();
+      },
+      createNamespacedSecret: async (args: unknown) => {
+        createCalls.push(args);
+        return {};
+      },
+    });
+    await patchWebAuthSecret('ns', {}, false, core, ['disabled']);
+    expect(createCalls).toHaveLength(0);
+    expect(stderr.lines.join('\n')).toContain('beatctl auth web-token set <token>');
+  });
+
   it('runGithubAllow exits when every login is blank', () => {
     const exitSpy = spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit called');
