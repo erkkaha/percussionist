@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   API_GROUP_VERSION,
   type InjectFileRef,
@@ -33,14 +34,21 @@ function projectConfigCmName(projectName: string): string {
 }
 
 /** Name of the per-project inject-file Secret for a given filename. */
-function injectFileSecretName(projectName: string, filename: string): string {
+export function injectFileSecretName(projectName: string, filename: string): string {
   // Sanitise the filename into a valid K8s name segment (replace dots/underscores, lowercase).
   const slug = filename
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
-  return `${projectName}-inject-${slug}`;
+  // Append a short deterministic hash so distinct source filenames that slug
+  // to the same segment (e.g. notes.md and notes_md) get distinct Secret names
+  // instead of colliding on the same Secret. A collision would let the last
+  // writer win and could cause orphan cleanup to delete a still-referenced
+  // Secret. The hash is derived from the full filename, so the name stays
+  // stable across upsert and orphan-delete (both use this one function).
+  const hash = createHash('sha1').update(filename).digest('hex').slice(0, 8);
+  return `${projectName}-inject-${slug}-${hash}`;
 }
 
 /**

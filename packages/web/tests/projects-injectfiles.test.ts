@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bu
 import type { Project } from '@percussionist/api';
 import type { Hono } from 'hono';
 import * as kube from '../src/server/kube.js';
+import { injectFileSecretName } from '../src/server/routes/projects.js';
 
 const PROJECT_NAME = 'test-proj';
 
@@ -16,13 +17,10 @@ function makeProject(spec: Partial<Project['spec']>): Project {
   } as unknown as Project;
 }
 
+// Use the real name function so the test stays aligned with the server's
+// (hash-suffixed) naming.
 function secretName(filename: string): string {
-  const slug = filename
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  return `${PROJECT_NAME}-inject-${slug}`;
+  return injectFileSecretName(PROJECT_NAME, filename);
 }
 
 let app: Hono;
@@ -154,5 +152,27 @@ describe('PUT /api/projects/:name injectFiles handling', () => {
     expect(deletedSecrets).toEqual([secretName('current.txt')]);
     const updatedSpec = updateProjectSpy.mock.lastCall?.[1] as { injectFiles?: unknown };
     expect(updatedSpec.injectFiles).toBeUndefined();
+  });
+});
+
+describe('injectFileSecretName disambiguation', () => {
+  it('produces distinct names for colliding slug filenames', () => {
+    expect(injectFileSecretName(PROJECT_NAME, 'notes.md')).not.toBe(
+      injectFileSecretName(PROJECT_NAME, 'notes_md'),
+    );
+  });
+
+  it('is stable across calls for the same filename', () => {
+    expect(injectFileSecretName(PROJECT_NAME, 'notes.md')).toBe(
+      injectFileSecretName(PROJECT_NAME, 'notes.md'),
+    );
+    expect(injectFileSecretName(PROJECT_NAME, 'notes_md')).toBe(
+      injectFileSecretName(PROJECT_NAME, 'notes_md'),
+    );
+  });
+
+  it('uses the project name and a hash-suffixed slug', () => {
+    const name = injectFileSecretName(PROJECT_NAME, 'notes.md');
+    expect(name).toMatch(/^test-proj-inject-notes-md-[0-9a-f]{8}$/);
   });
 });
