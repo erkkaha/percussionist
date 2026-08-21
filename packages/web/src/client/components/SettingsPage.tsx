@@ -222,6 +222,131 @@ interface SecretsPanelProps {
   saving: boolean;
 }
 
+interface SecretRow {
+  id: string;
+  key: string;
+  value: string;
+}
+
+interface SecretEditorProps {
+  label: string;
+  name: string;
+  namePlaceholder: string;
+  onNameChange: (name: string) => void;
+  existingSecret?: { name: string; keys: string[] };
+  onSecretOp: (
+    name: string,
+    data: Record<string, string>,
+    op: 'create' | 'update' | 'delete',
+  ) => void;
+  saving: boolean;
+}
+
+/**
+ * One key/value editor block for a single Secret. The values are masked
+ * (password inputs) and the assembled `data` object is built from rows that
+ * have both a key and a non-empty value — mirroring the server's
+ * `data (key-value pairs) is required` 400 guard so empty edits never fire.
+ */
+function SecretEditor({
+  label,
+  name,
+  namePlaceholder,
+  onNameChange,
+  existingSecret,
+  onSecretOp,
+  saving,
+}: SecretEditorProps) {
+  const [rows, setRows] = useState<SecretRow[]>([]);
+  const rowSeq = useRef(0);
+
+  function addRow() {
+    rowSeq.current += 1;
+    setRows((prev) => [...prev, { id: `row-${rowSeq.current}`, key: '', value: '' }]);
+  }
+
+  function updateRow(id: string, patch: Partial<SecretRow>) {
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }
+
+  function removeRow(id: string) {
+    setRows((prev) => prev.filter((r) => r.id !== id));
+  }
+
+  const hasValidRow = rows.some((r) => r.key.trim() !== '' && r.value.trim() !== '');
+
+  function submit() {
+    const data: Record<string, string> = {};
+    for (const r of rows) {
+      const key = r.key.trim();
+      if (key !== '' && r.value.trim() !== '') {
+        data[key] = r.value;
+      }
+    }
+    if (Object.keys(data).length === 0) return;
+    onSecretOp(name, data, existingSecret ? 'update' : 'create');
+  }
+
+  return (
+    <div>
+      <label className="text-sm font-medium block mb-1">{label}</label>
+      <div className="flex gap-2 flex-wrap">
+        <Input
+          value={name}
+          onChange={(e) => onNameChange(e.target.value)}
+          placeholder={namePlaceholder}
+          className="flex-1 min-w-0 sm:w-64"
+        />
+        <Button
+          variant="outline"
+          onClick={submit}
+          disabled={saving || !name.trim() || !hasValidRow}
+        >
+          {existingSecret ? 'Update Secret' : 'Create Secret'}
+        </Button>
+      </div>
+      {existingSecret && (
+        <p className="text-xs text-text-dim mt-1">
+          Existing secret. Keys: {existingSecret.keys.join(', ') || '(empty)'}
+        </p>
+      )}
+      <div className="flex flex-col gap-2 mt-2">
+        {rows.map((r) => (
+          <div key={r.id} className="flex gap-2 flex-wrap items-center">
+            <Input
+              aria-label="Key"
+              placeholder="Key"
+              value={r.key}
+              onChange={(e) => updateRow(r.id, { key: e.target.value })}
+              className="flex-1 min-w-0 sm:w-48"
+            />
+            <Input
+              aria-label="Value"
+              type="password"
+              placeholder="Value"
+              value={r.value}
+              onChange={(e) => updateRow(r.id, { value: e.target.value })}
+              className="flex-1 min-w-0 sm:w-48"
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              type="button"
+              aria-label="Remove key"
+              onClick={() => removeRow(r.id)}
+            >
+              ✕
+            </Button>
+          </div>
+        ))}
+        <Button variant="ghost" type="button" onClick={addRow} className="self-start">
+          Add key
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: SecretsPanelProps) {
   const [llmKeysSecret, setLlmKeysSecret] = useState(
     ((spec.secrets as Record<string, unknown> | undefined)?.llmKeysSecret as string) ?? 'llm-keys',
@@ -231,10 +356,6 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
     | undefined;
   const [authSecretName, setAuthSecretName] = useState(authSecretObj?.name ?? '');
   const [_showCreateModal, _setShowCreateModal] = useState(false);
-
-  // Pre-populate from cluster config
-  const llmSecretData: Record<string, string> = {};
-  const authSecretData: Record<string, string> = {};
 
   const existingLlmSecret = secretsList.find((s) => s.name === llmKeysSecret);
   const existingAuthSecret = secretsList.find((s) => s.name === authSecretName);
@@ -249,56 +370,25 @@ function SecretsPanel({ spec, secretsList, onSave, onSecretOp, saving }: Secrets
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <div>
-          <label className="text-sm font-medium block mb-1">LLM Keys Secret Name</label>
-          <div className="flex gap-2 flex-wrap">
-            <Input
-              value={llmKeysSecret}
-              onChange={(e) => setLlmKeysSecret(e.target.value)}
-              placeholder="llm-keys"
-              className="flex-1 min-w-0 sm:w-64"
-            />
-            <Button
-              variant="outline"
-              onClick={() =>
-                onSecretOp(llmKeysSecret, llmSecretData, existingLlmSecret ? 'update' : 'create')
-              }
-              disabled={saving || !llmKeysSecret.trim()}
-            >
-              {existingLlmSecret ? 'Update Secret' : 'Create Secret'}
-            </Button>
-          </div>
-          {existingLlmSecret && (
-            <p className="text-xs text-text-dim mt-1">
-              Existing secret. Keys: {existingLlmSecret.keys.join(', ') || '(empty)'}
-            </p>
-          )}
-        </div>
-
+        <SecretEditor
+          label="LLM Keys Secret Name"
+          name={llmKeysSecret}
+          namePlaceholder="llm-keys"
+          onNameChange={setLlmKeysSecret}
+          existingSecret={existingLlmSecret}
+          onSecretOp={onSecretOp}
+          saving={saving}
+        />
         <div className="border-t border-border pt-4">
-          <label className="text-sm font-medium block mb-1">OpenCode Auth Secret Name</label>
-          <div className="flex gap-2 flex-wrap">
-            <Input
-              value={authSecretName}
-              onChange={(e) => setAuthSecretName(e.target.value)}
-              placeholder="percussionist-auth"
-              className="flex-1 min-w-0 sm:w-64"
-            />
-            <Button
-              variant="outline"
-              onClick={() =>
-                onSecretOp(authSecretName, authSecretData, existingAuthSecret ? 'update' : 'create')
-              }
-              disabled={saving || !authSecretName.trim()}
-            >
-              {existingAuthSecret ? 'Update Secret' : 'Create Secret'}
-            </Button>
-          </div>
-          {existingAuthSecret && (
-            <p className="text-xs text-text-dim mt-1">
-              Existing secret. Keys: {existingAuthSecret.keys.join(', ') || '(empty)'}
-            </p>
-          )}
+          <SecretEditor
+            label="OpenCode Auth Secret Name"
+            name={authSecretName}
+            namePlaceholder="percussionist-auth"
+            onNameChange={setAuthSecretName}
+            existingSecret={existingAuthSecret}
+            onSecretOp={onSecretOp}
+            saving={saving}
+          />
         </div>
       </CardContent>
       <CardFooter className="sm:flex-row flex-col gap-2">
