@@ -142,12 +142,15 @@ export async function patchWebAuthSecret(
   data: Record<string, string>,
   dryRun: boolean,
   coreOverride?: import('@kubernetes/client-node').CoreV1Api,
+  removeKeys: string[] = [],
 ): Promise<void> {
   const core = coreOverride ?? (await loadKube()).core;
 
   if (dryRun) {
+    const setKeys = Object.keys(data);
+    const removalMessages = removeKeys.map((k) => `-${k}`);
     console.error(
-      `--dry-run: would set ${Object.keys(data).join(', ')} on Secret "${WEB_AUTH_SECRET}" in ns "${namespace}"`,
+      `--dry-run: would set ${[...setKeys, ...removalMessages].join(', ')} on Secret "${WEB_AUTH_SECRET}" in ns "${namespace}"`,
     );
     return;
   }
@@ -159,12 +162,26 @@ export async function patchWebAuthSecret(
     existing = null;
   }
 
+  // Enabling on a Secret that doesn't exist yet is a no-op — there's nothing
+  // to clear, and we must not create an empty Secret. Point the user at set.
+  if (existing === null && Object.keys(data).length === 0) {
+    console.error('beatctl: no web-auth Secret found. Set a token first with:\n');
+    console.error('  beatctl auth web-token set <token>');
+    return;
+  }
+
+  // Carry forward every existing key we're not explicitly removing, then
+  // overlay the keys we were asked to set (stringData wins for overlaps).
+  const merged: Record<string, string> = { ...(existing?.data ?? {}) };
+  for (const key of removeKeys) {
+    delete merged[key];
+  }
+
   const body: V1Secret = {
     apiVersion: 'v1',
     kind: 'Secret',
     metadata: { name: WEB_AUTH_SECRET, namespace },
-    // Preserve keys we're not touching (token, disabled, …).
-    data: existing?.data ?? {},
+    data: merged,
     stringData: data,
   };
 

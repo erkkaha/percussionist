@@ -24,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { CoreV1Api, V1Secret } from '@kubernetes/client-node';
 import { PatchStrategy, setHeaderOptions } from '@kubernetes/client-node';
+import { patchWebAuthSecret } from './auth-keys.js';
 import { fatal, loadKube } from './kube.js';
 
 export interface AuthImportOpts {
@@ -277,45 +278,10 @@ export interface WebTokenSetOpts {
 }
 
 export async function runWebTokenSet(opts: WebTokenSetOpts): Promise<void> {
-  const { core } = loadKube();
-
-  const body: V1Secret = {
-    apiVersion: 'v1',
-    kind: 'Secret',
-    metadata: {
-      name: WEB_AUTH_SECRET,
-      namespace: opts.namespace,
-      labels: {
-        'app.kubernetes.io/managed-by': 'percussionist',
-        'percussionist.dev/component': 'web-auth',
-      },
-    },
-    type: 'Opaque',
-    stringData: { [TOKEN_KEY]: opts.token },
-  };
-
-  if (opts.dryRun) {
-    console.error(
-      `--dry-run: would create/update Secret "${WEB_AUTH_SECRET}" in ns "${opts.namespace}"`,
-    );
-    return;
-  }
-
-  try {
-    await core.readNamespacedSecret({ name: WEB_AUTH_SECRET, namespace: opts.namespace });
-    await core.replaceNamespacedSecret({ name: WEB_AUTH_SECRET, namespace: opts.namespace, body });
-    console.error(`Updated Secret "${WEB_AUTH_SECRET}" in ns "${opts.namespace}".`);
-  } catch (e) {
-    const code = (e as { code?: number }).code;
-    if (code !== 404) throw e;
-    await core.createNamespacedSecret({ namespace: opts.namespace, body });
-    console.error(`Created Secret "${WEB_AUTH_SECRET}" in ns "${opts.namespace}".`);
-  }
-
-  console.error('\nAuth token updated. The web pod will pick it up on next restart.');
-  console.error('If auth was previously disabled, re-enable with:\n');
-  console.error('  beatctl auth web-token enable');
-  console.error('  kubectl -n percussionist rollout restart deploy/percussionist-web');
+  // Route through patchWebAuthSecret so sibling keys (session-secret,
+  // github-*, legacy-token-auth, disabled) are carried forward rather than
+  // wiped by a full Secret replace.
+  await patchWebAuthSecret(opts.namespace, { [TOKEN_KEY]: opts.token }, opts.dryRun === true);
 }
 
 export interface WebTokenRotateOpts {
@@ -339,76 +305,12 @@ export interface WebTokenToggleOpts {
 }
 
 export async function runWebTokenToggle(opts: WebTokenToggleOpts): Promise<void> {
-  const { core } = loadKube();
-
-  if (opts.dryRun) {
-    console.error(
-      `--dry-run: would ${opts.disable ? 'disable' : 'enable'} auth on Secret "${WEB_AUTH_SECRET}"`,
-    );
-    return;
-  }
-
+  // Both branches route through patchWebAuthSecret so sibling keys are
+  // preserved. The disable branch sets disabled="1"; the enable branch sets
+  // nothing but removes the disabled key (if present).
   if (opts.disable) {
-    // Upsert with disabled="1"
-    const body: V1Secret = {
-      apiVersion: 'v1',
-      kind: 'Secret',
-      metadata: {
-        name: WEB_AUTH_SECRET,
-        namespace: opts.namespace,
-        labels: {
-          'app.kubernetes.io/managed-by': 'percussionist',
-          'percussionist.dev/component': 'web-auth',
-        },
-      },
-      type: 'Opaque',
-      stringData: { [DISABLED_KEY]: '1' },
-    };
-
-    try {
-      await core.readNamespacedSecret({ name: WEB_AUTH_SECRET, namespace: opts.namespace });
-      await core.replaceNamespacedSecret({
-        name: WEB_AUTH_SECRET,
-        namespace: opts.namespace,
-        body,
-      });
-    } catch (e) {
-      const code = (e as { code?: number }).code;
-      if (code !== 404) throw e;
-      await core.createNamespacedSecret({ namespace: opts.namespace, body });
-    }
-    console.error(`Auth DISABLED for ns "${opts.namespace}". Restart the web pod to apply:\n`);
-    console.error(`  kubectl -n ${opts.namespace} rollout restart deploy/percussionist-web`);
+    await patchWebAuthSecret(opts.namespace, { [DISABLED_KEY]: '1' }, opts.dryRun === true);
   } else {
-    // Remove the disabled key from the Secret.
-    try {
-      const existing = await core.readNamespacedSecret({
-        name: WEB_AUTH_SECRET,
-        namespace: opts.namespace,
-      });
-      delete existing.data?.[DISABLED_KEY];
-      if (existing.data) {
-        existing.stringData = {};
-        for (const [k, v] of Object.entries(existing.data)) {
-          existing.stringData[k] = atob(v);
-        }
-        delete existing.data;
-      }
-      await core.replaceNamespacedSecret({
-        name: WEB_AUTH_SECRET,
-        namespace: opts.namespace,
-        body: existing,
-      });
-      console.error(`Auth ENABLED for ns "${opts.namespace}". Restart the web pod to apply:\n`);
-      console.error(`  kubectl -n ${opts.namespace} rollout restart deploy/percussionist-web`);
-    } catch (e) {
-      const code = (e as { code?: number }).code;
-      if (code === 404) {
-        console.error('beatctl: no web-auth Secret found. Set a token first with:\n');
-        console.error('  beatctl auth web-token set <token>');
-      } else {
-        throw e;
-      }
-    }
+    await patchWebAuthSecret(opts.namespace, {}, opts.dryRun === true, undefined, [DISABLED_KEY]);
   }
 }
