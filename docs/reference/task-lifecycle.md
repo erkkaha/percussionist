@@ -102,4 +102,6 @@ See [`inspect_task_flow`](mcp-tools.md#inspect_task_flow) for inputs, outputs, a
 
 ## Backward Compatibility
 
-A legacy `column` field on `Task.status` maps phases to board columns: `backlog`, `ready`, `in-progress`, `review`, `rework`, `done`, `blocked`. The column field is never written by new code — all state is driven by the phase enum.
+A legacy `column` field used to map phases to board columns. It has been removed
+from the Task schema entirely and is never written — columns are derived from each
+task's phase, and all state is driven by the phase enum.

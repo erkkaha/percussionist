@@ -42,6 +42,11 @@ Percussionist orchestrates OpenCode AI agents on Kubernetes with a controller-ba
 | 6 | `@percussionist/memory-service` | Per-project vector embedding server (Bun + sqlite-vec) |
 | 7 | `@percussionist/web` | Hono + React dashboard, REST APIs, stats DB |
 | 8 | `@percussionist/cli` | `beatctl` CLI; talks to K8s API directly |
+| 9 | `@percussionist/runner-claude` | Claude Agent SDK runner sidecar (alternative engine) |
+
+The first eight form the dependency chain (`api` → `kube` → operator/dispatcher/
+manager-controller → web/cli); `runner-claude` is standalone (Claude Agent SDK +
+Hono) and ships in its own image.
 
 ## Controller Architecture
 
@@ -75,7 +80,7 @@ Both controllers use `makeInformer` + in-memory work queue pattern. They are sin
 | Language | TypeScript (strict, ESM, ES2022) |
 | Runtime | Node.js 24, Bun (web + memory service) |
 | K8s Client | `@kubernetes/client-node` |
-| API Framework | Hono (web), Express-like (manager MCP) |
+| API Framework | Hono (web), raw `node:http` (manager MCP/chat) |
 | Frontend | React 19, Tailwind CSS v4, shadcn/ui |
 | Database | SQLite via Drizzle ORM (web), sqlite-vec (memory) |
 | Package Manager | pnpm (monorepo) |
