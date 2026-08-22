@@ -18,6 +18,8 @@ import {
   GitCommit as GitCommitIcon,
   GitPullRequest,
   History,
+  Maximize2,
+  Minimize2,
   MousePointerClick,
   RefreshCw,
   Sparkles,
@@ -108,6 +110,8 @@ interface TaskDetailPanelProps {
   codeServerUrl?: string;
   repoWebUrl?: string;
   onDeleted: () => void;
+  focused?: boolean;
+  onToggleFocus?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -976,6 +980,8 @@ function TaskDetailPanelInner({
   codeServerUrl,
   repoWebUrl,
   onDeleted,
+  focused = false,
+  onToggleFocus,
 }: TaskDetailPanelProps) {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>('overview');
@@ -1089,7 +1095,9 @@ function TaskDetailPanelInner({
   const activeTab = availableTabs.find((t) => t.id === tab) ? tab : 'overview';
 
   return (
-    <div className="flex flex-col h-full min-h-0 border-l border-border">
+    <div
+      className={`flex flex-col h-full min-h-0 border-l border-border ${focused ? 'md:border-l-0' : ''}`}
+    >
       {/* Header */}
       <div className="shrink-0 px-4 pt-4 pb-3 border-b border-border space-y-2">
         <div className="flex items-start gap-2">
@@ -1233,10 +1241,26 @@ function TaskDetailPanelInner({
             </button>
           )}
 
+          {onToggleFocus && (
+            <button
+              type="button"
+              onClick={onToggleFocus}
+              title={focused ? 'Collapse task list' : 'Expand to full width'}
+              aria-label={focused ? 'Collapse task list' : 'Expand to full width'}
+              className="flex items-center gap-1 rounded-md border border-border px-2 py-1.5 text-xs font-medium text-text-dim hover:text-text transition-colors ml-auto"
+            >
+              {focused ? (
+                <Minimize2 className="h-3.5 w-3.5" />
+              ) : (
+                <Maximize2 className="h-3.5 w-3.5" />
+              )}
+            </button>
+          )}
+
           {!confirmDelete ? (
             <button
               onClick={() => setConfirmDelete(true)}
-              className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-phase-failed hover:border-phase-failed/40 transition-colors ml-auto"
+              className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-phase-failed hover:border-phase-failed/40 transition-colors"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -1430,7 +1454,9 @@ export const TaskDetailPanel = memo(TaskDetailPanelInner, (prev, next) => {
     prev.projectName === next.projectName &&
     prev.approvals === next.approvals &&
     prev.repoWebUrl === next.repoWebUrl &&
-    prev.onDeleted === next.onDeleted
+    prev.onDeleted === next.onDeleted &&
+    prev.focused === next.focused &&
+    prev.onToggleFocus === next.onToggleFocus
   );
 });
 
