@@ -157,7 +157,7 @@ Manage ClusterAgent resources.
 ```bash
 beatctl agent list
 beatctl agent get <name> [-o yaml|json]
-beatctl agent create --name <name> -f agent.md
+beatctl agent create --name <name> -f clusteragent.yaml   # ClusterAgent manifest (YAML)
 beatctl agent delete <name>
 ```
 
@@ -171,7 +171,7 @@ beatctl board plan <project>                  # list stored PLAN artifacts
 beatctl board plan <project> --task <name>    # print one plan's content
 beatctl board findings <project>              # list agent-reported findings
 beatctl board task add <project> --title "..." --agent <name>
-beatctl board task move --task-name <name> --to <column>
+beatctl board task move --task-name <name> --to <phase>   # target phase, validated against the transition table
 beatctl board task remove --task-name <name>
 beatctl board task approve --task-name <name>          # approve an awaiting-human task
 beatctl board task request-changes --task-name <name> --feedback "..."
@@ -381,7 +381,8 @@ The ten check categories (`--check <name>` filters by these names):
    NetworkPolicies exist; a warning is reported when the CNI cannot enforce
    them.
 4. `dns` — CoreDNS is Available; control-plane Services (`percussionist-manager`,
-   `percussionist-web`, `ollama`) have ready endpoints; with `--probe-dns`,
+   `percussionist-web`, and `ollama` when any Project enables `spec.embedding`)
+   have ready endpoints; with `--probe-dns`,
    execs `getent hosts` into a ready pod.
 5. `storage` — a default StorageClass exists; the web PVC and each
    `{project}-data` PVC are `Bound` (`Pending` → warning, `Lost`/`Failed` →

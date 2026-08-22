@@ -59,7 +59,7 @@ Percussionist uses a four-layer testing model. See [`docs/testing-strategy.md`](
 | Tier | Command | When to run | Duration target |
 |------|---------|-------------|-----------------|
 | **Unit + Smoke** | `pnpm test` | Every commit; PR gate required | < 1 min |
-| **Core E2E** | `pnpm e2e:core` | Before merging feature branches; CI on every PR | < 10 min |
+| **Core E2E** | `pnpm e2e:core` | Before merging feature branches; manual trigger in CI (workflow_dispatch) | < 10 min |
 | **Extended E2E** | `pnpm e2e:extended` | Before releases; manual trigger for complex paths | < 20 min |
 
 ### `bun test --isolate` in `@percussionist/web`
@@ -81,9 +81,9 @@ Both failed **only on CI** and passed locally, because test file order comes
 from filesystem enumeration and differs between a fresh clone and a working
 tree. Adding an unrelated test file is enough to flip the order and surface it.
 
-`--isolate` requires bun 1.3.14 (what CI pins); 1.3.12 does not have the flag.
-Keep the `bun-version` pins in `.github/workflows/ci.yml` and `release.yml` in
-step with it.
+`--isolate` requires bun 1.3.14 or newer (CI pins 1.4.0); 1.3.12 does not have
+the flag. Keep the `bun-version` pins in `.github/workflows/ci.yml` and
+`release.yml` in step with each other.
 
 `tests/setup.ts` must install happy-dom's `document` **before** loading
 `@testing-library/jest-dom`. `@testing-library/dom` freezes `screen` at
@@ -242,7 +242,7 @@ spec:
     # Optional overrides:
     # model: nomic-embed-text           # default
     # dimensions: 768                    # default
-    # ollamaUrl: http://ollama:11434     # default (cluster DNS)
+    # ollamaUrl: http://ollama.percussionist.svc.cluster.local:11434     # default (cluster DNS)
     # resources:
     #   requests: { cpu: "100m", memory: "256Mi" }
     #   limits: { memory: "512Mi" }
