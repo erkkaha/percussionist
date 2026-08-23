@@ -22,8 +22,9 @@ The board shows simplified columns. The real state machine uses 16 phases stored
 |---|---|
 | **ideas** | `idea` |
 | **backlog** | `pending` |
-| **in-progress** | `scheduled`, `initializing`, `running`, `waiting-for-input`, `awaiting-merge`, `generating-builds`, `awaiting-children`, `awaiting-feature-merge`, `rework-requested` |
-| **review** | `succeeded`, `reviewing`, `awaiting-human`, `failed` |
+| **in-progress** | `scheduled`, `initializing`, `running`, `awaiting-merge`, `generating-builds`, `awaiting-feature-merge`, `rework-requested` |
+| **review** | `waiting-for-input`, `succeeded`, `reviewing`, `awaiting-human`, `failed` |
+| **blocked** | `awaiting-children` |
 | **done** | `done` |
 
 `status.blocked: true` is orthogonal — it freezes the task regardless of phase.
@@ -46,7 +47,7 @@ All three pass → `scheduled`.
 ### `scheduled`
 Manager's pure decision engine emits a `ScheduleRun` effect. The effect executor
 resolves it by building a Run CR via `buildWorkerRun()` with a deterministic
-run name (via `workerRunName(project, task, retryCount)`) and creating it in
+run name (via `workerRunName(project, task, retryCount, aiReworkCount)`) and creating it in
 Kubernetes. If feature branching is on, the run's `source.git.ref` is overridden
 with the task's feature branch. Patches `worker.runName`, `worker.status = "Running"`,
 `worker.startedAt`. Transitions to `initializing`.
@@ -67,16 +68,17 @@ Manager polls `Run.status.phase`:
 - `WaitingForInput` → `waiting-for-input` (any task type parks when a human is genuinely required)
 - Running but no events beyond `flow.timeouts.runningStaleSeconds` (default 1800s/30min) → `failed` (staleness guard)
 
-When the run completes (`Succeeded` or `Failed`), if `project.spec.embedding.enabled`
-is true, the manager fires a fire-and-forget `SummarizeSession` effect that uses the
-LLM to produce a 2-3 paragraph summary of the session and stores it in the
-`{runName}-session` ConfigMap (`summary-{sessionID}`) and the project's vector
-memory database.
+When the run completes (`Succeeded` or `Failed`) with a session ID, the manager fires a
+fire-and-forget `SummarizeSession` effect that uses the LLM to produce a 2-3 paragraph
+summary of the session and stores it in the `{runName}-session` ConfigMap
+(`summary-{sessionID}`). This happens regardless of whether vector memory is enabled;
+when `project.spec.embedding.enabled` is true, the summary is additionally stored in the
+project's vector memory database.
 
 The agent is working during this phase. It calls `complete_run` or `complete_plan` on the dispatcher when done. The dispatcher records the signal and exits 0. The pod reaches Succeeded, the operator mirrors it, and the manager picks it up on the next reconcile.
 
 ### `waiting-for-input`
-Manager polls for an answer annotation (`percussionist.dev/action-answer`) on the Task CR (with legacy fallback to Project CR annotations). When a human posts an answer via the web UI, the dispatcher injects it into the live session. Once the run resumes to `Running` the task goes back to `running`. The annotation is cleared.
+Manager polls for an answer annotation (`percussionist.dev/action-answer`) on the Task CR. When a human posts an answer via the web UI, the manager injects it into the live session (a `DeliverAnswer` effect that posts to the run's OpenCode API). Once the run resumes to `Running` the task goes back to `running`. The annotation is cleared.
 
 A parked task also supports the same annotation-driven exits as `awaiting-human`: `percussionist.dev/action-abandon: "true"` → `done` (worker marked `abandoned`), and `percussionist.dev/action-request-changes` (+ `percussionist.dev/action-rework-feedback`) → `rework-requested` with capped feedback and `retryCount + 1`.
 
@@ -102,8 +104,7 @@ The decision engine reads the annotation:
 
 ### `awaiting-human`
 The task waits for a human action written as Task annotations by the web UI.
-The decision engine reads Task annotations first, falling back to legacy
-Project annotations for migration compatibility:
+The decision engine reads the Task annotations:
 
 | Action | Task annotation | BUILD path | PLAN path |
 |---|---|---|---|

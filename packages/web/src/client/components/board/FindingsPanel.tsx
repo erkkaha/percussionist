@@ -16,6 +16,8 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
+import { useUpdateFinding } from '../../hooks/useFindings';
+import { isClosedFindingStatus } from '../../lib/findings';
 import type { Finding } from '../../lib/types';
 
 const FINDING_SEVERITIES: Finding['severity'][] = ['critical', 'high', 'medium', 'low'];
@@ -101,12 +103,19 @@ interface FindingsPanelProps {
   onClose?: () => void;
 }
 
-export function FindingsPanel({ findings, onClose }: FindingsPanelProps) {
+export function FindingsPanel({ findings, projectName, onClose }: FindingsPanelProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Finding['severity'] | 'all'>('all');
+  const [hideClosed, setHideClosed] = useState(false);
+  const updateFindingMutation = useUpdateFinding(projectName);
 
   const filtered =
     severityFilter === 'all' ? findings : findings.filter((f) => f.severity === severityFilter);
+
+  const visible = hideClosed ? filtered.filter((f) => !isClosedFindingStatus(f.status)) : filtered;
+
+  const setStatus = (id: string, status: Finding['status']) =>
+    updateFindingMutation.mutate({ id, req: { status } });
 
   const counts = FINDING_SEVERITIES.reduce<Record<string, number>>((acc, sev) => {
     acc[sev] = findings.filter((f) => f.severity === sev).length;
@@ -116,9 +125,24 @@ export function FindingsPanel({ findings, onClose }: FindingsPanelProps) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between shrink-0 px-4 pt-3 pb-2">
-        <h2 className="text-sm font-semibold text-text">Findings ({findings.length})</h2>
+        <div className="flex items-center gap-2 min-w-0">
+          <h2 className="text-sm font-semibold text-text shrink-0">Findings ({findings.length})</h2>
+          <button
+            onClick={() => setHideClosed((v) => !v)}
+            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border transition-colors shrink-0 ${
+              hideClosed
+                ? 'border-accent bg-surface-overlay text-text'
+                : 'border-border bg-surface text-text-dim hover:text-text'
+            }`}
+          >
+            {hideClosed ? 'Show closed' : 'Hide closed'}
+          </button>
+        </div>
         {onClose && (
-          <button onClick={onClose} className="text-text-dim hover:text-text transition-colors">
+          <button
+            onClick={onClose}
+            className="text-text-dim hover:text-text transition-colors shrink-0"
+          >
             <X className="h-4 w-4" />
           </button>
         )}
@@ -169,10 +193,14 @@ export function FindingsPanel({ findings, onClose }: FindingsPanelProps) {
               tool. Comments a reviewer left on a diff are not here — they are on the task.
             </p>
           </div>
-        ) : filtered.length === 0 ? (
-          <p className="text-xs text-text-dim py-4 text-center">No {severityFilter} findings.</p>
+        ) : visible.length === 0 ? (
+          <p className="text-xs text-text-dim py-4 text-center">
+            {hideClosed && findings.some((f) => isClosedFindingStatus(f.status))
+              ? 'All findings in this view are closed — clear "Hide closed" to see them.'
+              : `No ${severityFilter === 'all' ? '' : `${severityFilter} `}findings.`}
+          </p>
         ) : (
-          filtered.map((f) => {
+          visible.map((f) => {
             const isExpanded = expandedId === f.id;
             const CategoryIcon = CATEGORY_ICON[f.category] ?? CircleDot;
 
@@ -257,6 +285,45 @@ export function FindingsPanel({ findings, onClose }: FindingsPanelProps) {
                       )}
                       {f.clusterId && <span>Cluster: {f.clusterId.slice(0, 12)}</span>}
                       <span>{formatRelative(f.triagedAt ?? f.createdAt)}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-border/30">
+                      {isClosedFindingStatus(f.status) ? (
+                        <button
+                          type="button"
+                          disabled={updateFindingMutation.isPending}
+                          onClick={() => setStatus(f.id, 'triaged')}
+                          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border border-border bg-surface text-text-dim hover:text-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Reopen
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            disabled={updateFindingMutation.isPending}
+                            onClick={() => setStatus(f.id, 'resolved')}
+                            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border border-border bg-surface text-text-dim hover:text-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Resolve
+                          </button>
+                          <button
+                            type="button"
+                            disabled={updateFindingMutation.isPending}
+                            onClick={() => setStatus(f.id, 'wontfix')}
+                            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border border-border bg-surface text-text-dim hover:text-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Won't Fix
+                          </button>
+                          <button
+                            type="button"
+                            disabled={updateFindingMutation.isPending}
+                            onClick={() => setStatus(f.id, 'duplicate')}
+                            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border border-border bg-surface text-text-dim hover:text-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Duplicate
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 )}

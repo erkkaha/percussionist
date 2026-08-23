@@ -727,20 +727,18 @@ describe('stats API', () => {
 // ===========================================================================
 
 describe('removed product surface → API 404 catch-all', () => {
-  // These were deleted as dead product surface: the four findings-triage
-  // routes and GET /stats/exists/:sessionID. (The board task /abandon route
-  // was among them but was re-added by the waiting-for-input exit work — it is
+  // These were deleted as dead product surface: the three remaining
+  // findings-triage routes (GET list, GET detail, POST->task) and
+  // GET /stats/exists/:sessionID. The PATCH /findings/:id route was
+  // re-introduced by the findings close/reopen feature (it proxies the
+  // manager's `update_finding` MCP tool). (The board task /abandon route was
+  // among them but was re-added by the waiting-for-input exit work — it is
   // asserted as wired in the board routes block above.) A reviewer of the
   // guard itself should note the wiring check above — the flip of
   // expectHandledNotRouterMiss is asserted per path here.
   const removedPaths: Array<{ method: string; path: string; body?: unknown }> = [
     { method: 'GET', path: `/api/projects/${PROJECT}/findings` },
     { method: 'GET', path: `/api/projects/${PROJECT}/findings/f1` },
-    {
-      method: 'PATCH',
-      path: `/api/projects/${PROJECT}/findings/f1`,
-      body: { status: 'wontfix' },
-    },
     { method: 'POST', path: `/api/projects/${PROJECT}/findings/f1/task`, body: { type: 'BUILD' } },
     { method: 'GET', path: '/api/stats/exists/sid' },
   ];

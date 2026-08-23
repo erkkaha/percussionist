@@ -95,7 +95,7 @@ Runner pods that use git over SSH default to no host key verification (backward 
 ### Secrets
 
 Sensitive data is stored in Kubernetes Secrets:
-- `web-auth` — Web API token
+- `web-auth` — Web API token (created by `beatctl auth`, referenced via `secretKeyRef` in the web manifest)
 - Provider API keys — Stored as Secrets, mounted as environment variables
 
 ### ConfigMaps
@@ -116,7 +116,8 @@ Non-sensitive configuration is stored in ConfigMaps. Session data is truncated t
 │       │                                  │
 │  ┌────▼─────────────────────────────┐   │
 │  │  Ingress                         │   │
-│  │  (HTTPS only)                    │   │
+│  │  (HTTP by default — terminate    │   │
+│  │   TLS in front for production)   │   │
 │  └──────────────────────────────────┘   │
 │                                          │
 │  ┌──────────┐  ┌──────────┐             │

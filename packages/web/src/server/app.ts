@@ -14,6 +14,7 @@ import agentKeys from './routes/agent-keys.js';
 import agents from './routes/agents.js';
 import board from './routes/board.js';
 import boardDb from './routes/board-db.js';
+import findings from './routes/findings.js';
 import logs from './routes/logs.js';
 import metrics from './routes/metrics.js';
 import plans from './routes/plans.js';
@@ -77,6 +78,7 @@ export function createApp() {
   app.route('/api/projects', plans);
   app.route('/api/projects', taskDiff);
   app.route('/api/projects', projectMemories);
+  app.route('/api/projects', findings);
   app.route('/api/upgrade', upgrade);
   app.route('/api/providers', providers);
   app.route('/api/push', pushRoute);

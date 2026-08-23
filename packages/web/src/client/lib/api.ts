@@ -1,6 +1,6 @@
 // Thin fetch wrappers for the /api endpoints.
 
-import type { ClusterAgent, ClusterSettings } from '@percussionist/api';
+import type { ClusterAgent, ClusterSettings, Finding } from '@percussionist/api';
 import { authHeaders } from './auth';
 import type {
   AgentCapability,
@@ -22,6 +22,7 @@ import type {
   StatSession,
   Task,
   TaskDiffResponse,
+  UpdateFindingRequest,
   UpdateMemoryRequest,
 } from './types';
 import { setGloballyLocked } from './usage-lock-state';
@@ -557,6 +558,23 @@ export async function updateProjectMemory(
 ): Promise<ProjectMemory> {
   return requestJSON<ProjectMemory>(
     `/projects/${encodeURIComponent(project)}/memories/${encodeURIComponent(id)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(req),
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Findings (proxy through web server → manager MCP update_finding tool)
+
+export async function updateFinding(
+  project: string,
+  id: string,
+  req: UpdateFindingRequest,
+): Promise<{ project: string; finding: Finding; updated: boolean }> {
+  return requestJSON<{ project: string; finding: Finding; updated: boolean }>(
+    `/projects/${encodeURIComponent(project)}/findings/${encodeURIComponent(id)}`,
     {
       method: 'PATCH',
       body: JSON.stringify(req),

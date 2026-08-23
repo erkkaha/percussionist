@@ -137,7 +137,7 @@ branch (`project.spec.source.git.ref ?? "main"` by default) when
 | `manual` | The task parks in `awaiting-human`; a human merges the feature branch to the target entirely outside the system, then marks the task done in Percussionist. |
 | `disabled` | No integration merge; the task goes to `done` once all BUILD children are done. |
 
-The feature branch is kept indefinitely in all modes.
+Branch retention depends on the mode: branches pushed to the remote (e.g. the feature branch in `pr` mode) are kept indefinitely, while in `auto-merge`/`manual` mode the feature-branch ref lives only in the local bare mirror and is deleted from it when the task reaches `done`.
 
 ## Data PVC
 
