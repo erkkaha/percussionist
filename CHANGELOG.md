@@ -1,6 +1,35 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.16] - 2026-08-23
+
+### <!-- 0 -->🚀 Features
+
+- Add focus-mode toggle affordance to TaskDetailPanel _(web)_
+- Wire focus state in BoardView (focus mode) _(web)_
+- Add PATCH /api/projects/:name/findings/:id proxy to update_finding _(web)_
+- Add updateFinding API wrapper and useUpdateFinding hook _(web)_
+- Add close/reopen controls to FindingsPanel _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Guard inject-file Secret writes on partial PUT /projects/:name _(web)_
+- Make Provider Secrets panel functional with editable key/value rows _(web)_
+- Route beatctl auth web-token through patchWebAuthSecret _(cli)_
+- Disambiguate inject-file Secret names with a filename hash _(web)_
+- Merge sibling keys on PUT /api/settings/secrets/:name _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Secret updates destroy sibling keys in three write paths + stubbed settings UI _(plan)_
+- Expandable board task detail view (focus mode) _(plan)_
+- Findings cannot be closed from UI _(plan)_
+- Correct claims that contradict the codebase
+
+### <!-- 6 -->🧪 Testing
+
+- Add focus-mode component tests for TaskDetailPanel and BoardView _(web)_
+- Add findings route + panel tests _(web)_
 ## [v0.2.15] - 2026-08-21
 
 ### <!-- 0 -->🚀 Features
@@ -72,6 +101,7 @@ All notable changes to Percussionist are documented here.
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Bump bun to 1.4.0 in images and CI
+- Release v0.2.15
 ## [v0.2.14] - 2026-08-11
 
 ### <!-- 0 -->🚀 Features
