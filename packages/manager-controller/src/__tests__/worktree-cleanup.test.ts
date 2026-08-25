@@ -95,6 +95,71 @@ describe('spawnTaskWorktreeCleanupPod — script content', () => {
     expect(capturedScript.match(/for dir in/g)?.length).toBe(1);
   });
 
+  it('deletes remote namespaced refs best-effort for explicit branches, with secret mounts', async () => {
+    const task = makeTask('build-123');
+    let capturedPod: any;
+    const fakeCore = {
+      createNamespacedPod: async ({ body }: { body: any }) => {
+        capturedPod = body;
+        capturedScript = body.spec.containers[0].args[0];
+        return body;
+      },
+    };
+    coreSpy.mockRestore();
+    coreSpy = spyOn(kube, 'core').mockReturnValue(fakeCore as any);
+
+    await spawnTaskWorktreeCleanupPod({
+      task,
+      projectName: 'proj',
+      namespace: 'percussionist',
+      image: 'alpine/git',
+      gitUrl: 'https://example.com/repo.git',
+      branches: ['feature/plan-abc--build-123'],
+      sshSecret: { name: 'git-ssh-key' },
+      githubTokenSecret: { name: 'git-github-token' },
+    });
+
+    // Explicit branch seeds $BRANCHES so the remote delete runs even when
+    // per-run pods already removed the worktrees.
+    expect(capturedScript).toContain('BRANCHES="feature/plan-abc--build-123"');
+    // Best-effort remote delete of the namespaced ref, never blocking done.
+    expect(capturedScript).toContain('push origin ":refs/percussionist/$b" 2>&1 || true');
+    // Auth material mounted for the push.
+    const mounts = capturedPod.spec.containers[0].volumeMounts.map((m: any) => m.name);
+    expect(mounts).toContain('git-ssh');
+    expect(mounts).toContain('git-github');
+    const volumes = capturedPod.spec.volumes.map((v: any) => v.name);
+    expect(volumes).toContain('git-ssh');
+    expect(volumes).toContain('git-github');
+  });
+
+  it('omits secret mounts when no secrets are supplied', async () => {
+    const task = makeTask('build-123');
+    let capturedPod: any;
+    const fakeCore = {
+      createNamespacedPod: async ({ body }: { body: any }) => {
+        capturedPod = body;
+        capturedScript = body.spec.containers[0].args[0];
+        return body;
+      },
+    };
+    coreSpy.mockRestore();
+    coreSpy = spyOn(kube, 'core').mockReturnValue(fakeCore as any);
+
+    await spawnTaskWorktreeCleanupPod({
+      task,
+      projectName: 'proj',
+      namespace: 'percussionist',
+      image: 'alpine/git',
+      gitUrl: 'https://example.com/repo.git',
+    });
+
+    const mounts = capturedPod.spec.containers[0].volumeMounts.map((m: any) => m.name);
+    expect(mounts).toEqual(['data']);
+    const volumes = capturedPod.spec.volumes.map((v: any) => v.name);
+    expect(volumes).toEqual(['data']);
+  });
+
   it('tolerates a concurrent cleanup deleting the same tree (rm must not abort the script)', async () => {
     const task = makeTask('build-123');
 
@@ -145,5 +210,23 @@ describe('spawnWorktreeCleanupPod — script content', () => {
 
     expect(capturedScript).toContain('set -e');
     expect(capturedScript).not.toMatch(/rm -rf [^\n]*(?<!\|\| true)$/m);
+  });
+
+  it('never deletes remote namespaced refs (the task is still in flight)', async () => {
+    const task = makeTask('build-123');
+
+    await spawnWorktreeCleanupPod({
+      task,
+      runName: 'proj-merge-build-123-1a2b3c',
+      projectName: 'proj',
+      namespace: 'percussionist',
+      image: 'alpine/git',
+      gitUrl: 'https://example.com/repo.git',
+    });
+
+    // Per-run cleanup fires on retries/rework; the branch (and its
+    // refs/percussionist/* remote copy) must survive until the task is done.
+    expect(capturedScript).not.toContain('refs/percussionist/');
+    expect(capturedScript).not.toContain('push origin');
   });
 });

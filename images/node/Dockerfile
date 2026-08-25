@@ -47,7 +47,9 @@ RUN rm -rf packages/api/dist packages/kube/dist packages/operator/dist \
 FROM node:${NODE_VERSION}-alpine AS runtime
 ARG PKG
 ENV NODE_ENV=production
-RUN apk add --no-cache tini
+# git + openssh-client: the dispatcher sidecar runs git in the run workspace
+# (clean-tree check and refs/percussionist/* branch publish on completion).
+RUN apk add --no-cache tini git openssh-client ca-certificates
 
 WORKDIR /app
 

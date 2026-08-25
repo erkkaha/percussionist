@@ -101,6 +101,17 @@ export interface TaskWorktreeCleanupOptions {
    * deterministic worker-run suffix pattern.
    */
   runNames?: string[];
+  /**
+   * Branch names whose refs/percussionist/<branch> namespaced refs should be
+   * deleted from the remote. Passed explicitly (task.status.worker.gitBranch)
+   * because worktree-HEAD sniffing fails when per-run cleanup pods already
+   * removed the trees.
+   */
+  branches?: string[];
+  /** SSH key secret for the remote ref deletion (project source.git.sshSecret). */
+  sshSecret?: { name: string; key?: string };
+  /** GitHub token secret for the remote ref deletion (project source.git.githubTokenSecret). */
+  githubTokenSecret?: { name: string; key?: string };
 }
 
 /**
@@ -226,6 +237,9 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
     dataPvcName = `${projectName}-data`,
     gitUrl,
     runNames = [],
+    branches = [],
+    sshSecret,
+    githubTokenSecret,
   } = opts;
 
   const taskName = task.metadata.name;
@@ -242,7 +256,9 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
     'set -e',
     `echo "[cleanup] removing all worktrees for task ${taskName}"`,
     `cd ${shQuote(worktreeDir)} || exit 0`,
-    `BRANCHES=""`,
+    // Seed with the explicitly passed branches — worktree-HEAD sniffing below
+    // finds nothing when per-run cleanup pods already removed the trees.
+    `BRANCHES="${branches.map((b) => b.replace(/[^A-Za-z0-9/_.-]/g, '')).join(' ')}"`,
     `for dir in ${shQuote(runPrefix)}-*; do`,
     `  [ -e "$dir" ] || continue`,
     `  case "$dir" in`,
@@ -283,6 +299,24 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
           `    echo "[cleanup] repacking mirror objects"`,
           `    git -C "${mirrorDir}" gc --auto 2>/dev/null || true`,
           `  ) 200>"${lockFile}"`,
+          // Delete the branches' namespaced remote refs (refs/percussionist/*,
+          // published on run completion). Best-effort and outside the flock —
+          // a slow network push must not block other runs' mirror fetches.
+          `  export GIT_TERMINAL_PROMPT=0`,
+          `  if [ -f /etc/git-ssh/id ]; then`,
+          `    export GIT_SSH_COMMAND="ssh -i /etc/git-ssh/id -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"`,
+          `  else`,
+          `    export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new"`,
+          `  fi`,
+          `  if [ -f /etc/git-github/token ]; then`,
+          `    GITHUB_TOKEN=$(cat /etc/git-github/token); export GITHUB_TOKEN`,
+          `    printf '#!/bin/sh\\ncase "$1" in Username*) echo x-access-token;; *) echo "$GITHUB_TOKEN";; esac\\n' > /tmp/askpass`,
+          `    chmod +x /tmp/askpass; export GIT_ASKPASS=/tmp/askpass`,
+          `  fi`,
+          `  for b in $BRANCHES; do`,
+          `    echo "[cleanup] deleting remote namespaced ref refs/percussionist/$b"`,
+          `    git -C "${mirrorDir}" push origin ":refs/percussionist/$b" 2>&1 || true`,
+          `  done`,
           `fi`,
         ]
       : []),
@@ -325,10 +359,41 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
             requests: { cpu: '50m', memory: '64Mi' },
             limits: { cpu: '200m', memory: '256Mi' },
           },
-          volumeMounts: [{ name: 'data', mountPath: dataMountPath }],
+          volumeMounts: [
+            { name: 'data', mountPath: dataMountPath },
+            ...(sshSecret ? [{ name: 'git-ssh', mountPath: '/etc/git-ssh', readOnly: true }] : []),
+            ...(githubTokenSecret
+              ? [{ name: 'git-github', mountPath: '/etc/git-github', readOnly: true }]
+              : []),
+          ],
         },
       ],
-      volumes: [{ name: 'data', persistentVolumeClaim: { claimName: dataPvcName } }],
+      volumes: [
+        { name: 'data', persistentVolumeClaim: { claimName: dataPvcName } },
+        ...(sshSecret
+          ? [
+              {
+                name: 'git-ssh',
+                secret: {
+                  secretName: sshSecret.name,
+                  items: [{ key: sshSecret.key ?? 'ssh-privatekey', path: 'id' }],
+                  defaultMode: 0o400,
+                },
+              },
+            ]
+          : []),
+        ...(githubTokenSecret
+          ? [
+              {
+                name: 'git-github',
+                secret: {
+                  secretName: githubTokenSecret.name,
+                  items: [{ key: githubTokenSecret.key ?? 'token', path: 'token' }],
+                },
+              },
+            ]
+          : []),
+      ],
     },
   };
 

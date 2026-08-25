@@ -488,9 +488,21 @@ export async function executeEffects(
   // Fire-and-forget — never blocks the reconcile cycle.
   if (toPhase === 'done' && project) {
     const projectName = project.metadata.name;
-    const gitUrl = (project.spec.source as { git?: { url?: string } } | undefined)?.git?.url;
+    const projectGit = (
+      project.spec.source as
+        | {
+            git?: {
+              url?: string;
+              sshSecret?: { name: string; key?: string };
+              githubTokenSecret?: { name: string; key?: string };
+            };
+          }
+        | undefined
+    )?.git;
+    const gitUrl = projectGit?.url;
     const runnerImage = (project.spec.runner as { image?: string } | undefined)?.image;
     const image = runnerImage ?? project.spec.image ?? 'alpine/git';
+    const gitBranch = currentTask.status?.worker?.gitBranch;
     (async () => {
       const runs = await listRuns(namespace, undefined, `${LABELS.taskId}=${taskName}`);
       const runNames = runs.map((r) => r.metadata.name);
@@ -503,6 +515,11 @@ export async function executeEffects(
         gitUrl,
         dataPvcName: project.spec.data?.pvcName,
         runNames,
+        // Also delete the branch's refs/percussionist/* namespaced ref from
+        // the remote — the branch is merged (or abandoned) once the task is done.
+        branches: gitBranch ? [gitBranch] : [],
+        sshSecret: projectGit?.sshSecret,
+        githubTokenSecret: projectGit?.githubTokenSecret,
       });
     })().catch((e: Error) =>
       console.warn(`[effects] task-done worktree cleanup failed for ${taskName}:`, e.message),

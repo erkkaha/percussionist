@@ -30,6 +30,7 @@ import {
 } from '@kubernetes/client-node';
 import { API_GROUP, API_VERSION, PLURAL_RUN, RunPhase, type RunStatus } from '@percussionist/api';
 import { makeNodeApiClient } from '@percussionist/kube';
+import { gitPublish } from './git-publish.js';
 import { startMcpServer } from './mcp-server.js';
 import { runInteractive, runPrompt, snapshotAllSessions } from './polling.js';
 import { waitForHealthy } from './session.js';
@@ -274,6 +275,9 @@ main().catch(async (e) => {
   }
   err('fatal:', e);
   const completedAt = new Date().toISOString();
+  // Best-effort branch publish so committed work survives a crashed run even
+  // if this node's mirror is later lost (refs/percussionist/* namespaced ref).
+  await gitPublish.publishWorkerBranch().catch(() => {});
   // Best-effort snapshot so session data survives fatal errors (e.g. waitForHealthy timeout).
   if (_activeSessionID) {
     await snapshotAllSessions(coreApi, RUN_NAME, RUN_NAMESPACE, RUN_UID, _activeSessionID).catch(

@@ -242,6 +242,7 @@ describe('renderPod - workspace-init script generation', () => {
       // Local git mode should not reference remote-tracking branches
       expect(args).not.toContain('refs/remotes/origin/');
       expect(args).not.toContain('_PARENT_REMOTE_REF');
+      expect(args).not.toContain('refs/percussionist/');
       expect(args).toContain('git init "$WORKSPACE_DIR"');
     });
 
@@ -350,10 +351,10 @@ describe('renderPod - workspace-init script generation', () => {
     // every path flows through it.
     it('renders the reset-to-remote-tip stanza exactly once for a ref run', () => {
       const argsReuse = getWorkspaceInitArgs(branchingRun());
-      expect((argsReuse.match(/reset to origin\//g) ?? []).length).toBe(1);
+      expect((argsReuse.match(/reset to \$_TIP/g) ?? []).length).toBe(1);
 
       const argsFresh = getWorkspaceInitArgs(branchingRun({ worktreeReuse: false }));
-      expect((argsFresh.match(/reset to origin\//g) ?? []).length).toBe(1);
+      expect((argsFresh.match(/reset to \$_TIP/g) ?? []).length).toBe(1);
     });
 
     // The force-add / normal-add / parent-baseline / error chain is shared
@@ -364,10 +365,9 @@ describe('renderPod - workspace-init script generation', () => {
       const argsFresh = getWorkspaceInitArgs(branchingRun({ worktreeReuse: false }));
 
       const startMarker = '# Re-sync refs/heads from remotes/origin';
-      // The hoisted reset stanza is the first `rev-parse origin/$GIT_REF` after
-      // the add chain; it is not part of the add-worktree content.
-      const endMarker =
-        'if git -C "$WORKTREE_DIR" rev-parse "origin/$GIT_REF" >/dev/null 2>&1; then';
+      // The hoisted reset stanza opens by clearing _TIP after the add chain;
+      // it is not part of the add-worktree content.
+      const endMarker = '_TIP=""';
 
       const startReuse = argsReuse.indexOf(startMarker);
       const startFresh = argsFresh.indexOf(startMarker);
@@ -867,5 +867,156 @@ describe('renderPod - parent baseline resolution failure', () => {
     expect(errIdx).toBeGreaterThan(-1);
     expect(addIdx).toBeGreaterThan(errIdx);
     expect(script.slice(errIdx, addIdx)).toContain('exit 1');
+  });
+});
+
+// Namespaced remote refs (refs/percussionist/*): the remote holds a durable
+// copy of in-flight worker branches. The init container fetches them, promotes
+// them into refs/heads (fast-forward only), resolves parent baselines and
+// checkouts from them, and the reset stanza never discards local work that is
+// ahead of or diverged from the remote copy.
+describe('renderPod - namespaced remote refs (refs/percussionist/*)', () => {
+  function gitRun(overrides: Record<string, unknown> = {}): Run {
+    return makeRun({
+      spec: {
+        project: 'test-project',
+        task: 'build-task-1',
+        interactive: false,
+        ttlSecondsAfterFinished: 604800,
+        source: {
+          git: {
+            url: 'https://github.com/test/repo.git',
+            ref: 'feature/child-branch',
+            parentRef: 'feature/my-feature',
+          },
+        },
+        ...overrides,
+      },
+    });
+  }
+
+  it('fetches both refspecs into the mirror', () => {
+    const args = getWorkspaceInitArgs(gitRun());
+    expect(args).toContain(
+      "fetch origin '+refs/heads/*:refs/remotes/origin/*' '+refs/percussionist/*:refs/percussionist/*' --prune",
+    );
+  });
+
+  it('configures the worktree fetch refspecs idempotently (--replace-all then guarded --add)', () => {
+    const args = getWorkspaceInitArgs(gitRun());
+    expect(args).toContain(
+      `config --local --replace-all remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'`,
+    );
+    expect(args).toContain(
+      `--add remote.origin.fetch '+refs/percussionist/*:refs/percussionist/*'`,
+    );
+    // Guarded: only added when not already present, so repeated inits do not
+    // accumulate duplicate entries in the shared mirror config.
+    expect(args).toContain(
+      `--get-all remote.origin.fetch 2>/dev/null | grep -qF 'refs/percussionist'`,
+    );
+  });
+
+  it('renders the fast-forward-only promote loop in both worktree modes', () => {
+    for (const gitCache of [undefined, { worktreeReuse: false }]) {
+      const args = getWorkspaceInitArgs(gitRun(gitCache ? { gitCache } : {}));
+      expect(args).toContain('# Promote refs/percussionist/* into refs/heads');
+      expect(args).toContain('merge-base --is-ancestor "refs/heads/$_BRANCH" "$_NS_REF"');
+      expect(args).toContain('keeping local refs/heads/$_BRANCH');
+    }
+  });
+
+  it('resolves the parent baseline from refs/percussionist as last resort', () => {
+    const args = getWorkspaceInitArgs(gitRun());
+    expect(args).toContain('rev-parse "refs/percussionist/$GIT_PARENT_REF"');
+    expect(args).toContain('_PARENT_BASE_REF="refs/percussionist/$GIT_PARENT_REF"');
+  });
+
+  it('falls back to the namespaced ref in the resume checkout chain', () => {
+    const args = getWorkspaceInitArgs(gitRun());
+    expect(args).toContain('checkout -b "$GIT_REF" "refs/percussionist/$GIT_REF"');
+  });
+
+  it('guards the reset: only when HEAD is strictly behind the remote tip', () => {
+    const args = getWorkspaceInitArgs(gitRun());
+    expect(args).toContain('_TIP="origin/$GIT_REF"');
+    expect(args).toContain('_TIP="refs/percussionist/$GIT_REF"');
+    expect(args).toContain('merge-base --is-ancestor HEAD "$_TIP"');
+    expect(args).toContain('keeping local HEAD for $GIT_REF');
+    // The old unconditional reset must be gone.
+    expect(args).not.toContain('reset to origin/$GIT_REF');
+  });
+});
+
+// Dispatcher git access: the sidecar runs the clean-tree check and the branch
+// publish, so remote-git runs mount the workspace + data volume and carry git
+// env; local-git and no-ref runs must not.
+describe('renderPod - dispatcher git access', () => {
+  function getDispatcher(run: Run) {
+    const pod = renderPod(run, []);
+    return pod.spec?.containers?.find((c) => c.name === 'dispatcher');
+  }
+
+  const gitRun = () =>
+    makeRun({
+      spec: {
+        project: 'test-project',
+        task: 'build-task-1',
+        interactive: false,
+        ttlSecondsAfterFinished: 604800,
+        source: {
+          git: {
+            url: 'https://github.com/test/repo.git',
+            ref: 'feature/child-branch',
+            githubTokenSecret: { name: 'git-github-token' },
+          },
+        },
+      },
+    });
+
+  const localRun = () =>
+    makeRun({
+      spec: {
+        project: 'test-project',
+        task: 'build-task-1',
+        interactive: false,
+        ttlSecondsAfterFinished: 604800,
+        source: { local: true },
+      },
+    });
+
+  it('mounts the workspace, data volume, and token secret for remote-git runs', () => {
+    const dispatcher = getDispatcher(gitRun());
+    const mounts = (dispatcher?.volumeMounts ?? []) as Array<{
+      name: string;
+      mountPath: string;
+      subPath?: string;
+    }>;
+    expect(mounts).toContainEqual({
+      name: 'data',
+      mountPath: '/workspace',
+      subPath: 'worktrees/test-run-123',
+    });
+    expect(mounts.some((m) => m.name === 'data' && m.mountPath === '/data')).toBe(true);
+    expect(mounts.some((m) => m.name === 'git-github' && m.mountPath === '/etc/git-github')).toBe(
+      true,
+    );
+  });
+
+  it('sets RUN_GIT_BRANCH, GIT_SSH_COMMAND and GITHUB_TOKEN env for remote-git runs', () => {
+    const env = (getDispatcher(gitRun())?.env ?? []) as Array<{ name?: string; value?: string }>;
+    const names = env.map((e) => e.name);
+    expect(env).toContainEqual({ name: 'RUN_GIT_BRANCH', value: 'feature/child-branch' });
+    expect(names).toContain('GIT_SSH_COMMAND');
+    expect(names).toContain('GITHUB_TOKEN');
+  });
+
+  it('mounts no workspace and sets no git env for local-git runs', () => {
+    const dispatcher = getDispatcher(localRun());
+    const mounts = (dispatcher?.volumeMounts ?? []) as Array<{ name: string }>;
+    expect(mounts.every((m) => m.name === 'kube-api-access')).toBe(true);
+    const names = ((dispatcher?.env ?? []) as Array<{ name?: string }>).map((e) => e.name);
+    expect(names).not.toContain('RUN_GIT_BRANCH');
+    expect(names).not.toContain('GIT_SSH_COMMAND');
   });
 });

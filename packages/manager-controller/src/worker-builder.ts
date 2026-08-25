@@ -155,6 +155,8 @@ export async function buildWorkerRun(
       '- The file is the authoritative PLAN output and will be reviewed by facilitator/human reviewers.',
       '- Include implementation context, scope boundaries, risks, acceptance criteria, and proposed BUILD task breakdown.',
       '- Commit the plan artifact on this task branch before completing the run.',
+      '- The platform automatically publishes your branch to a namespaced remote ref on completion;',
+      '  do not push the branch yourself.',
       `- After committing, call percussionist_dispatcher_write_plan(project="${projectName}", task="${taskName}", content=<plan-content>) to persist it to ConfigMap.`,
       `- Mention ${planPath} in the completion summary.`,
       `- When done, call percussionist_dispatcher_complete_plan instead of complete_run.`,
@@ -189,6 +191,8 @@ export async function buildWorkerRun(
       '- Stage and commit your changes before calling complete_run.',
       '- The dispatcher will reject complete_run if the working tree has uncommitted changes.',
       '- If no code changes are needed, call complete_run with "force": true to bypass this check.',
+      '- The platform automatically publishes your branch to a namespaced remote ref on completion;',
+      '  do not push the branch yourself.',
       '',
     );
   }
@@ -414,8 +418,9 @@ export async function buildMergeRun(
  * In auto-merge mode nothing ever publishes a build branch: the worker commits
  * into the shared git mirror and `complete_run` only checks the tree is clean.
  * That is deliberate — one remote branch per BUILD task would flood the remote —
- * so the source branch usually exists ONLY locally and every step here works off
- * the local tip rather than `origin/<source>`.
+ * so the source branch exists locally plus as a namespaced refs/percussionist/*
+ * remote copy (invisible in the branch UI), never as `origin/<source>`, and
+ * every step here works off the local tip.
  *
  * The previous version referenced `origin/<source>` in its pre-flight, its
  * fast-forward test and its verification, so all three failed on an unpublished
@@ -441,10 +446,11 @@ export function autoMergePromptLines(
     '## Pre-flight Check',
     '',
     'Your worktree is already checked out at the source branch. In this mode the',
-    'source branch normally exists only in the local git mirror — it is never',
-    `published, and origin/${sourceBranch} will usually not exist. That is`,
+    'source branch lives in the local git mirror plus a namespaced remote copy',
+    `(refs/percussionist/${sourceBranch}) that the platform publishes automatically —`,
+    `origin/${sourceBranch} (a real remote branch) will usually not exist. That is`,
     'expected, not an error, and NOT something to repair by pushing the source',
-    'branch: the remote must only ever receive target branches.',
+    'branch: the remote must only ever receive target branches under refs/heads.',
     '',
     `    git rev-parse --abbrev-ref HEAD          # expect ${sourceBranch}`,
     '    SOURCE_SHA=$(git rev-parse HEAD)         # the work being merged',

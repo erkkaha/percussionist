@@ -57,6 +57,9 @@ function parentBaselineResolve(): string {
     echo "[workspace-init] using remote-tracking ref $_PARENT_REMOTE_REF as parent baseline for $GIT_REF"
   elif git -C "$MIRROR_DIR" rev-parse "refs/heads/$GIT_PARENT_REF" >/dev/null 2>&1; then
     echo "[workspace-init] falling back to local ref $GIT_PARENT_REF as parent baseline for $GIT_REF"
+  elif git -C "$MIRROR_DIR" rev-parse "refs/percussionist/$GIT_PARENT_REF" >/dev/null 2>&1; then
+    _PARENT_BASE_REF="refs/percussionist/$GIT_PARENT_REF"
+    echo "[workspace-init] using namespaced ref refs/percussionist/$GIT_PARENT_REF as parent baseline for $GIT_REF"
   else
     # Neither ref exists, so the worktree add below would fail on an unresolvable
     # baseline — as a bare "git worktree add" fatal, i.e. exit 128 with nothing
@@ -69,7 +72,7 @@ function parentBaselineResolve(): string {
     # old mirror — because a push failed for want of credentials — is simply not
     # there.
     echo "[workspace-init] error: parent branch $GIT_PARENT_REF not found in mirror $MIRROR_DIR" >&2
-    echo "[workspace-init] looked for refs/remotes/origin/$GIT_PARENT_REF and refs/heads/$GIT_PARENT_REF" >&2
+    echo "[workspace-init] looked for refs/remotes/origin/$GIT_PARENT_REF, refs/heads/$GIT_PARENT_REF and refs/percussionist/$GIT_PARENT_REF" >&2
     echo "[workspace-init] it is on neither the remote nor this mirror; if source.git.url changed, the branch may only exist in the mirror for the previous URL" >&2
     exit 1
   fi`;
@@ -94,23 +97,63 @@ function renderRefSyncSnippet(): string[] {
     '      git -C "$MIRROR_DIR" update-ref "refs/heads/$_BRANCH" "$_REMOTE_REF" 2>/dev/null || true',
     '    fi',
     '  done',
+    ...renderPercussionistRefPromote(),
   ];
 }
 
 /**
- * Reset the worktree to the tip of origin/<ref> so the run always starts from
- * the latest committed code, skipping when the remote-tracking branch does not
- * exist yet (e.g. a freshly created feature branch that has not been pushed).
+ * Promote refs/percussionist/* (worker branches published to the remote on run
+ * completion) into refs/heads/ so `git worktree add` and checkout can resolve
+ * them on a mirror that never held the branch locally. Never clobbers local
+ * work: creates the branch when absent, fast-forwards when the local ref is an
+ * ancestor of the namespaced copy, and leaves checked-out or ahead/diverged
+ * branches alone — the local mirror tip is the live lineage on this node.
+ */
+function renderPercussionistRefPromote(): string[] {
+  return [
+    '  # Promote refs/percussionist/* into refs/heads (create or fast-forward only)',
+    '  for _NS_REF in $(git -C "$MIRROR_DIR" for-each-ref --format=\'%(refname)\' refs/percussionist/ 2>/dev/null || true); do',
+    '    _BRANCH="${_NS_REF#refs/percussionist/}"',
+    '    [ "$_BRANCH" = "HEAD" ] && continue',
+    '    if git -C "$MIRROR_DIR" worktree list --porcelain 2>/dev/null | grep -qF "branch refs/heads/$_BRANCH"; then',
+    '      continue',
+    '    fi',
+    '    if ! git -C "$MIRROR_DIR" rev-parse "refs/heads/$_BRANCH" >/dev/null 2>&1; then',
+    '      git -C "$MIRROR_DIR" update-ref "refs/heads/$_BRANCH" "$_NS_REF" 2>/dev/null || true',
+    '    elif git -C "$MIRROR_DIR" merge-base --is-ancestor "refs/heads/$_BRANCH" "$_NS_REF" 2>/dev/null; then',
+    '      git -C "$MIRROR_DIR" update-ref "refs/heads/$_BRANCH" "$_NS_REF" 2>/dev/null || true',
+    '    else',
+    '      echo "[workspace-init] keeping local refs/heads/$_BRANCH (ahead of or diverged from $_NS_REF)"',
+    '    fi',
+    '  done',
+  ];
+}
+
+/**
+ * Reset the worktree to the freshest remote copy of <ref> — origin/<ref> when
+ * the branch exists on the remote proper, else its refs/percussionist/<ref>
+ * namespaced copy — but ONLY when HEAD is strictly behind that tip. A HEAD that
+ * is ahead or diverged holds committed work the remote never received (e.g. a
+ * crashed run whose completion push never fired); resetting would destroy it.
  * Rendered exactly once per script, after the worktree is in place, so every
  * path (resume, force-add, normal-add, parent-baseline create) flows through
  * it — except the exit-1 error path, which must not reset.
  */
 function renderResetToRemoteTip(): string[] {
   return [
+    `_TIP=""`,
     `if git -C "$WORKTREE_DIR" rev-parse "origin/$GIT_REF" >/dev/null 2>&1; then`,
-    `  git -C "$WORKTREE_DIR" reset --hard "origin/$GIT_REF" && echo "[workspace-init] reset to origin/$GIT_REF"`,
-    `else`,
+    `  _TIP="origin/$GIT_REF"`,
+    `elif git -C "$WORKTREE_DIR" rev-parse "refs/percussionist/$GIT_REF" >/dev/null 2>&1; then`,
+    `  _TIP="refs/percussionist/$GIT_REF"`,
+    `fi`,
+    `if [ -z "$_TIP" ]; then`,
     `  echo "[workspace-init] no remote tracking branch for $GIT_REF, skipping reset"`,
+    `elif [ "$(git -C "$WORKTREE_DIR" rev-parse HEAD)" != "$(git -C "$WORKTREE_DIR" rev-parse "$_TIP")" ] \\`,
+    `  && git -C "$WORKTREE_DIR" merge-base --is-ancestor HEAD "$_TIP" 2>/dev/null; then`,
+    `  git -C "$WORKTREE_DIR" reset --hard "$_TIP" && echo "[workspace-init] reset to $_TIP"`,
+    `else`,
+    `  echo "[workspace-init] keeping local HEAD for $GIT_REF (not strictly behind $_TIP)"`,
     `fi`,
   ];
 }
@@ -509,7 +552,7 @@ export function renderPod(
                     '  if [ -d "$MIRROR_DIR" ]; then',
                     '    echo "[workspace-init] updating mirror $MIRROR_DIR"',
                     '    # Fetch into remote-tracking refs — never blocked by worktree checkouts',
-                    '    git -C "$MIRROR_DIR" fetch origin \'+refs/heads/*:refs/remotes/origin/*\' --prune 2>&1 || echo "[workspace-init] fetch failed, using stale mirror"',
+                    '    git -C "$MIRROR_DIR" fetch origin \'+refs/heads/*:refs/remotes/origin/*\' \'+refs/percussionist/*:refs/percussionist/*\' --prune 2>&1 || echo "[workspace-init] fetch failed, using stale mirror"',
                     '    # Sync refs/heads/ from remotes/origin/ for branches NOT checked out in worktrees',
                     "    # Skip HEAD — it's a symbolic ref, not a real branch; syncing it creates",
                     "    # refs/heads/HEAD which conflicts with the symbolic HEAD (causes 'HEAD is ambiguous').",
@@ -520,6 +563,7 @@ export function renderPod(
                     '        git -C "$MIRROR_DIR" update-ref "refs/heads/$_BRANCH" "$_REMOTE_REF" 2>/dev/null || true',
                     '      fi',
                     '    done',
+                    ...renderPercussionistRefPromote().map((l) => `  ${l}`),
                     '  else',
                     `    echo "[workspace-init] cloning mirror from $GIT_URL"`,
                     `    git clone --mirror "$GIT_URL" "$MIRROR_DIR"`,
@@ -548,6 +592,8 @@ export function renderPod(
                                 `    echo "[workspace-init] checked out existing branch $GIT_REF"`,
                                 `  elif git -C "$WORKTREE_DIR" checkout -b "$GIT_REF" "origin/$GIT_REF" 2>/dev/null; then`,
                                 `    echo "[workspace-init] checked out remote branch $GIT_REF"`,
+                                `  elif git -C "$WORKTREE_DIR" checkout -b "$GIT_REF" "refs/percussionist/$GIT_REF" 2>/dev/null; then`,
+                                `    echo "[workspace-init] checked out namespaced ref refs/percussionist/$GIT_REF"`,
                                 ...(git.parentRef
                                   ? [
                                       `  elif git -C "$WORKTREE_DIR" checkout -b "$GIT_REF" "$GIT_PARENT_REF" 2>/dev/null; then`,
@@ -588,8 +634,12 @@ export function renderPod(
                     `git -C "$WORKTREE_DIR" remote set-url origin "$GIT_URL" 2>/dev/null || true`,
                     '# Unset mirror=true inherited from bare mirror so agent can push individual branches',
                     `git -C "$WORKTREE_DIR" config --local remote.origin.mirror false 2>/dev/null || true`,
-                    '# Use standard fetch refspec so git fetch origin goes to refs/remotes/origin/* instead of refs/heads/* (avoids worktree conflicts)',
-                    `git -C "$WORKTREE_DIR" config --local remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' 2>/dev/null || true`,
+                    '# Use standard fetch refspec so git fetch origin goes to refs/remotes/origin/* instead of refs/heads/* (avoids worktree conflicts).',
+                    '# Multi-valued: --replace-all collapses to the heads refspec, then the namespaced',
+                    '# refspec is re-added — a plain `git config` fails on multi-valued keys, and an',
+                    '# unguarded --add would accumulate duplicates in the shared mirror config on every init.',
+                    `git -C "$WORKTREE_DIR" config --local --replace-all remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' 2>/dev/null || true`,
+                    `git -C "$WORKTREE_DIR" config --local --get-all remote.origin.fetch 2>/dev/null | grep -qF 'refs/percussionist' || git -C "$WORKTREE_DIR" config --local --add remote.origin.fetch '+refs/percussionist/*:refs/percussionist/*' 2>/dev/null || true`,
                     `echo "[workspace-init] HEAD=$(git -C "$WORKTREE_DIR" rev-parse HEAD)"`,
                     '',
                     ...(initScript
@@ -1076,6 +1126,36 @@ export function renderPod(
             { name: 'RUN_PROJECT', value: spec.project },
             ...(spec.boardTask ? [{ name: 'RUN_BOARD_TASK', value: spec.boardTask }] : []),
             { name: 'RUN_TIMEOUT_SECONDS', value: String(spec.timeoutSeconds ?? 3600) },
+            // Git access for the clean-tree check and the refs/percussionist/*
+            // branch publish on run completion. Remote-git runs only.
+            ...(git
+              ? [
+                  ...(git.ref ? [{ name: 'RUN_GIT_BRANCH', value: git.ref }] : []),
+                  sshSecret
+                    ? {
+                        name: 'GIT_SSH_COMMAND',
+                        value: `ssh -i /etc/git-ssh/id${sshHostKeyOpts}${verifyHostKeys ? '' : ' -o IdentitiesOnly=yes'}`,
+                      }
+                    : {
+                        name: 'GIT_SSH_COMMAND',
+                        value: `ssh${sshHostKeyOpts}`,
+                      },
+                  ...gitAuthorEnv,
+                  ...(githubTokenSecret
+                    ? [
+                        {
+                          name: 'GITHUB_TOKEN',
+                          valueFrom: {
+                            secretKeyRef: {
+                              name: githubTokenSecret.name,
+                              key: githubTokenSecret.key,
+                            },
+                          },
+                        },
+                      ]
+                    : []),
+                ]
+              : []),
           ],
           // The ServiceAccount token lives here (and only here — see
           // automountServiceAccountToken: false) so the dispatcher can patch the
@@ -1086,6 +1166,22 @@ export function renderPod(
               mountPath: '/var/run/secrets/kubernetes.io/serviceaccount',
               readOnly: true,
             },
+            // The run workspace plus the data volume (the worktree's .git file
+            // points into /data/git-mirrors), so the dispatcher can run git for
+            // the clean-tree check and the branch publish. Remote-git runs only.
+            ...(git && workspaceSubPath
+              ? [
+                  { name: 'data', mountPath: '/workspace', subPath: workspaceSubPath },
+                  { name: 'data', mountPath: dataMountPath },
+                  ...(sshSecret
+                    ? [{ name: 'git-ssh', mountPath: '/etc/git-ssh', readOnly: true }]
+                    : []),
+                  ...(githubTokenSecret
+                    ? [{ name: 'git-github', mountPath: '/etc/git-github', readOnly: true }]
+                    : []),
+                  ...knownHostsVolumeMount,
+                ]
+              : []),
           ],
           resources: {
             requests: { cpu: '50m', memory: '128Mi' },

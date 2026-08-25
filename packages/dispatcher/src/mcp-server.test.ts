@@ -331,3 +331,137 @@ describe('dispatchNotification swallows handler rejections', () => {
     spy.mockRestore();
   });
 });
+
+describe('branch publish on completion (refs/percussionist/*)', () => {
+  const { gitPublish } = require('./git-publish.js') as typeof import('./git-publish.js');
+
+  function withPublish<T>(
+    impl: () => Promise<import('./git-publish.js').PublishResult>,
+    fn: (calls: { count: number }) => Promise<T>,
+  ): Promise<T> {
+    const original = gitPublish.publishWorkerBranch;
+    const calls = { count: 0 };
+    gitPublish.publishWorkerBranch = async () => {
+      calls.count += 1;
+      return impl();
+    };
+    return fn(calls).finally(() => {
+      gitPublish.publishWorkerBranch = original;
+    });
+  }
+
+  it('complete_run (build-worker) publishes and passes the summary through on success', async () => {
+    await withPublish(
+      async () => ({ ok: true }),
+      async (calls) => {
+        const response = await callMcp(
+          {
+            jsonrpc: '2.0',
+            id: 20,
+            method: 'tools/call',
+            params: { name: 'complete_run', arguments: { summary: 'did the work' } },
+          },
+          okAuth(),
+        );
+        expect(response.error).toBeUndefined();
+        expect(calls.count).toBe(1);
+        const { completeCalls } = response.__calls as { completeCalls: string[] };
+        expect(completeCalls).toEqual(['did the work']);
+      },
+    );
+  });
+
+  it('complete_run soft-fails: publish failure completes with a warning marker, not an rpc error', async () => {
+    await withPublish(
+      async () => ({ ok: false, error: 'remote rejected' }),
+      async (calls) => {
+        const response = await callMcp(
+          {
+            jsonrpc: '2.0',
+            id: 21,
+            method: 'tools/call',
+            params: { name: 'complete_run', arguments: { summary: 'did the work' } },
+          },
+          okAuth(),
+        );
+        expect(response.error).toBeUndefined();
+        expect(calls.count).toBe(1);
+        const { completeCalls } = response.__calls as { completeCalls: string[] };
+        expect(completeCalls.length).toBe(1);
+        expect(completeCalls[0]).toContain('[warning: branch publish failed: remote rejected]');
+        expect(completeCalls[0]).toContain('did the work');
+      },
+    );
+  });
+
+  it('complete_plan (plan-worker) publishes', async () => {
+    await withPublish(
+      async () => ({ ok: true }),
+      async (calls) => {
+        const response = await callMcp(
+          {
+            jsonrpc: '2.0',
+            id: 22,
+            method: 'tools/call',
+            params: { name: 'complete_plan', arguments: { summary: 'planned' } },
+          },
+          okAuth({
+            context: 'plan-worker',
+            allowedTool: 'complete_plan',
+            requiredCapability: 'run.complete.plan',
+          }),
+        );
+        expect(response.error).toBeUndefined();
+        expect(calls.count).toBe(1);
+        const { planCalls } = response.__calls as { planCalls: string[] };
+        expect(planCalls).toEqual(['planned']);
+      },
+    );
+  });
+
+  it('complete_review never publishes', async () => {
+    await withPublish(
+      async () => ({ ok: true }),
+      async (calls) => {
+        await callMcp(
+          {
+            jsonrpc: '2.0',
+            id: 23,
+            method: 'tools/call',
+            params: {
+              name: 'complete_review',
+              arguments: { approved: true, diagnosis: 'looks good' },
+            },
+          },
+          okAuth({
+            context: 'review-facilitator',
+            allowedTool: 'complete_review',
+            requiredCapability: 'run.complete.review',
+          }),
+        );
+        expect(calls.count).toBe(0);
+      },
+    );
+  });
+
+  it('fail_run publishes best-effort', async () => {
+    await withPublish(
+      async () => ({ ok: false, error: 'no creds' }),
+      async (calls) => {
+        const response = await callMcp(
+          {
+            jsonrpc: '2.0',
+            id: 24,
+            method: 'tools/call',
+            params: { name: 'fail_run', arguments: { reason: 'stuck' } },
+          },
+          okAuth(),
+        );
+        expect(response.error).toBeUndefined();
+        expect(calls.count).toBe(1);
+        const { failCalls } = response.__calls as { failCalls: string[] };
+        expect(failCalls).toEqual(['stuck']);
+      },
+    );
+  });
+});

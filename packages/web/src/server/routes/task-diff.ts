@@ -344,8 +344,11 @@ router.get('/:project/tasks/:taskName/diff', auth(), async (c) => {
       // Without this guard a git-less exec image makes every command below fail
       // quietly, and the route blames the branches (base_missing) instead.
       'if ! command -v git >/dev/null 2>&1; then printf \'__PERCUSSIONIST_ERROR__ git_missing %s\\n\' "the exec image has no git"; exit 0; fi',
-      'git -C "$REPO" fetch origin "+refs/heads/*:refs/remotes/origin/*" --prune 2>/dev/null || echo "[diff] fetch failed, using stale mirror"',
-      'RESOLVE() { if git -C "$REPO" rev-parse --verify "origin/$1^{commit}" >/dev/null 2>&1; then printf "origin/%s" "$1"; elif git -C "$REPO" rev-parse --verify "$1^{commit}" >/dev/null 2>&1; then printf "%s" "$1"; fi; }',
+      'git -C "$REPO" fetch origin "+refs/heads/*:refs/remotes/origin/*" "+refs/percussionist/*:refs/percussionist/*" --prune 2>/dev/null || echo "[diff] fetch failed, using stale mirror"',
+      // Resolution precedence: origin/<name> (real remote branch) → <name>
+      // (live mirror tip) → refs/percussionist/<name> (namespaced worker
+      // branch published on run completion).
+      'RESOLVE() { if git -C "$REPO" rev-parse --verify "origin/$1^{commit}" >/dev/null 2>&1; then printf "origin/%s" "$1"; elif git -C "$REPO" rev-parse --verify "$1^{commit}" >/dev/null 2>&1; then printf "%s" "$1"; elif git -C "$REPO" rev-parse --verify "refs/percussionist/$1^{commit}" >/dev/null 2>&1; then printf "refs/percussionist/%s" "$1"; fi; }',
       'BASE_REF=$(RESOLVE "$BASE")',
       'HEAD_REF=$(RESOLVE "$HEAD")',
       'if [ -z "$BASE_REF" ]; then printf \'__PERCUSSIONIST_ERROR__ base_missing %s\\n\' "$BASE"; exit 0; fi',

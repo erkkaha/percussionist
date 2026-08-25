@@ -73,6 +73,7 @@ import {
   validateAgentTaskCapability,
   writePlanToConfigMap,
 } from '@percussionist/kube';
+import { gitHardeningFlags, gitPublish } from './git-publish.js';
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'percussionist-dispatcher';
@@ -496,7 +497,13 @@ function execCommand(
 export const gitCheck = {
   isClean: async (): Promise<string | null> => {
     try {
-      const { stdout: status } = await execCommand('git', ['status', '--porcelain'], 10_000);
+      // Hardened flags: the repo config/hooks live in the agent-writable
+      // mirror, and this container holds the ServiceAccount token.
+      const { stdout: status } = await execCommand(
+        'git',
+        [...gitHardeningFlags(), 'status', '--porcelain'],
+        10_000,
+      );
       const trimmed = status.trim();
       return trimmed.length > 0 ? trimmed : null;
     } catch {
@@ -1319,6 +1326,9 @@ async function handleMcp(
         const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
         const reason =
           typeof args.reason === 'string' ? args.reason : 'agent called fail_run without a reason';
+        // Best-effort branch publish so committed work survives the failure
+        // even if this node's mirror is later lost. Never blocks the fail path.
+        await gitPublish.publishWorkerBranch().catch(() => {});
         onFailRun(reason);
         return ok(req.id, {
           content: [
@@ -1357,7 +1367,19 @@ async function handleMcp(
           }
         }
 
-        onCompleteRun(summary);
+        // Publish the branch to its namespaced remote ref so the remote holds
+        // the durable copy of the completed work. Soft-fail: the mirror path
+        // still works, so a rejected push must not brick the run — surface it
+        // in the summary instead.
+        let publishNote = '';
+        if (!completionAuth || completionAuth.context === 'build-worker') {
+          const publish = await gitPublish.publishWorkerBranch();
+          if (!publish.ok) {
+            publishNote = `[warning: branch publish failed: ${publish.error}]\n`;
+          }
+        }
+
+        onCompleteRun(publishNote + summary);
         return ok(req.id, {
           content: [
             {
@@ -1374,7 +1396,17 @@ async function handleMcp(
           typeof args.summary === 'string'
             ? args.summary
             : 'agent called complete_plan without a summary';
-        onCompletePlan(summary);
+        // Same namespaced-ref publish as complete_run — plan artifacts are
+        // commits on the PLAN branch and need the same remote durability.
+        let planPublishNote = '';
+        if (!completionAuth || completionAuth.context === 'plan-worker') {
+          const publish = await gitPublish.publishWorkerBranch();
+          if (!publish.ok) {
+            planPublishNote = `[warning: branch publish failed: ${publish.error}]\n`;
+          }
+        }
+
+        onCompletePlan(planPublishNote + summary);
         return ok(req.id, {
           content: [
             {
