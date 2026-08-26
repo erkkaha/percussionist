@@ -187,6 +187,10 @@ spec:
                     mergeError:
                       type: string
                       maxLength: 4096
+                    prFeedbackRunName:
+                      type: string
+                    prFeedbackLastCommentAt:
+                      type: string
                     abandoned:
                       type: boolean
                   required:

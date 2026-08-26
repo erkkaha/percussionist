@@ -6,6 +6,7 @@ import {
   __setFetchImpl,
   __setPollTtlMs,
   __setTokenTtlMs,
+  getPrComments,
   getPrState,
   parseGitHubUrl,
   readProjectGithubToken,
@@ -165,6 +166,110 @@ describe('getPrState', () => {
   });
 });
 
+describe('getPrComments', () => {
+  beforeEach(() => {
+    __clearCache();
+    __setPollTtlMs(15 * 60 * 1000);
+  });
+
+  function mockFeeds(feeds: {
+    issues?: unknown[] | 'fail';
+    pulls?: unknown[] | 'fail';
+    reviews?: unknown[] | 'fail';
+  }): typeof fetch {
+    return (async (url: RequestInfo | URL) => {
+      const u = String(url);
+      const feed = u.includes('/issues/')
+        ? feeds.issues
+        : u.includes('/reviews')
+          ? feeds.reviews
+          : feeds.pulls;
+      if (feed === 'fail' || feed === undefined) {
+        return new Response('', { status: 500, statusText: 'boom' });
+      }
+      return new Response(JSON.stringify(feed), { status: 200 });
+    }) as typeof fetch;
+  }
+
+  it('merges the three feeds, excludes the PR author, sorts by createdAt', async () => {
+    __setFetchImpl(
+      mockFeeds({
+        issues: [
+          { user: { login: 'bot' }, body: 'PR opened', created_at: '2026-05-01T00:00:00Z' },
+          { user: { login: 'alice' }, body: 'please rename', created_at: '2026-05-03T00:00:00Z' },
+        ],
+        pulls: [{ user: { login: 'bob' }, body: 'inline nit', created_at: '2026-05-02T00:00:00Z' }],
+        reviews: [
+          {
+            user: { login: 'carol' },
+            body: 'overall looks off',
+            state: 'COMMENTED',
+            submitted_at: '2026-05-04T00:00:00Z',
+          },
+        ],
+      }),
+    );
+    const comments = await getPrComments('o', 'r', 1, 'tok', 'bot');
+    expect(comments?.map((c) => c.author)).toEqual(['bob', 'alice', 'carol']);
+    expect(comments?.[0]?.kind).toBe('review-comment');
+    expect(comments?.[2]?.kind).toBe('review');
+  });
+
+  it('drops empty bodies except CHANGES_REQUESTED reviews', async () => {
+    __setFetchImpl(
+      mockFeeds({
+        issues: [{ user: { login: 'alice' }, body: '   ', created_at: '2026-05-01T00:00:00Z' }],
+        pulls: [],
+        reviews: [
+          {
+            user: { login: 'bob' },
+            body: '',
+            state: 'CHANGES_REQUESTED',
+            submitted_at: '2026-05-02T00:00:00Z',
+          },
+          {
+            user: { login: 'carol' },
+            body: '',
+            state: 'APPROVED',
+            submitted_at: '2026-05-03T00:00:00Z',
+          },
+        ],
+      }),
+    );
+    const comments = await getPrComments('o', 'r', 1, 'tok', undefined);
+    expect(comments?.length).toBe(1);
+    expect(comments?.[0]?.author).toBe('bob');
+  });
+
+  it('caches within TTL — second call does not fetch', async () => {
+    let calls = 0;
+    __setFetchImpl((async () => {
+      calls++;
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as typeof fetch);
+    await getPrComments('o', 'r', 1, 'tok', undefined);
+    await getPrComments('o', 'r', 1, 'tok', undefined);
+    expect(calls).toBe(3);
+  });
+
+  it('returns undefined when every feed fails', async () => {
+    __setFetchImpl(mockFeeds({ issues: 'fail', pulls: 'fail', reviews: 'fail' }));
+    expect(await getPrComments('o', 'r', 1, 'tok', undefined)).toBeUndefined();
+  });
+
+  it('returns the surviving feeds on partial failure', async () => {
+    __setFetchImpl(
+      mockFeeds({
+        issues: [{ user: { login: 'alice' }, body: 'hi', created_at: '2026-05-01T00:00:00Z' }],
+        pulls: 'fail',
+        reviews: 'fail',
+      }),
+    );
+    const comments = await getPrComments('o', 'r', 1, 'tok', undefined);
+    expect(comments?.length).toBe(1);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // readProjectGithubToken — A7: transient Secret read failures must NOT be
 // cached as a token miss for the full TTL window (which silently disabled
@@ -199,6 +304,10 @@ describe('readProjectGithubToken', () => {
         data: { token: Buffer.from('ghp_abc123').toString('base64') },
       }),
     } as never);
+    // Other test files spy kube.core without restoring, and bun's spyOn hands
+    // back that same spy with its call history intact — drop the inherited
+    // calls before counting ours.
+    coreSpy.mockClear();
 
     expect(await readProjectGithubToken(makeProject({ name: 'gh-token' }))).toBe('ghp_abc123');
     expect(coreSpy).toHaveBeenCalledTimes(1);

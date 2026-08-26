@@ -9,8 +9,20 @@ Each run gets its own isolated git worktree, eliminating conflicts between concu
 ### How it works
 
 1. **First run:** Clones a bare mirror to `/data/git-mirrors/{url-hash}/`, then creates a worktree at `/data/worktrees/{run-name}/`
-2. **Subsequent runs:** `git fetch` updates the mirror. Worktree is reused by default (`gitCache.worktreeReuse: true`)
+2. **Subsequent runs:** `git fetch` updates the mirror — both `refs/heads/*` (into `refs/remotes/origin/*`) and the namespaced `refs/percussionist/*` worker branches. Namespaced refs are promoted into the mirror's `refs/heads` fast-forward-only, so a fresh mirror can reconstruct in-flight branches without ever clobbering local work. Worktree is reused by default (`gitCache.worktreeReuse: true`)
 3. **Push capability:** `remote set-url` restores the real remote URL after mirror-based setup, so agents can push commits
+
+### Remote durability of in-flight branches
+
+On worker-run completion (`complete_run`/`complete_plan`) the dispatcher pushes
+the branch to `refs/percussionist/<branch>` on the real remote — invisible in
+the GitHub branch UI and not fetched by normal clones. This makes the remote
+the durable copy of unmerged work, so review/merge/child runs can rebuild it
+into any mirror. The push is best-effort: on failure the run completes with a
+warning in its summary and the mirror-only behavior remains. The namespaced
+ref is deleted when the task reaches `done`. Runs that never reach `done`
+(TTL-expired) may leave a stale namespaced ref behind — harmless and invisible;
+remote GC for that path is a known follow-up.
 
 ### Concurrency safety
 

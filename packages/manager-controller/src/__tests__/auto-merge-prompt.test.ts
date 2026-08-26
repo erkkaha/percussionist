@@ -18,7 +18,8 @@ const prompt = autoMergePromptLines(
 
 describe('autoMergePromptLines — never depends on a published source branch', () => {
   it('states the source branch is normally absent from origin and must not be pushed', () => {
-    expect(prompt).toContain('only in the local git mirror');
+    expect(prompt).toContain('lives in the local git mirror plus a namespaced remote copy');
+    expect(prompt).toContain(`refs/percussionist/${SOURCE}`);
     expect(prompt).toContain('Do not push the source branch under any name');
   });
 
@@ -40,6 +41,9 @@ describe('autoMergePromptLines — never depends on a published source branch', 
     for (const push of pushes) {
       expect(push).toContain(`HEAD:refs/heads/${TARGET}`);
       expect(push).not.toContain(`refs/heads/${SOURCE}`);
+      // The namespaced copy is published by the platform on worker completion —
+      // the merge agent must never be told to push it.
+      expect(push).not.toContain('refs/percussionist/');
     }
   });
 

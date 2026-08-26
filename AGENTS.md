@@ -296,6 +296,7 @@ these tools for agent use:
 - Subsequent runs: `git fetch` updates the mirror; worktree is reused by default (`gitCache.worktreeReuse: true`)
 - Set `gitCache.worktreeReuse: false` to always start from a clean checkout
 - Agent can push to the real remote — `remote set-url` restores the real URL after mirror-based setup
+- On worker-run completion the dispatcher publishes the branch to `refs/percussionist/<branch>` on the remote (durable copy of in-flight work, invisible in the branch UI; best-effort — a failed push completes the run with a warning). The init container fetches these refs back and promotes them into the mirror's `refs/heads` fast-forward-only; the task-done cleanup pod deletes them from the remote
 - Mirror fetches are serialized with `flock` so parallel runs don't corrupt the bare repo
 - Worktree cleanup: the pod init container prunes stale worktrees on startup via `git worktree prune`; MCP tools (force_retry, set_task_state) no longer delete runs eagerly — the TTL controller handles cleanup after `runTTLDays` days; a cleanup pod spawns when a task reaches `done` to remove all deterministic worker worktrees for that task
 

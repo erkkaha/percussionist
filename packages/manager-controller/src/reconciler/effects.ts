@@ -32,6 +32,15 @@ export type ReconcileEffect =
   | { type: 'ScheduleBuildGenRun'; buildgenRunName: string; succeededRunName: string }
   | { type: 'ScheduleMergeRun'; mergeRunName: string }
   | { type: 'SchedulePrOpenRun'; prOpenRunName: string }
+  | { type: 'SchedulePrFeedbackEvalRun'; runName: string; prNumber: number; sinceIso?: string }
+  | {
+      type: 'CreatePrFollowUpTask';
+      taskName: string;
+      planTaskName: string;
+      title: string;
+      description: string;
+      agent: string;
+    }
   | { type: 'CreateRun'; run: Run }
   | { type: 'DeleteRun'; name: string; reason: string }
   | { type: 'PatchTaskStatus'; patch: Record<string, unknown> }
@@ -242,6 +251,9 @@ export async function executeEffects(
             effect.prOpenRunName,
             allTasks,
             flow.integration.agent,
+            // When a PR already exists (feedback rework landed on the feature
+            // branch), the run updates its head instead of opening a new PR.
+            task.status?.worker?.prNumber,
           );
           try {
             await createRun(prRun, namespace);
@@ -257,6 +269,61 @@ export async function executeEffects(
               await createRun(prRun, namespace);
             }
           }
+          break;
+        }
+        case 'SchedulePrFeedbackEvalRun': {
+          if (!project) {
+            throw new Error('Project metadata required for SchedulePrFeedbackEvalRun effect');
+          }
+          const { buildPrFeedbackEvalRun } = await import('../facilitator.js');
+          const evalRun = await buildPrFeedbackEvalRun(
+            project,
+            task,
+            effect.runName,
+            effect.prNumber,
+            effect.sinceIso,
+            flow.review.agent,
+            allTasks,
+          );
+          try {
+            await createRun(evalRun, namespace);
+          } catch (e: unknown) {
+            // The run name is unique per evaluation round (it hashes the
+            // comment watermark), so an existing run is this round's — adopt it.
+            const msg = (e as Error).message;
+            if (!/already exists/i.test(msg)) throw e;
+          }
+          break;
+        }
+        case 'CreatePrFollowUpTask': {
+          if (!project) {
+            throw new Error('Project metadata required for CreatePrFollowUpTask effect');
+          }
+          const { buildTask } = await import('@percussionist/kube');
+          const followUp = buildTask({
+            name: effect.taskName,
+            projectName: project.metadata.name,
+            projectUid: project.metadata.uid ?? '',
+            ns: namespace,
+            spec: {
+              projectRef: project.metadata.name,
+              type: 'BUILD',
+              title: effect.title,
+              description: effect.description,
+              agent: effect.agent,
+              priority: 'high',
+              parentTaskRef: effect.planTaskName,
+            },
+          });
+          try {
+            await createTask(followUp, namespace);
+          } catch (e: unknown) {
+            if (!isAlreadyExists(e)) throw e;
+          }
+          // Task creation does not write the status subresource; put the child
+          // on the board explicitly (best effort — the reconciler defaults an
+          // absent phase to pending anyway).
+          await patchTaskStatus(effect.taskName, { phase: 'pending' }, namespace).catch(() => {});
           break;
         }
         case 'CreateRun': {
@@ -498,9 +565,21 @@ export async function executeEffects(
   // Fire-and-forget — never blocks the reconcile cycle.
   if (toPhase === 'done' && project) {
     const projectName = project.metadata.name;
-    const gitUrl = (project.spec.source as { git?: { url?: string } } | undefined)?.git?.url;
+    const projectGit = (
+      project.spec.source as
+        | {
+            git?: {
+              url?: string;
+              sshSecret?: { name: string; key?: string };
+              githubTokenSecret?: { name: string; key?: string };
+            };
+          }
+        | undefined
+    )?.git;
+    const gitUrl = projectGit?.url;
     const runnerImage = (project.spec.runner as { image?: string } | undefined)?.image;
     const image = runnerImage ?? project.spec.image ?? 'alpine/git';
+    const gitBranch = currentTask.status?.worker?.gitBranch;
     (async () => {
       const runs = await listRuns(namespace, undefined, `${LABELS.taskId}=${taskName}`);
       const runNames = runs.map((r) => r.metadata.name);
@@ -513,6 +592,11 @@ export async function executeEffects(
         gitUrl,
         dataPvcName: project.spec.data?.pvcName,
         runNames,
+        // Also delete the branch's refs/percussionist/* namespaced ref from
+        // the remote — the branch is merged (or abandoned) once the task is done.
+        branches: gitBranch ? [gitBranch] : [],
+        sshSecret: projectGit?.sshSecret,
+        githubTokenSecret: projectGit?.githubTokenSecret,
       });
     })().catch((e: Error) =>
       console.warn(`[effects] task-done worktree cleanup failed for ${taskName}:`, e.message),

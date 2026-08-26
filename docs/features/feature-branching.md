@@ -32,9 +32,9 @@ Each run gets its own worktree at `/data/worktrees/{run-name}/` checking out the
 
 ### 3. BUILD Review & Merge
 
-- Agent works on BUILD branch, commits and pushes
+- Agent works on BUILD branch and commits; on completion the dispatcher publishes the branch to a namespaced remote ref (`refs/percussionist/<branch>`), making the remote the durable copy of in-flight work
 - On approval, merge run merges BUILD branch → parent PLAN branch
-- BUILD branch is cleaned up (worktree removed, mirror ref deleted) once the task reaches `done`; in `auto-merge` mode BUILD branches are never pushed to the remote at all — only the merge result lands there
+- BUILD branch is cleaned up (worktree removed, mirror ref deleted, `refs/percussionist/<branch>` deleted from the remote) once the task reaches `done`; BUILD branches never reach the remote's `refs/heads` in `auto-merge` mode — only the merge result lands there
 - Next BUILD in sequence sees predecessor's changes
 
 ### 4. Predecessor Dependencies
@@ -63,11 +63,16 @@ spec:
 | `manual` | The task parks in `awaiting-human`; a human merges the feature branch to the target entirely outside the system, then marks the task done in Percussionist. |
 | `disabled` | No integration merge; the task goes to `done` once all BUILD children are done. |
 
-Branch retention depends on the mode: branches pushed to the remote (e.g. the
-feature branch in `pr` mode) are kept indefinitely, while in `auto-merge`/`manual`
-mode the feature-branch ref lives only in the local bare mirror and is deleted
-from it when the task reaches `done`. The merged result on the target branch is
-unaffected either way.
+Branch retention depends on the mode: branches pushed to the remote's
+`refs/heads` (e.g. the feature branch in `pr` mode) are kept indefinitely.
+In `auto-merge`/`manual` mode the feature-branch ref lives in the local bare
+mirror plus a namespaced remote copy at `refs/percussionist/<branch>` —
+published automatically by the dispatcher on run completion, invisible in the
+GitHub branch UI, and not fetched by teammates' clones. Both copies are
+deleted when the task reaches `done`. The merged result on the target branch
+is unaffected either way. The publish is best-effort: if the push fails (e.g.
+read-only credentials), the run still completes with a warning in its summary
+and the mirror remains the only copy, as before.
 
 ## Enable
 

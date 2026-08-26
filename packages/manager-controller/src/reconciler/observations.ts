@@ -16,7 +16,12 @@ import { getRun } from '@percussionist/kube';
 import { isKubeNotFoundError } from '../kube-errors.js';
 import type { ManualActions, ObservedRuns, ReconcileInput } from './decision.js';
 import { resolveFlow } from './flow.js';
-import { getPrState, parseGitHubUrl, readProjectGithubToken } from './github-client.js';
+import {
+  getPrComments,
+  getPrState,
+  parseGitHubUrl,
+  readProjectGithubToken,
+} from './github-client.js';
 
 const TASK_ANNOTATION_KEYS = {
   approved: 'percussionist.dev/action-approved',
@@ -44,6 +49,7 @@ export async function observe(
   const reviewRunName = task.status?.worker?.reviewRunName;
   const mergeRunName = task.status?.worker?.mergeRunName;
   const buildgenRunName = task.status?.worker?.buildTasksFacilitatorRun;
+  const prFeedbackRunName = task.status?.worker?.prFeedbackRunName;
 
   // Fetch observed runs in parallel.
   // Distinguish 404 (run legitimately gone) from transient errors
@@ -54,14 +60,15 @@ export async function observe(
       if (isKubeNotFoundError(err)) return undefined;
       throw err;
     });
-  const [worker, review, merge, buildgen] = await Promise.all([
+  const [worker, review, merge, buildgen, prFeedbackRun] = await Promise.all([
     workerRunName ? maybeRun(workerRunName) : undefined,
     reviewRunName ? maybeRun(reviewRunName) : undefined,
     mergeRunName ? maybeRun(mergeRunName) : undefined,
     buildgenRunName ? maybeRun(buildgenRunName) : undefined,
+    prFeedbackRunName ? maybeRun(prFeedbackRunName) : undefined,
   ]);
 
-  const observed: ObservedRuns = { worker, review, merge, buildgen };
+  const observed: ObservedRuns = { worker, review, merge, buildgen, prFeedbackRun };
 
   // PR-mode integration: when a PR has been opened (worker.prNumber set) and
   // the PR-open run has completed (no active mergeRunName), poll GitHub for the
@@ -76,6 +83,31 @@ export async function observe(
       if (token) {
         const prState = await getPrState(parsed.owner, parsed.repo, prNumber, token);
         if (prState) observed.prState = prState;
+
+        // Feedback detection: while the PR is open and no evaluation round is
+        // in flight, surface human comments newer than the consumed watermark.
+        // An unset watermark means the whole comment history is unevaluated
+        // (PRs opened before this feature shipped) — evaluate all of it.
+        if (prState?.state === 'open' && !prFeedbackRunName) {
+          const watermark = task.status?.worker?.prFeedbackLastCommentAt;
+          const comments = await getPrComments(
+            parsed.owner,
+            parsed.repo,
+            prNumber,
+            token,
+            prState.authorLogin,
+          );
+          const fresh = (comments ?? []).filter((c) => !watermark || c.createdAt > watermark);
+          if (fresh.length > 0) {
+            const newest = fresh[fresh.length - 1];
+            const first = fresh[0];
+            observed.prFeedback = {
+              count: fresh.length,
+              newestCommentAt: newest?.createdAt ?? '',
+              preview: first ? `${first.author}: ${first.body.slice(0, 160)}` : '',
+            };
+          }
+        }
       }
     }
   }

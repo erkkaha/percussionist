@@ -155,6 +155,8 @@ export async function buildWorkerRun(
       '- The file is the authoritative PLAN output and will be reviewed by facilitator/human reviewers.',
       '- Include implementation context, scope boundaries, risks, acceptance criteria, and proposed BUILD task breakdown.',
       '- Commit the plan artifact on this task branch before completing the run.',
+      '- The platform automatically publishes your branch to a namespaced remote ref on completion;',
+      '  do not push the branch yourself.',
       `- After committing, call percussionist_dispatcher_write_plan(project="${projectName}", task="${taskName}", content=<plan-content>) to persist it to ConfigMap.`,
       `- Mention ${planPath} in the completion summary.`,
       `- When done, call percussionist_dispatcher_complete_plan instead of complete_run.`,
@@ -189,6 +191,8 @@ export async function buildWorkerRun(
       '- Stage and commit your changes before calling complete_run.',
       '- The dispatcher will reject complete_run if the working tree has uncommitted changes.',
       '- If no code changes are needed, call complete_run with "force": true to bypass this check.',
+      '- The platform automatically publishes your branch to a namespaced remote ref on completion;',
+      '  do not push the branch yourself.',
       '',
     );
   }
@@ -414,8 +418,9 @@ export async function buildMergeRun(
  * In auto-merge mode nothing ever publishes a build branch: the worker commits
  * into the shared git mirror and `complete_run` only checks the tree is clean.
  * That is deliberate — one remote branch per BUILD task would flood the remote —
- * so the source branch usually exists ONLY locally and every step here works off
- * the local tip rather than `origin/<source>`.
+ * so the source branch exists locally plus as a namespaced refs/percussionist/*
+ * remote copy (invisible in the branch UI), never as `origin/<source>`, and
+ * every step here works off the local tip.
  *
  * The previous version referenced `origin/<source>` in its pre-flight, its
  * fast-forward test and its verification, so all three failed on an unpublished
@@ -441,10 +446,11 @@ export function autoMergePromptLines(
     '## Pre-flight Check',
     '',
     'Your worktree is already checked out at the source branch. In this mode the',
-    'source branch normally exists only in the local git mirror — it is never',
-    `published, and origin/${sourceBranch} will usually not exist. That is`,
+    'source branch lives in the local git mirror plus a namespaced remote copy',
+    `(refs/percussionist/${sourceBranch}) that the platform publishes automatically —`,
+    `origin/${sourceBranch} (a real remote branch) will usually not exist. That is`,
     'expected, not an error, and NOT something to repair by pushing the source',
-    'branch: the remote must only ever receive target branches.',
+    'branch: the remote must only ever receive target branches under refs/heads.',
     '',
     `    git rev-parse --abbrev-ref HEAD          # expect ${sourceBranch}`,
     '    SOURCE_SHA=$(git rev-parse HEAD)         # the work being merged',
@@ -638,6 +644,7 @@ export async function buildPrOpenRun(
   runName: string,
   allTasks?: Task[],
   integrationAgentName?: string,
+  existingPrNumber?: number,
 ): Promise<Run> {
   const clusterSettings = await getOptionalClusterSettings('buildPrOpenRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
@@ -694,29 +701,36 @@ export async function buildPrOpenRun(
     resolved.source.git.parentRef = targetBranch;
   }
 
-  // Gather PR-authoring materials: the plan document and the build tasks'
-  // review records. Both degrade gracefully — a missing plan or absent build
-  // task CRs must never fail the PR-open run.
-  let planDoc: string | null = null;
-  try {
-    planDoc = await readPlanFromConfigMap(projectName, taskName);
-  } catch (e) {
-    console.error(`[worker-builder] readPlanFromConfigMap failed for ${taskName}`, e);
-  }
-  const buildRefs = task.status?.worker?.createdBuildTaskRefs ?? [];
-  const buildTasks = buildRefs
-    .map((ref) => (allTasks ?? []).find((t) => t.metadata.name === ref))
-    .filter((t): t is Task => t !== undefined);
+  let promptLines: string[];
+  if (existingPrNumber) {
+    // Update mode: the PR already exists and rework landed on the feature
+    // branch — push the revised head and comment, instead of authoring a body.
+    promptLines = prUpdatePromptLines(taskName, existingPrNumber, sourceBranch, targetBranch);
+  } else {
+    // Gather PR-authoring materials: the plan document and the build tasks'
+    // review records. Both degrade gracefully — a missing plan or absent build
+    // task CRs must never fail the PR-open run.
+    let planDoc: string | null = null;
+    try {
+      planDoc = await readPlanFromConfigMap(projectName, taskName);
+    } catch (e) {
+      console.error(`[worker-builder] readPlanFromConfigMap failed for ${taskName}`, e);
+    }
+    const buildRefs = task.status?.worker?.createdBuildTaskRefs ?? [];
+    const buildTasks = buildRefs
+      .map((ref) => (allTasks ?? []).find((t) => t.metadata.name === ref))
+      .filter((t): t is Task => t !== undefined);
 
-  const promptLines = prOpenPromptLines(
-    taskName,
-    task.spec.title,
-    task.spec.description,
-    sourceBranch,
-    targetBranch,
-    planDoc,
-    buildTasks,
-  );
+    promptLines = prOpenPromptLines(
+      taskName,
+      task.spec.title,
+      task.spec.description,
+      sourceBranch,
+      targetBranch,
+      planDoc,
+      buildTasks,
+    );
+  }
 
   return {
     apiVersion: API_GROUP_VERSION,
@@ -768,6 +782,73 @@ export async function buildPrOpenRun(
  * (same pattern as autoMergePromptLines). The agent both composes the PR body
  * from the supplied materials and executes the `gh pr create` call.
  */
+/**
+ * Prompt for updating an existing PR after rework landed on the feature
+ * branch (PR-mode feedback loop). Unlike the create-mode pre-flight, this
+ * must NOT reset HEAD to origin — the local lineage is ahead of the published
+ * head by exactly the rework commits it exists to publish.
+ */
+export function prUpdatePromptLines(
+  taskName: string,
+  prNumber: number,
+  sourceBranch: string,
+  targetBranch: string,
+): string[] {
+  return [
+    `TASK: Update pull request #${prNumber} for ${taskName}`,
+    '',
+    `Source (head) branch: ${sourceBranch}`,
+    `Target (base) branch: ${targetBranch}`,
+    '',
+    `PR #${prNumber} is already open for this head/base pair. Rework commits`,
+    'addressing reviewer feedback have landed on the feature branch, and your',
+    '/workspace HEAD contains them. Your job is to publish the revised head and',
+    'tell the reviewers.',
+    '',
+    '## Publish the revised head',
+    '',
+    'Your HEAD is expected to be AHEAD of the published head — do not reset it.',
+    `    git fetch origin ${sourceBranch}`,
+    `    if git rev-parse --verify "origin/${sourceBranch}" >/dev/null 2>&1 \\`,
+    `       && ! git merge-base --is-ancestor "origin/${sourceBranch}" HEAD; then`,
+    '      # Someone pushed to the PR while rework ran — integrate their commits.',
+    `      git merge --no-edit "origin/${sourceBranch}"`,
+    '    fi',
+    `    git push origin "HEAD:refs/heads/${sourceBranch}"`,
+    '',
+    'If the merge hits conflicts you cannot resolve with confidence, abort it and',
+    'report outcome=`conflict` with requiresHuman=true instead of pushing.',
+    '',
+    '## Comment on the PR',
+    '',
+    'Summarize the update for the human reviewers with:',
+    `    gh pr comment ${prNumber} --body-file /tmp/pr-update.md`,
+    '',
+    'Write /tmp/pr-update.md yourself (outside the repo; never commit files in',
+    'the worktree): list the new commits (`git log --oneline` of the range you',
+    'just pushed) and state, per piece of reviewer feedback the rework addressed,',
+    'what changed. Ground every claim in the actual diff; no self-congratulation.',
+    '',
+    '## Rules',
+    '',
+    '- Do not merge or close the PR.',
+    '- Do not create additional commits beyond the conflict-resolution merge above.',
+    '- If `gh` is unavailable or the push is rejected for auth reasons, report',
+    '  outcome=`push-failed`.',
+    '',
+    '## Completion',
+    '',
+    'Call `percussionist_dispatcher_complete_merge` with:',
+    '- outcome=`pr-opened`',
+    `- prNumber=${prNumber}`,
+    `- diagnosis: a brief one-line note (e.g. "Pushed rework to PR #${prNumber}").`,
+    '',
+    'On failure, use the standard outcome mapping:',
+    '- outcome=`push-failed` for auth/CLI errors.',
+    '- outcome=`transient-failure` for transient infra/network errors.',
+  ];
+}
+
 export function prOpenPromptLines(
   taskName: string,
   taskTitle: string,

@@ -35,7 +35,9 @@ function makeInput(
       review?: ReturnType<typeof makeRun>;
       merge?: ReturnType<typeof makeRun>;
       buildgen?: ReturnType<typeof makeRun>;
-      prState?: { state: 'open' | 'closed'; mergedAt: string | null };
+      prState?: { state: 'open' | 'closed'; mergedAt: string | null; authorLogin?: string };
+      prFeedbackRun?: ReturnType<typeof makeRun>;
+      prFeedback?: { count: number; newestCommentAt: string; preview: string };
     };
     manualActions?: {
       approved?: boolean;
@@ -1528,6 +1530,157 @@ describe('decide — awaiting-feature-merge', () => {
     });
     (task.status as any).worker = { prNumber: 42 };
     const result = decide(makeInput(task, { observed: {} }));
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects).toEqual([]);
+  });
+});
+
+describe('decide — PR feedback loop', () => {
+  function makePrTask() {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { prNumber: 42 };
+    return task;
+  }
+
+  it('open PR + new comments → schedules eval run and advances watermark', () => {
+    const task = makePrTask();
+    const result = decide(
+      makeInput(task, {
+        observed: {
+          prState: { state: 'open', mergedAt: null },
+          prFeedback: {
+            count: 2,
+            newestCommentAt: '2026-05-28T10:00:00.000Z',
+            preview: 'alice: please rename this',
+          },
+        },
+      }),
+    );
+    expect(result.toPhase).toBeUndefined();
+    const evalEffect = result.effects.find((e) => e.type === 'SchedulePrFeedbackEvalRun') as any;
+    expect(evalEffect).toBeDefined();
+    expect(evalEffect.prNumber).toBe(42);
+    const worker = result.statusPatch?.worker as any;
+    expect(worker.prFeedbackRunName).toBe(evalEffect.runName);
+    expect(worker.prFeedbackLastCommentAt).toBe('2026-05-28T10:00:00.000Z');
+    expect(result.events[0]?.reason).toBe('PrFeedbackEvalScheduled');
+  });
+
+  it('open PR + comments while eval already in flight → progresses the run, not a second round', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    const result = decide(
+      makeInput(task, {
+        observed: {
+          prState: { state: 'open', mergedAt: null },
+          prFeedbackRun: makeRun('preval-1', { phase: 'Running' }),
+        },
+      }),
+    );
+    expect(result.effects).toEqual([]);
+    expect(result.toPhase).toBeUndefined();
+  });
+
+  it('eval verdict approve → clears run name and resumes polling', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    const evalRun = makeRun('preval-1', { phase: 'Succeeded' });
+    (evalRun.metadata as any).annotations = {
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'approve',
+        diagnosis: 'questions answered on the PR',
+      }),
+    };
+    const result = decide(
+      makeInput(task, {
+        observed: { prState: { state: 'open', mergedAt: null }, prFeedbackRun: evalRun },
+      }),
+    );
+    expect(result.toPhase).toBeUndefined();
+    expect((result.statusPatch?.worker as any).prFeedbackRunName).toBeNull();
+    expect(result.effects.some((e) => e.type === 'CleanupWorktree')).toBe(true);
+    expect(result.events[0]?.reason).toBe('PrFeedbackNoChangesNeeded');
+  });
+
+  it('eval verdict request_changes → follow-up BUILD child + awaiting-children', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    (task.status as any).worker.prFeedbackLastCommentAt = '2026-05-28T10:00:00.000Z';
+    (task.status as any).worker.createdBuildTaskRefs = ['test-project-build-old111'];
+    const evalRun = makeRun('preval-1', { phase: 'Succeeded' });
+    (evalRun.metadata as any).annotations = {
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'request_changes',
+        diagnosis: 'reviewer asked for a rename',
+        feedback: '1. alice: rename foo to bar in src/x.ts',
+      }),
+    };
+    const result = decide(
+      makeInput(task, {
+        observed: { prState: { state: 'open', mergedAt: null }, prFeedbackRun: evalRun },
+      }),
+    );
+    expect(result.toPhase).toBe('awaiting-children');
+    const create = result.effects.find((e) => e.type === 'CreatePrFollowUpTask') as any;
+    expect(create).toBeDefined();
+    expect(create.planTaskName).toBe('t1');
+    expect(create.title).toContain('PR #42');
+    expect(create.description).toContain('rename foo to bar');
+    const worker = result.statusPatch?.worker as any;
+    expect(worker.prFeedbackRunName).toBeNull();
+    expect(worker.createdBuildTaskRefs).toEqual(['test-project-build-old111', create.taskName]);
+    expect(result.events[0]?.reason).toBe('PrFeedbackChangesRequested');
+  });
+
+  it('eval run failed → clears run name and resumes polling (round consumed)', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    const evalRun = makeRun('preval-1', { phase: 'Failed' });
+    const result = decide(
+      makeInput(task, {
+        observed: { prState: { state: 'open', mergedAt: null }, prFeedbackRun: evalRun },
+      }),
+    );
+    expect(result.toPhase).toBeUndefined();
+    expect((result.statusPatch?.worker as any).prFeedbackRunName).toBeNull();
+    expect(result.events[0]?.reason).toBe('PrFeedbackEvalFailed');
+  });
+
+  it('eval run disappeared → clears run name', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    const result = decide(
+      makeInput(task, { observed: { prState: { state: 'open', mergedAt: null } } }),
+    );
+    expect((result.statusPatch?.worker as any).prFeedbackRunName).toBeNull();
+    expect(result.events[0]?.reason).toBe('PrFeedbackRunMissing');
+  });
+
+  it('PR merged while eval in flight → done wins, eval run deleted', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    const result = decide(
+      makeInput(task, {
+        observed: {
+          prState: { state: 'closed', mergedAt: '2026-05-29T12:00:00.000Z' },
+          prFeedbackRun: makeRun('preval-1', { phase: 'Running' }),
+        },
+      }),
+    );
+    expect(result.toPhase).toBe('done');
+    const del = result.effects.find((e) => e.type === 'DeleteRun') as any;
+    expect(del?.name).toBe('preval-1');
+    expect((result.statusPatch?.worker as any).prFeedbackRunName).toBeNull();
+  });
+
+  it('open PR + no new comments → keep polling', () => {
+    const task = makePrTask();
+    const result = decide(
+      makeInput(task, { observed: { prState: { state: 'open', mergedAt: null } } }),
+    );
     expect(result.toPhase).toBeUndefined();
     expect(result.effects).toEqual([]);
   });
