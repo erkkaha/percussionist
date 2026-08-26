@@ -49,6 +49,15 @@ function summarizeEffect(input: ReconcileInput, run: Run): ReconcileEffect | und
   };
 }
 
+/** New human comments on an open PR, not yet handed to an evaluation round. */
+export interface PrFeedbackObservation {
+  count: number;
+  /** ISO created-at of the newest unevaluated comment — the next watermark. */
+  newestCommentAt: string;
+  /** Short "author: excerpt" of the oldest unevaluated comment, for events. */
+  preview: string;
+}
+
 export interface ObservedRuns {
   worker?: Run;
   review?: Run;
@@ -56,6 +65,10 @@ export interface ObservedRuns {
   buildgen?: Run;
   /** GitHub PR state — populated for PR-mode integration when worker.prNumber is set. */
   prState?: PrState;
+  /** In-flight PR-comment evaluation run (worker.prFeedbackRunName). */
+  prFeedbackRun?: Run;
+  /** Unevaluated PR comments — populated while the PR is open and no evaluation run is in flight. */
+  prFeedback?: PrFeedbackObservation;
 }
 
 export interface ManualActions {
@@ -1805,6 +1818,11 @@ function decideAwaitingFeatureMerge(input: ReconcileInput): ReconcileDecision {
  *
  * - closed + mergedAt → done (feature branch landed on target via PR merge)
  * - closed + no mergedAt → awaiting-human (PR was closed without merging)
+ * - open + new human comments → schedule a PR-feedback evaluation run; its
+ *   review verdict either records "no changes needed" or creates a follow-up
+ *   BUILD child with the distilled feedback and parks the PLAN back in
+ *   awaiting-children (the child-completion path then re-runs the PR-open run
+ *   in update mode to push the revised head)
  * - open or prState missing → stay in awaiting-feature-merge (keep polling)
  */
 function decidePrStateOutcome(
@@ -1813,23 +1831,23 @@ function decidePrStateOutcome(
   fromPhase: TaskPhase,
   taskName: string,
 ): ReconcileDecision {
-  const { observed } = input;
+  const { observed, task } = input;
   const prState = observed.prState;
+  const prFeedbackRunName = task.status?.worker?.prFeedbackRunName;
 
-  if (!prState) {
-    // No state yet (cache miss, fetch error, or missing token/URL). Keep
-    // waiting; observe() will retry on the next reconcile cycle.
-    return { taskName, fromPhase, effects: [], events: [] };
-  }
-
-  if (prState.state === 'closed') {
+  if (prState?.state === 'closed') {
+    // The PR reached a terminal state — an in-flight feedback evaluation is
+    // moot; delete it so it cannot post a stale verdict later.
+    const evalCleanup: ReconcileEffect[] = prFeedbackRunName
+      ? [{ type: 'DeleteRun', name: prFeedbackRunName, reason: 'PullRequestTerminal' }]
+      : [];
     if (prState.mergedAt) {
       return {
         taskName,
         fromPhase,
         toPhase: 'done',
-        statusPatch: { worker: { mergedAt: prState.mergedAt } },
-        effects: [],
+        statusPatch: { worker: { mergedAt: prState.mergedAt, prFeedbackRunName: null } },
+        effects: evalCleanup,
         events: [
           makeEvent(
             input,
@@ -1849,9 +1867,13 @@ function decidePrStateOutcome(
         // Clear prNumber: the PR is dead, so any later approval must schedule
         // a fresh PR-open run instead of re-polling this closed PR (which
         // would bounce the task straight back here — infinite approve loop).
-        worker: { mergeError: `PR #${prNumber} was closed without merging`, prNumber: null },
+        worker: {
+          mergeError: `PR #${prNumber} was closed without merging`,
+          prNumber: null,
+          prFeedbackRunName: null,
+        },
       },
-      effects: [],
+      effects: evalCleanup,
       events: [
         makeEvent(
           input,
@@ -1864,7 +1886,243 @@ function decidePrStateOutcome(
     };
   }
 
-  // PR still open — keep polling.
+  // Feedback evaluation run lifecycle — progressed even when the PR state
+  // fetch missed this cycle, since the verdict lives on the Run CR.
+  if (prFeedbackRunName) {
+    return decidePrFeedbackEvalOutcome(input, prNumber, prFeedbackRunName, fromPhase, taskName);
+  }
+
+  // Open PR with unevaluated human comments — schedule an evaluation round.
+  // The watermark advances at scheduling time so a comment is handed to
+  // exactly one round; a failed round is recorded as an event, not retried.
+  if (prState?.state === 'open' && observed.prFeedback) {
+    const feedback = observed.prFeedback;
+    const suffix = createHash('sha256')
+      .update(`${input.project.metadata.name}:${taskName}:preval:${feedback.newestCommentAt}`)
+      .digest('hex')
+      .slice(0, 10);
+    const runName = auxiliaryRunName(input.project.metadata.name, 'preval', taskName, suffix);
+    const effects: ReconcileEffect[] = [
+      {
+        type: 'SchedulePrFeedbackEvalRun',
+        runName,
+        prNumber,
+        sinceIso: task.status?.worker?.prFeedbackLastCommentAt,
+      },
+    ];
+    return {
+      taskName,
+      fromPhase,
+      toPhase: undefined,
+      statusPatch: {
+        worker: {
+          prFeedbackRunName: runName,
+          prFeedbackLastCommentAt: feedback.newestCommentAt,
+        },
+      },
+      effects,
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'awaiting-feature-merge',
+          'PrFeedbackEvalScheduled',
+          `${feedback.count} new comment(s) on PR #${prNumber}; evaluating — ${feedback.preview}`,
+          effects,
+        ),
+      ],
+    };
+  }
+
+  // PR still open (or state unavailable this cycle) — keep polling.
+  return { taskName, fromPhase, effects: [], events: [] };
+}
+
+/**
+ * Progress an in-flight PR-feedback evaluation run. The evaluator is a
+ * review-facilitator run: its `complete_review` verdict is read through the
+ * same annotation channel as the pre-merge reviewer.
+ *
+ * - approve → the comments need no code change (the evaluator replied on the
+ *   PR where appropriate); resume polling
+ * - request_changes → create a follow-up BUILD child carrying the distilled
+ *   feedback and move the PLAN to awaiting-children
+ * - failed / stale / missing verdict → record an event and resume polling;
+ *   the round's comments stay consumed (a human can still act via the board)
+ */
+function decidePrFeedbackEvalOutcome(
+  input: ReconcileInput,
+  prNumber: number,
+  prFeedbackRunName: string,
+  fromPhase: TaskPhase,
+  taskName: string,
+): ReconcileDecision {
+  const { observed, task, flow, now } = input;
+  const evalRun = observed.prFeedbackRun;
+
+  if (!evalRun) {
+    return {
+      taskName,
+      fromPhase,
+      statusPatch: { worker: { prFeedbackRunName: null } },
+      effects: [],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          undefined,
+          'PrFeedbackRunMissing',
+          `PR-feedback evaluation run ${prFeedbackRunName} disappeared; resuming PR polling`,
+        ),
+      ],
+    };
+  }
+
+  const evalPhase = getEffectiveRunPhase(evalRun);
+
+  if (evalPhase === 'Succeeded') {
+    const verdict = getReviewVerdict(evalRun);
+    if (!verdict) {
+      return {
+        taskName,
+        fromPhase,
+        statusPatch: { worker: { prFeedbackRunName: null } },
+        effects: [{ type: 'CleanupWorktree', runName: prFeedbackRunName }],
+        events: [
+          makeEvent(
+            input,
+            fromPhase,
+            undefined,
+            'PrFeedbackVerdictMissing',
+            `PR-feedback evaluation run finished without a structured verdict for PR #${prNumber}`,
+          ),
+        ],
+      };
+    }
+
+    const verdictMessage = [verdict.diagnosis, verdict.feedback].filter(Boolean).join('\n\n');
+
+    if (verdict.action === 'approve') {
+      return {
+        taskName,
+        fromPhase,
+        statusPatch: { worker: { prFeedbackRunName: null } },
+        effects: [{ type: 'CleanupWorktree', runName: prFeedbackRunName }],
+        events: [
+          makeEvent(
+            input,
+            fromPhase,
+            undefined,
+            'PrFeedbackNoChangesNeeded',
+            verdictMessage || `PR #${prNumber} comments need no code changes`,
+          ),
+        ],
+      };
+    }
+
+    // request_changes — distill the verdict into a follow-up BUILD child on
+    // the PLAN's feature branch. Deterministic name per evaluation round so an
+    // effect retry cannot create duplicates.
+    const roundKey = task.status?.worker?.prFeedbackLastCommentAt ?? now;
+    const followUpSuffix = createHash('sha256')
+      .update(`${taskName}:pr-${prNumber}:${roundKey}`)
+      .digest('hex')
+      .slice(0, 6);
+    const followUpName = `${input.project.metadata.name}-build-${followUpSuffix}`;
+    const description = [
+      `Address reviewer feedback on GitHub PR #${prNumber} (feature branch of plan task ${taskName}).`,
+      '',
+      verdictMessage || 'Reviewer comments on the PR require code changes.',
+      ...(verdict.suggestion ? ['', verdict.suggestion] : []),
+    ]
+      .join('\n')
+      .slice(0, 7500);
+    const effects: ReconcileEffect[] = [
+      {
+        type: 'CreatePrFollowUpTask',
+        taskName: followUpName,
+        planTaskName: taskName,
+        title: `[PR #${prNumber} feedback] ${task.spec.title}`.slice(0, 256),
+        description,
+        agent: flow.build.defaultAgent,
+      },
+      { type: 'CleanupWorktree', runName: prFeedbackRunName },
+    ];
+    return {
+      taskName,
+      fromPhase,
+      toPhase: 'awaiting-children',
+      statusPatch: {
+        worker: {
+          prFeedbackRunName: null,
+          createdBuildTaskRefs: [
+            ...(task.status?.worker?.createdBuildTaskRefs ?? []),
+            followUpName,
+          ],
+        },
+      },
+      effects,
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          'awaiting-children',
+          'PrFeedbackChangesRequested',
+          `PR #${prNumber} comments require changes; created follow-up task ${followUpName}`,
+          effects,
+        ),
+      ],
+    };
+  }
+
+  if (evalPhase === 'Failed') {
+    return {
+      taskName,
+      fromPhase,
+      statusPatch: { worker: { prFeedbackRunName: null } },
+      effects: [{ type: 'CleanupWorktree', runName: prFeedbackRunName }],
+      events: [
+        makeEvent(
+          input,
+          fromPhase,
+          undefined,
+          'PrFeedbackEvalFailed',
+          evalRun.status?.message ?? `PR-feedback evaluation failed for PR #${prNumber}`,
+        ),
+      ],
+    };
+  }
+
+  // Staleness check for running evaluation runs — same budget as reviews.
+  if (evalPhase === 'Running') {
+    const staleThresholdMs = flow.timeouts.reviewStaleSeconds * 1000;
+    const lastEvent = evalRun.status?.lastEventAt;
+    if (lastEvent) {
+      const elapsed = new Date(now).getTime() - new Date(lastEvent).getTime();
+      if (elapsed > staleThresholdMs) {
+        return {
+          taskName,
+          fromPhase,
+          statusPatch: { worker: { prFeedbackRunName: null } },
+          effects: [
+            { type: 'DeleteRun', name: prFeedbackRunName, reason: 'PrFeedbackEvalStale' },
+            { type: 'CleanupWorktree', runName: prFeedbackRunName },
+          ],
+          events: [
+            makeEvent(
+              input,
+              fromPhase,
+              undefined,
+              'PrFeedbackEvalStale',
+              `PR-feedback evaluation stale after ${flow.timeouts.reviewStaleSeconds}s`,
+            ),
+          ],
+        };
+      }
+    }
+  }
+
+  // Evaluation still running — wait.
   return { taskName, fromPhase, effects: [], events: [] };
 }
 

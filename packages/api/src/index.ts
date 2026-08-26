@@ -909,7 +909,10 @@ export const TRANSITION_TABLE: Record<TaskPhase, TaskPhase[]> = {
   'rework-requested': ['scheduled'],
   'generating-builds': ['awaiting-children', 'awaiting-human', 'failed'],
   'awaiting-children': ['awaiting-feature-merge', 'awaiting-human', 'done', 'failed'],
-  'awaiting-feature-merge': ['done', 'awaiting-human', 'failed'],
+  // → awaiting-children: PR-comment feedback produced a follow-up BUILD task
+  // (see decidePrStateOutcome); the PLAN waits for it, then re-runs the
+  // PR-open run in update mode to push the revised head.
+  'awaiting-feature-merge': ['done', 'awaiting-human', 'failed', 'awaiting-children'],
   failed: ['pending', 'awaiting-human', 'awaiting-merge', 'awaiting-feature-merge'],
   done: [],
 };
@@ -952,6 +955,11 @@ export const WorkerStatusSchema = z.object({
   mergeRunName: z.string().optional(),
   mergedAt: z.string().optional(),
   mergeError: z.string().max(4096).optional(),
+  // PR-mode feedback loop: name of the in-flight run evaluating new PR
+  // comments, and the created-at watermark of the newest comment already
+  // handed to an evaluation round (comments at or before it are consumed).
+  prFeedbackRunName: z.string().optional(),
+  prFeedbackLastCommentAt: z.string().optional(),
   // True when a human intentionally abandoned this task from `awaiting-human`
   // (distinct from normal completion, both of which end `status: 'Succeeded'`).
   abandoned: z.boolean().optional(),
