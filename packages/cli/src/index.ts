@@ -73,6 +73,25 @@ program
     false,
   )
   .option('--release <tag>', 'release tag to pin under --gitops (default: this checkout)')
+  .option(
+    '--platform <platform>',
+    'target platform: auto|minikube|microk8s|generic (default: auto; auto-detects from the cluster)',
+    'auto',
+  )
+  .option(
+    '--domain <host>',
+    'base domain for the dashboard + wildcard cert (default: <node-ip>.nip.io)',
+  )
+  .option('--http-port <port>', 'override the ingress HTTP port', (v: string) => Number(v))
+  .option(
+    '--https-port <port>',
+    'override the ingress HTTPS port (NodePort pin target on microk8s)',
+    (v: string) => Number(v),
+  )
+  .option('--storage-class <name>', 'override DEFAULT_STORAGE_CLASS in the operator manifest')
+  .option('--ingress-class <name>', 'override the IngressClass')
+  .option('--skip-tls', 'skip TLS setup (no cert, no default-cert wiring, no port pinning)', false)
+  .option('--tls-secret <ns>/<name>', 'TLS Secret name (default: percussionist-tls-wildcard)')
   .action(runDeploy);
 
 // web -----------------------------------------------------------------------

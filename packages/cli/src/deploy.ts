@@ -15,6 +15,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { DeployPlatform } from './deploy-platform.js';
+import { resolvePlatform } from './deploy-platform.js';
 import { patchFluxManifest, tagFromVersion } from './gitops-manifest.js';
 import { DEFAULT_NAMESPACE, fatal } from './kube.js';
 
@@ -27,6 +29,23 @@ export interface DeployOpts {
   gitops?: boolean;
   /** Release tag to pin under --gitops (default: this checkout's version). */
   release?: string;
+  // --- platform layer (task 1; consumed by TLS/preflight in tasks 2-3) ---
+  /** Target platform; `auto` (default) detects from the live cluster. */
+  platform?: DeployPlatform;
+  /** Override the base domain (default: <node-ip>.nip.io). */
+  domain?: string;
+  /** Override the ingress HTTP port (NodePort pin target on microk8s). */
+  httpPort?: number;
+  /** Override the ingress HTTPS port (NodePort pin target on microk8s). */
+  httpsPort?: number;
+  /** Override DEFAULT_STORAGE_CLASS. */
+  storageClass?: string;
+  /** Override the IngressClass. */
+  ingressClass?: string;
+  /** Skip TLS setup entirely (implied by `--platform generic`). */
+  skipTls?: boolean;
+  /** TLS Secret name as <ns>/<name>. */
+  tlsSecret?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -633,7 +652,28 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     }
   }
 
+  // --- platform layer (task 1) ----------------------------------------------
+  // Resolve the target platform and always print it. Auto-detection is advisory
+  // only; `--platform` overrides. TLS + preflight wiring is tasks 2-3, so for
+  // this slice we only resolve + print and leave clear integration points.
+  const profile = await resolvePlatform(opts.platform);
+  const platformLabel =
+    opts.platform && opts.platform !== 'auto'
+      ? `${profile.name} (explicit)`
+      : `${profile.name} (auto-detected)`;
+  console.log(`beatctl: deploy platform: ${platformLabel}`);
+
+  // Integration points for tasks 2-3 (left intentionally unwired in this slice):
+  //   - preflight:  ensurePlatformPrereqs(profile)   // addons, RBAC, storage
+  //   - controller: const ctrl = await detectTraefikController(profile);
+  //                 // feeds port/URL + TLS decisions; fail on nginx mismatch
+  //   - TLS setup:  profile-driven replacement of setupTls() below
+  //   - URL build:  baseUrl(profile, domain, httpPort, httpsPort)
+  // `baseUrl`, `platformProfile` and `detectTraefikController` are exported from
+  // deploy-platform.ts so the next slices can use them directly.
+
   // TLS setup — always attempted; fails clearly if ingress-nginx is absent.
+  // TODO(task 2): replace this with profile-driven TLS wiring.
   let nodeIP: string;
   try {
     nodeIP = await setupTls();
