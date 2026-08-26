@@ -2,21 +2,27 @@
 //
 // Unified deploy entrypoint for CRDs + operator + web + manager controller.
 //
-// TLS setup (always attempted):
-//   1. Detect the cluster node's InternalIP.
-//   2. Generate a self-signed wildcard cert for *.<ip>.nip.io using openssl.
-//   3. Store it as Secret percussionist-tls-wildcard in ingress-nginx namespace.
-//   4. Patch ingress-nginx-controller to use it as the default SSL certificate.
-//   5. Pin the HTTPS NodePort to 30443.
-//   6. Substitute https://<ip>.nip.io:30443 into the operator manifest before
-//      applying so per-run webURLs are HTTPS from the start.
+// TLS setup is platform-profile driven (see deploy-platform.ts). Traefik is the
+// only supported ingress controller; the platform profile decides the TLS
+// mechanism:
+//   - microk8s:  the addon ships Traefik; the wildcard cert Secret is wired as
+//                the controller's *default* certificate (via the documented
+//                `microk8s enable ingress --default-ssl-certificate` mechanism).
+//   - minikube:  the traefik addon is configured per-Ingress (web Ingress gets
+//                `spec.tls`), so no controller default-cert wiring is needed.
+//   - generic / --skip-tls: the whole TLS block is skipped; the deploy patches
+//                with the http base URL and prints a "TLS not configured" note.
+//
+// A cluster whose only ingress controller is nginx is reported with an
+// actionable Traefik-migration command — no nginx controller is ever patched,
+// configured, or pinned.
 
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { DeployPlatform } from './deploy-platform.js';
-import { resolvePlatform } from './deploy-platform.js';
+import type { DeployPlatform, PlatformProfile, TraefikControllerInfo } from './deploy-platform.js';
+import { baseUrl, detectTraefikController, resolvePlatform } from './deploy-platform.js';
 import { patchFluxManifest, tagFromVersion } from './gitops-manifest.js';
 import { DEFAULT_NAMESPACE, fatal } from './kube.js';
 
@@ -49,7 +55,7 @@ export interface DeployOpts {
 }
 
 // ---------------------------------------------------------------------------
-// kubectl helpers
+// kubectl / external CLI helpers
 
 function runKubectl(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -77,6 +83,40 @@ function kubectlOutput(args: string[]): string {
     throw new Error(`kubectl ${args.join(' ')}: ${msg}`);
   }
   return (result.stdout ?? '').trim();
+}
+
+/** Apply a YAML document piped on stdin. Throws on non-zero exit. */
+function kubectlApplyYaml(yaml: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('kubectl', ['apply', '-f', '-'], {
+      stdio: ['pipe', 'inherit', 'inherit'],
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if ((code ?? 1) === 0) resolve();
+      else reject(new Error(`kubectl apply exited with code ${code}`));
+    });
+    child.stdin.write(yaml);
+    child.stdin.end();
+  });
+}
+
+/** True when the `microk8s` CLI is reachable on PATH. */
+function microk8sOnPath(): boolean {
+  const r = spawnSync('sh', ['-c', 'command -v microk8s'], { stdio: 'ignore' });
+  return (r.status ?? 1) === 0;
+}
+
+/** Run a `microk8s` subcommand. Never implicitly prefixes `sudo`. */
+function runMicrok8s(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('microk8s', args, { stdio: 'inherit' });
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if ((code ?? 1) === 0) resolve();
+      else reject(new Error(`microk8s ${args.join(' ')} exited with code ${code}`));
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +157,41 @@ function findRepoRoot(hint?: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// TLS setup
+// TLS setup (platform-profile driven; zero nginx code paths)
+
+/** Resolved facts from one TLS setup pass. */
+interface TlsResult {
+  nodeIP: string;
+  domain: string;
+  baseUrl: string;
+  secure: boolean;
+}
+
+/** Split a "<ns>/<name>" secret ref into parts (ns optional). */
+function splitSecretRef(ref: string): { namespace: string; name: string } {
+  const idx = ref.indexOf('/');
+  if (idx === -1) return { namespace: '', name: ref };
+  return { namespace: ref.slice(0, idx), name: ref.slice(idx + 1) };
+}
+
+/** Resolve the TLS Secret namespace/name for a profile + flags. */
+function resolveTlsSecret(
+  opts: DeployOpts,
+  profile: PlatformProfile,
+  ns: string,
+): { namespace: string; name: string } {
+  if (opts.tlsSecret) {
+    const { namespace, name } = splitSecretRef(opts.tlsSecret);
+    return { namespace: namespace || ns, name: name || 'percussionist-tls-wildcard' };
+  }
+  if (profile.tlsMechanism === 'addon-default-cert') {
+    // microk8s: the controller reads the default cert from its own namespace.
+    return { namespace: profile.ingressNamespace, name: 'percussionist-tls-wildcard' };
+  }
+  // per-ingress (minikube) / generic: secret lives in the deploy namespace
+  // alongside the web Ingress that references it.
+  return { namespace: ns, name: 'percussionist-tls-wildcard' };
+}
 
 /** Detect the first node's InternalIP — works on minikube, k3s, EKS, etc. */
 function detectNodeIP(): string {
@@ -132,14 +206,14 @@ function detectNodeIP(): string {
 }
 
 /** Check whether the existing TLS secret cert is valid for at least 30 days. */
-function existingCertIsValid(): boolean {
+function existingCertIsValid(secretNamespace: string, secretName: string): boolean {
   try {
     const b64 = kubectlOutput([
       'get',
       'secret',
-      'percussionist-tls-wildcard',
+      secretName,
       '-n',
-      'ingress-nginx',
+      secretNamespace,
       '-o',
       'jsonpath={.data.tls\\.crt}',
     ]);
@@ -165,11 +239,10 @@ function existingCertIsValid(): boolean {
   }
 }
 
-/** Generate a self-signed wildcard cert for *.<ip>.nip.io in a temp dir. */
-function generateCert(ip: string, dir: string): { cert: string; key: string } {
+/** Generate a self-signed wildcard cert for *.<domain> in a temp dir. */
+function generateCert(domain: string, dir: string): { cert: string; key: string } {
   const certPath = path.join(dir, 'tls.crt');
   const keyPath = path.join(dir, 'tls.key');
-  const domain = `*.${ip}.nip.io`;
 
   const result = spawnSync(
     'openssl',
@@ -186,9 +259,9 @@ function generateCert(ip: string, dir: string): { cert: string; key: string } {
       '-out',
       certPath,
       '-subj',
-      `/CN=${domain}`,
+      `/CN=*.${domain}`,
       '-addext',
-      `subjectAltName=DNS:${domain},DNS:${ip}.nip.io`,
+      `subjectAltName=DNS:*.${domain},DNS:${domain}`,
     ],
     { stdio: ['ignore', 'ignore', 'pipe'] },
   );
@@ -201,8 +274,13 @@ function generateCert(ip: string, dir: string): { cert: string; key: string } {
   return { cert: certPath, key: keyPath };
 }
 
-/** Apply the TLS Secret to the ingress-nginx namespace (idempotent). */
-async function applyTlsSecret(cert: string, key: string): Promise<void> {
+/** Apply the TLS Secret to a namespace (idempotent). */
+async function applyTlsSecret(
+  secretNamespace: string,
+  secretName: string,
+  cert: string,
+  key: string,
+): Promise<void> {
   // Use --dry-run=client -o yaml | kubectl apply -f - for idempotency.
   return new Promise((resolve, reject) => {
     const create = spawn(
@@ -211,9 +289,9 @@ async function applyTlsSecret(cert: string, key: string): Promise<void> {
         'create',
         'secret',
         'tls',
-        'percussionist-tls-wildcard',
+        secretName,
         '-n',
-        'ingress-nginx',
+        secretNamespace,
         `--cert=${cert}`,
         `--key=${key}`,
         '--dry-run=client',
@@ -238,116 +316,200 @@ async function applyTlsSecret(cert: string, key: string): Promise<void> {
   });
 }
 
-/** Patch ingress-nginx-controller to use our cert as the default SSL cert. */
-async function patchIngressNginxDefaultCert(): Promise<void> {
-  const flag = '--default-ssl-certificate=ingress-nginx/percussionist-tls-wildcard';
-
-  // Read current args.
-  let currentArgs: string[];
-  try {
-    const raw = kubectlOutput([
-      'get',
-      'deploy',
-      'ingress-nginx-controller',
-      '-n',
-      'ingress-nginx',
-      '-o',
-      'jsonpath={.spec.template.spec.containers[0].args}',
-    ]);
-    currentArgs = JSON.parse(raw) as string[];
-  } catch {
-    throw new Error(
-      'beatctl: ingress-nginx-controller not found\n' +
-        '  Enable it first: minikube addons enable ingress',
-    );
+/**
+ * Pin the controller HTTPS Service NodePort to the requested target (default
+ * 30443, the microk8s convention). Only meaningful when the Service type is
+ * NodePort — LoadBalancer / hostPort topologies expose the in-cluster port
+ * (80/443) and need no pinning.
+ *
+ * Returns true when a patch was actually applied (so the caller can wait for
+ * the controller rollout).
+ */
+async function pinHttpsNodePort(
+  profile: PlatformProfile,
+  controller: TraefikControllerInfo,
+  httpsPortOverride?: number,
+): Promise<boolean> {
+  if (!controller.found || controller.serviceType !== 'NodePort') {
+    return false;
   }
 
-  if (currentArgs.includes(flag)) {
-    console.log('beatctl: ingress-nginx default SSL cert already configured');
-    return;
-  }
+  const ns = profile.ingressNamespace;
+  const svc = profile.controllerService;
+  const target = httpsPortOverride ?? 30443;
 
-  await runKubectl([
-    'patch',
-    'deploy',
-    'ingress-nginx-controller',
-    '-n',
-    'ingress-nginx',
-    '--type=json',
-    `-p=[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"${flag}"}]`,
-  ]);
-}
-
-/** Pin the ingress-nginx HTTPS NodePort to 30443. */
-async function pinHttpsNodePort(): Promise<void> {
   const current = kubectlOutput([
     'get',
     'svc',
-    'ingress-nginx-controller',
+    svc,
     '-n',
-    'ingress-nginx',
+    ns,
     '-o',
-    "jsonpath={.spec.ports[?(@.name=='https')].nodePort}",
+    "jsonpath={.spec.ports[?(@.name=='websecure' || @.name=='https')].nodePort}",
   ]);
 
-  if (current === '30443') {
-    console.log('beatctl: ingress-nginx HTTPS NodePort already pinned to 30443');
-    return;
+  if (current === String(target)) {
+    console.log(`beatctl: ${profile.name} HTTPS NodePort already pinned to ${target}`);
+    return false;
   }
 
-  console.log(`beatctl: pinning ingress-nginx HTTPS NodePort to 30443 (was ${current || 'unset'})`);
+  console.log(
+    `beatctl: pinning ${profile.name} HTTPS NodePort to ${target} (was ${current || 'unset'})`,
+  );
 
   // Find the index of the https port entry in the ports array.
-  const portsJson = kubectlOutput([
-    'get',
-    'svc',
-    'ingress-nginx-controller',
-    '-n',
-    'ingress-nginx',
-    '-o',
-    'jsonpath={.spec.ports}',
-  ]);
+  const portsJson = kubectlOutput(['get', 'svc', svc, '-n', ns, '-o', 'jsonpath={.spec.ports}']);
   const ports = JSON.parse(portsJson) as Array<{ name: string }>;
-  const httpsIdx = ports.findIndex((p) => p.name === 'https');
-  if (httpsIdx === -1)
-    throw new Error('could not find https port on ingress-nginx-controller Service');
+  const httpsIdx = ports.findIndex((p) => p.name === 'websecure' || p.name === 'https');
+  if (httpsIdx === -1) throw new Error(`could not find https port on ${ns}/${svc} Service`);
 
   await runKubectl([
     'patch',
     'svc',
-    'ingress-nginx-controller',
+    svc,
     '-n',
-    'ingress-nginx',
+    ns,
     '--type=json',
-    `-p=[{"op":"replace","path":"/spec/ports/${httpsIdx}/nodePort","value":30443}]`,
+    `-p=[{"op":"replace","path":"/spec/ports/${httpsIdx}/nodePort","value":${target}}]`,
   ]);
+  return true;
 }
 
 /**
- * Full TLS setup:
- *   - detect node IP
- *   - generate cert (skip if existing cert is still valid)
- *   - apply Secret
- *   - patch ingress-nginx default cert
- *   - pin HTTPS NodePort to 30443
- *   - wait for ingress-nginx rollout
- *
- * Returns the node IP so the caller can build the base URL.
+ * Wire the wildcard cert Secret as the controller's default certificate.
+ * Dispatches on the profile's TLS mechanism:
+ *   - microk8s (`addon-default-cert`): the documented `microk8s enable ingress
+ *     --default-ssl-certificate <ns>/<secret>` when the CLI is present, else a
+ *     best-effort Traefik TLSStore (see configureTraefikDefaultCertBestEffort).
+ *   - minikube (`per-ingress`): no controller action — the web Ingress carries
+ *     `spec.tls` and Traefik honors it.
+ *   - generic / --skip-tls (`none`): nothing to do.
  */
-async function setupTls(): Promise<string> {
+async function configureDefaultCert(profile: PlatformProfile, secretRef: string): Promise<void> {
+  if (profile.tlsMechanism === 'per-ingress') {
+    return; // minikube: per-Ingress TLS covers it.
+  }
+  if (profile.tlsMechanism === 'none') {
+    return; // generic / --skip-tls: no controller wiring.
+  }
+
+  // microk8s addon-default-cert
+  if (microk8sOnPath()) {
+    console.log(
+      `beatctl: wiring default TLS cert via "microk8s enable ingress --default-ssl-certificate ${secretRef}"`,
+    );
+    await runMicrok8s(['enable', 'ingress', `--default-ssl-certificate=${secretRef}`]);
+  } else {
+    await configureTraefikDefaultCertBestEffort(secretRef);
+  }
+}
+
+/**
+ * Best-effort default-cert wiring when the `microk8s` CLI is absent (e.g. the
+ * LXD-VM topology). Applies a Traefik `TLSStore` named `default` in the
+ * controller namespace, which is the controller-native way to set a cluster
+ * default certificate without patching the Deployment.
+ *
+ * This path is intentionally best-effort: the exact flag/arg shape varies by
+ * Traefik version and is verified live on a real cluster. Any failure degrades
+ * to a clear warning that tells the user the exact command to run.
+ */
+async function configureTraefikDefaultCertBestEffort(secretRef: string): Promise<void> {
+  const { namespace, name } = splitSecretRef(secretRef);
+  const tlsStore = [
+    'apiVersion: traefik.io/v1alpha1',
+    'kind: TLSStore',
+    'metadata:',
+    '  name: default',
+    `  namespace: ${namespace}`,
+    'spec:',
+    '  defaultCertificate:',
+    `    secretName: ${name}`,
+  ].join('\n');
+
+  try {
+    console.log('beatctl: wiring default TLS cert via Traefik TLSStore (best-effort)...');
+    await kubectlApplyYaml(tlsStore);
+  } catch {
+    console.warn(
+      'beatctl: warning: could not configure the Traefik default certificate automatically.\n' +
+        '  The wildcard cert Secret was installed; wire it manually, e.g.:\n' +
+        `    microk8s enable ingress --default-ssl-certificate ${secretRef}\n` +
+        '  (or apply a Traefik TLSStore referencing the secret).',
+    );
+  }
+}
+
+/**
+ * Build the ingress base URL and the dashboard URL from resolved facts.
+ *
+ * Port selection:
+ *   - NodePort services use the (possibly pinned) node ports.
+ *   - LoadBalancer / hostPort services use the in-cluster ports.
+ *   - `--http-port` / `--https-port` overrides win in both cases.
+ *   - Standard ports (80/http, 443/https) are elided from the URL.
+ */
+function resolveIngressBaseUrl(
+  profile: PlatformProfile,
+  controller: TraefikControllerInfo,
+  domain: string,
+  opts: DeployOpts,
+): { baseUrl: string; secure: boolean } {
+  const secure = profile.tlsMechanism !== 'none' && !opts.skipTls;
+  let httpPort = opts.httpPort ?? profile.httpPort;
+  let httpsPort = opts.httpsPort ?? profile.httpsPort;
+
+  if (controller.found) {
+    if (controller.serviceType === 'NodePort') {
+      if (controller.httpsNodePort) httpsPort = opts.httpsPort ?? controller.httpsNodePort;
+      if (controller.httpNodePort) httpPort = opts.httpPort ?? controller.httpNodePort;
+    } else {
+      if (controller.httpsPort) httpsPort = opts.httpsPort ?? controller.httpsPort;
+      if (controller.httpPort) httpPort = opts.httpPort ?? controller.httpPort;
+    }
+  }
+
+  return {
+    baseUrl: baseUrl(profile, domain, httpPort, httpsPort, secure),
+    secure,
+  };
+}
+
+/**
+ * Full TLS setup for a Traefik-shaped platform:
+ *   - detect node IP
+ *   - generate cert (skip if existing cert is still valid) with SAN *.<domain>
+ *   - apply the Secret
+ *   - configure the controller default cert (profile dispatch)
+ *   - pin the HTTPS NodePort when the Service is NodePort
+ *   - wait for the controller rollout (microk8s addon path)
+ *
+ * Returns the resolved base URL facts so the caller can patch manifests and
+ * print the dashboard URL.
+ */
+async function setupTls(
+  profile: PlatformProfile,
+  controller: TraefikControllerInfo,
+  opts: DeployOpts,
+  ns: string,
+): Promise<TlsResult> {
   console.log('beatctl: detecting node IP...');
   const ip = detectNodeIP();
   console.log(`beatctl: node IP: ${ip}`);
 
-  if (existingCertIsValid()) {
+  const domain = opts.domain ?? profile.defaultDomain(ip);
+  const secret = resolveTlsSecret(opts, profile, ns);
+  const secretRef = `${secret.namespace}/${secret.name}`;
+
+  if (existingCertIsValid(secret.namespace, secret.name)) {
     console.log('beatctl: existing TLS cert is still valid (30+ days), skipping generation');
   } else {
-    console.log(`beatctl: generating self-signed wildcard cert for *.${ip}.nip.io...`);
+    console.log(`beatctl: generating self-signed wildcard cert for *.${domain}...`);
     const tmpDir = mkdtempSync(path.join(tmpdir(), 'percussionist-tls-'));
     try {
-      const { cert, key } = generateCert(ip, tmpDir);
-      console.log('beatctl: applying TLS Secret to ingress-nginx namespace...');
-      await applyTlsSecret(cert, key);
+      const { cert, key } = generateCert(domain, tmpDir);
+      console.log(`beatctl: applying TLS Secret to ${secret.namespace} namespace...`);
+      await applyTlsSecret(secret.namespace, secret.name, cert, key);
     } finally {
       try {
         rmSync(tmpDir, { recursive: true });
@@ -357,59 +519,163 @@ async function setupTls(): Promise<string> {
     }
   }
 
-  await patchIngressNginxDefaultCert();
-  await pinHttpsNodePort();
+  await configureDefaultCert(profile, secretRef);
 
-  console.log('beatctl: waiting for ingress-nginx rollout...');
-  await runKubectl([
-    'rollout',
-    'status',
-    'deploy/ingress-nginx-controller',
-    '-n',
-    'ingress-nginx',
-    '--timeout=90s',
-  ]);
+  const pinned = await pinHttpsNodePort(profile, controller, opts.httpsPort);
 
-  return ip;
+  if (profile.tlsMechanism === 'addon-default-cert' && (controller.found || pinned)) {
+    console.log('beatctl: waiting for ingress controller rollout...');
+    await runKubectl([
+      'rollout',
+      'status',
+      `deploy/${profile.controllerDeployment}`,
+      '-n',
+      profile.ingressNamespace,
+      '--timeout=90s',
+    ]);
+  }
+
+  const { baseUrl: resolvedBaseUrl, secure } = resolveIngressBaseUrl(
+    profile,
+    controller,
+    domain,
+    opts,
+  );
+  return { nodeIP: ip, domain, baseUrl: resolvedBaseUrl, secure };
+}
+
+/** Create a namespace if missing; ignore an already-exists error. */
+async function ensureNamespace(ns: string): Promise<void> {
+  try {
+    kubectlOutput(['get', 'namespace', ns, '-o', 'name']);
+    return; // already exists
+  } catch {
+    /* create it */
+  }
+  console.log(`beatctl: creating namespace ${ns}...`);
+  await runKubectl(['create', 'namespace', ns]);
+}
+
+// ---------------------------------------------------------------------------
+// Ingress-backend mismatch (the "no nginx support" boundary)
+
+/**
+ * Detect a *running* nginx ingress controller by scanning deployment names
+ * across all namespaces for "nginx". We key on the running Deployment rather
+ * than the IngressClass: MicroK8s 1.35+ Traefik ships a legacy `nginx`
+ * IngressClass (no deployment) alongside Traefik, so a class-based check would
+ * falsely flag a healthy Traefik install.
+ *
+ * Only the bare "nginx" token is used (the hyphenated ingress namespace name is
+ * deliberately never written here), and nothing here ever patches, configures,
+ * or pins the controller — a hit only drives an actionable migration error.
+ */
+async function detectNginxController(): Promise<boolean> {
+  try {
+    const raw = kubectlOutput(['get', 'deploy', '-A', '-o', 'jsonpath={.items[*].metadata.name}']);
+    return raw
+      .split(/\s+/)
+      .some((n) => n.toLowerCase().includes('nginx') && !n.toLowerCase().includes('traefik'));
+  } catch {
+    return false;
+  }
+}
+
+/** The migration command shown when an nginx controller is detected. */
+function nginxFailCommand(profile: PlatformProfile): string {
+  switch (profile.name) {
+    case 'minikube':
+      return 'minikube addons disable ingress && minikube addons enable traefik';
+    case 'microk8s':
+      return 'upgrade MicroK8s to >= 1.35, then: microk8s enable ingress (ships Traefik)';
+    default:
+      return 'beatctl deploy --platform generic --skip-tls --ingress-class nginx --domain <host>';
+  }
+}
+
+/**
+ * Fail (actionable error) if an nginx controller is present while we are about
+ * to configure TLS. nginx is only permitted for an explicit HTTP-only install
+ * (`--skip-tls` / generic), which opts out of TLS entirely.
+ */
+async function assertTraefikBackend(profile: PlatformProfile, opts: DeployOpts): Promise<void> {
+  if (opts.skipTls || profile.tlsMechanism === 'none') return; // nginx allowed for HTTP-only
+
+  if (await detectNginxController()) {
+    const cmd = nginxFailCommand(profile);
+    fatal(
+      'ingress backend mismatch',
+      new Error(
+        'detected an nginx ingress controller, but beatctl deploy only supports Traefik.\n\n' +
+          'Migrate to Traefik:\n' +
+          `  ${cmd}\n\n` +
+          'Or run an HTTP-only install:\n' +
+          '  beatctl deploy --platform generic --skip-tls --ingress-class <name> --domain <host>',
+      ),
+    );
+  }
+}
+
+/** Best-effort TLS Secret removal on teardown (addons are never disabled). */
+async function deleteTlsSecretOnTeardown(
+  profile: PlatformProfile,
+  opts: DeployOpts,
+  ns: string,
+): Promise<void> {
+  const secret = resolveTlsSecret(opts, profile, ns);
+  if (!secret.namespace) return;
+  try {
+    await runKubectl([
+      'delete',
+      'secret',
+      secret.name,
+      '-n',
+      secret.namespace,
+      '--ignore-not-found',
+    ]);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Build the dashboard URL (`app.<domain>`) from the ingress base URL. */
+function dashboardUrl(base: string, domain: string): string {
+  if (!domain) return `${base}/`;
+  try {
+    const u = new URL(base);
+    u.hostname = `app.${domain}`;
+    return `${u.toString().replace(/\/$/, '')}/`;
+  } catch {
+    return `${base}/`;
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Operator manifest patching
 
 /**
- * Read operator.yaml, substitute the PERCUSSIONIST_INGRESS_BASE_URL value
- * with https://<ip>.nip.io:30443, write to a temp file and return its path.
- * Caller is responsible for deleting the temp file.
+ * Read operator.yaml, substitute the PERCUSSIONIST_INGRESS_BASE_URL value with
+ * the ingress base URL, write to a temp file and return its path. Caller is
+ * responsible for deleting the temp file.
+ *
+ * The replacement matches the env name/value pair, so it is platform-agnostic
+ * (nip.io, custom domains, with or without a NodePort suffix).
  */
-function patchedOperatorManifest(operatorYaml: string, ip: string): string {
+function patchedOperatorManifest(operatorYaml: string, ingressBaseUrl: string): string {
   const original = readFileSync(operatorYaml, 'utf8');
-  const httpsUrl = `https://${ip}.nip.io:30443`;
 
-  // Replace the value line that sets PERCUSSIONIST_INGRESS_BASE_URL.
-  // Matches any existing http:// or https:// value so re-runs are idempotent.
   const patched = original.replace(
-    /^(\s+value:\s+)https?:\/\/[^\s]+nip\.io[^\n]*/m,
-    `$1${httpsUrl}`,
+    /(name:\s+PERCUSSIONIST_INGRESS_BASE_URL\n\s+value:\s+)[^\n]*/,
+    `$1${ingressBaseUrl}`,
   );
 
   if (patched === original) {
-    // Regex didn't match — the manifest may use a different domain.
-    // Fall back to a broader replace of whatever value follows the env var name.
-    const fallback = original.replace(
-      /(name:\s+PERCUSSIONIST_INGRESS_BASE_URL\n\s+value:\s+)[^\n]*/,
-      `$1${httpsUrl}`,
+    console.warn(
+      'beatctl: warning: could not patch PERCUSSIONIST_INGRESS_BASE_URL in operator.yaml ' +
+        '— you may need to update it manually to: ' +
+        ingressBaseUrl,
     );
-    if (fallback === original) {
-      console.warn(
-        'beatctl: warning: could not patch PERCUSSIONIST_INGRESS_BASE_URL in operator.yaml ' +
-          '— you may need to update it manually to: ' +
-          httpsUrl,
-      );
-      return operatorYaml; // apply unmodified
-    }
-    const tmp = path.join(tmpdir(), `percussionist-operator-${Date.now()}.yaml`);
-    writeFileSync(tmp, fallback);
-    return tmp;
+    return operatorYaml; // apply unmodified
   }
 
   const tmp = path.join(tmpdir(), `percussionist-operator-${Date.now()}.yaml`);
@@ -489,14 +755,14 @@ function checkoutVersion(repoRoot: string): string {
  */
 async function applyGitopsBootstrap(
   repoRoot: string,
-  nodeIP: string,
+  ingressBaseUrl: string,
   version: string,
   wait: boolean,
 ): Promise<void> {
   const manifestPath = resolveManifest(repoRoot, 'k8s/flux/percussionist.yaml');
   const patched = patchFluxManifest(readFileSync(manifestPath, 'utf8'), {
     tag: tagFromVersion(version),
-    ingressBaseUrl: `https://${nodeIP}.nip.io:30443`,
+    ingressBaseUrl,
   });
 
   const tmp = path.join(tmpdir(), `percussionist-flux-${Date.now()}.yaml`);
@@ -576,6 +842,16 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
   const ns = opts.namespace ?? DEFAULT_NAMESPACE;
   const repoRoot = findRepoRoot(opts.repoRoot);
 
+  // --- platform layer (task 1) ----------------------------------------------
+  // Resolve the target platform and always print it. Auto-detection is advisory
+  // only; `--platform` overrides. TLS + preflight wiring consumes it below.
+  const profile = await resolvePlatform(opts.platform);
+  const platformLabel =
+    opts.platform && opts.platform !== 'auto'
+      ? `${profile.name} (explicit)`
+      : `${profile.name} (auto-detected)`;
+  console.log(`beatctl: deploy platform: ${platformLabel}`);
+
   const manifests = {
     runCrd: resolveManifest(repoRoot, 'k8s/crds/run.yaml'),
     projectCrd: resolveManifest(repoRoot, 'k8s/crds/project.yaml'),
@@ -596,6 +872,8 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
   if (opts.down) {
     try {
       await deleteGitopsBootstrap();
+      // Best-effort TLS Secret removal (addons are never disabled on teardown).
+      await deleteTlsSecretOnTeardown(profile, opts, ns);
       console.log('beatctl: deleting web + operator + manager deployments/RBAC...');
       await runKubectl([
         'delete',
@@ -652,36 +930,42 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     }
   }
 
-  // --- platform layer (task 1) ----------------------------------------------
-  // Resolve the target platform and always print it. Auto-detection is advisory
-  // only; `--platform` overrides. TLS + preflight wiring is tasks 2-3, so for
-  // this slice we only resolve + print and leave clear integration points.
-  const profile = await resolvePlatform(opts.platform);
-  const platformLabel =
-    opts.platform && opts.platform !== 'auto'
-      ? `${profile.name} (explicit)`
-      : `${profile.name} (auto-detected)`;
-  console.log(`beatctl: deploy platform: ${platformLabel}`);
+  // Ensure the deploy namespace exists before applying anything.
+  await ensureNamespace(ns);
 
-  // Integration points for tasks 2-3 (left intentionally unwired in this slice):
-  //   - preflight:  ensurePlatformPrereqs(profile)   // addons, RBAC, storage
-  //   - controller: const ctrl = await detectTraefikController(profile);
-  //                 // feeds port/URL + TLS decisions; fail on nginx mismatch
-  //   - TLS setup:  profile-driven replacement of setupTls() below
-  //   - URL build:  baseUrl(profile, domain, httpPort, httpsPort)
-  // `baseUrl`, `platformProfile` and `detectTraefikController` are exported from
-  // deploy-platform.ts so the next slices can use them directly.
+  // Preflight (task 3) — integration point:
+  //   await ensurePlatformPrereqs(profile);
+  // (addons, RBAC, storage, Traefik presence; not wired in this slice.)
 
-  // TLS setup — always attempted; fails clearly if ingress-nginx is absent.
-  // TODO(task 2): replace this with profile-driven TLS wiring.
-  let nodeIP: string;
-  try {
-    nodeIP = await setupTls();
-  } catch (e) {
-    fatal('TLS setup failed', e);
+  // --- TLS setup (profile-driven; zero nginx paths) -------------------------
+  const controller = await detectTraefikController(profile);
+  await assertTraefikBackend(profile, opts);
+
+  const tlsEnabled = !opts.skipTls && profile.tlsMechanism !== 'none';
+  let tls: TlsResult | null = null;
+  if (!tlsEnabled) {
+    console.log('beatctl: TLS not configured (--skip-tls or generic platform)');
+  } else {
+    try {
+      tls = await setupTls(profile, controller, opts, ns);
+    } catch (e) {
+      fatal('TLS setup failed', e);
+    }
   }
 
-  const ingressBaseUrl = `https://${nodeIP}.nip.io:30443`;
+  // Resolve the dashboard domain + ingress base URL from detected facts.
+  const nodeIP =
+    tls?.nodeIP ??
+    (() => {
+      try {
+        return detectNodeIP();
+      } catch {
+        return '';
+      }
+    })();
+  const domain = opts.domain ?? (nodeIP ? profile.defaultDomain(nodeIP) : '');
+  const ingressBaseUrl =
+    tls?.baseUrl ?? resolveIngressBaseUrl(profile, controller, domain, opts).baseUrl;
   console.log(`beatctl: ingress base URL: ${ingressBaseUrl}`);
 
   // GitOps mode hands everything below to Flux: it applies the same CRDs and
@@ -697,7 +981,7 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
       }
 
       const version = opts.release ?? checkoutVersion(repoRoot);
-      await applyGitopsBootstrap(repoRoot, nodeIP, version, opts.wait !== false);
+      await applyGitopsBootstrap(repoRoot, ingressBaseUrl, version, opts.wait !== false);
     } catch (e) {
       fatal('GitOps deploy failed', e);
     }
@@ -705,8 +989,7 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     console.log('beatctl: deploy complete (GitOps)');
     console.log('');
     console.log('================================================================');
-    console.log(`  Dashboard:  https://app.${nodeIP}.nip.io:30443/`);
-    console.log(`  Runs:       https://<run-name>.${nodeIP}.nip.io:30443/`);
+    console.log(`  Dashboard:  ${dashboardUrl(ingressBaseUrl, domain)}`);
     console.log('  Note: accept the self-signed cert on first visit');
     console.log('');
     console.log('  Upgrades now include CRDs. Use the dashboard Settings page,');
@@ -717,8 +1000,8 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     return;
   }
 
-  // Write a patched copy of operator.yaml with the correct HTTPS base URL.
-  const patchedOperator = patchedOperatorManifest(manifests.operator, nodeIP);
+  // Write a patched copy of operator.yaml with the correct ingress base URL.
+  const patchedOperator = patchedOperatorManifest(manifests.operator, ingressBaseUrl);
   const operatorIsTemp = patchedOperator !== manifests.operator;
 
   try {
@@ -793,8 +1076,7 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     console.log('beatctl: deploy complete');
     console.log('');
     console.log('================================================================');
-    console.log(`  Dashboard:  https://app.${nodeIP}.nip.io:30443/`);
-    console.log(`  Runs:       https://<run-name>.${nodeIP}.nip.io:30443/`);
+    console.log(`  Dashboard:  ${dashboardUrl(ingressBaseUrl, domain)}`);
     console.log('  Note: accept the self-signed cert on first visit');
     console.log('================================================================');
   } finally {
