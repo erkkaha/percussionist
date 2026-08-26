@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { DeployPlatform, PlatformProfile, TraefikControllerInfo } from './deploy-platform.js';
 import { baseUrl, detectTraefikController, resolvePlatform } from './deploy-platform.js';
+import { ensurePlatformPrereqs } from './deploy-preflight.js';
 import { patchFluxManifest, tagFromVersion } from './gitops-manifest.js';
 import { DEFAULT_NAMESPACE, fatal } from './kube.js';
 
@@ -933,9 +934,14 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
   // Ensure the deploy namespace exists before applying anything.
   await ensureNamespace(ns);
 
-  // Preflight (task 3) — integration point:
-  //   await ensurePlatformPrereqs(profile);
-  // (addons, RBAC, storage, Traefik presence; not wired in this slice.)
+  // Preflight (task 3) — addons, RBAC, storage, Traefik presence per platform.
+  // Runs before TLS setup so the Traefik controller is present when
+  // detectTraefikController() probes it below (ports + IngressClass).
+  try {
+    await ensurePlatformPrereqs(profile);
+  } catch (e) {
+    fatal('platform preflight failed', e);
+  }
 
   // --- TLS setup (profile-driven; zero nginx paths) -------------------------
   const controller = await detectTraefikController(profile);
