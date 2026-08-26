@@ -1,6 +1,12 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.17] - 2026-08-26
+
+### <!-- 0 -->🚀 Features
+
+- Publish worker branches to namespaced remote refs (refs/percussionist/*) _(git)_
+- Close the PR-comment feedback loop in PR-mode integration _(reconciler)_
 ## [v0.2.16] - 2026-08-23
 
 ### <!-- 0 -->🚀 Features
@@ -30,6 +36,10 @@ All notable changes to Percussionist are documented here.
 
 - Add focus-mode component tests for TaskDetailPanel and BoardView _(web)_
 - Add findings route + panel tests _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.16
 ## [v0.2.15] - 2026-08-21
 
 ### <!-- 0 -->🚀 Features
