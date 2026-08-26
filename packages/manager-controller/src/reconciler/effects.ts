@@ -105,9 +105,21 @@ export async function executeEffects(
     }
   }
 
+  // Deferred annotation-clear effects: consumed only AFTER a successful status
+  // patch so a failed/conflicted status write never deletes a human's intent
+  // (approve/abandon/answer). See the deferred section below the status patch.
+  const deferredClears: Extract<ReconcileEffect, { type: 'ClearTaskAnnotations' }>[] = [];
+
   // Apply effects.
   for (const effect of effects) {
     try {
+      // Defer ClearTaskAnnotations — it must run only after the guarded status
+      // write so a conflicting/aborted status patch keeps the annotation intact.
+      // All other effect types run exactly as before.
+      if (effect.type === 'ClearTaskAnnotations') {
+        deferredClears.push(effect);
+        continue;
+      }
       switch (effect.type) {
         case 'ScheduleRun': {
           // Resolve the ScheduleRun effect into an actual Run and create it.
@@ -264,38 +276,6 @@ export async function executeEffects(
           }
           break;
         }
-        case 'ClearTaskAnnotations': {
-          try {
-            const taskPatch: Record<string, string | null> = {};
-            const projectKeys: string[] = [];
-            for (const key of effect.keys) {
-              if (key.startsWith('percussionist.dev/action-')) {
-                taskPatch[key] = null;
-              } else {
-                projectKeys.push(key);
-              }
-            }
-            const taskKeys = Object.keys(taskPatch);
-            if (taskKeys.length > 0) {
-              await patchTask(
-                taskName,
-                {
-                  metadata: { name: taskName, annotations: taskPatch as Record<string, string> },
-                },
-                namespace,
-              );
-            }
-            if (projectKeys.length > 0) {
-              await clearProjectAnnotations(projectKeys, project, namespace, taskName);
-            }
-          } catch (e) {
-            console.warn(
-              `[effects] ClearTaskAnnotations failed for ${taskName}:`,
-              (e as Error).message,
-            );
-          }
-          break;
-        }
         case 'ClearProjectAnnotations': {
           await clearProjectAnnotations(effect.keys, project, namespace, taskName);
           break;
@@ -428,6 +408,10 @@ export async function executeEffects(
   }
 
   // Apply final status patch (phase + worker + other fields in one patch).
+  // Captures the updated task so we can pass its resourceVersion into the
+  // deferred annotation-clear below (making that write conditional on the one
+  // we just made, avoiding a spurious self-409).
+  let patched: Task | undefined;
   if (toPhase || statusPatch) {
     // The phase guard above ran before the effects, which take seconds
     // (creating runs, spawning cleanup pods). An MCP tool or a human annotation
@@ -436,8 +420,10 @@ export async function executeEffects(
     // conditional on that read so anything landing in the remaining gap is a
     // conflict rather than a lost update.
     //
-    // The re-read also picks up our own metadata writes from the effects above
-    // (ClearTaskAnnotations), so those don't false-conflict.
+    // The re-read guards the phase and supplies the resource version for the
+    // conditional status write. Annotation consumption (ClearTaskAnnotations)
+    // is deferred until after this successful status write (see below), so a
+    // failed/conflicted status patch never loses the human's intent.
     let latest: Task;
     try {
       latest = await getTask(taskName, namespace);
@@ -467,7 +453,13 @@ export async function executeEffects(
       phase: toPhase ?? currentPhase,
     };
     try {
-      await patchTaskStatus(taskName, patch, namespace, 3, latest.metadata.resourceVersion);
+      patched = await patchTaskStatus(
+        taskName,
+        patch,
+        namespace,
+        3,
+        latest.metadata.resourceVersion,
+      );
     } catch (e) {
       if (isKubeConflictError(e)) {
         return {
@@ -480,6 +472,24 @@ export async function executeEffects(
       }
       throw e;
     }
+  }
+
+  // Deferred annotation clears: only reached when the function has NOT
+  // early-returned, i.e. the status patch succeeded (or was skipped because
+  // there was no toPhase/statusPatch). We pass the post-status resource version
+  // so the annotation delete is conditional on the write we just made, avoiding
+  // a spurious self-409. When the status patch was skipped, resourceVersion is
+  // undefined and the helper calls patchTask without it (unchanged behavior).
+  // Each cleared effect is reported exactly as the loop would have.
+  for (const effect of deferredClears) {
+    await applyClearTaskAnnotations(
+      effect,
+      taskName,
+      project,
+      namespace,
+      patched?.metadata?.resourceVersion,
+    );
+    effectsApplied.push(effect.type);
   }
 
   // Task-level worktree cleanup, wired centrally rather than as a per-site
@@ -524,6 +534,56 @@ function isAlreadyExists(e: unknown): boolean {
     'statusCode' in e &&
     (e as { statusCode?: number }).statusCode === 409
   );
+}
+
+/**
+ * Consume (clear) a set of task annotation keys. `percussionist.dev/action-*`
+ * keys are cleared on the Task CR via patchTask (metadata `annotations` set to
+ * `null`); everything else is cleared on the Project via
+ * clearProjectAnnotations. When `resourceVersion` is provided it is included in
+ * the patchTask metadata so the clear is conditional on the status write that
+ * preceded it. A failed annotation clear is non-fatal: it is logged and the
+ * reconcile cycle continues, leaving the annotation as a harmless leftover
+ * (the intent is preserved, merely not cleaned up).
+ */
+async function applyClearTaskAnnotations(
+  effect: Extract<ReconcileEffect, { type: 'ClearTaskAnnotations' }>,
+  taskName: string,
+  projectObj: Project | null,
+  namespace: string,
+  resourceVersion?: string,
+): Promise<void> {
+  try {
+    const taskPatch: Record<string, string | null> = {};
+    const projectKeys: string[] = [];
+    for (const key of effect.keys) {
+      if (key.startsWith('percussionist.dev/action-')) {
+        taskPatch[key] = null;
+      } else {
+        projectKeys.push(key);
+      }
+    }
+    const taskKeys = Object.keys(taskPatch);
+    if (taskKeys.length > 0) {
+      const metadata: {
+        name: string;
+        annotations: Record<string, string>;
+        resourceVersion?: string;
+      } = {
+        name: taskName,
+        annotations: taskPatch as Record<string, string>,
+      };
+      if (resourceVersion) {
+        metadata.resourceVersion = resourceVersion;
+      }
+      await patchTask(taskName, { metadata }, namespace);
+    }
+    if (projectKeys.length > 0) {
+      await clearProjectAnnotations(projectKeys, projectObj, namespace, taskName);
+    }
+  } catch (e) {
+    console.warn(`[effects] ClearTaskAnnotations failed for ${taskName}:`, (e as Error).message);
+  }
 }
 
 async function clearProjectAnnotations(
