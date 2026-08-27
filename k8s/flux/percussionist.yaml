@@ -68,7 +68,7 @@ spec:
   # same k8s/ directory that ships in the repo.
   url: oci://ghcr.io/erkkaha/percussionist/manifests
   ref:
-    tag: v0.2.17
+    tag: v0.2.18
 ---
 # CRDs, applied first and waited on.
 #

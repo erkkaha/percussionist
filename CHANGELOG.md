@@ -1,12 +1,33 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.18] - 2026-08-27
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- PR-update run replies in each addressed review thread _(reconciler)_
 ## [v0.2.17] - 2026-08-26
 
 ### <!-- 0 -->🚀 Features
 
 - Publish worker branches to namespaced remote refs (refs/percussionist/*) _(git)_
 - Close the PR-comment feedback loop in PR-mode integration _(reconciler)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Defer ClearTaskAnnotations until after successful status patch _(manager)_
+
+### <!-- 3 -->📚 Documentation
+
+- Manager approve/abandon annotations consumed after status patch _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add regression tests for lost-intent annotation clear race _(manager)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.17
 ## [v0.2.16] - 2026-08-23
 
 ### <!-- 0 -->🚀 Features
