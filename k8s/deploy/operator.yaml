@@ -219,19 +219,22 @@ spec:
             # ONLY on trusted single-tenant clusters that need it (e.g. self-dev DinD).
             # - name: PERCUSSIONIST_ALLOW_PRIVILEGED_SIDECARS
             #   value: "true"
-            # Enable per-run Ingresses that expose the opencode web UI at
-            # <run-name>.<baseURL-without-scheme>/.
-            # Format: scheme://host[:port]  (no trailing slash)
+            # Base URL the operator hands out for the per-project code-server IDE
+            # Ingress. Format: scheme://host[:port]  (no trailing slash).
+            # Traefik binds node port 80 by default, so on a Traefik cluster the
+            # URL has no :port suffix.
             #
             # Examples:
             #   Port-80 cluster (*.percussionist.localhost resolves to 127.0.0.1):
             #     http://percussionist.localhost
-            #   minikube with nip.io wildcard DNS (port 30080 = nginx-ingress NodePort):
-            #     PERCUSSIONIST_INGRESS_BASE_URL=http://$(minikube ip).nip.io:30080
+            #   minikube with the traefik addon (nip.io wildcard DNS, no port):
+            #     PERCUSSIONIST_INGRESS_BASE_URL=http://$(minikube ip).nip.io
+            #   MicroK8s 1.35+ (addon ships Traefik; class is "public", no port):
+            #     PERCUSSIONIST_INGRESS_BASE_URL=http://$(microk8s kubectl get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}').nip.io
             - name: PERCUSSIONIST_INGRESS_BASE_URL
-              value: http://192.168.49.2.nip.io:30080
+              value: http://192.168.49.2.nip.io
             - name: PERCUSSIONIST_INGRESS_CLASS
-              value: nginx
+              value: traefik
             - name: PERCUSSIONIST_SELF_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -247,9 +250,11 @@ spec:
                   key: token
                   optional: true
             # - name: PERCUSSIONIST_INGRESS_CLASS
-            #   value: nginx
+            #   value: traefik
             # - name: PERCUSSIONIST_INGRESS_ANNOTATIONS
-            #   value: '{"nginx.ingress.kubernetes.io/proxy-read-timeout":"3600","nginx.ingress.kubernetes.io/proxy-buffering":"off"}'
+            #   value: '{"traefik.ingress.kubernetes.io/router.timeout":"3600"}'
+            # - name: PERCUSSIONIST_INGRESS_TLS_SECRET
+            #   value: percussionist-tls-wildcard
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits:   { cpu: 500m, memory: 512Mi }

@@ -135,6 +135,11 @@ spec:
   #
   # beatctl deploy --gitops rewrites the ingress URL below to match the
   # detected node IP; edit it by hand if you apply this file yourself.
+  #
+  # The DEFAULT_STORAGE_CLASS / PERCUSSIONIST_INGRESS_CLASS entries mirror the
+  # checked-in operator.yaml defaults and are what `beatctl deploy --gitops`
+  # substitutes when --storage-class / --ingress-class are passed (or when the
+  # detected platform differs, e.g. microk8s uses microk8s-hostpath + public).
   patches:
     - patch: |
         apiVersion: apps/v1
@@ -149,4 +154,8 @@ spec:
                 - name: operator
                   env:
                     - name: PERCUSSIONIST_INGRESS_BASE_URL
-                      value: http://192.168.49.2.nip.io:30080
+                      value: http://192.168.49.2.nip.io
+                    - name: DEFAULT_STORAGE_CLASS
+                      value: standard
+                    - name: PERCUSSIONIST_INGRESS_CLASS
+                      value: traefik

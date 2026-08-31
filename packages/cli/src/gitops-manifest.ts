@@ -14,15 +14,21 @@ export interface FluxManifestPatch {
   tag?: string;
   /** Base URL the operator hands out for per-run ingress, e.g. "https://1.2.3.4.nip.io:30443". */
   ingressBaseUrl?: string;
+  /** StorageClass override for DEFAULT_STORAGE_CLASS. */
+  storageClass?: string;
+  /** IngressClass override for PERCUSSIONIST_INGRESS_CLASS. */
+  ingressClass?: string;
 }
 
 // Indented `tag:` — the only mapping key of that name in the file. Comment
 // lines mentioning `tag:` start at column 0 behind a `#`, so they cannot match.
 const TAG_RE = /^([ \t]+tag:[ \t]+)\S+/m;
 
-// The env entry inside the Kustomization's strategic merge patch. Matched as a
-// name/value pair so it cannot latch onto some other `value:` line.
+// The env entries inside the Kustomization's strategic merge patch. Matched as
+// name/value pairs so they cannot latch onto some other `value:` line.
 const INGRESS_RE = /^([ \t]+- name: PERCUSSIONIST_INGRESS_BASE_URL\n[ \t]+value:[ \t]+)\S+/m;
+const STORAGE_RE = /^([ \t]+- name: DEFAULT_STORAGE_CLASS\n[ \t]+value:[ \t]+)\S+/m;
+const CLASS_RE = /^([ \t]+- name: PERCUSSIONIST_INGRESS_CLASS\n[ \t]+value:[ \t]+)\S+/m;
 
 /**
  * Apply the requested substitutions to the bootstrap manifest.
@@ -47,6 +53,24 @@ export function patchFluxManifest(yaml: string, patch: FluxManifestPatch): strin
       );
     }
     out = out.replace(INGRESS_RE, `$1${patch.ingressBaseUrl}`);
+  }
+
+  if (patch.storageClass !== undefined) {
+    if (!STORAGE_RE.test(out)) {
+      throw new Error(
+        'could not find the DEFAULT_STORAGE_CLASS patch in k8s/flux/percussionist.yaml',
+      );
+    }
+    out = out.replace(STORAGE_RE, `$1${patch.storageClass}`);
+  }
+
+  if (patch.ingressClass !== undefined) {
+    if (!CLASS_RE.test(out)) {
+      throw new Error(
+        'could not find the PERCUSSIONIST_INGRESS_CLASS patch in k8s/flux/percussionist.yaml',
+      );
+    }
+    out = out.replace(CLASS_RE, `$1${patch.ingressClass}`);
   }
 
   return out;

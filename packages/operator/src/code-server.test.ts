@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'bun:test';
+import { afterAll, describe, expect, it, mock } from 'bun:test';
 import type { Project } from '@percussionist/api';
-import { renderIdeDeployment } from './code-server.js';
+import { ideIngressTls, renderIdeDeployment } from './code-server.js';
+// Capture the REAL config module via a separate query import so we can restore it
+// after the mock.module below (bun shares one module registry across test files,
+// and mock.module cannot be cleared with mock.restore() in this version).
+import * as realConfig from './config.js?capture-real-env=1';
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -331,5 +335,50 @@ describe('renderIdeDeployment', () => {
       expect(emailWrites).toHaveLength(1);
       expect(cmd).toContain('git -C "$HUMAN_DIR" config --get user.email >/dev/null 2>&1 || \\');
     });
+  });
+});
+
+// --- renderIdeIngress spec.tls (decision 7) -----------------------------------
+
+describe('ideIngressTls', () => {
+  it('builds a single-entry tls block with the host and secret', () => {
+    expect(ideIngressTls('ide-proj.example.com', 'my-secret')).toEqual([
+      { hosts: ['ide-proj.example.com'], secretName: 'my-secret' },
+    ]);
+  });
+});
+
+describe('renderIdeIngress — spec.tls', () => {
+  let counter = 0;
+  async function loadIngress(tlsSecret: string) {
+    mock.module('./config.js', () => ({
+      INGRESS_BASE_URL: 'http://192.168.49.2.nip.io',
+      INGRESS_CLASS: 'traefik',
+      INGRESS_ANNOTATIONS: {},
+      INGRESS_TLS_SECRET: tlsSecret,
+    }));
+    counter += 1;
+    const mod = await import(`./code-server.js?tls=${counter}`);
+    return mod.renderIdeIngress(makeProject());
+  }
+
+  // mock.module permanently patches the shared config module for the rest of the
+  // process, so restore the full real config afterwards (captured above) to avoid
+  // leaking a truthy INGRESS_BASE_URL into other files' reconcile assertions.
+  afterAll(() => {
+    mock.module('./config.js', () => ({ ...realConfig }));
+  });
+
+  it('omits spec.tls when PERCUSSIONIST_INGRESS_TLS_SECRET is unset', async () => {
+    const ingress = await loadIngress('');
+    expect(ingress.spec?.tls).toBeUndefined();
+    expect(ingress.spec?.ingressClassName).toBe('traefik');
+  });
+
+  it('adds spec.tls with the computed host and secret name when set', async () => {
+    const ingress = await loadIngress('percussionist-tls-wildcard');
+    expect(ingress.spec?.tls).toEqual([
+      { hosts: ['ide-test-project.192.168.49.2.nip.io'], secretName: 'percussionist-tls-wildcard' },
+    ]);
   });
 });

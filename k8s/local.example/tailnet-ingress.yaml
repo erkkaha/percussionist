@@ -7,7 +7,7 @@
 # stock nip.io rule keeps working and `beatctl deploy` never overwrites it.
 #
 # Why it is needed at all: `tailscale serve` forwards the request with the
-# tailnet hostname in the Host header, and ingress-nginx routes strictly by
+# tailnet hostname in the Host header, and a Traefik ingress routes strictly by
 # Host — without a rule for that name every request lands on the default
 # backend as a 404.
 #
@@ -24,8 +24,9 @@
 #
 #   3. Proxy the tailnet HTTPS port at the cluster's ingress. `serve` only
 #      accepts targets on the local machine, so use whichever address your
-#      ingress controller answers on from this host — for minikube that is the
-#      node IP (`minikube ip`), for a port-80 local cluster it is localhost:
+#      ingress controller answers on from this host — for minikube (traefik
+#      addon) that is the node IP (`minikube ip`), for a port-80 local cluster
+#      it is localhost:
 #        sudo tailscale serve --bg --https=443 http://192.168.49.2:80
 #        tailscale serve status
 #
@@ -44,7 +45,7 @@ metadata:
     app.kubernetes.io/name: percussionist
     app.kubernetes.io/component: web
 spec:
-  ingressClassName: nginx
+  ingressClassName: traefik
   rules:
     # Must be the node's full MagicDNS name, exactly as `tailscale status`
     # reports it (minus the trailing dot).

@@ -23,6 +23,14 @@ const INGRESS_BASE_URL: string = _rawBaseURL
     : '';
 
 const INGRESS_CLASS = process.env.PERCUSSIONIST_INGRESS_CLASS ?? '';
+
+// PERCUSSIONIST_INGRESS_TLS_SECRET:
+//   Optional. When set, code-server Ingresses are rendered with a `spec.tls`
+//   block referencing this secret (minikube per-Ingress TLS). Off by default —
+//   on platforms where the controller serves a default certificate (microk8s
+//   addon-default-cert) this is unnecessary. The secret must exist in the
+//   namespace where the code-server Ingress is created.
+const INGRESS_TLS_SECRET = process.env.PERCUSSIONIST_INGRESS_TLS_SECRET ?? '';
 let INGRESS_ANNOTATIONS: Record<string, string> = {};
 try {
   INGRESS_ANNOTATIONS = JSON.parse(process.env.PERCUSSIONIST_INGRESS_ANNOTATIONS ?? '{}');
@@ -72,6 +80,7 @@ export {
   INGRESS_ANNOTATIONS,
   INGRESS_BASE_URL,
   INGRESS_CLASS,
+  INGRESS_TLS_SECRET,
   MEMORY_SERVICE_IMAGE,
   NAMESPACE,
   OLLAMA_BASE_URL,

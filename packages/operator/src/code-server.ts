@@ -18,6 +18,7 @@ import type {
   V1Deployment,
   V1EnvVar,
   V1Ingress,
+  V1IngressTLS,
   V1Service,
 } from '@kubernetes/client-node';
 import {
@@ -30,7 +31,12 @@ import {
   type Project,
   type SshHostKeyVerificationMode,
 } from '@percussionist/api';
-import { INGRESS_ANNOTATIONS, INGRESS_BASE_URL, INGRESS_CLASS } from './config.js';
+import {
+  INGRESS_ANNOTATIONS,
+  INGRESS_BASE_URL,
+  INGRESS_CLASS,
+  INGRESS_TLS_SECRET,
+} from './config.js';
 
 // ---------------------------------------------------------------------------
 // Naming helpers
@@ -704,7 +710,22 @@ export function renderIdeIngress(project: Project): V1Ingress {
     },
   };
   if (INGRESS_CLASS && ingress.spec) ingress.spec.ingressClassName = INGRESS_CLASS;
+  // Per-Ingress TLS (minikube): when the operator is told the wildcard cert
+  // secret name, attach it to the code-server Ingress so the IDE is served over
+  // HTTPS. Off by default; harmless on platforms that serve a controller default
+  // certificate (the block simply duplicates what the controller already does).
+  if (INGRESS_TLS_SECRET && ingress.spec) {
+    ingress.spec.tls = ideIngressTls(csHost, INGRESS_TLS_SECRET);
+  }
   return ingress;
+}
+
+/**
+ * Build the `spec.tls` block for a code-server Ingress. Exported (and pure) so
+ * the wiring can be unit-tested without loading config env.
+ */
+export function ideIngressTls(csHost: string, secretName: string): V1IngressTLS[] {
+  return [{ hosts: [csHost], secretName }];
 }
 
 // ---------------------------------------------------------------------------

@@ -21,6 +21,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import {
+  patchedOperatorManifest,
+  patchedWebManifest,
+  type WebManifestPatch,
+} from './deploy-manifests.js';
 import type { DeployPlatform, PlatformProfile, TraefikControllerInfo } from './deploy-platform.js';
 import { baseUrl, detectTraefikController, resolvePlatform } from './deploy-platform.js';
 import { ensurePlatformPrereqs } from './deploy-preflight.js';
@@ -155,6 +160,13 @@ function findRepoRoot(hint?: string): string {
   }
 
   throw new Error('could not locate repo root with k8s/crds and k8s/deploy (pass --repo-root)');
+}
+
+/** Write a patched manifest to a temp file and return its path (caller deletes). */
+function writeTempManifest(content: string, label: string): string {
+  const tmp = path.join(tmpdir(), `percussionist-${label}-${Date.now()}.yaml`);
+  writeFileSync(tmp, content);
+  return tmp;
 }
 
 // ---------------------------------------------------------------------------
@@ -652,39 +664,6 @@ function dashboardUrl(base: string, domain: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Operator manifest patching
-
-/**
- * Read operator.yaml, substitute the PERCUSSIONIST_INGRESS_BASE_URL value with
- * the ingress base URL, write to a temp file and return its path. Caller is
- * responsible for deleting the temp file.
- *
- * The replacement matches the env name/value pair, so it is platform-agnostic
- * (nip.io, custom domains, with or without a NodePort suffix).
- */
-function patchedOperatorManifest(operatorYaml: string, ingressBaseUrl: string): string {
-  const original = readFileSync(operatorYaml, 'utf8');
-
-  const patched = original.replace(
-    /(name:\s+PERCUSSIONIST_INGRESS_BASE_URL\n\s+value:\s+)[^\n]*/,
-    `$1${ingressBaseUrl}`,
-  );
-
-  if (patched === original) {
-    console.warn(
-      'beatctl: warning: could not patch PERCUSSIONIST_INGRESS_BASE_URL in operator.yaml ' +
-        '— you may need to update it manually to: ' +
-        ingressBaseUrl,
-    );
-    return operatorYaml; // apply unmodified
-  }
-
-  const tmp = path.join(tmpdir(), `percussionist-operator-${Date.now()}.yaml`);
-  writeFileSync(tmp, patched);
-  return tmp;
-}
-
-// ---------------------------------------------------------------------------
 // GitOps mode
 
 /** The Flux CRD whose presence means kustomize-controller is installed. */
@@ -759,11 +738,14 @@ async function applyGitopsBootstrap(
   ingressBaseUrl: string,
   version: string,
   wait: boolean,
+  extra?: { storageClass?: string; ingressClass?: string },
 ): Promise<void> {
   const manifestPath = resolveManifest(repoRoot, 'k8s/flux/percussionist.yaml');
   const patched = patchFluxManifest(readFileSync(manifestPath, 'utf8'), {
     tag: tagFromVersion(version),
     ingressBaseUrl,
+    storageClass: extra?.storageClass,
+    ingressClass: extra?.ingressClass,
   });
 
   const tmp = path.join(tmpdir(), `percussionist-flux-${Date.now()}.yaml`);
@@ -987,7 +969,12 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
       }
 
       const version = opts.release ?? checkoutVersion(repoRoot);
-      await applyGitopsBootstrap(repoRoot, ingressBaseUrl, version, opts.wait !== false);
+      const gitopsStorageClass = opts.storageClass ?? profile.storageClass;
+      const gitopsIngressClass = opts.ingressClass ?? profile.ingressClass;
+      await applyGitopsBootstrap(repoRoot, ingressBaseUrl, version, opts.wait !== false, {
+        storageClass: gitopsStorageClass || undefined,
+        ingressClass: gitopsIngressClass || undefined,
+      });
     } catch (e) {
       fatal('GitOps deploy failed', e);
     }
@@ -1006,9 +993,40 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     return;
   }
 
-  // Write a patched copy of operator.yaml with the correct ingress base URL.
-  const patchedOperator = patchedOperatorManifest(manifests.operator, ingressBaseUrl);
-  const operatorIsTemp = patchedOperator !== manifests.operator;
+  // Write patched copies of operator.yaml and web.yaml with the resolved ingress
+  // facts (base URL, storage/ingress class, and the TLS secret for per-Ingress
+  // TLS). Each is optional: an unmodified result applies the checked-in file
+  // directly. Temp files are cleaned up in `finally`.
+  let tlsSecretName: string | undefined;
+  if (tlsEnabled) {
+    tlsSecretName = resolveTlsSecret(opts, profile, ns).name;
+  }
+
+  const operatorContent = readFileSync(manifests.operator, 'utf8');
+  const patchedOperatorContent = patchedOperatorManifest(operatorContent, {
+    baseUrl: ingressBaseUrl,
+    storageClass: opts.storageClass,
+    ingressClass: opts.ingressClass,
+    tlsSecret: tlsSecretName,
+  });
+  const operatorIsTemp = patchedOperatorContent !== operatorContent;
+  const patchedOperator = operatorIsTemp
+    ? writeTempManifest(patchedOperatorContent, 'operator')
+    : manifests.operator;
+
+  const webScheme = tlsEnabled ? 'https' : 'http';
+  const webPatch: WebManifestPatch = {};
+  if (domain) {
+    webPatch.host = `app.${domain}`;
+    webPatch.webBaseUrl = `${webScheme}://app.${domain}`;
+  }
+  const resolvedIngressClass = opts.ingressClass ?? profile.ingressClass;
+  if (resolvedIngressClass) webPatch.ingressClass = resolvedIngressClass;
+  if (tlsSecretName) webPatch.tlsSecret = tlsSecretName;
+  const webContent = readFileSync(manifests.web, 'utf8');
+  const patchedWebContent = patchedWebManifest(webContent, webPatch);
+  const webIsTemp = patchedWebContent !== webContent;
+  const patchedWeb = webIsTemp ? writeTempManifest(patchedWebContent, 'web') : manifests.web;
 
   try {
     console.log('beatctl: applying CRDs...');
@@ -1048,7 +1066,7 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     await runKubectl(['apply', '-f', patchedOperator]);
     await runKubectl(['apply', '-f', manifests.agentConfig]);
     await runKubectl(['apply', '-f', manifests.managerController]);
-    await runKubectl(['apply', '-f', manifests.web]);
+    await runKubectl(['apply', '-f', patchedWeb]);
     await runKubectl(['apply', '-f', manifests.networkPolicy]);
 
     if (opts.wait !== false) {
@@ -1089,6 +1107,13 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     if (operatorIsTemp) {
       try {
         rmSync(patchedOperator);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (webIsTemp) {
+      try {
+        rmSync(patchedWeb);
       } catch {
         /* ignore */
       }
