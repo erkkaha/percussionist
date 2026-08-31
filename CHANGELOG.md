@@ -1,11 +1,24 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.19] - 2026-08-31
+
+### <!-- 5 -->🎨 Styling
+
+- Format prUpdatePromptLines quote style (biome)
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Bump opencode to 1.18.21, claude-code to 2.1.241, agent-sdk to 0.3.241 _(images)_
 ## [v0.2.18] - 2026-08-27
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - PR-update run replies in each addressed review thread _(reconciler)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.18
 ## [v0.2.17] - 2026-08-26
 
 ### <!-- 0 -->🚀 Features
