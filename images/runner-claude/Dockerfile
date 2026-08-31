@@ -93,7 +93,7 @@ RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION} \
 # for linux-x64 not found" at the first query — i.e. as a broken run rather
 # than a broken build. Installing the CLI directly makes the dependency
 # explicit and pins its version where it can be seen.
-ARG CLAUDE_CODE_VERSION=2.1.220
+ARG CLAUDE_CODE_VERSION=2.1.241
 RUN npm i -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
   && claude --version
 ENV CLAUDE_CODE_EXECUTABLE=/usr/local/bin/claude
