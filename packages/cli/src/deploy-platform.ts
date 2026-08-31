@@ -182,14 +182,21 @@ export function baseUrl(
  * Every probe is wrapped so a missing cluster / missing kubectl degrades
  * gracefully to `generic` instead of throwing.
  */
-export async function resolvePlatform(explicit: DeployPlatform = 'auto'): Promise<PlatformProfile> {
+// `resolvePlatform` accepts an injectable `runKubectl` so the detection logic can
+// be unit-tested without a live cluster (the default wires it to the real
+// kubectl). Every probe swallows errors and falls through, so a missing cluster
+// degrades gracefully to `generic`.
+export async function resolvePlatform(
+  explicit: DeployPlatform = 'auto',
+  runKubectl: (args: string[]) => string = kubectlOutput,
+): Promise<PlatformProfile> {
   if (explicit !== 'auto') {
     return platformProfile(explicit);
   }
 
   // 1. kubeconfig context name.
   try {
-    const ctx = kubectlOutput(['config', 'current-context']).toLowerCase();
+    const ctx = runKubectl(['config', 'current-context']).toLowerCase();
     if (ctx.includes('microk8s')) return platformProfile('microk8s');
     if (ctx.includes('minikube')) return platformProfile('minikube');
   } catch {
@@ -198,7 +205,7 @@ export async function resolvePlatform(explicit: DeployPlatform = 'auto'): Promis
 
   // 2a. microk8s-hostpath StorageClass exists.
   try {
-    kubectlOutput(['get', 'storageclass', 'microk8s-hostpath', '-o', 'name']);
+    runKubectl(['get', 'storageclass', 'microk8s-hostpath', '-o', 'name']);
     return platformProfile('microk8s');
   } catch {
     /* not microk8s storage */
@@ -206,7 +213,7 @@ export async function resolvePlatform(explicit: DeployPlatform = 'auto'): Promis
 
   // 2b. a node carries the microk8s control-plane label.
   try {
-    const labeled = kubectlOutput([
+    const labeled = runKubectl([
       'get',
       'nodes',
       '-l',
@@ -221,7 +228,7 @@ export async function resolvePlatform(explicit: DeployPlatform = 'auto'): Promis
 
   // 2c. node names start with `minikube`.
   try {
-    const names = kubectlOutput(['get', 'nodes', '-o', 'jsonpath={.items[*].metadata.name}']);
+    const names = runKubectl(['get', 'nodes', '-o', 'jsonpath={.items[*].metadata.name}']);
     if (names.split(/\s+/).some((n) => n.startsWith('minikube'))) {
       return platformProfile('minikube');
     }
@@ -247,8 +254,11 @@ export async function resolvePlatform(explicit: DeployPlatform = 'auto'): Promis
  *   - detect a nginx-only cluster (found=false while a known nginx controller
  *     exists elsewhere) and fail with the migration command.
  */
+// `detectTraefikController` accepts an injectable `runKubectl` (default: the real
+// kubectl) so the probe parsing can be unit-tested with stubbed output.
 export async function detectTraefikController(
   profile: PlatformProfile,
+  runKubectl: (args: string[]) => string = kubectlOutput,
 ): Promise<TraefikControllerInfo> {
   const info: TraefikControllerInfo = { found: false, ingressClassExists: false };
   const ns = profile.ingressNamespace;
@@ -256,7 +266,7 @@ export async function detectTraefikController(
 
   // IngressClass presence.
   try {
-    kubectlOutput(['get', 'ingressclass', profile.ingressClass, '-o', 'name']);
+    runKubectl(['get', 'ingressclass', profile.ingressClass, '-o', 'name']);
     info.ingressClassExists = true;
   } catch {
     info.ingressClassExists = false;
@@ -265,7 +275,7 @@ export async function detectTraefikController(
   // Deployment presence.
   let hasDeployment = false;
   try {
-    kubectlOutput(['get', 'deploy', profile.controllerDeployment, '-n', ns, '-o', 'name']);
+    runKubectl(['get', 'deploy', profile.controllerDeployment, '-n', ns, '-o', 'name']);
     hasDeployment = true;
   } catch {
     hasDeployment = false;
@@ -274,7 +284,7 @@ export async function detectTraefikController(
   // Service presence + type/ports.
   let svcRaw = '';
   try {
-    svcRaw = kubectlOutput(['get', 'svc', profile.controllerService, '-n', ns, '-o', 'json']);
+    svcRaw = runKubectl(['get', 'svc', profile.controllerService, '-n', ns, '-o', 'json']);
   } catch {
     svcRaw = '';
   }
@@ -308,4 +318,46 @@ export async function detectTraefikController(
   }
 
   return info;
+}
+
+// ---------------------------------------------------------------------------
+// nginx mismatch (decision 6 — the "no nginx support" boundary)
+//
+// These are pure helpers extracted from deploy.ts so the decision-6 logic can
+// be unit-tested without a cluster and without the `fatal()` process exit. The
+// caller (deploy.ts `assertTraefikBackend`) wires them to kubectl + `fatal`.
+
+/**
+ * True when any of the listed deployment names indicate a *running* nginx ingress
+ * controller. Traefik installs that ship a legacy `nginx` IngressClass but no
+ * `nginx` *deployment* are deliberately not flagged — a bare-`nginx` token would
+ * match `traefik` only through the exclusion guard below.
+ */
+export function hasNginxController(deployNames: string[]): boolean {
+  return deployNames.some(
+    (n) => n.toLowerCase().includes('nginx') && !n.toLowerCase().includes('traefik'),
+  );
+}
+
+/** The migration command shown when an nginx controller is detected. */
+export function nginxMigrationCommand(profile: PlatformProfile): string {
+  switch (profile.name) {
+    case 'minikube':
+      return 'minikube addons disable ingress && minikube addons enable traefik';
+    case 'microk8s':
+      return 'upgrade MicroK8s to >= 1.35, then: microk8s enable ingress (ships Traefik)';
+    default:
+      return 'beatctl deploy --platform generic --skip-tls --ingress-class nginx --domain <host>';
+  }
+}
+
+/** The full fatal error body shown when an nginx controller blocks a TLS deploy. */
+export function nginxMismatchError(profile: PlatformProfile): string {
+  return (
+    'detected an nginx ingress controller, but beatctl deploy only supports Traefik.\n\n' +
+    'Migrate to Traefik:\n' +
+    `  ${nginxMigrationCommand(profile)}\n\n` +
+    'Or run an HTTP-only install:\n' +
+    '  beatctl deploy --platform generic --skip-tls --ingress-class <name> --domain <host>'
+  );
 }

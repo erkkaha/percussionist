@@ -39,7 +39,7 @@ import {
 } from './board.js';
 import { runCancel } from './cancel.js';
 import { runChat } from './chat.js';
-import { runDeploy } from './deploy.js';
+import { type DeployOpts, runDeploy } from './deploy.js';
 import { runDoctor } from './doctor.js';
 import { runGithubTokenCreate } from './github-token.js';
 import { DEFAULT_NAMESPACE } from './kube.js';
@@ -60,39 +60,59 @@ program
   .version('0.1.0');
 
 // deploy --------------------------------------------------------------------
-program
-  .command('deploy')
-  .description('install or remove percussionist CRDs and deployments')
-  .option('-n, --namespace <ns>', 'namespace for rollout checks', DEFAULT_NAMESPACE)
-  .option('--repo-root <path>', 'repo root containing k8s/crds and k8s/deploy', process.cwd())
-  .option('--down', 'remove deployed resources', false)
-  .option('--no-wait', "don't wait for deployment rollout")
-  .option(
-    '--gitops',
-    'install via Flux so upgrades include CRDs (installs source- and kustomize-controller)',
-    false,
-  )
-  .option('--release <tag>', 'release tag to pin under --gitops (default: this checkout)')
-  .option(
-    '--platform <platform>',
-    'target platform: auto|minikube|microk8s|generic (default: auto; auto-detects from the cluster)',
-    'auto',
-  )
-  .option(
-    '--domain <host>',
-    'base domain for the dashboard + wildcard cert (default: <node-ip>.nip.io)',
-  )
-  .option('--http-port <port>', 'override the ingress HTTP port', (v: string) => Number(v))
-  .option(
-    '--https-port <port>',
-    'override the ingress HTTPS port (NodePort pin target on microk8s)',
-    (v: string) => Number(v),
-  )
-  .option('--storage-class <name>', 'override DEFAULT_STORAGE_CLASS in the operator manifest')
-  .option('--ingress-class <name>', 'override the IngressClass')
-  .option('--skip-tls', 'skip TLS setup (no cert, no default-cert wiring, no port pinning)', false)
-  .option('--tls-secret <ns>/<name>', 'TLS Secret name (default: percussionist-tls-wildcard)')
-  .action(runDeploy);
+// The deploy option set is factored out so the flag → DeployOpts mapping can be
+// unit-tested (see parseDeployArgs) without invoking a real deploy.
+function withDeployOptions(cmd: Command): Command {
+  return cmd
+    .description('install or remove percussionist CRDs and deployments')
+    .option('-n, --namespace <ns>', 'namespace for rollout checks', DEFAULT_NAMESPACE)
+    .option('--repo-root <path>', 'repo root containing k8s/crds and k8s/deploy', process.cwd())
+    .option('--down', 'remove deployed resources', false)
+    .option('--no-wait', "don't wait for deployment rollout")
+    .option(
+      '--gitops',
+      'install via Flux so upgrades include CRDs (installs source- and kustomize-controller)',
+      false,
+    )
+    .option('--release <tag>', 'release tag to pin under --gitops (default: this checkout)')
+    .option(
+      '--platform <platform>',
+      'target platform: auto|minikube|microk8s|generic (default: auto; auto-detects from the cluster)',
+      'auto',
+    )
+    .option(
+      '--domain <host>',
+      'base domain for the dashboard + wildcard cert (default: <node-ip>.nip.io)',
+    )
+    .option('--http-port <port>', 'override the ingress HTTP port', (v: string) => Number(v))
+    .option(
+      '--https-port <port>',
+      'override the ingress HTTPS port (NodePort pin target on microk8s)',
+      (v: string) => Number(v),
+    )
+    .option('--storage-class <name>', 'override DEFAULT_STORAGE_CLASS in the operator manifest')
+    .option('--ingress-class <name>', 'override the IngressClass')
+    .option(
+      '--skip-tls',
+      'skip TLS setup (no cert, no default-cert wiring, no port pinning)',
+      false,
+    )
+    .option('--tls-secret <ns>/<name>', 'TLS Secret name (default: percussionist-tls-wildcard)');
+}
+
+withDeployOptions(program.command('deploy')).action(runDeploy);
+
+/**
+ * Parse a `beatctl deploy` argument vector into a `DeployOpts` without running the
+ * deploy. Used by the unit tests to assert the flag → DeployOpts mapping (e.g.
+ * `--skip-tls` → `skipTls`, `--platform` → `platform`); commander maps kebab-case
+ * flags to camelCase `DeployOpts` keys automatically.
+ */
+export function parseDeployArgs(args: string[]): DeployOpts {
+  const cmd = withDeployOptions(new Command('deploy')).action(() => {});
+  cmd.parse(args, { from: 'user' });
+  return cmd.opts() as DeployOpts;
+}
 
 // web -----------------------------------------------------------------------
 program
@@ -674,7 +694,9 @@ program
     }),
   );
 
-program.parseAsync(process.argv).catch((e) => {
-  console.error('beatctl:', (e as Error).message ?? e);
-  process.exit(1);
-});
+if (import.meta.main) {
+  program.parseAsync(process.argv).catch((e) => {
+    console.error('beatctl:', (e as Error).message ?? e);
+    process.exit(1);
+  });
+}
