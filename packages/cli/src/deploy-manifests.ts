@@ -36,9 +36,15 @@ export interface WebManifestPatch {
   tlsSecret?: string;
 }
 
-/** Match a `- name: <NAME>\n  value: <VALUE>` env pair; group 1 is the prefix. */
+/**
+ * Match a `- name: <NAME>\n  value: <VALUE>` env pair at the start of a line.
+ * Group 1 is the item's leading indentation and group 2 the rest of the prefix;
+ * replacements must re-emit both, or the entry loses its indentation and falls
+ * out of the env sequence. The `^`/`m` anchoring also keeps a commented-out
+ * `# - name: <NAME>` example from being matched.
+ */
 function envValueRe(name: string): RegExp {
-  return new RegExp(`(- name: ${name}\n[ \\t]+value:[ \\t]+)[^\\n]*`);
+  return new RegExp(`^([ \\t]*)(- name: ${name}\\n[ \\t]+value:[ \\t]+)[^\\n]*`, 'm');
 }
 
 /** Replace the `value:` of a named env entry. Returns yaml unchanged if absent. */
@@ -50,25 +56,36 @@ function replaceEnvValue(yaml: string, name: string, value: string): string {
     );
     return yaml;
   }
-  return yaml.replace(re, `$1${value}`);
+  return yaml.replace(re, (_m, indent: string, prefix: string) => `${indent}${prefix}${value}`);
 }
 
 /**
  * Add or replace the PERCUSSIONIST_INGRESS_TLS_SECRET env entry. Inserted after
- * the PERCUSSIONIST_INGRESS_CLASS block on first use, replaced in place on
- * subsequent passes (idempotent).
+ * the PERCUSSIONIST_INGRESS_CLASS block on first use (reusing that entry's own
+ * indentation), replaced in place on subsequent passes (idempotent).
  */
 function setTlsSecretEnv(yaml: string, secretName: string): string {
   const existing = envValueRe('PERCUSSIONIST_INGRESS_TLS_SECRET');
   if (existing.test(yaml)) {
-    return yaml.replace(existing, `$1${secretName}`);
+    return yaml.replace(
+      existing,
+      (_m, indent: string, prefix: string) => `${indent}${prefix}${secretName}`,
+    );
   }
-  const anchor = /(- name: PERCUSSIONIST_INGRESS_CLASS\n[ \t]+value: [^\n]*)/;
-  if (!anchor.test(yaml)) return yaml;
-  const indent = '            ';
+  const anchor = /^([ \t]*)(- name: PERCUSSIONIST_INGRESS_CLASS\n[ \t]+value:[ \t]+[^\n]*)/m;
+  if (!anchor.test(yaml)) {
+    console.warn(
+      'beatctl: warning: could not patch PERCUSSIONIST_INGRESS_TLS_SECRET in manifest — ' +
+        `apply it manually: ${secretName}`,
+    );
+    return yaml;
+  }
   return yaml.replace(
     anchor,
-    `${indent}- name: PERCUSSIONIST_INGRESS_TLS_SECRET\n${indent}  value: ${secretName}\n$1`,
+    (_m, indent: string, entry: string) =>
+      `${indent}${entry}\n` +
+      `${indent}- name: PERCUSSIONIST_INGRESS_TLS_SECRET\n` +
+      `${indent}  value: ${secretName}`,
   );
 }
 
@@ -94,7 +111,7 @@ export function patchedOperatorManifest(yaml: string, opts: OperatorManifestPatc
   return out;
 }
 
-/** Replace a top-level scalar field (`key: value`). Unchanged if absent. */
+/** Replace a top-level scalar field (`key: value`), preserving indentation. */
 function replaceScalarField(yaml: string, key: string, value: string): string {
   const re = new RegExp(`^([ \\t]*${key}:[ \\t]+)[^\\n]*`, 'm');
   if (!re.test(yaml)) {
@@ -103,32 +120,48 @@ function replaceScalarField(yaml: string, key: string, value: string): string {
     );
     return yaml;
   }
-  return yaml.replace(re, `$1${value}`);
+  return yaml.replace(re, (_m, prefix: string) => `${prefix}${value}`);
 }
 
-/** Replace the Ingress `host:` list item. Unchanged if absent. */
+/** Match the Ingress `- host:` rule item; group 1 is its leading indentation. */
+const HOST_RE = /^([ \t]*)- host:[ \t]+([^\n]*)/m;
+
+/**
+ * Replace the Ingress `host:` list item, preserving the sequence item's own
+ * indentation (dropping it would move the item out of `spec.rules`). Unchanged
+ * if absent.
+ */
 function replaceHost(yaml: string, host: string): string {
-  const re = /^[ \t]*- host:[ \t]+([^\n]*)/m;
-  if (!re.test(yaml)) {
+  if (!HOST_RE.test(yaml)) {
     console.warn(
       `beatctl: warning: could not patch Ingress host in web manifest — apply it manually: ${host}`,
     );
     return yaml;
   }
-  return yaml.replace(re, `- host: ${host}`);
+  return yaml.replace(HOST_RE, (_m, indent: string) => `${indent}- host: ${host}`);
 }
 
-/** Strip a leading `tls:` mapping (and its nested children) under the Ingress spec. */
-function stripWebTls(yaml: string): string {
+/** Width of a line's leading whitespace. */
+function indentWidth(line: string): number {
+  return line.length - line.trimStart().length;
+}
+
+/**
+ * Strip a `tls:` mapping (and its nested children) at the given indentation,
+ * so re-patching an already-patched manifest stays idempotent.
+ */
+function stripWebTls(yaml: string, indent: string): string {
+  const tlsRe = new RegExp(`^${indent}tls:[ \\t]*$`);
   const lines = yaml.split('\n');
   const out: string[] = [];
   let skip = false;
   for (const line of lines) {
     if (skip) {
-      if (/^ {4,}\S/.test(line)) continue; // still inside the tls block
+      // Still inside the tls block while lines are indented deeper than `tls:`.
+      if (line.trim() !== '' && indentWidth(line) > indent.length) continue;
       skip = false; // dropped back to a sibling; process this line normally
     }
-    if (/^ {2}tls:\s*$/.test(line)) {
+    if (tlsRe.test(line)) {
       skip = true;
       continue;
     }
@@ -139,15 +172,22 @@ function stripWebTls(yaml: string): string {
 
 /**
  * Insert a `spec.tls` block into the web Ingress, anchoring on the
- * `ingressClassName` line. Idempotent: any prior `tls:` block is stripped first.
+ * `ingressClassName` line and reusing its indentation (both are `spec` children).
+ * Idempotent: any prior `tls:` block at that indentation is stripped first.
  */
 function setWebTls(yaml: string, host: string, secretName: string): string {
-  const out = stripWebTls(yaml);
-  const anchor = /^([ \t]*ingressClassName:[ \t]+[^\n]*)/m;
-  if (!anchor.test(out)) return out;
-  const block =
-    '  tls:\n' + '    - hosts:\n' + `        - ${host}\n` + `      secretName: ${secretName}`;
-  return out.replace(anchor, `$1\n${block}`);
+  const anchor = /^([ \t]*)(ingressClassName:[ \t]+[^\n]*)/m;
+  const m = anchor.exec(yaml);
+  if (!m) return yaml;
+  const indent = m[1] ?? '';
+  const out = stripWebTls(yaml, indent);
+  const block = [
+    `${indent}tls:`,
+    `${indent}  - hosts:`,
+    `${indent}      - ${host}`,
+    `${indent}    secretName: ${secretName}`,
+  ].join('\n');
+  return out.replace(anchor, (_full, ind: string, rest: string) => `${ind}${rest}\n${block}`);
 }
 
 /**
@@ -168,8 +208,7 @@ export function patchedWebManifest(yaml: string, opts: WebManifestPatch): string
   // Resolve the host to use for the Ingress rule and the tls block.
   let host = opts.host;
   if (host === undefined) {
-    const m = out.match(/^[ \t]*- host:[ \t]+([^\n]*)/m);
-    host = m?.[1];
+    host = HOST_RE.exec(out)?.[2]?.trim();
   }
   if (opts.host !== undefined) {
     out = replaceHost(out, opts.host);
