@@ -108,7 +108,7 @@ own names and are never touched.
 dashboard to every device on a [Tailscale](https://tailscale.com) tailnet over
 real HTTPS, which also gives you the secure context that browser notifications
 and the drum audio require. It combines an extra Ingress for the MagicDNS
-hostname (ingress-nginx routes by `Host`, and `tailscale serve` forwards the
+hostname (the ingress controller routes by `Host`, and `tailscale serve` forwards the
 tailnet name) with a `WEB_BASE_URL` patch, plus:
 
 ```bash
@@ -133,3 +133,45 @@ kubectl -n percussionist get crd | grep percussionist
 - [LXD, MicroK8s, and Tailscale](/guide/lxd-microk8s-tailscale) — tailnet-only single-node playbook
 - [Configuration](/guide/configuration) — project spec reference
 - [Getting Started](/guide/getting-started) — first run walkthrough
+
+## Platforms
+
+`beatctl deploy` works on any cluster that runs Traefik. The platform is
+**auto-detected** from the cluster (kubeconfig context, StorageClass, node
+labels) and the detected value is always printed. Override it with `--platform`:
+
+| `--platform` | Target | IngressClass | StorageClass | TLS |
+|--------------|--------|--------------|--------------|-----|
+| `auto` | detect from cluster (default) | detected | detected | detected |
+| `minikube` | minikube + `traefik` addon | `traefik` | `standard` | per-Ingress |
+| `microk8s` | MicroK8s 1.35+ (`ingress` addon) | `public` | `microk8s-hostpath` | addon default cert |
+| `generic` | any Traefik cluster (no assumptions) | `--ingress-class` | `--storage-class` | none (`--skip-tls`) |
+
+### MicroK8s quickstart
+
+```bash
+microk8s enable dns rbac hostpath-storage ingress
+microk8s config > ~/.kube/percussionist-microk8s
+export KUBECONFIG=~/.kube/percussionist-microk8s
+beatctl deploy
+```
+
+MicroK8s' `ingress` addon ships Traefik (class `public`); `beatctl deploy`
+auto-detects it and wires the wildcard TLS Secret via Traefik's default
+certificate. `hostpath-storage` is node-local — single-node only, not HA.
+
+### Other flags
+
+```bash
+beatctl deploy --platform microk8s            # force the profile (else auto)
+beatctl deploy --domain example.com            # override the wildcard base domain
+beatctl deploy --http-port 80 --https-port 443
+beatctl deploy --storage-class longhorn-rwx    # RWX clusters
+beatctl deploy --ingress-class traefik         # custom IngressClass
+beatctl deploy --skip-tls                      # no cert / no default-cert wiring
+beatctl deploy --tls-secret percussionist/tls  # custom Secret name
+```
+
+A cluster whose only ingress controller is nginx fails fast with the exact
+Traefik-migration command; install HTTP-only with
+`beatctl deploy --platform generic --skip-tls --ingress-class nginx`.

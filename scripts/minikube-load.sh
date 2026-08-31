@@ -406,18 +406,31 @@ echo ">> Images present in minikube:"
 minikube image ls | grep -E 'percussionist/(runner|runner-claude|operator|dispatcher|web|manager|memory|code-server)' | sort || true
 
 # ---------------------------------------------------------------------------
-# Pin the ingress-nginx HTTP NodePort to 30080 so the dashboard and per-run
-# URLs stay stable across cluster restarts.  Idempotent: skipped when already
-# correct or when the addon is not installed.
-if kubectl -n ingress-nginx get svc ingress-nginx-controller &>/dev/null; then
-  current_np=$(kubectl -n ingress-nginx get svc ingress-nginx-controller \
-    -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}' 2>/dev/null || true)
-  if [[ "$current_np" != "30080" ]]; then
-    echo ">> Pinning ingress-nginx HTTP NodePort to 30080 (was ${current_np:-unset})"
-    kubectl -n ingress-nginx patch svc ingress-nginx-controller --type=json \
-      -p='[{"op":"replace","path":"/spec/ports/0/nodePort","value":30080}]'
+# Pin the Traefik HTTPS NodePort to 30443 so the dashboard URL stays stable
+# across cluster restarts. Idempotent: only applies when the controller Service
+# is a NodePort (microk8s); on minikube the traefik addon binds 443 via hostPort
+# and needs no pinning, so this is a no-op there. Skipped when traefik is absent.
+if kubectl -n kube-system get svc traefik &>/dev/null; then
+  svc_type=$(kubectl -n kube-system get svc traefik \
+    -o jsonpath='{.spec.type}' 2>/dev/null || true)
+  if [[ "$svc_type" == "NodePort" ]]; then
+    https_idx=$(kubectl -n kube-system get svc traefik -o json \
+      | jq -r '.spec.ports | to_entries[] | select(.value.name=="websecure" or .value.name=="https") | .key' 2>/dev/null | head -1)
+    if [[ -z "$https_idx" ]]; then
+      echo ">> traefik has no websecure/https port — skipping NodePort pin" >&2
+    else
+      current_np=$(kubectl -n kube-system get svc traefik \
+        -o jsonpath="{.spec.ports[${https_idx}].nodePort}" 2>/dev/null || true)
+      if [[ "$current_np" != "30443" ]]; then
+        echo ">> Pinning traefik HTTPS NodePort to 30443 (was ${current_np:-unset})"
+        kubectl -n kube-system patch svc traefik --type=json \
+          -p="[{\"op\":\"replace\",\"path\":\"/spec/ports/${https_idx}/nodePort\",\"value\":30443}]"
+      else
+        echo ">> traefik HTTPS NodePort already pinned to 30443"
+      fi
+    fi
   else
-    echo ">> ingress-nginx HTTP NodePort already pinned to 30080"
+    echo ">> traefik Service is ${svc_type:-unknown} (hostPort/LB) — no NodePort pin needed"
   fi
 fi
 
@@ -426,9 +439,8 @@ fi
 MINIKUBE_IP=$(minikube ip 2>/dev/null || echo "192.168.49.2")
 echo ""
 echo "================================================================"
-echo "  Dashboard:  https://app.${MINIKUBE_IP}.nip.io:30443/"
-echo "  Runs:       https://<run>.${MINIKUBE_IP}.nip.io:30443/"
-echo "  (requires: minikube addons enable ingress)"
+echo "  Dashboard:  https://app.${MINIKUBE_IP}.nip.io/"
+echo "  (requires: minikube addons enable traefik)"
 echo "  Note: accept the self-signed cert on first visit"
 echo "        or run: beatctl deploy  (sets up TLS automatically)"
 echo "================================================================"

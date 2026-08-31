@@ -1020,7 +1020,7 @@ The dashboard (`percussionist-web`) is exposed via Ingress at a stable URL.
 `beatctl deploy` automatically configures TLS, so for minikube with the default IP:
 
 ```
-https://app.192.168.49.2.nip.io:30443/
+https://app.192.168.49.2.nip.io/
 ```
 
 [nip.io](https://nip.io) resolves `*.192.168.49.2.nip.io` to `192.168.49.2` —
@@ -1053,82 +1053,140 @@ A day-range selector (7d / 30d / 90d / All) refetches from `/api/stats/export?da
 
 ### Setup (minikube)
 
-1. Enable the ingress addon:
+1. Enable the Traefik ingress addon. The old `ingress` (nginx) addon is
+   unmaintained and cannot run alongside Traefik, so disable it first:
    ```sh
-   minikube addons enable ingress
+   minikube addons disable ingress
+   minikube addons enable traefik
    ```
 2. Run `beatctl deploy` — it generates a self-signed wildcard TLS cert for
-   `*.<node-ip>.nip.io`, stores it as a Secret in the `ingress-nginx` namespace,
-   patches `ingress-nginx-controller` to use it as the default SSL certificate,
-   pins the HTTPS NodePort to `30443`, and applies all manifests with the
-   correct `https://` ingress base URL.
+   `*.<node-ip>.nip.io`, stores it as a Secret in the `kube-system` namespace,
+   and applies all manifests with the correct `https://` ingress base URL. On
+   minikube the Traefik addon binds the node ports 80/443 via hostPort, so the
+   dashboard is reachable with no port suffix:
+
+   ```
+   https://app.<node-ip>.nip.io/
+   ```
 
 > **Note:** the web server runs under Bun. Bun's TLS stack does not pick up
 > the custom `https.Agent` that `@kubernetes/client-node` configures for the
 > in-cluster CA. `k8s/deploy/web.yaml` sets `NODE_EXTRA_CA_CERTS` to the service
 > account CA bundle path so Bun trusts the cluster API server certificate.
 
-## Per-run web UI (subdomains)
+### Setup (MicroK8s)
 
-Each run exposes the full opencode web UI via its ClusterIP Service on port
-4096. To make it browser-accessible, the operator can create a per-run Ingress
-that routes `http://<run>.<baseDomain>/` to the run's Service.
+MicroK8s 1.35+ ships Traefik via the `ingress` addon (IngressClass `public` by
+default, backward compatible with the previous NGINX routing). Enable the addons
+and export the kubeconfig, then deploy:
 
-### Ingress controller setup
+```sh
+microk8s enable dns rbac hostpath-storage ingress
+microk8s config > ~/.kube/percussionist-microk8s
+export KUBECONFIG=~/.kube/percussionist-microk8s
+beatctl deploy
+```
 
-| Cluster | Setup |
-|---------|-------|
-| **minikube** | `minikube addons enable ingress` + `scripts/minikube-load.sh` to pin NodePort |
-| **kind** | `extraPortMappings` for port 80 + install `ingress-nginx` |
-| **k3d** | `k3d cluster create --port 80:80@loadbalancer` — Traefik included |
-| **Docker Desktop** | Install `ingress-nginx` manually |
+`beatctl deploy` auto-detects the MicroK8s platform, sets
+`DEFAULT_STORAGE_CLASS=microk8s-hostpath`, and wires the wildcard TLS Secret to
+Traefik via the documented `--default-ssl-certificate` mechanism. The dashboard
+is reachable on the Ingress port (`30443` when the `traefik` Service is a
+NodePort, or `:443` with no suffix when Traefik binds hostPort/LoadBalancer).
 
-### Operator configuration
+> **Single-node caveat:** `hostpath-storage` is node-local — not highly
+> available. Use it only for single-node (dev/test) clusters, not multi-node or
+> production.
 
-Set these environment variables on the operator Deployment (see commented-out
-examples in `k8s/deploy/operator.yaml`):
+> **Note:** the web server runs under Bun. Bun's TLS stack does not pick up
+> the custom `https.Agent` that `@kubernetes/client-node` configures for the
+> in-cluster CA. `k8s/deploy/web.yaml` sets `NODE_EXTRA_CA_CERTS` to the service
+> account CA bundle path so Bun trusts the cluster API server certificate.
+
+## Web UI access
+
+The dashboard (`percussionist-web`) is exposed via the `percussionist-web`
+Ingress in `k8s/deploy/web.yaml` (Traefik, host `app.<base-host>`). `beatctl
+deploy` configures TLS automatically, so for minikube with the default IP:
+
+```
+https://app.192.168.49.2.nip.io/
+```
+
+[nip.io](https://nip.io) resolves `*.192.168.49.2.nip.io` to `192.168.49.2` —
+no `/etc/hosts` edits needed. The cert is self-signed; accept the browser
+warning once on first visit (or add it to your OS trust store).
+
+> **Note:** each run's opencode web UI is reached with `beatctl attach` (the run
+> pod's ClusterIP Service on port 4096) — there is **no per-run Ingress**. The
+> ingress env vars below configure the per-project **code-server IDE Ingress**
+> only.
+
+### MicroK8s quickstart
+
+```sh
+microk8s enable dns rbac hostpath-storage ingress
+microk8s config > ~/.kube/percussionist-microk8s
+export KUBECONFIG=~/.kube/percussionist-microk8s
+beatctl deploy
+```
+
+MicroK8s 1.35+ ships Traefik via the `ingress` addon (IngressClass `public` by
+default, backward compatible with the previous NGINX routing). `beatctl deploy`
+auto-detects the platform, sets `DEFAULT_STORAGE_CLASS=microk8s-hostpath`, and
+wires the wildcard TLS Secret to Traefik via the `--default-ssl-certificate`
+mechanism. The dashboard is reachable on the Ingress port (`30443` when the
+`traefik` Service is a NodePort, or `:443` with no suffix when Traefik binds
+hostPort/LoadBalancer).
+
+> **Single-node caveat:** `hostpath-storage` is node-local — not highly
+> available. Use it only for single-node (dev/test) clusters.
+
+### minikube
+
+```sh
+minikube addons disable ingress   # old nginx addon is unmaintained
+minikube addons enable traefik
+```
+
+Traefik binds the node ports 80/443 via hostPort, so URLs carry no port suffix.
+
+### Operator configuration (code-server IDE Ingress)
+
+Set these environment variables on the operator Deployment to control the
+per-project code-server IDE Ingress (see commented-out examples in
+`k8s/deploy/operator.yaml`):
 
 ```sh
 # Set automatically by `beatctl deploy` — shown here for manual overrides
-PERCUSSIONIST_INGRESS_BASE_URL=https://192.168.49.2.nip.io:30443
+PERCUSSIONIST_INGRESS_BASE_URL=https://192.168.49.2.nip.io
 
-# Optional: ingress class name
-PERCUSSIONIST_INGRESS_CLASS=nginx
+# Optional: ingress class name (default: traefik)
+PERCUSSIONIST_INGRESS_CLASS=traefik
 
 # Optional: extra annotations merged onto every Ingress (JSON)
 # The SSE /event endpoint needs long timeouts and no buffering:
-PERCUSSIONIST_INGRESS_ANNOTATIONS='{"nginx.ingress.kubernetes.io/proxy-read-timeout":"3600","nginx.ingress.kubernetes.io/proxy-buffering":"off"}'
+PERCUSSIONIST_INGRESS_ANNOTATIONS='{"traefik.ingress.kubernetes.io/router.timeout":"3600"}'
+
+# Optional: when set, code-server Ingresses are rendered with a `spec.tls`
+# block referencing this secret (minikube per-Ingress TLS):
+PERCUSSIONIST_INGRESS_TLS_SECRET=percussionist-tls-wildcard
 ```
 
-DNS options for minikube:
+DNS options:
 
 ```sh
 # nip.io wildcard DNS (recommended — no local config needed)
-PERCUSSIONIST_INGRESS_BASE_URL=https://$(minikube ip).nip.io:30443
+PERCUSSIONIST_INGRESS_BASE_URL=https://$(minikube ip).nip.io
 
 # *.localhost (Linux with systemd-resolved, macOS Ventura+, Windows 11)
 PERCUSSIONIST_INGRESS_BASE_URL=http://percussionist.localhost
 ```
 
-### Per-run opt-out
+### Security note
 
-```yaml
-spec:
-  task: "run the tests"
-  expose:
-    web: false
-```
-
-### URL format
-
-```
-https://<run-name>.<base-host>:<port>/
-# e.g. https://run-abc123.192.168.49.2.nip.io:30443/
-```
-
-> **Security note:** the opencode server runs without a password. The Ingress
-> is only reachable on your local network via the minikube IP. Do not bind the
-> ingress controller to a public interface without adding authentication.
+The code-server IDE runs behind the Ingress and is only reachable on your local
+network via the node IP (or your tailnet). Do not bind the ingress controller to
+a public interface without adding authentication.
 
 ## Provider auth
 
@@ -1312,10 +1370,10 @@ and never delays run completion.
 
 ```bash
 # Last 30 days (default)
-curl https://app.<minikube-ip>.nip.io:30443/api/stats/export > sessions.json
+curl https://app.<minikube-ip>.nip.io/api/stats/export > sessions.json
 
 # All time
-curl https://app.<minikube-ip>.nip.io:30443/api/stats/export?days=0 > sessions.json
+curl https://app.<minikube-ip>.nip.io/api/stats/export?days=0 > sessions.json
 
 # Pipe into an LLM
 curl .../api/stats/export | llm "find patterns in agent tool usage and prompt effectiveness"

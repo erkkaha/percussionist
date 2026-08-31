@@ -73,14 +73,39 @@ beatctl chat [--namespace <ns>]
 
 ### deploy
 
-Install or remove Percussionist CRDs and deployments.
+Install or remove Percussionist CRDs and deployments. Traefik is the only
+supported ingress controller; the target platform is auto-detected (and printed)
+or forced with `--platform`.
 
 ```bash
-beatctl deploy                                # install
+beatctl deploy                                # install (auto-detect platform)
+beatctl deploy --platform microk8s            # force the MicroK8s profile
 beatctl deploy --down                         # remove
 beatctl deploy --gitops                       # install via Flux
 beatctl deploy --gitops --release v0.2.11     # ...pinned to a release
 ```
+
+MicroK8s quickstart:
+
+```bash
+microk8s enable dns rbac hostpath-storage ingress
+microk8s config > ~/.kube/percussionist-microk8s
+export KUBECONFIG=~/.kube/percussionist-microk8s
+beatctl deploy                                # auto-detects microk8s
+```
+
+Deploy options:
+
+| Flag | Description |
+|------|-------------|
+| `--platform <auto\|minikube\|microk8s\|generic>` | Target platform (default `auto`; auto-detects from the cluster) |
+| `--domain <host>` | Base domain for the dashboard + wildcard cert (default `<node-ip>.nip.io`) |
+| `--http-port <port>` | Override the ingress HTTP port |
+| `--https-port <port>` | Override the ingress HTTPS port (NodePort pin target on microk8s) |
+| `--storage-class <name>` | Override `DEFAULT_STORAGE_CLASS` in the operator manifest |
+| `--ingress-class <name>` | Override the IngressClass |
+| `--skip-tls` | Skip TLS setup (no cert, no default-cert wiring, no port pinning) |
+| `--tls-secret <ns>/<name>` | TLS Secret name (default `percussionist-tls-wildcard`) |
 
 `--gitops` hands the control plane to Flux so that later upgrades apply CRDs as
 well as images — the in-place upgrade path cannot touch CRDs. See

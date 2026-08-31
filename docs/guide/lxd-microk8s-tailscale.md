@@ -104,9 +104,20 @@ accounts and scoped RoleBindings; do not run it with authorization disabled.
 MicroK8s uses Calico by default, which also enforces Percussionist's
 NetworkPolicies.
 
-Leave the MicroK8s ingress addon disabled. Tailscale Serve will terminate HTTPS
-and proxy directly to the web Service, so an ingress controller is unnecessary
-and may compete for ports on the VM.
+### Ingress controller (optional)
+
+`beatctl deploy` auto-detects MicroK8s and wires Traefik (the `ingress` addon,
+IngressClass `public`) for dashboard HTTPS. **Enable it** when you want the
+dashboard reachable on the cluster Ingress:
+
+```bash
+lxc exec "$VM" -- microk8s enable ingress
+```
+
+Otherwise — and this is the recommended topology for this playbook — leave the
+ingress addon **disabled** and let Tailscale Serve terminate HTTPS and proxy
+directly to the web Service. Deploy with `--skip-tls` so no ingress controller
+is touched:
 
 ```bash
 lxc exec "$VM" -- microk8s disable ingress
@@ -128,26 +139,14 @@ The generated server address is the VM's LXD bridge address. If that address
 changes, export the kubeconfig again. Keep this file private because it contains
 cluster-admin client credentials.
 
-### StorageClass compatibility
+### StorageClass
 
-MicroK8s creates a default StorageClass named `microk8s-hostpath`, while the
-current Percussionist web manifest names `standard` explicitly. Create a
-compatibility StorageClass before deploying:
+`beatctl deploy` sets `DEFAULT_STORAGE_CLASS=microk8s-hostpath` for the MicroK8s
+profile, so no `standard` StorageClass alias is needed.
 
-```bash
-kubectl apply -f - <<'EOF'
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: standard
-provisioner: microk8s.io/hostpath
-reclaimPolicy: Delete
-volumeBindingMode: WaitForFirstConsumer
-EOF
-```
-
-This is an alias using the same provisioner. It does not create a second
-storage system.
+> **Single-node caveat:** `hostpath-storage` is node-local — not highly
+> available. This playbook is single-node by design; do not use it for a
+> multi-node or production cluster.
 
 Take the first optional recovery snapshot now:
 
@@ -157,30 +156,24 @@ lxc snapshot "$VM" microk8s-base
 
 ## 3. Deploy Percussionist
 
-Do not use `beatctl deploy` for this topology. The current command assumes an
-`ingress-nginx` deployment, patches its TLS certificate, and derives a minikube
-`nip.io` URL. Apply the manifests directly instead:
+Deploy with `beatctl deploy`. It auto-detects the MicroK8s platform, sets
+`DEFAULT_STORAGE_CLASS=microk8s-hostpath`, and (when the ingress addon is
+enabled) wires the wildcard TLS Secret to Traefik's default certificate.
 
 ```bash
-kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -f k8s/crds/
-kubectl apply -k k8s/deploy/
+beatctl deploy                                  # ingress enabled: full TLS
+beatctl deploy --platform microk8s --skip-tls   # ingress disabled (Tailscale Serve)
 ```
 
-Remove the dashboard Ingress created by the generic manifests and disable
-operator-created IDE Ingresses. The dashboard remains available through its
-ClusterIP Service.
+For the Tailscale-Serve topology the dashboard Ingress is not used — remove the
+one created by the web manifest and let Tailscale Serve reach the ClusterIP
+Service:
 
 ```bash
 kubectl -n "$NAMESPACE" delete ingress percussionist-web --ignore-not-found
-kubectl -n "$NAMESPACE" set env deployment/percussionist-operator \
-  DEFAULT_STORAGE_CLASS=microk8s-hostpath \
-  DEFAULT_STORAGE_ACCESS_MODE=ReadWriteOnce \
-  PERCUSSIONIST_INGRESS_BASE_URL- \
-  PERCUSSIONIST_INGRESS_CLASS-
 ```
 
-Set the final public origin before configuring sign-in:
+Set the final public origin before configuring sign-in (the Tailscale HTTPS URL):
 
 ```bash
 kubectl -n "$NAMESPACE" set env deployment/percussionist-web \
@@ -524,8 +517,8 @@ provider OAuth credentials, re-import them.
 
 | Symptom | Check | Corrective action |
 |---------|-------|-------------------|
-| PVC remains `Pending` | `kubectl get storageclass` | Create `standard` alias or patch the workload to `microk8s-hostpath` |
-| `beatctl deploy` fails looking for nginx | `kubectl -n ingress-nginx get deploy` | Use direct manifest application for this topology |
+| PVC remains `Pending` | `kubectl get storageclass` | `beatctl deploy` sets `microk8s-hostpath` for the microk8s profile; otherwise patch `DEFAULT_STORAGE_CLASS` or the workload |
+| `beatctl deploy` fails on a nginx-only cluster | `kubectl get ingressclass` | Enable Traefik (`microk8s enable ingress`, or `minikube addons enable traefik`); for HTTP-only use `beatctl deploy --platform generic --skip-tls --ingress-class <name>` |
 | Dashboard redirects to the wrong host | Inspect `WEB_BASE_URL` | Set it to the exact Tailscale HTTPS origin and restart web |
 | GitHub reports callback mismatch | GitHub App callback setting | Set the exact `${WEB_BASE_URL}/api/auth/callback/github` URL |
 | Operator cannot mint run keys | Check `operator-api-key` existence and operator logs | Wait for web bootstrap, then restart operator |
