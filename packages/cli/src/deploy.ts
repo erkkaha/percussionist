@@ -1002,11 +1002,17 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     tlsSecretName = resolveTlsSecret(opts, profile, ns).name;
   }
 
+  // Explicit flags win; otherwise the resolved platform's defaults apply
+  // (microk8s-hostpath/public on MicroK8s, standard/traefik on minikube). The
+  // generic profile leaves both empty, which keeps the checked-in defaults.
+  const operatorStorageClass = opts.storageClass ?? profile.storageClass;
+  const operatorIngressClass = opts.ingressClass ?? profile.ingressClass;
+
   const operatorContent = readFileSync(manifests.operator, 'utf8');
   const patchedOperatorContent = patchedOperatorManifest(operatorContent, {
     baseUrl: ingressBaseUrl,
-    storageClass: opts.storageClass,
-    ingressClass: opts.ingressClass,
+    storageClass: operatorStorageClass || undefined,
+    ingressClass: operatorIngressClass || undefined,
     tlsSecret: tlsSecretName,
   });
   const operatorIsTemp = patchedOperatorContent !== operatorContent;
@@ -1020,8 +1026,7 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     webPatch.host = `app.${domain}`;
     webPatch.webBaseUrl = `${webScheme}://app.${domain}`;
   }
-  const resolvedIngressClass = opts.ingressClass ?? profile.ingressClass;
-  if (resolvedIngressClass) webPatch.ingressClass = resolvedIngressClass;
+  if (operatorIngressClass) webPatch.ingressClass = operatorIngressClass;
   if (tlsSecretName) webPatch.tlsSecret = tlsSecretName;
   const webContent = readFileSync(manifests.web, 'utf8');
   const patchedWebContent = patchedWebManifest(webContent, webPatch);
