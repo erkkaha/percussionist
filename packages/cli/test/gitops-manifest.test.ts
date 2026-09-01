@@ -52,9 +52,56 @@ describe('patchFluxManifest — against the checked-in manifest', () => {
     expect(patchFluxManifest(MANIFEST, {})).toBe(MANIFEST);
   });
 
+  it('rewrites DEFAULT_STORAGE_CLASS inside the kustomize patch', () => {
+    const out = patchFluxManifest(MANIFEST, { storageClass: 'longhorn' });
+    expect(out).toContain(
+      '- name: DEFAULT_STORAGE_CLASS\n' + '                      value: longhorn',
+    );
+  });
+
+  it('rewrites PERCUSSIONIST_INGRESS_CLASS inside the kustomize patch', () => {
+    const out = patchFluxManifest(MANIFEST, { ingressClass: 'public' });
+    expect(out).toContain(
+      '- name: PERCUSSIONIST_INGRESS_CLASS\n' + '                      value: public',
+    );
+  });
+
+  it('applies all substitutions together and changes nothing else', () => {
+    const out = patchFluxManifest(MANIFEST, {
+      tag: 'v1.2.3',
+      ingressBaseUrl: 'https://example.test',
+      storageClass: 'longhorn',
+      ingressClass: 'public',
+    });
+
+    const changed = MANIFEST.split('\n')
+      .map((line, i) => [line, out.split('\n')[i]] as const)
+      .filter(([a, b]) => a !== b);
+
+    expect(changed).toHaveLength(4);
+    expect(out).toContain('tag: v1.2.3');
+    expect(out).toContain('value: https://example.test');
+    expect(out).toContain('value: longhorn');
+    expect(out).toContain('value: public');
+  });
+
   it('preserves the comment that mentions `tag:` in prose', () => {
     const out = patchFluxManifest(MANIFEST, { tag: 'v9.9.9' });
     expect(out).toContain('replace `tag:` with a `semver:` range');
+  });
+});
+
+describe('patchFluxManifest — drift detection (storageClass / ingressClass)', () => {
+  it('throws when the DEFAULT_STORAGE_CLASS patch block is missing', () => {
+    expect(() => patchFluxManifest('kind: Kustomization\n', { storageClass: 'longhorn' })).toThrow(
+      /could not find the DEFAULT_STORAGE_CLASS patch/,
+    );
+  });
+
+  it('throws when the PERCUSSIONIST_INGRESS_CLASS patch block is missing', () => {
+    expect(() => patchFluxManifest('kind: Kustomization\n', { ingressClass: 'public' })).toThrow(
+      /could not find the PERCUSSIONIST_INGRESS_CLASS patch/,
+    );
   });
 });
 

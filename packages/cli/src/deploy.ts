@@ -27,7 +27,13 @@ import {
   type WebManifestPatch,
 } from './deploy-manifests.js';
 import type { DeployPlatform, PlatformProfile, TraefikControllerInfo } from './deploy-platform.js';
-import { baseUrl, detectTraefikController, resolvePlatform } from './deploy-platform.js';
+import {
+  baseUrl,
+  detectTraefikController,
+  hasNginxController,
+  nginxMismatchError,
+  resolvePlatform,
+} from './deploy-platform.js';
 import { ensurePlatformPrereqs } from './deploy-preflight.js';
 import { patchFluxManifest, tagFromVersion } from './gitops-manifest.js';
 import { DEFAULT_NAMESPACE, fatal } from './kube.js';
@@ -586,23 +592,9 @@ async function ensureNamespace(ns: string): Promise<void> {
 async function detectNginxController(): Promise<boolean> {
   try {
     const raw = kubectlOutput(['get', 'deploy', '-A', '-o', 'jsonpath={.items[*].metadata.name}']);
-    return raw
-      .split(/\s+/)
-      .some((n) => n.toLowerCase().includes('nginx') && !n.toLowerCase().includes('traefik'));
+    return hasNginxController(raw.split(/\s+/));
   } catch {
     return false;
-  }
-}
-
-/** The migration command shown when an nginx controller is detected. */
-function nginxFailCommand(profile: PlatformProfile): string {
-  switch (profile.name) {
-    case 'minikube':
-      return 'minikube addons disable ingress && minikube addons enable traefik';
-    case 'microk8s':
-      return 'upgrade MicroK8s to >= 1.35, then: microk8s enable ingress (ships Traefik)';
-    default:
-      return 'beatctl deploy --platform generic --skip-tls --ingress-class nginx --domain <host>';
   }
 }
 
@@ -615,17 +607,7 @@ async function assertTraefikBackend(profile: PlatformProfile, opts: DeployOpts):
   if (opts.skipTls || profile.tlsMechanism === 'none') return; // nginx allowed for HTTP-only
 
   if (await detectNginxController()) {
-    const cmd = nginxFailCommand(profile);
-    fatal(
-      'ingress backend mismatch',
-      new Error(
-        'detected an nginx ingress controller, but beatctl deploy only supports Traefik.\n\n' +
-          'Migrate to Traefik:\n' +
-          `  ${cmd}\n\n` +
-          'Or run an HTTP-only install:\n' +
-          '  beatctl deploy --platform generic --skip-tls --ingress-class <name> --domain <host>',
-      ),
-    );
+    fatal('ingress backend mismatch', new Error(nginxMismatchError(profile)));
   }
 }
 
