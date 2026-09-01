@@ -170,8 +170,8 @@ importers:
         specifier: 0.3.241
         version: 0.3.241(@anthropic-ai/sdk@0.112.3(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
       '@hono/node-server':
-        specifier: 2.1.0
-        version: 2.1.0(hono@4.12.27)
+        specifier: 2.1.1
+        version: 2.1.1(hono@4.12.27)
       hono:
         specifier: 4.12.27
         version: 4.12.27
@@ -189,8 +189,8 @@ importers:
         specifier: 1.6.25
         version: 1.6.25(@better-auth/core@1.6.25(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-call@1.3.7(zod@4.4.3))(jose@6.2.4)(kysely@0.29.4)(nanostores@1.4.1))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.2(bun-types@1.3.14)(kysely@0.29.4))
       '@hono/node-server':
-        specifier: 2.0.6
-        version: 2.0.6(hono@4.12.27)
+        specifier: 2.1.1
+        version: 2.1.1(hono@4.12.27)
       '@kubernetes/client-node':
         specifier: 2.0.0
         version: 2.0.0
@@ -1422,14 +1422,8 @@ packages:
     peerDependencies:
       hono: ^4
 
-  '@hono/node-server@2.0.6':
-    resolution: {integrity: sha512-7DeRlKG57JDBNZ5Qj2jwVdgwQy4b0tLubRLl3zCf91/rCf9i7p1V5FtW/yWibm1uUHE493ts9ZXH/7g/LQWl+g==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      hono: ^4
-
-  '@hono/node-server@2.1.0':
-    resolution: {integrity: sha512-XovyyCCnBzW+zKu+z/zq8hwNs4KOR5rEMAOxo2f40Q5xoOI37IMm6MIg2COOUtUApo0i6850MTBKH2u4QLGIqg==}
+  '@hono/node-server@2.1.1':
+    resolution: {integrity: sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4
@@ -3936,6 +3930,9 @@ packages:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
 
+  jose@6.2.10:
+    resolution: {integrity: sha512-iiW7J9qRFlGxvCOIBDBDxFePQSn7ZMAnrYGhrrOo6siO/MIqwfyilLR27pkfDgUk+raLuzADS8A3S/KLBisc0g==}
+
   jose@6.2.4:
     resolution: {integrity: sha512-N8acGzVsQy6M/fjFcxtysNc4Q379TcM5dM/qKkNtsHFji88yANnXTr7BLeP75iPnFwBfQzM/jg2BZ9+HZrHCZA==}
 
@@ -4405,9 +4402,9 @@ packages:
     resolution: {integrity: sha512-PGd3uPojJB9Z07d5NX3Db/SOSBbyy3wLMUGq0GpnEEJfVzY9mq7daPMAZ3jObV5D3Jn+YKND636eI5ULg7F80Q==}
     engines: {node: ^20.0.0 || >=22.0.0}
 
-  negotiator@1.0.0:
-    resolution: {integrity: sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==}
-    engines: {node: '>= 0.6'}
+  negotiator@1.1.0:
+    resolution: {integrity: sha512-NMPBRMJgiQHjbd8phG3Vebdx4kZ1H121rbl5IkMqeOsahptB9BKo/d7oJ3zTXqTgagn2bWlNSXkh0QUGM31RYg==}
+    engines: {node: '>=18'}
 
   oauth4webapi@3.8.5:
     resolution: {integrity: sha512-A8jmyUckVhRJj5lspguklcl90Ydqk61H3dcU0oLhH3Yv13KpAliKTt5hknpGGPZSSfOwGyraNEFmofDYH+1kSg==}
@@ -6036,11 +6033,7 @@ snapshots:
     dependencies:
       hono: 4.12.27
 
-  '@hono/node-server@2.0.6(hono@4.12.27)':
-    dependencies:
-      hono: 4.12.27
-
-  '@hono/node-server@2.1.0(hono@4.12.27)':
+  '@hono/node-server@2.1.1(hono@4.12.27)':
     dependencies:
       hono: 4.12.27
 
@@ -6126,7 +6119,7 @@ snapshots:
       express: 5.2.1
       express-rate-limit: 8.6.2(express@5.2.1)
       hono: 4.12.27
-      jose: 6.2.9
+      jose: 6.2.10
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
@@ -7352,7 +7345,7 @@ snapshots:
   accepts@2.0.0:
     dependencies:
       mime-types: 3.0.2
-      negotiator: 1.0.0
+      negotiator: 1.1.0
 
   agent-base@7.1.4: {}
 
@@ -8418,6 +8411,8 @@ snapshots:
 
   jiti@2.7.0: {}
 
+  jose@6.2.10: {}
+
   jose@6.2.4: {}
 
   jose@6.2.9: {}
@@ -9051,7 +9046,9 @@ snapshots:
 
   nanostores@1.4.1: {}
 
-  negotiator@1.0.0: {}
+  negotiator@1.1.0:
+    dependencies:
+      content-type: 2.1.0
 
   oauth4webapi@3.8.5: {}
 
