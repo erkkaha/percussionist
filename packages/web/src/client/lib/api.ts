@@ -582,6 +582,30 @@ export async function updateFinding(
   );
 }
 
+/** Result returned by POST /api/projects/:name/findings/:id/promote. */
+export interface PromoteFindingResponse {
+  project: string;
+  taskName: string;
+  findingId: string;
+  type: 'PLAN' | 'BUILD';
+  agent: string;
+  priority: 'high' | 'medium' | 'low';
+}
+
+export async function promoteFindingToTask(
+  project: string,
+  id: string,
+  opts?: { agent?: string; priority?: 'high' | 'medium' | 'low' },
+): Promise<PromoteFindingResponse> {
+  return requestJSON<PromoteFindingResponse>(
+    `/projects/${encodeURIComponent(project)}/findings/${encodeURIComponent(id)}/promote`,
+    {
+      method: 'POST',
+      body: JSON.stringify(opts ?? {}),
+    },
+  );
+}
+
 export async function deleteProjectMemory(
   project: string,
   id: string,
