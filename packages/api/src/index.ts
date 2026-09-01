@@ -894,7 +894,7 @@ export const TRANSITION_TABLE: Record<TaskPhase, TaskPhase[]> = {
   scheduled: ['initializing', 'failed'],
   initializing: ['running', 'succeeded', 'failed'],
   running: ['waiting-for-input', 'succeeded', 'failed'],
-  'waiting-for-input': ['running', 'succeeded', 'failed'],
+  'waiting-for-input': ['running', 'succeeded', 'failed', 'done', 'rework-requested'],
   succeeded: ['reviewing', 'awaiting-human', 'done'],
   reviewing: ['awaiting-human', 'rework-requested'],
   'awaiting-human': [
@@ -909,8 +909,11 @@ export const TRANSITION_TABLE: Record<TaskPhase, TaskPhase[]> = {
   'rework-requested': ['scheduled'],
   'generating-builds': ['awaiting-children', 'awaiting-human', 'failed'],
   'awaiting-children': ['awaiting-feature-merge', 'awaiting-human', 'done', 'failed'],
-  'awaiting-feature-merge': ['done', 'awaiting-human', 'failed'],
-  failed: ['pending', 'awaiting-human', 'awaiting-merge'],
+  // → awaiting-children: PR-comment feedback produced a follow-up BUILD task
+  // (see decidePrStateOutcome); the PLAN waits for it, then re-runs the
+  // PR-open run in update mode to push the revised head.
+  'awaiting-feature-merge': ['done', 'awaiting-human', 'failed', 'awaiting-children'],
+  failed: ['pending', 'awaiting-human', 'awaiting-merge', 'awaiting-feature-merge'],
   done: [],
 };
 
@@ -952,6 +955,11 @@ export const WorkerStatusSchema = z.object({
   mergeRunName: z.string().optional(),
   mergedAt: z.string().optional(),
   mergeError: z.string().max(4096).optional(),
+  // PR-mode feedback loop: name of the in-flight run evaluating new PR
+  // comments, and the created-at watermark of the newest comment already
+  // handed to an evaluation round (comments at or before it are consumed).
+  prFeedbackRunName: z.string().optional(),
+  prFeedbackLastCommentAt: z.string().optional(),
   // True when a human intentionally abandoned this task from `awaiting-human`
   // (distinct from normal completion, both of which end `status: 'Succeeded'`).
   abandoned: z.boolean().optional(),
@@ -1835,33 +1843,6 @@ export const LABELS = {
   projectName: 'percussionist.dev/project',
   taskId: 'percussionist.dev/task-id',
 } as const;
-
-/** Annotation key prefixes used for board actions. */
-export const ANNOTATION_PREFIXES = [
-  'approved',
-  'request-changes',
-  'rework',
-  'abandon',
-  'answer',
-] as const;
-
-/**
- * Build a K8s-safe annotation name part (after the `/`) that is ≤63 bytes.
- * Uses a short hash suffix to guarantee uniqueness when the prefix+taskName
- * exceeds the 63-byte limit.
- */
-export function annotationKey(prefix: string, taskName: string): string {
-  const key = `${prefix}-${taskName}`;
-  if (key.length <= 63) return key;
-  let hash = 0;
-  for (let i = 0; i < taskName.length; i++) {
-    hash = (hash << 5) - hash + taskName.charCodeAt(i);
-    hash |= 0;
-  }
-  const hashStr = Math.abs(hash).toString(36).slice(0, 6);
-  const maxPrefix = 63 - hashStr.length - 1;
-  return `${key.slice(0, maxPrefix).replace(/-+$/, '')}-${hashStr}`;
-}
 
 export const MANAGED_BY = 'percussionist';
 

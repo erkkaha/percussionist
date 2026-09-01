@@ -1,6 +1,6 @@
 {
   "name": "@percussionist/runner-claude",
-  "version": "0.2.14",
+  "version": "0.2.19",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -11,8 +11,8 @@
     "test": "bun test src/"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.215",
-    "@hono/node-server": "2.0.6",
+    "@anthropic-ai/claude-agent-sdk": "0.3.241",
+    "@hono/node-server": "2.1.0",
     "hono": "4.12.27"
   },
   "devDependencies": {

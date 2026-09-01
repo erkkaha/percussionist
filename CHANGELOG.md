@@ -1,6 +1,151 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.19] - 2026-08-31
+
+### <!-- 5 -->🎨 Styling
+
+- Format prUpdatePromptLines quote style (biome)
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Bump opencode to 1.18.21, claude-code to 2.1.241, agent-sdk to 0.3.241 _(images)_
+## [v0.2.18] - 2026-08-27
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- PR-update run replies in each addressed review thread _(reconciler)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.18
+## [v0.2.17] - 2026-08-26
+
+### <!-- 0 -->🚀 Features
+
+- Publish worker branches to namespaced remote refs (refs/percussionist/*) _(git)_
+- Close the PR-comment feedback loop in PR-mode integration _(reconciler)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Defer ClearTaskAnnotations until after successful status patch _(manager)_
+
+### <!-- 3 -->📚 Documentation
+
+- Manager approve/abandon annotations consumed after status patch _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add regression tests for lost-intent annotation clear race _(manager)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.17
+## [v0.2.16] - 2026-08-23
+
+### <!-- 0 -->🚀 Features
+
+- Add focus-mode toggle affordance to TaskDetailPanel _(web)_
+- Wire focus state in BoardView (focus mode) _(web)_
+- Add PATCH /api/projects/:name/findings/:id proxy to update_finding _(web)_
+- Add updateFinding API wrapper and useUpdateFinding hook _(web)_
+- Add close/reopen controls to FindingsPanel _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Guard inject-file Secret writes on partial PUT /projects/:name _(web)_
+- Make Provider Secrets panel functional with editable key/value rows _(web)_
+- Route beatctl auth web-token through patchWebAuthSecret _(cli)_
+- Disambiguate inject-file Secret names with a filename hash _(web)_
+- Merge sibling keys on PUT /api/settings/secrets/:name _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Secret updates destroy sibling keys in three write paths + stubbed settings UI _(plan)_
+- Expandable board task detail view (focus mode) _(plan)_
+- Findings cannot be closed from UI _(plan)_
+- Correct claims that contradict the codebase
+
+### <!-- 6 -->🧪 Testing
+
+- Add focus-mode component tests for TaskDetailPanel and BoardView _(web)_
+- Add findings route + panel tests _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.16
+## [v0.2.15] - 2026-08-21
+
+### <!-- 0 -->🚀 Features
+
+- Add waiting-for-input exits and DeliverAnswer effect _(manager)_
+- Add abandon route and UI for waiting-for-input tasks _(web)_
+- Accent CTA variant for board add-task buttons _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Clear stale prNumber and route PLAN merge retries through feature-merge gate _(manager)_
+- Clear worker.runName with null in admin tool patches _(manager)_
+- Resolve session model from user message in detail route _(web)_
+- Populate toolCallsPayload in buildPayloads _(manager)_
+- Rework create_run to schedule through reconciliation _(manager)_
+- Make pause_reconciliation per-project (A4) _(manager)_
+- Validate limit/offset and propagate pull errors (A5, A8) _(memory-service)_
+- Only flag snapshot tool output truncated when sliced (A6, C22) _(dispatcher)_
+- Harden web client, CLI, operator and manager findings (A9-A16) + CLI hygiene
+- Resolve kubeconfig token via getCurrentUser and parse decimal quantities _(kube)_
+- Retry transient errors in run/project patch loops _(kube)_
+- Make plan ConfigMap writes conflict-free via per-key merge-patch _(kube)_
+- Retry findings merge-patch when concurrent create wins _(kube)_
+- Keep session-fetch abort timer armed and dedupe ws-exec pod names _(kube)_
+- Claim terminal Succeeded phase before deleting succeeded pod _(operator)_
+- Re-gate zero-token guard on needsHumanInput to close session.idle race _(dispatcher)_
+- Make completion authorization retryable on transient lookup failures _(dispatcher)_
+
+### <!-- 2 -->🚜 Refactor
+
+- Dedupe shared error/port-forward helpers, drop dead code (B7-B9, E)
+
+### <!-- 3 -->📚 Documentation
+
+- Add rev13 plan for merge/PR recovery fixes _(plan)_
+- Add full code review plan (percussionist-dev-plan-4abf54) _(plan)_
+- Resolve A3 create_run contract per review (rev 2) _(plan)_
+- Rework create_run to schedule through reconciliation (rev 3) _(plan)_
+- Add rev17 plan for kube write-path and retry fixes _(plan)_
+- Add docs review plan 22b590 — false claims and gaps audit _(plan)_
+- Add memory and findings tool reference gaps _(mcp-tools)_
+- Remove stale per-run web UI section and fix run-pod architecture prose
+- Fix code-server port-forward service name in AGENTS.md
+- Fix data PVC override facts in README and configuration guide
+- Fix NetworkPolicy and MCP auth claims _(security)_
+- Fix ClusterSettings example runnerImage -> runner.image
+- Fix review preset description and document flow.integration modes
+- Document spec.timeoutSeconds run deadline
+- Fix beatctl attach documentation to match exec-based implementation
+- Fix run-name scheme and task transition table
+- Fill CLI reference gaps (board subcommands, validate, chat --message, wait exit codes)
+- Add pnpm and bun to runner base-image lists
+- Add waiting-for-input exit and answer delivery plan (rev01) _(plan)_
+- Document abandon/request-changes exits for waiting-for-input
+- Add rev04 plan for Succeeded-pod terminal-phase claim fix _(plan)_
+- Revise rev04 plan — Succeeded-pod terminal claim fix with full test-impact correction _(plan)_
+- Add rev08 plan for dispatcher completion-auth retry and MCP robustness _(plan)_
+- Add CTA colors for board add task and add task form add _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Cover branch-resolver, run builders, chat-handler, runWorker (C1-C4) _(manager)_
+- Add operator/CLI coverage for C14-C21, C24 _(operator,cli)_
+- Add stats/metrics/session/runs/upgrade/usage-tracker coverage (C8-C13) _(web)_
+- Purge nonsensical/tautological tests (D1-D12)
+- Add deterministic abandon-exit test for waiting-for-input _(e2e)_
+- Pin cleanup refuse-to-delete guard with edge-case scenarios _(operator)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Bump bun to 1.4.0 in images and CI
+- Release v0.2.15
 ## [v0.2.14] - 2026-08-11
 
 ### <!-- 0 -->🚀 Features
@@ -60,6 +205,7 @@ All notable changes to Percussionist are documented here.
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Remove stale manager Dockerfile, fix ghcr-delete and minikube-load scripts _(scripts)_
+- Release v0.2.14
 ## [v0.2.13] - 2026-08-07
 
 ### <!-- 0 -->🚀 Features

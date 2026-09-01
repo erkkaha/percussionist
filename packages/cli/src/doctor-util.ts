@@ -13,13 +13,19 @@
  * timeout error if it does not settle in time. Every doctor network probe
  * must go through this (or pass `signal: AbortSignal.timeout(ms)` to a raw
  * fetch) so the `--timeout` bound is honoured.
+ *
+ * A non-positive or non-finite `ms` is a programming error: silently returning
+ * the promise unguarded (the old behaviour) disabled the timeout bound. Throw
+ * instead so the caller's try/catch surfaces it as a check problem.
  */
 export async function withProbeTimeout<T>(
   promise: Promise<T>,
   ms: number,
   label: string,
 ): Promise<T> {
-  if (!Number.isFinite(ms) || ms <= 0) return promise;
+  if (!Number.isFinite(ms) || ms <= 0) {
+    throw new Error(`invalid probe timeout for "${label}": ${ms}`);
+  }
   const signal = AbortSignal.timeout(ms);
   let onAbort: (() => void) | undefined;
   return Promise.race([

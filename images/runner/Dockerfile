@@ -11,10 +11,10 @@
 # For k3s (no registry), import directly:
 #   docker save percussionist/runner:dev | sudo k3s ctr images import -
 
-ARG RUNNER_BASE=ghcr.io/anomalyco/opencode:1.17.9
+ARG RUNNER_BASE=ghcr.io/anomalyco/opencode:1.18.21
 FROM ${RUNNER_BASE}
 
-ARG BUN_VERSION=1.3.14
+ARG BUN_VERSION=1.4.0
 ARG PNPM_VERSION=11.1.2
 
 # Pin locale-related env for deterministic number/date formatting in tests

@@ -294,3 +294,26 @@ async function handleStream(req: IncomingMessage, res: ServerResponse): Promise<
     clearInterval(poll);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Test hooks
+//
+// Only startChatServer is production-reachable; the ConfigMap persistence,
+// session-reuse and handler logic below it is module-private. Exposing them
+// under __test (same pattern as tools.ts) lets the suite exercise the
+// patch-then-create fallback, session reuse and the abort race without a live
+// cluster or a bound HTTP socket.
+export const __test = {
+  loadHistoryFromConfigMap,
+  saveHistoryToConfigMap,
+  ensureSession,
+  handleChat,
+  getState: () => ({ currentSessionId, conversationHistory }),
+  /** Clear session state and any pending debounced save between tests. */
+  reset: () => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    currentSessionId = null;
+    conversationHistory = [];
+  },
+};

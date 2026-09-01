@@ -27,7 +27,7 @@ import {
   type RunStatus,
   TERMINAL_PHASES,
 } from '@percussionist/api';
-import { makeNodeApiClient } from '@percussionist/kube';
+import { errorMessage, isNotFoundError, makeNodeApiClient } from '@percussionist/kube';
 import {
   assertCredentialsUnambiguous,
   resolveRunnerSpec,
@@ -72,13 +72,6 @@ const log = (...args: unknown[]) => console.log(`[operator ${new Date().toISOStr
 const err = (...args: unknown[]) =>
   console.error(`[operator ${new Date().toISOString()}]`, ...args);
 
-// Extracts a loggable message from a caught value without throwing, even when
-// the value is null/undefined or not an Error (e.g. a rejected promise with
-// no reason at all).
-function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
-
 // ---------------------------------------------------------------------------
 // K8s clients
 
@@ -92,6 +85,16 @@ const networking = makeNodeApiClient(kc, NetworkingV1Api);
 // ---------------------------------------------------------------------------
 // Status writer
 
+/**
+ * Merge-patch a Run's status subresource.
+ *
+ * Rethrows on failure: the run worker's `runWorkerOnce` catch treats a thrown
+ * reconcile as a transient failure and re-enqueues the key after
+ * `ERROR_REQUEUE_DELAY_MS`, which is the retry path for a lost status patch
+ * (pod-phase mirror, missing-agent warning, terminal-Failed claim). Swallowing
+ * the error (the old behaviour) left the informer with nothing to re-fire and
+ * the status patch permanently lost (A11).
+ */
 async function patchStatus(run: Run, patch: RunStatus): Promise<void> {
   try {
     await co.patchNamespacedCustomObjectStatus(
@@ -107,6 +110,7 @@ async function patchStatus(run: Run, patch: RunStatus): Promise<void> {
     );
   } catch (e) {
     err(`patchStatus(${run.metadata.name}):`, errorMessage(e));
+    throw e;
   }
 }
 
@@ -154,8 +158,9 @@ async function patchProjectReconcileStatus(
 // Inject the percussionist-dispatcher MCP stanza into an opencode.json string.
 // Parses the raw JSON (defaults to {} on parse error), strips local/stdio MCP
 // entries that are unsafe in headless containers, then adds the dispatcher entry.
-// Exported so it can be called from ensureOpencodeConfig for the no-config case.
-function injectDispatcherMcpStanza(raw: string): string {
+// Exported so it can be called from ensureOpencodeConfig for the no-config case
+// and unit-tested without a cluster.
+export function injectDispatcherMcpStanza(raw: string): string {
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -393,7 +398,12 @@ Always include at least one actionable option when presenting choices.`;
 // from any prior field manager (kubectl, tofu, node-fetch, etc.). This is safe
 // because the operator is the authoritative source of truth for these ConfigMaps
 // and rebuilds them from ClusterSettings on every reconcile cycle.
-async function ssaConfigMap(ns: string, name: string, data: Record<string, string>): Promise<void> {
+// Exported for unit testing (the SSA request shape is asserted without a cluster).
+export async function ssaConfigMap(
+  ns: string,
+  name: string,
+  data: Record<string, string>,
+): Promise<void> {
   try {
     await core.patchNamespacedConfigMap(
       {
@@ -650,6 +660,31 @@ export async function reconcile(run: Run): Promise<void> {
   }
 
   if (podPhase === 'Succeeded') {
+    // Terminal-phase fallback for the succeeded pod, mirroring the Failed
+    // branch below. The dispatcher normally owns terminal run phases (it
+    // patches Succeeded/Failed before exiting), but several exit-0 paths
+    // leave the phase non-terminal: the message-abort paths patch Running
+    // ("waiting for input (message aborted)"), and the shutdown / interactive-
+    // end paths patch only `message`. If we deleted the pod without claiming
+    // a terminal phase, the next resync would 404 on the pod, mint a new run
+    // key, recreate it, and re-run the whole task forever, burning tokens. So
+    // claim the terminal Succeeded phase here. The claim is guarded by a fresh
+    // read: a Succeeded pod does NOT imply a non-terminal run — the dispatcher
+    // can patch a terminal Failed and still exit 0 ("session ended without
+    // completion signal") — and blindly claiming Succeeded would clobber that
+    // Failed claim and mark a failed task done. Only claim when the fresh
+    // phase is still non-terminal; the reconcile guard then short-circuits
+    // future passes.
+    const fresh = await readFreshRun(run, ns);
+    const freshPhase = fresh?.status?.phase ?? currentPhase;
+    if (!freshPhase || !TERMINAL_PHASES.has(freshPhase)) {
+      await patchStatus(run, {
+        phase: RunPhase.Succeeded,
+        podPhase,
+        message: 'pod succeeded (operator claimed terminal phase; dispatcher exited without one)',
+        completedAt: new Date().toISOString(),
+      });
+    }
     await cleanupChildResources(run, ns);
   } else if (podPhase === 'Failed') {
     // Terminal-phase fallback. The dispatcher normally owns the terminal run
@@ -671,33 +706,63 @@ export async function reconcile(run: Run): Promise<void> {
   }
 }
 
-function isNotFound(e: unknown): boolean {
-  return (
-    ((e as { statusCode?: number; code?: number }).statusCode ?? (e as { code?: number }).code) ===
-    404
-  );
+// Freshly re-reads the Run CR from the apiserver. The `run` passed to
+// reconcile()/cleanupChildResources is a snapshot taken by runWorkerOnce before
+// the pass and is stale after any patchStatus (patchStatus never mutates it),
+// so terminal-claim decisions must re-read. Returns undefined on read error —
+// callers decide whether to fall back (Succeeded-branch claim) or fail safe
+// (cleanup pod-delete guard). Same call shape as runWorkerOnce's fresh read.
+async function readFreshRun(run: Run, ns: string): Promise<Run | undefined> {
+  try {
+    return (await co.getNamespacedCustomObject({
+      group: API_GROUP,
+      version: API_VERSION,
+      namespace: ns,
+      plural: PLURAL_RUN,
+      name: run.metadata.name,
+    })) as Run;
+  } catch (e) {
+    err(`readFreshRun(${ns}/${run.metadata.name}):`, errorMessage(e));
+    return undefined;
+  }
 }
-
 async function cleanupChildResources(run: Run, ns: string): Promise<void> {
   const name = run.metadata.name;
   // Revoke the run's stats key alongside its other child resources, so the pod
   // failure paths don't wait for the next reconcile to invalidate it. Idempotent.
   await revokeRunKey(name);
+  // Never delete a run pod while the run phase is non-terminal: deletion makes
+  // the next resync 404 on the pod, mint a new run key, and recreate it,
+  // re-running the task (burning tokens). Re-read the Run CR fresh (the passed
+  // `run` is stale after patchStatus) and delete the pod only when the fresh
+  // phase is terminal. On a read error, skip the pod deletion too (fail-safe):
+  // the pod carries an ownerReference to the Run CR, so Kubernetes GC removes
+  // it if the Run CR is gone, and a transient error is retried next resync.
+  // Every cleanupChildResources caller (terminal guard, Failed branch,
+  // Succeeded branch) has a terminal phase by the time it runs, so this guard
+  // never blocks legitimate cleanup.
+  const fresh = await readFreshRun(run, ns);
+  const freshPhase = fresh?.status?.phase;
+  const podDeleteAllowed = !!freshPhase && TERMINAL_PHASES.has(freshPhase);
   // Delete Pod (best-effort).
-  try {
-    await core.deleteNamespacedPod({ name, namespace: ns });
-    log(`deleted pod ${ns}/${name}`);
-  } catch (e: unknown) {
-    if (!isNotFound(e)) {
-      err(`delete pod ${ns}/${name}:`, (e as Error).message);
+  if (podDeleteAllowed) {
+    try {
+      await core.deleteNamespacedPod({ name, namespace: ns });
+      log(`deleted pod ${ns}/${name}`);
+    } catch (e: unknown) {
+      if (!isNotFoundError(e)) {
+        err(`delete pod ${ns}/${name}:`, (e as Error).message);
+      }
     }
+  } else {
+    log(`cleanup(${ns}/${name}): run phase non-terminal or read failed — skipping pod delete`);
   }
   // Delete Service (best-effort).
   try {
     await core.deleteNamespacedService({ name, namespace: ns });
     log(`deleted service ${ns}/${name}`);
   } catch (e: unknown) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`delete service ${ns}/${name}:`, (e as Error).message);
     }
   }
@@ -857,7 +922,7 @@ export async function runWorkerOnce(
     return true;
   } catch (e) {
     err(`reconcile(${key}) failed:`, (e as Error).message);
-    if (isNotFound(e)) {
+    if (isNotFoundError(e)) {
       // Run CR was deleted — remove from state to prevent indefinite re-enqueue.
       dequeue(key);
     } else {
@@ -940,7 +1005,7 @@ async function upsertDeployment(
     );
     log(`${logPrefix} patched deployment ${name}`);
   } catch (e) {
-    if (isNotFound(e)) {
+    if (isNotFoundError(e)) {
       await apps.createNamespacedDeployment({
         namespace: ns,
         body: render(project),
@@ -978,7 +1043,7 @@ async function upsertService(
     );
     log(`${logPrefix} patched service ${name}`);
   } catch (e) {
-    if (isNotFound(e)) {
+    if (isNotFoundError(e)) {
       await core.createNamespacedService({
         namespace: ns,
         body: render(project),
@@ -1042,7 +1107,7 @@ export async function reconcileProject(project: Project): Promise<void> {
         // Exists — skip (SSA would reset infra-managed annotations).
         // TODO: reconcile spec.rules on drift (INGRESS_CLASS, host pattern, port).
       } catch (e) {
-        if (isNotFound(e)) {
+        if (isNotFoundError(e)) {
           await networking.createNamespacedIngress({
             namespace: ns,
             body: renderIdeIngress(project),
@@ -1250,7 +1315,7 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
     await core.deleteNamespacedService({ name: svcName, namespace: ns });
     log(`${logPrefix} deleted code-server service ${svcName}`);
   } catch (e) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`${logPrefix} failed to delete service:`, (e as Error).message);
     }
   }
@@ -1261,7 +1326,7 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
     await apps.deleteNamespacedDeployment({ name: deployName, namespace: ns });
     log(`${logPrefix} deleted code-server deployment ${deployName}`);
   } catch (e) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`${logPrefix} failed to delete deployment:`, (e as Error).message);
     }
   }
@@ -1272,7 +1337,7 @@ export async function cleanupCodeServer(project: Project): Promise<void> {
     await networking.deleteNamespacedIngress({ name: ingName, namespace: ns });
     log(`${logPrefix} deleted code-server ingress ${ingName}`);
   } catch (e) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`${logPrefix} failed to delete ingress:`, (e as Error).message);
     }
   }
@@ -1292,7 +1357,7 @@ export async function cleanupMemoryService(project: Project): Promise<void> {
     await core.deleteNamespacedService({ name: svcName, namespace: ns });
     log(`${logPrefix} deleted memory-service service ${svcName}`);
   } catch (e) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`${logPrefix} failed to delete service:`, (e as Error).message);
     }
   }
@@ -1303,7 +1368,7 @@ export async function cleanupMemoryService(project: Project): Promise<void> {
     await apps.deleteNamespacedDeployment({ name: deployName, namespace: ns });
     log(`${logPrefix} deleted memory-service deployment ${deployName}`);
   } catch (e) {
-    if (!isNotFound(e)) {
+    if (!isNotFoundError(e)) {
       err(`${logPrefix} failed to delete deployment:`, (e as Error).message);
     }
   }

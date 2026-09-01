@@ -11,7 +11,7 @@
 
 import type { V1PersistentVolumeClaim } from '@kubernetes/client-node';
 import { API_GROUP_VERSION, KIND_PROJECT } from '@percussionist/api';
-import { core } from '@percussionist/kube';
+import { core, isConflictError, isNotFoundError } from '@percussionist/kube';
 import {
   DEFAULT_STORAGE_ACCESS_MODE,
   DEFAULT_STORAGE_CLASS,
@@ -59,9 +59,7 @@ export async function ensureDataPVC(opts: DataPVCOptions): Promise<V1PersistentV
     );
     return existing;
   } catch (err: unknown) {
-    const statusCode =
-      (err as { statusCode?: number }).statusCode ?? (err as { code?: number }).code;
-    if (statusCode !== 404) {
+    if (!isNotFoundError(err)) {
       throw err; // Unexpected error
     }
     // PVC doesn't exist, continue to create it
@@ -112,10 +110,8 @@ export async function ensureDataPVC(opts: DataPVCOptions): Promise<V1PersistentV
     console.log(`[pvc-helper] Data PVC ${namespace}/${pvcName} created successfully`);
     return created;
   } catch (err: unknown) {
-    const statusCode =
-      (err as { statusCode?: number }).statusCode ?? (err as { code?: number }).code;
     // If PVC was created by another reconcile loop concurrently, treat as success
-    if (statusCode === 409) {
+    if (isConflictError(err)) {
       console.log(`[pvc-helper] PVC ${namespace}/${pvcName} already exists (created concurrently)`);
       const existing = await coreApi.readNamespacedPersistentVolumeClaim({
         name: pvcName,

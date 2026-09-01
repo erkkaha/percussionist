@@ -310,6 +310,21 @@ export default function MetricsView() {
             </div>
           )}
 
+          {data && data.failures.length > 0 && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-amber-600">
+              <h2 className="text-caption-sm font-semibold mb-1">
+                {data.failures.length === 1
+                  ? 'One metrics endpoint is unavailable'
+                  : 'Metrics endpoints unavailable'}
+              </h2>
+              <p className="text-caption-xs">
+                {data.failures.join(' / ')} failed to load — showing{' '}
+                {data.failures.includes('nodes') ? 'pods' : 'nodes'} only. The metrics-server addon
+                may be degraded.
+              </p>
+            </div>
+          )}
+
           {isLoading && (
             <div className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

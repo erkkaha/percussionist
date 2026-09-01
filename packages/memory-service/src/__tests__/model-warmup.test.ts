@@ -192,6 +192,53 @@ describe('warmupModel — disabled', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Test: streamed pull error aborts warmup with the real message (A8)
+//
+// Ollama reports pull failures as `{"error": ...}` events inside the stream.
+// These used to be thrown inside the same try that guarded JSON.parse, so the
+// sibling "skip non-JSON line" catch swallowed them and warmup ground on to a
+// generic "stream ended without success status" — the real error was lost and
+// the pull never aborted.
+
+describe('warmupModel — streamed pull error aborts', () => {
+  it('propagates the Ollama event.error message', async () => {
+    const restore = withFetchMock((req) => {
+      if (req.url.includes('/api/tags')) {
+        return new Response(JSON.stringify({ models: [] }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (req.url.includes('/api/pull')) {
+        // A non-JSON line must be skipped WITHOUT swallowing the error event.
+        const stream = new Blob([
+          'not json at all\n',
+          '{"status":"pulling manifest"}\n',
+          '{"error":"model not found on registry"}\n',
+        ]).stream() as unknown as ReadableStream<Uint8Array>;
+        return new Response(stream, { headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response('not found', { status: 404 });
+    });
+
+    process.env.WARMUP_MAX_RETRIES = '0';
+    const mod = await import('../model-warmup.js');
+    if ('resetState' in mod) (mod as any).resetState();
+
+    try {
+      await mod.warmupModel();
+      expect(mod.isModelReady()).toBe(false);
+      const err = mod.getModelError();
+      // Before the fix this contained "pull stream ended without success
+      // status" — the specific Ollama error was swallowed.
+      expect(err).toContain('pull error: model not found on registry');
+    } finally {
+      delete process.env.WARMUP_MAX_RETRIES;
+      restore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Test: isModelReady / getModelError state accessors
 
 describe('state accessors', () => {

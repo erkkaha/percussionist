@@ -25,8 +25,8 @@ spec:
       # name: code
       # branch: main
       # remoteUrl: git@github.com:example/repo.git
-    # Optional overrides:
-    # image: codercom/code-server:4.96.4
+    # Optional overrides (default image: ghcr.io/erkkaha/percussionist/code-server:latest):
+    # image: ghcr.io/erkkaha/percussionist/code-server:latest
     # resources:
     #   requests: { cpu: "100m", memory: "256Mi" }
     #   limits: { memory: "512Mi" }

@@ -1,8 +1,11 @@
 // `beatctl ls` / `beatctl get` — read-only views of Run resources.
 
 import {
+  API_GROUP,
+  API_VERSION,
   DEFAULT_RUNNER_ENGINE,
   deriveEngine,
+  PLURAL_RUN,
   type Run,
   runnerDefaultsFor,
 } from '@percussionist/api';
@@ -33,34 +36,59 @@ export interface LsOpts {
 
 export async function runLs(opts: LsOpts): Promise<void> {
   const { custom } = loadKube();
-  const ns = opts.allNamespaces ? '' : (opts.namespace ?? DEFAULT_NAMESPACE);
+  const allNamespaces = opts.allNamespaces === true;
   let runs: Run[];
   try {
-    // all-namespaces path — list via empty namespace argument (the informer
-    // uses listForAllNamespaces under the hood but for a one-shot read we
-    // just loop). For simplicity we require a ns here; --all-namespaces is
-    // deferred to when it actually matters.
-    runs = await listRuns(custom, ns || DEFAULT_NAMESPACE);
+    if (allNamespaces) {
+      // Cluster-wide listing via listClusterCustomObject (an empty namespace
+      // argument to listNamespacedCustomObject is not valid). Previously the
+      // -A flag was accepted but silently fell back to the default namespace.
+      const res = (await custom.listClusterCustomObject({
+        group: API_GROUP,
+        version: API_VERSION,
+        plural: PLURAL_RUN,
+      })) as { items?: Run[] };
+      runs = res.items ?? [];
+    } else {
+      runs = await listRuns(custom, opts.namespace ?? DEFAULT_NAMESPACE);
+    }
   } catch (e) {
     fatal('list failed', e);
   }
 
   if (runs.length === 0) {
-    console.log(`No Runs in namespace ${ns || DEFAULT_NAMESPACE}.`);
+    console.log(
+      allNamespaces
+        ? 'No Runs in any namespace.'
+        : `No Runs in namespace ${opts.namespace ?? DEFAULT_NAMESPACE}.`,
+    );
     return;
   }
 
-  const rows: string[][] = [['NAME', 'PHASE', 'SESSION', 'TOK-IN', 'TOK-OUT', 'AGE']];
-  for (const r of runs) {
-    rows.push([
-      r.metadata.name,
-      r.status?.phase ?? '-',
-      r.status?.sessionID ?? '-',
-      String(r.status?.tokensIn ?? 0),
-      String(r.status?.tokensOut ?? 0),
-      age(r.metadata.creationTimestamp),
-    ]);
-  }
+  const rows: string[][] = allNamespaces
+    ? [
+        ['NAMESPACE', 'NAME', 'PHASE', 'SESSION', 'TOK-IN', 'TOK-OUT', 'AGE'],
+        ...runs.map((r) => [
+          r.metadata.namespace ?? '-',
+          r.metadata.name,
+          r.status?.phase ?? '-',
+          r.status?.sessionID ?? '-',
+          String(r.status?.tokensIn ?? 0),
+          String(r.status?.tokensOut ?? 0),
+          age(r.metadata.creationTimestamp),
+        ]),
+      ]
+    : [
+        ['NAME', 'PHASE', 'SESSION', 'TOK-IN', 'TOK-OUT', 'AGE'],
+        ...runs.map((r) => [
+          r.metadata.name,
+          r.status?.phase ?? '-',
+          r.status?.sessionID ?? '-',
+          String(r.status?.tokensIn ?? 0),
+          String(r.status?.tokensOut ?? 0),
+          age(r.metadata.creationTimestamp),
+        ]),
+      ];
   console.log(padCols(rows));
 }
 

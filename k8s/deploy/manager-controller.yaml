@@ -173,7 +173,7 @@ spec:
         # opencode-web sidecar — runs the agent session for decision-making
         # and interactive chat. The manager connects to it via localhost:4096.
         - name: opencode-web
-          image: ghcr.io/anomalyco/opencode:1.17.9
+          image: ghcr.io/anomalyco/opencode:1.18.21
           imagePullPolicy: IfNotPresent
           args: ["serve", "--hostname", "0.0.0.0", "--port", "4096"]
           env:

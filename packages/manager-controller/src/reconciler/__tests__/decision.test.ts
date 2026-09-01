@@ -35,7 +35,9 @@ function makeInput(
       review?: ReturnType<typeof makeRun>;
       merge?: ReturnType<typeof makeRun>;
       buildgen?: ReturnType<typeof makeRun>;
-      prState?: { state: 'open' | 'closed'; mergedAt: string | null };
+      prState?: { state: 'open' | 'closed'; mergedAt: string | null; authorLogin?: string };
+      prFeedbackRun?: ReturnType<typeof makeRun>;
+      prFeedback?: { count: number; newestCommentAt: string; preview: string };
     };
     manualActions?: {
       approved?: boolean;
@@ -496,12 +498,63 @@ describe('decide — awaiting-human', () => {
     (task.status as any).worker = {
       mergeRunName: 'merge-stale',
       mergeError: 'conflict detected',
+      prNumber: 42,
     };
     const result = decide(makeInput(task, { manualActions: { approved: true } }));
     expect(result.toPhase).toBe('awaiting-feature-merge');
     expect((result.statusPatch?.worker as any).mergeRunName).toBeNull();
     expect((result.statusPatch?.worker as any).mergeError).toBeNull();
+    expect((result.statusPatch?.worker as any).prNumber).toBeNull();
     expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(true);
+  });
+
+  it('awaiting-human + PLAN merge-retry approval → fresh PR-open run, not re-poll (loop regression)', () => {
+    // Bug 1: a closed-unmerged PR left worker.prNumber set; approving cleared
+    // mergeError but not prNumber, so the next cycle re-polled the dead PR and
+    // bounced straight back to awaiting-human — infinite approve loop.
+    const prProject = makeProject('test-project', { featureBranchingEnabled: true });
+    prProject.spec.flow = { ...prProject.spec.flow, integration: { mode: 'pr' } };
+    const prFlow = resolveFlow(prProject);
+    const task = makeTask('t1', 'test-project', { phase: 'awaiting-human', type: 'PLAN' });
+    (task.status as any).worker = {
+      mergeRunName: 'pr-open-stale',
+      mergeError: 'PR #42 was closed without merging',
+      prNumber: 42,
+    };
+    const approved = decide({
+      task,
+      project: prProject,
+      allTasks: [task],
+      observed: {},
+      manualActions: { approved: true },
+      flow: prFlow,
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(approved.toPhase).toBe('awaiting-feature-merge');
+    expect((approved.statusPatch?.worker as any).prNumber).toBeNull();
+
+    // Feed the patch semantics back: prNumber is now null and no merge run is
+    // active — the next cycle must schedule a fresh PR-open run, not poll.
+    (task.status as any).phase = 'awaiting-feature-merge';
+    (task.status as any).worker = {
+      mergeRunName: null,
+      mergeError: null,
+      prNumber: null,
+    };
+    const next = decide({
+      task,
+      project: prProject,
+      allTasks: [task],
+      observed: {},
+      manualActions: {},
+      flow: prFlow,
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(next.effects.some((e) => e.type === 'SchedulePrOpenRun')).toBe(true);
+    expect(next.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(false);
+    expect((next.statusPatch?.worker as any).mergeRunName).toBeDefined();
   });
 });
 
@@ -588,6 +641,96 @@ describe('decide — failed', () => {
       now,
     });
     expect(result.toPhase).toBeUndefined();
+  });
+
+  it('failed + approve PLAN + merge failure → awaiting-feature-merge (not awaiting-merge)', () => {
+    // Bug 2: a failed feature-branch merge on a PLAN task must be re-routed
+    // through the feature-merge gate (awaiting-feature-merge), which in PR
+    // mode opens a PR — never a direct buildMergeRun to the target.
+    const task = makeTask('t1', 'test-project', { phase: 'failed', type: 'PLAN' });
+    (task.status as any).worker = { mergeError: 'conflict', mergeRunName: 'merge-1' };
+    const result = decide(makeInput(task, { manualActions: { approved: true } }));
+    expect(result.toPhase).toBe('awaiting-feature-merge');
+    expect((result.statusPatch?.worker as any).mergeRunName).toBeNull();
+    expect((result.statusPatch?.worker as any).mergeError).toBeNull();
+    expect((result.statusPatch?.worker as any).prNumber).toBeNull();
+    expect(result.events[0]?.reason).toBe('MergeRetryApproved');
+    expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(true);
+  });
+
+  it('failed + approve PLAN + merge failure ignores capacity gate', () => {
+    // Mirror of the awaiting-human PLAN branch: awaiting-feature-merge is not
+    // an active/WIP phase, so the capacity gate must not block the approval.
+    const task = makeTask('t1', 'test-project', { phase: 'failed', type: 'PLAN' });
+    (task.status as any).worker = { mergeError: 'conflict', mergeRunName: 'merge-1' };
+    const result = decide(
+      makeInput(task, {
+        manualActions: { approved: true },
+        capacity: { activeCount: 2, maxParallel: 2 },
+      }),
+    );
+    expect(result.toPhase).toBe('awaiting-feature-merge');
+  });
+
+  it('failed + approve BUILD + merge failure → awaiting-merge (behavior preserved)', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'failed', type: 'BUILD' });
+    (task.status as any).worker = { mergeError: 'conflict', mergeRunName: 'merge-1' };
+    const result = decide(makeInput(task, { manualActions: { approved: true } }));
+    expect(result.toPhase).toBe('awaiting-merge');
+    expect((result.statusPatch?.worker as any).mergeRunName).toBeNull();
+    expect((result.statusPatch?.worker as any).mergeError).toBeNull();
+    expect(result.events[0]?.reason).toBe('MergeRetryApproved');
+  });
+
+  it('failed + approve BUILD + merge failure + no capacity → no-op (gate kept)', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'failed', type: 'BUILD' });
+    (task.status as any).worker = { mergeError: 'conflict', mergeRunName: 'merge-1' };
+    const result = decide(
+      makeInput(task, {
+        manualActions: { approved: true },
+        capacity: { activeCount: 2, maxParallel: 2 },
+      }),
+    );
+    expect(result.toPhase).toBeUndefined();
+  });
+
+  it('failed + approve PLAN + merge failure + PR mode → follow-up schedules PR-open run, never merge run', () => {
+    const prProject = makeProject('test-project', { featureBranchingEnabled: true });
+    prProject.spec.flow = { ...prProject.spec.flow, integration: { mode: 'pr' } };
+    const prFlow = resolveFlow(prProject);
+    const task = makeTask('t1', 'test-project', { phase: 'failed', type: 'PLAN' });
+    (task.status as any).worker = {
+      mergeError: 'branch protection rejected',
+      mergeRunName: 'merge-1',
+    };
+    const approved = decide({
+      task,
+      project: prProject,
+      allTasks: [task],
+      observed: {},
+      manualActions: { approved: true },
+      flow: prFlow,
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(approved.toPhase).toBe('awaiting-feature-merge');
+
+    // Next reconcile cycle: prNumber/mergeRunName cleared → schedule a fresh
+    // PR-open run, never a direct buildMergeRun to the target.
+    (task.status as any).phase = 'awaiting-feature-merge';
+    (task.status as any).worker = { mergeRunName: null, mergeError: null, prNumber: null };
+    const next = decide({
+      task,
+      project: prProject,
+      allTasks: [task],
+      observed: {},
+      manualActions: {},
+      flow: prFlow,
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+    expect(next.effects.some((e) => e.type === 'SchedulePrOpenRun')).toBe(true);
+    expect(next.effects.some((e) => e.type === 'ScheduleMergeRun')).toBe(false);
   });
 });
 
@@ -1359,6 +1502,9 @@ describe('decide — awaiting-feature-merge', () => {
     );
     expect(result.toPhase).toBe('awaiting-human');
     expect((result.statusPatch?.worker as any).mergeError).toContain('closed without merging');
+    // The dead PR number must be cleared so a later approval schedules a fresh
+    // PR-open run instead of re-polling the closed PR (infinite bounce loop).
+    expect((result.statusPatch?.worker as any).prNumber).toBeNull();
     expect(result.events[0]?.reason).toBe('PullRequestClosedWithoutMerge');
   });
 
@@ -1384,6 +1530,157 @@ describe('decide — awaiting-feature-merge', () => {
     });
     (task.status as any).worker = { prNumber: 42 };
     const result = decide(makeInput(task, { observed: {} }));
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects).toEqual([]);
+  });
+});
+
+describe('decide — PR feedback loop', () => {
+  function makePrTask() {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { prNumber: 42 };
+    return task;
+  }
+
+  it('open PR + new comments → schedules eval run and advances watermark', () => {
+    const task = makePrTask();
+    const result = decide(
+      makeInput(task, {
+        observed: {
+          prState: { state: 'open', mergedAt: null },
+          prFeedback: {
+            count: 2,
+            newestCommentAt: '2026-05-28T10:00:00.000Z',
+            preview: 'alice: please rename this',
+          },
+        },
+      }),
+    );
+    expect(result.toPhase).toBeUndefined();
+    const evalEffect = result.effects.find((e) => e.type === 'SchedulePrFeedbackEvalRun') as any;
+    expect(evalEffect).toBeDefined();
+    expect(evalEffect.prNumber).toBe(42);
+    const worker = result.statusPatch?.worker as any;
+    expect(worker.prFeedbackRunName).toBe(evalEffect.runName);
+    expect(worker.prFeedbackLastCommentAt).toBe('2026-05-28T10:00:00.000Z');
+    expect(result.events[0]?.reason).toBe('PrFeedbackEvalScheduled');
+  });
+
+  it('open PR + comments while eval already in flight → progresses the run, not a second round', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    const result = decide(
+      makeInput(task, {
+        observed: {
+          prState: { state: 'open', mergedAt: null },
+          prFeedbackRun: makeRun('preval-1', { phase: 'Running' }),
+        },
+      }),
+    );
+    expect(result.effects).toEqual([]);
+    expect(result.toPhase).toBeUndefined();
+  });
+
+  it('eval verdict approve → clears run name and resumes polling', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    const evalRun = makeRun('preval-1', { phase: 'Succeeded' });
+    (evalRun.metadata as any).annotations = {
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'approve',
+        diagnosis: 'questions answered on the PR',
+      }),
+    };
+    const result = decide(
+      makeInput(task, {
+        observed: { prState: { state: 'open', mergedAt: null }, prFeedbackRun: evalRun },
+      }),
+    );
+    expect(result.toPhase).toBeUndefined();
+    expect((result.statusPatch?.worker as any).prFeedbackRunName).toBeNull();
+    expect(result.effects.some((e) => e.type === 'CleanupWorktree')).toBe(true);
+    expect(result.events[0]?.reason).toBe('PrFeedbackNoChangesNeeded');
+  });
+
+  it('eval verdict request_changes → follow-up BUILD child + awaiting-children', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    (task.status as any).worker.prFeedbackLastCommentAt = '2026-05-28T10:00:00.000Z';
+    (task.status as any).worker.createdBuildTaskRefs = ['test-project-build-old111'];
+    const evalRun = makeRun('preval-1', { phase: 'Succeeded' });
+    (evalRun.metadata as any).annotations = {
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'request_changes',
+        diagnosis: 'reviewer asked for a rename',
+        feedback: '1. alice: rename foo to bar in src/x.ts',
+      }),
+    };
+    const result = decide(
+      makeInput(task, {
+        observed: { prState: { state: 'open', mergedAt: null }, prFeedbackRun: evalRun },
+      }),
+    );
+    expect(result.toPhase).toBe('awaiting-children');
+    const create = result.effects.find((e) => e.type === 'CreatePrFollowUpTask') as any;
+    expect(create).toBeDefined();
+    expect(create.planTaskName).toBe('t1');
+    expect(create.title).toContain('PR #42');
+    expect(create.description).toContain('rename foo to bar');
+    const worker = result.statusPatch?.worker as any;
+    expect(worker.prFeedbackRunName).toBeNull();
+    expect(worker.createdBuildTaskRefs).toEqual(['test-project-build-old111', create.taskName]);
+    expect(result.events[0]?.reason).toBe('PrFeedbackChangesRequested');
+  });
+
+  it('eval run failed → clears run name and resumes polling (round consumed)', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    const evalRun = makeRun('preval-1', { phase: 'Failed' });
+    const result = decide(
+      makeInput(task, {
+        observed: { prState: { state: 'open', mergedAt: null }, prFeedbackRun: evalRun },
+      }),
+    );
+    expect(result.toPhase).toBeUndefined();
+    expect((result.statusPatch?.worker as any).prFeedbackRunName).toBeNull();
+    expect(result.events[0]?.reason).toBe('PrFeedbackEvalFailed');
+  });
+
+  it('eval run disappeared → clears run name', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    const result = decide(
+      makeInput(task, { observed: { prState: { state: 'open', mergedAt: null } } }),
+    );
+    expect((result.statusPatch?.worker as any).prFeedbackRunName).toBeNull();
+    expect(result.events[0]?.reason).toBe('PrFeedbackRunMissing');
+  });
+
+  it('PR merged while eval in flight → done wins, eval run deleted', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    const result = decide(
+      makeInput(task, {
+        observed: {
+          prState: { state: 'closed', mergedAt: '2026-05-29T12:00:00.000Z' },
+          prFeedbackRun: makeRun('preval-1', { phase: 'Running' }),
+        },
+      }),
+    );
+    expect(result.toPhase).toBe('done');
+    const del = result.effects.find((e) => e.type === 'DeleteRun') as any;
+    expect(del?.name).toBe('preval-1');
+    expect((result.statusPatch?.worker as any).prFeedbackRunName).toBeNull();
+  });
+
+  it('open PR + no new comments → keep polling', () => {
+    const task = makePrTask();
+    const result = decide(
+      makeInput(task, { observed: { prState: { state: 'open', mergedAt: null } } }),
+    );
     expect(result.toPhase).toBeUndefined();
     expect(result.effects).toEqual([]);
   });
@@ -1932,7 +2229,7 @@ describe('decide — invalid transition rejection', () => {
 });
 
 describe('decide — waiting-for-input edge cases', () => {
-  it('waiting + answer but run not resumed → no-op', () => {
+  it('waiting + answer but run still WaitingForInput → deliver answer, keep annotation, no transition', () => {
     const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'PLAN' });
     const result = decide(
       makeInput(task, {
@@ -1940,8 +2237,112 @@ describe('decide — waiting-for-input edge cases', () => {
         manualActions: { answer: 'yes' },
       }),
     );
-    // Run is still WaitingForInput, not Running — should stay put.
+    // Run is still WaitingForInput, not Running — no phase transition.
     expect(result.toPhase).toBeUndefined();
+    // The answer is delivered to the live session and the annotation is kept
+    // so the next reconcile (after the run flips to Running) consumes it.
+    expect(result.effects).toEqual([{ type: 'DeliverAnswer', runName: 'run-1', text: 'yes' }]);
+    expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(false);
+  });
+
+  it('waiting + abandon + run WaitingForInput → done with abandoned worker', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = decide(
+      makeInput(task, {
+        observed: { worker: makeRun('run-1', { phase: 'WaitingForInput' }) },
+        manualActions: { abandon: true },
+      }),
+    );
+    expect(result.toPhase).toBe('done');
+    expect((result.statusPatch?.worker as any).status).toBe('Succeeded');
+    expect((result.statusPatch?.worker as any).completedAt).toBe(now);
+    expect((result.statusPatch?.worker as any).abandoned).toBe(true);
+    const clear = result.effects.find((e) => e.type === 'ClearTaskAnnotations') as
+      | {
+          keys: string[];
+        }
+      | undefined;
+    expect(clear?.keys).toContain('percussionist.dev/action-abandon');
+    expect(result.events[0]?.reason).toBe('TaskAbandoned');
+  });
+
+  it('waiting + requestChanges + reworkFeedback → rework-requested with capped feedback and retryCount + 1', () => {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'waiting-for-input',
+      type: 'BUILD',
+      retryCount: 2,
+    });
+    const result = decide(
+      makeInput(task, {
+        observed: { worker: makeRun('run-1', { phase: 'WaitingForInput' }) },
+        manualActions: { requestChanges: true, reworkFeedback: 'please redo' },
+      }),
+    );
+    expect(result.toPhase).toBe('rework-requested');
+    expect((result.statusPatch?.worker as any).reviewFeedback).toBe('please redo');
+    expect((result.statusPatch?.worker as any).retryCount).toBe(3);
+    expect((result.statusPatch?.worker as any).aiReworkCount).toBe(0);
+    const clear = result.effects.find((e) => e.type === 'ClearTaskAnnotations') as
+      | {
+          keys: string[];
+        }
+      | undefined;
+    expect(clear?.keys).toEqual(
+      expect.arrayContaining([
+        'percussionist.dev/action-request-changes',
+        'percussionist.dev/action-rework-feedback',
+      ]),
+    );
+    expect(result.events[0]?.reason).toBe('HumanRequestedChanges');
+  });
+
+  it('waiting + requestChanges without feedback → default feedback text', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'BUILD' });
+    const result = decide(
+      makeInput(task, {
+        observed: { worker: makeRun('run-1', { phase: 'WaitingForInput' }) },
+        manualActions: { requestChanges: true },
+      }),
+    );
+    expect(result.toPhase).toBe('rework-requested');
+    expect((result.statusPatch?.worker as any).reviewFeedback).toBe('No feedback provided');
+  });
+
+  it('waiting + answer + run Running → running with DeliverAnswer + ClearTaskAnnotations', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'PLAN' });
+    const result = decide(
+      makeInput(task, {
+        observed: { worker: makeRun('run-1', { phase: 'Running' }) },
+        manualActions: { answer: 'yes' },
+      }),
+    );
+    expect(result.toPhase).toBe('running');
+    expect(result.effects).toEqual([
+      { type: 'DeliverAnswer', runName: 'run-1', text: 'yes' },
+      { type: 'ClearTaskAnnotations', keys: ['percussionist.dev/action-answer'] },
+    ]);
+    expect(result.events[0]?.reason).toBe('InputAnswered');
+  });
+
+  it('abandon takes precedence over answer when both are set', () => {
+    const task = makeTask('t1', 'test-project', { phase: 'waiting-for-input', type: 'PLAN' });
+    const result = decide(
+      makeInput(task, {
+        observed: { worker: makeRun('run-1', { phase: 'WaitingForInput' }) },
+        manualActions: { abandon: true, answer: 'yes' },
+      }),
+    );
+    expect(result.toPhase).toBe('done');
+    expect((result.statusPatch?.worker as any).abandoned).toBe(true);
+    // The consumed keys include the answer annotation too.
+    const clear = result.effects.find((e) => e.type === 'ClearTaskAnnotations') as
+      | {
+          keys: string[];
+        }
+      | undefined;
+    expect(clear?.keys).toContain('percussionist.dev/action-abandon');
+    expect(clear?.keys).toContain('percussionist.dev/action-answer');
+    expect(result.effects.some((e) => e.type === 'DeliverAnswer')).toBe(false);
   });
 });
 

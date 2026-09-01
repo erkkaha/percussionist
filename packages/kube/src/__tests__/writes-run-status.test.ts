@@ -1,9 +1,10 @@
-// writes-run-status.test.ts — regression tests for the 409 retry/backoff loops
-// in patchRunStatus and patchRunAnnotations.
+// writes-run-status.test.ts — regression tests for the retry/backoff loops in
+// patchRunStatus and patchRunAnnotations.
 //
-// Both helpers retry a conflict (409) up to maxRetries+1 total attempts with an
-// exponential backoff (100ms, 200ms, 400ms …) injected via a `sleep` seam. Any
-// other error — including 429 — is thrown immediately without retrying.
+// Both helpers retry transient failures up to maxRetries+1 total attempts with
+// an exponential backoff (100ms, 200ms, 400ms …) injected via a `sleep` seam.
+// Retryable: 408/409/429, any 5xx, and network errors with no statusCode.
+// Deterministic 4xx errors (400/401/403/404/422) throw immediately.
 
 import { describe, expect, it } from 'bun:test';
 import { RunPhase } from '@percussionist/api';
@@ -11,6 +12,8 @@ import { patchRunAnnotations, patchRunStatus } from '../index.js';
 import {
   conflict,
   installFakeKube,
+  kubeError,
+  networkError,
   notFound,
   serverError,
   tooManyRequests,
@@ -87,7 +90,7 @@ describe('patchRunStatus', () => {
     }
   });
 
-  it('throws immediately on a non-409 error (404) without retrying or sleeping', async () => {
+  it('throws immediately on a non-retryable 4xx error (404) without retrying or sleeping', async () => {
     const fake = installFakeKube({ patchNamespacedCustomObjectStatus: { error: notFound() } });
     const { sleep, delays } = recordingSleep();
     try {
@@ -101,21 +104,43 @@ describe('patchRunStatus', () => {
     }
   });
 
-  it('throws immediately on a 5xx error without retrying', async () => {
-    const fake = installFakeKube({ patchNamespacedCustomObjectStatus: { error: serverError() } });
+  it('retries a 5xx and succeeds on the 2nd attempt with one backoff delay', async () => {
+    const fake = installFakeKube({
+      patchNamespacedCustomObjectStatus: [
+        { error: serverError('transient API server hiccup') },
+        { value: { status: { phase: RunPhase.Running } } },
+      ],
+    });
     const { sleep, delays } = recordingSleep();
     try {
-      await expect(
-        patchRunStatus(RUN, { phase: RunPhase.Running }, NS, 3, sleep),
-      ).rejects.toMatchObject({ statusCode: 500 });
-      expect(fake.calls).toHaveLength(1);
-      expect(delays).toEqual([]);
+      const run = await patchRunStatus(RUN, { phase: RunPhase.Running }, NS, 3, sleep);
+      expect(run.status?.phase).toBe(RunPhase.Running);
+      expect(fake.calls).toHaveLength(2);
+      expect(delays).toEqual([100]);
     } finally {
       fake.restore();
     }
   });
 
-  it('does not retry on 429 — rate limits are thrown immediately (pinned behavior)', async () => {
+  it('retries 429 with backoff and succeeds on the 2nd attempt', async () => {
+    const fake = installFakeKube({
+      patchNamespacedCustomObjectStatus: [
+        { error: tooManyRequests() },
+        { value: { status: { phase: RunPhase.Running } } },
+      ],
+    });
+    const { sleep, delays } = recordingSleep();
+    try {
+      const run = await patchRunStatus(RUN, { phase: RunPhase.Running }, NS, 3, sleep);
+      expect(run.status?.phase).toBe(RunPhase.Running);
+      expect(fake.calls).toHaveLength(2);
+      expect(delays).toEqual([100]);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('gives up after maxRetries+1 429 responses and throws', async () => {
     const fake = installFakeKube({
       patchNamespacedCustomObjectStatus: { error: tooManyRequests() },
     });
@@ -124,11 +149,63 @@ describe('patchRunStatus', () => {
       await expect(
         patchRunStatus(RUN, { phase: RunPhase.Running }, NS, 3, sleep),
       ).rejects.toMatchObject({ statusCode: 429 });
-      // A 429 is not a conflict: no retry loop, no backoff — single attempt.
-      expect(fake.calls).toHaveLength(1);
-      expect(delays).toEqual([]);
+      // maxRetries=3 → attempts 0..3 = 4 calls, all rate-limited, then throw.
+      expect(fake.calls).toHaveLength(4);
+      expect(delays).toEqual([100, 200, 400]);
     } finally {
       fake.restore();
+    }
+  });
+
+  it('retries a network error (no statusCode) and succeeds on the 2nd attempt', async () => {
+    const fake = installFakeKube({
+      patchNamespacedCustomObjectStatus: [
+        { error: networkError('ECONNRESET') },
+        { value: { status: { phase: RunPhase.Running } } },
+      ],
+    });
+    const { sleep, delays } = recordingSleep();
+    try {
+      const run = await patchRunStatus(RUN, { phase: RunPhase.Running }, NS, 3, sleep);
+      expect(run.status?.phase).toBe(RunPhase.Running);
+      expect(fake.calls).toHaveLength(2);
+      expect(delays).toEqual([100]);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('gives up after maxRetries+1 network errors and throws', async () => {
+    const fake = installFakeKube({
+      patchNamespacedCustomObjectStatus: { error: networkError('socket hang up') },
+    });
+    const { sleep, delays } = recordingSleep();
+    try {
+      await expect(patchRunStatus(RUN, { phase: RunPhase.Running }, NS, 3, sleep)).rejects.toThrow(
+        /socket hang up/,
+      );
+      expect(fake.calls).toHaveLength(4);
+      expect(delays).toEqual([100, 200, 400]);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('throws immediately on non-retryable 4xx (401/403/422) with a single call', async () => {
+    for (const status of [401, 403, 422]) {
+      const fake = installFakeKube({
+        patchNamespacedCustomObjectStatus: { error: kubeError(status) },
+      });
+      const { sleep, delays } = recordingSleep();
+      try {
+        await expect(
+          patchRunStatus(RUN, { phase: RunPhase.Running }, NS, 3, sleep),
+        ).rejects.toMatchObject({ statusCode: status });
+        expect(fake.calls).toHaveLength(1);
+        expect(delays).toEqual([]);
+      } finally {
+        fake.restore();
+      }
     }
   });
 });
@@ -175,13 +252,49 @@ describe('patchRunAnnotations', () => {
     }
   });
 
-  it('throws immediately on a non-409 error without sleeping', async () => {
-    const fake = installFakeKube({ patchNamespacedCustomObject: { error: serverError() } });
+  it('retries a transient 5xx and succeeds on the 2nd attempt', async () => {
+    const fake = installFakeKube({
+      patchNamespacedCustomObject: [
+        { error: serverError() },
+        { value: { metadata: { annotations: { verdict: 'merged' } } } },
+      ],
+    });
+    const { sleep, delays } = recordingSleep();
+    try {
+      const run = await patchRunAnnotations(RUN, { verdict: 'merged' }, NS, 3, sleep);
+      expect(run.metadata?.annotations?.verdict).toBe('merged');
+      expect(fake.calls).toHaveLength(2);
+      expect(delays).toEqual([100]);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('retries a network error and succeeds on the 2nd attempt', async () => {
+    const fake = installFakeKube({
+      patchNamespacedCustomObject: [
+        { error: networkError('ECONNREFUSED') },
+        { value: { metadata: { annotations: { verdict: 'merged' } } } },
+      ],
+    });
+    const { sleep, delays } = recordingSleep();
+    try {
+      const run = await patchRunAnnotations(RUN, { verdict: 'merged' }, NS, 3, sleep);
+      expect(run.metadata?.annotations?.verdict).toBe('merged');
+      expect(fake.calls).toHaveLength(2);
+      expect(delays).toEqual([100]);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('throws immediately on a non-retryable 4xx without sleeping', async () => {
+    const fake = installFakeKube({ patchNamespacedCustomObject: { error: kubeError(422) } });
     const { sleep, delays } = recordingSleep();
     try {
       await expect(
         patchRunAnnotations(RUN, { verdict: 'merged' }, NS, 3, sleep),
-      ).rejects.toMatchObject({ statusCode: 500 });
+      ).rejects.toMatchObject({ statusCode: 422 });
       expect(fake.calls).toHaveLength(1);
       expect(delays).toEqual([]);
     } finally {

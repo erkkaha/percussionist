@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { FindingCategory, FindingSchema, FindingSeverity, FindingStatus } from '../index.js';
+import { FindingSchema, FindingStatus } from '../index.js';
 
 const baseFinding = {
   id: 'f1',
@@ -126,26 +126,6 @@ describe('FindingSchema', () => {
       source: { project: 'test-project' },
     });
     expect(result.success).toBe(true);
-  });
-});
-
-describe('FindingSeverity', () => {
-  it('accepts valid enum values', () => {
-    expect(FindingSeverity.enum.low).toBe('low');
-    expect(FindingSeverity.enum.medium).toBe('medium');
-    expect(FindingSeverity.enum.high).toBe('high');
-    expect(FindingSeverity.enum.critical).toBe('critical');
-  });
-});
-
-describe('FindingCategory', () => {
-  it('accepts valid enum values', () => {
-    expect(FindingCategory.enum.bug).toBe('bug');
-    expect(FindingCategory.enum.security).toBe('security');
-    expect(FindingCategory.enum.performance).toBe('performance');
-    expect(FindingCategory.enum.debt).toBe('debt');
-    expect(FindingCategory.enum.docs).toBe('docs');
-    expect(FindingCategory.enum.other).toBe('other');
   });
 });
 

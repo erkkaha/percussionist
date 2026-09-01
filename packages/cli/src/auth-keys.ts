@@ -95,7 +95,24 @@ export interface AuthKeyRotateOpts {
   namespace?: string;
 }
 
+/**
+ * Components permitted for `auth key rotate` — mirrors the web server's
+ * COMPONENTS table (operator + manager standing keys). The component is
+ * interpolated into both the web API path AND the printed kubectl rollout
+ * command, so arbitrary input must be rejected rather than echoed (E item).
+ */
+const ROTATE_COMPONENT_WHITELIST = ['operator', 'manager'];
+
+export function assertRotatableComponent(component: string): void {
+  if (!ROTATE_COMPONENT_WHITELIST.includes(component)) {
+    throw new Error(
+      `unknown component '${component}'. Known: ${ROTATE_COMPONENT_WHITELIST.join(', ')}`,
+    );
+  }
+}
+
 export async function runAuthKeyRotate(component: string, opts: AuthKeyRotateOpts): Promise<void> {
+  assertRotatableComponent(component);
   await withWebApi(opts.namespace, async (baseUrl) => {
     try {
       const body = await webRequest<{ secret: string; message: string }>(
@@ -118,16 +135,22 @@ export async function runAuthKeyRotate(component: string, opts: AuthKeyRotateOpt
 // ---------------------------------------------------------------------------
 // Secret plumbing for the values web reads at startup
 
-async function patchWebAuthSecret(
+// Exported for unit tests (create-vs-replace / key-preservation semantics are
+// exercised with an injected fake CoreV1Api).
+export async function patchWebAuthSecret(
   namespace: string,
   data: Record<string, string>,
   dryRun: boolean,
+  coreOverride?: import('@kubernetes/client-node').CoreV1Api,
+  removeKeys: string[] = [],
 ): Promise<void> {
-  const { core } = loadKube();
+  const core = coreOverride ?? (await loadKube()).core;
 
   if (dryRun) {
+    const setKeys = Object.keys(data);
+    const removalMessages = removeKeys.map((k) => `-${k}`);
     console.error(
-      `--dry-run: would set ${Object.keys(data).join(', ')} on Secret "${WEB_AUTH_SECRET}" in ns "${namespace}"`,
+      `--dry-run: would set ${[...setKeys, ...removalMessages].join(', ')} on Secret "${WEB_AUTH_SECRET}" in ns "${namespace}"`,
     );
     return;
   }
@@ -139,12 +162,26 @@ async function patchWebAuthSecret(
     existing = null;
   }
 
+  // Enabling on a Secret that doesn't exist yet is a no-op — there's nothing
+  // to clear, and we must not create an empty Secret. Point the user at set.
+  if (existing === null && Object.keys(data).length === 0) {
+    console.error('beatctl: no web-auth Secret found. Set a token first with:\n');
+    console.error('  beatctl auth web-token set <token>');
+    return;
+  }
+
+  // Carry forward every existing key we're not explicitly removing, then
+  // overlay the keys we were asked to set (stringData wins for overlaps).
+  const merged: Record<string, string> = { ...(existing?.data ?? {}) };
+  for (const key of removeKeys) {
+    delete merged[key];
+  }
+
   const body: V1Secret = {
     apiVersion: 'v1',
     kind: 'Secret',
     metadata: { name: WEB_AUTH_SECRET, namespace },
-    // Preserve keys we're not touching (token, disabled, …).
-    data: existing?.data ?? {},
+    data: merged,
     stringData: data,
   };
 

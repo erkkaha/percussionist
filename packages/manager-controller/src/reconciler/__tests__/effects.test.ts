@@ -57,6 +57,8 @@ let spawnWorktreeCleanupPodSpy: ReturnType<typeof spyOn>;
 let spawnTaskWorktreeCleanupPodSpy: ReturnType<typeof spyOn>;
 let listRunsSpy: ReturnType<typeof spyOn>;
 let summarizeSessionSpy: ReturnType<typeof spyOn>;
+let fetchSessionMessagesSpy: ReturnType<typeof spyOn>;
+let postSessionMessageSpy: ReturnType<typeof spyOn>;
 
 const mockRun = makeRun('mock-run') as Run;
 
@@ -97,6 +99,10 @@ beforeEach(() => {
   summarizeSessionSpy = spyOn(sessionSummarizer, 'summarizeSession').mockResolvedValue(
     undefined as any,
   );
+
+  // answer delivery
+  fetchSessionMessagesSpy = spyOn(kube, 'fetchSessionMessages').mockResolvedValue([]);
+  postSessionMessageSpy = spyOn(kube, 'postSessionMessage').mockResolvedValue(undefined as any);
 });
 
 afterEach(() => {
@@ -117,6 +123,8 @@ afterEach(() => {
   spawnWorktreeCleanupPodSpy.mockRestore();
   spawnTaskWorktreeCleanupPodSpy.mockRestore();
   summarizeSessionSpy.mockRestore();
+  fetchSessionMessagesSpy.mockRestore();
+  postSessionMessageSpy.mockRestore();
 });
 
 // ===========================================================================
@@ -718,6 +726,91 @@ describe('executeEffects — SummarizeSession', () => {
   });
 });
 
+describe('executeEffects — DeliverAnswer', () => {
+  const answerRun = makeRun('answer-run', {
+    phase: 'WaitingForInput',
+    serviceName: 'answer-svc',
+    sessionID: 'sess-1',
+  }) as Run;
+  const effect: ReconcileEffect = { type: 'DeliverAnswer', runName: 'answer-run', text: 'yes' };
+
+  it('posts the answer when the session tail has no matching user message', async () => {
+    getRunSpy.mockResolvedValue(answerRun);
+    fetchSessionMessagesSpy.mockResolvedValue([
+      { info: { role: 'user' }, parts: [{ type: 'text', text: 'original prompt' }] },
+      { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'working...' }] },
+    ]);
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(fetchSessionMessagesSpy).toHaveBeenCalledWith('answer-svc', 'sess-1', namespace);
+    expect(postSessionMessageSpy).toHaveBeenCalledWith('answer-svc', 'sess-1', 'yes', namespace);
+  });
+
+  it('skips the post when the last user message text already equals the answer', async () => {
+    getRunSpy.mockResolvedValue(answerRun);
+    fetchSessionMessagesSpy.mockResolvedValue([
+      { info: { role: 'user' }, parts: [{ type: 'text', text: 'original prompt' }] },
+      { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'working...' }] },
+      { info: { role: 'user' }, parts: [{ type: 'text', text: 'yes' }] },
+    ]);
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(fetchSessionMessagesSpy).toHaveBeenCalledWith('answer-svc', 'sess-1', namespace);
+    expect(postSessionMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('dedupes with a trimmed comparison (whitespace drift)', async () => {
+    getRunSpy.mockResolvedValue(answerRun);
+    fetchSessionMessagesSpy.mockResolvedValue([
+      { info: { role: 'user' }, parts: [{ type: 'text', text: '  yes  \n' }] },
+    ]);
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(postSessionMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('run without serviceName/sessionID → applied, no throw, no post', async () => {
+    // Default mockRun has no serviceName/sessionID.
+    getRunSpy.mockResolvedValue(mockRun);
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(result.effectsApplied).toEqual(['DeliverAnswer']);
+    expect(fetchSessionMessagesSpy).not.toHaveBeenCalled();
+    expect(postSessionMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('getRun 404 → applied (non-fatal)', async () => {
+    const notFound = new Error('not found');
+    (notFound as any).statusCode = 404;
+    getRunSpy.mockRejectedValue(notFound);
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(result.effectsApplied).toEqual(['DeliverAnswer']);
+    expect(postSessionMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('postSessionMessage failure → applied (non-fatal)', async () => {
+    getRunSpy.mockResolvedValue(answerRun);
+    fetchSessionMessagesSpy.mockResolvedValue([]);
+    postSessionMessageSpy.mockRejectedValue(new Error('service unreachable'));
+
+    const result = await call(testTask, undefined, [effect]);
+
+    expect(result.applied).toBe(true);
+    expect(result.effectsApplied).toEqual(['DeliverAnswer']);
+  });
+});
+
 describe('executeEffects — CreateTask', () => {
   const childTask = makeTask('child-task', 'test-project');
   const effect: ReconcileEffect = { type: 'CreateTask', task: childTask as Task };
@@ -858,5 +951,119 @@ describe('executeEffects — concurrent modification', () => {
     patchTaskStatusSpy.mockRejectedValue(boom);
 
     await expect(call(testTask, 'scheduled')).rejects.toThrow('apiserver exploded');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lost-intent race: the action-approval annotation must be cleared ONLY AFTER
+// a successful status patch. If the status write fails (conflict) or aborts
+// (phase guard trip), the annotation must remain on the Task so the next
+// reconcile re-consumes it — never silently lost.
+//
+// These exercise the decision-shaped shape used by DecideAwaitingHuman:
+// toPhase 'awaiting-merge' + a statusPatch + a ClearTaskAnnotations effect for
+// percussionist.dev/action-approved. The decision originates from a task in
+// awaiting-human (pending → awaiting-merge is not a valid transition).
+// ---------------------------------------------------------------------------
+
+describe('executeEffects — annotation clear ordering', () => {
+  const APPROVED = 'percussionist.dev/action-approved';
+  const awaitingHumanTask = makeTask('test-task', 'test-project', { phase: 'awaiting-human' });
+  // The re-fetch/re-read getTask calls need to agree with the passed task so
+  // fromPhase/currentPhase stay 'awaiting-human' and the transition validates.
+  awaitingHumanTask.metadata.resourceVersion = '1000';
+
+  const clearEffect: ReconcileEffect = {
+    type: 'ClearTaskAnnotations',
+    keys: [APPROVED],
+  };
+
+  function withAwaitingHumanReReads() {
+    getTaskSpy.mockResolvedValue(awaitingHumanTask);
+  }
+
+  it('status patch 409 ⇒ annotation preserved (not cleared)', async () => {
+    withAwaitingHumanReReads();
+    const conflict = new Error('the object has been modified');
+    (conflict as unknown as { statusCode: number }).statusCode = 409;
+    patchTaskStatusSpy.mockRejectedValue(conflict);
+
+    const result = await call(awaitingHumanTask, 'awaiting-merge', [clearEffect], {
+      worker: { runName: 'r1' },
+    });
+
+    expect(result.applied).toBe(false);
+    expect(result.error).toMatch(/changed concurrently/);
+    // Critical: the approval annotation must survive the conflict so the next
+    // reconcile re-consumes it. The clear (patchTask) must never be called.
+    expect(patchTaskSpy).not.toHaveBeenCalled();
+  });
+
+  it('status patch succeeds ⇒ annotation cleared after the status write', async () => {
+    withAwaitingHumanReReads();
+    const updated = makeTask('test-task', 'test-project', { phase: 'awaiting-merge' });
+    updated.metadata.resourceVersion = '1001';
+    patchTaskStatusSpy.mockResolvedValue(updated as any);
+
+    const result = await call(awaitingHumanTask, 'awaiting-merge', [clearEffect], {
+      worker: { runName: 'r1' },
+    });
+
+    expect(result.applied).toBe(true);
+    // The clear carries the post-status resource version so it is conditional on
+    // the write we just made (avoiding a spurious self-409).
+    expect(patchTaskSpy).toHaveBeenCalledWith(
+      'test-task',
+      {
+        metadata: {
+          name: 'test-task',
+          resourceVersion: '1001',
+          annotations: { 'percussionist.dev/action-approved': null },
+        },
+      },
+      namespace,
+    );
+    // Ordering: the annotation clear must run AFTER the status patch.
+    const statusOrder = patchTaskStatusSpy.mock.invocationCallOrder[0];
+    const clearOrder = patchTaskSpy.mock.invocationCallOrder[0];
+    expect(statusOrder).toBeLessThan(clearOrder);
+  });
+
+  it('phase guard trip ⇒ annotation preserved (not cleared)', async () => {
+    // First getTask is the re-fetch; the second is the re-read before the write.
+    const movedTask = makeTask('test-task', 'test-project', { phase: 'failed' });
+    movedTask.metadata.resourceVersion = '1001';
+    getTaskSpy.mockResolvedValueOnce(awaitingHumanTask).mockResolvedValueOnce(movedTask);
+
+    const result = await call(awaitingHumanTask, 'awaiting-merge', [clearEffect], {
+      worker: { runName: 'r1' },
+    });
+
+    expect(result.applied).toBe(false);
+    expect(result.error).toMatch(/moved to failed while effects were running/);
+    // The phase guard aborts before the status write, so the annotation clear
+    // must never run and the approval intent is preserved.
+    expect(patchTaskStatusSpy).not.toHaveBeenCalled();
+    expect(patchTaskSpy).not.toHaveBeenCalled();
+  });
+
+  it('no status patch ⇒ annotation still cleared (deferred section runs)', async () => {
+    withAwaitingHumanReReads();
+
+    const result = await call(awaitingHumanTask, undefined, [clearEffect]);
+
+    expect(result.applied).toBe(true);
+    // The status block is skipped, but the deferred clear must still run.
+    expect(patchTaskSpy).toHaveBeenCalledWith(
+      'test-task',
+      {
+        metadata: {
+          name: 'test-task',
+          annotations: { 'percussionist.dev/action-approved': null },
+        },
+      },
+      namespace,
+    );
+    expect(result.effectsApplied).toEqual(['ClearTaskAnnotations']);
   });
 });

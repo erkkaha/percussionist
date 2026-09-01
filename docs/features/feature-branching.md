@@ -32,15 +32,47 @@ Each run gets its own worktree at `/data/worktrees/{run-name}/` checking out the
 
 ### 3. BUILD Review & Merge
 
-- Agent works on BUILD branch, commits and pushes
+- Agent works on BUILD branch and commits; on completion the dispatcher publishes the branch to a namespaced remote ref (`refs/percussionist/<branch>`), making the remote the durable copy of in-flight work
 - On approval, merge run merges BUILD branch → parent PLAN branch
-- BUILD branch deleted after successful merge
+- BUILD branch is cleaned up (worktree removed, mirror ref deleted, `refs/percussionist/<branch>` deleted from the remote) once the task reaches `done`; BUILD branches never reach the remote's `refs/heads` in `auto-merge` mode — only the merge result lands there
 - Next BUILD in sequence sees predecessor's changes
 
 ### 4. Predecessor Dependencies
 
 - BUILD tasks with `predecessorRef` wait for predecessor to merge
 - Reconciler blocks task from starting until predecessor is in `done` column AND has `mergedAt` timestamp
+
+### 5. Feature Branch Merge
+
+When all BUILD tasks under a PLAN are done, the PLAN's `feature/{plan-id}` branch
+contains all merged BUILD changes. The `flow.integration.mode` setting controls
+how it lands on the target branch (`project.spec.source.git.ref ?? "main"` by default):
+
+```yaml
+spec:
+  featureBranchingEnabled: true
+  flow:
+    integration:
+      mode: auto-merge   # auto-merge (default) | pr | manual | disabled
+```
+
+| Mode | Behavior |
+|------|----------|
+| `auto-merge` (default) | A merge run merges the feature branch directly to the target branch. No human in the loop. |
+| `pr` | A short-lived run opens a GitHub PR from the feature branch to the target. The manager polls the PR state (15-minute cache interval) and auto-transitions the task to `done` when the PR is merged. If the PR is closed without merging, the task goes to `awaiting-human`. Requires `source.git.githubTokenSecret` to be configured so the manager can read the PR state via the GitHub API. Detection latency is up to 15 minutes after merge. |
+| `manual` | The task parks in `awaiting-human`; a human merges the feature branch to the target entirely outside the system, then marks the task done in Percussionist. |
+| `disabled` | No integration merge; the task goes to `done` once all BUILD children are done. |
+
+Branch retention depends on the mode: branches pushed to the remote's
+`refs/heads` (e.g. the feature branch in `pr` mode) are kept indefinitely.
+In `auto-merge`/`manual` mode the feature-branch ref lives in the local bare
+mirror plus a namespaced remote copy at `refs/percussionist/<branch>` —
+published automatically by the dispatcher on run completion, invisible in the
+GitHub branch UI, and not fetched by teammates' clones. Both copies are
+deleted when the task reaches `done`. The merged result on the target branch
+is unaffected either way. The publish is best-effort: if the push fails (e.g.
+read-only credentials), the run still completes with a warning in its summary
+and the mirror remains the only copy, as before.
 
 ## Enable
 

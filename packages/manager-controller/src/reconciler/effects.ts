@@ -6,12 +6,14 @@ import {
   createRun,
   createTask,
   deleteRun,
+  fetchSessionMessages,
   getRun,
   getTask,
   listRuns,
   patchProject,
   patchTask,
   patchTaskStatus,
+  postSessionMessage,
 } from '@percussionist/kube';
 import { isKubeConflictError, isKubeNotFoundError } from '../kube-errors.js';
 import { buildMergeRun, buildPrOpenRun, buildWorkerRun } from '../worker-builder.js';
@@ -30,6 +32,15 @@ export type ReconcileEffect =
   | { type: 'ScheduleBuildGenRun'; buildgenRunName: string; succeededRunName: string }
   | { type: 'ScheduleMergeRun'; mergeRunName: string }
   | { type: 'SchedulePrOpenRun'; prOpenRunName: string }
+  | { type: 'SchedulePrFeedbackEvalRun'; runName: string; prNumber: number; sinceIso?: string }
+  | {
+      type: 'CreatePrFollowUpTask';
+      taskName: string;
+      planTaskName: string;
+      title: string;
+      description: string;
+      agent: string;
+    }
   | { type: 'CreateRun'; run: Run }
   | { type: 'DeleteRun'; name: string; reason: string }
   | { type: 'PatchTaskStatus'; patch: Record<string, unknown> }
@@ -37,7 +48,8 @@ export type ReconcileEffect =
   | { type: 'ClearTaskAnnotations'; keys: string[] }
   | { type: 'ClearProjectAnnotations'; keys: string[] }
   | { type: 'CleanupWorktree'; runName: string }
-  | { type: 'SummarizeSession'; project: string; runName: string; sessionID: string };
+  | { type: 'SummarizeSession'; project: string; runName: string; sessionID: string }
+  | { type: 'DeliverAnswer'; runName: string; text: string };
 
 export interface ExecutionResult {
   applied: boolean;
@@ -102,9 +114,21 @@ export async function executeEffects(
     }
   }
 
+  // Deferred annotation-clear effects: consumed only AFTER a successful status
+  // patch so a failed/conflicted status write never deletes a human's intent
+  // (approve/abandon/answer). See the deferred section below the status patch.
+  const deferredClears: Extract<ReconcileEffect, { type: 'ClearTaskAnnotations' }>[] = [];
+
   // Apply effects.
   for (const effect of effects) {
     try {
+      // Defer ClearTaskAnnotations — it must run only after the guarded status
+      // write so a conflicting/aborted status patch keeps the annotation intact.
+      // All other effect types run exactly as before.
+      if (effect.type === 'ClearTaskAnnotations') {
+        deferredClears.push(effect);
+        continue;
+      }
       switch (effect.type) {
         case 'ScheduleRun': {
           // Resolve the ScheduleRun effect into an actual Run and create it.
@@ -227,6 +251,9 @@ export async function executeEffects(
             effect.prOpenRunName,
             allTasks,
             flow.integration.agent,
+            // When a PR already exists (feedback rework landed on the feature
+            // branch), the run updates its head instead of opening a new PR.
+            task.status?.worker?.prNumber,
           );
           try {
             await createRun(prRun, namespace);
@@ -244,6 +271,61 @@ export async function executeEffects(
           }
           break;
         }
+        case 'SchedulePrFeedbackEvalRun': {
+          if (!project) {
+            throw new Error('Project metadata required for SchedulePrFeedbackEvalRun effect');
+          }
+          const { buildPrFeedbackEvalRun } = await import('../facilitator.js');
+          const evalRun = await buildPrFeedbackEvalRun(
+            project,
+            task,
+            effect.runName,
+            effect.prNumber,
+            effect.sinceIso,
+            flow.review.agent,
+            allTasks,
+          );
+          try {
+            await createRun(evalRun, namespace);
+          } catch (e: unknown) {
+            // The run name is unique per evaluation round (it hashes the
+            // comment watermark), so an existing run is this round's — adopt it.
+            const msg = (e as Error).message;
+            if (!/already exists/i.test(msg)) throw e;
+          }
+          break;
+        }
+        case 'CreatePrFollowUpTask': {
+          if (!project) {
+            throw new Error('Project metadata required for CreatePrFollowUpTask effect');
+          }
+          const { buildTask } = await import('@percussionist/kube');
+          const followUp = buildTask({
+            name: effect.taskName,
+            projectName: project.metadata.name,
+            projectUid: project.metadata.uid ?? '',
+            ns: namespace,
+            spec: {
+              projectRef: project.metadata.name,
+              type: 'BUILD',
+              title: effect.title,
+              description: effect.description,
+              agent: effect.agent,
+              priority: 'high',
+              parentTaskRef: effect.planTaskName,
+            },
+          });
+          try {
+            await createTask(followUp, namespace);
+          } catch (e: unknown) {
+            if (!isAlreadyExists(e)) throw e;
+          }
+          // Task creation does not write the status subresource; put the child
+          // on the board explicitly (best effort — the reconciler defaults an
+          // absent phase to pending anyway).
+          await patchTaskStatus(effect.taskName, { phase: 'pending' }, namespace).catch(() => {});
+          break;
+        }
         case 'CreateRun': {
           try {
             await createRun(effect.run, namespace);
@@ -258,38 +340,6 @@ export async function executeEffects(
             await deleteRun(effect.name, namespace);
           } catch (e: unknown) {
             if (!isKubeNotFoundError(e)) throw e;
-          }
-          break;
-        }
-        case 'ClearTaskAnnotations': {
-          try {
-            const taskPatch: Record<string, string | null> = {};
-            const projectKeys: string[] = [];
-            for (const key of effect.keys) {
-              if (key.startsWith('percussionist.dev/action-')) {
-                taskPatch[key] = null;
-              } else {
-                projectKeys.push(key);
-              }
-            }
-            const taskKeys = Object.keys(taskPatch);
-            if (taskKeys.length > 0) {
-              await patchTask(
-                taskName,
-                {
-                  metadata: { name: taskName, annotations: taskPatch as Record<string, string> },
-                },
-                namespace,
-              );
-            }
-            if (projectKeys.length > 0) {
-              await clearProjectAnnotations(projectKeys, project, namespace, taskName);
-            }
-          } catch (e) {
-            console.warn(
-              `[effects] ClearTaskAnnotations failed for ${taskName}:`,
-              (e as Error).message,
-            );
           }
           break;
         }
@@ -348,6 +398,61 @@ export async function executeEffects(
             );
           break;
         }
+        case 'DeliverAnswer': {
+          // Post a human answer into the run's live opencode session. Delivery
+          // is NON-FATAL: a missing/unreachable run must not stall the
+          // reconcile cycle — the dead-run exit in decideWaitingForInput fails
+          // the task on the next cycle instead. Dedupe against the session tail
+          // so the common UI path (client already posted via /reply before
+          // writing the annotation) does not deliver twice.
+          try {
+            const run = await getRun(effect.runName, namespace);
+            const serviceName = run.status?.serviceName;
+            const sessionID = run.status?.sessionID;
+            if (!serviceName || !sessionID) {
+              console.warn(
+                `[effects] DeliverAnswer: run ${effect.runName} has no serviceName/sessionID, skipping`,
+              );
+              break;
+            }
+            const raw = await fetchSessionMessages(serviceName, sessionID, namespace);
+            const messages = Array.isArray(raw) ? raw : [];
+            const answer = effect.text.trim();
+            // Walk backwards for the last user message; its combined text is
+            // compared trimmed so minor whitespace drift cannot defeat the dedupe.
+            let alreadyDelivered = false;
+            for (let i = messages.length - 1; i >= 0; i--) {
+              const m = messages[i] as {
+                info?: { role?: string };
+                parts?: Array<{ type?: string; text?: string }>;
+              };
+              if (m?.info?.role !== 'user') continue;
+              const text = (m.parts ?? [])
+                .filter((p) => p?.type === 'text' && typeof p.text === 'string')
+                .map((p) => p.text as string)
+                .join('')
+                .trim();
+              alreadyDelivered = text === answer;
+              break;
+            }
+            if (alreadyDelivered) {
+              console.log(
+                `[effects] DeliverAnswer: answer already in session tail for ${effect.runName}, skipping`,
+              );
+              break;
+            }
+            await postSessionMessage(serviceName, sessionID, effect.text, namespace);
+            console.log(
+              `[effects] DeliverAnswer: posted answer to ${effect.runName} (session ${sessionID})`,
+            );
+          } catch (e) {
+            console.warn(
+              `[effects] DeliverAnswer failed for ${effect.runName}:`,
+              (e as Error).message,
+            );
+          }
+          break;
+        }
         case 'CreateTask': {
           try {
             await createTask(effect.task, namespace);
@@ -370,6 +475,10 @@ export async function executeEffects(
   }
 
   // Apply final status patch (phase + worker + other fields in one patch).
+  // Captures the updated task so we can pass its resourceVersion into the
+  // deferred annotation-clear below (making that write conditional on the one
+  // we just made, avoiding a spurious self-409).
+  let patched: Task | undefined;
   if (toPhase || statusPatch) {
     // The phase guard above ran before the effects, which take seconds
     // (creating runs, spawning cleanup pods). An MCP tool or a human annotation
@@ -378,8 +487,10 @@ export async function executeEffects(
     // conditional on that read so anything landing in the remaining gap is a
     // conflict rather than a lost update.
     //
-    // The re-read also picks up our own metadata writes from the effects above
-    // (ClearTaskAnnotations), so those don't false-conflict.
+    // The re-read guards the phase and supplies the resource version for the
+    // conditional status write. Annotation consumption (ClearTaskAnnotations)
+    // is deferred until after this successful status write (see below), so a
+    // failed/conflicted status patch never loses the human's intent.
     let latest: Task;
     try {
       latest = await getTask(taskName, namespace);
@@ -409,7 +520,13 @@ export async function executeEffects(
       phase: toPhase ?? currentPhase,
     };
     try {
-      await patchTaskStatus(taskName, patch, namespace, 3, latest.metadata.resourceVersion);
+      patched = await patchTaskStatus(
+        taskName,
+        patch,
+        namespace,
+        3,
+        latest.metadata.resourceVersion,
+      );
     } catch (e) {
       if (isKubeConflictError(e)) {
         return {
@@ -424,15 +541,45 @@ export async function executeEffects(
     }
   }
 
+  // Deferred annotation clears: only reached when the function has NOT
+  // early-returned, i.e. the status patch succeeded (or was skipped because
+  // there was no toPhase/statusPatch). We pass the post-status resource version
+  // so the annotation delete is conditional on the write we just made, avoiding
+  // a spurious self-409. When the status patch was skipped, resourceVersion is
+  // undefined and the helper calls patchTask without it (unchanged behavior).
+  // Each cleared effect is reported exactly as the loop would have.
+  for (const effect of deferredClears) {
+    await applyClearTaskAnnotations(
+      effect,
+      taskName,
+      project,
+      namespace,
+      patched?.metadata?.resourceVersion,
+    );
+    effectsApplied.push(effect.type);
+  }
+
   // Task-level worktree cleanup, wired centrally rather than as a per-site
   // effect: on a transition to "done", clean up the worker worktree plus any
   // review/buildgen/merge auxiliary worktrees whose Run CRs still exist.
   // Fire-and-forget — never blocks the reconcile cycle.
   if (toPhase === 'done' && project) {
     const projectName = project.metadata.name;
-    const gitUrl = (project.spec.source as { git?: { url?: string } } | undefined)?.git?.url;
+    const projectGit = (
+      project.spec.source as
+        | {
+            git?: {
+              url?: string;
+              sshSecret?: { name: string; key?: string };
+              githubTokenSecret?: { name: string; key?: string };
+            };
+          }
+        | undefined
+    )?.git;
+    const gitUrl = projectGit?.url;
     const runnerImage = (project.spec.runner as { image?: string } | undefined)?.image;
     const image = runnerImage ?? project.spec.image ?? 'alpine/git';
+    const gitBranch = currentTask.status?.worker?.gitBranch;
     (async () => {
       const runs = await listRuns(namespace, undefined, `${LABELS.taskId}=${taskName}`);
       const runNames = runs.map((r) => r.metadata.name);
@@ -445,6 +592,11 @@ export async function executeEffects(
         gitUrl,
         dataPvcName: project.spec.data?.pvcName,
         runNames,
+        // Also delete the branch's refs/percussionist/* namespaced ref from
+        // the remote — the branch is merged (or abandoned) once the task is done.
+        branches: gitBranch ? [gitBranch] : [],
+        sshSecret: projectGit?.sshSecret,
+        githubTokenSecret: projectGit?.githubTokenSecret,
       });
     })().catch((e: Error) =>
       console.warn(`[effects] task-done worktree cleanup failed for ${taskName}:`, e.message),
@@ -466,6 +618,56 @@ function isAlreadyExists(e: unknown): boolean {
     'statusCode' in e &&
     (e as { statusCode?: number }).statusCode === 409
   );
+}
+
+/**
+ * Consume (clear) a set of task annotation keys. `percussionist.dev/action-*`
+ * keys are cleared on the Task CR via patchTask (metadata `annotations` set to
+ * `null`); everything else is cleared on the Project via
+ * clearProjectAnnotations. When `resourceVersion` is provided it is included in
+ * the patchTask metadata so the clear is conditional on the status write that
+ * preceded it. A failed annotation clear is non-fatal: it is logged and the
+ * reconcile cycle continues, leaving the annotation as a harmless leftover
+ * (the intent is preserved, merely not cleaned up).
+ */
+async function applyClearTaskAnnotations(
+  effect: Extract<ReconcileEffect, { type: 'ClearTaskAnnotations' }>,
+  taskName: string,
+  projectObj: Project | null,
+  namespace: string,
+  resourceVersion?: string,
+): Promise<void> {
+  try {
+    const taskPatch: Record<string, string | null> = {};
+    const projectKeys: string[] = [];
+    for (const key of effect.keys) {
+      if (key.startsWith('percussionist.dev/action-')) {
+        taskPatch[key] = null;
+      } else {
+        projectKeys.push(key);
+      }
+    }
+    const taskKeys = Object.keys(taskPatch);
+    if (taskKeys.length > 0) {
+      const metadata: {
+        name: string;
+        annotations: Record<string, string>;
+        resourceVersion?: string;
+      } = {
+        name: taskName,
+        annotations: taskPatch as Record<string, string>,
+      };
+      if (resourceVersion) {
+        metadata.resourceVersion = resourceVersion;
+      }
+      await patchTask(taskName, { metadata }, namespace);
+    }
+    if (projectKeys.length > 0) {
+      await clearProjectAnnotations(projectKeys, projectObj, namespace, taskName);
+    }
+  } catch (e) {
+    console.warn(`[effects] ClearTaskAnnotations failed for ${taskName}:`, (e as Error).message);
+  }
 }
 
 async function clearProjectAnnotations(

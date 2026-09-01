@@ -25,6 +25,7 @@ import {
   handleStoreMemory,
   handleUpdateMemory,
   initDb,
+  ValidationError,
 } from './routes.js';
 
 const PORT = parseInt(process.env.MEMORY_SERVICE_PORT ?? '4100', 10);
@@ -120,9 +121,11 @@ async function handler(req: Request): Promise<Response> {
     // POST /search — semantic search
     if (method === 'POST' && path === '/search') {
       const body = await parseBody(req);
+      // Raw limit passes through — handleSearch coerces and validates it
+      // (integer >= 1, max 100), so "abc"/NaN/negative never reach the bind.
       const result = await handleSearch({
         query: String(body.query ?? ''),
-        limit: body.limit ? Number(body.limit) : undefined,
+        limit: body.limit,
       });
       return json(result);
     }
@@ -139,10 +142,12 @@ async function handler(req: Request): Promise<Response> {
 
     // GET /memories — list memories (query params: task, limit, offset)
     if (method === 'GET' && path === '/memories') {
+      // Raw query params pass through — handleListMemories coerces and
+      // validates limit (integer >= 1, max 200) and offset (integer >= 0).
       const result = await handleListMemories({
         task: url.searchParams.get('task') ?? undefined,
-        limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined,
-        offset: url.searchParams.has('offset') ? Number(url.searchParams.get('offset')) : undefined,
+        limit: url.searchParams.get('limit') ?? undefined,
+        offset: url.searchParams.get('offset') ?? undefined,
       });
       return json(result);
     }
@@ -177,6 +182,11 @@ async function handler(req: Request): Promise<Response> {
 
     return new Response('Not Found', { status: 404 });
   } catch (e) {
+    if (e instanceof ValidationError) {
+      // Invalid client input (bad limit/offset) is a 400, not a 500.
+      console.warn(`[memory] ${method} ${path}: ${(e as Error).message}`);
+      return json({ error: (e as Error).message }, 400);
+    }
     const msg = (e as Error).message;
     console.error(`[memory] ${method} ${path}:`, msg);
     return json({ error: msg }, 500);

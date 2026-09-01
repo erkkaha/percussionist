@@ -98,6 +98,21 @@ function generateName(): string {
   return `run-${Date.now().toString(16)}`;
 }
 
+/**
+ * Parse `--timeout` seconds. Commander hands us the raw string; `Number('abc')`
+ * is NaN, and a NaN/zero/negative value would silently fall back to the
+ * project default (up to an hour) — exactly the trap wait.ts and doctor.ts
+ * already guard against. Throws a clear usage error instead.
+ */
+export function parseTimeoutSeconds(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`invalid --timeout value: ${raw} (expected a positive number of seconds)`);
+  }
+  return n;
+}
+
 export function buildRunFromFlags(
   opts: SubmitOpts,
   projectDefaults?: import('@percussionist/api').ProjectSpec,
@@ -115,7 +130,7 @@ export function buildRunFromFlags(
   const pd = projectDefaults;
   const resolvedAgent = opts.agent ?? pd?.agent;
   const resolvedImage = opts.image ?? pd?.image;
-  const resolvedTimeoutSeconds = opts.timeout ? Number(opts.timeout) : pd?.timeoutSeconds;
+  const resolvedTimeoutSeconds = parseTimeoutSeconds(opts.timeout) ?? pd?.timeoutSeconds;
   const resolvedModel = opts.model ?? pd?.model;
   const resolvedLlmSecret = opts.llmKeysSecret ?? pd?.secrets?.llmKeysSecret;
   const resolvedAuthSecret = opts.authSecret ?? pd?.secrets?.authSecret?.name;
@@ -273,15 +288,29 @@ function namespaceFromFile(path: string): string | undefined {
 // Poll the CR status until phase is Running (or terminal, which is fatal for
 // --attach). We prefer polling over a Watch here because submits are short
 // and one-shot; setting up an informer is overkill and adds RBAC surface.
-async function waitForRunning(namespace: string, name: string, timeoutMs = 120_000): Promise<Run> {
-  const { custom } = loadKube();
+//
+// Exported so the polling loop is unit-testable without a cluster: the last
+// parameter injects a `getRunFn` (defaulting to the kube-backed reader) that
+// the loop drives, mirroring wait.ts's waitForOutcome pattern.
+export async function waitForRunning(
+  namespace: string,
+  name: string,
+  timeoutMs = 120_000,
+  getRunFn?: (ns: string, n: string) => Promise<Run>,
+): Promise<Run> {
+  const readRun =
+    getRunFn ??
+    (async (ns: string, n: string) => {
+      const { custom } = loadKube();
+      return getRun(custom, ns, n);
+    });
   const deadline = Date.now() + timeoutMs;
   let lastPhase: string | undefined;
   // Small stderr spinner so the user knows we're alive. Keep it cheap —
   // a single line updated in place; no fancy spinner libs.
   const stamp = () => new Date().toISOString().slice(11, 19); // HH:MM:SS
   while (Date.now() < deadline) {
-    const run = await getRun(custom, namespace, name);
+    const run = await readRun(namespace, name);
     const phase = run.status?.phase;
     if (phase !== lastPhase) {
       process.stderr.write(`\rbeatctl: [${stamp()}] phase=${phase ?? '-'}   `);

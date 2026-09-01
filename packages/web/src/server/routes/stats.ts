@@ -452,10 +452,14 @@ const sessionRowSelect = {
   cost: runs.cost,
   error: runs.error,
   createdAt: runs.createdAt,
+  // `runs.id` must be written as a raw identifier, not ${runs.id} — drizzle
+  // renders an interpolated column unqualified ("id") inside a raw sql
+  // template, so the subquery would bind "id" to messages.id instead of the
+  // outer runs row and the fallback would never resolve.
   resolvedModel: sql<string>`
     COALESCE(${runs.model}, (
       SELECT ${messages.model} FROM ${messages}
-      WHERE ${messages.sessionId} = ${runs.id}
+      WHERE ${messages.sessionId} = runs.id
         AND ${messages.role} = 'user'
         AND ${messages.model} IS NOT NULL
       LIMIT 1
@@ -485,41 +489,12 @@ stats.get('/sessions', auth(), (c) => {
   const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
   const whereClause = cutoff ? gte(runs.startedAt, cutoff) : undefined;
 
-  // Resolve model: runs.model first, fallback to first user message's model.
-  // Note: `runs.id` must be written as a raw identifier, not ${runs.id} —
-  // drizzle renders an interpolated column unqualified ("id") inside a raw sql
-  // template, so the subquery would bind "id" to messages.id instead of the
-  // outer runs row and the fallback would never resolve.
-  const resolvedModel = sql<string>`
-    COALESCE(${runs.model}, (
-      SELECT ${messages.model} FROM ${messages}
-      WHERE ${messages.sessionId} = runs.id
-        AND ${messages.role} = 'user'
-        AND ${messages.model} IS NOT NULL
-      LIMIT 1
-    ), 'unknown')
-  `;
-
   // Page query — LIMIT/OFFSET pushed into SQL so the resolvedModel subquery
-  // runs only for the page rows, not every row in the window.
+  // runs only for the page rows, not every row in the window. The select shape
+  // is shared with GET /sessions/:name via sessionRowSelect, so resolvedModel
+  // has a single definition.
   const sessions = db
-    .select({
-      id: runs.id,
-      name: runs.name,
-      namespace: runs.namespace,
-      task: runs.task,
-      model: runs.model,
-      agent: runs.agent,
-      phase: runs.phase,
-      startedAt: runs.startedAt,
-      completedAt: runs.completedAt,
-      tokensIn: runs.tokensIn,
-      tokensOut: runs.tokensOut,
-      cost: runs.cost,
-      error: runs.error,
-      createdAt: runs.createdAt,
-      resolvedModel,
-    })
+    .select(sessionRowSelect)
     .from(runs)
     .where(whereClause)
     .orderBy(desc(runs.startedAt))
@@ -584,7 +559,7 @@ stats.get('/sessions', auth(), (c) => {
   // (matches the previous JS sort).
   const modelRows = db
     .select({
-      model: resolvedModel,
+      model: sessionRowSelect.resolvedModel,
       runs: sql<number>`COUNT(*)`.as('runs'),
       tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('tokens_in'),
       tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('tokens_out'),
@@ -592,7 +567,7 @@ stats.get('/sessions', auth(), (c) => {
     })
     .from(runs)
     .where(whereClause)
-    .groupBy(resolvedModel)
+    .groupBy(sessionRowSelect.resolvedModel)
     .orderBy(sql`COALESCE(SUM(${runs.tokensIn}), 0) DESC`)
     .all() as Array<{
     model: string;
@@ -1211,20 +1186,17 @@ stats.get('/trends', auth(), (c) => {
     for (const model of dateMap.keys()) allModels.add(model);
   }
 
-  const sortedDates = [...pivotMap.keys()].sort();
-  const modelTrendPoints: ModelTrendPoint[] = sortedDates.map((date) => {
-    const entry: ModelTrendPoint = { date };
-    const dateMap = pivotMap.get(date);
-    if (!dateMap) {
-      const emptyMap = new Map<string, number>();
-      pivotMap.set(date, emptyMap);
-      return { date };
-    }
-    for (const model of allModels) {
-      entry[model] = dateMap.get(model) ?? 0;
-    }
-    return entry;
-  });
+  // Pivot dates sorted in place; each date is guaranteed to exist in pivotMap
+  // since the entries come straight from its keys (no missing-entry branch).
+  const modelTrendPoints: ModelTrendPoint[] = [...pivotMap.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([date, dateMap]) => {
+      const entry: ModelTrendPoint = { date };
+      for (const model of allModels) {
+        entry[model] = dateMap.get(model) ?? 0;
+      }
+      return entry;
+    });
 
   return c.json({ trendPoints, modelTrendPoints });
 });

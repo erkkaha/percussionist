@@ -18,6 +18,7 @@
 // for staying read-only (get/list verbs + bounded probes), and `--probe-dns`
 // is the only opt-in in-pod exec (a read-only `getent hosts`).
 
+import { errorMessage } from '@percussionist/kube';
 import { PLATFORM_CHECKS } from './doctor-platform.js';
 import { RUNTIME_CHECKS } from './doctor-runtime.js';
 import { STATIC_CHECKS } from './doctor-static.js';
@@ -315,8 +316,4 @@ function printTextReport(
   } else {
     log(`Result: FAIL — ${fail} failing check(s) (exit 1)`);
   }
-}
-
-function errorMessage(e: unknown): string {
-  return ((e as { message?: string }).message ?? String(e)).trim();
 }

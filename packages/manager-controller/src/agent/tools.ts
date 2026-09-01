@@ -61,7 +61,7 @@ import { resolveMergeBranch, resolveParentBranch, resolveTaskBranch } from '../b
 import { resolveFlow } from '../reconciler/flow.js';
 import { inspectTaskFlow, type ObservedRuns } from '../reconciler/flow-introspection.js';
 import { isValidTransition, TRANSITION_TABLE } from '../reconciler/transitions.js';
-import { getPauseStatus, setPaused } from '../reconciler-bridge.js';
+import { getLastReconcile, getPauseStatus, setPaused } from '../reconciler-bridge.js';
 import { webHeaders } from '../web-headers.js';
 import { buildWorkerRun, resolveAgentModel, workerRunName } from '../worker-builder.js';
 import { MANAGER_NAMESPACE, MCP_PORT, MCP_TOKEN, OPENCODE_URL } from './config.js';
@@ -231,28 +231,12 @@ const TOOLS = [
   {
     name: 'create_run',
     description:
-      "Create a new Run for a task. The task must be in the 'pending' phase. Moves the task to 'running' and creates the run.",
+      "Schedule a task now (admin shortcut). Moves a 'pending' (backlog) or 'rework-requested' task to 'scheduled' via the standard transition table; the reconciler creates the Run on its next reconcile cycle. Does not create Run CRs itself — all runs are created by the reconciler. For failed/stuck tasks use `force_retry`; for arbitrary phase moves use `set_task_state`.",
     inputSchema: {
       type: 'object',
       properties: {
         project: { type: 'string', description: 'Project name' },
         task: { type: 'string', description: "Task CR name (e.g. 'BUILD-4')" },
-        agent: {
-          type: 'string',
-          description: "Override the task's default agent",
-        },
-        model: {
-          type: 'string',
-          description: 'Override the default model',
-        },
-        retryCount: {
-          type: 'number',
-          description: 'Retry count (default: inferred from existing worker or 0)',
-        },
-        reworkFeedback: {
-          type: 'string',
-          description: 'Feedback to include in the task prompt',
-        },
         namespace: {
           type: 'string',
           description: 'Namespace (optional, defaults to percussionist)',
@@ -469,10 +453,17 @@ const TOOLS = [
   {
     name: 'get_reconcile_status',
     description:
-      "Check whether the manager's reconciliation loop is paused or active, and when it was last paused.",
+      "Check whether the manager's reconciliation loop for a project is paused or active, how long is left before it auto-resumes, and when the project was last reconciled.",
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        project: { type: 'string', description: 'Project name' },
+        namespace: {
+          type: 'string',
+          description: 'Namespace (optional, defaults to percussionist)',
+        },
+      },
+      required: ['project'],
     },
   },
   {
@@ -1330,115 +1321,64 @@ async function callTool(
     case 'create_run': {
       const projectName = String(args.project ?? '');
       const taskName = String(args.task ?? '');
-      const agentOverride = args.agent ? String(args.agent) : undefined;
-      const modelOverride = args.model ? String(args.model) : undefined;
-      const reworkFeedback = args.reworkFeedback ? String(args.reworkFeedback) : undefined;
       const resourceNs = String(args.namespace ?? ns);
 
-      const project = await getProject(projectName, resourceNs);
+      await getProject(projectName, resourceNs);
       const task = await getTask(taskName, resourceNs);
-      const projectTasks = await listProjectTasks(projectName, resourceNs);
+      const firstPhase = (task.status?.phase ?? 'pending') as TaskPhase;
 
-      if (agentOverride) {
-        const validation = await validateAgentTaskCapability(
-          project,
-          task.spec.type as TaskType,
-          agentOverride,
-        );
-        if (!validation.ok) {
-          throw new Error(validation.error);
-        }
+      // Idempotency — the reconciler may already be scheduling this task.
+      if (firstPhase === 'scheduled' || firstPhase === 'initializing') {
+        return {
+          project: projectName,
+          task: taskName,
+          phase: 'Scheduled',
+          note: 'run already being scheduled by the reconciler',
+        };
       }
 
-      const currentPhase = (task.status?.phase ?? 'pending') as TaskPhase;
-      // Validate pending → running transition (create_run is an admin shortcut).
-      if (!isValidTransition(currentPhase, 'running')) {
-        const allowed = TRANSITION_TABLE[currentPhase] ?? [];
+      // create_run advances a task one legal step into the standard pipeline
+      // (pending → scheduled, rework-requested → scheduled) via the existing
+      // TRANSITION_TABLE edges. No phase is special-cased and no Run CR is
+      // created here — the reconciler's ScheduleRun effect creates the run on
+      // its next reconcile cycle (Task informer enqueues the project on the
+      // phase patch).
+      if (!isValidTransition(firstPhase, 'scheduled')) {
+        const allowed = TRANSITION_TABLE[firstPhase] ?? [];
         throw new Error(
-          `Task ${taskName} has phase "${currentPhase}", cannot create run. Allowed transitions: ${allowed.join(', ') || '(none, terminal)'}. Use force_retry to clean up first.`,
+          `Task ${taskName} has phase "${firstPhase}", cannot schedule a run. Allowed transitions: ${allowed.join(', ') || '(none, terminal)'}. Use force_retry for failed/stuck tasks, or set_task_state for arbitrary phase moves.`,
         );
       }
 
-      const existingWorker = task.status?.worker ?? null;
-      const retryCount =
-        args.retryCount !== undefined ? Number(args.retryCount) : (existingWorker?.retryCount ?? 0);
-
-      const runName = workerRunName(projectName, taskName, retryCount);
-      const workerRun = await buildWorkerRun(
-        project,
-        task,
-        runName,
-        retryCount,
-        reworkFeedback,
-        projectTasks,
-      );
-      const phaseAgent = resolvePhaseAgent(task, project, currentPhase);
-      const effectiveAgent = agentOverride ?? phaseAgent;
-      if (effectiveAgent) workerRun.spec.agent = effectiveAgent;
-      if (modelOverride) {
-        workerRun.spec.model = modelOverride;
-      } else if (effectiveAgent && effectiveAgent !== task.spec.agent) {
-        // buildWorkerRun resolved the model for task.spec.agent — re-resolve
-        // for the agent actually running, falling back to the project default.
-        workerRun.spec.model =
-          (await resolveAgentModel(project, effectiveAgent)) ?? project.spec.model;
+      // Re-read before patching so a concurrent transition is not clobbered
+      // (mirrors effects.ts:64-89 — no lost-update writes).
+      const latest = await getTask(taskName, resourceNs);
+      const currentPhase = (latest.status?.phase ?? 'pending') as TaskPhase;
+      if (currentPhase !== firstPhase) {
+        return {
+          project: projectName,
+          task: taskName,
+          phase: 'Scheduled',
+          note: `task phase changed from "${firstPhase}" to "${currentPhase}" since read; run scheduling left to the reconciler`,
+        };
       }
 
-      // Validate auth before creating the run.
-      const finalModel = workerRun.spec.model;
-      const finalSecrets = workerRun.spec.secrets ?? project.spec.secrets;
-      const authValidation = validateModelAuth(finalModel, finalSecrets);
-      if (!authValidation.ok) {
-        throw new Error(
-          `Cannot create run: ${authValidation.error} ` +
-            `(task="${taskName}", project="${projectName}")`,
-        );
-      }
+      // Patch only the phase — decideScheduled computes runName/status/gitBranch
+      // deterministically from the task; pre-populating worker fields would drift.
+      await patchTaskStatus(taskName, { phase: 'scheduled' }, resourceNs);
 
-      await patchTaskStatus(
-        taskName,
-        {
-          phase: 'running',
-          worker: {
-            ...(existingWorker ?? {}),
-            runName,
-            status: 'Running',
-            ...workerBranchPatch(project, task, projectTasks),
-            retryCount,
-            aiReworkCount: existingWorker?.aiReworkCount ?? 0,
-          },
-        },
-        resourceNs,
-      );
-
-      try {
-        await createRun(workerRun, resourceNs);
-      } catch (e) {
-        const msg = (e as Error).message;
-        if (/AlreadyExists/i.test(msg)) {
-          const existing = await getRun(runName, resourceNs);
-          const phase = existing.status?.phase;
-          if (phase === 'Failed' || phase === 'Cancelled') {
-            await deleteRun(runName, resourceNs);
-            await cleanupRunWorktree(projectName, runName, resourceNs);
-            await createRun(workerRun, resourceNs);
-          } else {
-            throw new Error(`Run ${runName} already exists (phase: ${phase})`);
-          }
-        } else {
-          await patchTaskStatus(taskName, { phase: 'pending' }, resourceNs).catch(() => {
-            /* best effort */
-          });
-          throw e;
-        }
-      }
-
+      const worker = latest.status?.worker;
       return {
-        runName,
         project: projectName,
         task: taskName,
-        phase: 'Created',
-        namespace: resourceNs,
+        phase: 'Scheduled',
+        expectedRunName: workerRunName(
+          projectName,
+          taskName,
+          worker?.retryCount ?? 0,
+          worker?.aiReworkCount ?? 0,
+        ),
+        note: 'run will be created by the reconciler on its next reconcile cycle',
       };
     }
 
@@ -1613,7 +1553,7 @@ async function callTool(
                 aiReworkCount: 0,
               }),
               status: 'Failed',
-              runName: undefined,
+              runName: null as unknown as undefined,
               retryCount,
             },
           },
@@ -1772,7 +1712,7 @@ async function callTool(
             phase: targetPhase as 'scheduled' | 'running',
             worker: {
               ...(existingWorker ?? {}),
-              runName: undefined,
+              runName: null as unknown as undefined,
               status: 'Running',
               ...workerBranchPatch(project, task, projectTasks),
               retryCount,
@@ -1794,7 +1734,7 @@ async function callTool(
                 status: 'Succeeded' as const,
               }),
               status: 'Succeeded',
-              runName: undefined,
+              runName: null as unknown as undefined,
               completedAt: new Date().toISOString(),
             },
           },
@@ -1807,7 +1747,7 @@ async function callTool(
           {
             phase: targetPhase as 'pending' | 'rework-requested',
             worker: existingWorker
-              ? { ...existingWorker, status: 'Failed', runName: undefined }
+              ? { ...existingWorker, status: 'Failed', runName: null as unknown as undefined }
               : undefined,
           },
           resourceNs,
@@ -1819,7 +1759,7 @@ async function callTool(
           {
             phase: 'failed',
             worker: existingWorker
-              ? { ...existingWorker, status: 'Failed', runName: undefined }
+              ? { ...existingWorker, status: 'Failed', runName: null as unknown as undefined }
               : { status: 'Failed' as const, retryCount: 0, aiReworkCount: 0 },
           },
           resourceNs,
@@ -1889,7 +1829,11 @@ async function callTool(
       const durationSeconds = args.durationSeconds ? Number(args.durationSeconds) : 300;
       const resourceNs = String(args.namespace ?? ns);
 
-      setPaused(true, durationSeconds * 1000);
+      if (!projectName) throw new Error('project is required');
+
+      // In-memory per-project pause (fast path) — the annotation written below
+      // is the durable source that survives a manager restart.
+      setPaused(projectName, true, durationSeconds * 1000, resourceNs);
 
       try {
         const { patchProject } = await import('@percussionist/kube');
@@ -1922,7 +1866,9 @@ async function callTool(
       const projectName = String(args.project ?? '');
       const resourceNs = String(args.namespace ?? ns);
 
-      setPaused(false);
+      if (!projectName) throw new Error('project is required');
+
+      setPaused(projectName, false, 0, resourceNs);
 
       try {
         const { patchProject } = await import('@percussionist/kube');
@@ -1950,11 +1896,19 @@ async function callTool(
     }
 
     case 'get_reconcile_status': {
-      const pauseInfo = getPauseStatus();
+      const projectName = String(args.project ?? '');
+      const resourceNs = String(args.namespace ?? ns);
+
+      if (!projectName) throw new Error('project is required');
+
+      const project = await getProject(projectName, resourceNs);
+      const pauseInfo = getPauseStatus(project);
       return {
+        project: projectName,
         paused: pauseInfo.paused,
         elapsedMs: pauseInfo.elapsedMs,
-        lastReconcile: new Date().toISOString(),
+        remainingMs: pauseInfo.remainingMs,
+        lastReconcile: getLastReconcile(project),
       };
     }
 

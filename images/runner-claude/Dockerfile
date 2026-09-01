@@ -11,7 +11,7 @@
 # providers, and nothing here uses Bun FFI.
 
 ARG NODE_VERSION=24
-ARG BUN_VERSION=1.3.14
+ARG BUN_VERSION=1.4.0
 ARG PNPM_VERSION=11.1.2
 
 # --- deps: install the runner-claude workspace package -----------------------
@@ -93,7 +93,7 @@ RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION} \
 # for linux-x64 not found" at the first query — i.e. as a broken run rather
 # than a broken build. Installing the CLI directly makes the dependency
 # explicit and pins its version where it can be seen.
-ARG CLAUDE_CODE_VERSION=2.1.220
+ARG CLAUDE_CODE_VERSION=2.1.241
 RUN npm i -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
   && claude --version
 ENV CLAUDE_CODE_EXECUTABLE=/usr/local/bin/claude

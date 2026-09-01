@@ -65,11 +65,18 @@ grows a third consumer, consolidate into a shared test package.
 
 **Current test suites:**
 
-| File | Scenario | Key assertions |
-|------|----------|----------------|
-| `e2e-advances.test.ts` | Worker calls `complete_run` → review run spawned → task reaches awaiting-human | Run phase transitions, review run lifecycle, task status phase |
-| `e2e-basic-failure.test.ts` | Worker fails (invalid git URL) → task reaches failed | Run failure, task status phase |
-| `e2e-achieves.test.ts` | Worker calls fail_run → auto-retry scheduled | Run failure via MCP, task retry lifecycle |
+| File | Lane | Scenario | Key assertions |
+|------|------|----------|----------------|
+| `e2e-advances.test.ts` | Core | Worker calls `complete_run` → review run spawned → task reaches awaiting-human | Run phase transitions, review run lifecycle, task status phase |
+| `e2e-basic-failure.test.ts` | Core | Worker fails (invalid git URL) → task reaches failed | Run failure, task status phase |
+| `e2e-achieves.test.ts` | Core | Worker calls fail_run → auto-retry scheduled | Run failure via MCP, task retry lifecycle |
+| `e2e-capability-enforcement.test.ts` | Core | Agent without required capability cannot create tasks / complete runs | Capability-gated tool rejection, task/run state unchanged |
+
+The extended lane (`tests/e2e/` as a whole) additionally picks up:
+`e2e-abandon-exit.test.ts`, `e2e-plan-merge-conflict-escalation.test.ts`, and
+`e2e-review-findings.test.ts`. Note that `pnpm e2e:extended` runs every file in
+the directory — including the core suites — while `pnpm e2e:core` runs only the
+four files listed in its script.
 
 **Responsibility:** Validate end-to-end orchestrator behavior with model-independent guarantees. Target: < 10 minutes per suite on a local cluster.
 
@@ -78,7 +85,7 @@ grows a third consumer, consolidate into a shared test package.
 **Scope:** Complex scenarios that exercise feature branching, dependency chains, and integration modes. Slower but still deterministic.
 
 - Run via `pnpm e2e:extended`.
-- Same harness as core lane; test files are selected by convention or explicit file list.
+- Same harness as core lane; `pnpm e2e:extended` runs every test file in the directory (core suites included).
 - Examples (planned): predecessor gating with merged dependencies, feature-branch metadata verification (`gitBranch`, `parentBranch`, `mergeIntoBranch`), PLAN lifecycle with artifact validation.
 
 **Responsibility:** Validate complex orchestrator paths that are too slow for the PR-required gate but important for release confidence.
@@ -137,10 +144,10 @@ A test should pass regardless of which LLM provider or model is configured. The 
 
 | Layer | Runs on PR? | Cluster needed? | Model needed? | Target duration |
 |-------|-------------|-----------------|---------------|-----------------|
-| Unit (`pnpm test`) | **Required** | No | No | < 30s |
-| Smoke (`pnpm test`, same) | **Required** | No | No | < 30s |
-| Core E2E (`pnpm e2e:core`) | **Required** | Yes (Kind/minikube) | Optional* | < 10 min |
-| Extended E2E (`pnpm e2e:extended`) | Optional (scheduled/manual) | Yes | Optional* | < 20 min |
+| Unit (`pnpm test`) | **Required** (CI + pre-commit) | No | No | < 30s |
+| Smoke (`pnpm test`, same) | **Required** (CI + pre-commit) | No | No | < 30s |
+| Core E2E (`pnpm e2e:core`) | No — manual (`workflow_dispatch`) | Yes (Kind/minikube) | Optional* | < 10 min |
+| Extended E2E (`pnpm e2e:extended`) | No — manual (`workflow_dispatch`) | Yes | Optional* | < 20 min |
 
 \* Model is optional because deterministic fixtures don't depend on model output quality. However, some tests may still make LLM calls for non-assertion purposes (e.g., review runs that read sessions).
 
@@ -153,7 +160,7 @@ A test should pass regardless of which LLM provider or model is configured. The 
 | `pnpm test` | Run unit + smoke tests across all packages (bun:test) |
 | `pnpm e2e:core` | Run deterministic E2E suites on a live cluster |
 | `pnpm e2e:extended` | Run extended E2E suites (feature branching, dependencies) |
-| `pnpm e2e` | Aggregate: runs all E2E suites (same as `pnpm e2e:core && pnpm e2e:extended`) |
+| `pnpm e2e` | Aggregate: runs every file in `tests/e2e/` (identical to `pnpm e2e:extended`) |
 
 ## Adding a New Deterministic E2E Test
 
@@ -253,11 +260,11 @@ Add the test file name to the `e2e:core` script in `package.json`. If it exercis
 ## CI Integration
 
 The GitHub Actions workflow (`.github/workflows/ci.yml`) runs:
-1. **Typecheck & Build** — always required on PRs and pushes to main
-2. **Core E2E** — required on PRs, runs against a Kind cluster provisioned by the CI job
-3. **Extended E2E + Smoke** — optional; triggered manually or on scheduled runs
+1. **Typecheck & Build + Unit/Smoke tests** — required on every PR and push to main (fast, no cluster or API keys needed)
+2. **Core E2E** — manual only (`workflow_dispatch`); needs a cluster plus provider keys, which makes it too expensive for every PR. Runs against a Kind cluster provisioned by the CI job
+3. **Extended E2E** — also `workflow_dispatch`-only, on its own Kind cluster; a weekly scheduled trigger runs the dependency-audit job only
 
-Extended E2E handles deep validation: building Docker images, loading to minikube, and running full E2E suites in an isolated namespace. This is a release gate, not a PR gate.
+Extended E2E handles deep validation: building Docker images and running full E2E suites in an isolated namespace. This is a release gate, not a PR gate.
 
 ## Troubleshooting
 

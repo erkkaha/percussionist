@@ -102,7 +102,7 @@ Projects configure their task lifecycle via `spec.flow.preset`:
 | Preset | Flow |
 |--------|------|
 | `simple` | Direct: scheduled → running → succeeded → done |
-| `review` | Adds AI review step after completion |
+| `review` | Adds a human review step after completion — no AI review |
 | `plan-build` | PLAN→BUILD workflow without review |
 | `plan-build-review-merge` | Full pipeline with PLAN→BUILD, review, and merge (default) |
 
@@ -122,11 +122,26 @@ flow:
     maxAutoReworks: 2
   merge:
     mode: auto                          # auto | manual | disabled
+  integration:
+    mode: auto-merge                    # auto-merge | pr | manual | disabled
 ```
+
+The `integration` block controls how a PLAN's feature branch lands on the target
+branch (`project.spec.source.git.ref ?? "main"` by default) when
+`featureBranchingEnabled: true`:
+
+| Mode | Behavior |
+|------|----------|
+| `auto-merge` (default) | A merge run merges the feature branch directly to the target branch. No human in the loop. |
+| `pr` | A short-lived run opens a GitHub PR from the feature branch to the target. The manager polls the PR state (15-minute cache interval) and auto-transitions the task to `done` when the PR is merged. If the PR is closed without merging, the task goes to `awaiting-human`. Requires `source.git.githubTokenSecret` to be configured so the manager can read the PR state via the GitHub API. Detection latency is up to 15 minutes after merge. |
+| `manual` | The task parks in `awaiting-human`; a human merges the feature branch to the target entirely outside the system, then marks the task done in Percussionist. |
+| `disabled` | No integration merge; the task goes to `done` once all BUILD children are done. |
+
+Branch retention depends on the mode: branches pushed to the remote (e.g. the feature branch in `pr` mode) are kept indefinitely, while in `auto-merge`/`manual` mode the feature-branch ref lives only in the local bare mirror and is deleted from it when the task reaches `done`.
 
 ## Data PVC
 
-The data PVC is auto-created per project with a default 50Gi size and ReadWriteOnce access mode. ReadWriteMany (RWX) is available when your storage class supports it — override via the `data` fields in the Project CR.
+The data PVC is auto-created per project with a default 50Gi size and ReadWriteOnce access mode. ReadWriteMany (RWX) is available when your storage class supports it — the PVC name, mount path, and storage class are overridable per project or run via the `data` fields in the CR (`pvcName`, `mountPath`, `storageClass`). The access mode and size are operator environment overrides (`DEFAULT_STORAGE_ACCESS_MODE`, `DEFAULT_STORAGE_SIZE`, `DEFAULT_STORAGE_CLASS`) applied when the data PVC is created.
 
 PVC layout:
 
@@ -150,9 +165,16 @@ kind: ClusterSettings
 metadata:
   name: default
 spec:
-  runnerImage: ghcr.io/erkkaha/percussionist/runner:latest
+  runner:
+    image: ghcr.io/erkkaha/percussionist/runner:latest
   runTTLDays: 7
 ```
+
+## Run Timeout
+
+Each `Run` CR has a per-run deadline: `spec.timeoutSeconds` (default `3600`, i.e. 1 hour). The operator sets the run pod's `activeDeadlineSeconds` from this value and injects it into the dispatcher as the `RUN_TIMEOUT_SECONDS` environment variable.
+
+The dispatcher's hard-timeout guard derives its deadline from `RUN_TIMEOUT_SECONDS` and fires 60 s **before** the pod's `activeDeadlineSeconds` (grace period), so on expiry it fails the run gracefully — session snapshot → stats → `Failed` status patch — rather than exiting abruptly and racing the kubelet's SIGTERM/SIGKILL. When the env is missing or invalid (local runs, tests), it falls back to the legacy 65-minute hard timeout.
 
 ## Next
 

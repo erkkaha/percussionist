@@ -81,7 +81,7 @@ exec). It is designed for **in-cluster use only**:
 | Tool | Risk Level | Description |
 |------|-----------|-------------|
 | `set_task_state` | High | Moves tasks between board columns, can cancel runs |
-| `create_run` | High | Creates new agent runs with arbitrary specs |
+| `create_run` | High | Schedules a backlog/rework task (`pending`/`rework-requested` → `scheduled`); the reconciler creates the run |
 | `force_retry` | Medium | Restarts stuck tasks |
 | `exec_in_workspace` | Critical | Arbitrary command execution in run workspaces |
 | `delete_run` | Medium | Deletes a run pod and associated resources |

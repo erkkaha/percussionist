@@ -40,12 +40,20 @@ export async function pickFreePort(): Promise<number> {
  * Start `kubectl port-forward svc/<service> <localPort>:<remotePort>` in
  * namespace `namespace`, resolving with the child process once kubectl reports
  * "Forwarding from".
+ *
+ * When `timeoutMs` is set, the call instead rejects (and SIGKILLs the child)
+ * if kubectl has not reported "Forwarding from" within the bound — used by
+ * probes (doctor) that must not hang on a stuck port-forward. An error-ish
+ * stderr line before "Forwarding from" (auth/RBAC failures, etc.) rejects
+ * immediately with the specific message; after the forward is up, such lines
+ * are surfaced to stderr so stdout stays clean for piped/captured output.
  */
 export async function startPortForward(
   namespace: string,
   service: string,
   remotePort: number,
   localPort: number,
+  timeoutMs?: number,
 ): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     const args = ['port-forward', '-n', namespace, `svc/${service}`, `${localPort}:${remotePort}`];
@@ -54,29 +62,54 @@ export async function startPortForward(
     });
 
     let ready = false;
-    const onReady = () => {
-      if (ready) return;
-      ready = true;
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const fail = (e: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      reject(e);
+    };
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
       resolve(child);
     };
 
+    const isErrorLine = (s: string) =>
+      s.toLowerCase().includes('error') || s.toLowerCase().includes('unable');
+
     const onChunk = (buf: Buffer) => {
       const s = buf.toString();
-      if (s.includes('Forwarding from')) onReady();
-      // Surface kubectl errors (auth, RBAC, etc.) to the user.
-      if (s.toLowerCase().includes('error') || s.toLowerCase().includes('unable')) {
-        process.stderr.write(s);
+      if (s.includes('Forwarding from')) {
+        ready = true;
+        succeed();
+        return;
       }
+      if (!ready && isErrorLine(s)) {
+        fail(new Error(`kubectl port-forward: ${s.trim()}`));
+        return;
+      }
+      // Diagnose a running forward without polluting stdout (auth, RBAC, …).
+      if (isErrorLine(s)) process.stderr.write(s);
     };
     child.stdout?.on('data', onChunk);
     child.stderr?.on('data', onChunk);
 
     child.on('exit', (code) => {
-      if (!ready) {
-        reject(new Error(`kubectl port-forward exited with code ${String(code)}`));
+      if (!ready && !settled) {
+        fail(new Error(`kubectl port-forward exited with code ${String(code)}`));
       }
     });
-    child.on('error', reject);
+    child.on('error', (e) => fail(e));
+
+    if (timeoutMs !== undefined) {
+      timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        fail(new Error(`kubectl port-forward did not start within ${timeoutMs}ms`));
+      }, timeoutMs);
+    }
   });
 }
 

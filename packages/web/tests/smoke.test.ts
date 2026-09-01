@@ -165,6 +165,12 @@ describe('board routes', () => {
     expect(res.status).toBe(400);
   });
 
+  it('POST /api/projects/:project/board/tasks/:taskName/abandon reaches its handler', async () => {
+    await expectHandledNotRouterMiss(
+      await req(`/api/projects/${PROJECT}/board/tasks/t1/abandon`, { method: 'POST' }),
+    );
+  });
+
   it('GET /api/board/:project/events → 200 with empty events list', async () => {
     const res = await req(`/api/board/${PROJECT}/events`);
     expect(res.status).toBe(200);
@@ -518,6 +524,59 @@ describe('stats API', () => {
     expect(body.agentSummaries[0]?.agent).toBe('builder');
   });
 
+  it('GET /api/stats/sessions/:name resolves model from user message when runs.model is null', async () => {
+    // Regression for A1/B13: sessionRowSelect used ${runs.id} inside a raw sql
+    // template, which drizzle renders unqualified — the correlated subquery
+    // bound to messages.id instead of the outer runs row, so the user-message
+    // model fallback never resolved and the single-session detail route always
+    // reported 'unknown'. Seeded AFTER the paging test so its hand-computed
+    // totals (total === 1 baseline, 4-session window) stay stable.
+    const now = Date.now();
+    const sessionID = `smoke-resolved-detail-${now}`;
+    const seed = await json('/api/stats/session', {
+      sessionID,
+      run: {
+        name: 'resolved-detail-run',
+        agent: 'reviewer',
+        model: null,
+        phase: 'Succeeded',
+        startedAt: '2025-03-01T00:00:00Z',
+        completedAt: '2025-03-01T00:05:00Z',
+        tokensIn: 100,
+        tokensOut: 50,
+        cost: 0.005,
+      },
+      messages: [
+        {
+          id: `${sessionID}-m0`,
+          idx: 0,
+          role: 'user',
+          content: '[]',
+          model: 'openai/gpt-4o',
+        },
+      ],
+      toolCalls: [],
+      fileOps: [],
+    });
+    expect(seed.status).toBe(200);
+
+    // The single-session detail route is the one that carried the A1 bug.
+    const res = await req('/api/stats/sessions/resolved-detail-run');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { model: string | null; resolvedModel: string };
+    expect(body.model).toBeNull();
+    expect(body.resolvedModel).toBe('openai/gpt-4o');
+    expect(body.resolvedModel).not.toBe('unknown');
+
+    // The list route shares the same sessionRowSelect projection, so the model
+    // resolves identically there too.
+    const list = await req('/api/stats/sessions?days=0');
+    expect(list.status).toBe(200);
+    const listBody = (await list.json()) as SessionsResponse;
+    const row = listBody.sessions.find((s) => s.name === 'resolved-detail-run');
+    expect(row?.resolvedModel).toBe('openai/gpt-4o');
+  });
+
   it('GET /api/stats/export respects EXPORT_MAX_SESSIONS and logs truncation', async () => {
     // Cap the export to 2 sessions and insert 3 fresh ones (newest startedAt
     // last). The DB already holds the baseline + paging sessions from earlier
@@ -668,19 +727,18 @@ describe('stats API', () => {
 // ===========================================================================
 
 describe('removed product surface → API 404 catch-all', () => {
-  // These were deleted as dead product surface: the board task /abandon route,
-  // the four findings-triage routes, and GET /stats/exists/:sessionID. A
-  // reviewer of the guard itself should note the wiring check above — the
-  // flip of expectHandledNotRouterMiss is asserted per path here.
+  // These were deleted as dead product surface: the three remaining
+  // findings-triage routes (GET list, GET detail, POST->task) and
+  // GET /stats/exists/:sessionID. The PATCH /findings/:id route was
+  // re-introduced by the findings close/reopen feature (it proxies the
+  // manager's `update_finding` MCP tool). (The board task /abandon route was
+  // among them but was re-added by the waiting-for-input exit work — it is
+  // asserted as wired in the board routes block above.) A reviewer of the
+  // guard itself should note the wiring check above — the flip of
+  // expectHandledNotRouterMiss is asserted per path here.
   const removedPaths: Array<{ method: string; path: string; body?: unknown }> = [
-    { method: 'POST', path: `/api/projects/${PROJECT}/board/tasks/t1/abandon` },
     { method: 'GET', path: `/api/projects/${PROJECT}/findings` },
     { method: 'GET', path: `/api/projects/${PROJECT}/findings/f1` },
-    {
-      method: 'PATCH',
-      path: `/api/projects/${PROJECT}/findings/f1`,
-      body: { status: 'wontfix' },
-    },
     { method: 'POST', path: `/api/projects/${PROJECT}/findings/f1/task`, body: { type: 'BUILD' } },
     { method: 'GET', path: '/api/stats/exists/sid' },
   ];

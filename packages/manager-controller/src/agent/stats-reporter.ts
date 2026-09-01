@@ -55,6 +55,7 @@ export function buildPayloads(
   const messagesPayload: unknown[] = [];
   const toolCallsPayload: unknown[] = [];
   const fileOpsPayload: unknown[] = [];
+  const toolUseTimestamps = new Map<string, number>();
 
   for (let i = 0; i < rawMessages.length; i++) {
     const idx = baseIdx + i;
@@ -130,6 +131,72 @@ export function buildPayloads(
             filePath: String(fp),
             operation: detectFileOp(toolName),
           });
+        }
+
+        // Tool-call rows — correlate tool-use with its result, mirroring the
+        // dispatcher's stats-reporter so manager chat sessions surface the same
+        // success/error/duration metrics in the web Stats view.
+        if (part.type === 'tool') {
+          const toolId = String(tp.callID ?? `${sessionID}-${idx}-${toolName}`);
+          const state =
+            tp.state && typeof tp.state === 'object'
+              ? (tp.state as {
+                  status?: string;
+                  input?: unknown;
+                  output?: unknown;
+                  metadata?: { exit?: number };
+                  time?: { start?: number; end?: number };
+                })
+              : undefined;
+          const isError =
+            state?.status === 'error' ||
+            (typeof state?.metadata?.exit === 'number' && state.metadata.exit !== 0);
+          const durationMs =
+            state?.time?.start != null && state?.time?.end != null
+              ? state.time.end - state.time.start
+              : undefined;
+
+          toolCallsPayload.push({
+            id: toolId,
+            messageIdx: idx,
+            tool: toolName,
+            args: input != null ? JSON.stringify(input) : undefined,
+            success: !isError,
+            error: isError
+              ? typeof state?.output === 'string'
+                ? state.output
+                : JSON.stringify(state?.output ?? null)
+              : undefined,
+            durationMs,
+          });
+        } else if (part.type === 'tool-use' || part.type === 'tool_use') {
+          const toolId = String(tp.id ?? `${sessionID}-${idx}-${toolName}`);
+          toolUseTimestamps.set(toolId, info.time?.created ?? Date.now());
+          toolCallsPayload.push({
+            id: toolId,
+            messageIdx: idx,
+            tool: toolName || 'unknown',
+            args: tp.input != null ? JSON.stringify(tp.input) : undefined,
+            success: true,
+          });
+        } else if (part.type === 'tool-result' || part.type === 'tool_result') {
+          const refId = (tp.toolUseId ?? tp.tool_use_id) as string | undefined;
+          if (refId) {
+            const existing = toolCallsPayload.find((t) => (t as { id: string }).id === refId) as
+              | Record<string, unknown>
+              | undefined;
+            if (existing) {
+              existing.success = tp.isError !== true;
+              if (tp.isError) {
+                existing.error =
+                  typeof tp.content === 'string' ? tp.content : JSON.stringify(tp.content);
+              }
+              const startTs = toolUseTimestamps.get(refId);
+              if (startTs && info.time?.completed) {
+                existing.durationMs = info.time.completed - startTs;
+              }
+            }
+          }
         }
       } else if (part && typeof part === 'object' && 'type' in part && part.type === 'file') {
         const fp =

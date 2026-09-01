@@ -21,7 +21,7 @@ RUN apt-get update -qq && \
         ripgrep \
         jq \
     && rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash
+    curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash -s -- bun-v1.4.0
 
 # Install pnpm standalone binary (bundles its own Node.js runtime).
 # Using the self-contained @pnpm/exe binary to avoid version conflicts

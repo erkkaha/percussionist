@@ -9,6 +9,7 @@ import type {
   AgentRef,
   DiffContext,
   DiffFinding,
+  Finding,
   TaskPhase,
 } from '@percussionist/api';
 
@@ -513,4 +514,14 @@ export interface CreateMemoryResponse {
 /** DELETE /api/projects/:name/memories/:id response. */
 export interface DeleteMemoryResponse {
   deleted: true;
+}
+
+// ---------------------------------------------------------------------------
+// Findings (proxy through web server → manager MCP update_finding tool)
+
+/** PATCH /api/projects/:name/findings/:id request body (partial update). */
+export interface UpdateFindingRequest {
+  status?: Finding['status'];
+  severity?: Finding['severity'];
+  category?: Finding['category'];
 }

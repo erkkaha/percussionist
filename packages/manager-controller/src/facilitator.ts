@@ -420,6 +420,108 @@ export async function buildReviewRun(
   );
 }
 
+/**
+ * Build the PR-feedback evaluation run for PR-mode integration. Spawned when
+ * new human comments land on an open PR (see decidePrStateOutcome). Runs the
+ * review agent on the PR's head branch; its complete_review verdict either
+ * declares the comments answered (approve) or distills them into rework
+ * instructions (request_changes) that become a follow-up BUILD task.
+ */
+export async function buildPrFeedbackEvalRun(
+  project: Project,
+  task: Task,
+  runName: string,
+  prNumber: number,
+  sinceIso: string | undefined,
+  reviewAgentName: string,
+  allTasks: Task[] = [],
+): Promise<Run> {
+  const clusterSettings = await getOptionalClusterSettings('buildPrFeedbackEvalRun');
+  const resolved = resolveRunConfig(project.spec, undefined, undefined, {
+    runner: {
+      image: undefined,
+      resources: undefined,
+    },
+    secrets: clusterSettings?.spec?.secrets,
+  });
+
+  const branch = task.status?.worker?.gitBranch ?? `feat/${task.metadata.name}`;
+  const baseBranch =
+    task.status?.worker?.mergeIntoBranch ??
+    task.status?.worker?.parentBranch ??
+    project.spec.source?.git?.ref ??
+    'main';
+
+  const promptLines = [
+    `You are evaluating reviewer feedback on GitHub pull request #${prNumber}.`,
+    '',
+    `TASK: ${task.metadata.name} — ${task.spec.title}`,
+    `PR HEAD BRANCH: ${branch} (checked out in your /workspace)`,
+    `PR BASE BRANCH: ${baseBranch}`,
+    ...(sinceIso
+      ? [`FEEDBACK WATERMARK: only comments created after ${sinceIso} are unevaluated.`]
+      : ['FEEDBACK WATERMARK: none — evaluate the full comment history of the PR.']),
+    '',
+    '## Gather the feedback',
+    '',
+    'Use `gh` (authenticated via the environment) to read every feedback source:',
+    `    gh api user --jq .login                                  # your own account — ignore its comments`,
+    `    gh api "repos/{owner}/{repo}/issues/${prNumber}/comments" # conversation comments`,
+    `    gh api "repos/{owner}/{repo}/pulls/${prNumber}/comments"  # inline diff comments`,
+    `    gh api "repos/{owner}/{repo}/pulls/${prNumber}/reviews"   # submitted reviews`,
+    '',
+    'Consider only comments newer than the watermark (when one is set above) and',
+    'not authored by your own account. Read the code they refer to — the PR head',
+    'is checked out in /workspace, so use git diff, git log, read, and grep to',
+    'judge each comment against the actual implementation.',
+    '',
+    '## Act on it',
+    '',
+    'Sort the feedback into two buckets:',
+    '',
+    '1. Comments that are questions, clarifications, or observations needing no',
+    '   code change: answer them directly on the PR with `gh pr comment` (or a',
+    '   reply in the relevant thread via the API). Be brief and concrete; only',
+    '   reply where you are confident the answer is correct.',
+    '2. Comments that require code changes: do NOT implement them here. Distill',
+    '   them into rework instructions for a builder agent.',
+    '',
+    '## Report the verdict',
+    '',
+    'Call the percussionist_dispatcher_complete_review MCP tool exactly once:',
+    '',
+    '- approved: true — when no comment requires a code change. Put a short',
+    '  summary of what was asked and how you replied in `diagnosis`.',
+    '- approved: false — when code changes are required. Put a one-line summary',
+    '  in `diagnosis` and the full rework instructions in `feedback`: a numbered',
+    '  list, each item quoting the reviewer comment (author and text), naming the',
+    '  affected file/lines, and stating precisely what to change. This text',
+    '  becomes the task description for a builder working on this same branch,',
+    '  so it must stand alone without access to the PR conversation.',
+    '',
+    'Never push commits, close the PR, or merge anything from this run.',
+  ].join('\n');
+
+  const facilitationSpec: FacilitationSpec = {
+    targetRunName: task.status?.worker?.runName ?? runName,
+    targetTaskId: task.metadata.name,
+    failureReason: '',
+    sessionSummary: '',
+    successReview: true,
+  };
+
+  return await buildFacilitatorRun(
+    project,
+    task,
+    runName,
+    facilitationSpec,
+    promptLines,
+    resolved,
+    reviewAgentName,
+    allTasks,
+  );
+}
+
 // Shared helper — constructs the Run for any facilitator invocation.
 async function buildFacilitatorRun(
   project: Project,

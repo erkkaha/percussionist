@@ -1,6 +1,15 @@
 import { afterAll, describe, expect, it, mock } from 'bun:test';
 import type { Project } from '@percussionist/api';
-import { ideIngressTls, renderIdeDeployment } from './code-server.js';
+import {
+  ideIngressName,
+  ideIngressTls,
+  ideServiceName,
+  ideURLFor,
+  renderIdeDeployment,
+  renderIdeIngress,
+  renderIdeService,
+  shouldReconcileCodeServer,
+} from './code-server.js';
 // Capture the REAL config module via a separate query import so we can restore it
 // after the mock.module below (bun shares one module registry across test files,
 // and mock.module cannot be cleared with mock.restore() in this version).
@@ -348,6 +357,44 @@ describe('ideIngressTls', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Network surface (C16): Service + Ingress + the externally reachable URL.
+// The renderers take the ingress base URL as an injectable parameter (the
+// config module reads it from the environment at import time, so it cannot be
+// varied per-test), which keeps these tests deterministic and cluster-free.
+
+const BASE_URL = 'https://example.com:30443';
+
+describe('renderIdeService', () => {
+  it('renders a ClusterIP Service selecting the code-server pods on port 8080', () => {
+    const svc = renderIdeService(makeProject());
+    expect(svc.metadata.name).toBe(ideServiceName(makeProject()));
+    expect(svc.metadata.namespace).toBe('test-ns');
+    expect(svc.spec?.type).toBe('ClusterIP');
+    expect(svc.spec?.selector).toEqual({
+      'percussionist.dev/project': 'test-project',
+      'percussionist.dev/component': 'code-server',
+    });
+    expect(svc.spec?.ports).toEqual([
+      { port: 8080, targetPort: 8080, name: 'http', protocol: 'TCP' },
+    ]);
+  });
+
+  it('sets an owner reference tying the Service lifecycle to the Project', () => {
+    const svc = renderIdeService(makeProject());
+    expect(svc.metadata.ownerReferences).toEqual([
+      {
+        apiVersion: 'percussionist.dev/v1alpha1',
+        kind: 'Project',
+        name: 'test-project',
+        uid: 'test-uid-123',
+        controller: true,
+        blockOwnerDeletion: true,
+      },
+    ]);
+  });
+});
+
 describe('renderIdeIngress — spec.tls', () => {
   let counter = 0;
   async function loadIngress(tlsSecret: string) {
@@ -380,5 +427,78 @@ describe('renderIdeIngress — spec.tls', () => {
     expect(ingress.spec?.tls).toEqual([
       { hosts: ['ide-test-project.192.168.49.2.nip.io'], secretName: 'percussionist-tls-wildcard' },
     ]);
+  });
+});
+
+describe('renderIdeIngress', () => {
+  it('routes the ide-<project> host to the Service on the code-server port', () => {
+    const ing = renderIdeIngress(makeProject(), BASE_URL);
+    expect(ing.metadata.name).toBe(ideIngressName(makeProject()));
+    expect(ing.metadata.namespace).toBe('test-ns');
+    expect(ing.apiVersion).toBe('networking.k8s.io/v1');
+
+    const rule = ing.spec?.rules?.[0];
+    expect(rule?.host).toBe('ide-test-project.example.com');
+    const path = rule?.http?.paths?.[0];
+    expect(path?.path).toBe('/');
+    expect(path?.pathType).toBe('Prefix');
+    expect(path?.backend?.service?.name).toBe('ide-test-project');
+    expect(path?.backend?.service?.port?.number).toBe(8080);
+  });
+
+  it('uses only the base URL hostname (no port) in the Ingress host rule', () => {
+    const ing = renderIdeIngress(makeProject(), 'http://k8s.example.internal:8080');
+    expect(ing.spec?.rules?.[0]?.host).toBe('ide-test-project.k8s.example.internal');
+  });
+
+  it('sets an owner reference tying the Ingress lifecycle to the Project', () => {
+    const ing = renderIdeIngress(makeProject(), BASE_URL);
+    expect(ing.metadata.ownerReferences).toEqual([
+      {
+        apiVersion: 'percussionist.dev/v1alpha1',
+        kind: 'Project',
+        name: 'test-project',
+        uid: 'test-uid-123',
+        controller: true,
+        blockOwnerDeletion: true,
+      },
+    ]);
+  });
+});
+
+describe('ideURLFor', () => {
+  it('builds the https://ide-<project>.<host> URL (A15) when the base URL is https', () => {
+    // The port is part of the URL host, so it is carried through to the IDE URL.
+    expect(ideURLFor(makeProject(), BASE_URL)).toBe('https://ide-test-project.example.com:30443');
+  });
+
+  it('keeps the scheme from the base URL — https stays https, http stays http', () => {
+    expect(ideURLFor(makeProject(), 'https://cluster.example.com:30443')).toBe(
+      'https://ide-test-project.cluster.example.com:30443',
+    );
+    expect(ideURLFor(makeProject(), 'http://cluster.example.com:30443')).toBe(
+      'http://ide-test-project.cluster.example.com:30443',
+    );
+    expect(ideURLFor(makeProject(), 'http://k8s.example.internal:8080')).toBe(
+      'http://ide-test-project.k8s.example.internal:8080',
+    );
+  });
+});
+
+describe('shouldReconcileCodeServer', () => {
+  it('requires codeServer.enabled', () => {
+    expect(shouldReconcileCodeServer(makeProject({ spec: { source: { local: true } } }))).toBe(
+      false,
+    );
+  });
+
+  it('requires a data PVC source (git or local)', () => {
+    expect(
+      shouldReconcileCodeServer(makeProject({ spec: { codeServer: { enabled: true } } })),
+    ).toBe(false);
+  });
+
+  it('enables with codeServer.enabled + source.local', () => {
+    expect(shouldReconcileCodeServer(makeProject())).toBe(true);
   });
 });

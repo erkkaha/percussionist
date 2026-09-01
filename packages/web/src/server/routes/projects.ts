@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   API_GROUP_VERSION,
   type InjectFileRef,
@@ -33,14 +34,21 @@ function projectConfigCmName(projectName: string): string {
 }
 
 /** Name of the per-project inject-file Secret for a given filename. */
-function injectFileSecretName(projectName: string, filename: string): string {
+export function injectFileSecretName(projectName: string, filename: string): string {
   // Sanitise the filename into a valid K8s name segment (replace dots/underscores, lowercase).
   const slug = filename
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
-  return `${projectName}-inject-${slug}`;
+  // Append a short deterministic hash so distinct source filenames that slug
+  // to the same segment (e.g. notes.md and notes_md) get distinct Secret names
+  // instead of colliding on the same Secret. A collision would let the last
+  // writer win and could cause orphan cleanup to delete a still-referenced
+  // Secret. The hash is derived from the full filename, so the name stays
+  // stable across upsert and orphan-delete (both use this one function).
+  const hash = createHash('sha1').update(filename).digest('hex').slice(0, 8);
+  return `${projectName}-inject-${slug}-${hash}`;
 }
 
 /**
@@ -349,6 +357,7 @@ projects.put('/:name', adminAuth(), async (c) => {
 
   const hasOpencodeConfig = Object.hasOwn(body as object, 'opencodeConfig');
   const opencodeConfig = (body as { opencodeConfig?: string }).opencodeConfig ?? '';
+  const hasInjectFiles = Object.hasOwn(body as object, 'injectFiles');
   // Out-of-band inject files: [{ filename, content }]
   const rawInjectFiles =
     (body as { injectFiles?: Array<{ filename: string; content: string }> }).injectFiles ?? [];
@@ -434,17 +443,23 @@ projects.put('/:name', adminAuth(), async (c) => {
   }
 
   // Manage inject-file Secrets: upsert new/updated, delete orphans.
-  const previousRefs = spec.injectFiles ?? [];
-  const validInjectFiles = rawInjectFiles.filter((f) => f.filename.trim());
-  const currentFilenames = new Set(validInjectFiles.map((f) => f.filename.trim()));
-  await deleteOrphanedInjectFileSecrets(name, previousRefs, currentFilenames);
-  if (validInjectFiles.length > 0) {
-    const refs = await Promise.all(
-      validInjectFiles.map((f) => upsertInjectFileSecret(name, f.filename.trim(), f.content)),
-    );
-    spec.injectFiles = refs;
-  } else {
-    spec.injectFiles = undefined;
+  // Only run when the request body explicitly includes `injectFiles`. When the
+  // field is absent (e.g. a partial PUT changing only `maxParallel`), leave the
+  // existing spec.injectFiles untouched — otherwise the default `[]` would
+  // delete every stored inject-file Secret as an "orphan".
+  if (hasInjectFiles) {
+    const previousRefs = spec.injectFiles ?? [];
+    const validInjectFiles = rawInjectFiles.filter((f) => f.filename.trim());
+    const currentFilenames = new Set(validInjectFiles.map((f) => f.filename.trim()));
+    await deleteOrphanedInjectFileSecrets(name, previousRefs, currentFilenames);
+    if (validInjectFiles.length > 0) {
+      const refs = await Promise.all(
+        validInjectFiles.map((f) => upsertInjectFileSecret(name, f.filename.trim(), f.content)),
+      );
+      spec.injectFiles = refs;
+    } else {
+      spec.injectFiles = undefined;
+    }
   }
 
   try {

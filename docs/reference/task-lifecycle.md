@@ -11,7 +11,7 @@ Tasks in Percussionist follow a defined state machine with 16 phases.
 | `scheduled` | in-progress | Scheduler picked it, run being created |
 | `initializing` | in-progress | Pod starting, git checkout in progress |
 | `running` | in-progress | Agent actively working |
-| `waiting-for-input` | review | PLAN-only: agent asked a question |
+| `waiting-for-input` | review | Agent asked a question (parked for human input) |
 | `succeeded` | review | Run completed successfully |
 | `reviewing` | review | AI reviewer evaluating |
 | `awaiting-human` | review | Needs human decision |
@@ -32,7 +32,7 @@ Tasks in Percussionist follow a defined state machine with 16 phases.
 | `scheduled` | `initializing`, `failed` |
 | `initializing` | `running`, `succeeded`, `failed` |
 | `running` | `waiting-for-input`, `succeeded`, `failed` |
-| `waiting-for-input` | `running`, `failed` |
+| `waiting-for-input` | `running`, `succeeded`, `failed`, `done`, `rework-requested` |
 | `succeeded` | `reviewing`, `awaiting-human`, `done` |
 | `reviewing` | `awaiting-human`, `rework-requested` |
 | `awaiting-human` | `awaiting-merge`, `generating-builds`, `awaiting-feature-merge`, `rework-requested`, `done`, `failed` |
@@ -41,7 +41,7 @@ Tasks in Percussionist follow a defined state machine with 16 phases.
 | `generating-builds` | `awaiting-children`, `awaiting-human`, `failed` |
 | `awaiting-children` | `awaiting-feature-merge`, `awaiting-human`, `done`, `failed` |
 | `awaiting-feature-merge` | `done`, `awaiting-human`, `failed` |
-| `failed` | `pending`, `awaiting-human`, `awaiting-merge` |
+| `failed` | `pending`, `awaiting-human`, `awaiting-merge`, `awaiting-feature-merge` |
 | `done` | — |
 
 `done` is a terminal phase with no outgoing transitions.
@@ -53,7 +53,7 @@ Projects configure their task lifecycle via `spec.flow.preset`:
 | Preset | Behavior |
 |--------|----------|
 | `simple` | Minimal: pending → scheduled → running → succeeded → done |
-| `review` | Adds AI review between succeeded and done |
+| `review` | Adds a human review step between succeeded and done — no AI review |
 | `plan-build` | PLAN creates BUILD tasks; no AI review |
 | `plan-build-review-merge` | Full pipeline with review + merge (default) |
 
@@ -102,4 +102,6 @@ See [`inspect_task_flow`](mcp-tools.md#inspect_task_flow) for inputs, outputs, a
 
 ## Backward Compatibility
 
-A legacy `column` field on `Task.status` maps phases to board columns: `backlog`, `ready`, `in-progress`, `review`, `rework`, `done`, `blocked`. The column field is never written by new code — all state is driven by the phase enum.
+A legacy `column` field used to map phases to board columns. It has been removed
+from the Task schema entirely and is never written — columns are derived from each
+task's phase, and all state is driven by the phase enum.

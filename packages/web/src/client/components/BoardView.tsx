@@ -48,6 +48,7 @@ export default function BoardView() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedTaskName = searchParams.get('task') ?? null;
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [detailFocused, setDetailFocused] = useState(false);
 
   // Clear any add-task overlay that belongs to the other breakpoint when the
   // viewport crosses the threshold, so a mobile sheet cannot leak onto desktop.
@@ -104,7 +105,10 @@ export default function BoardView() {
 
   const handleSheetClose = (open: boolean) => {
     setSheetOpen(open);
-    if (!open) setSearchParams({}, { replace: true });
+    if (!open) {
+      setSearchParams({}, { replace: true });
+      setDetailFocused(false);
+    }
   };
 
   const rawApprovals = data?.approvals;
@@ -143,9 +147,12 @@ export default function BoardView() {
         approvals={approvals}
         codeServerUrl={codeServerUrl}
         repoWebUrl={settings.repoWebUrl}
+        focused={detailFocused}
+        onToggleFocus={() => setDetailFocused((f) => !f)}
         onDeleted={() => {
           setSearchParams({}, { replace: true });
           setSheetOpen(false);
+          setDetailFocused(false);
         }}
       />
     ) : null;
@@ -187,7 +194,7 @@ export default function BoardView() {
       <div className="flex flex-1 min-h-0">
         {/* Task list — full width on mobile, constrained on desktop when detail is open */}
         <div
-          className={`flex flex-col min-h-0 w-full ${selectedTask ? 'md:w-2/5 md:border-r md:border-border' : ''}`}
+          className={`flex flex-col min-h-0 w-full ${selectedTask ? 'md:w-2/5 md:border-r md:border-border' : ''} ${selectedTask && detailFocused ? 'md:hidden' : ''}`}
         >
           <TaskListPanel
             projectName={projectName}
@@ -222,7 +229,7 @@ export default function BoardView() {
       <Sheet open={sheetOpen} onOpenChange={handleSheetClose}>
         <SheetContent
           side="right"
-          className="md:hidden w-full sm:max-w-lg p-0 flex flex-col overflow-hidden bg-surface text-text border-border [&>button]:z-10"
+          className={`md:hidden w-full ${detailFocused ? 'max-w-none sm:max-w-none' : 'sm:max-w-lg'} p-0 flex flex-col overflow-hidden bg-surface text-text border-border [&>button]:z-10`}
         >
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
             {detailPanel ?? <TaskDetailEmpty />}

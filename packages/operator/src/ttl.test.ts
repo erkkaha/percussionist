@@ -1,7 +1,9 @@
 // ttl.test.ts — Tests for TTL expiry precedence (per-run vs cluster default)
+// and the worktree-cleanup Job renderer (buildCleanupJob).
 
 import { describe, expect, it } from 'bun:test';
 import type { Run } from '@percussionist/api';
+import { gitUrlHash } from '@percussionist/kube';
 import { buildCleanupJob, isExpired } from './ttl.js';
 
 // Helper to create a minimal terminal Run CR with all required fields
@@ -106,5 +108,47 @@ describe('buildCleanupJob', () => {
     expect(job.metadata.name).toMatch(/^[a-z0-9-]+$/);
     expect(job.metadata.name.startsWith('cleanup-ttl-')).toBe(true);
     expect(job.metadata.name.endsWith('-')).toBe(false);
+  });
+
+  it('shell script removes the worktree after recording its branch', () => {
+    const run = makeRun();
+    const script = buildCleanupJob(run).spec.template.spec.containers[0]?.args?.[0] ?? '';
+    expect(script.startsWith('set -e')).toBe(true);
+    expect(script).toContain('rm -rf /data/worktrees/test-run-123');
+    // The branch is captured BEFORE the worktree is deleted so the mirror
+    // cleanup below can delete the feature branch.
+    const branchLine = script.split('\n').find((l) => l.includes('symbolic-ref HEAD'));
+    expect(branchLine).toContain('git -C /data/worktrees/test-run-123 symbolic-ref HEAD');
+    expect(branchLine).toContain('2>/dev/null || true');
+    expect(script).toContain('echo "[cleanup-ttl] done"');
+  });
+
+  it('prunes the git mirror and deletes the recorded feature branch when a git URL is set', () => {
+    const gitUrl = 'ssh://git@github.com/acme/repo.git';
+    const hash = gitUrlHash(gitUrl);
+    const run = makeRun({ source: { git: { url: gitUrl } } });
+    const script = buildCleanupJob(run).spec.template.spec.containers[0]?.args?.[0] ?? '';
+    const mirrorDir = `/data/git-mirrors/${hash}`;
+
+    expect(script).toContain(`if [ -d "${mirrorDir}" ]; then`);
+    expect(script).toContain(
+      `git -C "${mirrorDir}" worktree prune --expire=now 2>/dev/null || true`,
+    );
+    // mirrorDir is interpolated at render time; the BRANCH ref-strip stays
+    // literal in the generated script (escaped \$ in ttl.ts).
+    expect(script).toContain(`git -C "${mirrorDir}" branch -D "\${BRANCH#refs/heads/}"`);
+    expect(script).toContain(`git -C "${mirrorDir}" gc --auto 2>/dev/null || true`);
+    // The branch deletion is guarded by the captured branch being non-empty.
+    expect(script).toContain('if [ -n "$BRANCH" ]; then');
+    expect(script).toContain('fi');
+  });
+
+  it('omits the mirror prune block entirely when no git URL is configured', () => {
+    const run = makeRun({ source: { local: true } });
+    const script = buildCleanupJob(run).spec.template.spec.containers[0]?.args?.[0] ?? '';
+    expect(script).not.toContain('git-mirrors');
+    expect(script).not.toContain('worktree prune');
+    expect(script).not.toContain('branch -D');
+    expect(script).not.toContain('gc --auto');
   });
 });

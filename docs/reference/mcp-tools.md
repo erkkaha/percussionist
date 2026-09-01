@@ -12,7 +12,7 @@ The manager runs an in-process MCP server on port 4097. OpenCode agents connect 
 |------|-------------|
 | `inspect_cr` | Get full details of a CR (Run, Project, Task, ClusterAgent) |
 | `list_crs` | List CRs of a given kind with optional labelSelector |
-| `create_run` | Create a new run for a ready task |
+| `create_run` | Schedule a backlog task now; the reconciler creates the run |
 | `create_task` | Create a new Task CR |
 | `delete_run` | Delete a Run by name |
 | `force_retry` | Restart a stuck task at an incremented retry count |
@@ -122,9 +122,9 @@ Explain the current lifecycle state of a task in the context of its project flow
 | Tool | Description |
 |------|-------------|
 | `patch_board` | Merge-patch `Project.status.board` |
-| `pause_reconciliation` | Pause the manager reconcile loop |
+| `pause_reconciliation` | Pause the manager reconcile loop for a project |
 | `resume_reconciliation` | Resume a paused reconcile loop |
-| `get_reconcile_status` | Check reconcile loop state |
+| `get_reconcile_status` | Check a project's reconcile loop state (paused, elapsed/remaining, last reconciled) |
 
 ### Memory
 
@@ -133,6 +133,10 @@ Explain the current lifecycle state of a task in the context of its project flow
 | `store_memory` | Store a memory with semantic embedding |
 | `query_memory` | Semantic search across stored memories |
 | `get_context` | Retrieve relevant context for prompt injection |
+| `list_memories` | List stored memories with pagination and optional task filter |
+| `get_memory` | Retrieve a single memory by its UUID |
+| `update_memory` | Update a memory's content and/or metadata (regenerates embedding if content changes) |
+| `delete_memory` | Delete a memory and its associated embedding vector atomically |
 
 ### Administration
 
@@ -145,6 +149,9 @@ Explain the current lifecycle state of a task in the context of its project flow
 | `apply_upgrade` | Upgrade Percussionist. Pins the Flux source when one exists (CRDs included), otherwise patches Deployment images and warns that CRDs were skipped |
 | `list_models` | List available LLM providers and models |
 | `list_task_events` | List task lifecycle audit events |
+| `list_findings` | List agent-reported findings with optional status/severity/category filters |
+| `update_finding` | Update a finding's status, severity, or category for manual triage |
+| `create_task_from_finding` | Create a Task CR from a finding regardless of severity |
 
 ## Dispatcher MCP Tools
 
@@ -241,7 +248,7 @@ Disallowed completion calls are rejected with deterministic JSON-RPC `-32602` er
 
 Task/run assignment capability checks are enforced consistently in:
 
-- Manager MCP: `create_task`, `create_run` (agent override), `force_retry` (agent override)
+- Manager MCP: `create_task`, `force_retry` (agent override), `create_run` (schedule backlog)
 - Dispatcher MCP: `create_task` (BUILD task creation from worker runs)
 - Web board API: `POST /api/projects/:project/board/tasks`
 

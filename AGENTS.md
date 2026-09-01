@@ -59,7 +59,7 @@ Percussionist uses a four-layer testing model. See [`docs/testing-strategy.md`](
 | Tier | Command | When to run | Duration target |
 |------|---------|-------------|-----------------|
 | **Unit + Smoke** | `pnpm test` | Every commit; PR gate required | < 1 min |
-| **Core E2E** | `pnpm e2e:core` | Before merging feature branches; CI on every PR | < 10 min |
+| **Core E2E** | `pnpm e2e:core` | Before merging feature branches; manual trigger in CI (workflow_dispatch) | < 10 min |
 | **Extended E2E** | `pnpm e2e:extended` | Before releases; manual trigger for complex paths | < 20 min |
 
 ### `bun test --isolate` in `@percussionist/web`
@@ -81,9 +81,9 @@ Both failed **only on CI** and passed locally, because test file order comes
 from filesystem enumeration and differs between a fresh clone and a working
 tree. Adding an unrelated test file is enough to flip the order and surface it.
 
-`--isolate` requires bun 1.3.14 (what CI pins); 1.3.12 does not have the flag.
-Keep the `bun-version` pins in `.github/workflows/ci.yml` and `release.yml` in
-step with it.
+`--isolate` requires bun 1.3.14 or newer (CI pins 1.4.0); 1.3.12 does not have
+the flag. Keep the `bun-version` pins in `.github/workflows/ci.yml` and
+`release.yml` in step with each other.
 
 `tests/setup.ts` must install happy-dom's `document` **before** loading
 `@testing-library/jest-dom`. `@testing-library/dom` freezes `screen` at
@@ -167,7 +167,7 @@ spec:
 ### Access (Minikube / Vanilla K8s)
 
 ```bash
-kubectl -n percussionist port-forward svc/code-server-my-project 8080:8080
+kubectl -n percussionist port-forward svc/ide-my-project 8080:8080
 # Open http://localhost:8080
 ```
 
@@ -242,7 +242,7 @@ spec:
     # Optional overrides:
     # model: nomic-embed-text           # default
     # dimensions: 768                    # default
-    # ollamaUrl: http://ollama:11434     # default (cluster DNS)
+    # ollamaUrl: http://ollama.percussionist.svc.cluster.local:11434     # default (cluster DNS)
     # resources:
     #   requests: { cpu: "100m", memory: "256Mi" }
     #   limits: { memory: "512Mi" }
@@ -296,6 +296,7 @@ these tools for agent use:
 - Subsequent runs: `git fetch` updates the mirror; worktree is reused by default (`gitCache.worktreeReuse: true`)
 - Set `gitCache.worktreeReuse: false` to always start from a clean checkout
 - Agent can push to the real remote — `remote set-url` restores the real URL after mirror-based setup
+- On worker-run completion the dispatcher publishes the branch to `refs/percussionist/<branch>` on the remote (durable copy of in-flight work, invisible in the branch UI; best-effort — a failed push completes the run with a warning). The init container fetches these refs back and promotes them into the mirror's `refs/heads` fast-forward-only; the task-done cleanup pod deletes them from the remote
 - Mirror fetches are serialized with `flock` so parallel runs don't corrupt the bare repo
 - Worktree cleanup: the pod init container prunes stale worktrees on startup via `git worktree prune`; MCP tools (force_retry, set_task_state) no longer delete runs eagerly — the TTL controller handles cleanup after `runTTLDays` days; a cleanup pod spawns when a task reaches `done` to remove all deterministic worker worktrees for that task
 
@@ -545,7 +546,7 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `read_session_live` | Incremental session messages with `since`/`nextSince` for polling (tries live API first, falls back to ConfigMap) |
 | `patch_board` | Merge-patch `Project.status.board` (escalations, pendingQuestions, facilitations, managerMetrics) |
 | `delete_run` | Delete an Run by name |
-| `create_run` | Create a new run for a ready task; resolves feature-branch metadata and updates `Task.status` |
+| `create_run` | Schedule a backlog (`pending`) or `rework-requested` task now; the reconciler creates the run on its next cycle |
 | `create_task` | Create a new Task CR from the manager |
 | `force_retry` | Restart a stuck task at an incremented retry count via `Task.status` (does not delete old runs) |
 | `set_task_state` | Move a task to a target column, optionally cancel running runs (runs preserved by default) |
@@ -560,7 +561,7 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `read_manager_logs` | Read logs from the manager controller pod |
 | `pause_reconciliation` | Pause the manager reconcile loop for a project (auto-resumes after timeout) |
 | `resume_reconciliation` | Resume a paused reconcile loop |
-| `get_reconcile_status` | Check whether the reconcile loop is paused and when it was last paused |
+| `get_reconcile_status` | Check whether a project's reconcile loop is paused, when it auto-resumes, and when it was last reconciled |
 | `list_available_packages` | List Alpine packages declared for a project's runner |
 | `install_packages` | Install ad-hoc Alpine packages via a maintenance pod |
 | `list_findings` | List agent-reported findings with optional status/severity/category filters |
@@ -574,13 +575,25 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `update_memory` | Update a memory's content and/or metadata (regenerates embedding if content changes) |
 | `delete_memory` | Delete a memory and its associated embedding vector atomically |
 
-**`create_run`** — Direct run creation without waiting for reconcile cycle.
+**`create_run`** — Schedule a task now (admin shortcut); the run is created by the reconciler.
 - Requires: `project`, `task` (Task CR name)
-- Optional: `agent`, `model`, `retryCount`, `reworkFeedback`, `namespace`
-- Validates the transition via `isValidTransition(currentPhase, "running")` — errors
-  if the current phase does not allow moving to `running` (use `force_retry` first)
-- Moves task to `running` and patches `Task.status.worker` with resolved `gitBranch`,
-  `parentBranch`, and `mergeIntoBranch` when feature branching is enabled
+- Optional: `namespace`
+- Moves a `pending` (backlog) or `rework-requested` task to `scheduled` via the standard
+  transition table (`pending → scheduled`, `rework-requested → scheduled`) and patches only
+  `Task.status.phase` — worker fields (`runName`/`status`/`gitBranch`/`parentBranch`/
+  `mergeIntoBranch`) are computed deterministically by the reconciler, not pre-populated
+- Does NOT create Run CRs itself — the reconciler creates the run on its next reconcile
+  cycle via the `ScheduleRun` effect (the Task informer enqueues the project on the phase
+  patch). All runs go through reconciliation; no transition-table holes are introduced
+- Idempotent: already-`scheduled`/`initializing` tasks return a no-op; a task whose phase
+  changed since the initial read is left to the reconciler (no lost-update clobber)
+- Returns `phase: 'Scheduled'` with `expectedRunName` (same formula the reconciler uses)
+  so callers can poll for the run
+- No `agent`/`model` overrides — overrides only make sense at run-build time, which is now
+  the reconciler's job (`force_retry` keeps the override capability for the restart path)
+- No capacity gate: a task flipped straight to `scheduled` gets its run created regardless
+  of `maxParallel` (intended "skip the queue" admin semantic)
+- For failed/stuck tasks use `force_retry`; for arbitrary phase moves use `set_task_state`
 
 **`force_retry`** — One-shot cleanup and restart for stuck tasks.
 - Requires: `project`, `task` (Task CR name)
@@ -630,6 +643,9 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 **`pause_reconciliation`** — Prevent the manager from overriding manual board patches.
 - Requires: `project`
 - Optional: `durationSeconds` (default: 300), `namespace`
+- Pause state is per project — pausing one project never freezes the others.
+- The pause is written to the project CR as `percussionist.dev/reconcile-paused`
+  annotations, which the reconciler reads directly, so it survives a manager restart.
 - Auto-resumes after the specified duration
 
 ## Dispatcher MCP Tools

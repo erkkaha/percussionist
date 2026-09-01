@@ -64,8 +64,11 @@ spec:
 
 4. **Submit a Run**
 
+The reconciler schedules a run automatically once the task is created. To launch
+an ad-hoc run outside the board workflow, pass an inline prompt (not a task name):
+
 ```bash
-pnpm beatctl submit --project my-project --task my-task
+pnpm beatctl submit --project my-project --task "Implement login"
 ```
 
 ## Next Steps

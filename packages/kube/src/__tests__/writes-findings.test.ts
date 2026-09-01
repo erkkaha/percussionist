@@ -136,6 +136,70 @@ describe('appendFindingToConfigMap', () => {
     }
   });
 
+  it('concurrent-agent scenario: create-409 falls back to retrying the patch, no throw', async () => {
+    // Two agents race the create: the first patch 404s (no ConfigMap yet),
+    // another agent creates it first so our create 409s — the write must loop
+    // back to the merge-patch (which now succeeds) instead of losing the
+    // finding to the rethrown 409.
+    const fake = installFakeKube({
+      patchNamespacedConfigMap: [{ error: notFound('no findings cm') }, { value: {} }],
+      createNamespacedConfigMap: { error: kubeError(409, 'already exists') },
+    });
+    try {
+      const finding = makeFinding({ id: '1785144009598-1232b4487768' });
+      const result = await appendFindingToConfigMap(PROJECT, finding, NS);
+
+      expect(result).toEqual({ written: true });
+      // patch (miss) → create (409) → patch (ok).
+      expect(fake.calls.map((c) => c.method)).toEqual([
+        'patchNamespacedConfigMap',
+        'createNamespacedConfigMap',
+        'patchNamespacedConfigMap',
+      ]);
+
+      // The retried patch carries the same single inbox key, and the finding
+      // is stored on the ConfigMap that the concurrent winner created.
+      const retried = fake.calls[2]?.args[0] as { body: { data: Record<string, string> } };
+      const key = singleDataKey(retried.body.data);
+      expect(key).toBe(inboxFindingKey(finding.id));
+      expect(key).toMatch(CONFIGMAP_KEY);
+      const stored = retried.body.data[key];
+      expect(stored).toBeDefined();
+      expect(JSON.parse(stored as string)).toMatchObject({ id: finding.id });
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('create-409 storm: exhaustion after 3 rounds throws, never a silent "success"', async () => {
+    // Every patch misses (ConfigMap keeps vanishing or never appearing) and
+    // every create conflicts (someone else keeps winning) — after 3 rounds the
+    // bounded loop must give up and throw rather than report written: true.
+    const fake = installFakeKube({
+      patchNamespacedConfigMap: { error: notFound('no findings cm') },
+      createNamespacedConfigMap: { error: kubeError(409, 'already exists') },
+    });
+    try {
+      const finding = makeFinding({ id: 'f1' });
+      await expect(appendFindingToConfigMap(PROJECT, finding, NS)).rejects.toThrow(
+        /appendFindingToConfigMap: exhausted retries/,
+      );
+
+      // 3 rounds × (patch miss + create conflict) — the finding is never
+      // reported as stored when it was not.
+      expect(fake.calls.map((c) => c.method)).toEqual([
+        'patchNamespacedConfigMap',
+        'createNamespacedConfigMap',
+        'patchNamespacedConfigMap',
+        'createNamespacedConfigMap',
+        'patchNamespacedConfigMap',
+        'createNamespacedConfigMap',
+      ]);
+    } finally {
+      fake.restore();
+    }
+  });
+
   it('non-404 errors rethrow without creating', async () => {
     const fake = installFakeKube({
       patchNamespacedConfigMap: { error: serverError('api is sad') },

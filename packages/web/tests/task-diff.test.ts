@@ -440,7 +440,7 @@ describe('GET /api/projects/:project/tasks/:taskName/diff', () => {
     expect(body.empty).toBe(true);
   });
 
-  it('includes RESOLVE function and origin/ ref resolution in the command', async () => {
+  it('plumbs the resolved base/head refs into the exec command', async () => {
     getTaskSpy.mockResolvedValue(makeTask());
 
     let capturedCommand = '';
@@ -455,10 +455,12 @@ describe('GET /api/projects/:project/tasks/:taskName/diff', () => {
     const res = await getDiff();
     expect(res.status).toBe(200);
 
-    expect(capturedCommand).toContain('RESOLVE()');
-    expect(capturedCommand).toContain('origin/$1^{commit}');
-    expect(capturedCommand).toContain('BASE_REF=$(RESOLVE');
-    expect(capturedCommand).toContain('HEAD_REF=$(RESOLVE');
+    // The diff must be computed against the branch metadata from
+    // Task.status.worker (mergeIntoBranch as base, gitBranch as head) — if the
+    // route ever stopped plumbing them, the git script would fall back to the
+    // project default ref and diff the wrong range.
+    expect(capturedCommand).toContain("BASE='main'");
+    expect(capturedCommand).toContain("HEAD='feature/thing'");
   });
   // Regression: the exec pod used to inherit Project.spec.exec.image, so a
   // project pinning a git-less image (plain ubuntu:24.04) made every git
@@ -501,10 +503,7 @@ describe('GET /api/projects/:project/tasks/:taskName/diff', () => {
     const body = (await res.json()) as { reason?: string };
     expect(body.reason).toContain('git_missing');
 
-    // The guard has to run before any git command, or it never fires.
+    // The route must emit the git-availability guard that produces this error.
     expect(capturedCommand).toContain('command -v git');
-    expect(capturedCommand.indexOf('command -v git')).toBeLessThan(
-      capturedCommand.indexOf('RESOLVE()'),
-    );
   });
 });

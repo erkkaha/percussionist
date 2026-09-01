@@ -1,204 +1,49 @@
 // memory-tools.test.ts — unit tests for manager controller memory MCP tools.
 //
 // Tests cover:
-// 1. Tool schema definitions (list_memories, get_memory, update_memory, delete_memory)
+// 1. Tool schema definitions (asserted against the actual inputSchema JSON
+//    served by tools/list — the old tests read tools.ts as a string and only
+//    checked that substrings like 'project' appeared somewhere)
 // 2. Memory client CRUD methods with mocked fetch
 
 import { describe, expect, it } from 'bun:test';
-import fs from 'node:fs';
-import pathMod from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const __dirname = pathMod.dirname(fileURLToPath(import.meta.url));
-const toolsSource = fs.readFileSync(pathMod.join(__dirname, '../tools.ts'), 'utf-8');
+const { __test } = await import('../tools.js');
 
 // ---------------------------------------------------------------------------
-// Tool schema definitions — verify TOOLS array contains all expected memory tools.
-// These tests read the source file to extract tool definitions without importing
-// the full tools.ts module (which starts an HTTP server). This keeps tests fast
-// and deterministic.
+// Tool schema definitions — assert against the real TOOLS array.
+// ---------------------------------------------------------------------------
+
+type ToolEntry = {
+  name: string;
+  inputSchema?: { properties?: Record<string, unknown>; required?: string[] };
+};
 
 describe('memory tool schema definitions', () => {
-  // Extract just the properties block for a given tool name by finding its
-  // position in the source and scanning forward to the matching closing brace.
-  function extractToolProperties(name: string): string | null {
-    const nameIdx = toolsSource.indexOf(`name: '${name}'`);
-    if (nameIdx < 0) return null;
-
-    // Find the opening `{` of this tool object — it's before `name:`.
-    let openBrace = -1;
-    for (let i = nameIdx - 1; i >= Math.max(0, nameIdx - 200); i--) {
-      if (toolsSource[i] === '{') {
-        openBrace = i;
-        break;
-      }
-    }
-    if (openBrace < 0) return null;
-
-    // Find the matching closing `}` by counting braces.
-    let depth = 0;
-    let closeBrace = -1;
-    for (let i = openBrace; i < toolsSource.length; i++) {
-      if (toolsSource[i] === '{') depth++;
-      else if (toolsSource[i] === '}') {
-        depth--;
-        if (depth === 0) {
-          closeBrace = i;
-          break;
-        }
-      }
-    }
-    if (closeBrace < 0) return null;
-
-    // Extract the full tool object block.
-    const block = toolsSource.slice(openBrace, closeBrace + 1);
-
-    // Now extract properties with proper brace matching.
-    const propsStartIdx = block.indexOf('properties:');
-    if (propsStartIdx < 0) return null;
-
-    let depth2 = 0;
-    let propsOpen = -1;
-    for (let i = propsStartIdx; i < block.length; i++) {
-      if (block[i] === '{') {
-        if (depth2 === 0) {
-          propsOpen = i;
-        }
-        depth2++;
-      } else if (block[i] === '}') {
-        depth2--;
-        if (depth2 === 0 && propsOpen >= 0) {
-          return block.slice(propsOpen + 1, i);
-        }
-      }
-    }
-    return null;
+  async function loadTools(): Promise<ToolEntry[]> {
+    const res = (await __test.handleMcp({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/list',
+    })) as { result?: { tools?: ToolEntry[] } };
+    return res.result?.tools ?? [];
   }
 
-  function extractToolRequired(name: string): string | null {
-    const nameIdx = toolsSource.indexOf(`name: '${name}'`);
-    if (nameIdx < 0) return null;
-
-    let openBrace = -1;
-    for (let i = nameIdx - 1; i >= Math.max(0, nameIdx - 200); i--) {
-      if (toolsSource[i] === '{') {
-        openBrace = i;
-        break;
-      }
-    }
-    if (openBrace < 0) return null;
-
-    let depth = 0;
-    let closeBrace = -1;
-    for (let i = openBrace; i < toolsSource.length; i++) {
-      if (toolsSource[i] === '{') depth++;
-      else if (toolsSource[i] === '}') {
-        depth--;
-        if (depth === 0) {
-          closeBrace = i;
-          break;
-        }
-      }
-    }
-    if (closeBrace < 0) return null;
-
-    const block = toolsSource.slice(openBrace, closeBrace + 1);
-    // Find `required:` and extract the array content with proper bracket matching.
-    const reqStartIdx = block.indexOf('required:');
-    if (reqStartIdx < 0) return null;
-
-    let bracketDepth = 0;
-    let reqOpen = -1;
-    for (let i = reqStartIdx; i < block.length; i++) {
-      if (block[i] === '[') {
-        if (bracketDepth === 0) {
-          reqOpen = i;
-        }
-        bracketDepth++;
-      } else if (block[i] === ']') {
-        bracketDepth--;
-        if (bracketDepth === 0 && reqOpen >= 0) {
-          return block.slice(reqOpen + 1, i);
-        }
-      }
-    }
-    return null;
+  async function schemaOf(name: string): Promise<{
+    required: string[];
+    properties: Record<string, unknown>;
+  }> {
+    const tool = (await loadTools()).find((t) => t.name === name);
+    expect(tool, `tool "${name}" is registered in the TOOLS array`).toBeDefined();
+    return {
+      required: tool?.inputSchema?.required ?? [],
+      properties: tool?.inputSchema?.properties ?? {},
+    };
   }
 
-  it('should define list_memories tool with project, task, limit, offset', () => {
-    const props = extractToolProperties('list_memories');
-    expect(props).not.toBeNull();
-    expect(props ?? '').toContain('task');
-    expect(props ?? '').toContain('limit');
-    expect(props ?? '').toContain('offset');
-
-    const req = extractToolRequired('list_memories');
-    expect(req).toBe("'project'");
-  });
-
-  it('should define get_memory tool with project and id', () => {
-    const props = extractToolProperties('get_memory');
-    expect(props).not.toBeNull();
-    expect(props ?? '').toContain('id');
-
-    const req = extractToolRequired('get_memory');
-    expect(req).toContain("'project'");
-    expect(req).toContain("'id'");
-  });
-
-  it('should define update_memory tool with project, id, content, metadata', () => {
-    const props = extractToolProperties('update_memory');
-    expect(props).not.toBeNull();
-    expect(props ?? '').toContain('content');
-    expect(props ?? '').toContain('metadata');
-
-    const req = extractToolRequired('update_memory');
-    expect(req).toContain("'project'");
-    expect(req).toContain("'id'");
-  });
-
-  it('should define delete_memory tool with project and id', () => {
-    const props = extractToolProperties('delete_memory');
-    expect(props).not.toBeNull();
-    expect(props ?? '').toContain('id');
-
-    const req = extractToolRequired('delete_memory');
-    expect(req).toContain("'project'");
-    expect(req).toContain("'id'");
-  });
-
-  it('should preserve existing store_memory tool definition', () => {
-    const props = extractToolProperties('store_memory');
-    expect(props).not.toBeNull();
-    expect(props ?? '').toContain('content');
-
-    const req = extractToolRequired('store_memory');
-    expect(req).toContain("'project'");
-    expect(req).toContain("'content'");
-  });
-
-  it('should preserve existing query_memory tool definition', () => {
-    const props = extractToolProperties('query_memory');
-    expect(props).not.toBeNull();
-    expect(props ?? '').toContain('query');
-
-    const req = extractToolRequired('query_memory');
-    expect(req).toContain("'project'");
-    expect(req).toContain("'query'");
-  });
-
-  it('should preserve existing get_context tool definition', () => {
-    const props = extractToolProperties('get_context');
-    expect(props).not.toBeNull();
-    expect(props ?? '').toContain('query');
-
-    const req = extractToolRequired('get_context');
-    expect(req).toContain("'project'");
-    expect(req).toContain("'query'");
-  });
-
-  it('should have all 7 memory tools in the TOOLS array', () => {
-    const toolNames = [
+  it('registers all 7 memory tools in the TOOLS array', async () => {
+    const tools = await loadTools();
+    for (const name of [
       'store_memory',
       'query_memory',
       'get_context',
@@ -206,29 +51,57 @@ describe('memory tool schema definitions', () => {
       'get_memory',
       'update_memory',
       'delete_memory',
-    ];
-    for (const name of toolNames) {
-      expect(extractToolProperties(name)).not.toBeNull();
+    ]) {
+      expect(
+        tools.some((t) => t.name === name),
+        `tool "${name}"`,
+      ).toBe(true);
     }
   });
 
-  it('should have callTool switch cases for all new memory tools', () => {
-    const expectedCases = [
-      "case 'list_memories'",
-      "case 'get_memory'",
-      "case 'update_memory'",
-      "case 'delete_memory'",
-    ];
-    for (const caseStr of expectedCases) {
-      expect(toolsSource).toContain(caseStr);
+  it('list_memories requires project and declares task, limit, offset as optional', async () => {
+    const { required, properties } = await schemaOf('list_memories');
+    expect(required).toEqual(['project']);
+    for (const key of ['task', 'limit', 'offset']) {
+      expect(properties, `property "${key}"`).toHaveProperty(key);
     }
   });
 
-  it('should import all new memory client functions', () => {
-    const imports = ['listMemories', 'getMemory', 'updateMemory', 'deleteMemory'];
-    for (const fn of imports) {
-      expect(toolsSource).toContain(fn);
+  it('get_memory requires project and id', async () => {
+    const { required, properties } = await schemaOf('get_memory');
+    expect(required).toEqual(expect.arrayContaining(['project', 'id']));
+    expect(properties).toHaveProperty('id');
+  });
+
+  it('update_memory requires project and id, declares content and metadata optional', async () => {
+    const { required, properties } = await schemaOf('update_memory');
+    expect(required).toEqual(expect.arrayContaining(['project', 'id']));
+    for (const key of ['content', 'metadata']) {
+      expect(properties, `property "${key}"`).toHaveProperty(key);
+      expect(required).not.toContain(key);
     }
+  });
+
+  it('delete_memory requires project and id', async () => {
+    const { required, properties } = await schemaOf('delete_memory');
+    expect(required).toEqual(expect.arrayContaining(['project', 'id']));
+    expect(properties).toHaveProperty('id');
+  });
+
+  it('store_memory requires project and content', async () => {
+    const { required, properties } = await schemaOf('store_memory');
+    expect(required).toEqual(expect.arrayContaining(['project', 'content']));
+    expect(properties).toHaveProperty('content');
+  });
+
+  it('query_memory requires project and query', async () => {
+    const { required } = await schemaOf('query_memory');
+    expect(required).toEqual(expect.arrayContaining(['project', 'query']));
+  });
+
+  it('get_context requires project and query', async () => {
+    const { required } = await schemaOf('get_context');
+    expect(required).toEqual(expect.arrayContaining(['project', 'query']));
   });
 });
 

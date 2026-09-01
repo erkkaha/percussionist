@@ -1,6 +1,6 @@
 {
   "name": "@percussionist/kube",
-  "version": "0.2.14",
+  "version": "0.2.19",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",

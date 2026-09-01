@@ -4,30 +4,20 @@
 // Offering it unconditionally would put a provider in the picker that cannot
 // authenticate, and the failure would surface as a 401 partway into a run rather
 // than at selection time.
+//
+// Asserts against the route's real `withClaudeEngine` composition step (imported,
+// not reimplemented here) — `visibleProviderIds` below models only the client's
+// ModelSelector contract (it filters `all` down to `connected`), which lives in
+// the client and has no route-side counterpart to import.
 
 import { describe, expect, test } from 'bun:test';
 import { CLAUDE_ENGINE_PROVIDER_ID } from '@percussionist/api';
+import { withClaudeEngine } from '../src/server/routes/providers.js';
 
 type Payload = {
   all?: Array<{ id: string; models?: Array<{ id: string }> }>;
   connected?: string[];
 };
-
-/**
- * Mirrors the route's composition step. Kept as a local reimplementation because
- * the route's own helper is module-private and the behaviour under test is the
- * contract with ModelSelector, which filters `all` by `connected`.
- */
-function withClaudeEngine(data: Payload): Payload {
-  return {
-    ...data,
-    all: [
-      ...(data.all ?? []),
-      { id: CLAUDE_ENGINE_PROVIDER_ID, models: [{ id: 'claude-opus-5' }] },
-    ],
-    connected: [...(data.connected ?? []), CLAUDE_ENGINE_PROVIDER_ID],
-  };
-}
 
 /** What ModelSelector actually shows: `all` narrowed to `connected`. */
 function visibleProviderIds(data: Payload): string[] {

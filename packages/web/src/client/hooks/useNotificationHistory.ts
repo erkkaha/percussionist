@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getNotificationHistory,
+  HISTORY_CAP,
   NOTIFICATION_EVENT,
   type NotificationEntry,
 } from '../lib/notifications';
@@ -28,7 +29,7 @@ export function useNotificationHistory(): {
       setEntries((prev) => {
         // Guard against duplicates (shouldn't happen but be safe).
         if (prev.some((x) => x.key === entry.key)) return prev;
-        return [entry, ...prev].slice(0, 50);
+        return [entry, ...prev].slice(0, HISTORY_CAP);
       });
       setUnreadCount((c) => c + 1);
     }

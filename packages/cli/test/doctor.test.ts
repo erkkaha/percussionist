@@ -939,6 +939,92 @@ describe('checkDns', () => {
     expect(result.status).toBe('fail');
     expect(result.detail).toContain('has no ready endpoints');
   });
+
+  // A10 — ollama must be optional unless a Project enables spec.embedding.
+  it('passes when the ollama Service is absent and no Project enables embedding', async () => {
+    const clients = makeClients({
+      apps: {
+        readNamespacedDeployment: async () => ({
+          metadata: { name: 'coredns' },
+          status: {
+            conditions: [{ type: 'Available', status: 'True' }],
+            readyReplicas: 1,
+            availableReplicas: 1,
+          },
+        }),
+      },
+      custom: {
+        listClusterCustomObject: async () => ({
+          items: [{ metadata: { name: 'plain-project' }, spec: { source: { local: true } } }],
+        }),
+      },
+      core: {
+        readNamespacedService: async ({ name }) => ({ metadata: { name } }),
+        readNamespacedEndpoints: async () => ({ subsets: [{ addresses: [{ ip: '10.0.0.1' }] }] }),
+      },
+    });
+
+    const result = await checkDns(clients, { namespace: NS, timeoutMs: 100 });
+    expect(result.status).toBe('pass');
+  });
+
+  it('fails when the ollama Service is absent while a Project enables embedding', async () => {
+    const clients = makeClients({
+      apps: {
+        readNamespacedDeployment: async () => ({
+          metadata: { name: 'coredns' },
+          status: {
+            conditions: [{ type: 'Available', status: 'True' }],
+            readyReplicas: 1,
+            availableReplicas: 1,
+          },
+        }),
+      },
+      custom: {
+        listClusterCustomObject: async () => ({
+          items: [{ metadata: { name: 'embed-project' }, spec: { embedding: { enabled: true } } }],
+        }),
+      },
+      core: {
+        readNamespacedService: async ({ name }) => {
+          if (name === 'ollama') throw new Error('not found');
+          return { metadata: { name } };
+        },
+        readNamespacedEndpoints: async () => ({ subsets: [{ addresses: [{ ip: '10.0.0.1' }] }] }),
+      },
+    });
+
+    const result = await checkDns(clients, { namespace: NS, timeoutMs: 100 });
+    expect(result.status).toBe('fail');
+    expect(result.detail).toContain('Service percussionist/ollama missing');
+  });
+
+  it('checks the ollama Service when a Project enables embedding', async () => {
+    const clients = makeClients({
+      apps: {
+        readNamespacedDeployment: async () => ({
+          metadata: { name: 'coredns' },
+          status: {
+            conditions: [{ type: 'Available', status: 'True' }],
+            readyReplicas: 1,
+            availableReplicas: 1,
+          },
+        }),
+      },
+      custom: {
+        listClusterCustomObject: async () => ({
+          items: [{ metadata: { name: 'embed-project' }, spec: { embedding: { enabled: true } } }],
+        }),
+      },
+      core: {
+        readNamespacedService: async ({ name }) => ({ metadata: { name } }),
+        readNamespacedEndpoints: async () => ({ subsets: [{ addresses: [{ ip: '10.0.0.1' }] }] }),
+      },
+    });
+
+    const result = await checkDns(clients, { namespace: NS, timeoutMs: 100 });
+    expect(result.status).toBe('pass');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1277,6 +1363,58 @@ describe('checkStorage', () => {
     const result = await checkStorage(clients, NS, 100);
     expect(result.status).toBe('fail');
     expect(result.message).toBe('cannot list StorageClasses');
+  });
+
+  // A10 — the documented spec.data.pvcName override must be honored.
+  it('checks spec.data.pvcName instead of {project}-data when the override is set', async () => {
+    const readPvcNames: string[] = [];
+    const clients = makeClients({
+      storage: {
+        listStorageClass: async () => ({
+          items: [
+            {
+              metadata: {
+                name: 'standard',
+                annotations: { 'storageclass.kubernetes.io/is-default-class': 'true' },
+              },
+            },
+          ],
+        }),
+      },
+      core: {
+        readNamespacedPersistentVolumeClaim: async ({ name }) => {
+          readPvcNames.push(name as string);
+          return { metadata: { name }, status: { phase: 'Bound' } };
+        },
+      },
+      custom: {
+        listClusterCustomObject: async () => ({
+          items: [
+            {
+              metadata: { name: 'demo', namespace: NS },
+              spec: { data: { pvcName: 'custom-data' } },
+            },
+          ],
+        }),
+      },
+      apps: {
+        readNamespacedDeployment: async () => ({
+          metadata: { name: 'percussionist-operator' },
+          spec: {
+            template: {
+              spec: {
+                containers: [{ env: [{ name: 'DEFAULT_STORAGE_CLASS', value: 'standard' }] }],
+              },
+            },
+          },
+        }),
+      },
+    });
+
+    const result = await checkStorage(clients, NS, 100);
+    expect(result.status).toBe('pass');
+    expect(readPvcNames).toContain('custom-data');
+    expect(readPvcNames).not.toContain('demo-data');
   });
 });
 

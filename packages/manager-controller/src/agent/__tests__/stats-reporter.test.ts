@@ -302,6 +302,182 @@ describe('buildPayloads', () => {
     const { messagesPayload } = buildPayloads(messages, 'session-1', 5);
     expect(messagesPayload[0].idx).toBe(5); // baseIdx + 0
   });
+
+  // -------------------------------------------------------------------------
+  // Tool-call rows — regression for A2: toolCallsPayload was declared but never
+  // populated, so every manager chat session's tool metrics were lost. Rows
+  // must match the dispatcher's shape: id/messageIdx/tool/args/success/error/
+  // durationMs (see ToolCallPayload in web/src/server/routes/stats.ts).
+  // -------------------------------------------------------------------------
+
+  it('should emit a tool-call row for a tool part with success state', () => {
+    const messages = [
+      {
+        info: { role: 'assistant' },
+        parts: [
+          {
+            type: 'tool',
+            tool: 'read_file',
+            callID: 'call-1',
+            state: {
+              input: { filePath: '/src/app.ts' },
+              status: 'success',
+              time: { start: 1000, end: 2500 },
+            },
+          } as any,
+        ],
+      } as any,
+    ];
+
+    const { toolCallsPayload } = buildPayloads(messages, 'session-1', 0);
+    expect(toolCallsPayload).toHaveLength(1);
+    expect(toolCallsPayload[0]).toEqual({
+      id: 'call-1',
+      messageIdx: 0,
+      tool: 'read_file',
+      args: JSON.stringify({ filePath: '/src/app.ts' }),
+      success: true,
+      error: undefined,
+      durationMs: 1500,
+    });
+  });
+
+  it('should mark a tool part as failed when state.status is error', () => {
+    const messages = [
+      {
+        info: { role: 'assistant' },
+        parts: [
+          {
+            type: 'tool',
+            tool: 'write_file',
+            callID: 'call-2',
+            state: {
+              input: { filePath: '/tmp/x.ts' },
+              status: 'error',
+              output: 'permission denied',
+            },
+          } as any,
+        ],
+      } as any,
+    ];
+
+    const { toolCallsPayload } = buildPayloads(messages, 'session-1', 0);
+    expect(toolCallsPayload).toHaveLength(1);
+    expect(toolCallsPayload[0]).toMatchObject({
+      id: 'call-2',
+      messageIdx: 0,
+      tool: 'write_file',
+      success: false,
+      error: 'permission denied',
+    });
+  });
+
+  it('should mark a tool part as failed on a non-zero exit code', () => {
+    const messages = [
+      {
+        info: { role: 'assistant' },
+        parts: [
+          {
+            type: 'tool',
+            tool: 'bash',
+            callID: 'call-3',
+            state: { input: { command: 'ls' }, metadata: { exit: 2 } },
+          } as any,
+        ],
+      } as any,
+    ];
+
+    const { toolCallsPayload } = buildPayloads(messages, 'session-1', 0);
+    expect(toolCallsPayload[0]).toMatchObject({
+      id: 'call-3',
+      tool: 'bash',
+      success: false,
+    });
+  });
+
+  it('should correlate tool-use with its tool-result (success + duration)', () => {
+    const messages = [
+      {
+        info: { role: 'assistant', time: { created: 1000 } },
+        parts: [
+          { type: 'tool-use', id: 'tu-1', name: 'read_file', input: { path: '/a.ts' } } as any,
+        ],
+      } as any,
+      {
+        info: { role: 'assistant', time: { completed: 4000 } },
+        parts: [{ type: 'tool-result', toolUseId: 'tu-1', content: 'ok', isError: false }] as any,
+      } as any,
+    ];
+
+    const { toolCallsPayload } = buildPayloads(messages, 'session-1', 0);
+    expect(toolCallsPayload).toHaveLength(1);
+    expect(toolCallsPayload[0]).toEqual({
+      id: 'tu-1',
+      messageIdx: 0,
+      tool: 'read_file',
+      args: JSON.stringify({ path: '/a.ts' }),
+      success: true,
+      error: undefined,
+      durationMs: 3000,
+    });
+  });
+
+  it('should correlate tool-use with its tool-result (error)', () => {
+    const messages = [
+      {
+        info: { role: 'assistant' },
+        parts: [
+          { type: 'tool_use', id: 'tu-2', name: 'edit_file', input: { path: '/b.ts' } } as any,
+        ],
+      } as any,
+      {
+        info: { role: 'assistant', time: { completed: 5000 } },
+        parts: [
+          { type: 'tool_result', tool_use_id: 'tu-2', content: 'failed', isError: true },
+        ] as any,
+      } as any,
+    ];
+
+    const { toolCallsPayload } = buildPayloads(messages, 'session-1', 0);
+    expect(toolCallsPayload).toHaveLength(1);
+    expect(toolCallsPayload[0]).toMatchObject({
+      id: 'tu-2',
+      tool: 'edit_file',
+      success: false,
+      error: 'failed',
+    });
+  });
+
+  it('should not emit a row for an unmatched tool-result', () => {
+    const messages = [
+      {
+        info: { role: 'assistant' },
+        parts: [{ type: 'tool-result', toolUseId: 'no-such', content: 'x' }] as any,
+      } as any,
+    ];
+
+    const { toolCallsPayload } = buildPayloads(messages, 'session-1', 0);
+    expect(toolCallsPayload).toHaveLength(0);
+  });
+
+  it('should apply baseIdx to tool-call messageIdx', () => {
+    const messages = [
+      {
+        info: { role: 'assistant' },
+        parts: [
+          {
+            type: 'tool',
+            tool: 'read',
+            callID: 'c1',
+            state: { input: { filePath: '/x.ts' } },
+          } as any,
+        ],
+      } as any,
+    ];
+
+    const { toolCallsPayload } = buildPayloads(messages, 'session-1', 5);
+    expect(toolCallsPayload[0].messageIdx).toBe(5);
+  });
 });
 
 // ---------------------------------------------------------------------------

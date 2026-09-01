@@ -24,7 +24,7 @@ export interface NotificationEntry {
   url?: string;
 }
 
-const HISTORY_CAP = 50;
+export const HISTORY_CAP = 50;
 const _history: NotificationEntry[] = [];
 
 export function getNotificationHistory(): NotificationEntry[] {
