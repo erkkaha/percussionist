@@ -27,12 +27,23 @@ const updateFindingState = {
   isPending: false,
 };
 
+const promoteFindingState = {
+  mutateCalls: [] as Array<{ id: string }>,
+  isPending: false,
+};
+
 mock.module(resolve(import.meta.dir, '..', 'src/client/hooks/useFindings'), () => ({
   useUpdateFinding: (_project: string | undefined) => ({
     mutate: (args: { id: string; req: { status?: string } }) => {
       updateFindingState.mutateCalls.push(args);
     },
     isPending: updateFindingState.isPending,
+  }),
+  usePromoteFindingToTask: (_project: string | undefined) => ({
+    mutate: (args: { id: string }) => {
+      promoteFindingState.mutateCalls.push(args);
+    },
+    isPending: promoteFindingState.isPending,
   }),
 }));
 
@@ -65,6 +76,8 @@ let FindingsPanel: React.ComponentType<{
 beforeEach(async () => {
   updateFindingState.mutateCalls = [];
   updateFindingState.isPending = false;
+  promoteFindingState.mutateCalls = [];
+  promoteFindingState.isPending = false;
   if (!FindingsPanel) {
     const mod = await import('../src/client/components/board/FindingsPanel');
     FindingsPanel = mod.FindingsPanel;

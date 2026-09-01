@@ -4,6 +4,7 @@
 // via the report_unrelated_issue MCP tool. Shows severity badges, categories, and action buttons.
 
 import {
+  ArrowRight,
   BookOpen,
   Bug,
   ChevronDown,
@@ -16,7 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
-import { useUpdateFinding } from '../../hooks/useFindings';
+import { usePromoteFindingToTask, useUpdateFinding } from '../../hooks/useFindings';
 import { isClosedFindingStatus } from '../../lib/findings';
 import type { Finding } from '../../lib/types';
 
@@ -108,6 +109,7 @@ export function FindingsPanel({ findings, projectName, onClose }: FindingsPanelP
   const [severityFilter, setSeverityFilter] = useState<Finding['severity'] | 'all'>('all');
   const [hideClosed, setHideClosed] = useState(false);
   const updateFindingMutation = useUpdateFinding(projectName);
+  const promoteMutation = usePromoteFindingToTask(projectName);
 
   const filtered =
     severityFilter === 'all' ? findings : findings.filter((f) => f.severity === severityFilter);
@@ -322,6 +324,22 @@ export function FindingsPanel({ findings, projectName, onClose }: FindingsPanelP
                           >
                             Duplicate
                           </button>
+                          {!f.taskRef && (
+                            <button
+                              type="button"
+                              disabled={promoteMutation.isPending}
+                              onClick={() => promoteMutation.mutate({ id: f.id })}
+                              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border border-border bg-surface text-text-dim hover:text-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {promoteMutation.isPending ? (
+                                'Promoting…'
+                              ) : (
+                                <>
+                                  <ArrowRight className="h-3 w-3" /> Promote to Task
+                                </>
+                              )}
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
