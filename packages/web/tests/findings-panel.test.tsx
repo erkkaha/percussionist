@@ -1,11 +1,12 @@
-// findings-panel.test.tsx — FindingsPanel close/reopen action controls and the
-// "Hide closed" toggle.
+// findings-panel.test.tsx — FindingsPanel close/reopen action controls, the
+// "Promote to Task" control, and the "Hide closed" toggle.
 //
 // Uses @testing-library/react with the happy-dom environment configured in
-// tests/setup.ts. The findings mutation hook is mocked at the module level so
-// the test exercises the panel's wiring (which action maps to which status) plus
-// the hide-closed filter, without standing up react-query or the network. The
-// mock.module stub is process-global but --isolate scopes it to this file.
+// tests/setup.ts. The findings mutation hooks are mocked at the module level so
+// the test exercises the panel's wiring (which action maps to which status, when
+// the promote button is gated) plus the hide-closed filter, without standing up
+// react-query or the network. The mock.module stub is process-global but
+// --isolate scopes it to this file.
 //
 // Mirrors the structure of board-header.test.tsx (render helper + describe
 // blocks per feature). The panel renders its own <button> elements (no Radix UI
@@ -157,6 +158,63 @@ describe('FindingsPanel action buttons', () => {
     const resolveBtn = screen.getByText('Resolve') as HTMLButtonElement;
     expect(resolveBtn.disabled).toBe(true);
     updateFindingState.isPending = false;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Promote to Task
+// ---------------------------------------------------------------------------
+
+describe('FindingsPanel "Promote to Task" button', () => {
+  it('shows the button for an open, unlinked finding and promotes it on click', async () => {
+    await renderPanel([makeFinding({ id: 'f-open', status: 'triaged', title: 'Open bug' })]);
+
+    fireEvent.click(screen.getByText('Open bug'));
+
+    fireEvent.click(screen.getByText('Promote to Task'));
+
+    expect(promoteFindingState.mutateCalls).toHaveLength(1);
+    expect(promoteFindingState.mutateCalls[0]).toEqual({ id: 'f-open' });
+    // Promotion must not touch the finding's status directly.
+    expect(updateFindingState.mutateCalls).toHaveLength(0);
+  });
+
+  it('hides the button for a finding already linked to a task', async () => {
+    await renderPanel([
+      makeFinding({
+        id: 'f-linked',
+        status: 'in-progress',
+        title: 'Linked bug',
+        taskRef: 'proj-build-find-abc123',
+      }),
+    ]);
+
+    fireEvent.click(screen.getByText('Linked bug'));
+
+    // The existing task link renders instead of the promote control.
+    expect(screen.getByText(/proj-build-find-abc123/)).toBeTruthy();
+    expect(screen.queryByText('Promote to Task')).toBeNull();
+  });
+
+  it('hides the button for a closed finding', async () => {
+    await renderPanel([makeFinding({ id: 'f-closed', status: 'resolved', title: 'Closed bug' })]);
+
+    fireEvent.click(screen.getByText('Closed bug'));
+
+    expect(screen.getByText('Reopen')).toBeTruthy();
+    expect(screen.queryByText('Promote to Task')).toBeNull();
+  });
+
+  it('disables the button and shows a pending label while promoting', async () => {
+    promoteFindingState.isPending = true;
+    await renderPanel([makeFinding({ id: 'f-pend', status: 'triaged', title: 'Promoting bug' })]);
+
+    fireEvent.click(screen.getByText('Promoting bug'));
+
+    const btn = screen.getByText('Promoting…') as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(screen.queryByText('Promote to Task')).toBeNull();
+    promoteFindingState.isPending = false;
   });
 });
 
