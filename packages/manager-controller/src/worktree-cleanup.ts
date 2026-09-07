@@ -1,53 +1,57 @@
-// worktree-cleanup.ts — spawns a short-lived Pod to remove a run's worktree
+// worktree-cleanup.ts — spawns a short-lived Job to remove a run's worktree
 // from the project data PVC once the task transitions to "done".
 //
-// The cleanup pod mounts the data PVC, removes the worktree directory for the
+// The cleanup Job mounts the data PVC, removes the worktree directory for the
 // completed run, and calls `git worktree prune` on the bare mirror so git's
 // internal metadata stays consistent.
 //
-// The pod is created with `restartPolicy: Never` and carries an owner
-// reference to the Task CR so it is garbage-collected when the task is
-// eventually deleted.
+// It is a Job rather than a bare Pod so the job controller reaps it (and its
+// pod) via `ttlSecondsAfterFinished` — bare pods stayed in Completed forever
+// and piled up by the hundreds. It also carries an owner reference to the
+// Task CR so it is garbage-collected early when the task is deleted.
 
 import type { Task } from '@percussionist/api';
 import { API_GROUP_VERSION, KIND_TASK, LABELS, MANAGED_BY } from '@percussionist/api';
-import { core, gitUrlHash } from '@percussionist/kube';
+import { batch, gitUrlHash } from '@percussionist/kube';
 import { getErrorStatusCode } from './kube-errors.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Finished cleanup Jobs (and their pods) are deleted by the job controller after this long. */
+const CLEANUP_JOB_TTL_SECONDS = 3600;
 
 const log = (...args: unknown[]) =>
   console.log(`[worktree-cleanup ${new Date().toISOString()}]`, ...args);
 const err = (...args: unknown[]) =>
   console.error(`[worktree-cleanup ${new Date().toISOString()}]`, ...args);
 
-async function retryCreatePod(
+async function retryCreateJob(
   namespace: string,
-  pod: object,
+  job: object,
   runName: string,
-  podName: string,
+  jobName: string,
   maxRetries = 3,
 ): Promise<void> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      await core().createNamespacedPod({ namespace, body: pod });
-      log(`cleanup pod ${namespace}/${podName} created for run ${runName}`);
+      await batch().createNamespacedJob({ namespace, body: job });
+      log(`cleanup job ${namespace}/${jobName} created for run ${runName}`);
       return;
     } catch (e: unknown) {
       const statusCode = getErrorStatusCode(e);
       if (statusCode === 409) {
-        log(`cleanup pod ${namespace}/${podName} already exists, skipping`);
+        log(`cleanup job ${namespace}/${jobName} already exists, skipping`);
         return;
       }
       if (attempt < maxRetries) {
         err(
-          `failed to create cleanup pod for run ${runName} (attempt ${attempt}/${maxRetries}):`,
+          `failed to create cleanup job for run ${runName} (attempt ${attempt}/${maxRetries}):`,
           (e as Error).message,
         );
         await sleep(2000 * attempt);
       } else {
         err(
-          `failed to create cleanup pod for run ${runName} after ${maxRetries} attempts:`,
+          `failed to create cleanup job for run ${runName} after ${maxRetries} attempts:`,
           (e as Error).message,
         );
       }
@@ -55,7 +59,7 @@ async function retryCreatePod(
   }
 }
 
-function cleanupPodName(prefix: string, name: string): string {
+function cleanupJobName(prefix: string, name: string): string {
   const suffix = Date.now().toString(36).slice(-6);
   return `${prefix}-${name}-${suffix}`
     .toLowerCase()
@@ -104,7 +108,7 @@ export interface TaskWorktreeCleanupOptions {
   /**
    * Branch names whose refs/percussionist/<branch> namespaced refs should be
    * deleted from the remote. Passed explicitly (task.status.worker.gitBranch)
-   * because worktree-HEAD sniffing fails when per-run cleanup pods already
+   * because worktree-HEAD sniffing fails when per-run cleanup jobs already
    * removed the trees.
    */
   branches?: string[];
@@ -115,11 +119,11 @@ export interface TaskWorktreeCleanupOptions {
 }
 
 /**
- * Spawns a cleanup pod that:
+ * Spawns a cleanup job that:
  *  1. Removes /data/worktrees/{runName}/ from the data PVC
  *  2. Calls `git worktree prune` on the bare mirror (if gitUrl is set)
  *
- * The pod is fire-and-forget — errors are logged but not surfaced to the
+ * The Job is fire-and-forget — errors are logged but not surfaced to the
  * caller to avoid blocking task state transitions.
  */
 export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Promise<void> {
@@ -134,7 +138,7 @@ export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Pro
     gitUrl,
   } = opts;
 
-  const podName = cleanupPodName('cleanup', runName);
+  const jobName = cleanupJobName('cleanup', runName);
   const mirrorDir = gitUrl ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}` : undefined;
   const lockFile = gitUrl ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}.lock` : undefined;
   const worktreeDir = `${dataMountPath}/worktrees/${runName}`;
@@ -143,7 +147,7 @@ export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Pro
     'set -e',
     `echo "[cleanup] removing worktree ${worktreeDir}"`,
     `BRANCH=$(git -C ${shQuote(worktreeDir)} symbolic-ref HEAD 2>/dev/null || true)`,
-    // A task-level cleanup pod may be deleting the same tree concurrently;
+    // A task-level cleanup job may be deleting the same tree concurrently;
     // entries vanishing mid-rm make rm exit non-zero, which is still success.
     `rm -rf ${shQuote(worktreeDir)} 2>/dev/null || true`,
     ...(mirrorDir
@@ -167,18 +171,20 @@ export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Pro
     `echo "[cleanup] done"`,
   ].join('\n');
 
-  const pod = {
-    apiVersion: 'v1',
-    kind: 'Pod',
+  const labels = {
+    [LABELS.managedBy]: MANAGED_BY,
+    [LABELS.projectName]: projectName,
+    'percussionist.dev/component': 'worktree-cleanup',
+    'percussionist.dev/run': runName,
+  };
+
+  const job = {
+    apiVersion: 'batch/v1',
+    kind: 'Job',
     metadata: {
-      name: podName,
+      name: jobName,
       namespace,
-      labels: {
-        [LABELS.managedBy]: MANAGED_BY,
-        [LABELS.projectName]: projectName,
-        'percussionist.dev/component': 'worktree-cleanup',
-        'percussionist.dev/run': runName,
-      },
+      labels,
       ownerReferences: [
         {
           apiVersion: API_GROUP_VERSION,
@@ -191,33 +197,40 @@ export async function spawnWorktreeCleanupPod(opts: WorktreeCleanupOptions): Pro
       ],
     },
     spec: {
-      restartPolicy: 'Never',
-      containers: [
-        {
-          name: 'cleanup',
-          image,
-          imagePullPolicy: 'IfNotPresent',
-          command: ['/bin/sh', '-c'],
-          args: [script],
-          resources: {
-            requests: { cpu: '50m', memory: '64Mi' },
-            limits: { cpu: '200m', memory: '256Mi' },
-          },
-          volumeMounts: [{ name: 'data', mountPath: dataMountPath }],
+      ttlSecondsAfterFinished: CLEANUP_JOB_TTL_SECONDS,
+      backoffLimit: 0,
+      template: {
+        metadata: { labels },
+        spec: {
+          restartPolicy: 'Never',
+          containers: [
+            {
+              name: 'cleanup',
+              image,
+              imagePullPolicy: 'IfNotPresent',
+              command: ['/bin/sh', '-c'],
+              args: [script],
+              resources: {
+                requests: { cpu: '50m', memory: '64Mi' },
+                limits: { cpu: '200m', memory: '256Mi' },
+              },
+              volumeMounts: [{ name: 'data', mountPath: dataMountPath }],
+            },
+          ],
+          volumes: [{ name: 'data', persistentVolumeClaim: { claimName: dataPvcName } }],
         },
-      ],
-      volumes: [{ name: 'data', persistentVolumeClaim: { claimName: dataPvcName } }],
+      },
     },
   };
 
-  await retryCreatePod(namespace, pod, runName, podName);
+  await retryCreateJob(namespace, job, runName, jobName);
 }
 
 /**
- * Spawns a cleanup pod that removes ALL worktrees for a task from the data PVC.
+ * Spawns a cleanup job that removes ALL worktrees for a task from the data PVC.
  * Used when a task moves to "done" to clean up all runs (retries/rework).
  *
- * The pod:
+ * The Job:
  *  1. Removes all /data/worktrees/{projectName}-* directories matching the
  *     deterministic worker-run suffix pattern for this task
  *  2. Removes each exact /data/worktrees/{name} directory in `runNames` —
@@ -243,7 +256,7 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
   } = opts;
 
   const taskName = task.metadata.name;
-  const podName = cleanupPodName('cleanup-task', taskName);
+  const jobName = cleanupJobName('cleanup-task', taskName);
   const mirrorDir = gitUrl ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}` : undefined;
   const lockFile = gitUrl ? `${dataMountPath}/git-mirrors/${gitUrlHash(gitUrl)}.lock` : undefined;
   const worktreeDir = `${dataMountPath}/worktrees`;
@@ -257,7 +270,7 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
     `echo "[cleanup] removing all worktrees for task ${taskName}"`,
     `cd ${shQuote(worktreeDir)} || exit 0`,
     // Seed with the explicitly passed branches — worktree-HEAD sniffing below
-    // finds nothing when per-run cleanup pods already removed the trees.
+    // finds nothing when per-run cleanup jobs already removed the trees.
     `BRANCHES="${branches.map((b) => b.replace(/[^A-Za-z0-9/_.-]/g, '')).join(' ')}"`,
     `for dir in ${shQuote(runPrefix)}-*; do`,
     `  [ -e "$dir" ] || continue`,
@@ -269,7 +282,7 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
     `    BRANCH="\${BRANCH#refs/heads/}"`,
     `    [ -n "$BRANCH" ] && BRANCHES="$BRANCHES $BRANCH"`,
     `    echo "[cleanup] removing $dir"`,
-    // Concurrent run-level cleanup pods may race on the same tree — see above.
+    // Concurrent run-level cleanup jobs may race on the same tree — see above.
     `    rm -rf "$dir" 2>/dev/null || true`,
     `done`,
     ...(runNames.length > 0
@@ -323,18 +336,20 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
     `echo "[cleanup] done"`,
   ].join('\n');
 
-  const pod = {
-    apiVersion: 'v1',
-    kind: 'Pod',
+  const labels = {
+    [LABELS.managedBy]: MANAGED_BY,
+    [LABELS.projectName]: projectName,
+    'percussionist.dev/component': 'worktree-cleanup',
+    [LABELS.taskId]: taskName,
+  };
+
+  const job = {
+    apiVersion: 'batch/v1',
+    kind: 'Job',
     metadata: {
-      name: podName,
+      name: jobName,
       namespace,
-      labels: {
-        [LABELS.managedBy]: MANAGED_BY,
-        [LABELS.projectName]: projectName,
-        'percussionist.dev/component': 'worktree-cleanup',
-        [LABELS.taskId]: taskName,
-      },
+      labels,
       ownerReferences: [
         {
           apiVersion: API_GROUP_VERSION,
@@ -347,55 +362,64 @@ export async function spawnTaskWorktreeCleanupPod(opts: TaskWorktreeCleanupOptio
       ],
     },
     spec: {
-      restartPolicy: 'Never',
-      containers: [
-        {
-          name: 'cleanup',
-          image,
-          imagePullPolicy: 'IfNotPresent',
-          command: ['/bin/sh', '-c'],
-          args: [script],
-          resources: {
-            requests: { cpu: '50m', memory: '64Mi' },
-            limits: { cpu: '200m', memory: '256Mi' },
-          },
-          volumeMounts: [
-            { name: 'data', mountPath: dataMountPath },
-            ...(sshSecret ? [{ name: 'git-ssh', mountPath: '/etc/git-ssh', readOnly: true }] : []),
+      ttlSecondsAfterFinished: CLEANUP_JOB_TTL_SECONDS,
+      backoffLimit: 0,
+      template: {
+        metadata: { labels },
+        spec: {
+          restartPolicy: 'Never',
+          containers: [
+            {
+              name: 'cleanup',
+              image,
+              imagePullPolicy: 'IfNotPresent',
+              command: ['/bin/sh', '-c'],
+              args: [script],
+              resources: {
+                requests: { cpu: '50m', memory: '64Mi' },
+                limits: { cpu: '200m', memory: '256Mi' },
+              },
+              volumeMounts: [
+                { name: 'data', mountPath: dataMountPath },
+                ...(sshSecret
+                  ? [{ name: 'git-ssh', mountPath: '/etc/git-ssh', readOnly: true }]
+                  : []),
+                ...(githubTokenSecret
+                  ? [{ name: 'git-github', mountPath: '/etc/git-github', readOnly: true }]
+                  : []),
+              ],
+            },
+          ],
+          volumes: [
+            { name: 'data', persistentVolumeClaim: { claimName: dataPvcName } },
+            ...(sshSecret
+              ? [
+                  {
+                    name: 'git-ssh',
+                    secret: {
+                      secretName: sshSecret.name,
+                      items: [{ key: sshSecret.key ?? 'ssh-privatekey', path: 'id' }],
+                      defaultMode: 0o400,
+                    },
+                  },
+                ]
+              : []),
             ...(githubTokenSecret
-              ? [{ name: 'git-github', mountPath: '/etc/git-github', readOnly: true }]
+              ? [
+                  {
+                    name: 'git-github',
+                    secret: {
+                      secretName: githubTokenSecret.name,
+                      items: [{ key: githubTokenSecret.key ?? 'token', path: 'token' }],
+                    },
+                  },
+                ]
               : []),
           ],
         },
-      ],
-      volumes: [
-        { name: 'data', persistentVolumeClaim: { claimName: dataPvcName } },
-        ...(sshSecret
-          ? [
-              {
-                name: 'git-ssh',
-                secret: {
-                  secretName: sshSecret.name,
-                  items: [{ key: sshSecret.key ?? 'ssh-privatekey', path: 'id' }],
-                  defaultMode: 0o400,
-                },
-              },
-            ]
-          : []),
-        ...(githubTokenSecret
-          ? [
-              {
-                name: 'git-github',
-                secret: {
-                  secretName: githubTokenSecret.name,
-                  items: [{ key: githubTokenSecret.key ?? 'token', path: 'token' }],
-                },
-              },
-            ]
-          : []),
-      ],
+      },
     },
   };
 
-  await retryCreatePod(namespace, pod, taskName, podName);
+  await retryCreateJob(namespace, job, taskName, jobName);
 }

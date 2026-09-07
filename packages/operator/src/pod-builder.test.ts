@@ -122,6 +122,49 @@ describe('renderPod - workspace-init script generation', () => {
     });
   });
 
+  describe('mirror self-heal', () => {
+    it('sweeps torn loose objects and dangling refs under the mirror lock, before the fetch', () => {
+      const run = makeRun({
+        spec: {
+          project: 'test-project',
+          task: 'build-task-1',
+          interactive: false,
+          ttlSecondsAfterFinished: 604800,
+          source: {
+            git: {
+              url: 'https://github.com/test/repo.git',
+              ref: 'feature/child-branch',
+              parentRef: 'feature/my-feature',
+            },
+          },
+        },
+      });
+
+      const args = getWorkspaceInitArgs(run);
+
+      const lock = args.indexOf('flock -x 200');
+      const sweep = args.indexOf('-type f -size 0');
+      const fetch = args.indexOf('fetch origin');
+      const unlock = args.indexOf(') 200>"$LOCK_FILE"');
+      expect(lock).toBeGreaterThan(-1);
+      // Inside the flock, and before the fetch that would otherwise trip over
+      // the torn objects.
+      expect(sweep).toBeGreaterThan(lock);
+      expect(fetch).toBeGreaterThan(sweep);
+      expect(unlock).toBeGreaterThan(sweep);
+      // Zero-byte loose objects are removed; refs at missing objects are dropped
+      // together with the worktree registration that held them.
+      expect(args).toContain('xargs rm -f');
+      expect(args).toContain('cat-file -e "$_SHA"');
+      expect(args).toContain('rm -f "$_REF_FILE"');
+      // ...along with its reflog, or fsck keeps reporting the dropped tip.
+      expect(args).toContain('rm -f "$MIRROR_DIR/logs/$_REF"');
+      expect(args).toContain('"$MIRROR_DIR"/worktrees/*/HEAD');
+      // Symbolic refs (HEAD files) are skipped, never treated as SHAs.
+      expect(args).toContain('case "$_SHA" in ref:*|"") continue ;; esac');
+    });
+  });
+
   describe('no parentRef scenario', () => {
     it('should work without parentRef (plain branch creation)', () => {
       const run = makeRun({

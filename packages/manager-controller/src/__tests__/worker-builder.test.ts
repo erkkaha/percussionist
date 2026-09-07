@@ -88,7 +88,7 @@ describe('buildWorkerRun — auth validation', () => {
   });
 
   it('passes when a cloud model has an authSecret configured', async () => {
-    const secrets: SecretsRef = { authSecret: { name: 'opencode-auth', key: 'auth.json' } };
+    const secrets: SecretsRef = { authSecret: { name: 'agent-auth', key: 'auth.json' } };
     const project = featureProject({ model: 'claude-code/claude-sonnet-5', secrets });
 
     const run = await buildWorkerRun(project, buildTask(), 'run-1', 0);
@@ -108,7 +108,7 @@ describe('buildWorkerRun — auth validation', () => {
   it('uses the per-agent roster model, which passes auth even when the project model is absent', async () => {
     const project = featureProject({
       agents: [{ name: 'builder', model: 'claude-code/claude-sonnet-5' }],
-      secrets: { authSecret: { name: 'opencode-auth', key: 'auth.json' } },
+      secrets: { authSecret: { name: 'agent-auth', key: 'auth.json' } },
     });
 
     const run = await buildWorkerRun(project, buildTask(), 'run-1', 0);

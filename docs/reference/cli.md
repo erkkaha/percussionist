@@ -414,7 +414,7 @@ The ten check categories (`--check <name>` filters by these names):
    error); the operator's `DEFAULT_STORAGE_CLASS` env resolves.
 6. `credentials` — required Secrets (`operator-api-key`, `manager-api-key`,
    `manager-mcp-token`, `web-auth`) are present with expected keys; optional
-   Secrets (`opencode-auth`, `llm-keys`) warn with remediation hints.
+   Secrets (`agent-auth`, `llm-keys`) warn with remediation hints.
 7. `providers` — provider authentication via the manager MCP `list_models`
    tool (port-forward); zero connected providers with credentials configured
    is an error (dev mode downgrades to a warning).

@@ -102,6 +102,47 @@ function renderRefSyncSnippet(): string[] {
 }
 
 /**
+ * Repair a mirror damaged by an unclean shutdown (hostpath PVC + power loss).
+ * Loose objects that were mid-write end up as zero-byte files; a ref pointing
+ * at one makes every ref enumeration in the mirror fatal, so every run for the
+ * project dies in workspace-init with a bare exit 128. Drop the torn objects,
+ * then drop loose refs whose target is gone — refs/heads entries come back
+ * from refs/remotes/origin in the ref sync that follows, and commits that were
+ * never pushed are already lost. A worktree registration that had such a
+ * branch checked out is removed too, so the branch can be recreated from its
+ * parent and the run proceeds; the orphaned tree on disk is reaped by the
+ * run's normal cleanup. Runs under the mirror flock. Packed refs are left
+ * alone: they only ever point at packed objects, which are not torn this way.
+ */
+function renderMirrorSelfHeal(): string[] {
+  return [
+    '# Self-heal torn loose objects / dangling loose refs left by an unclean shutdown',
+    '_TORN=$(find "$MIRROR_DIR/objects" -mindepth 2 -maxdepth 2 -type f -size 0 2>/dev/null || true)',
+    'if [ -n "$_TORN" ]; then',
+    '  echo "[workspace-init] self-heal: removing $(printf \'%s\\n\' "$_TORN" | wc -l) zero-byte loose object(s) from $MIRROR_DIR"',
+    '  printf \'%s\\n\' "$_TORN" | xargs rm -f',
+    'fi',
+    'for _REF_FILE in $(find "$MIRROR_DIR/refs" -type f 2>/dev/null || true); do',
+    '  _SHA=$(cat "$_REF_FILE" 2>/dev/null || true)',
+    '  case "$_SHA" in ref:*|"") continue ;; esac',
+    '  if ! git -C "$MIRROR_DIR" cat-file -e "$_SHA" 2>/dev/null; then',
+    '    _REF="${_REF_FILE#$MIRROR_DIR/}"',
+    '    echo "[workspace-init] self-heal: $_REF points at missing object $_SHA — dropping ref"',
+    '    rm -f "$_REF_FILE"',
+    '    rm -f "$MIRROR_DIR/logs/$_REF"',
+    '    for _WT_HEAD in "$MIRROR_DIR"/worktrees/*/HEAD; do',
+    '      [ -f "$_WT_HEAD" ] || continue',
+    '      if [ "$(cat "$_WT_HEAD" 2>/dev/null)" = "ref: $_REF" ]; then',
+    '        echo "[workspace-init] self-heal: unregistering worktree $(dirname "$_WT_HEAD") (was on $_REF)"',
+    '        rm -rf "$(dirname "$_WT_HEAD")"',
+    '      fi',
+    '    done',
+    '  fi',
+    'done',
+  ];
+}
+
+/**
  * Promote refs/percussionist/* (worker branches published to the remote on run
  * completion) into refs/heads/ so `git worktree add` and checkout can resolve
  * them on a mirror that never held the branch locally. Never clobbers local
@@ -551,6 +592,7 @@ export function renderPod(
                     '  flock -x 200',
                     '  if [ -d "$MIRROR_DIR" ]; then',
                     '    echo "[workspace-init] updating mirror $MIRROR_DIR"',
+                    ...renderMirrorSelfHeal().map((l) => `    ${l}`),
                     '    # Fetch into remote-tracking refs — never blocked by worktree checkouts',
                     '    git -C "$MIRROR_DIR" fetch origin \'+refs/heads/*:refs/remotes/origin/*\' \'+refs/percussionist/*:refs/percussionist/*\' --prune 2>&1 || echo "[workspace-init] fetch failed, using stale mirror"',
                     '    # Sync refs/heads/ from remotes/origin/ for branches NOT checked out in worktrees',

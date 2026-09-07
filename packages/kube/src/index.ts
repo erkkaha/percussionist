@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import {
   type ApiType,
   AppsV1Api,
+  BatchV1Api,
   type Configuration,
   CoreV1Api,
   CustomObjectsApi,
@@ -83,6 +84,7 @@ let _kc: KubeConfig | undefined;
 let _core: CoreV1Api | undefined;
 let _custom: CustomObjectsApi | undefined;
 let _apps: AppsV1Api | undefined;
+let _batch: BatchV1Api | undefined;
 
 function init() {
   if (_kc) return;
@@ -104,6 +106,7 @@ function init() {
   _core = makeNodeApiClient(_kc, CoreV1Api);
   _custom = makeNodeApiClient(_kc, CustomObjectsApi);
   _apps = makeNodeApiClient(_kc, AppsV1Api);
+  _batch = makeNodeApiClient(_kc, BatchV1Api);
 }
 
 export function kubeConfig(): KubeConfig {
@@ -128,6 +131,12 @@ export function apps(): AppsV1Api {
   init();
   if (!_apps) throw new Error('Kubernetes AppsV1Api client was not initialized');
   return _apps;
+}
+
+export function batch(): BatchV1Api {
+  init();
+  if (!_batch) throw new Error('Kubernetes BatchV1Api client was not initialized');
+  return _batch;
 }
 
 // For CLI use — loads from kubeconfig only (no in-cluster fallback).

@@ -50,6 +50,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
     verbs: ["get", "list", "create", "delete"]
+  # Worktree cleanup Jobs — reaped by the job controller via ttlSecondsAfterFinished.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list", "create"]
@@ -203,7 +207,7 @@ spec:
               mountPath: /root/.config/opencode/agents/
           resources:
             requests: { cpu: 50m, memory: 128Mi }
-            limits:   { cpu: 500m, memory: 512Mi }
+            limits:   { cpu: 500m, memory: 1Gi }
           readinessProbe:
             tcpSocket:
               port: 4096

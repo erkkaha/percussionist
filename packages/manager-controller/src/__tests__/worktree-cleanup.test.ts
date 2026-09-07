@@ -21,22 +21,58 @@ function makeTask(name: string): Task {
 }
 
 describe('spawnTaskWorktreeCleanupPod — script content', () => {
-  let coreSpy: ReturnType<typeof spyOn>;
+  let batchSpy: ReturnType<typeof spyOn>;
   let capturedScript: string;
 
   beforeEach(() => {
     capturedScript = '';
-    const fakeCore = {
-      createNamespacedPod: async ({ body }: { body: any }) => {
-        capturedScript = body.spec.containers[0].args[0];
+    const fakeBatch = {
+      createNamespacedJob: async ({ body }: { body: any }) => {
+        capturedScript = body.spec.template.spec.containers[0].args[0];
         return body;
       },
     };
-    coreSpy = spyOn(kube, 'core').mockReturnValue(fakeCore as any);
+    batchSpy = spyOn(kube, 'batch').mockReturnValue(fakeBatch as any);
   });
 
   afterEach(() => {
-    coreSpy.mockRestore();
+    batchSpy.mockRestore();
+  });
+
+  it('creates a TTL-reaped Job owned by the Task, not a bare Pod', async () => {
+    const task = makeTask('build-123');
+    let capturedJob: any;
+    batchSpy.mockRestore();
+    batchSpy = spyOn(kube, 'batch').mockReturnValue({
+      createNamespacedJob: async ({ body }: { body: any }) => {
+        capturedJob = body;
+        return body;
+      },
+    } as any);
+
+    await spawnTaskWorktreeCleanupPod({
+      task,
+      projectName: 'proj',
+      namespace: 'percussionist',
+      image: 'alpine/git',
+    });
+
+    expect(capturedJob.apiVersion).toBe('batch/v1');
+    expect(capturedJob.kind).toBe('Job');
+    expect(capturedJob.metadata.name.length).toBeLessThanOrEqual(63);
+    // The job controller deletes the finished Job and its pod; without this,
+    // Completed cleanup pods accumulate indefinitely.
+    expect(capturedJob.spec.ttlSecondsAfterFinished).toBe(3600);
+    expect(capturedJob.spec.backoffLimit).toBe(0);
+    expect(capturedJob.spec.template.spec.restartPolicy).toBe('Never');
+    // Labels reach the pod template so `-l percussionist.dev/component=worktree-cleanup` still selects the pods.
+    expect(capturedJob.spec.template.metadata.labels['percussionist.dev/component']).toBe(
+      'worktree-cleanup',
+    );
+    expect(capturedJob.metadata.ownerReferences[0]).toMatchObject({
+      kind: 'Task',
+      name: 'build-123',
+    });
   });
 
   it('removes explicit runNames paths in addition to the worker-prefix glob', async () => {
@@ -98,15 +134,15 @@ describe('spawnTaskWorktreeCleanupPod — script content', () => {
   it('deletes remote namespaced refs best-effort for explicit branches, with secret mounts', async () => {
     const task = makeTask('build-123');
     let capturedPod: any;
-    const fakeCore = {
-      createNamespacedPod: async ({ body }: { body: any }) => {
+    const fakeBatch = {
+      createNamespacedJob: async ({ body }: { body: any }) => {
         capturedPod = body;
-        capturedScript = body.spec.containers[0].args[0];
+        capturedScript = body.spec.template.spec.containers[0].args[0];
         return body;
       },
     };
-    coreSpy.mockRestore();
-    coreSpy = spyOn(kube, 'core').mockReturnValue(fakeCore as any);
+    batchSpy.mockRestore();
+    batchSpy = spyOn(kube, 'batch').mockReturnValue(fakeBatch as any);
 
     await spawnTaskWorktreeCleanupPod({
       task,
@@ -125,10 +161,12 @@ describe('spawnTaskWorktreeCleanupPod — script content', () => {
     // Best-effort remote delete of the namespaced ref, never blocking done.
     expect(capturedScript).toContain('push origin ":refs/percussionist/$b" 2>&1 || true');
     // Auth material mounted for the push.
-    const mounts = capturedPod.spec.containers[0].volumeMounts.map((m: any) => m.name);
+    const mounts = capturedPod.spec.template.spec.containers[0].volumeMounts.map(
+      (m: any) => m.name,
+    );
     expect(mounts).toContain('git-ssh');
     expect(mounts).toContain('git-github');
-    const volumes = capturedPod.spec.volumes.map((v: any) => v.name);
+    const volumes = capturedPod.spec.template.spec.volumes.map((v: any) => v.name);
     expect(volumes).toContain('git-ssh');
     expect(volumes).toContain('git-github');
   });
@@ -136,15 +174,15 @@ describe('spawnTaskWorktreeCleanupPod — script content', () => {
   it('omits secret mounts when no secrets are supplied', async () => {
     const task = makeTask('build-123');
     let capturedPod: any;
-    const fakeCore = {
-      createNamespacedPod: async ({ body }: { body: any }) => {
+    const fakeBatch = {
+      createNamespacedJob: async ({ body }: { body: any }) => {
         capturedPod = body;
-        capturedScript = body.spec.containers[0].args[0];
+        capturedScript = body.spec.template.spec.containers[0].args[0];
         return body;
       },
     };
-    coreSpy.mockRestore();
-    coreSpy = spyOn(kube, 'core').mockReturnValue(fakeCore as any);
+    batchSpy.mockRestore();
+    batchSpy = spyOn(kube, 'batch').mockReturnValue(fakeBatch as any);
 
     await spawnTaskWorktreeCleanupPod({
       task,
@@ -154,9 +192,11 @@ describe('spawnTaskWorktreeCleanupPod — script content', () => {
       gitUrl: 'https://example.com/repo.git',
     });
 
-    const mounts = capturedPod.spec.containers[0].volumeMounts.map((m: any) => m.name);
+    const mounts = capturedPod.spec.template.spec.containers[0].volumeMounts.map(
+      (m: any) => m.name,
+    );
     expect(mounts).toEqual(['data']);
-    const volumes = capturedPod.spec.volumes.map((v: any) => v.name);
+    const volumes = capturedPod.spec.template.spec.volumes.map((v: any) => v.name);
     expect(volumes).toEqual(['data']);
   });
 
@@ -179,22 +219,22 @@ describe('spawnTaskWorktreeCleanupPod — script content', () => {
 });
 
 describe('spawnWorktreeCleanupPod — script content', () => {
-  let coreSpy: ReturnType<typeof spyOn>;
+  let batchSpy: ReturnType<typeof spyOn>;
   let capturedScript: string;
 
   beforeEach(() => {
     capturedScript = '';
-    const fakeCore = {
-      createNamespacedPod: async ({ body }: { body: any }) => {
-        capturedScript = body.spec.containers[0].args[0];
+    const fakeBatch = {
+      createNamespacedJob: async ({ body }: { body: any }) => {
+        capturedScript = body.spec.template.spec.containers[0].args[0];
         return body;
       },
     };
-    coreSpy = spyOn(kube, 'core').mockReturnValue(fakeCore as any);
+    batchSpy = spyOn(kube, 'batch').mockReturnValue(fakeBatch as any);
   });
 
   afterEach(() => {
-    coreSpy.mockRestore();
+    batchSpy.mockRestore();
   });
 
   it('tolerates a concurrent task-level cleanup deleting the same tree', async () => {

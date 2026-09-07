@@ -100,7 +100,7 @@ const REQUIRED_SECRETS: SecretExpectation[] = [
 ];
 
 const OPTIONAL_SECRETS: SecretExpectation[] = [
-  { name: 'opencode-auth', keys: ['auth.json'] },
+  { name: 'agent-auth', keys: ['auth.json'] },
   { name: 'llm-keys', keys: [] },
 ];
 
@@ -164,13 +164,13 @@ export async function checkCredentials(
         );
       }
     } catch {
-      if (expectation.name === 'opencode-auth') {
+      if (expectation.name === 'agent-auth') {
         warnings.push(
-          'no opencode-auth Secret — provider credentials not imported; run `beatctl auth import` after `opencode auth login`',
+          'no agent-auth Secret — agent credentials not imported; run `beatctl auth import` after `opencode auth login` (or `claude setup-token` for the claude engine)',
         );
       } else {
         warnings.push(
-          'no llm-keys Secret — provider API keys not configured (fine when using subscription auth via opencode-auth)',
+          'no llm-keys Secret — provider API keys not configured (fine when using subscription auth via agent-auth)',
         );
       }
     }
@@ -243,7 +243,7 @@ export interface ProvidersCheckOptions {
   /** Injectable dev-mode detector (default: web-auth `disabled` key === "1"). */
   isAuthDisabled?: () => Promise<boolean>;
   /**
-   * Injectable provider-credential detector (default: opencode-auth / llm-keys
+   * Injectable provider-credential detector (default: agent-auth / llm-keys
    * Secrets present).
    */
   credentialsConfigured?: () => Promise<boolean>;
@@ -288,14 +288,14 @@ export async function checkProviders(
         status: 'fail',
         message: 'no connected providers despite credentials configured',
         detail:
-          'check provider credentials (opencode-auth / llm-keys) and the opencode sidecar; list_models reported zero connected providers',
+          'check provider credentials (agent-auth / llm-keys) and the opencode sidecar; list_models reported zero connected providers',
       };
     }
     return {
       status: 'warn',
       message: 'no connected providers',
       detail:
-        'no provider credentials configured (no opencode-auth / llm-keys Secret) — run `beatctl auth import` to connect providers',
+        'no provider credentials configured (no agent-auth / llm-keys Secret) — run `beatctl auth import` to connect providers',
     };
   }
 
@@ -333,7 +333,7 @@ async function detectProviderCredentials(
   namespace: string,
   timeoutMs: number,
 ): Promise<boolean> {
-  for (const name of ['opencode-auth', 'llm-keys']) {
+  for (const name of ['agent-auth', 'llm-keys']) {
     try {
       await withProbeTimeout(
         clients.core.readNamespacedSecret({ name, namespace }),

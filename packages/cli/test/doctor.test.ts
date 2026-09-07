@@ -199,7 +199,7 @@ function secretDataFor(name: string): Record<string, string> {
         'github-client-secret': btoa('app-secret'),
         'github-allowed-logins': btoa('alice'),
       };
-    case 'opencode-auth':
+    case 'agent-auth':
       return { 'auth.json': btoa('{}') };
     case 'llm-keys':
       return {};
@@ -1445,7 +1445,7 @@ describe('checkCredentials', () => {
     expect(result.detail).toContain('3 scoped agent key(s) verified');
   });
 
-  it('warns when optional secrets (opencode-auth, llm-keys) are missing', async () => {
+  it('warns when optional secrets (agent-auth, llm-keys) are missing', async () => {
     const clients = makeClients({
       core: {
         readNamespacedSecret: async ({ name }) => {
@@ -1463,7 +1463,7 @@ describe('checkCredentials', () => {
       queryAgentKeys: async () => 3,
     });
     expect(result.status).toBe('warn');
-    expect(result.detail).toContain('no opencode-auth Secret');
+    expect(result.detail).toContain('no agent-auth Secret');
     expect(result.detail).toContain('no llm-keys Secret');
   });
 
