@@ -1,6 +1,40 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.20] - 2026-09-08
+
+### <!-- 0 -->🚀 Features
+
+- Add platform layer for deploy — profiles, auto-detection, CLI flags _(cli)_
+- Add platform preflight for deploy (addons, RBAC, storage, Traefik) _(cli)_
+- Generalize deploy manifest patching for Traefik + operator code-server TLS _(cli)_
+- Add promote-finding-to-task route and client API _(web)_
+- Add usePromoteFindingToTask hook and Promote to Task button _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Preserve YAML indentation in deploy manifest patching _(cli)_
+- Thread platform storage/ingress-class defaults into direct operator patch _(cli)_
+- Heal torn git mirrors, TTL cleanup jobs, 1Gi opencode-web, agent-auth sweep _(ops)_
+- Override js-yaml >=4.3.1 and nanoid >=3.3.18 for audit _(deps)_
+
+### <!-- 2 -->🚜 Refactor
+
+- Parameterize deploy TLS/ingress setup, remove nginx paths _(cli)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add MicroK8s platform deploy plan _(plans)_
+- Revise MicroK8s deploy plan — first-class platform, Traefik ingress, nginx cleanup _(plans)_
+- Revise MicroK8s deploy plan to revision 3 — verified facts, full nginx inventory _(plans)_
+- Revise MicroK8s deploy plan to revision 4 — Traefik-only, no nginx support _(plans)_
+- Drop nginx assumptions, add MicroK8s/Traefik deploy material
+- Allow promoting findings to tasks via web UI _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add unit tests for platform layer and manifest patching _(cli)_
+- Cover promote-finding-to-task route and panel button _(web)_
 ## [v0.2.19] - 2026-08-31
 
 ### <!-- 5 -->🎨 Styling
@@ -10,11 +44,21 @@ All notable changes to Percussionist are documented here.
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Bump opencode to 1.18.21, claude-code to 2.1.241, agent-sdk to 0.3.241 _(images)_
+- Release v0.2.19
 ## [v0.2.18] - 2026-08-27
 
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Defer ClearTaskAnnotations until after successful status patch _(manager)_
 - PR-update run replies in each addressed review thread _(reconciler)_
+
+### <!-- 3 -->📚 Documentation
+
+- Manager approve/abandon annotations consumed after status patch _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add regression tests for lost-intent annotation clear race _(manager)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
@@ -25,18 +69,6 @@ All notable changes to Percussionist are documented here.
 
 - Publish worker branches to namespaced remote refs (refs/percussionist/*) _(git)_
 - Close the PR-comment feedback loop in PR-mode integration _(reconciler)_
-
-### <!-- 1 -->🐛 Bug Fixes
-
-- Defer ClearTaskAnnotations until after successful status patch _(manager)_
-
-### <!-- 3 -->📚 Documentation
-
-- Manager approve/abandon annotations consumed after status patch _(plan)_
-
-### <!-- 6 -->🧪 Testing
-
-- Add regression tests for lost-intent annotation clear race _(manager)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
@@ -219,6 +251,7 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
+- Extract runPollStatusLoop with scripted-stream tests _(dispatcher)_
 - Show AI review in-flight badge in board review column _(web)_
 - Show ai approved badge with robot icon in board review column _(web)_
 - Attach worker run phase to board tasks _(web)_
@@ -241,6 +274,7 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 2 -->🚜 Refactor
 
+- Extract runWorkerOnce with injectable queue seams (rev24 BUILD 3) _(operator)_
 - Extract callManagerTool shared MCP client _(web)_
 - Use gitUrlHash from @percussionist/kube _(manager-controller)_
 - Extract shared upsertSecret helper _(web)_
@@ -251,6 +285,7 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 3 -->📚 Documentation
 
+- Document recording fake-kube helper pattern in testing strategy
 - Plan board review-stage AI review visibility
 - Update plan board review-stage AI review visibility (rev 2)
 - Move spec.engine description into Zod describe() so codegen preserves it _(api)_
@@ -258,55 +293,6 @@ All notable changes to Percussionist are documented here.
 - Plan for board showing failed when run waits for input _(plans)_
 - Plan for board active-run terminal tab _(plans)_
 - Revise board active-run terminal plan (gate from live run CR) _(plans)_
-
-### <!-- 6 -->🧪 Testing
-
-- Cover TaskRow ai review state badges _(web)_
-- Add component tests for board terminal gating _(web)_
-- Stabilize CI-flaky retry and agent-model fallbacks
-- Respect configured shared web token _(operator)_
-
-### <!-- 7 -->⚙️ Miscellaneous Tasks
-
-- Migrate biome config
-- Clear biome warnings
-- Release v0.2.12
-## [v0.2.11] - 2026-08-06
-
-### <!-- 7 -->⚙️ Miscellaneous Tasks
-
-- Release v0.2.11
-## [v0.2.10] - 2026-08-05
-
-### <!-- 0 -->🚀 Features
-
-- Extract runPollStatusLoop with scripted-stream tests _(dispatcher)_
-- Add humanFolder schema and regenerate CRDs _(api)_
-- Clone and open human folder in code-server _(operator)_
-- Add human folder toggle to project form _(web)_
-- Unify agent auth into one agent-auth Secret _(cli)_
-
-### <!-- 1 -->🐛 Bug Fixes
-
-- Give human-folder bootstrap commit an identity and stop clobbering human git config _(operator)_
-- Allow disabling human folder via edit form _(web)_
-- Wait exits 3 on first-poll 404 instead of claiming deletion _(cli)_
-- Repoint board task move to sanctioned phase transitions and drop task add --column _(cli)_
-- Bind --agent-name to the preceding --agent-file _(cli)_
-- Merge project agent/image/timeout/resources defaults into submit _(cli)_
-- Stop -n default from overriding file namespaces on submit/project create _(cli)_
-- Honor project roster agent models in facilitator and agent-swap runs _(manager)_
-
-### <!-- 2 -->🚜 Refactor
-
-- Extract runWorkerOnce with injectable queue seams (rev24 BUILD 3) _(operator)_
-
-### <!-- 3 -->📚 Documentation
-
-- Document recording fake-kube helper pattern in testing strategy
-- Add plan for human repo folder on project pvc _(plans)_
-- Revise human repo folder plan — clone from spec on project default branch _(plans)_
-- Beatctl CLI correctness plan rev19 (percussionist-dev-plan-rev19)
 
 ### <!-- 5 -->🎨 Styling
 
@@ -321,10 +307,56 @@ All notable changes to Percussionist are documented here.
 - Write-path regression tests for kube write helpers (rev24 BUILD 2) _(kube)_
 - Cover run-key-client, agent-resolver, pvc-helper, ttl flows (rev24 BUILD 5) _(operator)_
 - Table-driven reconcile() + safeReconcileProject flow tests (rev24 BUILD 4) _(operator)_
+- Cover TaskRow ai review state badges _(web)_
+- Add component tests for board terminal gating _(web)_
+- Stabilize CI-flaky retry and agent-model fallbacks
+- Respect configured shared web token _(operator)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Migrate biome config
+- Clear biome warnings
+- Release v0.2.12
+## [v0.2.11] - 2026-08-06
+
+### <!-- 0 -->🚀 Features
+
+- Add humanFolder schema and regenerate CRDs _(api)_
+- Clone and open human folder in code-server _(operator)_
+- Add human folder toggle to project form _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Give human-folder bootstrap commit an identity and stop clobbering human git config _(operator)_
+- Allow disabling human folder via edit form _(web)_
+- Wait exits 3 on first-poll 404 instead of claiming deletion _(cli)_
+- Repoint board task move to sanctioned phase transitions and drop task add --column _(cli)_
+- Bind --agent-name to the preceding --agent-file _(cli)_
+- Merge project agent/image/timeout/resources defaults into submit _(cli)_
+- Stop -n default from overriding file namespaces on submit/project create _(cli)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add plan for human repo folder on project pvc _(plans)_
+- Revise human repo folder plan — clone from spec on project default branch _(plans)_
+- Beatctl CLI correctness plan rev19 (percussionist-dev-plan-rev19)
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Enable human folder on percussionist-dev and document _(self-dev)_
+- Release v0.2.11
+## [v0.2.10] - 2026-08-05
+
+### <!-- 0 -->🚀 Features
+
+- Unify agent auth into one agent-auth Secret _(cli)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Honor project roster agent models in facilitator and agent-swap runs _(manager)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
 - Release v0.2.10
 ## [v0.2.9] - 2026-08-04
 
@@ -356,33 +388,16 @@ All notable changes to Percussionist are documented here.
 - Release v0.2.9
 ## [v0.2.8] - 2026-08-03
 
-### <!-- 1 -->🐛 Bug Fixes
-
-- Respect PR integration mode on merge retry; compose PR body from plan and reviews _(manager)_
-- Opt run pods out of Claude commit attribution trailers _(operator)_
-- Resolve high-severity audit findings failing scheduled CI _(deps)_
-
-### <!-- 5 -->🎨 Styling
-
-- Apply biome formatting to PR-open builder and operator test imports
-
-### <!-- 7 -->⚙️ Miscellaneous Tasks
-
-- Release v0.2.8
-## [v0.2.7] - 2026-08-02
-
 ### <!-- 0 -->🚀 Features
 
+- Expose codeServer.enabled on board API _(web)_
 - Add abandoned field to WorkerStatusSchema _(api)_
 - Add child-completion.ts shared gate predicate _(manager-controller)_
 - Wire task-done worktree cleanup for aux runs _(manager)_
-- Add url deep-link support to in-tab notification core _(web)_
-- Emit deep links from board and run notification producers _(web)_
-- Render bell notifications as clickable links _(web)_
-- Deep-link task push notifications to the task detail panel _(web)_
 
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Gate board-level code-server links on spec.codeServer.enabled _(web)_
 - Stub gitCheck.isClean in complete_run availability test _(dispatcher)_
 - Mark worker.abandoned on TaskAbandoned status patch _(manager-controller)_
 - Escalate ChildrenDoneWithoutMerge instead of deadlocking _(manager-controller)_
@@ -400,11 +415,9 @@ All notable changes to Percussionist are documented here.
 - Derive Project reconcile status constraints from Zod, not hand-edited CRD _(api)_
 - Fail fast on permanent Run credentials misconfiguration _(operator)_
 - Stop accepting auth tokens via ?token= query param and redact token= from request logs _(web)_
-- Survive a missing sqlite-vec instead of failing every test _(memory-service)_
-- Restore Agents table vertical scroll on medium screens _(web)_
-- Apply unified table-scroll wrapper to remaining route table views _(web)_
-- Replace stale terminal runs when retrying a merge _(manager)_
-- Consume nested null delete-markers when editing a project _(web)_
+- Respect PR integration mode on merge retry; compose PR body from plan and reviews _(manager)_
+- Opt run pods out of Claude commit attribution trailers _(operator)_
+- Resolve high-severity audit findings failing scheduled CI _(deps)_
 
 ### <!-- 10 -->💼 Other
 
@@ -416,16 +429,60 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 3 -->📚 Documentation
 
+- Hide code-server board link when code-server not enabled _(plan)_
 - Percussionist-dev-plan-rev02 — fix awaiting-children mergedAt deadlock _(plan)_
 - Add plan for run TTL & cleanup lifecycle fixes (percussionist-dev-plan-rev05) _(plan)_
 - Update run TTL precedence and worktree cleanup description
 - Percussionist-dev-plan-rev10 — remove ?token= query-param auth and redact token from request logs _(plan)_
+
+### <!-- 5 -->🎨 Styling
+
+- Apply biome formatting to PR-open builder and operator test imports
+
+### <!-- 6 -->🧪 Testing
+
+- Cover codeServerEnabled gating in BoardHeader tests _(web)_
+- Cover BoardView's code-server enabled gate, not just BoardHeader's ternary _(web)_
+- Mock gitCheck.isClean in complete_run happy-path test _(dispatcher)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.8
+## [v0.2.7] - 2026-08-02
+
+### <!-- 0 -->🚀 Features
+
+- Add project color field to spec, CRD, and routes _(api)_
+- Add project color hash helper and client type support _(web)_
+- Render project color chip in sidebar _(web)_
+- Add color picker to project create/edit form _(web)_
+- Render project color strip on board view _(web)_
+- Add url deep-link support to in-tab notification core _(web)_
+- Emit deep links from board and run notification producers _(web)_
+- Render bell notifications as clickable links _(web)_
+- Deep-link task push notifications to the task detail panel _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Show board chat context button on tablets without hover _(web)_
+- Survive a missing sqlite-vec instead of failing every test _(memory-service)_
+- Restore Agents table vertical scroll on medium screens _(web)_
+- Apply unified table-scroll wrapper to remaining route table views _(web)_
+- Replace stale terminal runs when retrying a merge _(manager)_
+- Consume nested null delete-markers when editing a project _(web)_
+
+### <!-- 10 -->💼 Other
+
+- Project identity colors for sidebar and board (percussionist-dev-plan-580f71)
+
+### <!-- 3 -->📚 Documentation
+
+- Plan for tablet-visible board chat context button _(web)_
 - Add plan for notification deep links _(plan)_
 - Add percussionist-dev-plan-8b3e46 _(plan)_
 
 ### <!-- 6 -->🧪 Testing
 
-- Mock gitCheck.isClean in complete_run happy-path test _(dispatcher)_
 - Add unit tests for notification core deep links _(web)_
 - Add regression coverage for table scroll wrappers _(web)_
 
@@ -438,17 +495,12 @@ All notable changes to Percussionist are documented here.
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Fail with the missing parent branch instead of a bare exit 128 _(operator)_
-- Show board chat context button on tablets without hover _(web)_
 - Keep a retried turn from settling the run _(runner-claude)_
 - Tell workers the run ends when they stop _(manager)_
 - Tell reviewers where findings go, rename report_finding _(agents)_
 - Survive a missing sqlite-vec instead of failing every test _(memory-service)_
 - Merge from the local source branch instead of origin/<source> _(manager)_
 - Promote ideas to the backlog without a worker status _(web)_
-
-### <!-- 3 -->📚 Documentation
-
-- Plan for tablet-visible board chat context button _(web)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
@@ -465,24 +517,12 @@ All notable changes to Percussionist are documented here.
 - Release v0.2.5
 ## [v0.2.4] - 2026-07-31
 
-### <!-- 0 -->🚀 Features
-
-- Add project color field to spec, CRD, and routes _(api)_
-- Add project color hash helper and client type support _(web)_
-- Render project color chip in sidebar _(web)_
-- Add color picker to project create/edit form _(web)_
-- Render project color strip on board view _(web)_
-
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Make project edits resettable _(web)_
 - Mount known_hosts outside the read-only git-ssh secret _(operator)_
 - Render task diffs when the project pins a git-less exec image _(web)_
 - Render claude-engine subtask parts without crashing _(web)_
-
-### <!-- 10 -->💼 Other
-
-- Project identity colors for sidebar and board (percussionist-dev-plan-580f71)
 
 ### <!-- 6 -->🧪 Testing
 
@@ -494,13 +534,8 @@ All notable changes to Percussionist are documented here.
 - Release v0.2.4
 ## [v0.2.3] - 2026-07-29
 
-### <!-- 0 -->🚀 Features
-
-- Expose codeServer.enabled on board API _(web)_
-
 ### <!-- 1 -->🐛 Bug Fixes
 
-- Gate board-level code-server links on spec.codeServer.enabled _(web)_
 - Persist project merge behavior edits _(web)_
 - Count every message's usage, not just the transcript tail _(dispatcher)_
 - Retry a truncated turn that reports itself successful _(runner-claude)_
@@ -509,13 +544,10 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 3 -->📚 Documentation
 
-- Hide code-server board link when code-server not enabled _(plan)_
 - Add LXD MicroK8s Tailscale playbook
 
 ### <!-- 6 -->🧪 Testing
 
-- Cover codeServerEnabled gating in BoardHeader tests _(web)_
-- Cover BoardView's code-server enabled gate, not just BoardHeader's ternary _(web)_
 - Stop the auth bypass test creating a real Project _(web)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
@@ -523,21 +555,6 @@ All notable changes to Percussionist are documented here.
 - Log the shape of a turn that ends without retrying _(runner-claude)_
 - Release v0.2.3
 ## [v0.2.2] - 2026-07-29
-
-### <!-- 1 -->🐛 Bug Fixes
-
-- Stop init from reverting a live run's uncommitted work _(operator)_
-
-### <!-- 6 -->🧪 Testing
-
-- Stop board-view's BoardHeader stub leaking into other suites _(web)_
-- Stop board-view's react-query stub leaking into other suites _(web)_
-- Give the board suites a real router instead of stubbing Link _(web)_
-
-### <!-- 7 -->⚙️ Miscellaneous Tasks
-
-- Release v0.2.2
-## [v0.2.1] - 2026-07-26
 
 ### <!-- 0 -->🚀 Features
 
@@ -558,10 +575,6 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 1 -->🐛 Bug Fixes
 
-- Normalize SessionList table semantics and add min-width for mobile alignment _(web)_
-- Monochrome notification badge for the Android status bar _(web)_
-- Gate exec_in_workspace sanitization bypass on bearer-token trust _(manager)_
-- Only report WaitingForInput when a human is actually needed _(dispatcher)_
 - Point agent prompts at /workspace instead of /data _(agents)_
 - Mount the engine auth key instead of opencode's auth.json _(operator)_
 - Use a valid ConfigMap key for findings so report_finding works _(kube)_
@@ -586,20 +599,42 @@ All notable changes to Percussionist are documented here.
 - Publish the runner-claude image and default to it _(ci)_
 - Accept the inline permission form the docs advertised _(operator)_
 - Polish mobile board header edge cases _(web)_
+- Stop init from reverting a live run's uncommitted work _(operator)_
 
 ### <!-- 3 -->📚 Documentation
 
-- Add percussionist-dev-plan-6b0248 sessions table plan _(plan)_
 - Describe the observed runs generically in test comments
 - Add percussionist-dev-plan-aa67fb _(plan)_
 
 ### <!-- 6 -->🧪 Testing
 
-- Add session list table structure regression tests _(web)_
 - Stop two board route tests depending on having no cluster _(web)_
 - Cover the answer-finality predicate _(manager)_
 - Add responsive regression tests for BoardHeader and BoardView _(web)_
 - Fix React DOM prop warnings in board-view mocks _(web)_
+- Stop board-view's BoardHeader stub leaking into other suites _(web)_
+- Stop board-view's react-query stub leaking into other suites _(web)_
+- Give the board suites a real router instead of stubbing Link _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.2
+## [v0.2.1] - 2026-07-26
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Normalize SessionList table semantics and add min-width for mobile alignment _(web)_
+- Monochrome notification badge for the Android status bar _(web)_
+- Gate exec_in_workspace sanitization bypass on bearer-token trust _(manager)_
+- Only report WaitingForInput when a human is actually needed _(dispatcher)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add percussionist-dev-plan-6b0248 sessions table plan _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add session list table structure regression tests _(web)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
@@ -645,7 +680,16 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Replace breakpoint-gated scroll with always-on overflow-x-auto in ProjectsPage _(web)_
 - Detect stale chat sessions and use headless opencode serve _(manager)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add be3785 settings projects table scroll plan _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add regression tests for Projects table overflow behavior _(web)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
@@ -748,16 +792,7 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 1 -->🐛 Bug Fixes
 
-- Replace breakpoint-gated scroll with always-on overflow-x-auto in ProjectsPage _(web)_
 - Use opencode serve (headless) as main process, shell for terminal attach
-
-### <!-- 3 -->📚 Documentation
-
-- Add be3785 settings projects table scroll plan _(plan)_
-
-### <!-- 6 -->🧪 Testing
-
-- Add regression tests for Projects table overflow behavior _(web)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
@@ -919,10 +954,15 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Update PVC defaults and SSH host-key modes to match implementation _(docs)_
 - Decouple create-action visibility from showHeader in ProjectsPage _(web)_
 
 ### <!-- 3 -->📚 Documentation
 
+- Add docs accuracy sweep plan hsb8g _(plan)_
+- Fix docs accuracy for CRDs, board flags, and caching _(readme)_
+- Fix MCP verification port 4096 -> 4097 in AGENTS.md _(agents)_
+- Fix PVC defaults in AGENTS.md to match operator code _(agents)_
 - Add plan for missing add project UI _(plan)_
 
 ### <!-- 6 -->🧪 Testing
@@ -934,8 +974,22 @@ All notable changes to Percussionist are documented here.
 - Release v0.1.195
 ## [v0.1.194] - 2026-06-17
 
+### <!-- 0 -->🚀 Features
+
+- Add compact-expanded usage tracker modes _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Integrate usage tracker with sidebar collapse state _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add usage tracker sidebar expand-collapse plan _(plan)_
+
 ### <!-- 6 -->🧪 Testing
 
+- Add verification tests for UsageBar expand/collapse modes _(web)_
+- Add focused component tests for UsageBar expand/collapse _(web)_
 - Remove flaky localStorage legacy compatibility test _(web)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
@@ -945,6 +999,7 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Handle unhandled rejections and preserve transient settings errors
 - Add percussionist_dispatcher_ prefix to report_finding tool mention in prompt _(worker-builder)_
 - Configure tsconfig for bun module resolution _(memory-service)_
 - Exclude test files from tsc build _(dispatcher)_
@@ -958,6 +1013,7 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
+- Add dependency scanning and pin @types/bun _(security)_
 - Update lockfile with bun-types for web package
 - Release v0.1.193
 ## [v0.1.192] - 2026-06-16
@@ -977,37 +1033,22 @@ All notable changes to Percussionist are documented here.
 - Release v0.1.192
 ## [v0.1.191] - 2026-06-16
 
-### <!-- 0 -->🚀 Features
-
-- Add compact-expanded usage tracker modes _(web)_
-
-### <!-- 1 -->🐛 Bug Fixes
-
-- Integrate usage tracker with sidebar collapse state _(web)_
-- Handle unhandled rejections and preserve transient settings errors
-
 ### <!-- 2 -->🚜 Refactor
 
 - Tighten executeEffects project typing _(manager)_
 
-### <!-- 3 -->📚 Documentation
-
-- Add usage tracker sidebar expand-collapse plan _(plan)_
-
-### <!-- 6 -->🧪 Testing
-
-- Add verification tests for UsageBar expand/collapse modes _(web)_
-- Add focused component tests for UsageBar expand/collapse _(web)_
-
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
-- Add dependency scanning and pin @types/bun _(security)_
 - Release v0.1.191
 ## [v0.1.190] - 2026-06-16
 
 ### <!-- 0 -->🚀 Features
 
 - Add list/update/create_task findings MCP tools + prompt awareness _(agent)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Align label keys and stale hygiene comments
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
@@ -1058,29 +1099,34 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 1 -->🐛 Bug Fixes
 
-- Update PVC defaults and SSH host-key modes to match implementation _(docs)_
-- Align label keys and stale hygiene comments
 - Validate workspace command and package inputs _(manager)_
 - Lock mirror cleanup operations with flock _(manager)_
 - Validate external status patch inputs with zod _(board)_
 - Use session.idle for idle-triggered flushes _(dispatcher)_
 - Avoid clobbering run terminal phase _(operator)_
 
-### <!-- 3 -->📚 Documentation
-
-- Add docs accuracy sweep plan hsb8g _(plan)_
-- Fix docs accuracy for CRDs, board flags, and caching _(readme)_
-- Fix MCP verification port 4096 -> 4097 in AGENTS.md _(agents)_
-- Fix PVC defaults in AGENTS.md to match operator code _(agents)_
-
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Release v0.1.185
 ## [v0.1.184] - 2026-06-15
 
+### <!-- 0 -->🚀 Features
+
+- Add per-project daily usage persistence _(web)_
+- Add project-aware client usage heartbeat tracking _(web)_
+
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Resolve empty git diff in task detail panel _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add per-project session tracking plan _(plan)_
+- Revise f2304a to keep total-only usage UI _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add per-project usage regression coverage _(web)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
@@ -1089,8 +1135,6 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
-- Add per-project daily usage persistence _(web)_
-- Add project-aware client usage heartbeat tracking _(web)_
 - Add active usage category indicator dot _(web)_
 - Add runner package form state plumbing _(web)_
 - Add runner packages field to execution tab _(web)_
@@ -1110,15 +1154,9 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 3 -->📚 Documentation
 
-- Add per-project session tracking plan _(plan)_
-- Revise f2304a to keep total-only usage UI _(plan)_
 - Add sidebar usage indicator plan _(plan)_
 - Add runner packages execution settings plan _(plan)_
 - Add validate agents capability audit plan _(plan)_
-
-### <!-- 6 -->🧪 Testing
-
-- Add per-project usage regression coverage _(web)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
@@ -1154,9 +1192,39 @@ All notable changes to Percussionist are documented here.
 - Release v0.1.182
 ## [v0.1.181] - 2026-06-14
 
+### <!-- 0 -->🚀 Features
+
+- Add agent capability validation foundation _(manager)_
+- Enforce capability checks across task creation entrypoints _(core)_
+- Gate completion tools by run context _(dispatcher)_
+- Harden buildgen agent capability constraints _(manager)_
+- Expose and edit agent capabilities _(web)_
+- Enrich board task display references _(web)_
+- Consume board display refs in board UI _(web)_
+- Use friendly parent label in chat context _(web)_
+- Add merge verdict types and normalizer _(api)_
+- Add complete_merge MCP tool for structured merge verdicts _(dispatcher)_
+- Update merge completion prompt and add conflict e2e _(manager)_
+
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Gate merge completion on structured verdict _(manager)_
 - Gate complete_merge by merge-worker context and fix test env _(dispatcher)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add plan for tool and agent gating _(plan)_
+- Refine guardrail plan for tool and agent gating _(plan)_
+- Address custom agent alias risk in guardrails _(plan)_
+- Refine percussionist-dev-plan-3a0500 guardrails _(plan)_
+- Update percussionist-dev-plan-3a0500 with capability-based guardrails _(plan)_
+- Finalize percussionist-dev-plan-3a0500 strict guardrails _(plan)_
+- Add plan for human-readable board waiting/from labels _(plan)_
+- Add merge-verdict implementation plan for a1301a _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add strict enforcement coverage across stack _(capabilities)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
@@ -1174,6 +1242,7 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
+- Add manager_approve MCP tool for BUILD merge approvals _(manager)_
 - Automate releases with changelog generation, GitHub Releases, and beta channel _(ci)_
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -1182,6 +1251,12 @@ All notable changes to Percussionist are documented here.
 - Replace curl+tar with orhun/git-cliff-action for changelog _(ci)_
 - Remove duplicate --config arg in git-cliff action _(ci)_
 
+### <!-- 3 -->📚 Documentation
+
+- Add percussionist-dev-plan-12c569 artifact _(plan)_
+- Refine percussionist-dev-plan-12c569 for manager_approve _(plan)_
+- Document manager_approve approval flow _(manager)_
+
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Release v0.1.179
@@ -1189,26 +1264,13 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
-- Add agent capability validation foundation _(manager)_
-- Enforce capability checks across task creation entrypoints _(core)_
-- Gate completion tools by run context _(dispatcher)_
-- Harden buildgen agent capability constraints _(manager)_
-- Expose and edit agent capabilities _(web)_
 - Add inspect_task_flow MCP tool and flow introspection helper _(manager)_
 - Mention inspect_task_flow in default manager decision agent prompt _(operator)_
-- Enrich board task display references _(web)_
-- Consume board display refs in board UI _(web)_
-- Use friendly parent label in chat context _(web)_
-- Add merge verdict types and normalizer _(api)_
-- Add complete_merge MCP tool for structured merge verdicts _(dispatcher)_
-- Update merge completion prompt and add conflict e2e _(manager)_
-- Add manager_approve MCP tool for BUILD merge approvals _(manager)_
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Add local horizontal scroll to project form tabs on mobile _(web)_
 - Add touch-scroll-x utility and harden tabs primitive for mobile overflow _(web)_
-- Gate merge completion on structured verdict _(manager)_
 
 ### <!-- 2 -->🚜 Refactor
 
@@ -1216,24 +1278,9 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 3 -->📚 Documentation
 
-- Add plan for tool and agent gating _(plan)_
-- Refine guardrail plan for tool and agent gating _(plan)_
-- Address custom agent alias risk in guardrails _(plan)_
-- Refine percussionist-dev-plan-3a0500 guardrails _(plan)_
-- Update percussionist-dev-plan-3a0500 with capability-based guardrails _(plan)_
-- Finalize percussionist-dev-plan-3a0500 strict guardrails _(plan)_
 - Add percussionist-dev-plan-8860ff mobile tabs plan _(plan)_
 - Add percussionist-dev-plan-1e6da6 implementation plan _(plan)_
 - Add inspect_task_flow reference and lifecycle troubleshooting notes
-- Add plan for human-readable board waiting/from labels _(plan)_
-- Add merge-verdict implementation plan for a1301a _(plan)_
-- Add percussionist-dev-plan-12c569 artifact _(plan)_
-- Refine percussionist-dev-plan-12c569 for manager_approve _(plan)_
-- Document manager_approve approval flow _(manager)_
-
-### <!-- 6 -->🧪 Testing
-
-- Add strict enforcement coverage across stack _(capabilities)_
 ## [v0.1.177] - 2026-06-14
 
 ### <!-- 0 -->🚀 Features
@@ -1263,6 +1310,30 @@ All notable changes to Percussionist are documented here.
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Upgrade memory service image via MEMORY_SERVICE_IMAGE env var _(operator)_
+## [v0.1.175] - 2026-06-13
+
+### <!-- 0 -->🚀 Features
+
+- Responsive mobile full-screen add-task overlay on board _(web)_
+- Polish mobile add-task overlay, wire add-from-ideas, enforce single overlay _(web)_
+- Extend NodeHostStats with filesystem fields + expose volume in metrics API _(kube,web)_
+- Add pod ephemeral-storage request/limit through metrics pipeline _(kube,web)_
+- Add volume storage display to Metrics page _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Guard possibly undefined blockContent in chat-utils _(web)_
+- Polish branch and agent review metadata with chip-style rendering _(web)_
+
+### <!-- 2 -->🚜 Refactor
+
+- Extract AddTaskForm to dedicated file and make TaskListPanel presentation-aware _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add b00602 mobile add-task fullscreen plan _(plan)_
+- Add metrics page volume information plan _(plan)_
+- Add task view review ui polish plan _(plan)_
 ## [v0.1.174] - 2026-06-13
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -1276,23 +1347,33 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
-- Extend NodeHostStats with filesystem fields + expose volume in metrics API _(kube,web)_
-- Add pod ephemeral-storage request/limit through metrics pipeline _(kube,web)_
-- Add volume storage display to Metrics page _(web)_
+- Add buildgen summary-source logging and facilitator unit tests _(manager)_
 - Add VitePress documentation site with dashboard screenshots _(docs)_
 - Add memory CRUD MCP tools and project settings UI _(memory)_
 - Add memory CRUD MCP tools and project settings UI _(memory)_
 
 ### <!-- 1 -->🐛 Bug Fixes
 
-- Polish branch and agent review metadata with chip-style rendering _(web)_
+- Remove embedding-gated trigger from summarizeEffect in decision engine _(manager)_
+- Add horizontal scroll to Models table on mobile viewports _(web)_
 - Add staleness check, deterministic merge prompt, and resolveMergeBranch for PLAN tasks _(merge)_
 - Replace mock.module with __sessionFns to prevent cross-file mock leak _(manager-controller)_
 
+### <!-- 2 -->🚜 Refactor
+
+- Harden session summarizer with retry/backoff, contextual logging, and correct ConfigMap write semantics _(manager)_
+- Add observability logs to SummarizeSession fire-and-forget effect _(manager)_
+
 ### <!-- 3 -->📚 Documentation
 
-- Add metrics page volume information plan _(plan)_
-- Add task view review ui polish plan _(plan)_
+- Add plan for session summarization pipeline fix _(plan)_
+- Refine summarization pipeline plan _(plan)_
+- Add session summarization pipeline verification runbook findings
+- Add stats models mobile scroll plan _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add summarizer memory-write failure tests and extend route metadata assertions _(manager)_
 ## [v0.1.172] - 2026-06-13
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -1302,9 +1383,6 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
-- Responsive mobile full-screen add-task overlay on board _(web)_
-- Polish mobile add-task overlay, wire add-from-ideas, enforce single overlay _(web)_
-- Add buildgen summary-source logging and facilitator unit tests _(manager)_
 - Add Biome for linting and formatting _(tooling)_
 - Add /sessions routes and sidebar navigation entry _(web)_
 - Implement dedicated Sessions list and detail pages _(web)_
@@ -1312,9 +1390,6 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 1 -->🐛 Bug Fixes
 
-- Guard possibly undefined blockContent in chat-utils _(web)_
-- Remove embedding-gated trigger from summarizeEffect in decision engine _(manager)_
-- Add horizontal scroll to Models table on mobile viewports _(web)_
 - Remove unused function parameters
 - Replace array index keys with stable keys
 - Replace explicit any with proper types in source files
@@ -1328,23 +1403,8 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 2 -->🚜 Refactor
 
-- Extract AddTaskForm to dedicated file and make TaskListPanel presentation-aware _(web)_
-- Harden session summarizer with retry/backoff, contextual logging, and correct ConfigMap write semantics _(manager)_
-- Add observability logs to SummarizeSession fire-and-forget effect _(manager)_
 - Migrate task type selector to shadcn RadioGroup _(web)_
 - Remove embedded Sessions tab from StatsView _(web)_
-
-### <!-- 3 -->📚 Documentation
-
-- Add b00602 mobile add-task fullscreen plan _(plan)_
-- Add plan for session summarization pipeline fix _(plan)_
-- Refine summarization pipeline plan _(plan)_
-- Add session summarization pipeline verification runbook findings
-- Add stats models mobile scroll plan _(plan)_
-
-### <!-- 6 -->🧪 Testing
-
-- Add summarizer memory-write failure tests and extend route metadata assertions _(manager)_
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
@@ -1362,6 +1422,7 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 3 -->📚 Documentation
 
+- Add percussionist-dev-plan-d7ad04 _(plan)_
 - Add plan for board task type selector shadcn migration _(plan)_
 ## [v0.1.168] - 2026-06-12
 
@@ -1408,40 +1469,17 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
+- Add ReviewRecord schema to Task.status for append-only review history _(api)_
+- Update reconciler to preserve full review verdict and append review records _(manager)_
 - Add stats reporter foundation for synthetic manager-run cost tracking _(manager)_
 - Add flush integration to waitForCompletion and expand stats-reporter tests _(manager)_
 
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Add non-empty guard in decideAwaitingChildren to prevent vacuous true from empty child set
 - Fix review run-name collision in decideSucceeded _(manager)_
 - Separate option descriptions from buttons to prevent vertical overflow _(web)_
 - Improve review agent workflow — pretty-print session, grant bash, preserve worktrees
-
-### <!-- 3 -->📚 Documentation
-
-- Add percussionist-dev-plan-d7ad04 _(plan)_
-- Add manager agent cost tracking plan _(plan)_
-- Add plan for review run-name collision fix _(plan)_
-
-### <!-- 6 -->🧪 Testing
-
-- Add regression tests for review run-name collision fix
-## [v0.1.159] - 2026-06-12
-
-### <!-- 0 -->🚀 Features
-
-- Add ReviewRecord schema to Task.status for append-only review history _(api)_
-- Update reconciler to preserve full review verdict and append review records _(manager)_
-
-### <!-- 1 -->🐛 Bug Fixes
-
-- Add non-empty guard in decideAwaitingChildren to prevent vacuous true from empty child set
-- Add awaiting-feature-merge to awaiting-human transition table _(reconciler)_
-- Handle MCP isError and JSON parse failure in task-diff _(web)_
-- Skip sanitization for trusted diff script in exec_in_workspace _(web)_
-- Guard res.json() in task-diff MCP call against non-JSON response _(web)_
-- Add worktree access guidance and pod exit code collection _(manager)_
-- Prevent option button text overflow and TTS uttering raw markup _(web)_
 
 ### <!-- 2 -->🚜 Refactor
 
@@ -1452,16 +1490,36 @@ All notable changes to Percussionist are documented here.
 - Add plan for awaiting-children empty child guard _(plan)_
 - Add plan for percussionist-dev-plan-58d4ff _(plan)_
 - Add review record improvements plan _(plan)_
-- Add b02d78 merge-retry transition fix plan _(plan)_
+- Add manager agent cost tracking plan _(plan)_
+- Add plan for review run-name collision fix _(plan)_
 
 ### <!-- 6 -->🧪 Testing
 
 - Add regression tests for AI auto-rework run name differentiation _(manager)_
+- Add regression tests for review run-name collision fix
+## [v0.1.159] - 2026-06-12
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Add awaiting-feature-merge to awaiting-human transition table _(reconciler)_
+- Handle MCP isError and JSON parse failure in task-diff _(web)_
+- Skip sanitization for trusted diff script in exec_in_workspace _(web)_
+- Guard res.json() in task-diff MCP call against non-JSON response _(web)_
+- Add worktree access guidance and pod exit code collection _(manager)_
+- Prevent option button text overflow and TTS uttering raw markup _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add b02d78 merge-retry transition fix plan _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
 - Add PLAN merge-retry approval test from awaiting-human _(decision)_
 ## [v0.1.155] - 2026-06-11
 
 ### <!-- 0 -->🚀 Features
 
+- Implement markdown rendering for task description _(board)_
 - Add single-open session state and row toggle behavior _(stats)_
 - Polish session row UX and improve empty/error states _(stats)_
 - Command injection remediation in workspace tooling _(manager)_
@@ -1472,12 +1530,28 @@ All notable changes to Percussionist are documented here.
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Return descriptive error names in sanitizeCommand for test compatibility _(manager-controller)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add bdd975 markdown taskview plan _(plan)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update add-task placeholder to mention Markdown support _(web)_
 ## [v0.1.154] - 2026-06-10
+
+### <!-- 0 -->🚀 Features
+
+- Add option block parser and interactive buttons _(chat)_
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Clean up pod on terminal Run when dispatcher patched status first _(operator)_
 - Add chat options instructions to decision agent prompt _(operator)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add plan for interactive chat option buttons _(plan)_
 ## [v0.1.151] - 2026-06-10
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -1490,24 +1564,13 @@ All notable changes to Percussionist are documented here.
 - Show resource requests/limits on Metrics page _(web)_
 ## [v0.1.150] - 2026-06-10
 
-### <!-- 0 -->🚀 Features
-
-- Implement markdown rendering for task description _(board)_
-- Add option block parser and interactive buttons _(chat)_
-
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Resolve plan diff view showing stale/incorrect commits
 
 ### <!-- 3 -->📚 Documentation
 
-- Add bdd975 markdown taskview plan _(plan)_
-- Add plan for interactive chat option buttons _(plan)_
 - Remove stale Vitest references, add missing test config
-
-### <!-- 7 -->⚙️ Miscellaneous Tasks
-
-- Update add-task placeholder to mention Markdown support _(web)_
 ## [v0.1.149] - 2026-06-10
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -1623,14 +1686,47 @@ All notable changes to Percussionist are documented here.
 - Add commitlint with husky commit-msg hook to enforce conventional commits
 ## [v0.1.137] - 2026-06-08
 
+### <!-- 0 -->🚀 Features
+
+- Harden kubectl helpers and setup/teardown lifecycle _(e2e)_
+
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Deterministic ClusterAgent fixture consolidation and PLAN semantic fix
 - Exclude test files from tsc build _(operator)_
+
+### <!-- 10 -->💼 Other
+
+- Testing improvements roadmap
+- CI tier rollout and smoke-agent alignment
+
+### <!-- 2 -->🚜 Refactor
+
+- Strict deterministic assertions for facilitator/advances/achieves suites _(e2e)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add testing improvements roadmap _(plan)_
+- Refresh testing improvements plan for bun _(plan)_
+- Refine testing improvements roadmap _(plan)_
+- Refine testing improvements roadmap _(plan)_
+- Add testing strategy document and contributor workflow guidance
 ## [v0.1.136] - 2026-06-08
 
 ### <!-- 0 -->🚀 Features
 
+- Add in-process model warmup before serving HTTP _(memory-service)_
+- Prefer remote-tracking ref for parent baseline in workspace-init _(operator)_
+- Prefer remote-tracking ref for parent baseline in workspace-init _(operator)_
 - Add readiness probe that waits for Ollama model availability _(memory-service)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Prefer remote-tracking ref for parent baseline in workspace-init _(operator)_
+
+### <!-- 10 -->💼 Other
+
+- Ensure embedding model pull before memory service startup
 ## [v0.1.135] - 2026-06-08
 
 ### <!-- 0 -->🚀 Features
@@ -1671,9 +1767,6 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
-- Add in-process model warmup before serving HTTP _(memory-service)_
-- Prefer remote-tracking ref for parent baseline in workspace-init _(operator)_
-- Prefer remote-tracking ref for parent baseline in workspace-init _(operator)_
 - Wire mobile-close helper in AppSidebar via useSidebar _(web)_
 - Show human approval status on review-lane cards + sort by age _(web)_
 - Add per-commit diff view with unified/commits toggle _(web)_
@@ -1683,12 +1776,10 @@ All notable changes to Percussionist are documented here.
 - Make Stats tab strip horizontally scrollable on mobile _(web)_
 - Make Stats tab strip horizontally scrollable on mobile (BUILD C safeguard) _(web)_
 - Make Stats tab strip horizontally scrollable on mobile _(web)_
-- Prefer remote-tracking ref for parent baseline in workspace-init _(operator)_
 - Make task-context inject icon visible on mobile devices
 
 ### <!-- 10 -->💼 Other
 
-- Ensure embedding model pull before memory service startup
 - Add mobile sidebar close behavior plan
 - Refine mobile sidebar close implementation plan
 ## [v0.1.126] - 2026-06-07
@@ -1719,36 +1810,26 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
-- Harden kubectl helpers and setup/teardown lifecycle _(e2e)_
 - Wire auth middleware to UI — login page, auth headers, SSE token support _(web)_
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Wire up task filter + dynamic dimensions + tests _(memory)_
-- Deterministic ClusterAgent fixture consolidation and PLAN semantic fix
-
-### <!-- 10 -->💼 Other
-
-- Testing improvements roadmap
-- CI tier rollout and smoke-agent alignment
-
-### <!-- 2 -->🚜 Refactor
-
-- Strict deterministic assertions for facilitator/advances/achieves suites _(e2e)_
-
-### <!-- 3 -->📚 Documentation
-
-- Add testing improvements roadmap _(plan)_
-- Refresh testing improvements plan for bun _(plan)_
-- Refine testing improvements roadmap _(plan)_
-- Refine testing improvements roadmap _(plan)_
-- Add testing strategy document and contributor workflow guidance
 ## [v0.1.121] - 2026-06-06
+
+### <!-- 0 -->🚀 Features
+
+- Auto-heal tasks with missing status.phase + buildTask default phase _(reconciler)_
 
 ### <!-- 1 -->🐛 Bug Fixes
 
+- Enforce status.phase='pending' on all Task CR creation paths
 - Use newline join in task-diff shell script to avoid ash syntax error _(web)_
 - Add dark-theme CSS overrides for react-diff-view _(web)_
+
+### <!-- 10 -->💼 Other
+
+- Address tasks missing initial phase
 ## [v0.1.119] - 2026-06-06
 
 ### <!-- 0 -->🚀 Features
@@ -1782,24 +1863,25 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
-- Auto-heal tasks with missing status.phase + buildTask default phase _(reconciler)_
 - Make manager chat full-screen on mobile with responsive CSS _(web)_
 - Use kubelet /stats/summary for host-level memory instead of cgroup _(web)_
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Prevent tab clicks from submitting project edit form _(web)_
-- Enforce status.phase='pending' on all Task CR creation paths
 - Resolve task diffs from worktree refs _(web)_
 
 ### <!-- 10 -->💼 Other
 
-- Address tasks missing initial phase
 - Add mobile full-screen manager chat plan _(web)_
 ## [v0.1.113] - 2026-06-05
 
 ### <!-- 0 -->🚀 Features
 
+- Add reusable Tabs UI component with ARIA + keyboard navigation _(web)_
+- Add reusable Tabs UI component with ARIA + keyboard navigation _(web)_
+- Add Notifications settings tab with sound toggle and preview _(web)_
+- Add notification sound settings to Zustand store _(web)_
 - Metrics time-series history with recharts _(web)_
 - Broader percussionist notification sounds _(web)_
 
@@ -1809,12 +1891,16 @@ All notable changes to Percussionist are documented here.
 - Add chart color CSS variables for recharts lines _(web)_
 - Average all nodes per minute instead of per-node entries in metric timeseries _(web)_
 - Prefix write_plan/read_plan MCP tool calls with percussionist_dispatcher_ in agent prompts
+
+### <!-- 10 -->💼 Other
+
+- Split project settings into tabbed groups
+- Notification settings — sound toggle + preview in Settings UI
+
+### <!-- 2 -->🚜 Refactor
+
+- Split project settings form into tabbed groups with URL deep-linking _(web)_
 ## [v0.1.107] - 2026-06-05
-
-### <!-- 0 -->🚀 Features
-
-- Add Notifications settings tab with sound toggle and preview _(web)_
-- Add notification sound settings to Zustand store _(web)_
 
 ### <!-- 1 -->🐛 Bug Fixes
 
@@ -1823,7 +1909,6 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 10 -->💼 Other
 
-- Notification settings — sound toggle + preview in Settings UI
 - Don't auto-terminate on every assistant turn
 ## [v0.1.106] - 2026-06-05
 
@@ -1843,11 +1928,6 @@ All notable changes to Percussionist are documented here.
 - Add NEVER rule for kubectl cp + kill, Drizzle SQL alias gotcha, tool-metrics endpoint docs
 ## [v0.1.103] - 2026-06-05
 
-### <!-- 0 -->🚀 Features
-
-- Add reusable Tabs UI component with ARIA + keyboard navigation _(web)_
-- Add reusable Tabs UI component with ARIA + keyboard navigation _(web)_
-
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Make collapsed sidebar tooltips opaque with sidebar palette _(web)_
@@ -1857,22 +1937,25 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 10 -->💼 Other
 
-- Split project settings into tabbed groups
 - Add eff5c8 sidebar tooltip readability plan
-
-### <!-- 2 -->🚜 Refactor
-
-- Split project settings form into tabbed groups with URL deep-linking _(web)_
 ## [v0.1.102] - 2026-06-05
 
 ### <!-- 0 -->🚀 Features
 
+- Add optional model field to AgentRefSchema for per-agent default models _(api)_
 - Add optional model field to AgentRefSchema for per-agent default models _(api)_
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Cap chat panel at viewport height and hide toggle when open _(web)_
 - Remove Description column from agents table (no schema field)
+
+### <!-- 10 -->💼 Other
+
+- Add description field to agent form UI (percussionist-dev-plan-16a91d)
+- Remove description column from agents table (percussionist-dev-plan-16a91d)
+- Update implementation status for agents description removal (percussionist-dev-plan-16a91d)
+- Approve BUILD task percussionist-dev-build-2e283f — per-agent default models for agents
 ## [v0.1.101] - 2026-06-05
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
@@ -1915,11 +1998,19 @@ All notable changes to Percussionist are documented here.
 - Replace while-read pipelines with for loops in init container
 ## [v0.1.91] - 2026-06-04
 
+### <!-- 0 -->🚀 Features
+
+- Expose missing project settings fields in CreateProjectForm _(web)_
+
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Use for loop instead of pipeline in init container re-sync
 - Merge retry cycle and worktree fetch conflict
 - Prefix MCP tool names for buildgen agent (create_task, complete_run)
+
+### <!-- 10 -->💼 Other
+
+- Expose missing project settings in web UI
 ## [v0.1.88] - 2026-06-04
 
 ### <!-- 0 -->🚀 Features
@@ -2136,21 +2227,11 @@ All notable changes to Percussionist are documented here.
 
 ### <!-- 0 -->🚀 Features
 
-- Add optional model field to AgentRefSchema for per-agent default models _(api)_
-- Expose missing project settings fields in CreateProjectForm _(web)_
 - Strip gh pr and remote push from basic flow; fix plan task stuck in generating-builds
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Execute effects when generating-builds has no phase transition
-
-### <!-- 10 -->💼 Other
-
-- Add description field to agent form UI (percussionist-dev-plan-16a91d)
-- Remove description column from agents table (percussionist-dev-plan-16a91d)
-- Update implementation status for agents description removal (percussionist-dev-plan-16a91d)
-- Approve BUILD task percussionist-dev-build-2e283f — per-agent default models for agents
-- Expose missing project settings in web UI
 ## [v0.1.45] - 2026-05-29
 
 ### <!-- 0 -->🚀 Features
