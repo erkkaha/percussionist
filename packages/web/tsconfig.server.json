@@ -5,6 +5,7 @@
     "rootDir": "./src/server",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "declaration": false,
     "types": ["bun-types"]
   },
   "include": ["src/server/**/*"]
