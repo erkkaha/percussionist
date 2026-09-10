@@ -810,17 +810,25 @@ export function runRetentionCleanup(): void {
   const db = getDb();
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
+  // Count the run rows to delete first: SQLite's `changes()` after the DELETE
+  // includes FK-cascaded child rows (messages / tool_calls / file_ops), so it
+  // overstates how many runs were removed.
+  const count =
+    db
+      .select({ count: sql<number>`COUNT(*)`.as('count') })
+      .from(runs)
+      .where(lt(runs.startedAt, cutoff))
+      .get()?.count ?? 0;
+
+  if (count <= 0) return;
+
   // Cascade deletes handle messages / tool_calls / file_ops via FK ON DELETE
   // CASCADE. Deleting from runs is sufficient.
-  const result = db.delete(runs).where(lt(runs.startedAt, cutoff)).run() as unknown as {
-    changes: number;
-  };
+  db.delete(runs).where(lt(runs.startedAt, cutoff)).run();
 
-  if (result.changes > 0) {
-    console.log(
-      `[stats] retention cleanup: deleted ${result.changes} run(s) older than ${RETENTION_DAYS} days`,
-    );
-  }
+  console.log(
+    `[stats] retention cleanup: deleted ${count} run(s) older than ${RETENTION_DAYS} days`,
+  );
 }
 
 // GET /api/stats/tool-metrics?days=30&agent=X — aggregated tool usage stats.
