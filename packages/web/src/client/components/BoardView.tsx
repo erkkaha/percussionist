@@ -194,7 +194,7 @@ export default function BoardView() {
       <div className="flex flex-1 min-h-0">
         {/* Task list — full width on mobile, constrained on desktop when detail is open */}
         <div
-          className={`flex flex-col min-h-0 w-full ${selectedTask ? 'md:w-2/5 md:border-r md:border-border' : ''} ${selectedTask && detailFocused ? 'md:hidden' : ''}`}
+          className={`flex flex-col min-h-0 min-w-0 w-full ${selectedTask ? 'md:w-2/5 md:border-r md:border-border' : ''} ${selectedTask && detailFocused ? 'md:hidden' : ''}`}
         >
           <TaskListPanel
             projectName={projectName}
@@ -211,14 +211,24 @@ export default function BoardView() {
           />
         </div>
 
-        {/* Desktop detail panel — hidden on mobile */}
-        <div className="hidden md:flex flex-col flex-1 min-h-0">
-          {detailPanel ?? <TaskDetailEmpty />}
-        </div>
+        {/* Desktop detail panel — hidden on mobile. When no task is selected and the
+            findings panel is open, the findings panel owns the right-hand region so the
+            empty detail placeholder does not compete with it for width. */}
+        {(!showFindings || selectedTask) && (
+          <div
+            data-testid="desktop-detail-panel"
+            className="hidden md:flex flex-col flex-1 min-h-0"
+          >
+            {detailPanel ?? <TaskDetailEmpty />}
+          </div>
+        )}
 
-        {/* Desktop findings panel — shown when toggled */}
+        {/* Desktop findings panel — fixed-width side panel shown when toggled */}
         {showFindings && (
-          <div className="hidden md:flex flex-col w-80 border-l border-border bg-surface overflow-hidden">
+          <div
+            data-testid="desktop-findings-panel"
+            className="hidden md:flex flex-col w-80 shrink-0 border-l border-border bg-surface overflow-hidden"
+          >
             <FindingsPanel findings={status.findings ?? []} projectName={projectName} />
           </div>
         )}
