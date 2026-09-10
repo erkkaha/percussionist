@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ClusterAgent, Run } from '@percussionist/api';
 
 // ---------------------------------------------------------------------------
@@ -471,12 +474,20 @@ describe('dispatcher MCP server — build-worker context', () => {
   const completedPlans: string[] = [];
   const failureReasons: string[] = [];
   const originalIsClean = gitCheck.isClean;
+  const originalWorkspaceDir = process.env.WORKSPACE_DIR;
+  let workspaceDir: string;
 
   beforeEach(async () => {
     process.env.RUN_NAME = 'test-run';
     process.env.RUN_NAMESPACE = 'test-ns';
     process.env.RUN_AGENT = 'builder';
     process.env.RUN_CONTEXT = 'build-worker';
+    // Point gitPublish at an empty, non-git dir so the real publish path
+    // degrades to `{ ok: true, skipped: 'not a git worktree' }` regardless of
+    // the ambient RUN_GIT_BRANCH, instead of running git plumbing against the
+    // agent's own /workspace worktree.
+    workspaceDir = mkdtempSync(join(tmpdir(), 'mcp-worker-'));
+    process.env.WORKSPACE_DIR = workspaceDir;
     completedSummaries.length = 0;
     completedPlans.length = 0;
     failureReasons.length = 0;
@@ -499,6 +510,9 @@ describe('dispatcher MCP server — build-worker context', () => {
     delete process.env.RUN_NAMESPACE;
     delete process.env.RUN_AGENT;
     delete process.env.RUN_CONTEXT;
+    if (originalWorkspaceDir === undefined) delete process.env.WORKSPACE_DIR;
+    else process.env.WORKSPACE_DIR = originalWorkspaceDir;
+    rmSync(workspaceDir, { recursive: true, force: true });
   });
 
   it('lists complete_run as the only completion tool', async () => {

@@ -19,9 +19,20 @@
 
 import { execFile } from 'node:child_process';
 
-const WORKSPACE = '/workspace';
+export const DEFAULT_WORKSPACE = '/workspace';
 const PUSH_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 2_000;
+
+/**
+ * Resolve the workspace root used for git operations.
+ *
+ * Precedence: explicit `cwd` override, then the `WORKSPACE_DIR` env var, then
+ * the production default `/workspace`. Resolution happens per call (not at
+ * module load) so callers and tests can override it at runtime.
+ */
+export function resolveWorkspaceRoot(override?: string): string {
+  return override ?? process.env.WORKSPACE_DIR ?? DEFAULT_WORKSPACE;
+}
 
 /** Hardening flags for running git in the agent-writable workspace. */
 export function gitHardeningFlags(): string[] {
@@ -42,12 +53,16 @@ export function gitHardeningFlags(): string[] {
   return flags;
 }
 
-function git(args: string[], timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
+function git(
+  args: string[],
+  timeoutMs: number,
+  cwd: string,
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       [...gitHardeningFlags(), ...args],
-      { maxBuffer: 1024 * 1024, timeout: timeoutMs, cwd: WORKSPACE },
+      { maxBuffer: 1024 * 1024, timeout: timeoutMs, cwd },
       (err, stdout, stderr) => {
         if (err) {
           reject(new Error(`${(err as Error).message}\n${stderr ?? ''}`.trim()));
@@ -66,17 +81,24 @@ export type PublishResult = { ok: true; skipped?: string } | { ok: false; error:
 /**
  * Push the workspace HEAD to refs/percussionist/<RUN_GIT_BRANCH> on origin.
  * No-ops (ok, skipped) when RUN_GIT_BRANCH is unset — local-git and
- * no-source runs — or when /workspace is not a git repository.
+ * no-source runs — or when the workspace is not a git repository.
+ *
+ * The workspace root is resolved per call from the optional `cwd` override,
+ * then the `WORKSPACE_DIR` env var, then `/workspace` (see
+ * `resolveWorkspaceRoot`); the production default is unchanged.
+ *
  * Exported as a mutable object property so tests can replace it without
  * module-level mocking (ESM live bindings limitation, same as gitCheck).
  */
 export const gitPublish = {
-  publishWorkerBranch: async (): Promise<PublishResult> => {
+  publishWorkerBranch: async (options?: { cwd?: string }): Promise<PublishResult> => {
     const branch = process.env.RUN_GIT_BRANCH;
     if (!branch) return { ok: true, skipped: 'RUN_GIT_BRANCH not set' };
 
+    const cwd = resolveWorkspaceRoot(options?.cwd);
+
     try {
-      await git(['rev-parse', '--is-inside-work-tree'], 10_000);
+      await git(['rev-parse', '--is-inside-work-tree'], 10_000, cwd);
     } catch {
       return { ok: true, skipped: 'not a git worktree' };
     }
@@ -84,7 +106,7 @@ export const gitPublish = {
     let lastError = '';
     for (let attempt = 1; attempt <= PUSH_ATTEMPTS; attempt++) {
       try {
-        await git(['push', 'origin', `HEAD:refs/percussionist/${branch}`], 60_000);
+        await git(['push', 'origin', `HEAD:refs/percussionist/${branch}`], 60_000, cwd);
         console.log(`[git-publish] pushed HEAD to refs/percussionist/${branch}`);
         return { ok: true };
       } catch (e) {
