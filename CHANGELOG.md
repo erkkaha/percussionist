@@ -35,6 +35,10 @@ All notable changes to Percussionist are documented here.
 
 - Add unit tests for platform layer and manifest patching _(cli)_
 - Cover promote-finding-to-task route and panel button _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.20
 ## [v0.2.19] - 2026-08-31
 
 ### <!-- 5 -->🎨 Styling
