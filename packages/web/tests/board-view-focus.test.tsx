@@ -180,15 +180,18 @@ mock.module(path.resolve('src/client/components/ui/sheet'), () => ({
 // Helper
 // ---------------------------------------------------------------------------
 
-async function renderBoardWithSelection() {
+async function renderBoard(opts: { taskName?: string } = {}) {
   const { default: BoardView } = await import('../src/client/components/BoardView');
   const { MemoryRouter, Route, Routes } = await import('react-router-dom');
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   // Selecting a task is driven by the ?task= URL param (useSearchParams).
+  const path = opts.taskName
+    ? `/projects/test-project/board?task=${opts.taskName}`
+    : '/projects/test-project/board';
   return render(
     React.createElement(
       MemoryRouter,
-      { initialEntries: [`/projects/test-project/board?task=${TASK_NAME}`] },
+      { initialEntries: [path] },
       React.createElement(
         QueryClientProvider,
         { client: queryClient },
@@ -203,6 +206,11 @@ async function renderBoardWithSelection() {
       ),
     ),
   );
+}
+
+// Backwards-compatible wrapper for the focus-mode tests (selected task).
+function renderBoardWithSelection() {
+  return renderBoard({ taskName: TASK_NAME });
 }
 
 // The mobile detail SheetContent is the only SheetContent that contains the
@@ -256,5 +264,41 @@ describe('BoardView focus-mode layout', () => {
     const sheet = await getMobileDetailSheet();
     expect(sheet.className).toContain('max-w-none');
     expect(sheet.className).not.toContain('sm:max-w-lg');
+  });
+});
+
+describe('BoardView findings panel layout', () => {
+  afterEach(cleanup);
+
+  it('pins the findings panel and drops the empty detail placeholder with no task selected', async () => {
+    await renderBoard();
+
+    // Toggle findings via the real BoardHeader button.
+    fireEvent.click(await screen.findByRole('button', { name: /Findings/ }));
+
+    const findingsWrapper = await screen.findByTestId('desktop-findings-panel');
+    expect(findingsWrapper.className).toContain('w-80');
+    expect(findingsWrapper.className).toContain('shrink-0');
+
+    // The task-list wrapper must be allowed to shrink below its content width.
+    const listWrapper = (await screen.findByTestId('task-list-panel')).parentElement as HTMLElement;
+    expect(listWrapper.className).toContain('min-w-0');
+
+    // The empty detail placeholder must not compete for the right-hand region.
+    expect(screen.queryByTestId('desktop-detail-panel')).toBeNull();
+  });
+
+  it('renders the empty detail placeholder when findings are closed and no task is selected', async () => {
+    await renderBoard();
+    expect(await screen.findByTestId('desktop-detail-panel')).toBeTruthy();
+  });
+
+  it('renders detail and findings side by side when a task is selected', async () => {
+    await renderBoard({ taskName: TASK_NAME });
+
+    fireEvent.click(await screen.findByRole('button', { name: /Findings/ }));
+
+    expect(await screen.findByTestId('desktop-detail-panel')).toBeTruthy();
+    expect(await screen.findByTestId('desktop-findings-panel')).toBeTruthy();
   });
 });
