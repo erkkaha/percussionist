@@ -54,12 +54,41 @@ describe('resolveWorkspaceRoot', () => {
   });
 });
 
+// `git commit` exports repo-local env vars (GIT_DIR, GIT_INDEX_FILE,
+// GIT_WORK_TREE, …) to its hooks. When this suite runs inside the pre-commit
+// hook those leak into the fixture processes, so every spawned `git` ignores
+// the explicit `cwd` and resolves to the developer's real checkout — the
+// fixture's `git commit -m init` would then land on the live branch. Clear them
+// for the duration of each test and restore them afterwards.
+const GIT_LOCAL_ENV_VARS = [
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_CONFIG',
+  'GIT_CONFIG_COUNT',
+  'GIT_CONFIG_PARAMETERS',
+  'GIT_DIR',
+  'GIT_GRAFT_FILE',
+  'GIT_IMPLICIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_NO_REPLACE_OBJECTS',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_PREFIX',
+  'GIT_REPLACE_REF_BASE',
+  'GIT_SHALLOW_FILE',
+  'GIT_WORK_TREE',
+] as const;
+
 describe('gitPublish.publishWorkerBranch', () => {
   let tempRoot: string;
   let emptyDir: string;
   const originalWorkspaceDir = process.env.WORKSPACE_DIR;
+  const originalGitEnv = new Map<string, string | undefined>();
 
   beforeEach(() => {
+    for (const key of GIT_LOCAL_ENV_VARS) {
+      originalGitEnv.set(key, process.env[key]);
+      delete process.env[key];
+    }
     tempRoot = mkdtempSync(join(tmpdir(), 'git-publish-'));
     emptyDir = join(tempRoot, 'empty');
     mkdirSync(emptyDir);
@@ -69,6 +98,12 @@ describe('gitPublish.publishWorkerBranch', () => {
     delete process.env.RUN_GIT_BRANCH;
     if (originalWorkspaceDir === undefined) delete process.env.WORKSPACE_DIR;
     else process.env.WORKSPACE_DIR = originalWorkspaceDir;
+    for (const key of GIT_LOCAL_ENV_VARS) {
+      const value = originalGitEnv.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    originalGitEnv.clear();
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
