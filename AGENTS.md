@@ -356,7 +356,14 @@ Each run gets its own worktree at `/data/worktrees/{run-name}/` checking out the
    - **`pr`** — a short-lived run opens a GitHub PR from the feature branch to
      the target. The manager polls the PR state (15-min cache interval) and
      auto-transitions the task to `done` when the PR is merged. If the PR is
-     closed without merging, the task goes to `awaiting-human`. Requires
+     closed without merging, the task goes to `awaiting-human`. New human PR
+     comments are distilled by a PR-feedback evaluation run; a
+     `request_changes` verdict creates a follow-up BUILD child that updates the
+     PR head. The same scope-change loop can be started without GitHub comments
+     via **Request Changes** on the board's detail panel or
+     `beatctl board task request-changes --task-name <plan> --feedback <text>`,
+     which moves the PLAN to `awaiting-children` until the follow-up child
+     lands on the feature branch. Requires
      `source.git.githubTokenSecret` to be configured so the manager can read
      the PR state via the GitHub API. Detection latency is up to 15 minutes
      after merge (hardcoded cache TTL in `github-client.ts`).
