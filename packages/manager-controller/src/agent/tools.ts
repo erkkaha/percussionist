@@ -397,6 +397,27 @@ const TOOLS = [
     },
   },
   {
+    name: 'request_changes',
+    description:
+      'Request changes on a task by writing the canonical `percussionist.dev/action-request-changes: "true"` and `percussionist.dev/action-rework-feedback` annotations. The reconciler consumes these annotations: for a task in `awaiting-human` it dispatches rework, and for a PLAN task in a PR-stage `awaiting-feature-merge` (with an open `worker.prNumber`) it creates a follow-up BUILD task whose merge updates the same PR. Actionable only for tasks in `awaiting-human` or a PR-stage `awaiting-feature-merge`; errors for any other phase. Use manager_approve to approve a task instead.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Project name' },
+        task: { type: 'string', description: "Task CR name (e.g. 'BUILD-4')" },
+        feedback: {
+          type: 'string',
+          description: 'Human feedback that drives the rework or scope-change follow-up task',
+        },
+        namespace: {
+          type: 'string',
+          description: 'Namespace (optional, defaults to percussionist)',
+        },
+      },
+      required: ['project', 'task', 'feedback'],
+    },
+  },
+  {
     name: 'read_manager_logs',
     description:
       'Read logs from the manager controller pod. Useful for debugging reconciliation decisions and seeing what the manager is doing.',
@@ -1008,6 +1029,75 @@ export function computeApproveMergeOutcome(projectName: string, task: Task): App
       ...baseResult,
       alreadyApproved: false,
       alreadyProgressed: false,
+      patched: true,
+    },
+  };
+}
+
+const REQUEST_CHANGES_ANNOTATION_KEYS = {
+  requestChanges: 'percussionist.dev/action-request-changes',
+  reworkFeedback: 'percussionist.dev/action-rework-feedback',
+} as const;
+
+/**
+ * Whether a human `request-changes` verdict can be consumed for this task.
+ *
+ * Mirrors the CLI gate (`beatctl board task request-changes`): a task is
+ * actionable in `awaiting-human`, or in a PR-stage `awaiting-feature-merge`
+ * where an open PR exists (`worker.prNumber` set). Keep in sync with
+ * `packages/cli/src/board.ts` when the gate changes.
+ */
+export function isRequestChangesEligible(task: Task): boolean {
+  const phase = task.status?.phase;
+  if (phase === 'awaiting-human') return true;
+  return phase === 'awaiting-feature-merge' && task.status?.worker?.prNumber !== undefined;
+}
+
+type RequestChangesOutcome =
+  | { kind: 'error'; message: string }
+  | { kind: 'patch'; annotations: Record<string, string>; result: Record<string, unknown> };
+
+export function computeRequestChangesOutcome(
+  projectName: string,
+  task: Task,
+  feedback: string,
+): RequestChangesOutcome {
+  if (task.spec.projectRef !== projectName) {
+    return {
+      kind: 'error',
+      message: `Task ${task.metadata.name} belongs to project "${task.spec.projectRef}", not "${projectName}"`,
+    };
+  }
+
+  const phase = (task.status?.phase ?? 'pending') as TaskPhase;
+  if (!isRequestChangesEligible(task)) {
+    return {
+      kind: 'error',
+      message:
+        `Task phase is "${phase}", expected "awaiting-human" or a PR-stage ` +
+        '"awaiting-feature-merge" with prNumber',
+    };
+  }
+
+  const trimmed = feedback.trim();
+  if (!trimmed) {
+    return { kind: 'error', message: 'feedback is required' };
+  }
+
+  const annotations = task.metadata.annotations ?? {};
+  return {
+    kind: 'patch',
+    annotations: {
+      ...annotations,
+      [REQUEST_CHANGES_ANNOTATION_KEYS.requestChanges]: 'true',
+      [REQUEST_CHANGES_ANNOTATION_KEYS.reworkFeedback]: trimmed,
+    },
+    result: {
+      project: projectName,
+      task: task.metadata.name,
+      phase,
+      requestChanges: true,
+      prStage: phase === 'awaiting-feature-merge',
       patched: true,
     },
   };
@@ -1807,6 +1897,36 @@ async function callTool(
           resourceNs,
         );
       }
+
+      return outcome.result;
+    }
+
+    case 'request_changes': {
+      const projectName = String(args.project ?? '');
+      const taskName = String(args.task ?? '');
+      const feedback = String(args.feedback ?? '');
+      const resourceNs = String(args.namespace ?? ns);
+
+      if (!projectName) throw new Error('project is required');
+      if (!taskName) throw new Error('task is required');
+
+      const task = await getTask(taskName, resourceNs);
+      const outcome = computeRequestChangesOutcome(projectName, task, feedback);
+
+      if (outcome.kind === 'error') {
+        throw new Error(outcome.message);
+      }
+
+      await patchTask(
+        taskName,
+        {
+          metadata: {
+            ...task.metadata,
+            annotations: outcome.annotations,
+          },
+        },
+        resourceNs,
+      );
 
       return outcome.result;
     }
