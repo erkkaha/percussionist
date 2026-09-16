@@ -2048,6 +2048,17 @@ function decidePrFeedbackEvalOutcome(
       },
       { type: 'CleanupWorktree', runName: prFeedbackRunName },
     ];
+    // A human may have requested changes via the board/CLI while this
+    // evaluation round was in flight. Consume those annotations in the same
+    // decision so they cannot linger and fire again (creating a fresh child)
+    // when the PLAN returns to awaiting-feature-merge — the evaluator's
+    // follow-up already covers the request.
+    if (input.manualActions.requestChanges) {
+      effects.push({
+        type: 'ClearTaskAnnotations',
+        keys: getConsumedAnnotationKeys(input.manualActions),
+      });
+    }
     return {
       taskName,
       fromPhase,

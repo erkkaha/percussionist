@@ -1002,6 +1002,13 @@ function TaskDetailPanelInner({
   // The worker run is parked on a human prompt — show "waiting for input"
   // instead of the raw worker.status, and hide Retry while the run is alive.
   const isWaiting = task.workerRunPhase === 'WaitingForInput';
+  // A PLAN task parked in the PR stage (`awaiting-feature-merge`) maps to the
+  // in-progress column, so it never gets the `review` column's action row. An
+  // open PR (`prNumber` set, not merged/closed) can still take a scope change:
+  // the same request-changes annotations route through a follow-up BUILD child
+  // whose merge updates the open PR head.
+  const isPrStage =
+    task.status?.phase === 'awaiting-feature-merge' && getPrPresentation(task)?.state === 'open';
   const canShowDiff =
     task.status?.phase === 'done' ||
     task.status?.phase === 'awaiting-human' ||
@@ -1094,6 +1101,18 @@ function TaskDetailPanelInner({
   // If current tab is not available (e.g. run just removed), reset
   const activeTab = availableTabs.find((t) => t.id === tab) ? tab : 'overview';
 
+  // Shared between the review column and the PR stage (`awaiting-feature-merge`
+  // with an open PR). The inline form below is likewise driven by the same
+  // `showRequestChanges` state.
+  const requestChangesButton = (
+    <button
+      onClick={() => setShowRequestChanges(true)}
+      className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-phase-failed hover:border-phase-failed/40 transition-colors"
+    >
+      <X className="h-3.5 w-3.5" /> Request Changes
+    </button>
+  );
+
   return (
     <div
       className={`flex flex-col h-full min-h-0 border-l border-border ${focused ? 'md:border-l-0' : ''}`}
@@ -1181,12 +1200,7 @@ function TaskDetailPanelInner({
                     ? 'Approving…'
                     : 'Approve'}
               </button>
-              <button
-                onClick={() => setShowRequestChanges(true)}
-                className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-phase-failed hover:border-phase-failed/40 transition-colors"
-              >
-                <X className="h-3.5 w-3.5" /> Request Changes
-              </button>
+              {requestChangesButton}
               {task.status?.phase === 'awaiting-human' &&
                 worker?.reviewRunName &&
                 task.spec.type === 'BUILD' && (
@@ -1229,6 +1243,8 @@ function TaskDetailPanelInner({
                 ))}
             </>
           )}
+
+          {isPrStage && col !== 'review' && requestChangesButton}
 
           {(worker?.status === 'Failed' || worker?.status === 'Escalated') && !isWaiting && (
             <button
@@ -1318,6 +1334,12 @@ function TaskDetailPanelInner({
                 );
               })()}
             </div>
+            {isPrStage && (
+              <p className="text-xs text-text-dim">
+                Requesting changes creates a follow-up BUILD task; when it merges, the open PR is
+                updated with the changes.
+              </p>
+            )}
             <Textarea
               placeholder="Describe required changes…"
               value={requestChangesComment}

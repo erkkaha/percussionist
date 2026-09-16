@@ -166,6 +166,39 @@ describe('board task actions resolve via the project namespace', () => {
   });
 });
 
+describe('request-changes writes annotations for a PR-stage task', () => {
+  // The route is intentionally ungated — it writes the annotations for any
+  // task. This pins the PR-stage case: an awaiting-feature-merge task with an
+  // open PR is where the web panel surfaces the action, and the reconciler
+  // consumes action-request-changes + action-rework-feedback to spawn a
+  // follow-up BUILD child that updates the open PR head.
+  it('patches the request-changes annotations on an awaiting-feature-merge task with an open PR', async () => {
+    getTaskSpy.mockResolvedValue(
+      makeTask({
+        name: 'task-pr',
+        status: {
+          phase: 'awaiting-feature-merge',
+          worker: { status: 'Succeeded', prNumber: 7 },
+        } as never,
+      }) as never,
+    );
+
+    const res = await postAction('request-changes', 'task-pr', {
+      feedback: 'Please expand the scope',
+    });
+
+    expect(res.status).toBe(200);
+    const patchArgs = patchTaskSpy.mock.calls[0];
+    expect(patchArgs?.[0]).toBe('task-pr');
+    expect(patchArgs?.[2]).toBe('percussionist');
+    const annotations = (patchArgs?.[1] as { metadata: { annotations: Record<string, string> } })
+      .metadata.annotations;
+    expect(annotations['percussionist.dev/action-request-changes']).toBe('true');
+    expect(annotations['percussionist.dev/action-rework-feedback']).toBe('Please expand the scope');
+    expect(eventRows(PROJECT_NAME, 'task-pr')).toBe(1);
+  });
+});
+
 describe('projectRef mismatch returns 404 with no write', () => {
   it('approve 404s and never patches or records an event', async () => {
     getTaskSpy.mockResolvedValue(
