@@ -40,7 +40,7 @@ Tasks in Percussionist follow a defined state machine with 16 phases.
 | `rework-requested` | `scheduled` |
 | `generating-builds` | `awaiting-children`, `awaiting-human`, `failed` |
 | `awaiting-children` | `awaiting-feature-merge`, `awaiting-human`, `done`, `failed` |
-| `awaiting-feature-merge` | `done`, `awaiting-human`, `failed` |
+| `awaiting-feature-merge` | `awaiting-children`, `done`, `awaiting-human`, `failed` |
 | `failed` | `pending`, `awaiting-human`, `awaiting-merge`, `awaiting-feature-merge` |
 | `done` | — |
 
@@ -93,6 +93,30 @@ When `featureBranchingEnabled: true`, additional states manage the merge workflo
 
 - `awaiting-feature-merge` replaces `awaiting-merge` for feature branch merges
 - On completion, transitions to `done` (success) or `awaiting-human` (requires intervention)
+- In `pr` integration mode the task does not merge directly. A PR-open run opens a
+  GitHub PR and the manager polls it: merged → `done`; closed without merging →
+  `awaiting-human`; new human PR comments spawn a PR-feedback evaluation run.
+
+### Request Changes in the PR stage
+
+When a PLAN task is parked in `awaiting-feature-merge` with an open PR
+(`worker.prNumber` set and no `worker.mergeRunName`), the **Request Changes** action is
+available from the board detail panel and from
+`beatctl board task request-changes --task-name <plan> --feedback <text>`. It writes
+`percussionist.dev/action-request-changes` +
+`percussionist.dev/action-rework-feedback` on the Task.
+
+On the next reconcile cycle the manager creates exactly one follow-up BUILD child
+(`spec.parentTaskRef` pointing at the PLAN, agent `flow.build.defaultAgent`, the human
+feedback in `spec.description`), appends it to `worker.createdBuildTaskRefs`, clears the
+annotations, and moves the PLAN to `awaiting-children`. Once that child merges into the
+PLAN's feature branch, the PR-open run is re-scheduled in update mode and pushes the
+revised head to the *same* PR. This is the Percussionist-native alternative to leaving
+review comments on the GitHub PR; both paths feed the same follow-up-child mechanism.
+
+The action is rejected for tasks that cannot consume it, e.g. `done`, `running`, or
+`awaiting-feature-merge` without an open PR (`worker.prNumber` unset). Merge still
+happens on GitHub — a PR-stage task cannot be approved from Percussionist.
 
 ## Troubleshooting Phase Ambiguity
 
