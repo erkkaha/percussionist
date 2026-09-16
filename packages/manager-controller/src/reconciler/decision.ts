@@ -1939,6 +1939,77 @@ function decidePrStateOutcome(
 }
 
 /**
+ * Build the shared decision that creates a follow-up BUILD child on the PLAN's
+ * feature branch and parks the PLAN in `awaiting-children`. Shared by the
+ * PR-comment evaluation path and (future) human request-changes in the PR
+ * stage, so the title/description construction, deterministic child naming,
+ * effect order, and worker-status append live in one place.
+ *
+ * `roundKey` makes the generated child name deterministic per round: an effect
+ * retry after a crash recomputes the same name (the `CreatePrFollowUpTask`
+ * effect collapses duplicates via AlreadyExists), while a new round gets a
+ * fresh name. `feedbackText` is the body placed after the task/PR reference,
+ * capped by the description budget. `runToCleanup` is an auxiliary run whose
+ * worktree should be removed once the decision is applied.
+ */
+function prFollowUpDecision(
+  input: ReconcileInput,
+  prNumber: number,
+  fromPhase: TaskPhase,
+  feedbackText: string,
+  roundKey: string,
+  runToCleanup?: string,
+): ReconcileDecision {
+  const { task, flow } = input;
+  const taskName = task.metadata.name;
+  const followUpSuffix = createHash('sha256')
+    .update(`${taskName}:pr-${prNumber}:${roundKey}`)
+    .digest('hex')
+    .slice(0, 6);
+  const followUpName = `${input.project.metadata.name}-build-${followUpSuffix}`;
+  const description = [
+    `Address reviewer feedback on GitHub PR #${prNumber} (feature branch of plan task ${taskName}).`,
+    '',
+    feedbackText || 'Reviewer comments on the PR require code changes.',
+  ]
+    .join('\n')
+    .slice(0, 7500);
+  const effects: ReconcileEffect[] = [
+    {
+      type: 'CreatePrFollowUpTask',
+      taskName: followUpName,
+      planTaskName: taskName,
+      title: `[PR #${prNumber} feedback] ${task.spec.title}`.slice(0, 256),
+      description,
+      agent: flow.build.defaultAgent,
+    },
+    ...(runToCleanup ? [{ type: 'CleanupWorktree' as const, runName: runToCleanup }] : []),
+  ];
+  return {
+    taskName,
+    fromPhase,
+    toPhase: 'awaiting-children',
+    statusPatch: {
+      worker: {
+        prFeedbackRunName: null,
+        createdBuildTaskRefs: [...(task.status?.worker?.createdBuildTaskRefs ?? []), followUpName],
+      },
+    },
+    effects,
+    events: [
+      makeEvent(
+        input,
+        fromPhase,
+        'awaiting-children',
+        'PrFeedbackChangesRequested',
+        `PR #${prNumber} comments require changes; created follow-up task ${followUpName}`,
+        effects,
+      ),
+    ],
+  };
+}
+
+/**
  * Progress an in-flight PR-feedback evaluation run. The evaluator is a
  * review-facilitator run: its `complete_review` verdict is read through the
  * same annotation channel as the pre-merge reviewer.
@@ -2021,58 +2092,21 @@ function decidePrFeedbackEvalOutcome(
     }
 
     // request_changes — distill the verdict into a follow-up BUILD child on
-    // the PLAN's feature branch. Deterministic name per evaluation round so an
-    // effect retry cannot create duplicates.
+    // the PLAN's feature branch, using the round's watermark as the
+    // deterministic round key so an effect retry cannot create duplicates.
     const roundKey = task.status?.worker?.prFeedbackLastCommentAt ?? now;
-    const followUpSuffix = createHash('sha256')
-      .update(`${taskName}:pr-${prNumber}:${roundKey}`)
-      .digest('hex')
-      .slice(0, 6);
-    const followUpName = `${input.project.metadata.name}-build-${followUpSuffix}`;
-    const description = [
-      `Address reviewer feedback on GitHub PR #${prNumber} (feature branch of plan task ${taskName}).`,
-      '',
+    const feedbackText = [
       verdictMessage || 'Reviewer comments on the PR require code changes.',
       ...(verdict.suggestion ? ['', verdict.suggestion] : []),
-    ]
-      .join('\n')
-      .slice(0, 7500);
-    const effects: ReconcileEffect[] = [
-      {
-        type: 'CreatePrFollowUpTask',
-        taskName: followUpName,
-        planTaskName: taskName,
-        title: `[PR #${prNumber} feedback] ${task.spec.title}`.slice(0, 256),
-        description,
-        agent: flow.build.defaultAgent,
-      },
-      { type: 'CleanupWorktree', runName: prFeedbackRunName },
-    ];
-    return {
-      taskName,
+    ].join('\n');
+    return prFollowUpDecision(
+      input,
+      prNumber,
       fromPhase,
-      toPhase: 'awaiting-children',
-      statusPatch: {
-        worker: {
-          prFeedbackRunName: null,
-          createdBuildTaskRefs: [
-            ...(task.status?.worker?.createdBuildTaskRefs ?? []),
-            followUpName,
-          ],
-        },
-      },
-      effects,
-      events: [
-        makeEvent(
-          input,
-          fromPhase,
-          'awaiting-children',
-          'PrFeedbackChangesRequested',
-          `PR #${prNumber} comments require changes; created follow-up task ${followUpName}`,
-          effects,
-        ),
-      ],
-    };
+      feedbackText,
+      roundKey,
+      prFeedbackRunName,
+    );
   }
 
   if (evalPhase === 'Failed') {
