@@ -1892,6 +1892,35 @@ function decidePrStateOutcome(
     return decidePrFeedbackEvalOutcome(input, prNumber, prFeedbackRunName, fromPhase, taskName);
   }
 
+  // Human scope change on the open PR. Consume the request-changes annotation
+  // by creating the same follow-up BUILD child the comment evaluator produces;
+  // the child merges into the PLAN feature branch and the next PR-open run
+  // updates the same PR in place. Only PLAN tasks park in the PR stage.
+  // This outranks the comment scheduling below: the annotation must be consumed
+  // now, otherwise a scheduled evaluation lingers and can create its own
+  // follow-up child against the still-pending human request (two children for
+  // one request).
+  if (
+    input.manualActions.requestChanges &&
+    task.spec.type === 'PLAN' &&
+    !task.status?.worker?.mergeRunName
+  ) {
+    const consumedKeys = getConsumedAnnotationKeys(input.manualActions);
+    const roundKey = `${task.status?.worker?.createdBuildTaskRefs?.length ?? 0}:${
+      input.manualActions.reworkFeedback ?? ''
+    }`;
+    return prFollowUpDecision(input, prNumber, fromPhase, {
+      titlePrefix: `[PR #${prNumber} scope change]`,
+      intro: `Address requested scope change on GitHub PR #${prNumber} (feature branch of plan task ${taskName}).`,
+      feedback: input.manualActions.reworkFeedback ?? 'No feedback provided',
+      roundKey,
+      extraEffects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
+      eventReason: 'PrScopeChangeRequested',
+      eventMessage: (followUpName) =>
+        `Human requested changes on PR #${prNumber}; created follow-up task ${followUpName}`,
+    });
+  }
+
   // Open PR with unevaluated human comments — schedule an evaluation round.
   // The watermark advances at scheduling time so a comment is handed to
   // exactly one round; a failed round is recorded as an event, not retried.
@@ -1932,31 +1961,6 @@ function decidePrStateOutcome(
         ),
       ],
     };
-  }
-
-  // Human scope change on the open PR. Consume the request-changes annotation
-  // by creating the same follow-up BUILD child the comment evaluator produces;
-  // the child merges into the PLAN feature branch and the next PR-open run
-  // updates the same PR in place. Only PLAN tasks park in the PR stage.
-  if (
-    input.manualActions.requestChanges &&
-    task.spec.type === 'PLAN' &&
-    !task.status?.worker?.mergeRunName
-  ) {
-    const consumedKeys = getConsumedAnnotationKeys(input.manualActions);
-    const roundKey = `${task.status?.worker?.createdBuildTaskRefs?.length ?? 0}:${
-      input.manualActions.reworkFeedback ?? ''
-    }`;
-    return prFollowUpDecision(input, prNumber, fromPhase, {
-      titlePrefix: `[PR #${prNumber} scope change]`,
-      intro: `Address requested scope change on GitHub PR #${prNumber} (feature branch of plan task ${taskName}).`,
-      feedback: input.manualActions.reworkFeedback ?? 'No feedback provided',
-      roundKey,
-      extraEffects: [{ type: 'ClearTaskAnnotations', keys: consumedKeys }],
-      eventReason: 'PrScopeChangeRequested',
-      eventMessage: (followUpName) =>
-        `Human requested changes on PR #${prNumber}; created follow-up task ${followUpName}`,
-    });
   }
 
   // PR still open (or state unavailable this cycle) — keep polling.

@@ -1712,6 +1712,7 @@ describe('decide — PR-stage human request-changes', () => {
     observed: {
       prState?: { state: 'open' | 'closed'; mergedAt: string | null };
       prFeedbackRun?: ReturnType<typeof makeRun>;
+      prFeedback?: { count: number; newestCommentAt: string; preview: string };
     } = {},
   ) {
     return decide({
@@ -1810,6 +1811,37 @@ describe('decide — PR-stage human request-changes', () => {
     );
     expect(result.toPhase).toBeUndefined();
     expect(result.effects).toEqual([]);
+  });
+
+  it('requestChanges wins over unevaluated comments on the open PR', () => {
+    const task = makePrStageTask();
+    const result = decidePrStage(
+      task,
+      { requestChanges: true, reworkFeedback: 'rename foo' },
+      {
+        prState: { state: 'open', mergedAt: null },
+        prFeedback: {
+          count: 2,
+          newestCommentAt: '2026-05-28T10:00:00.000Z',
+          preview: 'alice: please rename this',
+        },
+      },
+    );
+
+    // The manual request outranks comment scheduling, so the annotation is
+    // consumed this cycle instead of leaving a feedback evaluation to run
+    // against the still-pending human request (which could create a second
+    // child when the PLAN returns to awaiting-feature-merge).
+    expect(result.toPhase).toBe('awaiting-children');
+    const creates = result.effects.filter((e) => e.type === 'CreatePrFollowUpTask') as any[];
+    expect(creates.length).toBe(1);
+    expect(result.effects.some((e) => e.type === 'SchedulePrFeedbackEvalRun')).toBe(false);
+    const worker = result.statusPatch?.worker as any;
+    expect(worker.prFeedbackRunName).toBeUndefined();
+    expect(worker.createdBuildTaskRefs).toEqual([creates[0].taskName]);
+    const clear = result.effects.find((e) => e.type === 'ClearTaskAnnotations') as any;
+    expect(clear?.keys).toContain('percussionist.dev/action-request-changes');
+    expect(clear?.keys).toContain('percussionist.dev/action-rework-feedback');
   });
 
   it('non-PLAN task ignores requestChanges (BUILD tasks never park in the PR stage)', () => {
