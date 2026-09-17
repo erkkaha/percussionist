@@ -17,14 +17,19 @@ import {
   cleanupCodeServer,
   cleanupMemoryService,
   co,
+  core,
   dequeue,
   enqueue,
+  isManagedConfigMapName,
   kc,
   NAMESPACE,
   projectKey,
   reconcileClusterSettings,
+  resyncClusterSettings,
   runWorker,
+  SELF_NAMESPACE,
   safeReconcileProject,
+  startClusterSettingsResync,
   startPeriodicResync,
 } from './reconciler.js';
 import { spawnWorktreeCleanupJob, startTTLCleanup } from './ttl.js';
@@ -113,6 +118,34 @@ async function main(): Promise<void> {
   });
   await csInformer.start();
 
+  // Watch the two ConfigMaps the operator owns. A foreign writer (Flux,
+  // kubectl apply, beatctl deploy) can overwrite their data keys without
+  // touching ClusterSettings, so no ClusterSettings event fires. Reacting to
+  // their add/update events reverts that drift immediately; the read-before-
+  // write check makes the operator's own correction a no-op the second time,
+  // so this converges instead of looping.
+  const cmPath = `/api/v1/namespaces/${SELF_NAMESPACE}/configmaps`;
+  const listConfigMapsFn = async () => {
+    const res = await core.listNamespacedConfigMap({ namespace: SELF_NAMESPACE });
+    return res as unknown as { items: unknown[] };
+  };
+  const cmInformer = makeInformer(kc, cmPath, listConfigMapsFn as never);
+  const onManagedConfigMapEvent = (obj: unknown) => {
+    const name = (obj as { metadata?: { name?: string } })?.metadata?.name;
+    if (!isManagedConfigMapName(name)) return;
+    resyncClusterSettings().catch((e) => {
+      err('reconcileClusterSettings(configmap) failed:', (e as Error).message);
+    });
+  };
+  cmInformer.on('add', onManagedConfigMapEvent);
+  cmInformer.on('update', onManagedConfigMapEvent);
+  cmInformer.on('error', (e) => {
+    err('configmap informer error:', (e as Error).message);
+    setTimeout(() => cmInformer.start().catch(console.error), 2000);
+  });
+  await cmInformer.start();
+  log('configmap informer started');
+
   // Watch Project CRs for code-server reconciliation.
   const projectPath = `/apis/${API_GROUP}/${API_VERSION}/namespaces/${NAMESPACE}/projects`;
   const listProjectsFn = async () => {
@@ -157,6 +190,9 @@ async function main(): Promise<void> {
   log('project informer started');
 
   startPeriodicResync();
+  // Backstop against foreign writers of the owned ConfigMaps: re-render from
+  // ClusterSettings on an interval even when no informer event arrives.
+  startClusterSettingsResync();
   startTTLCleanup();
   await runWorker();
 }

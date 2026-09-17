@@ -70,8 +70,33 @@ const DEFAULT_STORAGE_ACCESS_MODE = process.env.DEFAULT_STORAGE_ACCESS_MODE ?? '
 //   exhaustion on self-dev cluster. Override for smaller or larger PVCs.
 const DEFAULT_STORAGE_SIZE = process.env.DEFAULT_STORAGE_SIZE ?? '50Gi';
 
+// CLUSTER_SETTINGS_RESYNC_INTERVAL_MS:
+//   How often the operator re-renders the owned agent-config / opencode-config
+//   ConfigMaps from ClusterSettings even when the ClusterSettings informer has
+//   emitted no event. This is the safety net against foreign writers (Flux's
+//   kustomize-controller, `kubectl apply`, `beatctl deploy`, a local overlay)
+//   that overwrite the ConfigMap data keys: without it, nothing would ever
+//   trigger the operator to reclaim ownership until the operator restarts.
+//   Defaults to 300000 (5 minutes). Set to 0 to disable the periodic resync —
+//   the ConfigMap informer and the ClusterSettings add/update events still
+//   reconcile on drift.
+const CLUSTER_SETTINGS_RESYNC_INTERVAL_MS = positiveIntervalMs(
+  process.env.PERCUSSIONIST_CLUSTER_SETTINGS_RESYNC_INTERVAL_MS,
+  300_000,
+);
+
+// Parses a non-negative integer number of milliseconds. Returns `fallback`
+// for unset/malformed values so a typo in the env cannot disable the resync
+// (or, worse, turn it into a 0ms busy loop).
+function positiveIntervalMs(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 export {
   ALLOW_PRIVILEGED_SIDECARS,
+  CLUSTER_SETTINGS_RESYNC_INTERVAL_MS,
   DEFAULT_STORAGE_ACCESS_MODE,
   DEFAULT_STORAGE_CLASS,
   DEFAULT_STORAGE_SIZE,

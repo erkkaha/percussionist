@@ -18,6 +18,13 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: percussionist
     app.kubernetes.io/component: agent-config
+  annotations:
+    # The operator is the authoritative writer of this ConfigMap's data keys
+    # (it rebuilds them from ClusterSettings with server-side apply). Tell
+    # kustomize-controller to create the object only when absent and otherwise
+    # leave it alone, so Flux does not fight the operator for field ownership.
+    # See docs/guide/configuration.md ("ConfigMap Ownership").
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
 data:
   # Opencode config loaded by the sidecar via OPENCODE_CONFIG_CONTENT.
   # The MCP stanza points the agent to the manager's in-process MCP server
