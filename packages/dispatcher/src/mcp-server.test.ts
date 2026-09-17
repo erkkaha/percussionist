@@ -1,5 +1,5 @@
-import { describe, expect, it, spyOn } from 'bun:test';
-import { __test } from './mcp-server.js';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { __test, gitCheck } from './mcp-server.js';
 
 type CompletionAuthorization = {
   context: 'plan-worker' | 'build-worker' | 'review-facilitator';
@@ -334,6 +334,19 @@ describe('dispatchNotification swallows handler rejections', () => {
 
 describe('branch publish on completion (refs/percussionist/*)', () => {
   const { gitPublish } = require('./git-publish.js') as typeof import('./git-publish.js');
+
+  // complete_run for a build-worker consults gitCheck.isClean(), whose real
+  // implementation runs `git status --porcelain` against the live workspace.
+  // Inside the husky pre-commit hook the inherited GIT_DIR points at the
+  // developer's real worktree, so without this stub the tests would inspect it
+  // and fail whenever anything is staged. Stub it clean to stay hermetic.
+  const originalIsClean = gitCheck.isClean;
+  beforeEach(() => {
+    gitCheck.isClean = async () => null;
+  });
+  afterEach(() => {
+    gitCheck.isClean = originalIsClean;
+  });
 
   function withPublish<T>(
     impl: () => Promise<import('./git-publish.js').PublishResult>,
