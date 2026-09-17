@@ -2138,6 +2138,19 @@ function decidePrFeedbackEvalOutcome(
       verdictMessage || 'Reviewer comments on the PR require code changes.',
       ...(verdict.suggestion ? [verdict.suggestion] : []),
     ].join('\n\n');
+    // A human may have requested changes via the board/CLI while this
+    // evaluation round was in flight. Consume those annotations in the same
+    // decision so they cannot linger and fire again (creating a fresh child)
+    // when the PLAN returns to awaiting-feature-merge — the evaluator's
+    // follow-up already covers the request.
+    const extraEffects: ReconcileEffect[] = input.manualActions.requestChanges
+      ? [
+          {
+            type: 'ClearTaskAnnotations',
+            keys: getConsumedAnnotationKeys(input.manualActions),
+          },
+        ]
+      : [];
     return prFollowUpDecision(input, prNumber, fromPhase, {
       titlePrefix: `[PR #${prNumber} feedback]`,
       intro: `Address reviewer feedback on GitHub PR #${prNumber} (feature branch of plan task ${taskName}).`,
@@ -2145,6 +2158,7 @@ function decidePrFeedbackEvalOutcome(
       roundKey,
       runToCleanup: prFeedbackRunName,
       clearPrFeedbackRunName: true,
+      extraEffects,
       eventReason: 'PrFeedbackChangesRequested',
       eventMessage: (followUpName) =>
         `PR #${prNumber} comments require changes; created follow-up task ${followUpName}`,

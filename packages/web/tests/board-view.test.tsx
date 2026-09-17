@@ -26,6 +26,23 @@ const codeServerMock: { current: { enabled: boolean } | undefined } = {
 };
 const settingsColorMock: { current: string | null | undefined } = { current: undefined };
 
+// Captures the props BoardView passes to TaskDetailPanel so tests can assert
+// the PR-stage task reaches the panel in the `in-progress` column (the panel
+// keys its Request Changes affordance off phase + prNumber, not the column).
+const detailPanelPropsMock: {
+  current: { col?: string; phase?: string; prNumber?: number } | null;
+} = { current: null };
+
+// A PLAN task parked in the PR stage: awaiting-feature-merge + open PR. It maps
+// to the in-progress column via computeBoardColumn.
+const prStageTask = {
+  apiVersion: 'percussionist.dev/v1alpha1',
+  kind: 'Task',
+  metadata: { name: 'test-plan-pr', creationTimestamp: '2026-01-01T00:00:00Z' },
+  spec: { projectRef: 'test-project', type: 'PLAN', title: 'PR stage plan', agent: 'planner' },
+  status: { phase: 'awaiting-feature-merge', worker: { status: 'Succeeded', prNumber: 7 } },
+};
+
 const mockBoardData = {
   settings: {
     agents: [{ name: 'agent-a' }],
@@ -38,7 +55,7 @@ const mockBoardData = {
       return settingsColorMock.current;
     },
   },
-  columns: { backlog: [], ready: [], running: [], done: [] },
+  columns: { backlog: [], ready: [], running: [], 'in-progress': [prStageTask], done: [] },
   status: { managerMetrics: null, findings: [] },
   authWarning: undefined,
   approvals: [],
@@ -126,7 +143,17 @@ mock.module(path.resolve('src/client/components/board/FindingsPanel'), () => ({
 }));
 
 mock.module(path.resolve('src/client/components/board/TaskDetailPanel'), () => ({
-  TaskDetailPanel: () => React.createElement('div'),
+  TaskDetailPanel: (props: {
+    col?: string;
+    task?: { status?: { phase?: string; worker?: { prNumber?: number } } };
+  }) => {
+    detailPanelPropsMock.current = {
+      col: props.col,
+      phase: props.task?.status?.phase,
+      prNumber: props.task?.status?.worker?.prNumber,
+    };
+    return React.createElement('div', { 'data-testid': 'task-detail-panel' });
+  },
   TaskDetailEmpty: () => React.createElement('div'),
 }));
 
@@ -159,7 +186,7 @@ mock.module(path.resolve('src/client/components/ui/sheet'), () => ({
 // Helper
 // ---------------------------------------------------------------------------
 
-async function renderBoardView() {
+async function renderBoardView(initialEntries: string[] = ['/projects/test-project/board']) {
   const { default: BoardView } = await import('../src/client/components/BoardView');
   const { MemoryRouter, Route, Routes } = await import('react-router-dom');
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -169,7 +196,7 @@ async function renderBoardView() {
   return render(
     React.createElement(
       MemoryRouter,
-      { initialEntries: ['/projects/test-project/board'] },
+      { initialEntries },
       React.createElement(
         QueryClientProvider,
         { client: queryClient },
@@ -266,5 +293,25 @@ describe('BoardView code-server link gating', () => {
     await renderBoardView();
     await screen.findByTestId('board-header-container');
     expect(screen.queryByText('Code')).toBeNull();
+  });
+});
+
+describe('BoardView PR-stage detail wiring', () => {
+  afterEach(() => {
+    cleanup();
+    detailPanelPropsMock.current = null;
+  });
+
+  it('passes an awaiting-feature-merge open-PR task to the detail panel with col=in-progress', async () => {
+    await renderBoardView(['/projects/test-project/board?task=test-plan-pr']);
+    const panels = await screen.findAllByTestId('task-detail-panel');
+    expect(panels.length).toBeGreaterThan(0);
+    // The panel derives its PR-stage Request Changes affordance from the task's
+    // phase + prNumber, so BoardView must hand both through unchanged.
+    expect(detailPanelPropsMock.current).toEqual({
+      col: 'in-progress',
+      phase: 'awaiting-feature-merge',
+      prNumber: 7,
+    });
   });
 });

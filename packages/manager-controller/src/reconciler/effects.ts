@@ -300,25 +300,45 @@ export async function executeEffects(
             throw new Error('Project metadata required for CreatePrFollowUpTask effect');
           }
           const { buildTask } = await import('@percussionist/kube');
-          const followUp = buildTask({
-            name: effect.taskName,
-            projectName: project.metadata.name,
-            projectUid: project.metadata.uid ?? '',
-            ns: namespace,
-            spec: {
-              projectRef: project.metadata.name,
-              type: 'BUILD',
-              title: effect.title,
-              description: effect.description,
-              agent: effect.agent,
-              priority: 'high',
-              parentTaskRef: effect.planTaskName,
-            },
+          // Idempotency: the child name is deterministic per round, so a retry
+          // after a crash (or a repeated request that hashes to the same round)
+          // can run this effect after the child already exists. Read it first
+          // and never reset one that has progressed — only a missing child is
+          // created and only a still-`pending` child is (re)marked pending.
+          // Resetting a done child would resurrect completed work.
+          const existing = await getTask(effect.taskName, namespace).catch((e: unknown) => {
+            if (isKubeNotFoundError(e)) return undefined;
+            throw e;
           });
-          try {
-            await createTask(followUp, namespace);
-          } catch (e: unknown) {
-            if (!isAlreadyExists(e)) throw e;
+          if (existing) {
+            const existingPhase = (existing.status?.phase ?? 'pending') as TaskPhase;
+            if (existingPhase !== 'pending') {
+              console.log(
+                `[effects] CreatePrFollowUpTask: child ${effect.taskName} already exists in phase ${existingPhase}; leaving it untouched`,
+              );
+              break;
+            }
+          } else {
+            const followUp = buildTask({
+              name: effect.taskName,
+              projectName: project.metadata.name,
+              projectUid: project.metadata.uid ?? '',
+              ns: namespace,
+              spec: {
+                projectRef: project.metadata.name,
+                type: 'BUILD',
+                title: effect.title,
+                description: effect.description,
+                agent: effect.agent,
+                priority: 'high',
+                parentTaskRef: effect.planTaskName,
+              },
+            });
+            try {
+              await createTask(followUp, namespace);
+            } catch (e: unknown) {
+              if (!isAlreadyExists(e)) throw e;
+            }
           }
           // Task creation does not write the status subresource; put the child
           // on the board explicitly (best effort — the reconciler defaults an

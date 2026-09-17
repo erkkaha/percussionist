@@ -416,6 +416,7 @@ export async function applyProject(opts: {
   phase?: string; // defaults to "Active"
   maxParallel?: number; // defaults to 1
   agents?: Array<{ name: string; model?: string }>; // list of agent refs
+  featureBranchingEnabled?: boolean; // enables per-task feature branches
   timeoutSeconds?: number; // run timeout override
   sourceYaml?: string; // optional `source:` block (indented 2 spaces)
   flowYaml?: string; // optional `flow:` block (indented 2 spaces)
@@ -430,6 +431,7 @@ export async function applyProject(opts: {
       ? `  agents:\n${opts.agents.map((a) => (a.model ? `    - name: ${a.name}\n      model: "${a.model}"` : `    - name: ${a.name}`)).join('\n')}\n`
       : '';
   const timeoutLine = opts.timeoutSeconds ? `  timeoutSeconds: ${opts.timeoutSeconds}\n` : '';
+  const featureLine = opts.featureBranchingEnabled ? `  featureBranchingEnabled: true\n` : '';
   await kubectlApply(`\
 apiVersion: percussionist.dev/v1alpha1
 kind: Project
@@ -442,6 +444,7 @@ ${modelLine}\
   phase: ${phase}
   maxParallel: ${maxParallel}
 ${agentsBlock}\
+${featureLine}\
 ${timeoutLine}\
   secrets:
     llmKeysSecret: "${opts.llmSecret}"

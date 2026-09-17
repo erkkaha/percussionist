@@ -1633,6 +1633,33 @@ describe('decide — PR feedback loop', () => {
     expect(worker.prFeedbackRunName).toBeNull();
     expect(worker.createdBuildTaskRefs).toEqual(['test-project-build-old111', create.taskName]);
     expect(result.events[0]?.reason).toBe('PrFeedbackChangesRequested');
+    // No human annotation pending → nothing to consume.
+    expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(false);
+  });
+
+  it('eval verdict request_changes + manual requestChanges → consumes the human annotations too', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    (task.status as any).worker.prFeedbackLastCommentAt = '2026-05-28T10:00:00.000Z';
+    const evalRun = makeRun('preval-1', { phase: 'Succeeded' });
+    (evalRun.metadata as any).annotations = {
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'request_changes',
+        diagnosis: 'reviewer asked for a rename',
+      }),
+    };
+    const result = decide(
+      makeInput(task, {
+        manualActions: { requestChanges: true, reworkFeedback: 'and update the docs' },
+        observed: { prState: { state: 'open', mergedAt: null }, prFeedbackRun: evalRun },
+      }),
+    );
+    expect(result.toPhase).toBe('awaiting-children');
+    expect(result.effects.some((e) => e.type === 'CreatePrFollowUpTask')).toBe(true);
+    const clear = result.effects.find((e) => e.type === 'ClearTaskAnnotations') as any;
+    expect(clear).toBeDefined();
+    expect(clear.keys).toContain('percussionist.dev/action-request-changes');
+    expect(clear.keys).toContain('percussionist.dev/action-rework-feedback');
   });
 
   it('eval run failed → clears run name and resumes polling (round consumed)', () => {

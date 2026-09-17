@@ -263,6 +263,65 @@ describe('inspectTaskFlow — awaiting-feature-merge', () => {
     expect(result.expectedNext.primary).toContain('awaiting-human');
     expect(result.expectedNext.blockingConditions[0]).toContain('merge conflict');
   });
+
+  it('open PR (prNumber set, no mergeRunName) → waiting for merge', () => {
+    const task = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { prNumber: 123 };
+    const result = inspectTaskFlow(task, project, [task]);
+
+    expect(result.statusSummary.worker.prNumber).toBe(123);
+    expect(result.expectedNext.primary).toContain('PR #123 open');
+    expect(result.expectedNext.primary).toContain('waiting for merge');
+    expect(result.expectedNext.reason).toContain('polls');
+    const suggestions = result.expectedNext.suggestedActions.join(' ');
+    expect(suggestions).toContain('action-request-changes');
+    expect(suggestions).toContain('action-rework-feedback');
+    expect(suggestions).toContain('Comment on the PR');
+  });
+
+  it('open PR + request-changes → scope-change follow-up child', () => {
+    const task = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { prNumber: 42 };
+    (task.metadata as any).annotations = {
+      'percussionist.dev/action-request-changes': 'true',
+      'percussionist.dev/action-rework-feedback': 'add dark mode',
+    };
+    const result = inspectTaskFlow(task, project, [task]);
+
+    expect(result.statusSummary.manualActionFlagsPresent).toContain('requestChanges');
+    expect(result.expectedNext.primary).toContain('PR #42 open');
+    expect(result.expectedNext.primary).toContain('scope-change follow-up BUILD child');
+    expect(result.expectedNext.reason).toContain('action-request-changes');
+    expect(result.expectedNext.suggestedActions.join(' ')).toContain('action-rework-feedback');
+  });
+
+  it('open PR but mergeRunName set → merge run handling wins', () => {
+    const task = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    (task.status as any).worker = { prNumber: 7, mergeRunName: 'merge-1' };
+    const result = inspectTaskFlow(task, project, [task], {
+      merge: makeRun('merge-1', { phase: 'Running' }),
+    });
+    expect(result.expectedNext.primary).toContain('merge run in progress');
+  });
+
+  it('no prNumber and no mergeRunName → schedule merge run (unchanged)', () => {
+    const task = makeTask('plan-1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type: 'PLAN',
+    });
+    const result = inspectTaskFlow(task, project, [task]);
+    expect(result.expectedNext.primary).toContain('Feature-branch merge run will be scheduled');
+    expect(result.expectedNext.reason).toContain('without mergeRunName');
+  });
 });
 
 describe('inspectTaskFlow — awaiting-children', () => {
