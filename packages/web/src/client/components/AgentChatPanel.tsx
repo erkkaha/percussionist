@@ -1,18 +1,11 @@
 import { Mic, MicOff, Send, Volume2, VolumeX, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { parseOptionBlocks } from '@/lib/chat-utils';
+import { type ChatMessage, findBubbleIndex, parseOptionBlocks, stableKey } from '@/lib/chat-utils';
 import type { Task } from '@/lib/types';
 import { authHeaders } from '../lib/auth';
 import { DrumLogo } from './app-sidebar';
 import ChatOptionCard from './ChatOptionCard';
-
-interface ChatMessage {
-  role: 'user' | 'assistant' | 'system';
-  text: string;
-  id?: string;
-  created?: number;
-}
 
 function formatTaskContext(task: Task, projectName: string): string {
   const lines: string[] = [];
@@ -67,34 +60,6 @@ function timeAgo(ts: number): string {
   return `${Math.floor(days / 30)}mo ago`;
 }
 
-// Monotonically increasing sequence for messages that carry no server `id`
-// (optimistic user bubbles, system/error bubbles, POST-response text). A fresh
-// key per message lets identical text render more than once ("yes" twice).
-let _clientSeq = 0;
-
-// Stable per-message identity: keep the server `id` when one is supplied,
-// otherwise assign a unique client sequence key.
-function stableKey(m: ChatMessage): string {
-  return m.id ?? `client-${++_clientSeq}`;
-}
-
-// Synthetic keys are the ones we assign locally (`client-*` for live messages,
-// `hist-*` for loaded history); everything else is a real server id.
-function isSyntheticKey(id: string | undefined): boolean {
-  return id == null || id.startsWith('client-') || id.startsWith('hist-');
-}
-
-// Index of the last item satisfying the predicate, or -1. Matching the last
-// (newest) occurrence keeps an SSE upgrade from hijacking an older history
-// bubble with identical text.
-function lastIndexMatching(items: ChatMessage[], pred: (m: ChatMessage) => boolean): number {
-  for (let i = items.length - 1; i >= 0; i--) {
-    const m = items[i];
-    if (m && pred(m)) return i;
-  }
-  return -1;
-}
-
 interface AgentChatPanelProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -135,7 +100,7 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
-  const seenKeysRef = useRef<Set<string>>(new Set());
+  const spokenIdsRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef<ChatMessage[]>([]);
   const speakEnabledRef = useRef(false);
   const speakAfterCreatedRef = useRef(0);
@@ -157,63 +122,59 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
 
   const addMessageIfNew = useCallback(
     (msg: ChatMessage) => {
+      const prev = messagesRef.current;
+      const idx = findBubbleIndex(prev, msg);
+      const existing = idx !== -1 ? prev[idx] : undefined;
+
       // Messages without a server id (optimistic user bubbles, system/error
       // bubbles, POST-response text) get a unique client sequence identity so
       // identical text renders more than once.
-      const hasServerId = msg.id != null;
-      const id = msg.id ?? stableKey(msg);
-      msg.id = id;
+      const id = msg.id ?? existing?.id ?? stableKey(msg);
+      const merged: ChatMessage = {
+        ...existing,
+        ...msg,
+        id,
+        created: msg.created ?? existing?.created,
+        // The POST response carries no `completed` flag but is always final.
+        completed: msg.completed ?? (msg.id == null ? true : existing?.completed),
+      };
 
-      if (seenKeysRef.current.has(id)) return;
-      seenKeysRef.current.add(id);
-
-      const prev = messagesRef.current;
       let next: ChatMessage[];
-      if (hasServerId) {
-        // SSE message with a real id: if the same role+text is already shown
-        // under a synthetic key (from history or the POST response), replace
-        // it in place so the bubble keeps its real id instead of duplicating.
-        const placeholderIdx = lastIndexMatching(
-          prev,
-          (m) => m.role === msg.role && m.text === msg.text && isSyntheticKey(m.id),
-        );
-        if (placeholderIdx !== -1) {
-          next = prev.slice();
-          next[placeholderIdx] = msg;
-        } else {
-          next = [...prev, msg];
+      if (existing) {
+        // Nothing to redraw when the stream re-delivers text we already show.
+        if (
+          existing.id === merged.id &&
+          existing.text === merged.text &&
+          existing.completed === merged.completed &&
+          existing.created === merged.created
+        ) {
+          return;
+        }
+        next = prev.slice();
+        next[idx] = merged;
+        // Keep the spoken marker attached to the bubble across an id upgrade.
+        if (existing.id && existing.id !== id && spokenIdsRef.current.has(existing.id)) {
+          spokenIdsRef.current.add(id);
         }
       } else {
-        // POST response text with no id: if SSE already delivered the same
-        // role+text under a real id, refresh that bubble's text in place
-        // instead of appending a duplicate.
-        const matchIdx = lastIndexMatching(
-          prev,
-          (m) => m.role === msg.role && m.text === msg.text && !isSyntheticKey(m.id),
-        );
-        const target = matchIdx !== -1 ? prev[matchIdx] : undefined;
-        if (target) {
-          next = prev.slice();
-          next[matchIdx] = { ...target, text: msg.text };
-        } else {
-          next = [...prev, msg];
-        }
+        next = [...prev, merged];
       }
       messagesRef.current = next;
       setMessages(next);
 
-      if (msg.role !== 'assistant') return;
-      const isNew = msg.created != null && msg.created > speakAfterCreatedRef.current;
+      if (merged.role !== 'assistant') return;
+      // Speak each reply once, only when its text is final, and only when it is
+      // genuinely new: produced after the panel opened, or in answer to a
+      // message sent from this panel. History and stream replays are silent.
+      if (merged.completed === false || spokenIdsRef.current.has(id)) return;
+      const isNew = merged.created != null && merged.created > speakAfterCreatedRef.current;
       if (isNew || speakEnabledRef.current) {
-        setTimeout(() => speak(msg.text), 300);
+        spokenIdsRef.current.add(id);
+        setTimeout(() => speak(merged.text), 300);
       }
     },
     [speak],
   );
-
-  const resetSeen = useCallback(() => {
-    seenKeysRef.current = new Set();
-  }, []);
 
   const startRecording = useCallback(() => {
     if (!sttSupported || recording) return;
@@ -274,29 +235,34 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
   useEffect(() => {
     if (!open) return;
     setHistoryLoaded(false);
-    resetSeen();
+    spokenIdsRef.current = new Set();
+    // Nothing in history is new, and no send is in flight from this panel yet:
+    // only replies created after this point (or to our own messages) are spoken.
+    speakEnabledRef.current = false;
+    speakAfterCreatedRef.current = Date.now();
     setMessages([]);
     messagesRef.current = [];
-    speakAfterCreatedRef.current = 0;
     fetch('/api/agent/chat/history', { headers: authHeaders() })
       .then((r) => r.json())
       .then((d) => {
         const history = (d.history as ChatMessage[] | undefined) ?? [];
-        // Server history has no `id`; give each item a stable role+seq key so
-        // it renders (and dedups consistently) without collisions.
-        const loaded = history.map((m, i) => (m.id ? m : { ...m, id: `hist-${i}-${m.role}` }));
+        // Older history entries carry no `id`; give each a stable role+seq key
+        // so it renders (and dedups consistently) without collisions.
+        const loaded = history.map((m, i) =>
+          m.id ? { ...m, completed: true } : { ...m, id: `hist-${i}-${m.role}`, completed: true },
+        );
         setMessages(loaded);
         messagesRef.current = loaded;
-        let maxCreated = 0;
         for (const m of loaded) {
-          if (m.id) seenKeysRef.current.add(m.id);
-          if (m.created && m.created > maxCreated) maxCreated = m.created;
+          if (m.id) spokenIdsRef.current.add(m.id);
+          if (m.created && m.created > speakAfterCreatedRef.current) {
+            speakAfterCreatedRef.current = m.created;
+          }
         }
-        speakAfterCreatedRef.current = maxCreated;
       })
       .catch(() => {})
       .finally(() => setHistoryLoaded(true));
-  }, [open, resetSeen]);
+  }, [open]);
 
   // SSE stream for real-time updates — only open after history is loaded to avoid race
   useEffect(() => {
@@ -384,7 +350,12 @@ export default function AgentChatPanel({ open, onOpenChange, onChatReady }: Agen
         if (data.cancelled) {
           addMessageIfNew({ role: 'system', text: 'Request cancelled.' });
         } else if (data.response) {
-          addMessageIfNew({ role: 'assistant', text: data.response });
+          addMessageIfNew({
+            role: 'assistant',
+            text: data.response,
+            ...(typeof data.id === 'string' ? { id: data.id } : {}),
+            ...(typeof data.created === 'number' ? { created: data.created } : {}),
+          });
         } else if (data.error) {
           addMessageIfNew({ role: 'system', text: `Error: ${data.error}` });
         }

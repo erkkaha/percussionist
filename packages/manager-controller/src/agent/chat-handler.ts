@@ -18,7 +18,14 @@ import {
   FIRST_RESPONSE_TIMEOUT_MS,
   MANAGER_NAMESPACE as NAMESPACE,
 } from './config.js';
-import { createSession, getMessages, sendMessage, waitForCompletion } from './session.js';
+import {
+  collectText,
+  createSession,
+  findLastAssistant,
+  getMessages,
+  sendMessage,
+  waitForCompletion,
+} from './session.js';
 
 const CONFIGMAP_NAME = 'manager-chat-history';
 const SAVE_DEBOUNCE_MS = 2000;
@@ -28,8 +35,17 @@ const log = (...args: unknown[]) =>
 const err = (...args: unknown[]) =>
   console.error(`[agent-chat ${new Date().toISOString()}]`, ...args);
 
+export interface HistoryEntry {
+  role: 'user' | 'assistant';
+  text: string;
+  /** opencode message id when known — lets the dashboard dedup against the SSE stream. */
+  id?: string;
+  /** Unix ms when the entry was recorded — lets the dashboard tell old from new. */
+  created?: number;
+}
+
 let currentSessionId: string | null = null;
-let conversationHistory: Array<{ role: 'user' | 'assistant'; text: string }> = [];
+let conversationHistory: HistoryEntry[] = [];
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ---------------------------------------------------------------------------
@@ -202,7 +218,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
     return;
   }
 
-  conversationHistory.push({ role: 'user', text: message });
+  conversationHistory.push({ role: 'user', text: message, created: Date.now() });
   debouncedSave();
 
   const abortController = new AbortController();
@@ -226,9 +242,23 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
     ]);
     sendController.abort();
     if (response) {
-      conversationHistory.push({ role: 'assistant', text: response });
+      // Look up the opencode id of the message we just returned so the
+      // dashboard can match this reply with the copy the SSE stream delivers
+      // under the same id instead of rendering both.
+      const reply = await lookupReply(sessionId, response);
+      conversationHistory.push({
+        role: 'assistant',
+        text: response,
+        ...(reply.id ? { id: reply.id } : {}),
+        created: reply.created ?? Date.now(),
+      });
       debouncedSave();
-      sendJson(res, 200, { response, sessionId });
+      sendJson(res, 200, {
+        response,
+        sessionId,
+        ...(reply.id ? { id: reply.id } : {}),
+        ...(reply.created ? { created: reply.created } : {}),
+      });
     } else if (abortController.signal.aborted) {
       sendJson(res, 200, { cancelled: true, sessionId });
     } else {
@@ -241,6 +271,22 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
     err('chat message failed:', (e as Error).message);
     sendJson(res, 500, { error: (e as Error).message });
   }
+}
+
+/** Id and creation time of the newest assistant message carrying `text`, if any. */
+async function lookupReply(
+  sessionId: string,
+  text: string,
+): Promise<{ id?: string; created?: number }> {
+  try {
+    const last = findLastAssistant(await getMessages(sessionId));
+    if (last?.info?.id && collectText(last) === text) {
+      return { id: last.info.id, created: last.info.time?.created };
+    }
+  } catch {
+    // best effort — the reply is still returned without an id
+  }
+  return {};
 }
 
 async function handleStream(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -258,28 +304,59 @@ async function handleStream(req: IncomingMessage, res: ServerResponse): Promise<
     return;
   }
 
+  // Everything already in the session at connect time is history, which the
+  // client fetched separately. Seeding the snapshot here means a (re)connect
+  // never replays old turns — the previous behaviour, which made the dashboard
+  // re-render and re-speak the whole conversation every time EventSource
+  // reconnected. A turn still streaming at connect is seeded with its current
+  // text, so its later growth is still delivered.
+  const known = new Map<string, { text: string; completed: boolean }>();
+  const snapshot = (msg: {
+    info?: { id?: string; role?: string; time?: { completed?: number } };
+    parts?: Array<{ type: string; text?: string }>;
+  }): { id: string; text: string; completed: boolean } | null => {
+    const id = msg.info?.id;
+    if (!id || msg.info?.role !== 'assistant') return null;
+    let text = '';
+    for (const part of msg.parts ?? []) {
+      if (part.type === 'text' && part.text) text += part.text;
+    }
+    return { id, text, completed: !!msg.info?.time?.completed };
+  };
+  try {
+    for (const msg of await getMessages(sessionId)) {
+      const snap = snapshot(msg);
+      if (snap) known.set(snap.id, { text: snap.text, completed: snap.completed });
+    }
+  } catch {
+    // Seed failed — fall through with an empty set; the client dedups by id.
+  }
+
   // Signal to the client that SSE is live and history has been fetched separately
   res.write(`event: ready\ndata: {}\n\n`);
 
-  const knownMessageCount = new Set<string>();
   const poll = setInterval(async () => {
     try {
       const messages = await getMessages(sessionId);
       for (const msg of messages) {
-        const id = msg.info?.id;
-        if (!id || knownMessageCount.has(id)) continue;
-        knownMessageCount.add(id);
-        if (msg.info?.role === 'assistant') {
-          let text = '';
-          for (const part of msg.parts ?? []) {
-            if (part.type === 'text' && part.text) text += part.text;
-          }
-          if (text) {
-            res.write(
-              `data: ${JSON.stringify({ role: 'assistant', text, completed: !!msg.info?.time?.completed, id: msg.info?.id, created: msg.info?.time?.created })}\n\n`,
-            );
-          }
-        }
+        const snap = snapshot(msg);
+        if (!snap) continue;
+        const prev = known.get(snap.id);
+        // Emit on first sight and again whenever the text grows or the turn
+        // completes, always under the same id, so the client can update the
+        // bubble in place instead of keeping the first partial text forever.
+        if (prev && prev.text === snap.text && prev.completed === snap.completed) continue;
+        known.set(snap.id, { text: snap.text, completed: snap.completed });
+        if (!snap.text) continue;
+        res.write(
+          `data: ${JSON.stringify({
+            role: 'assistant',
+            text: snap.text,
+            completed: snap.completed,
+            id: snap.id,
+            created: msg.info?.time?.created,
+          })}\n\n`,
+        );
       }
     } catch {
       // ignore poll errors
@@ -308,6 +385,7 @@ export const __test = {
   saveHistoryToConfigMap,
   ensureSession,
   handleChat,
+  handleStream,
   getState: () => ({ currentSessionId, conversationHistory }),
   /** Clear session state and any pending debounced save between tests. */
   reset: () => {
