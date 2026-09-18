@@ -1,6 +1,34 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.22] - 2026-09-18
+
+### <!-- 0 -->🚀 Features
+
+- Keep agent-config/opencode-config converged with ClusterSettings _(operator)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Make git-publish workspace root injectable _(dispatcher)_
+- Keep findings panel width when no task is selected _(web)_
+- Count run rows before retention delete to avoid cascaded overcount _(web)_
+- Stop manager chat replaying and double-rendering replies _(chat)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add plan for hermetic dispatcher git-publish tests _(plans)_
+- Fix findings panel width when no task selected _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Isolate git fixtures from pre-commit hook env _(dispatcher)_
+- Stub gitCheck.isClean in branch-publish tests _(dispatcher)_
+- Sanitize git env in git-publish tests _(dispatcher)_
+## [v0.2.21] - 2026-09-10
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.21
 ## [v0.2.20] - 2026-09-08
 
 ### <!-- 0 -->🚀 Features
