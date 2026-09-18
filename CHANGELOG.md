@@ -1,6 +1,12 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.23] - 2026-09-18
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Replace exec readiness probes with HTTP/TCP _(operator,k8s)_
+- Bump better-auth to 1.7.4 to restore GitHub sign-in _(web)_
 ## [v0.2.22] - 2026-09-18
 
 ### <!-- 0 -->🚀 Features
@@ -24,6 +30,10 @@ All notable changes to Percussionist are documented here.
 - Isolate git fixtures from pre-commit hook env _(dispatcher)_
 - Stub gitCheck.isClean in branch-publish tests _(dispatcher)_
 - Sanitize git env in git-publish tests _(dispatcher)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.22
 ## [v0.2.21] - 2026-09-10
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
