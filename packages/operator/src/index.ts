@@ -12,6 +12,7 @@ import {
   type Project,
   type Run,
 } from '@percussionist/api';
+import { markReady, startHealthServer } from './health.js';
 import {
   cancelProjectRetry,
   cleanupCodeServer,
@@ -66,6 +67,9 @@ export function handleRunDelete(obj: unknown): void {
 }
 
 async function main(): Promise<void> {
+  // Up first so kubelet's readiness probe has something to talk to while the
+  // watches below are still being established (/readyz answers 503 until then).
+  startHealthServer();
   log(`watching ${API_GROUP}/${API_VERSION}/${PLURAL_RUN} in namespace=${NAMESPACE}`);
 
   // Watch Run CRs.
@@ -188,6 +192,7 @@ async function main(): Promise<void> {
   });
   await projectInformer.start();
   log('project informer started');
+  markReady();
 
   startPeriodicResync();
   // Backstop against foreign writers of the owned ConfigMaps: re-render from

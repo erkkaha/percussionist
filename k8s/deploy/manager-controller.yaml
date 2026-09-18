@@ -168,9 +168,12 @@ spec:
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits:   { cpu: 500m, memory: 512Mi }
+          # TCP on the MCP port, not exec: index.ts binds 4097 before the
+          # informers start, and exec probes through the containerd shim leaked
+          # processes after a host suspend/resume (2026-09-18).
           readinessProbe:
-            exec:
-              command: ["sh", "-c", "pgrep -f node >/dev/null"]
+            tcpSocket:
+              port: 4097
             initialDelaySeconds: 2
             periodSeconds: 5
 

@@ -265,11 +265,16 @@ spec:
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits:   { cpu: 500m, memory: 512Mi }
+          ports:
+            - name: health
+              containerPort: 8081
+          # HTTP, not exec: exec probes run through the containerd shim and
+          # after a host suspend/resume each timed-out `pgrep` left a process
+          # behind until the node froze (2026-09-18). /readyz flips to 200 once
+          # the informers are up; see packages/operator/src/health.ts.
           readinessProbe:
-            # The operator has no HTTP surface yet; use an exec probe on a
-            # sentinel file the process could touch later. For now simply
-            # check that the process is alive via a tiny `node -e`.
-            exec:
-              command: ["sh", "-c", "pgrep -f node >/dev/null"]
+            httpGet:
+              path: /readyz
+              port: health
             initialDelaySeconds: 2
             periodSeconds: 5
