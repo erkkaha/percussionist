@@ -1,12 +1,22 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.24] - 2026-09-19
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Harden control-plane trust boundaries _(security)_
+- Resolve rebased core export _(operator)_
 ## [v0.2.23] - 2026-09-18
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Replace exec readiness probes with HTTP/TCP _(operator,k8s)_
 - Bump better-auth to 1.7.4 to restore GitHub sign-in _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.23
 ## [v0.2.22] - 2026-09-18
 
 ### <!-- 0 -->🚀 Features
