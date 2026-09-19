@@ -17,6 +17,9 @@ import {
   FindingCategory,
   FindingSeverity,
   FindingStatus,
+  INTERACTIVE_RUN_ANNOTATION,
+  InteractiveRunRequestSchema,
+  interactiveRunName,
   LABELS,
   type Project,
   type Task,
@@ -237,6 +240,32 @@ const TOOLS = [
       properties: {
         project: { type: 'string', description: 'Project name' },
         task: { type: 'string', description: "Task CR name (e.g. 'BUILD-4')" },
+        namespace: {
+          type: 'string',
+          description: 'Namespace (optional, defaults to percussionist)',
+        },
+      },
+      required: ['project', 'task'],
+    },
+  },
+  {
+    name: 'start_interactive_run',
+    description:
+      "Start an interactive run attached to a task, on that task's branch. Writes a request annotation; the reconciler creates the Run on its next reconcile cycle. The run is auxiliary — it does not change the task's phase or worker.runName — and the human attaches to its Terminal tab. Rejects 'done' and 'idea' tasks.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Project name' },
+        task: { type: 'string', description: "Task CR name (e.g. 'BUILD-4')" },
+        agent: {
+          type: 'string',
+          description: "Override the agent for the interactive run (defaults to the task's agent)",
+        },
+        model: { type: 'string', description: 'Override the model for the interactive run' },
+        timeoutSeconds: {
+          type: 'number',
+          description: 'Override the run timeout in seconds (defaults to the project config)',
+        },
         namespace: {
           type: 'string',
           description: 'Namespace (optional, defaults to percussionist)',
@@ -1378,6 +1407,61 @@ async function callTool(
           worker?.retryCount ?? 0,
           worker?.aiReworkCount ?? 0,
         ),
+        note: 'run will be created by the reconciler on its next reconcile cycle',
+      };
+    }
+
+    case 'start_interactive_run': {
+      const projectName = String(args.project ?? '');
+      const taskName = String(args.task ?? '');
+      const resourceNs = String(args.namespace ?? ns);
+
+      if (!projectName) throw new Error('project is required');
+      if (!taskName) throw new Error('task is required');
+
+      // Load both CRs so a typo'd project/task pair fails before any patch.
+      await getProject(projectName, resourceNs);
+      const task = await getTask(taskName, resourceNs);
+
+      if (task.spec.projectRef !== projectName) {
+        throw new Error(
+          `Task ${taskName} belongs to project "${task.spec.projectRef}", not "${projectName}"`,
+        );
+      }
+
+      const phase = (task.status?.phase ?? 'pending') as TaskPhase;
+      if (phase === 'done' || phase === 'idea') {
+        throw new Error(
+          `Task ${taskName} has phase "${phase}", cannot start an interactive run (done/idea tasks are not actionable)`,
+        );
+      }
+
+      // The request id seeds the deterministic run name so a retry after a
+      // partial failure recreates the same Run and the reconciler can adopt it.
+      const id = randomBytes(4).toString('hex');
+      const request = {
+        id,
+        ...(args.agent ? { agent: String(args.agent) } : {}),
+        ...(args.model ? { model: String(args.model) } : {}),
+        ...(args.timeoutSeconds ? { timeoutSeconds: Number(args.timeoutSeconds) } : {}),
+      };
+      const parsed = InteractiveRunRequestSchema.safeParse(request);
+      if (!parsed.success) {
+        throw new Error(
+          `Invalid interactive run request: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        );
+      }
+
+      const annotations = {
+        ...(task.metadata.annotations ?? {}),
+        [INTERACTIVE_RUN_ANNOTATION]: JSON.stringify(parsed.data),
+      };
+      await patchTask(taskName, { metadata: { ...task.metadata, annotations } }, resourceNs);
+
+      return {
+        project: projectName,
+        task: taskName,
+        runName: interactiveRunName(projectName, taskName, id),
         note: 'run will be created by the reconciler on its next reconcile cycle',
       };
     }
