@@ -8,8 +8,10 @@
 // (preserving existing annotations). The reconciler consumes the annotation on
 // its next cycle. These tests pin:
 //   - the annotation payload shape (id + optional overrides);
+//   - that the payload round-trips through InteractiveRunRequestSchema;
 //   - preservation of unrelated annotations;
 //   - the deterministic runName returned (derived from the same id);
+//   - that `createRun` is never called (the reconciler owns Run creation);
 //   - rejection of done/idea tasks without any patch;
 //   - schema rejection of an out-of-range timeout override.
 
@@ -24,13 +26,17 @@ const state = {
   taskPhase: 'running' as string,
   annotations: {} as Record<string, string>,
   taskPatches: [] as Array<{ name: string; patch: Record<string, unknown>; ns: string }>,
+  createRunCalls: 0,
 };
 
 mock.module('@percussionist/kube', () => ({
   ...realKube,
   apps: () => ({}),
   buildTask: (args: Record<string, unknown>) => ({ metadata: { name: args.name }, ...args }),
-  createRun: async () => ({}),
+  createRun: async () => {
+    state.createRunCalls++;
+    return {};
+  },
   createTask: async (task: Record<string, unknown>) => task,
   deleteRun: async () => undefined,
   execInWorkspace: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
@@ -67,7 +73,8 @@ mock.module('@percussionist/kube', () => ({
 }));
 
 const { __test } = await import('../tools.js');
-const { INTERACTIVE_RUN_ANNOTATION, interactiveRunName } = await import('@percussionist/api');
+const { INTERACTIVE_RUN_ANNOTATION, InteractiveRunRequestSchema, interactiveRunName } =
+  await import('@percussionist/api');
 
 interface ToolResponse {
   isError: boolean | undefined;
@@ -122,10 +129,12 @@ describe('start_interactive_run writes the request annotation', () => {
     state.taskPhase = 'running';
     state.annotations = {};
     state.taskPatches = [];
+    state.createRunCalls = 0;
   });
 
   afterEach(() => {
     state.taskPatches = [];
+    state.createRunCalls = 0;
   });
 
   it('patches the task and returns the deterministic run name', async () => {
@@ -141,6 +150,11 @@ describe('start_interactive_run writes the request annotation', () => {
     expect(request.agent).toBeUndefined();
     expect(request.model).toBeUndefined();
     expect(request.timeoutSeconds).toBeUndefined();
+
+    // The payload must be consumable by the reconciler's own parse.
+    expect(InteractiveRunRequestSchema.safeParse(request).success).toBe(true);
+    // The tool only writes the annotation; the reconciler creates the Run.
+    expect(state.createRunCalls).toBe(0);
 
     expect(parsed.project).toBe('proj');
     expect(parsed.task).toBe('task-1');
@@ -174,6 +188,7 @@ describe('start_interactive_run writes the request annotation', () => {
     expect(isError).toBe(true);
     expect(text).toContain(phase);
     expect(state.taskPatches).toHaveLength(0);
+    expect(state.createRunCalls).toBe(0);
   });
 
   it('rejects an out-of-range timeout override', async () => {
