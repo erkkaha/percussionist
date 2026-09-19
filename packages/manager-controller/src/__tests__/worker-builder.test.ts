@@ -310,6 +310,146 @@ describe('buildWorkerRun — prompt and run shape', () => {
 });
 
 // ---------------------------------------------------------------------------
+// buildWorkerRun — interactive options
+// ---------------------------------------------------------------------------
+
+describe('buildWorkerRun — interactive options', () => {
+  it('marks the run interactive and omits spec.task', async () => {
+    const run = await buildWorkerRun(
+      featureProject(),
+      buildTask('build-123'),
+      'run-1',
+      0,
+      undefined,
+      [],
+      { interactive: true },
+    );
+
+    expect(run.spec.interactive).toBe(true);
+    expect(run.spec.task).toBeUndefined();
+  });
+
+  it('skips prompt construction side effects for interactive runs', async () => {
+    const project = featureProject({ embedding: { enabled: true } });
+
+    const run = await buildWorkerRun(project, buildTask(), 'run-1', 0, undefined, [], {
+      interactive: true,
+    });
+
+    expect(getContextSpy).not.toHaveBeenCalled();
+    expect(run.spec.task).toBeUndefined();
+  });
+
+  it('keeps labels, boardTask, and owner reference', async () => {
+    const run = await buildWorkerRun(
+      featureProject(),
+      buildTask('build-123'),
+      'run-1',
+      0,
+      undefined,
+      [],
+      { interactive: true },
+    );
+
+    expect(run.metadata.labels?.[LABELS.projectName]).toBe('proj-a');
+    expect(run.metadata.labels?.[LABELS.taskId]).toBe('build-123');
+    expect(run.metadata.ownerReferences?.[0]?.name).toBe('proj-a');
+    expect(run.spec.boardTask).toBe('build-123');
+  });
+
+  it('honours the agent override and excludes it from the secondary agents', async () => {
+    const run = await buildWorkerRun(
+      featureProject(),
+      buildTask('build-123'),
+      'run-1',
+      0,
+      undefined,
+      [],
+      { interactive: true, agent: 'integrator' },
+    );
+
+    expect(run.spec.agent).toBe('integrator');
+    expect(run.spec.agents?.some((a) => a.name === 'integrator')).toBe(false);
+    expect(run.spec.agents?.some((a) => a.name === 'builder')).toBe(true);
+  });
+
+  it('honours the model override over the roster model', async () => {
+    const project = featureProject({
+      agents: [{ name: 'builder', model: 'claude-code/claude-sonnet-5' }],
+      secrets: { authSecret: { name: 'agent-auth', key: 'auth.json' } },
+    });
+
+    const run = await buildWorkerRun(project, buildTask(), 'run-1', 0, undefined, [], {
+      interactive: true,
+      model: 'opencode-go/deepseek-v4-flash',
+    });
+
+    expect(run.spec.model).toBe('opencode-go/deepseek-v4-flash');
+  });
+
+  it('validates auth against the overridden model', async () => {
+    const project = featureProject({ model: 'opencode-go/deepseek-v4-flash' });
+
+    await expect(
+      buildWorkerRun(project, buildTask(), 'run-1', 0, undefined, [], {
+        interactive: true,
+        model: 'deepseek/deepseek-chat',
+      }),
+    ).rejects.toThrow(/Auth validation failed for task "build-123" \(agent="builder"\)/);
+  });
+
+  it('honours the timeout override', async () => {
+    const run = await buildWorkerRun(featureProject(), buildTask(), 'run-1', 0, undefined, [], {
+      interactive: true,
+      timeoutSeconds: 7200,
+    });
+
+    expect(run.spec.timeoutSeconds).toBe(7200);
+  });
+
+  it('uses the recorded task branch even when feature branching is disabled', async () => {
+    const project = featureProject({ featureBranchingEnabled: false });
+    const task = buildTask('build-123');
+    task.status = {
+      ...task.status,
+      worker: {
+        ...task.status?.worker,
+        gitBranch: 'feature/recorded',
+        parentBranch: 'feature/parent',
+      },
+    };
+
+    const run = await buildWorkerRun(project, task, 'run-1', 0, undefined, [], {
+      interactive: true,
+    });
+
+    expect(run.spec.source?.git?.ref).toBe('feature/recorded');
+    expect(run.spec.source?.git?.parentRef).toBe('feature/parent');
+  });
+
+  it('falls back to the resolved feature branch when no branch is recorded', async () => {
+    const project = featureProject();
+    const task = buildTask('build-99');
+
+    const run = await buildWorkerRun(project, task, 'run-1', 0, undefined, [task], {
+      interactive: true,
+    });
+
+    expect(run.spec.source?.git?.ref).toBe('feature/build-99');
+    expect(run.spec.source?.git?.parentRef).toBe('main');
+  });
+
+  it('leaves the default worker path unchanged when options are omitted', async () => {
+    const run = await buildWorkerRun(featureProject(), buildTask(), 'run-1', 0);
+
+    expect(run.spec.interactive).toBe(false);
+    expect(run.spec.task).toContain('TASK: build-123');
+    expect(run.spec.agent).toBe('builder');
+    expect(run.spec.timeoutSeconds).toBe(3600);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // buildMergeRun
 // ---------------------------------------------------------------------------
 

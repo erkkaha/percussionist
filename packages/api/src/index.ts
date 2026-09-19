@@ -1995,3 +1995,70 @@ export function buildRepoWebUrl(url: string): string | undefined {
   if (!parsed) return undefined;
   return `https://github.com/${parsed.owner}/${parsed.repo}`;
 }
+
+// ---------------------------------------------------------------------------
+// Interactive task runs.
+//
+// An interactive run is attached to a board Task but is auxiliary: it never
+// touches `Task.status.phase` or `Task.status.worker.runName`. The web UI, CLI,
+// and manager MCP tool all request one by writing a JSON payload to the Task
+// annotation below; the manager reconciler is the only component that creates
+// the Run. The run name is derived from a writer-generated request id so a
+// retry after a partial failure recreates the same name and the AlreadyExists
+// response is adopted instead of duplicating work.
+
+/** Task annotation carrying an `InteractiveRunRequest` JSON payload. */
+export const INTERACTIVE_RUN_ANNOTATION = 'percussionist.dev/action-interactive';
+
+export const InteractiveRunRequestSchema = z.object({
+  id: z.string().regex(/^[a-z0-9]{4,16}$/),
+  agent: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  timeoutSeconds: z.number().int().positive().max(86_400).optional(),
+});
+export type InteractiveRunRequest = z.infer<typeof InteractiveRunRequestSchema>;
+
+/**
+ * Compute a deterministic run name for an interactive task run.
+ *
+ * Format: `{project}-interactive-{mid}-{requestId}`, where `mid` is derived
+ * from the task name with any project-name prefix stripped. The result is a
+ * valid DNS-1123 label of at most 63 characters; the middle segment is
+ * truncated and, for pathologically long project names, the project prefix is
+ * shortened as well — but the request id suffix is always preserved so the
+ * name stays collision-resistant.
+ *
+ * Pure string operations only: the api package is imported by the browser
+ * bundle, so `node:crypto` must not be used here (see `parseGitHubUrl`).
+ */
+export function interactiveRunName(
+  projectName: string,
+  taskName: string,
+  requestId: string,
+): string {
+  const sanitize = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+  const project = sanitize(projectName) || 'project';
+  const task = sanitize(taskName);
+  const stripped = task.startsWith(`${project}-`) ? task.slice(project.length + 1) : task;
+
+  const literal = '-interactive-';
+  const tail = `-${requestId}`;
+
+  let prefix = project;
+  let maxMid = 63 - prefix.length - literal.length - tail.length;
+  if (maxMid < 1) {
+    // The project name alone leaves no room for the middle segment — shorten
+    // it, keeping the leading portion (and always at least one character).
+    const prefixBudget = 63 - literal.length - tail.length - 1;
+    prefix = prefix.slice(0, Math.max(prefixBudget, 1)).replace(/-+$/g, '');
+    maxMid = 63 - prefix.length - literal.length - tail.length;
+  }
+
+  const mid = stripped.slice(0, maxMid).replace(/-+$/g, '') || 'x';
+  return `${prefix}${literal}${mid}${tail}`;
+}
