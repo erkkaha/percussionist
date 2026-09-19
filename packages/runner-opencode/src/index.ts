@@ -30,6 +30,7 @@ import {
   type AgentFile,
   apiCredentials,
   buildConfigContent,
+  envCredentials,
   materializeAuthFile,
 } from './config.js';
 import { RunnerHost, type V1Event } from './host.js';
@@ -83,6 +84,18 @@ async function main(): Promise<void> {
   for (const w of built.warnings) warn(w);
   const authPath = materializeAuthFile(authContent);
   if (authPath) log(`auth: legacy auth.json materialized at ${authPath}`);
+  // Env-method credentials must be in place before the SDK boots; it reads the
+  // environment when it builds the provider registry.
+  for (const cred of envCredentials(authContent)) {
+    if (process.env[cred.env] && process.env[cred.env] !== cred.value) {
+      warn(
+        `auth: ${cred.env} is already set in the pod (githubTokenSecret?); leaving it — ${cred.providerID} will use that token, not the one from auth.json`,
+      );
+      continue;
+    }
+    process.env[cred.env] = cred.value;
+    log(`auth: ${cred.providerID} token exposed as ${cred.env}`);
+  }
 
   const host = await RunnerHost.start({
     workspace: WORKSPACE,

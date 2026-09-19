@@ -129,6 +129,10 @@ export function buildConfigContent(opts: BuildConfigOptions): BuildConfigResult 
       const entry = asObject(raw);
       if (entry.type === 'api' && typeof entry.key === 'string') {
         notes.push(`auth: ${providerID} api key will be registered with the SDK`);
+      } else if (OAUTH_ENV_CREDENTIALS[providerID]) {
+        notes.push(
+          `auth: ${providerID} token will be exposed as ${OAUTH_ENV_CREDENTIALS[providerID]?.env}`,
+        );
       } else {
         warnings.push(
           `auth: ${providerID} credential of type "${String(entry.type)}" cannot be injected into the embedded host; relying on the legacy auth.json import`,
@@ -170,6 +174,39 @@ export function buildConfigContent(opts: BuildConfigOptions): BuildConfigResult 
   }
 
   return { content: JSON.stringify(config), notes, warnings };
+}
+
+/**
+ * v1 `type: oauth` entries that are really a long-lived token the SDK can take
+ * from the environment. OpenCode 1.x stored the GitHub device-flow token
+ * (`gho_…`, expires 0) under github-copilot's `refresh`/`access` and minted
+ * short-lived Copilot tokens from it; OpenCode 2 has no key method for that
+ * integration but reads the same token from GITHUB_TOKEN.
+ */
+export const OAUTH_ENV_CREDENTIALS: Record<string, { env: string; fields: string[] }> = {
+  'github-copilot': { env: 'GITHUB_TOKEN', fields: ['refresh', 'access'] },
+};
+
+export type EnvCredential = { providerID: string; env: string; value: string };
+
+/** Env-var credentials derived from oauth entries (see OAUTH_ENV_CREDENTIALS). */
+export function envCredentials(authContent: string | undefined): EnvCredential[] {
+  if (!authContent || authContent.trim() === '') return [];
+  let auth: Json;
+  try {
+    auth = asObject(JSON.parse(authContent));
+  } catch {
+    return [];
+  }
+  const out: EnvCredential[] = [];
+  for (const [providerID, raw] of Object.entries(auth)) {
+    const map = OAUTH_ENV_CREDENTIALS[providerID];
+    const entry = asObject(raw);
+    if (!map || entry.type !== 'oauth') continue;
+    const value = map.fields.map((f) => entry[f]).find((v) => typeof v === 'string' && v !== '');
+    if (typeof value === 'string') out.push({ providerID, env: map.env, value });
+  }
+  return out;
 }
 
 /** The `type: api` entries of a v1 auth.json, for RunnerHost credential registration. */

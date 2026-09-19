@@ -32,7 +32,7 @@ called a plugin-registered tool and returned in two steps for $0.0016.
 | Transcript: `{ info: { role, tokens, cost, model }, parts[] }` with `text`/`tool`/`step-finish` parts | Flat messages typed `user`/`assistant`/`idle`/`model-switched`; assistant `content[]` of `text`/`reasoning`/`tool`; `tokens`/`cost` on the message | `src/translate.ts` (+ tests) |
 | Tool parts name the tool directly | "Code Mode": the model calls one `execute` tool; real calls sit in `state.metadata.toolCalls[]` | `translate.ts` unwraps them into per-tool parts |
 | SSE `message.updated`, `session.idle`, `permission.updated` | `session.step.ended`, `session.execution.succeeded/failed`, `session.usage.updated`, … | `src/host.ts` event pump maps to the three v1 events |
-| `OPENCODE_AUTH_CONTENT` (v1 `auth.json`) | No auth env var; credentials live in the SDK database (in-memory when embedded) | `host.ts` registers `type: api` keys via `integration.connect.key` after the catalog loads; `prompt()` waits for the requested model to become listed |
+| `OPENCODE_AUTH_CONTENT` (v1 `auth.json`) | No auth env var; credentials live in the SDK database (in-memory when embedded) | `host.ts` registers `type: api` keys via `integration.connect.key` after the catalog loads; `prompt()` waits for the requested model to become listed. The github-copilot `oauth` entry is really the long-lived GitHub token (`gho_…`, `expires: 0`); v2's integration only offers a device flow or `GITHUB_TOKEN`, so `index.ts` exposes that token as `GITHUB_TOKEN` before the SDK boots (not clobbering a pod-provided one) |
 | `OPENCODE_CONFIG_CONTENT` | Still read; also `OpenCode.create({ config: { content } })`. v1 keys are normalized (`provider→providers`, `npm→package`, `options→settings`, `mcp→mcp.servers`, `agent→agents`) | `src/config.ts` builds one document from config + auth + agent files |
 | Agent files in `~/.config/opencode/agents/*.md` | Not observed to load from the XDG directory in 2.0.10 | `config.ts` inlines mounted agent files under the legacy `agent` key (`prompt`, `mode`, `permission`, …) |
 | Permissions answered by config / a human | Plugin permission hook (`ctx.permission.hook("evaluate")`) | `src/plugin.ts` auto-allows in headless pods (`RUNNER_PERMISSION_MODE=ask` to disable) |
@@ -97,7 +97,7 @@ Inputs the image consumes are exactly the v1 runner's:
 | Input | Source | Used for |
 |---|---|---|
 | `OPENCODE_CONFIG_CONTENT` | `opencode-config` ConfigMap (or `spec.secrets.configMap`) | providers, models, MCP servers |
-| `OPENCODE_AUTH_CONTENT` | `spec.secrets.authSecret` (`auth.json`) | `type: api` entries → `integration.connect.key`; OAuth entries are warned about and left to the SDK's legacy import |
+| `OPENCODE_AUTH_CONTENT` | `spec.secrets.authSecret` (`auth.json`) | `type: api` entries → `integration.connect.key`; github-copilot → `GITHUB_TOKEN`; other OAuth entries are warned about and left to the SDK's legacy import |
 | `/root/.config/opencode/agents/*.md` | agents ConfigMap rendered from `ClusterAgent`s | inlined as `agent.<name>` config |
 | `RUN_MODEL`, `RUN_AGENT` | via the dispatcher's POST body | `switchModel`, `switchAgent` |
 
