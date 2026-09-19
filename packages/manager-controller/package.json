@@ -13,7 +13,8 @@
   "dependencies": {
     "@kubernetes/client-node": "2.0.0",
     "@percussionist/api": "workspace:*",
-    "@percussionist/kube": "workspace:*"
+    "@percussionist/kube": "workspace:*",
+    "@percussionist/runner-opencode": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "1.4.2"

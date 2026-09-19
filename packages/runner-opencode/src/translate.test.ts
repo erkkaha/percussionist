@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { contentToText, translateMessage, translateMessages, type V2Message } from './translate.js';
+import {
+  contentToText,
+  providerListing,
+  translateMessage,
+  translateMessages,
+  type V2Message,
+} from './translate.js';
 
 // Payloads captured from @opencode/sdk 2.0.10 on 2026-09-19 (opencode-go /
 // deepseek-v4.1-flash), trimmed to the fields the translator reads.
@@ -266,5 +272,34 @@ describe('contentToText', () => {
     ).toBe('a\nb');
     expect(contentToText([{ type: 'file', uri: 'u' }])).toBeUndefined();
     expect(contentToText(undefined)).toBeUndefined();
+  });
+});
+
+describe('providerListing', () => {
+  test('groups models by provider and marks listed providers connected', () => {
+    const out = providerListing(
+      [{ id: 'opencode-go', name: 'OpenCode Go' }, { id: 'llama.cpp' }, { name: 'no-id' }],
+      [
+        { id: 'deepseek-v4.1-flash', providerID: 'opencode-go', name: 'DeepSeek V4.1 Flash' },
+        { modelID: 'muse-glimmer-30b', providerID: 'llama.cpp' },
+        { id: 'orphan', providerID: 'other' },
+      ],
+    );
+    expect(out).toEqual({
+      all: [
+        {
+          id: 'opencode-go',
+          name: 'OpenCode Go',
+          models: [{ id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' }],
+        },
+        {
+          id: 'llama.cpp',
+          name: 'llama.cpp',
+          models: [{ id: 'muse-glimmer-30b', name: 'muse-glimmer-30b' }],
+        },
+      ],
+      default: {},
+      connected: ['opencode-go', 'llama.cpp'],
+    });
   });
 });

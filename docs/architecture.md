@@ -71,7 +71,7 @@ The manager watches `Project` and `Task` CRs, implementing the board controller 
 - **Decision engine** — Evaluates task transitions, agent assignments, parallel limits
 - **MCP server** — Exposes orchestration tools (create_run, force_retry, etc.) on port 4097
 - **Chat handler** — Interactive agent chat on port 4098
-- **OpenCode web** — Sidecar on port 4096
+- **Embedded OpenCode 2 host** — `@percussionist/runner-opencode` facade in the manager process on 127.0.0.1:4096 (replaced the `opencode-web` sidecar in v0.2.24)
 
 ### Controller Pattern
 

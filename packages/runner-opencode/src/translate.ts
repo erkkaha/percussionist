@@ -310,3 +310,33 @@ export function translateMessages(sessionID: string, messages: V2Message[]): Tra
     .map(({ m }) => translateMessage(sessionID, m))
     .filter((m): m is TranscriptMessage => m !== undefined);
 }
+
+// ---------------------------------------------------------------------------
+// v1 `GET /provider`
+//
+// The manager's list_models tool reads `{ all: [{ id, name, models }],
+// default, connected }` and keeps only providers named in `connected`.
+
+export type V2Provider = { id?: string; name?: string };
+export type V2ModelEntry = { id?: string; modelID?: string; providerID?: string; name?: string };
+
+export type ProviderListing = {
+  all: Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>;
+  default: Record<string, string>;
+  connected: string[];
+};
+
+export function providerListing(providers: V2Provider[], models: V2ModelEntry[]): ProviderListing {
+  const byProvider = new Map<string, Array<{ id: string; name: string }>>();
+  for (const m of models) {
+    const id = m.id ?? m.modelID;
+    if (!m.providerID || !id) continue;
+    const list = byProvider.get(m.providerID) ?? [];
+    list.push({ id, name: m.name ?? id });
+    byProvider.set(m.providerID, list);
+  }
+  const all = providers
+    .filter((p): p is V2Provider & { id: string } => typeof p.id === 'string')
+    .map((p) => ({ id: p.id, name: p.name ?? p.id, models: byProvider.get(p.id) ?? [] }));
+  return { all, default: {}, connected: all.map((p) => p.id) };
+}

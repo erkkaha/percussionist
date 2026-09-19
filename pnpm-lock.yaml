@@ -125,6 +125,9 @@ importers:
       '@percussionist/kube':
         specifier: workspace:*
         version: link:../kube
+      '@percussionist/runner-opencode':
+        specifier: workspace:*
+        version: link:../runner-opencode
     devDependencies:
       '@types/bun':
         specifier: 1.4.2

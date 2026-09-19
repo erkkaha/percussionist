@@ -4,74 +4,77 @@
 #   docker build -t percussionist/operator:dev          --build-arg PKG=operator           -f images/node/Dockerfile .
 #   docker build -t percussionist/dispatcher:dev        --build-arg PKG=dispatcher         -f images/node/Dockerfile .
 #   docker build -t percussionist/manager:dev           --build-arg PKG=manager-controller -f images/node/Dockerfile .
+#
+# Each image installs and builds only its own dependency subgraph
+# (`pnpm --filter <pkg>...`). That matters since the manager pulled in
+# @percussionist/runner-opencode (OpenCode 2 embedded, ~450 MB of
+# node_modules): sharing one install would have grown the operator and
+# dispatcher images by the same amount for nothing.
 
 ARG NODE_VERSION=24
 
-# --- deps stage: install workspace deps once ---------------------------------
+# --- deps stage: install this package's workspace subgraph -------------------
 FROM node:${NODE_VERSION}-alpine AS deps
+ARG PKG
 RUN apk add --no-cache libc6-compat
 RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
 
 WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
-COPY packages/api/package.json              packages/api/package.json
-COPY packages/kube/package.json             packages/kube/package.json
-COPY packages/operator/package.json         packages/operator/package.json
-COPY packages/dispatcher/package.json       packages/dispatcher/package.json
+COPY packages/api/package.json                packages/api/package.json
+COPY packages/kube/package.json               packages/kube/package.json
+COPY packages/operator/package.json           packages/operator/package.json
+COPY packages/dispatcher/package.json         packages/dispatcher/package.json
 COPY packages/manager-controller/package.json packages/manager-controller/package.json
-RUN pnpm install --frozen-lockfile --config.strict-dep-builds=false
+COPY packages/runner-opencode/package.json    packages/runner-opencode/package.json
+# The filter needs the package *name*; the directory is what the build arg
+# names. pnpm resolves `{packages/<dir>}...` to the package and its deps.
+# --ignore-scripts: the OpenCode SDK's native transitive deps ship prebuilt
+# binaries; nothing else here has install scripts that matter.
+RUN pnpm install --frozen-lockfile --ignore-scripts --config.strict-dep-builds=false \
+      --filter "{packages/${PKG}}..."
 
 # --- build stage: compile TS --------------------------------------------------
 FROM deps AS build
 ARG PKG
-COPY packages/api/src                        packages/api/src
-COPY packages/api/tsconfig.json              packages/api/tsconfig.json
-COPY packages/kube/src                       packages/kube/src
-COPY packages/kube/tsconfig.json             packages/kube/tsconfig.json
-COPY packages/operator/src                   packages/operator/src
-COPY packages/operator/tsconfig.json         packages/operator/tsconfig.json
-COPY packages/dispatcher/src                 packages/dispatcher/src
-COPY packages/dispatcher/tsconfig.json       packages/dispatcher/tsconfig.json
-COPY packages/manager-controller/src         packages/manager-controller/src
+COPY packages/api/src                          packages/api/src
+COPY packages/api/tsconfig.json                packages/api/tsconfig.json
+COPY packages/kube/src                         packages/kube/src
+COPY packages/kube/tsconfig.json               packages/kube/tsconfig.json
+COPY packages/operator/src                     packages/operator/src
+COPY packages/operator/tsconfig.json           packages/operator/tsconfig.json
+COPY packages/dispatcher/src                   packages/dispatcher/src
+COPY packages/dispatcher/tsconfig.json         packages/dispatcher/tsconfig.json
+COPY packages/manager-controller/src           packages/manager-controller/src
 COPY packages/manager-controller/tsconfig.json packages/manager-controller/tsconfig.json
-# Clean dist dirs first to avoid tsc incremental compilation skipping new files
-RUN rm -rf packages/api/dist packages/kube/dist packages/operator/dist \
-         packages/dispatcher/dist packages/manager-controller/dist \
- && pnpm --config.strict-dep-builds=false -C packages/api              run build \
- && pnpm --config.strict-dep-builds=false -C packages/kube             run build \
- && pnpm --config.strict-dep-builds=false -C packages/operator         run build \
- && pnpm --config.strict-dep-builds=false -C packages/dispatcher       run build \
- && pnpm --config.strict-dep-builds=false -C packages/manager-controller run build
+COPY packages/runner-opencode/src              packages/runner-opencode/src
+COPY packages/runner-opencode/tsconfig.json    packages/runner-opencode/tsconfig.json
+# Clean dist dirs first to avoid tsc incremental compilation skipping new files,
+# then build the subgraph in dependency order (pnpm -r honours the graph).
+RUN rm -rf packages/*/dist \
+ && pnpm --config.strict-dep-builds=false -r --filter "{packages/${PKG}}..." run build
+# Stage exactly what the runtime needs: the root store plus each built
+# package's dist, manifest and own node_modules links. Packages outside the
+# subgraph have no dist and are skipped.
+RUN mkdir -p /out \
+ && cp -a --parents node_modules /out/ \
+ && for p in packages/*; do \
+      [ -d "$p/dist" ] || continue; \
+      cp -a --parents "$p/dist" "$p/package.json" /out/; \
+      [ -d "$p/node_modules" ] && cp -a --parents "$p/node_modules" /out/ || true; \
+    done
 
-# --- runtime: minimal node image with all built packages --------------------
+# --- runtime: minimal node image with the built subgraph ---------------------
 FROM node:${NODE_VERSION}-alpine AS runtime
 ARG PKG
 ENV NODE_ENV=production
 # git + openssh-client: the dispatcher sidecar runs git in the run workspace
-# (clean-tree check and refs/percussionist/* branch publish on completion).
+# (clean-tree check and refs/percussionist/* branch publish on completion);
+# the manager's embedded OpenCode host uses git for its vcs status.
 RUN apk add --no-cache tini git openssh-client ca-certificates
 
 WORKDIR /app
-
-# Copy the built JS plus node_modules. We ship the whole workspace's
-# node_modules because pnpm symlinks across packages; splitting is possible
-# but not worth the complexity at M2 scale.
-COPY --from=build /repo/node_modules                     /app/node_modules
-COPY --from=build /repo/packages/api/dist                /app/packages/api/dist
-COPY --from=build /repo/packages/api/package.json        /app/packages/api/package.json
-COPY --from=build /repo/packages/api/node_modules        /app/packages/api/node_modules
-COPY --from=build /repo/packages/kube/dist               /app/packages/kube/dist
-COPY --from=build /repo/packages/kube/package.json       /app/packages/kube/package.json
-COPY --from=build /repo/packages/kube/node_modules       /app/packages/kube/node_modules
-COPY --from=build /repo/packages/operator/dist           /app/packages/operator/dist
-COPY --from=build /repo/packages/operator/package.json   /app/packages/operator/package.json
-COPY --from=build /repo/packages/operator/node_modules   /app/packages/operator/node_modules
-COPY --from=build /repo/packages/dispatcher/dist         /app/packages/dispatcher/dist
-COPY --from=build /repo/packages/dispatcher/package.json /app/packages/dispatcher/package.json
-COPY --from=build /repo/packages/dispatcher/node_modules /app/packages/dispatcher/node_modules
-COPY --from=build /repo/packages/manager-controller/dist /app/packages/manager-controller/dist
-COPY --from=build /repo/packages/manager-controller/package.json /app/packages/manager-controller/package.json
-COPY --from=build /repo/packages/manager-controller/node_modules /app/packages/manager-controller/node_modules
+COPY --from=build /out /app
 
 ENV PKG=${PKG}
 ENTRYPOINT ["/sbin/tini", "--"]

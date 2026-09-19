@@ -5,10 +5,14 @@ import { OpenCode } from '@opencode/sdk';
 import { type PermissionMode, percussionistPlugin } from './plugin.js';
 import {
   type MessageInfo,
+  type ProviderListing,
+  providerListing,
   type TranscriptMessage,
   translateMessage,
   translateMessages,
   type V2Message,
+  type V2ModelEntry,
+  type V2Provider,
 } from './translate.js';
 
 export type ApiCredential = { providerID: string; key: string };
@@ -123,14 +127,30 @@ export class RunnerHost {
     }
   }
 
-  async createSession(title: string): Promise<SessionSummary> {
+  async createSession(title: string, agent?: string): Promise<SessionSummary> {
     const s = await this.sdk.sessions.create({
       location: { directory: this.opts.workspace },
       ...(title ? { title } : {}),
+      ...(agent ? { agent: agent as never } : {}),
     });
-    const summary = { id: s.id, title };
+    const summary = { id: s.id, title, ...(agent ? { agent } : {}) };
     this.sessions.set(s.id, summary);
     return summary;
+  }
+
+  /**
+   * v1 `GET /provider` shape: `{ all, default, connected }`. provider.list is
+   * the set of providers that are configured or connected; models come from
+   * model.list grouped by provider.
+   */
+  async providers(): Promise<ProviderListing> {
+    const location = { directory: this.opts.workspace };
+    const providersRes = await this.sdk.provider.list({ location });
+    const modelsRes = await this.sdk.model.list({ location });
+    return providerListing(
+      providersRes.data as unknown as V2Provider[],
+      modelsRes.data as unknown as V2ModelEntry[],
+    );
   }
 
   listSessions(): SessionSummary[] {

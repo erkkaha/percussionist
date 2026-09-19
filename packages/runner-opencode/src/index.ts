@@ -5,9 +5,11 @@
 // The endpoint set is exactly what packages/dispatcher already calls (see
 // dispatcher/src/session.ts, the BASE_URL fetches in dispatcher/src/polling.ts
 // and dispatcher/src/stats-reporter.ts); packages/runner-claude serves the same
-// set over the Claude Agent SDK:
+// set over the Claude Agent SDK, and the manager controller embeds this same
+// facade in-process (see facade.ts):
 //
 //   GET  /global/health          → { healthy, version }
+//   GET  /provider               → { all, default, connected }  (manager list_models)
 //   POST /session                → { id, title }        (dispatcher creates first)
 //   GET  /session                → [{ id, title }]
 //   GET  /session/:id/message    → transcript, oldest first
@@ -19,21 +21,8 @@
 // also installs an `opencode` shim that accepts `serve --hostname … --port …`,
 // so it is a drop-in `spec.image` for the default engine.
 
-import { readdirSync, readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { join } from 'node:path';
-import { inspect } from 'node:util';
-import { serve } from '@hono/node-server';
-import { Hono } from 'hono';
-import { streamSSE } from 'hono/streaming';
-import {
-  type AgentFile,
-  apiCredentials,
-  buildConfigContent,
-  envCredentials,
-  materializeAuthFile,
-} from './config.js';
-import { RunnerHost, type V1Event } from './host.js';
+import { startFacade } from './facade.js';
 import type { PermissionMode } from './plugin.js';
 
 const PORT = Number(
@@ -49,169 +38,28 @@ const PERMISSION_MODE: PermissionMode =
   process.env.RUNNER_PERMISSION_MODE === 'ask' ? 'ask' : 'allow';
 const LOG_EVENTS = process.env.RUNNER_LOG_EVENTS === '1';
 
-const require = createRequire(import.meta.url);
-/** The exact @opencode/sdk pin from this package's manifest (its own package.json is not exported). */
-const SDK_VERSION: string =
-  (require('../package.json') as { dependencies?: Record<string, string> }).dependencies?.[
-    '@opencode/sdk'
-  ] ?? 'unknown';
-const VERSION = process.env.RUNNER_OPENCODE_VERSION ?? `sdk-${SDK_VERSION}`;
-
 const log = (msg: string): void => console.log(`[runner-opencode] ${msg}`);
 const warn = (msg: string): void => console.error(`[runner-opencode] ${msg}`);
 
-function readAgentFiles(dir: string): AgentFile[] {
-  try {
-    return readdirSync(dir)
-      .filter((f) => f.endsWith('.md'))
-      .sort()
-      .map((f) => ({ name: f.replace(/\.md$/, ''), content: readFileSync(join(dir, f), 'utf8') }));
-  } catch {
-    return [];
-  }
-}
-
 async function main(): Promise<void> {
-  const authContent = process.env.OPENCODE_AUTH_CONTENT;
-  const agentFiles = readAgentFiles(AGENTS_DIR);
-  const built = buildConfigContent({
-    configContent: process.env.OPENCODE_CONFIG_CONTENT,
-    authContent,
-    agentFiles,
-    dispatcherMcpUrl: DISPATCHER_MCP_URL,
-  });
-  for (const n of built.notes) log(n);
-  for (const w of built.warnings) warn(w);
-  const authPath = materializeAuthFile(authContent);
-  if (authPath) log(`auth: legacy auth.json materialized at ${authPath}`);
-  // Env-method credentials must be in place before the SDK boots; it reads the
-  // environment when it builds the provider registry.
-  for (const cred of envCredentials(authContent)) {
-    if (process.env[cred.env] && process.env[cred.env] !== cred.value) {
-      warn(
-        `auth: ${cred.env} is already set in the pod (githubTokenSecret?); leaving it — ${cred.providerID} will use that token, not the one from auth.json`,
-      );
-      continue;
-    }
-    process.env[cred.env] = cred.value;
-    log(`auth: ${cred.providerID} token exposed as ${cred.env}`);
-  }
-
-  const host = await RunnerHost.start({
+  const facade = await startFacade({
     workspace: WORKSPACE,
-    configContent: built.content,
-    credentials: apiCredentials(authContent),
+    configContent: process.env.OPENCODE_CONFIG_CONTENT,
+    authContent: process.env.OPENCODE_AUTH_CONTENT,
+    agentsDir: AGENTS_DIR,
+    dispatcherMcpUrl: DISPATCHER_MCP_URL,
+    port: PORT,
+    hostname: '0.0.0.0',
     permissionMode: PERMISSION_MODE,
     logEvents: LOG_EVENTS,
+    version: process.env.RUNNER_OPENCODE_VERSION,
     log,
     warn,
   });
-  const sdkVersion = await host.version();
-
-  const app = new Hono();
-  app.onError((e, c) => {
-    // SDK errors are Effect failures, not always Error instances; inspect()
-    // renders them without risking a second throw inside the handler.
-    const detail = inspect(e, { depth: 4, breakLength: Infinity }).slice(0, 2000);
-    warn(`${c.req.method} ${c.req.path} failed: ${detail}`);
-    return c.json({ error: e instanceof Error ? e.message : detail.slice(0, 300) }, 500);
-  });
-
-  app.get('/global/health', (c) => c.json({ healthy: true, version: VERSION, sdk: sdkVersion }));
-
-  app.post('/session', async (c) => {
-    const body = await c.req.json<{ title?: string }>().catch(() => ({}) as { title?: string });
-    const s = await host.createSession(body.title ?? '');
-    log(`session ${s.id} created (${s.title || 'untitled'})`);
-    return c.json(s);
-  });
-
-  app.get('/session', (c) => c.json(host.listSessions()));
-
-  app.get('/session/:id/message', async (c) => {
-    const id = c.req.param('id');
-    if (!host.has(id)) return c.json({ error: 'no such session' }, 404);
-    return c.json(await host.messages(id));
-  });
-
-  app.post('/session/:id/message', async (c) => {
-    const id = c.req.param('id');
-    if (!host.has(id)) return c.json({ error: 'no such session' }, 404);
-
-    const body = await c.req.json<{
-      parts?: Array<{ type?: string; text?: string }>;
-      agent?: string;
-      model?: { providerID?: string; modelID?: string };
-    }>();
-    const text = (body.parts ?? [])
-      .filter((p) => p.type === 'text' && typeof p.text === 'string')
-      .map((p) => p.text as string)
-      .join('\n');
-    if (!text) return c.json({ error: 'no text parts in request' }, 400);
-
-    await host.prompt(id, { text, agent: body.agent, model: body.model });
-    // v1 `opencode serve` answered this call with the finished assistant
-    // message. Answering immediately is what runner-claude does and the
-    // dispatcher tolerates it: usage arrives through message.updated instead.
-    return c.json({ ok: true });
-  });
-
-  /** Not part of the contract — a one-curl diagnostic from inside the pod. */
-  app.post('/session/:id/interrupt', async (c) => {
-    const id = c.req.param('id');
-    if (!host.has(id)) return c.json({ error: 'no such session' }, 404);
-    await host.interrupt(id);
-    return c.json({ ok: true });
-  });
-
-  /**
-   * SSE. `permission.updated` is only emitted in RUNNER_PERMISSION_MODE=ask;
-   * in the default allow mode nothing ever needs a human, and emitting it
-   * would strand the run in WaitingForInput.
-   */
-  app.get('/event', (c) =>
-    streamSSE(c, async (stream) => {
-      await stream.writeSSE({
-        data: JSON.stringify({ type: 'server.connected' } satisfies V1Event),
-      });
-
-      const queue: string[] = [];
-      let wake: (() => void) | undefined;
-      const unsubscribe = host.subscribe((ev) => {
-        queue.push(JSON.stringify(ev));
-        wake?.();
-      });
-      try {
-        while (!stream.closed) {
-          const next = queue.shift();
-          if (next === undefined) {
-            await new Promise<void>((resolve) => {
-              wake = resolve;
-              setTimeout(resolve, 15_000);
-            });
-            wake = undefined;
-            // Keep-alive so an idle connection is not dropped mid-run.
-            if (queue.length === 0) await stream.writeSSE({ data: '', event: 'ping' });
-            continue;
-          }
-          await stream.writeSSE({ data: next });
-        }
-      } finally {
-        unsubscribe();
-      }
-    }),
-  );
-
-  const server = serve({ fetch: app.fetch, port: PORT, hostname: '0.0.0.0' });
-  log(`${VERSION} listening on 0.0.0.0:${PORT} (cwd=${WORKSPACE}, sdk=${sdkVersion})`);
-  log(`permission mode: ${PERMISSION_MODE}`);
-  log(`dispatcher MCP:  ${DISPATCHER_MCP_URL}`);
-  log(`agents dir:      ${AGENTS_DIR} (${agentFiles.length} file(s))`);
 
   const shutdown = async (signal: string): Promise<void> => {
     log(`${signal} received; closing host`);
-    server.close();
-    await host
+    await facade
       .close()
       .catch((e) => warn(`close failed: ${e instanceof Error ? e.message : String(e)}`));
     process.exit(0);

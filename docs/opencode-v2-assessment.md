@@ -119,6 +119,35 @@ BASE_URL=http://127.0.0.1:4396 MODEL=opencode-go/deepseek-v4.1-flash AGENT=build
   node packages/runner-opencode/scripts/smoke.mjs
 ```
 
+## Manager: the sidecar is now in-process
+
+`k8s/deploy/manager-controller.yaml` no longer has an `opencode-web`
+container. `packages/manager-controller/src/agent/embedded.ts` starts the same
+runner-opencode facade inside the manager process, bound to 127.0.0.1:4096, so
+`agent/session.ts`, `stats-reporter.ts`, the chat handler and the `list_models`
+tool (which needs `GET /provider`, added to the facade) keep speaking the v1
+HTTP API unchanged. The manager container now receives what the sidecar used
+to: `OPENCODE_CONFIG_CONTENT` from `agent-config`, `OPENCODE_AUTH_CONTENT`
+from `agent-auth`, the `llm-keys` envFrom and the `agent-skills` mount. Memory
+limit went from 512Mi to 1536Mi (the SDK host adds ~300–400 MB RSS).
+`AGENT_OPENCODE_EMBEDDED=0` reverts to an external server at
+`AGENT_OPENCODE_URL`.
+
+Verified locally on 2026-09-19 by running the manager with the live cluster's
+agent-config: all four providers connected (github-copilot, opencode-go,
+opencode, llama.cpp), `POST /chat` answered through the `manager-decision`
+agent on github-copilot/gpt-5.6-luna in 4 s.
+
+**Upgrade note.** Any Flux patch that targets the `opencode-web` container
+(the cluster bootstrap raised its memory limit to 1Gi) must be removed in the
+same step as the release that drops the sidecar; a strategic-merge patch on a
+container that no longer exists re-adds it without an image and the
+Kustomization fails to apply.
+
+The shared `images/node/Dockerfile` now builds each image's own workspace
+subgraph (`pnpm --filter "{packages/<pkg>}..."`), so only the manager image
+carries the SDK's ~450 MB of `node_modules`.
+
 ## Not done, and why
 
 - **Dispatcher / manager migration to the typed v2 client** (plan tracks A and
@@ -128,8 +157,6 @@ BASE_URL=http://127.0.0.1:4396 MODEL=opencode-go/deepseek-v4.1-flash AGENT=build
   `polling.ts`, `stats-reporter.ts` and the dashboard's transcript views for a
   schema that is still moving several times a week. Revisit once the v2 API
   settles.
-- **Manager `opencode-web` sidecar embedding.** Same reasoning; the manager's
-  client is small and works against the pinned 1.18 sidecar.
 - **Percussionist tools as plugin tools instead of MCP.** The remote MCP stanza
   works unchanged in v2, and the MCP control points are what the deterministic
   e2e fixtures rely on.

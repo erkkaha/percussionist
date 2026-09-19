@@ -3,7 +3,14 @@
   "version": "0.2.25",
   "private": true,
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./dist/facade.js",
+  "types": "./dist/facade.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/facade.d.ts",
+      "import": "./dist/facade.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json",
