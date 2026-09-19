@@ -248,6 +248,29 @@ describe('AttentionPage', () => {
     expect(screen.getByText('builder')).toBeTruthy();
     expect(screen.getByText('tests failed')).toBeTruthy();
   });
+
+  it('marks open-PR items with a distinct waiting-on-GitHub badge', async () => {
+    attentionMock.data = response([
+      makeItem({
+        taskName: 'pr-1',
+        title: 'Open PR build',
+        phase: 'awaiting-feature-merge',
+        reason: 'Merge PR #7 on GitHub',
+        detail: 'checks failing',
+      }),
+    ]);
+
+    await renderPage(makeQueryClient());
+
+    const reason = screen.getByText('Merge PR #7 on GitHub');
+    expect(reason.className).toContain('text-phase-initializing');
+    expect(screen.getByTestId('waiting-on-github').textContent).toContain('waiting on GitHub');
+    expect(screen.getByText('checks failing')).toBeTruthy();
+    // GitHub-merge items are not in-app approval gates.
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Open' })).toBeTruthy();
+  });
 });
 
 // ---------------------------------------------------------------------------

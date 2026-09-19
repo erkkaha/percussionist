@@ -10,6 +10,7 @@ import {
   attentionSince,
   collectAttention,
   isAttentionPhase,
+  isOpenPrAttention,
 } from '../src/server/lib/attention.js';
 
 interface TaskOverrides {
@@ -81,6 +82,37 @@ describe('isAttentionPhase', () => {
     }
     expect(isAttentionPhase(undefined)).toBe(false);
   });
+
+  it('keeps awaiting-feature-merge out of the push-parity set', () => {
+    // The open-PR extension is opt-in and must not silently join the pushed set,
+    // or the documented push/inbox parity would break.
+    expect(ATTENTION_PHASES).not.toContain('awaiting-feature-merge' as never);
+  });
+});
+
+describe('isOpenPrAttention', () => {
+  it('accepts only awaiting-feature-merge with an open, unmerged PR', () => {
+    expect(
+      isOpenPrAttention(
+        makeTask({ phase: 'awaiting-feature-merge', worker: { status: 'Succeeded', prNumber: 7 } }),
+      ),
+    ).toBe(true);
+    // Merged PR is done, not waiting.
+    expect(
+      isOpenPrAttention(
+        makeTask({
+          phase: 'awaiting-feature-merge',
+          worker: { status: 'Succeeded', prNumber: 7, mergedAt: '2024-05-01T00:00:00Z' },
+        }),
+      ),
+    ).toBe(false);
+    // No PR number (auto/manual merge) is not an open-PR gate.
+    expect(isOpenPrAttention(makeTask({ phase: 'awaiting-feature-merge' }))).toBe(false);
+    // Other phases never qualify.
+    expect(isOpenPrAttention(makeTask({ phase: 'awaiting-human', worker: { prNumber: 7 } }))).toBe(
+      false,
+    );
+  });
 });
 
 describe('attentionReason', () => {
@@ -93,6 +125,18 @@ describe('attentionReason', () => {
       'Review and approve',
     );
     expect(attentionReason(makeTask({ phase: 'failed' }))).toBe('Failed — retry or abandon');
+  });
+
+  it('names the PR for an open awaiting-feature-merge task', () => {
+    expect(
+      attentionReason(
+        makeTask({ phase: 'awaiting-feature-merge', worker: { status: 'Succeeded', prNumber: 7 } }),
+      ),
+    ).toBe('Merge PR #7 on GitHub');
+    // No PR number → generic, but still actionable.
+    expect(attentionReason(makeTask({ phase: 'awaiting-feature-merge' }))).toBe(
+      'Merge feature branch',
+    );
   });
 });
 
@@ -118,6 +162,22 @@ describe('attentionDetail', () => {
   it('has no detail for awaiting-human and never throws on bad input', () => {
     expect(attentionDetail(makeTask({ phase: 'awaiting-human' }))).toBeUndefined();
     expect(attentionDetail(null as unknown as Task)).toBeUndefined();
+  });
+
+  it('surfaces worker.mergeError for an open awaiting-feature-merge task', () => {
+    expect(
+      attentionDetail(
+        makeTask({
+          phase: 'awaiting-feature-merge',
+          worker: { status: 'Failed', prNumber: 7, mergeError: 'push rejected' },
+        }),
+      ),
+    ).toBe('push rejected');
+    expect(
+      attentionDetail(
+        makeTask({ phase: 'awaiting-feature-merge', worker: { status: 'Succeeded', prNumber: 7 } }),
+      ),
+    ).toBeUndefined();
   });
 });
 
@@ -253,5 +313,39 @@ describe('collectAttention', () => {
     );
     expect(item?.phase).toBe('awaiting-human');
     expect(item?.reason).toBe('Review and approve');
+  });
+
+  it('includes open-PR awaiting-feature-merge tasks with the GitHub reason and detail', () => {
+    const items = collectAttention([
+      makeTask({
+        name: 'open-pr',
+        phase: 'awaiting-feature-merge',
+        worker: { status: 'Succeeded', prNumber: 12, mergeError: 'checks failing' },
+      }),
+      // Merged PR, no PR number, and other non-pushed phases must not appear.
+      makeTask({
+        name: 'merged',
+        phase: 'awaiting-feature-merge',
+        worker: { status: 'Succeeded', prNumber: 13, mergedAt: '2024-05-01T00:00:00Z' },
+      }),
+      makeTask({ name: 'no-pr', phase: 'awaiting-feature-merge', worker: { status: 'Succeeded' } }),
+      makeTask({ name: 'running', phase: 'running' }),
+    ]);
+
+    expect(items.map((item) => item.taskName)).toEqual(['open-pr']);
+    expect(items[0]).toMatchObject({
+      phase: 'awaiting-feature-merge',
+      reason: 'Merge PR #12 on GitHub',
+      detail: 'checks failing',
+    });
+  });
+
+  it('sorts open-PR items together with the core gates, oldest first', () => {
+    const items = collectAttention([
+      makeTask({ name: 'new-pr', phase: 'awaiting-feature-merge', worker: { prNumber: 1 } }),
+      makeTask({ name: 'old-human', phase: 'awaiting-human' }),
+    ]);
+    // No timestamps → both fall back to '' and tie-break by task name.
+    expect(items.map((item) => item.taskName)).toEqual(['new-pr', 'old-human']);
   });
 });

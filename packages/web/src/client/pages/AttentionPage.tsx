@@ -8,7 +8,17 @@
 // without leaving the inbox.
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, FileText, Inbox, MessageSquare, RefreshCw, User, Wrench, X } from 'lucide-react';
+import {
+  Check,
+  FileText,
+  GitPullRequest,
+  Inbox,
+  MessageSquare,
+  RefreshCw,
+  User,
+  Wrench,
+  X,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Textarea } from '../components/ui/textarea';
@@ -21,7 +31,7 @@ import {
   retryEscalatedTask,
 } from '../lib/api';
 import { projectColor } from '../lib/project-color';
-import type { AttentionItem, AttentionPhase } from '../lib/types';
+import type { AttentionItem, AttentionItemPhase } from '../lib/types';
 
 // Same terse relative-time helper as TaskRow.tsx, so ages read identically on
 // the board and in the inbox.
@@ -39,12 +49,14 @@ function age(iso: string | undefined): string {
   return `${d}d`;
 }
 
-// Reason-badge tone per phase: questions are amber, failures red, and tasks
-// parked on approval get the neutral accent color.
-const REASON_TONE: Record<AttentionPhase, string> = {
+// Reason-badge tone per phase: questions are amber, failures red, tasks parked
+// on approval get the neutral accent color, and open-PR items take a distinct
+// orange so "waiting on GitHub" never reads as an in-app approval.
+const REASON_TONE: Record<AttentionItemPhase, string> = {
   'waiting-for-input': 'text-amber-400',
   failed: 'text-phase-failed',
   'awaiting-human': 'text-accent',
+  'awaiting-feature-merge': 'text-phase-initializing',
 };
 
 function TypeIcon({ type }: { type: AttentionItem['type'] }) {
@@ -296,6 +308,18 @@ function AttentionRow({ item }: { item: AttentionItem }) {
           <span className={`text-label-md font-mono uppercase ${REASON_TONE[item.phase]}`}>
             {item.reason}
           </span>
+
+          {/* Open-PR extension: distinct marker so an item that only push
+              omitted (count differs) is obvious at a glance. */}
+          {item.phase === 'awaiting-feature-merge' && (
+            <span
+              data-testid="waiting-on-github"
+              className="text-label-md font-mono uppercase px-1.5 py-0.5 rounded-sm bg-accent/20 text-accent flex items-center gap-0.5 shrink-0"
+            >
+              <GitPullRequest className="h-2.5 w-2.5" aria-hidden="true" />
+              waiting on GitHub
+            </span>
+          )}
 
           {item.agent && (
             <span className="text-label-md font-mono uppercase text-text-dim flex items-center gap-0.5">

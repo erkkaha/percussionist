@@ -9,19 +9,51 @@
 // waiting on a human and why.
 //
 // Deliberately free of Hono/Kube imports so it can be unit-tested directly,
-// mirroring the shape of push-triggers.ts. The phase set matches the push
+// mirroring the shape of push-triggers.ts. The core phase set matches the push
 // policy's PUSHED_TASK_PHASES so the two can never drift.
+//
+// One deliberate exception: an `awaiting-feature-merge` task with an open PR
+// (worker.prNumber set, worker.mergedAt unset) is genuinely parked on a human —
+// the PR must be merged on GitHub — but Web Push stays quiet for that phase by
+// design. It is included here as an opt-in extension, so the in-app inbox count
+// can exceed the number of push notifications the operator received. See
+// lib/push-triggers.ts for the push-side rationale.
 
 import type { Task, TaskType } from '@percussionist/api';
 
 export const ATTENTION_PHASES = ['awaiting-human', 'waiting-for-input', 'failed'] as const;
 export type AttentionPhase = (typeof ATTENTION_PHASES)[number];
 
+/** The one phase outside the push-parity set that the inbox still surfaces. */
+export const OPEN_PR_PHASE = 'awaiting-feature-merge' as const;
+
+/**
+ * Phase an inbox item can carry: the push-parity set, plus the open-PR
+ * extension. Kept separate from {@link AttentionPhase} so the push-parity
+ * contract stays explicit.
+ */
+export type AttentionItemPhase = AttentionPhase | typeof OPEN_PR_PHASE;
+
 const ATTENTION_PHASE_SET: ReadonlySet<string> = new Set(ATTENTION_PHASES);
 
-/** True for the phases that park a task on a human decision. */
+/**
+ * True for the phases that park a task on a human decision *and* are pushed.
+ * `awaiting-feature-merge` is intentionally false — use
+ * {@link isOpenPrAttention} for the opt-in extension.
+ */
 export function isAttentionPhase(phase: string | undefined): boolean {
   return phase !== undefined && ATTENTION_PHASE_SET.has(phase);
+}
+
+/**
+ * True when an `awaiting-feature-merge` task has an open PR that only a human
+ * can merge (pr-mode integration). A task with no PR number (auto/manual merge)
+ * or one already merged is excluded.
+ */
+export function isOpenPrAttention(task: AttentionSourceTask): boolean {
+  if (task.status?.phase !== OPEN_PR_PHASE) return false;
+  const worker = task.status.worker;
+  return worker?.prNumber !== undefined && worker.mergedAt === undefined;
 }
 
 /** Task status plus the board's computed worker-run message, when present. */
@@ -62,6 +94,10 @@ export function attentionReason(task: AttentionSourceTask): string {
     return task.spec.type === 'PLAN' ? 'Review plan and approve' : 'Review and approve';
   }
   if (phase === 'failed') return 'Failed — retry or abandon';
+  if (phase === OPEN_PR_PHASE) {
+    const prNumber = task.status?.worker?.prNumber;
+    return prNumber !== undefined ? `Merge PR #${prNumber} on GitHub` : 'Merge feature branch';
+  }
   return 'Needs attention';
 }
 
@@ -80,6 +116,11 @@ export function attentionDetail(task: AttentionSourceTask): string | undefined {
     }
     if (phase === 'failed') {
       return task.status?.lastFailureReason ?? task.status?.worker?.mergeError;
+    }
+    if (phase === OPEN_PR_PHASE) {
+      // The merge run records why a previous push/merge attempt failed; surface
+      // it so the operator knows GitHub is blocked on something specific.
+      return task.status?.worker?.mergeError;
     }
     return undefined;
   } catch {
@@ -101,7 +142,7 @@ export interface AttentionItem {
   type: TaskType;
   /** Agent the task is assigned to, shown on the row. */
   agent: string;
-  phase: AttentionPhase;
+  phase: AttentionItemPhase;
   reason: string;
   detail?: string;
   /**
@@ -146,7 +187,9 @@ export function collectAttention(
   for (const raw of tasks) {
     const task = withEffectivePhase(raw, runPhaseByRun);
     const phase = task.status?.phase;
-    if (!isAttentionPhase(phase)) continue;
+    // Core push-parity gates, plus the opt-in open-PR extension (which push
+    // deliberately does not cover — hence the differing count).
+    if (!isAttentionPhase(phase) && !isOpenPrAttention(task)) continue;
 
     const project = task.spec.projectRef;
     const taskName = task.metadata.name;
@@ -158,7 +201,7 @@ export function collectAttention(
       title: task.spec.title || taskName,
       type: task.spec.type,
       agent: task.spec.agent,
-      phase: phase as AttentionPhase,
+      phase: phase as AttentionItemPhase,
       reason: attentionReason(task),
       ...(detail !== undefined ? { detail } : {}),
       ...(workerRunName !== undefined ? { workerRunName } : {}),

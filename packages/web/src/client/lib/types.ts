@@ -76,6 +76,13 @@ export interface Task extends _Task {
  */
 export type AttentionPhase = 'awaiting-human' | 'waiting-for-input' | 'failed';
 
+/**
+ * Phase an inbox item can actually carry: the push-parity set plus the opt-in
+ * open-PR extension. `awaiting-feature-merge` with an open PR needs a human on
+ * GitHub but is deliberately not pushed, so the inbox count can exceed push.
+ */
+export type AttentionItemPhase = AttentionPhase | 'awaiting-feature-merge';
+
 /** One task waiting on a human, as returned by GET /api/attention. */
 export interface AttentionItem {
   project: string;
@@ -85,7 +92,7 @@ export interface AttentionItem {
   type: 'PLAN' | 'BUILD';
   /** Agent the task is assigned to, shown on the row. */
   agent: string;
-  phase: AttentionPhase;
+  phase: AttentionItemPhase;
   /** Short human-readable reason, e.g. "Answer agent question". */
   reason: string;
   /** Best-effort context (question/failure text) when the server has it. */

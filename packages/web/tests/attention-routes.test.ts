@@ -161,6 +161,37 @@ describe('GET /api/attention', () => {
     });
   });
 
+  it('includes open-PR awaiting-feature-merge tasks that push deliberately omits', async () => {
+    listTasksSpy.mockResolvedValue([
+      makeTask({
+        name: 'proj-build-pr01',
+        phase: 'awaiting-feature-merge',
+        worker: { status: 'Succeeded', prNumber: 7, mergeError: 'checks failing' },
+      }),
+      // Merged or PR-less tasks are not waiting on a human.
+      makeTask({
+        name: 'proj-build-merged',
+        phase: 'awaiting-feature-merge',
+        worker: { status: 'Succeeded', prNumber: 8, mergedAt: '2024-05-01T00:00:00Z' },
+      }),
+      makeTask({ name: 'proj-build-nopr', phase: 'awaiting-feature-merge' }),
+    ]);
+
+    const res = await get();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: { taskName: string; phase: string; reason: string; detail?: string }[];
+      count: number;
+    };
+    expect(body.items.map((item) => item.taskName)).toEqual(['proj-build-pr01']);
+    expect(body.items[0]).toMatchObject({
+      phase: 'awaiting-feature-merge',
+      reason: 'Merge PR #7 on GitHub',
+      detail: 'checks failing',
+    });
+    expect(body.count).toBe(body.items.length);
+  });
+
   it('promotes a running task whose worker run is WaitingForInput', async () => {
     listTasksSpy.mockResolvedValue([
       makeTask({
