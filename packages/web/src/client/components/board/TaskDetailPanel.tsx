@@ -384,12 +384,16 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
 
   return (
     <div className="space-y-3 px-4 py-3">
-      <div className="rounded border border-border-muted bg-surface-overlay/30 px-3 py-2 text-xs text-text-dim">
-        Base: <span className="font-mono text-text">{data.baseRef}</span>
-        {'  '}
-        Head: <span className="font-mono text-text">{data.headRef}</span>
-        {'  '}
-        Default: <span className="font-mono text-text">{data.defaultRef}</span>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded border border-border-muted bg-surface-overlay/30 px-3 py-2 text-xs text-text-dim">
+        <span className="min-w-0">
+          Base: <span className="font-mono text-text break-all">{data.baseRef}</span>
+        </span>
+        <span className="min-w-0">
+          Head: <span className="font-mono text-text break-all">{data.headRef}</span>
+        </span>
+        <span className="min-w-0">
+          Default: <span className="font-mono text-text break-all">{data.defaultRef}</span>
+        </span>
       </div>
 
       {/* Findings summary panel */}
@@ -1096,7 +1100,7 @@ function TaskDetailPanelInner({
 
   return (
     <div
-      className={`flex flex-col h-full min-h-0 border-l border-border ${focused ? 'md:border-l-0' : ''}`}
+      className={`flex flex-col h-full min-h-0 min-w-0 border-l border-border ${focused ? 'md:border-l-0' : ''}`}
     >
       {/* Header */}
       <div className="shrink-0 px-4 pt-4 pb-3 border-b border-border space-y-2">
@@ -1418,7 +1422,7 @@ function TaskDetailPanelInner({
       )}
 
       {/* Tab content — scrollable */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-w-0 overflow-y-auto">
         {activeTab === 'overview' && (
           <OverviewContent
             task={task}
