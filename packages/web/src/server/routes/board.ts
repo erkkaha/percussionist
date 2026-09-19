@@ -10,11 +10,15 @@
 // DELETE /api/projects/:project/board/tasks/:taskName         — delete an Task CR
 // POST   /api/projects/:project/board/tasks/:taskName/approve — set approved annotation
 // POST   /api/projects/:project/board/tasks/:taskName/request-changes
+// POST   /api/projects/:project/board/tasks/:taskName/interactive-run — request an auxiliary interactive run
 
 import { randomBytes } from 'node:crypto';
 import {
   buildRepoWebUrl,
   computeBoardColumn,
+  INTERACTIVE_RUN_ANNOTATION,
+  InteractiveRunRequestSchema,
+  interactiveRunName,
   type RunPhase,
   type Task,
   type TaskPhase,
@@ -571,6 +575,74 @@ board.post('/:project/board/tasks/:taskName/abandon', adminAuth(), async (c) => 
     );
     await appendTaskEvent(name, taskName, task.spec.type, 'abandoned', {});
     return c.json({ success: true });
+  } catch (e) {
+    const ke = e as KubeError;
+    return c.json({ error: errMsg(ke) }, errStatus(ke));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/projects/:project/board/tasks/:taskName/interactive-run
+//
+// Requests an auxiliary interactive run attached to this task's branch. The
+// full request payload is written to the INTERACTIVE_RUN_ANNOTATION annotation;
+// the manager reconciler is the only component that creates the Run, keeping a
+// single Run-creation authority. `done`/`idea` tasks are rejected because there
+// is no branch or in-flight work to investigate. The run name is derived from
+// the writer-generated request id via the shared helper so a retried request
+// recreates the same Run instead of duplicating it.
+
+board.post('/:project/board/tasks/:taskName/interactive-run', adminAuth(), async (c) => {
+  const name = c.req.param('project');
+  const taskName = c.req.param('taskName');
+  // Body is optional: { agent?, model?, timeoutSeconds? }.
+  let body: Record<string, unknown> = {};
+  const raw = await c.req.text();
+  if (raw) {
+    try {
+      body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'Invalid JSON' }, 400);
+    }
+  }
+  const { agent, model, timeoutSeconds } = body;
+  try {
+    const { task, ns } = await getProjectTask(name, taskName);
+    const phase = task.status?.phase;
+    if (phase === 'done' || phase === 'idea') {
+      return c.json({ error: `Cannot start an interactive run for a "${phase}" task` }, 400);
+    }
+
+    const id = randomBytes(4).toString('hex');
+    const parsed = InteractiveRunRequestSchema.safeParse({ id, agent, model, timeoutSeconds });
+    if (!parsed.success) {
+      return c.json(
+        {
+          error: `Invalid interactive run request: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        },
+        400,
+      );
+    }
+
+    const runName = interactiveRunName(name, taskName, parsed.data.id);
+    const currentAnnotations = task.metadata.annotations ?? {};
+    await patchTask(
+      taskName,
+      {
+        metadata: {
+          ...task.metadata,
+          annotations: {
+            ...currentAnnotations,
+            [INTERACTIVE_RUN_ANNOTATION]: JSON.stringify(parsed.data),
+          },
+        },
+      },
+      ns,
+    );
+    await appendTaskEvent(name, taskName, task.spec.type, 'interactive-run-requested', {
+      runName,
+    });
+    return c.json({ success: true, runName });
   } catch (e) {
     const ke = e as KubeError;
     return c.json({ error: errMsg(ke) }, errStatus(ke));

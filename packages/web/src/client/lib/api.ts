@@ -396,6 +396,30 @@ export async function answerTask(project: string, taskName: string, answer: stri
   );
 }
 
+export interface StartInteractiveRunOptions {
+  agent?: string;
+  model?: string;
+  timeoutSeconds?: number;
+}
+
+// Request an auxiliary interactive run attached to this task's branch. The
+// route writes the percussionist.dev/action-interactive annotation; the
+// reconciler creates the Run on its next pass and the response carries the
+// deterministic run name so callers can poll for it.
+export async function startInteractiveRun(
+  project: string,
+  taskName: string,
+  opts: StartInteractiveRunOptions = {},
+): Promise<{ success: boolean; runName: string }> {
+  return requestJSON<{ success: boolean; runName: string }>(
+    `/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/interactive-run`,
+    {
+      method: 'POST',
+      body: JSON.stringify(opts),
+    },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Settings
 
