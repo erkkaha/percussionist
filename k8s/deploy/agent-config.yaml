@@ -1,10 +1,10 @@
-# Agent configuration for the manager's opencode-web sidecar.
+# Agent configuration for the manager's embedded OpenCode host.
 #
 # Contains:
-#   1. opencode.json — the opencode config for the sidecar (provider, MCP)
+#   1. opencode.json — the opencode config for the embedded host (provider, MCP)
 #   2. manager-decision.md — the agent skill definition used for decision-making
 #
-# The sidecar uses OPENCODE_CONFIG_CONTENT to load opencode.json.
+# The manager container uses OPENCODE_CONFIG_CONTENT to load opencode.json.
 # The agent skill is mounted at /root/.config/opencode/agents/.
 #
 # Override the default provider config by editing opencode.json below.
@@ -26,7 +26,7 @@ metadata:
     # See docs/guide/configuration.md ("ConfigMap Ownership").
     kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
 data:
-  # Opencode config loaded by the sidecar via OPENCODE_CONFIG_CONTENT.
+  # Opencode config loaded by the manager via OPENCODE_CONFIG_CONTENT.
   # The MCP stanza points the agent to the manager's in-process MCP server
   # for K8s tool access (inspect_cr, read_logs, etc.).
   opencode.json: |

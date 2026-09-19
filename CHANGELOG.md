@@ -1,12 +1,54 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.26] - 2026-09-19
+
+### <!-- 0 -->🚀 Features
+
+- OpenCode 2 embedded runner as a drop-in image _(runner-opencode)_
+- Expose the Copilot GitHub token as GITHUB_TOKEN _(runner-opencode)_
+- Embed the OpenCode 2 host, drop the opencode-web sidecar _(manager)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Wait for the requested model before the first prompt _(runner-opencode)_
+## [v0.2.25] - 2026-09-19
+
+### <!-- 0 -->🚀 Features
+
+- Make run detail a full-height tabbed shell _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Tolerate stale secret RBAC during upgrades _(operator)_
+- Constrain detail panel flex chain and ref banner _(web)_
+- Constrain long diff file paths and commit header truncation _(web)_
+- Harden board FilterBar chip wrapping _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Board ui fixes for diff filename overflow and focus-mode overlap _(plan)_
+- Add tabbed run page redesign plan _(plans)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add board overflow regression tests and manual checklist _(web)_
+- Add RunDetail tab shell coverage _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Merge BUILD-3 (8f681a) FilterBar wrapping into BUILD-4 base _(web)_
+- Release v0.2.25
 ## [v0.2.24] - 2026-09-19
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Harden control-plane trust boundaries _(security)_
 - Resolve rebased core export _(operator)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.24
 ## [v0.2.23] - 2026-09-18
 
 ### <!-- 1 -->🐛 Bug Fixes

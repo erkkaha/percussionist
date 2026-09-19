@@ -177,7 +177,7 @@ The operator is the **authoritative writer** of two ConfigMaps in the
 
 | ConfigMap | Consumer | Content |
 |---|---|---|
-| `agent-config` | manager's `opencode-web` sidecar (`OPENCODE_CONFIG_CONTENT`) | `opencode.json` (provider, model, MCP, skills) + `manager-decision.md` |
+| `agent-config` | manager's embedded OpenCode host (`OPENCODE_CONFIG_CONTENT` on the manager container) | `opencode.json` (provider, model, MCP, skills) + `manager-decision.md` |
 | `opencode-config` | every run pod (`OPENCODE_CONFIG_CONTENT`) | `opencode.json` with the dispatcher MCP stanza injected |
 
 Both are rendered from `ClusterSettings` and written with **server-side apply**
@@ -208,7 +208,7 @@ corrected ConfigMap percussionist/agent-config (previous field manager: kustomiz
 
 ### Sidecar Rollout
 
-The `opencode-web` sidecar reads `OPENCODE_CONFIG_CONTENT` from a
+The manager's embedded OpenCode host reads `OPENCODE_CONFIG_CONTENT` from a
 `configMapKeyRef` **once at container start**, so a corrected `agent-config` only
 takes effect after the manager pod restarts. When the rendered `agent-config`
 content changes, the operator stamps the manager Deployment's pod template with

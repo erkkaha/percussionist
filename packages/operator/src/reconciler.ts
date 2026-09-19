@@ -252,14 +252,14 @@ export const MANAGED_CONFIGMAP_NAMES = ['agent-config', 'opencode-config'] as co
 
 /**
  * Pod-template annotation on the manager Deployment carrying a hash of the
- * rendered agent-config data. The opencode-web sidecar reads
+ * rendered agent-config data. The manager's embedded OpenCode host reads
  * OPENCODE_CONFIG_CONTENT (a configMapKeyRef) once at container start, so a
  * corrected ConfigMap only takes effect after a rollout — and a rollout is only
  * triggered when this hash actually changes.
  */
 export const AGENT_CONFIG_HASH_ANNOTATION = 'percussionist.dev/agent-config-hash';
 
-/** Deployment whose opencode-web sidecar consumes agent-config. */
+/** Deployment whose embedded OpenCode host consumes agent-config. */
 export const MANAGER_DEPLOYMENT_NAME = 'percussionist-manager';
 
 /** True when `name` is one of the ConfigMaps the operator owns. */
@@ -354,7 +354,7 @@ export async function ensureConfigMap(
 /**
  * Sets the manager Deployment's pod-template agent-config hash annotation when
  * it differs from the rendered content. Kubernetes rolls a new pod template
- * when the annotation changes, which is what makes the sidecar re-read
+ * when the annotation changes, which is what makes the manager re-read
  * OPENCODE_CONFIG_CONTENT. A matching annotation is a no-op, so the periodic
  * resync never restarts the manager unnecessarily — including across operator
  * restarts, since the comparison is against the live Deployment, not memory.
@@ -406,7 +406,7 @@ export async function syncManagerDeploymentHash(desired: Record<string, string>)
 
 // Reconcile ClusterSettings spec into the two managed ConfigMaps:
 //   1. opencode-config  — copied to every namespace that has a run
-//   2. agent-config     — used by the manager's opencode-web sidecar
+//   2. agent-config     — used by the manager's embedded OpenCode host
 //
 // Both ConfigMaps are written using server-side apply (SSA) with
 // fieldManager="percussionist-operator" and force=true. This means the
@@ -518,7 +518,7 @@ Each option must have:
 
 Always include at least one actionable option when presenting choices.`;
 
-  // Build opencode.json for the manager sidecar. It always needs the MCP
+  // Build opencode.json for the manager's embedded host. It always needs the MCP
   // manager-agent entry; model/provider/skills are layered on top when set.
   const runnerConfig: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',

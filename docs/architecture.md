@@ -43,10 +43,14 @@ Percussionist orchestrates OpenCode AI agents on Kubernetes with a controller-ba
 | 7 | `@percussionist/web` | Hono + React dashboard, REST APIs, stats DB |
 | 8 | `@percussionist/cli` | `beatctl` CLI; talks to K8s API directly |
 | 9 | `@percussionist/runner-claude` | Claude Agent SDK runner sidecar (alternative engine) |
+| 10 | `@percussionist/runner-opencode` | OpenCode 2 embedded (`@opencode/sdk`) runner; drop-in image for the default engine |
 
 The first eight form the dependency chain (`api` → `kube` → operator/dispatcher/
-manager-controller → web/cli); `runner-claude` is standalone (Claude Agent SDK +
-Hono) and ships in its own image.
+manager-controller → web/cli); `runner-claude` and `runner-opencode` are
+standalone (their agent SDK + Hono) and ship in their own images. All three
+runner images serve the same six-endpoint HTTP contract on port 4096, which is
+what keeps the dispatcher, stats and dashboard engine-agnostic. See
+[OpenCode 2 assessment](./opencode-v2-assessment.md) for the v2 runner.
 
 ## Controller Architecture
 
@@ -67,7 +71,7 @@ The manager watches `Project` and `Task` CRs, implementing the board controller 
 - **Decision engine** — Evaluates task transitions, agent assignments, parallel limits
 - **MCP server** — Exposes orchestration tools (create_run, force_retry, etc.) on port 4097
 - **Chat handler** — Interactive agent chat on port 4098
-- **OpenCode web** — Sidecar on port 4096
+- **Embedded OpenCode 2 host** — `@percussionist/runner-opencode` facade in the manager process on 127.0.0.1:4096 (replaced the `opencode-web` sidecar in v0.2.24)
 
 ### Controller Pattern
 
