@@ -3,6 +3,7 @@ import {
   Activity,
   BarChart3,
   Code2,
+  Inbox,
   LogOut,
   MessageSquare,
   Plus,
@@ -12,6 +13,7 @@ import {
 } from 'lucide-react';
 import React from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
+import { useAttention } from '../hooks/useAttention';
 import { useProjects } from '../hooks/useProjects';
 import { useProjectsEvents } from '../hooks/useProjectsEvents';
 import { fetchUpdateStatus } from '../lib/api';
@@ -31,6 +33,7 @@ import {
 } from './ui/sidebar';
 
 const topNavItems = [
+  { title: 'Needs attention', url: '/attention', icon: Inbox },
   { title: 'Activity', url: '/', icon: Activity },
   { title: 'Runs', url: '/runs', icon: Terminal },
 ];
@@ -157,6 +160,11 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
   const { connected: projectsSseConnected, eventTick } = useProjectsEvents();
   void eventTick;
   const { data: projects } = useProjects(projectsSseConnected ? false : 10_000);
+  // Server-authoritative HITL count for the "Needs attention" nav badge. Gated
+  // on auth so an unauthenticated sidebar (e.g. AUTH_DISABLED dev mode or a
+  // session that has not resolved yet) never fires the request.
+  const { data: attention } = useAttention(0, isAuthenticated);
+  const attentionCount = attention?.count ?? 0;
   const { data: updateStatus } = useQuery({
     queryKey: ['update-status'],
     queryFn: fetchUpdateStatus,
@@ -201,6 +209,18 @@ export function AppSidebar({ playing, managerAvailable, ...props }: AppSidebarPr
               >
                 <NavLink to={item.url} end onClick={handleNavClick}>
                   <item.icon />
+                  {/* Live HITL count. `order-last` keeps the title span as the
+                      final child so the button's `[&>span:last-child]:truncate`
+                      rule still trims long labels; hidden when the sidebar is
+                      collapsed to an icon rail (tooltip still names the item). */}
+                  {item.url === '/attention' && attentionCount > 0 && (
+                    <span
+                      data-testid="attention-nav-badge"
+                      className="order-last ml-auto flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-accent text-surface text-caption-xs font-bold leading-none group-data-[collapsible=icon]:hidden"
+                    >
+                      {attentionCount > 99 ? '99+' : attentionCount}
+                    </span>
+                  )}
                   <span>{item.title}</span>
                 </NavLink>
               </SidebarMenuButton>
