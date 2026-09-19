@@ -2,6 +2,7 @@
 
 import http from 'node:http';
 import { LABELS, MANAGED_BY, RunPhase } from '@percussionist/api';
+import { gitPublish } from './git-publish.js';
 import {
   BASE_URL,
   checkHealth,
@@ -633,6 +634,12 @@ export async function runInteractive(
   }
   log('interactive session ending — snapshotting');
   await snapshotAllSessions(coreApi, runName, runNamespace, runUid);
+  // Best-effort branch publish so committed work in an interactive session
+  // survives worktree cleanup (refs/percussionist/<branch>). Matches the
+  // fatal-path publish in index.ts; soft-fail so a read-only remote does not
+  // turn a graceful shutdown into a failure. No-ops when RUN_GIT_BRANCH is
+  // unset (local-git / no-source runs).
+  await gitPublish.publishWorkerBranch().catch(() => {});
   await patchStatus({ message: 'dispatcher terminated' });
 }
 
