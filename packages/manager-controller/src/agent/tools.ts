@@ -2862,10 +2862,19 @@ export interface McpServer {
  * cluster access: `kubectl port-forward` traffic arrives on the pod's loopback
  * interface (that is how `beatctl chat` reaches the chat port).
  */
+function isInsecureDevMode(): boolean {
+  return (
+    process.env.PERCUSSIONIST_ALLOW_INSECURE_DEV === '1' || process.env.ALLOW_INSECURE_DEV === '1'
+  );
+}
+
 function presentsValidMcpToken(req: IncomingMessage): boolean {
-  // No token configured → the whole deployment is in no-auth dev mode (same
-  // semantics as the web dashboard's AUTH_DISABLED); treat callers as trusted.
-  if (!MCP_TOKEN) return true;
+  // Fail closed when no token is configured. An absent MCP_TOKEN means a
+  // startup-order problem, deleted Secret, or misconfiguration — silently
+  // treating every cross-pod caller as trusted turns privileged MCP tools
+  // (exec_in_workspace, apply_upgrade, delete_run) into an unauthenticated
+  // service. Only an explicit dev-only flag opts into no-auth mode.
+  if (!MCP_TOKEN) return isInsecureDevMode();
 
   const header = req.headers.authorization ?? '';
   const provided = header.startsWith('Bearer ') ? header.slice(7) : '';

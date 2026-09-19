@@ -40,10 +40,19 @@ const STATS_BODY = {
 };
 
 let runKey: string;
+let legacyRunKey: string;
 let operatorKey: string;
 
 beforeAll(async () => {
-  runKey = await mintKey({ name: 'run:test-run', permissions: RUN_KEY_PERMISSIONS });
+  runKey = await mintKey({
+    name: 'run:agent-keys-run',
+    permissions: RUN_KEY_PERMISSIONS,
+    metadata: { kind: 'run', runName: 'agent-keys-run' },
+  });
+  legacyRunKey = await mintKey({
+    name: 'run:legacy-run',
+    permissions: RUN_KEY_PERMISSIONS,
+  });
   operatorKey = await mintKey({
     name: 'component:test-operator',
     permissions: OPERATOR_KEY_PERMISSIONS,
@@ -81,6 +90,46 @@ describe('run key (stats:write)', () => {
     });
     expect(res.status).not.toBe(401);
     expect(res.status).not.toBe(403);
+  });
+
+  it('cannot report stats under another run name', async () => {
+    const res = await app.request('/api/stats/session', {
+      method: 'POST',
+      headers: withKey(runKey, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ sessionID: 'foreign-name-session', run: { name: 'another-run' } }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects legacy run keys that lack identity metadata', async () => {
+    const res = await app.request('/api/stats/session', {
+      method: 'POST',
+      headers: withKey(legacyRunKey, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ sessionID: 'legacy-session', run: { name: 'legacy-run' } }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('cannot overwrite a session ID already owned by another run', async () => {
+    const foreignSessionID = `foreign-session-${Date.now()}`;
+    const foreignKey = await mintKey({
+      name: 'run:foreign-run',
+      permissions: RUN_KEY_PERMISSIONS,
+      metadata: { kind: 'run', runName: 'foreign-run' },
+    });
+    const seed = await app.request('/api/stats/session', {
+      method: 'POST',
+      headers: withKey(foreignKey, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ sessionID: foreignSessionID, run: { name: 'foreign-run' } }),
+    });
+    expect(seed.status).toBe(200);
+
+    const overwrite = await app.request('/api/stats/session', {
+      method: 'POST',
+      headers: withKey(runKey, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ sessionID: foreignSessionID, run: { name: 'agent-keys-run' } }),
+    });
+    expect(overwrite.status).toBe(403);
   });
 });
 

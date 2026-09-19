@@ -8,6 +8,7 @@
 // so it survives pod restarts. If the ConfigMap is unavailable the handler
 // degrades gracefully (in-memory only).
 
+import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { PatchStrategy, setHeaderOptions } from '@kubernetes/client-node';
 import { core } from '@percussionist/kube';
@@ -169,12 +170,47 @@ interface ChatRequest {
   message: string;
 }
 
+function isLoopback(req: IncomingMessage): boolean {
+  const remote = req.socket.remoteAddress ?? '';
+  return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+}
+
+/**
+ * Bearer check for cross-pod chat callers (the web dashboard proxy).
+ *
+ * Port-forward traffic (`beatctl chat`) arrives on loopback and is exempt —
+ * holding port-forward already implies namespace secrets access. Every other
+ * source must present MCP_TOKEN, the same shared secret that gates the MCP
+ * port. Fail closed when the token is absent unless the explicit dev-only
+ * flag PERCUSSIONIST_ALLOW_INSECURE_DEV=1 is set.
+ */
+function isAuthorizedChatRequest(req: IncomingMessage): boolean {
+  if (isLoopback(req)) return true;
+  const token = process.env.MCP_TOKEN ?? '';
+  if (!token) {
+    return (
+      process.env.PERCUSSIONIST_ALLOW_INSECURE_DEV === '1' || process.env.ALLOW_INSECURE_DEV === '1'
+    );
+  }
+  const header = req.headers.authorization ?? '';
+  const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
+  const a = Buffer.from(provided);
+  const b = Buffer.from(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 export async function startChatServer(): Promise<void> {
   // Restore conversation history from ConfigMap on startup
   await loadHistoryFromConfigMap();
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
+      // Reject unauthenticated cross-pod callers before touching the agent:
+      // prompts forwarded here drive privileged same-pod MCP tools.
+      if (!isAuthorizedChatRequest(req)) {
+        sendJson(res, 401, { error: 'unauthorized' });
+        return;
+      }
       if (req.method === 'POST' && req.url === '/chat') {
         await handleChat(req, res);
       } else if (req.method === 'GET' && req.url === '/chat/stream') {

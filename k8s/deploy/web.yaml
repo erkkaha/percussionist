@@ -249,7 +249,7 @@ spec:
                 secretKeyRef:
                   name: manager-mcp-token
                   key: token
-                  optional: true
+                  optional: false
             # Legacy shared-secret auth. Accepted IN ADDITION to sessions and API
             # keys while a cluster is mid-migration, so a rolling upgrade does not
             # break agents that still hold the old shared token. Remove this and

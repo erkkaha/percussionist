@@ -162,7 +162,7 @@ spec:
                 secretKeyRef:
                   name: manager-mcp-token
                   key: token
-                  optional: true
+                  optional: false
             - name: NODE_EXTRA_CA_CERTS
               value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
           resources:

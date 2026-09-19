@@ -80,7 +80,7 @@ const err = (...args: unknown[]) =>
 
 const kc = new KubeConfig();
 kc.loadFromDefault();
-const core = makeNodeApiClient(kc, CoreV1Api);
+export const core = makeNodeApiClient(kc, CoreV1Api);
 const apps = makeNodeApiClient(kc, AppsV1Api);
 const co = makeNodeApiClient(kc, CustomObjectsApi);
 const networking = makeNodeApiClient(kc, NetworkingV1Api);

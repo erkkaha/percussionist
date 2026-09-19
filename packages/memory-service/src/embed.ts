@@ -1,5 +1,5 @@
-const OLLAMA_BASE_URL =
-  process.env.OLLAMA_BASE_URL ?? 'http://ollama.percussionist.svc.cluster.local:11434';
+import { ollamaFetch } from './ollama.js';
+
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? 'nomic-embed-text';
 
 export interface EmbeddingResult {
@@ -7,8 +7,7 @@ export interface EmbeddingResult {
 }
 
 export async function getEmbedding(text: string): Promise<Float32Array> {
-  const url = `${OLLAMA_BASE_URL}/api/embeddings`;
-  const res = await fetch(url, {
+  const res = await ollamaFetch('/api/embeddings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: EMBEDDING_MODEL, prompt: text }),

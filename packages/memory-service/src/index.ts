@@ -29,7 +29,7 @@ import {
 } from './routes.js';
 
 const PORT = parseInt(process.env.MEMORY_SERVICE_PORT ?? '4100', 10);
-// Shared control-plane token (manager-mcp-token Secret). Empty = dev mode.
+// Shared control-plane token (manager-mcp-token Secret). Empty fails closed.
 const MCP_TOKEN = process.env.MCP_TOKEN ?? '';
 
 process.on('unhandledRejection', (reason) => {
@@ -72,11 +72,20 @@ function parseBody(req: Request): Promise<Record<string, unknown>> {
  * MCP_TOKEN is the shared control-plane token (manager-mcp-token Secret). The
  * manager is the only legitimate caller, and that Secret is deliberately not
  * projected into run pods, so an agent cannot authenticate even if it reaches
- * the port. When no token is configured the check is skipped, matching the
- * dev-mode behaviour of the manager MCP server and the web dashboard.
+ * the port. When no token is configured the check fails closed unless the
+ * explicit dev-only flag PERCUSSIONIST_ALLOW_INSECURE_DEV=1 is set.
  */
+function isInsecureDevMode(): boolean {
+  return (
+    process.env.PERCUSSIONIST_ALLOW_INSECURE_DEV === '1' || process.env.ALLOW_INSECURE_DEV === '1'
+  );
+}
+
 function isAuthorized(req: Request): boolean {
-  if (!MCP_TOKEN) return true;
+  // Fail closed when no token is configured (see manager MCP server).
+  // Stored memories are injected verbatim into worker prompts, so an open
+  // write path is prompt injection into the orchestration loop.
+  if (!MCP_TOKEN) return isInsecureDevMode();
   const header = req.headers.get('authorization') ?? '';
   const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
   const a = Buffer.from(provided);

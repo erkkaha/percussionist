@@ -99,6 +99,7 @@ describe('renderMemoryServiceDeployment', () => {
         'MCP_TOKEN',
         'MEMORY_DB_PATH',
         'MEMORY_SERVICE_PORT',
+        'OLLAMA_ALLOWED_ORIGINS',
         'OLLAMA_BASE_URL',
       ].sort(),
     );
@@ -121,6 +122,9 @@ describe('renderMemoryServiceDeployment', () => {
     expect(envOf(dep, 'EMBEDDING_MODEL').value).toBe('nomic-embed-text');
     expect(envOf(dep, 'EMBEDDING_DIMENSIONS').value).toBe('1024');
     expect(envOf(dep, 'OLLAMA_BASE_URL').value).toBe('http://ollama.internal:11434');
+    expect(envOf(dep, 'OLLAMA_ALLOWED_ORIGINS').value).toBe(
+      'http://ollama.percussionist.svc.cluster.local:11434',
+    );
   });
 
   it('applies defaults for dimensions, Ollama URL and the DB path on the default mount', () => {
@@ -150,11 +154,11 @@ describe('renderMemoryServiceDeployment', () => {
     expect(memoryContainer(dep).volumeMounts?.[0]?.mountPath).toBe('/custom-data');
   });
 
-  it('references the MCP token secret as an optional secretKeyRef (control-plane gating)', () => {
+  it('references the required MCP token secret (control-plane gating)', () => {
     const dep = renderMemoryServiceDeployment(makeProject());
     const entry = envOf(dep, 'MCP_TOKEN');
     expect(entry.valueFrom).toEqual({
-      secretKeyRef: { name: 'manager-mcp-token', key: 'token', optional: true },
+      secretKeyRef: { name: 'manager-mcp-token', key: 'token', optional: false },
     });
   });
 

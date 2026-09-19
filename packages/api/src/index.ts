@@ -253,7 +253,25 @@ export const EmbeddingSpecSchema = z.object({
   enabled: z.boolean().default(false),
   model: z.string().default('nomic-embed-text'),
   dimensions: z.number().int().default(768),
-  ollamaUrl: z.string().optional(),
+  // The memory-service runtime additionally requires this origin to appear in
+  // the operator-controlled OLLAMA_ALLOWED_ORIGINS allowlist. Redirects are not
+  // followed by the memory-service client.
+  ollamaUrl: z
+    .string()
+    .refine(
+      (v) => {
+        try {
+          const u = new URL(v);
+          if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+          if (u.username || u.password) return false;
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: 'ollamaUrl must be an http(s) URL without credentials' },
+    )
+    .optional(),
   resources: ResourceRequirementsSchema.optional(),
 });
 export type EmbeddingSpec = z.infer<typeof EmbeddingSpecSchema>;

@@ -16,6 +16,17 @@ const router = new Hono();
 const MANAGER_SERVICE = `http://percussionist-manager.${NAMESPACE}.svc.cluster.local`;
 const CHAT_URL = `${MANAGER_SERVICE}:4098`;
 
+// Shared control-plane token gating the manager's chat port against
+// cross-pod callers. The manager exempts loopback (kubectl port-forward);
+// every other source must present this bearer token.
+function chatHeaders(extra?: Record<string, string>): Record<string, string> {
+  const token = process.env.MCP_TOKEN ?? '';
+  return {
+    ...(extra ?? {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 // POST /api/agent/chat — send a message to the manager agent, get response.
 router.post('/chat', adminAuth(), async (c) => {
   const abortController = new AbortController();
@@ -25,7 +36,7 @@ router.post('/chat', adminAuth(), async (c) => {
     const body = await c.req.json();
     const res = await fetch(`${CHAT_URL}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: chatHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body),
       signal: abortController.signal,
     });
@@ -47,6 +58,7 @@ router.get('/chat/stream', auth(), async (c) => {
 
   try {
     const upstream = await fetch(`${CHAT_URL}/chat/stream`, {
+      headers: chatHeaders(),
       signal: abortController.signal,
     });
     if (!upstream.ok || !upstream.body) {
@@ -89,6 +101,7 @@ router.get('/chat/stream', auth(), async (c) => {
 router.get('/chat/history', auth(), async (c) => {
   try {
     const res = await fetch(`${CHAT_URL}/chat/history`, {
+      headers: chatHeaders(),
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) {
@@ -105,6 +118,7 @@ router.get('/chat/history', auth(), async (c) => {
 router.get('/status', auth(), async (c) => {
   try {
     const res = await fetch(`${CHAT_URL}/chat/history`, {
+      headers: chatHeaders(),
       signal: AbortSignal.timeout(3_000),
     });
     if (res.ok) {

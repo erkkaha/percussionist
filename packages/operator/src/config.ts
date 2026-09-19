@@ -43,6 +43,8 @@ const MEMORY_SERVICE_IMAGE =
   process.env.MEMORY_SERVICE_IMAGE ?? 'ghcr.io/erkkaha/percussionist/memory:latest';
 const OLLAMA_BASE_URL =
   process.env.OLLAMA_BASE_URL ?? `http://ollama.${NAMESPACE}.svc.cluster.local:11434`;
+const OLLAMA_ALLOWED_ORIGINS =
+  process.env.OLLAMA_ALLOWED_ORIGINS ?? new URL(OLLAMA_BASE_URL).origin;
 
 const WEB_AUTH_TOKEN = process.env.WEB_AUTH_TOKEN ?? '';
 
@@ -108,6 +110,7 @@ export {
   INGRESS_TLS_SECRET,
   MEMORY_SERVICE_IMAGE,
   NAMESPACE,
+  OLLAMA_ALLOWED_ORIGINS,
   OLLAMA_BASE_URL,
   RUNNER_IMAGE_DEFAULT,
   SELF_NAMESPACE,

@@ -47,13 +47,15 @@
 
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
+import { lstatSync, realpathSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { resolve as resolvePath } from 'node:path';
+import { sep as pathSep, resolve as resolvePath } from 'node:path';
 import {
   type AgentCapability,
   DISPATCHER_MCP_PORT,
   type Finding,
   FindingSchema,
+  LABELS,
   MERGE_VERDICT_ANNOTATION,
   normalizeMergeVerdict,
   normalizeReviewVerdict,
@@ -513,6 +515,56 @@ export const gitCheck = {
   },
 };
 
+/**
+ * Canonical workspace containment: reject symlink escapes.
+ *
+ * Walks every component of `candidate` (including the leaf when it exists)
+ * and rejects symlink components, then resolves the realpath of the nearest
+ * existing ancestor and requires it to stay inside `root`. Returns an error
+ * message when the path is unsafe, null when it is contained.
+ */
+export function checkWorkspaceContainment(root: string, candidate: string): string | null {
+  const parts = candidate.split(pathSep).filter(Boolean);
+  let current: string = pathSep;
+  for (const part of parts) {
+    current = resolvePath(current, part);
+    // Only enforce the prefix once we are at/below the root.
+    if (current !== root && !current.startsWith(`${root}/`)) break;
+    try {
+      if (lstatSync(current).isSymbolicLink()) {
+        return 'path must not contain symlinks escaping the workspace';
+      }
+    } catch {
+      // Component does not exist yet — nothing more to lstat below it.
+      break;
+    }
+  }
+  try {
+    const real = realpathSync(candidate);
+    if (real !== root && !real.startsWith(`${root}/`)) {
+      return `path must be within ${root}`;
+    }
+  } catch {
+    // Nonexistent leaf: resolve the nearest existing ancestor instead.
+    let ancestor = candidate;
+    while (ancestor !== root && ancestor.startsWith(`${root}/`)) {
+      try {
+        const realAncestor = realpathSync(ancestor);
+        if (realAncestor !== root && !realAncestor.startsWith(`${root}/`)) {
+          return `path must be within ${root}`;
+        }
+        return null;
+      } catch {
+        ancestor = resolvePath(ancestor, '..');
+      }
+    }
+    if (ancestor !== root && !ancestor.startsWith(`${root}/`)) {
+      return `path must be within ${root}`;
+    }
+  }
+  return null;
+}
+
 async function handleSearchCode(
   id: JsonRpcRequest['id'],
   args: Record<string, unknown>,
@@ -528,6 +580,12 @@ async function handleSearchCode(
   // against /workspace) or an absolute path, but must never escape /workspace —
   // otherwise an agent could point search_code at /var/run/secrets/... and
   // exfiltrate the mounted ServiceAccount token or other secrets.
+  //
+  // The lexical check alone is insufficient: an explicitly supplied symlink
+  // inside /workspace (e.g. /workspace/link -> /var/run/secrets/...) passes a
+  // prefix test but the grep fallback follows it into the target. Resolve the
+  // canonical path and reject any symlink component so both engines stay
+  // inside the workspace regardless of ripgrep-vs-grep follow semantics.
   const WORKSPACE_ROOT = '/workspace';
   const requestedPath = String(args.path ?? WORKSPACE_ROOT);
   const searchPath = resolvePath(WORKSPACE_ROOT, requestedPath);
@@ -539,6 +597,12 @@ async function handleSearchCode(
           text: JSON.stringify({ error: `path must be within ${WORKSPACE_ROOT}` }),
         },
       ],
+    });
+  }
+  const containmentError = checkWorkspaceContainment(WORKSPACE_ROOT, searchPath);
+  if (containmentError) {
+    return ok(id, {
+      content: [{ type: 'text', text: JSON.stringify({ error: containmentError }) }],
     });
   }
   const filePattern = args.filePattern ? String(args.filePattern) : undefined;
@@ -795,6 +859,18 @@ async function handleWritePlan(
   if (!project || !task || !content) {
     return rpcError(id, -32602, 'project, task, and content are required');
   }
+  // Project/run isolation: a run agent may only write its own task's plan.
+  // Plans become future agent input, so cross-project or cross-task writes are
+  // plan poisoning. RUN_PROJECT / RUN_BOARD_TASK are injected by the operator
+  // and are not caller-controlled.
+  const ownProject = process.env.RUN_PROJECT ?? '';
+  const ownTask = process.env.RUN_BOARD_TASK ?? '';
+  if (ownProject && project !== ownProject) {
+    return rpcError(id, -32602, 'project must match the run project');
+  }
+  if (ownTask && task !== ownTask) {
+    return rpcError(id, -32602, 'task must match the run task');
+  }
   try {
     const result = await writePlanToConfigMap(project, task, content);
     return ok(id, {
@@ -814,6 +890,13 @@ async function handleReadPlan(
   if (!project || !task) {
     return rpcError(id, -32602, 'project and task are required');
   }
+  // Reads are scoped to the run's own project. Cross-project reads could leak
+  // another tenant's plans; cross-task reads within the project stay allowed
+  // so review/buildgen runs can load the parent PLAN artifact.
+  const ownProject = process.env.RUN_PROJECT ?? '';
+  if (ownProject && project !== ownProject) {
+    return rpcError(id, -32602, 'project must match the run project');
+  }
   try {
     const content = await readPlanFromConfigMap(project, task);
     return ok(id, {
@@ -832,6 +915,30 @@ async function handleReadSession(
   const ns = process.env.RUN_NAMESPACE ?? 'percussionist';
   if (!runName) {
     return rpcError(id, -32602, 'runName is required');
+  }
+  // Cross-run reads are scoped to the run's own project: verify the target
+  // run carries the same project label before opening its session snapshot.
+  // This keeps review runs (which read the worker run they review) working
+  // while blocking reads into another tenant's conversations.
+  const ownProject = process.env.RUN_PROJECT ?? '';
+  if (ownProject) {
+    try {
+      const target = await getRun(runName, ns);
+      const targetProject = target.metadata?.labels?.[LABELS.projectName] ?? '';
+      if (targetProject && targetProject !== ownProject) {
+        return rpcError(id, -32602, 'run belongs to a different project');
+      }
+      // A run without a project label is likely from another tenant's
+      // namespace layout — deny rather than leak its snapshot.
+      if (!targetProject && runName !== (process.env.RUN_NAME ?? '')) {
+        return rpcError(id, -32602, 'run belongs to a different project');
+      }
+    } catch {
+      // Unknown run — answer "no snapshot" rather than leaking existence.
+      return ok(id, {
+        content: [{ type: 'text', text: JSON.stringify({ exists: false, messages: [] }, null, 2) }],
+      });
+    }
   }
   try {
     const data = await readAllSessionsFromConfigMap(runName, ns);

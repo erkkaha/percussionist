@@ -12,6 +12,7 @@ import {
   type Project,
   type Run,
 } from '@percussionist/api';
+import { ensureManagerMcpToken } from './control-plane-secret.js';
 import { markReady, startHealthServer } from './health.js';
 import {
   cancelProjectRetry,
@@ -71,6 +72,8 @@ async function main(): Promise<void> {
   // watches below are still being established (/readyz answers 503 until then).
   startHealthServer();
   log(`watching ${API_GROUP}/${API_VERSION}/${PLURAL_RUN} in namespace=${NAMESPACE}`);
+
+  await ensureManagerMcpToken(core, NAMESPACE);
 
   // Watch Run CRs.
   const runPath = `/apis/${API_GROUP}/${API_VERSION}/namespaces/${NAMESPACE}/${PLURAL_RUN}`;
