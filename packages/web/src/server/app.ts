@@ -12,6 +12,7 @@ import activity from './routes/activity.js';
 import agentChat from './routes/agent-chat.js';
 import agentKeys from './routes/agent-keys.js';
 import agents from './routes/agents.js';
+import attention from './routes/attention.js';
 import board from './routes/board.js';
 import boardDb from './routes/board-db.js';
 import findings from './routes/findings.js';
@@ -63,6 +64,7 @@ export function createApp() {
   // Lock middleware applies to all /api/* routes — it skips /api/usage/* internally.
   app.use('/api/*', usageLockMiddleware());
 
+  app.route('/api/attention', attention);
   app.route('/api/runs', runs);
   app.route('/api/runs', logs);
   app.route('/api/runs', session);
