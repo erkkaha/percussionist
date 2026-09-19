@@ -168,11 +168,24 @@ export class RunnerHost {
     // 2.0.10 pages message.list; walk it so long runs are not silently cut.
     // The cursor encodes the order, and passing both is rejected.
     for (let page = 0; page < 200; page++) {
-      const res = await this.sdk.message.list({
-        sessionID: sessionID as never,
-        limit: 200,
-        ...(cursor ? { cursor } : { order: 'asc' as const }),
-      });
+      let res: Awaited<ReturnType<typeof this.sdk.message.list>>;
+      try {
+        res = await this.sdk.message.list({
+          sessionID: sessionID as never,
+          limit: 200,
+          ...(cursor ? { cursor } : { order: 'asc' as const }),
+        });
+      } catch (e) {
+        // The first page failing is a real error the caller should see. A later
+        // page failing must not turn a partial transcript into a 500: the
+        // dispatcher treats any non-2xx as an empty transcript, which blinds
+        // its snapshots and stats for the rest of the run.
+        if (page === 0) throw e;
+        this.opts.warn(
+          `message.list page ${page} for ${sessionID} failed: ${describe(e)} — returning ${all.length} message(s)`,
+        );
+        break;
+      }
       all.push(...(res.data as unknown as V2Message[]));
       cursor = res.cursor?.next;
       if (!cursor || res.data.length === 0) break;
