@@ -4,8 +4,20 @@ packages:
 
 ignoredBuiltDependencies:
   - esbuild
+  # Transitive deps of @opencode/sdk with install scripts. All ship prebuilt
+  # binaries (or are optional accelerators); the runner-opencode spike ran with
+  # scripts disabled on both glibc and musl.
+  - "@parcel/watcher"
+  - msgpackr-extract
+  - protobufjs
+  - tree-sitter-bash
+  - tree-sitter-powershell
 
 minimumReleaseAge: 10080
+# OpenCode 2 ships several patch releases a week; the runner-opencode image is
+# the only consumer and pins exact versions, so the quarantine buys nothing there.
+minimumReleaseAgeExclude:
+  - "@opencode/*"
 
 # Transitive high-severity advisories with patches available in-range.
 overrides:
@@ -30,3 +42,11 @@ trustedDependencies:
 blockExoticSubdeps: true
 allowBuilds:
   esbuild: true
+  # Transitive deps of @opencode/sdk (runner-opencode) with install scripts. All
+  # ship prebuilt binaries or are optional accelerators; the runner spike ran
+  # with scripts disabled on both glibc and musl.
+  '@parcel/watcher': false
+  msgpackr-extract: false
+  protobufjs: false
+  tree-sitter-bash: false
+  tree-sitter-powershell: false
