@@ -18,6 +18,7 @@ The manager runs an in-process MCP server on port 4097. OpenCode agents connect 
 | `force_retry` | Restart a stuck task at an incremented retry count |
 | `set_task_state` | Move a task to a target column |
 | `manager_approve` | Approve a BUILD task in `awaiting-human` for merge by writing the canonical approval annotation |
+| `start_interactive_run` | Start an auxiliary interactive run on a task's branch by writing the canonical interactive-run annotation |
 | `inspect_task_flow` | Explain current task lifecycle state, allowed transitions, and expected next action |
 
 ### `inspect_task_flow`
@@ -100,6 +101,25 @@ Explain the current lifecycle state of a task in the context of its project flow
   }
 }
 ```
+
+### `start_interactive_run`
+
+Start an **auxiliary** interactive run attached to a task, checked out on that task's branch. Writes the `percussionist.dev/action-interactive` annotation with a writer-generated `id` and returns the deterministic `runName`; the reconciler creates the Run on its next pass.
+
+**Inputs**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project` | string | yes | Project name |
+| `task` | string | yes | Task CR name |
+| `agent` | string | no | Override the task's agent for the interactive run |
+| `model` | string | no | Override the task's model for the interactive run |
+| `timeoutSeconds` | number | no | Override the run's pod deadline |
+| `namespace` | string | no | Namespace (defaults to `percussionist`) |
+
+The run does not change the task's `status.phase` or `status.worker.runName`, so it can be used to investigate a `failed`, `running`, or `blocked` task without disturbing it. Tasks in `idea` or `done` are rejected.
+
+The session is a real shell: only committed HEAD is published when the run ends gracefully, so the user must `git commit` or the work is lost with the worktree. A live worker may still be using the same branch — stop it before making conflicting edits.
 
 ### Session
 

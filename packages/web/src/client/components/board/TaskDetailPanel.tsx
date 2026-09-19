@@ -1,6 +1,11 @@
 // TaskDetailPanel.tsx — tabbed detail view for a selected task.
 // Shows: Overview, Runs (with per-run Session/Logs), Events, Plan (PLAN tasks only).
-// Actions: Approve, Request Changes, Abandon, Retry, Delete.
+// Actions: Approve, Request Changes, Abandon, Retry, Start Interactive Run, Delete.
+//   Start Interactive Run requests an auxiliary run on the task's branch (it does
+//   not change the task's phase or worker) for investigating/fixing work in
+//   progress. The session is a real shell: only committed work is published when
+//   the run ends, so the user must `git commit`; and a live worker on the same
+//   branch can diverge, so stop the worker before making conflicting edits.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -23,6 +28,7 @@ import {
   MousePointerClick,
   RefreshCw,
   Sparkles,
+  Terminal,
   Trash2,
   User,
   Wrench,
@@ -45,6 +51,7 @@ import {
   requestChangesTask,
   retryEscalatedTask,
   retryReviewTask,
+  startInteractiveRun,
 } from '../../lib/api';
 import type { DiffFindingSort } from '../../lib/diff-findings';
 import {
@@ -1012,6 +1019,9 @@ function TaskDetailPanelInner({
     task.status?.phase === 'failed';
   const approvalState = approvals?.[taskName];
   const alreadyApproved = approvalState?.approved === true;
+  // An interactive run can be started on any task that still has a branch to
+  // work on — i.e. not parked in the idea backlog and not already done.
+  const canStartInteractiveRun = task.status?.phase !== 'idea' && task.status?.phase !== 'done';
 
   const invalidateBoard = () => queryClient.invalidateQueries({ queryKey: ['board', projectName] });
 
@@ -1073,6 +1083,19 @@ function TaskDetailPanelInner({
   const promoteIdeaMutation = useMutation({
     mutationFn: () => moveTask(projectName, taskName, 'backlog'),
     onSuccess: invalidateBoard,
+  });
+
+  // Interactive runs are auxiliary: the reconciler creates the Run from the
+  // task annotation without touching the task phase/worker. Refresh the board
+  // and the task's Runs list, then surface the Runs tab so the user can watch
+  // for the new run and attach once its pod is Running.
+  const startInteractiveRunMutation = useMutation({
+    mutationFn: () => startInteractiveRun(projectName, taskName),
+    onSuccess: () => {
+      invalidateBoard();
+      queryClient.invalidateQueries({ queryKey: ['taskRuns', taskName] });
+      setTab('runs');
+    },
   });
 
   const deleteMutation = useMutation({
@@ -1152,6 +1175,18 @@ function TaskDetailPanelInner({
 
         {/* Action buttons */}
         <div className="flex items-center gap-2 flex-wrap">
+          {canStartInteractiveRun && (
+            <button
+              onClick={() => startInteractiveRunMutation.mutate()}
+              disabled={startInteractiveRunMutation.isPending}
+              title="Start an interactive run on this task's branch"
+              className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text transition-colors disabled:opacity-40"
+            >
+              <Terminal className="h-3.5 w-3.5" />
+              {startInteractiveRunMutation.isPending ? 'Starting…' : 'Start Interactive Run'}
+            </button>
+          )}
+
           {col === 'ideas' && (
             <button
               onClick={() => promoteIdeaMutation.mutate()}
