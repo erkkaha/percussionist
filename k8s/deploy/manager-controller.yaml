@@ -142,7 +142,7 @@ spec:
             - name: WEB_SERVICE_URL
               value: http://percussionist-web.percussionist.svc.cluster.local:8080
             - name: RUNNER_IMAGE_DEFAULT
-              value: ghcr.io/erkkaha/percussionist/runner:latest
+              value: ghcr.io/erkkaha/percussionist/runner-opencode:latest
             - name: MERGING_AGENT
               value: integrator
             # Outbound: the manager's own scoped API key (stats:write,

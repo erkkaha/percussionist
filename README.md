@@ -1586,5 +1586,5 @@ spec:
 ### Base image
 
 Packages are installed on top of the runner image
-(`ghcr.io/erkkaha/percussionist/runner:latest`). The base image always
+(`ghcr.io/erkkaha/percussionist/runner-opencode:latest`). The base image always
 includes git, openssh, node, npm, pnpm, bun, bash, curl, unzip, and github-cli.

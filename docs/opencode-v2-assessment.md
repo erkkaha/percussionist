@@ -1,7 +1,8 @@
 # OpenCode 2 (`@opencode/sdk`) — assessment and the `runner-opencode` image
 
-Status: **go** for the runner. Shipped as `packages/runner-opencode` and the
-`ghcr.io/erkkaha/percussionist/runner-opencode` image, opt-in per run.
+Status: **shipped**. `packages/runner-opencode` and the
+`ghcr.io/erkkaha/percussionist/runner-opencode` image are the default runner
+since v0.2.27; the v1 image stays published as `runner` for opt-out.
 
 This documents the feasibility spike behind plan task
 `percussionist-dev-plan-57caf6` ("Opencode 2 is out") and the design that came
@@ -90,7 +91,12 @@ override applies to every engine, so leave it unset if `engine: claude` runs
 share the cluster). No CRD, operator, dispatcher or e2e-fixture change is
 required; the security boundary (SA token only in the dispatcher container) is
 untouched because the runner container's contents are the only thing that
-changed. The v1 `runner` image remains the default and the fallback.
+changed. Since v0.2.27 `runner-opencode` is the default (`DEFAULT_RUNNER_IMAGE` in
+`packages/api`, the Run and ClusterSettings CRD defaults, and
+`RUNNER_IMAGE_DEFAULT` on the operator and manager Deployments); the v1
+`runner` image remains published for opt-out. Note that `beatctl attach` /
+the dashboard terminal exec `opencode attach` inside the runner container,
+which the v2 image cannot serve (no TUI); the shim exits with a clear error.
 
 Inputs the image consumes are exactly the v1 runner's:
 

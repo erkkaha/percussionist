@@ -76,6 +76,15 @@ export const RunnerPackagesSchema = z
   .optional();
 export type RunnerPackages = z.infer<typeof RunnerPackagesSchema>;
 
+/**
+ * The runner image a Run gets when nothing (Run, board task, Project,
+ * ClusterSettings) names one. Since v0.2.27 this is the OpenCode 2 embedded
+ * runner (packages/runner-opencode); the v1 `opencode serve` image remains
+ * published as `ghcr.io/erkkaha/percussionist/runner` for opt-out via
+ * `spec.image` or `ClusterSettings.spec.runner.image`.
+ */
+export const DEFAULT_RUNNER_IMAGE = 'ghcr.io/erkkaha/percussionist/runner-opencode:latest';
+
 /** Default RunnerImageSpec — points at the opencode runtime. */
 export const OPENCODE_RUNNER_DEFAULTS: RunnerImageSpec = {
   image: 'ghcr.io/anomalyco/opencode:latest',
@@ -559,7 +568,7 @@ export const ClusterSettingsSpecSchema = z.object({
 
   runner: z
     .object({
-      image: z.string().default('ghcr.io/erkkaha/percussionist/runner:latest'),
+      image: z.string().default(DEFAULT_RUNNER_IMAGE),
       timeoutSeconds: z.number().int().positive().default(3600),
       resources: ResourceRequirementsSchema.optional(),
     })
@@ -692,7 +701,7 @@ export const RunSpecSchema = z
     inlineAgents: AgentDefSchema.array().max(5).optional(),
 
     model: z.string().optional(),
-    image: z.string().default('ghcr.io/erkkaha/percussionist/runner:latest'),
+    image: z.string().default(DEFAULT_RUNNER_IMAGE),
     dispatcher: z
       .object({
         image: z.string().optional(),
@@ -1929,7 +1938,7 @@ export function resolveRunConfig(
       boardOverrides?.image ??
       project.image ??
       clusterBase?.runner?.image ??
-      'ghcr.io/erkkaha/percussionist/runner:latest',
+      DEFAULT_RUNNER_IMAGE,
     timeoutSeconds:
       runOverrides?.timeoutSeconds ??
       boardOverrides?.timeoutSeconds ??

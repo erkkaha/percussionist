@@ -166,7 +166,7 @@ metadata:
   name: default
 spec:
   runner:
-    image: ghcr.io/erkkaha/percussionist/runner:latest
+    image: ghcr.io/erkkaha/percussionist/runner-opencode:latest
   runTTLDays: 7
 ```
 
