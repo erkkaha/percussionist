@@ -32,7 +32,7 @@ called a plugin-registered tool and returned in two steps for $0.0016.
 | Transcript: `{ info: { role, tokens, cost, model }, parts[] }` with `text`/`tool`/`step-finish` parts | Flat messages typed `user`/`assistant`/`idle`/`model-switched`; assistant `content[]` of `text`/`reasoning`/`tool`; `tokens`/`cost` on the message | `src/translate.ts` (+ tests) |
 | Tool parts name the tool directly | "Code Mode": the model calls one `execute` tool; real calls sit in `state.metadata.toolCalls[]` | `translate.ts` unwraps them into per-tool parts |
 | SSE `message.updated`, `session.idle`, `permission.updated` | `session.step.ended`, `session.execution.succeeded/failed`, `session.usage.updated`, … | `src/host.ts` event pump maps to the three v1 events |
-| `OPENCODE_AUTH_CONTENT` (v1 `auth.json`) | No auth env var; credentials live in the SDK database (in-memory when embedded) | `host.ts` registers `type: api` keys via `integration.connect.key` after the catalog loads, then waits for `model.list` to show the provider |
+| `OPENCODE_AUTH_CONTENT` (v1 `auth.json`) | No auth env var; credentials live in the SDK database (in-memory when embedded) | `host.ts` registers `type: api` keys via `integration.connect.key` after the catalog loads; `prompt()` waits for the requested model to become listed |
 | `OPENCODE_CONFIG_CONTENT` | Still read; also `OpenCode.create({ config: { content } })`. v1 keys are normalized (`provider→providers`, `npm→package`, `options→settings`, `mcp→mcp.servers`, `agent→agents`) | `src/config.ts` builds one document from config + auth + agent files |
 | Agent files in `~/.config/opencode/agents/*.md` | Not observed to load from the XDG directory in 2.0.10 | `config.ts` inlines mounted agent files under the legacy `agent` key (`prompt`, `mode`, `permission`, …) |
 | Permissions answered by config / a human | Plugin permission hook (`ctx.permission.hook("evaluate")`) | `src/plugin.ts` auto-allows in headless pods (`RUNNER_PERMISSION_MODE=ask` to disable) |
@@ -42,10 +42,14 @@ called a plugin-registered tool and returned in two steps for $0.0016.
 Two behaviours cost real debugging time and are worth knowing:
 
 - **Readiness race.** After `integration.connect.key`, the provider's models
-  become routable 1–2 s later. `provider.get` and `integration.get` answer from
-  the catalog and succeed immediately; only `model.list` flips. A prompt sent
-  in between fails with `Model unavailable`. The dispatcher posts its prompt
-  right after creating the session, so `prompt()` awaits readiness.
+  become routable a few hundred ms later, in the batch that also emits
+  `models-dev.refreshed` / `integration.updated`. Nothing simpler flips:
+  `provider.get` and `integration.get` answer from the catalog immediately, and
+  `model.list` already lists a provider's catalog models *before* any
+  credential is connected (18 of 27 for opencode-go). A prompt sent in between
+  fails with `Model unavailable`. The dispatcher posts its prompt right after
+  creating the session, so `prompt()` waits until the *specific* requested
+  model is listed (`waitForModel`, 15 s cap).
 - **Pagination.** `message.list` cursors encode the order; passing `cursor`
   together with `order` is rejected (`InvalidCursorError`).
 
@@ -56,7 +60,10 @@ Other observations:
   SDK sets from its `app.name` option; Percussionist does not spoof it.
 - An API key in the config document alone (`provider.<id>.options.apiKey`) does
   not connect a *catalog* provider; it does still configure a fully
-  config-defined provider such as the cluster's `llama.cpp` entry.
+  config-defined provider such as the cluster's `llama.cpp` entry. Worse, a
+  config-side key for a catalog provider makes its models appear listed before
+  the connection is routable, so the runner deliberately does not write keys
+  into the config document.
 - `server.info().version` is `unknown` for embedded hosts; `/global/health`
   reports the pinned SDK version instead.
 - The v1 line is still maintained (1.18.x releases continue), so there is no
