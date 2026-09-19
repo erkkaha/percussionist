@@ -1,6 +1,23 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.27] - 2026-09-19
+
+### <!-- 0 -->🚀 Features
+
+- Add server attention selection logic _(web)_
+- Add GET /api/attention HITL inbox route _(web)_
+- Add client attention api and useAttention hook _(web)_
+- Add Needs attention page at /attention _(web)_
+- Add server-backed needs-attention section to notification bell _(web)_
+- Add inline quick actions to attention rows _(web)_
+- Add Needs attention sidebar nav item with live count badge _(web)_
+- Include open-PR tasks in attention inbox _(web)_
+- Make runner-opencode the default runner image _(runner)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add HITL needs-attention inbox plan _(plan)_
 ## [v0.2.26] - 2026-09-19
 
 ### <!-- 0 -->🚀 Features
@@ -12,6 +29,10 @@ All notable changes to Percussionist are documented here.
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Wait for the requested model before the first prompt _(runner-opencode)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.26
 ## [v0.2.25] - 2026-09-19
 
 ### <!-- 0 -->🚀 Features
