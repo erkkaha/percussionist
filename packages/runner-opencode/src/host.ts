@@ -97,9 +97,19 @@ export class RunnerHost {
     });
     const host = new RunnerHost(sdk, opts);
     void host.pumpEvents();
-    host.ready = host.connectCredentials(opts.credentials).catch((e) => {
-      opts.warn(`credential setup failed: ${describe(e)}`);
-    });
+    // Bounded: a hung SDK call here must degrade to a prompt that may fail,
+    // not to a POST /message that never answers the dispatcher.
+    host.ready = Promise.race([
+      host.connectCredentials(opts.credentials).catch((e) => {
+        opts.warn(`credential setup failed: ${describe(e)}`);
+      }),
+      new Promise<void>((resolve) =>
+        setTimeout(() => {
+          opts.warn('credential setup still running after 60s — accepting prompts anyway');
+          resolve();
+        }, 60_000).unref(),
+      ),
+    ]);
     return host;
   }
 
@@ -166,6 +176,11 @@ export class RunnerHost {
     if (input.model?.modelID) {
       const providerID = input.model.providerID;
       if (providerID) {
+        if (!(await this.waitForModel(providerID, input.model.modelID, 15_000))) {
+          this.opts.warn(
+            `model ${providerID}/${input.model.modelID} not listed after 15s — prompting anyway`,
+          );
+        }
         try {
           await this.sdk.sessions.switchModel({
             sessionID: sid,
@@ -245,15 +260,30 @@ export class RunnerHost {
     }
   }
 
-  /** True once model.list shows a model from `providerID`, false after `ms`. */
-  private async waitForProvider(providerID: string, ms: number): Promise<boolean> {
+  /**
+   * True once model.list shows exactly `providerID/modelID`, false after `ms`.
+   *
+   * The catalog lists a provider's models before any credential is connected,
+   * so "some model from this provider" is always true; the connected provider's
+   * fuller model set (and routability) lands 200–500 ms after connect.key, in
+   * the batch that also emits models-dev.refreshed / integration.updated.
+   * Waiting for the model the dispatcher actually asked for is the check that
+   * cannot be fooled by the catalog.
+   */
+  private async waitForModel(providerID: string, modelID: string, ms: number): Promise<boolean> {
     const deadline = Date.now() + ms;
     const location = { directory: this.opts.workspace };
     while (Date.now() < deadline && !this.closed) {
       try {
         const res = await this.sdk.model.list({ location });
-        const models = res.data as unknown as Array<{ providerID?: string }>;
-        if (models.some((m) => m.providerID === providerID)) return true;
+        const models = res.data as unknown as Array<{
+          providerID?: string;
+          id?: string;
+          modelID?: string;
+        }>;
+        if (models.some((m) => m.providerID === providerID && (m.id ?? m.modelID) === modelID)) {
+          return true;
+        }
       } catch {
         // registry not ready yet
       }
@@ -266,10 +296,9 @@ export class RunnerHost {
    * Register API keys with the SDK's integration service.
    *
    * The integration catalog is loaded asynchronously after create(), so each
-   * provider is polled into existence first (a few hundred ms in practice), and
-   * after each key is connected we wait for the provider refresh that makes
-   * the models routable. Observed in 2.0.10: a prompt issued between
-   * connect.key and that refresh fails with "Model unavailable".
+   * provider is polled into existence first (a few hundred ms in practice).
+   * Routability of the connected provider's models arrives later still; see
+   * waitForModel.
    */
   private async connectCredentials(creds: ApiCredential[]): Promise<void> {
     if (creds.length === 0) return;
@@ -301,14 +330,9 @@ export class RunnerHost {
           label: 'percussionist',
         });
         connected++;
-        // The connection is folded into the model registry asynchronously
-        // (1–2 s in 2.0.10); a prompt before that fails with "Model
-        // unavailable". model.list is the observable that flips — provider.get
-        // and integration.get answer from the catalog and succeed immediately.
-        const routable = await this.waitForProvider(cred.providerID, 15_000);
-        this.opts.log(
-          `credential: ${cred.providerID} api key connected${routable ? '' : ' (provider not routable after 15s)'}`,
-        );
+        // The connection is folded into the model registry asynchronously;
+        // prompt() waits for the specific requested model (waitForModel).
+        this.opts.log(`credential: ${cred.providerID} api key connected`);
       } catch (e) {
         this.opts.warn(`credential: connect.key(${cred.providerID}) failed: ${describe(e)}`);
       }

@@ -11,9 +11,10 @@
 // Two things v2 no longer does for us:
 //   - It has no OPENCODE_AUTH_CONTENT. Credentials live in its database, and
 //     the embedded host's database is in-memory. API keys are therefore
-//     injected as provider settings in the config document; the auth file is
-//     also materialized at the legacy path so v2's legacy-credential import can
-//     pick up anything else (OAuth entries) if it runs.
+//     registered at runtime through the SDK's integration API (see
+//     RunnerHost.connectCredentials); the auth file is also materialized at the
+//     legacy path so v2's legacy-credential import can pick up anything else
+//     (OAuth entries) if it runs.
 //   - Agent files in the XDG config directory were not observed to load in
 //     2.0.10 (see the spike notes), so agents are inlined under the legacy
 //     `agent` key, which v2 migrates to `agents`.
@@ -108,7 +109,13 @@ export function buildConfigContent(opts: BuildConfigOptions): BuildConfigResult 
     }
   }
 
-  // --- credentials → provider settings ---------------------------------------
+  // --- credentials ---------------------------------------------------------------
+  // API keys are NOT written into the config document. A `providers.<id>.
+  // settings.apiKey` entry makes the catalog provider's models appear in
+  // model.list before the connection registered through integration.connect.key
+  // is routable, which defeats RunnerHost's readiness check (observed in-cluster:
+  // "Model unavailable" on the first prompt). Keys go through apiCredentials()
+  // → RunnerHost instead; this block only reports what cannot be registered.
   if (opts.authContent && opts.authContent.trim() !== '') {
     let auth: Json = {};
     try {
@@ -118,27 +125,16 @@ export function buildConfigContent(opts: BuildConfigOptions): BuildConfigResult 
         `auth: OPENCODE_AUTH_CONTENT is not valid JSON — ignored (${e instanceof Error ? e.message : String(e)})`,
       );
     }
-    const providers = asObject(config.provider);
     for (const [providerID, raw] of Object.entries(auth)) {
       const entry = asObject(raw);
       if (entry.type === 'api' && typeof entry.key === 'string') {
-        const provider = asObject(providers[providerID]);
-        const options = asObject(provider.options);
-        if (typeof options.apiKey === 'string' && options.apiKey !== '') {
-          notes.push(
-            `auth: ${providerID} already has options.apiKey in config — auth.json key not applied`,
-          );
-        } else {
-          providers[providerID] = { ...provider, options: { ...options, apiKey: entry.key } };
-          notes.push(`auth: ${providerID} api key injected as provider option`);
-        }
+        notes.push(`auth: ${providerID} api key will be registered with the SDK`);
       } else {
         warnings.push(
           `auth: ${providerID} credential of type "${String(entry.type)}" cannot be injected into the embedded host; relying on the legacy auth.json import`,
         );
       }
     }
-    if (Object.keys(providers).length > 0) config.provider = providers;
   }
 
   // --- dispatcher MCP ----------------------------------------------------------

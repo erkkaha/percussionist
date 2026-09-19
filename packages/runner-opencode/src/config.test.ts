@@ -75,22 +75,13 @@ describe('buildConfigContent', () => {
     'opencode-go': { type: 'api', key: 'sk-go' },
   });
 
-  test('injects api keys as provider options and warns about oauth entries', () => {
+  test('leaves provider settings alone and warns about oauth entries', () => {
     const r = buildConfigContent({ configContent: cluster, authContent: auth });
     const cfg = JSON.parse(r.content);
-    expect(cfg.provider['opencode-go']).toEqual({ options: { apiKey: 'sk-go' } });
+    expect(cfg.provider['opencode-go']).toBeUndefined();
     expect(cfg.provider['llama.cpp'].options.apiKey).toBe('k1');
+    expect(r.notes.some((n) => n.includes('opencode-go api key will be registered'))).toBe(true);
     expect(r.warnings.some((w) => w.includes('github-copilot') && w.includes('oauth'))).toBe(true);
-  });
-
-  test('does not clobber an apiKey already present in config', () => {
-    const r = buildConfigContent({
-      configContent: JSON.stringify({
-        provider: { 'opencode-go': { options: { apiKey: 'from-config' } } },
-      }),
-      authContent: JSON.stringify({ 'opencode-go': { type: 'api', key: 'from-auth' } }),
-    });
-    expect(JSON.parse(r.content).provider['opencode-go'].options.apiKey).toBe('from-config');
   });
 
   test('keeps an existing dispatcher MCP entry and adds one when missing', () => {
