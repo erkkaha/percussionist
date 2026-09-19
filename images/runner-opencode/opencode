@@ -1,0 +1,30 @@
+#!/bin/sh
+# `opencode` shim for the runner-opencode image.
+#
+# The operator launches the default runner as
+#   opencode serve --hostname 0.0.0.0 --port <port>
+# This image has no opencode binary — OpenCode 2 is embedded in the facade — so
+# the shim maps that one invocation onto it and rejects everything else.
+set -eu
+
+case "${1:-}" in
+  serve)
+    shift
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --port) PORT="$2"; export PORT; shift 2 ;;
+        --port=*) PORT="${1#--port=}"; export PORT; shift ;;
+        --hostname|--hostname=*) [ "$1" = "--hostname" ] && shift; shift ;;
+        *) shift ;;
+      esac
+    done
+    exec node /app/packages/runner-opencode/dist/index.js
+    ;;
+  --version|-v)
+    node -e 'console.log("runner-opencode (embedded @opencode/sdk " + (require("/app/packages/runner-opencode/package.json").dependencies["@opencode/sdk"]) + ")")'
+    ;;
+  *)
+    echo "opencode shim: only 'opencode serve --hostname H --port P' is supported in the runner-opencode image (got: $*)" >&2
+    exit 64
+    ;;
+esac
