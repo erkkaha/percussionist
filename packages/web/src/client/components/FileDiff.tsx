@@ -257,12 +257,12 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
   };
 
   return (
-    <div className="rounded-lg border border-border-muted bg-surface overflow-hidden">
+    <div className="rounded-lg border border-border-muted bg-surface overflow-hidden min-w-0 max-w-full">
       {/* Header */}
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 w-full px-3 py-2 hover:bg-surface-overlay/30 transition-colors"
+        className="flex items-center gap-2 w-full min-w-0 px-3 py-2 hover:bg-surface-overlay/30 transition-colors"
       >
         {expanded ? (
           <ChevronDown className="h-4 w-4 text-text-dim" />
@@ -270,7 +270,12 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
           <ChevronRight className="h-4 w-4 text-text-dim" />
         )}
         <File className="h-4 w-4 text-purple-600 dark:text-purple-400" />
-        <span className="text-sm font-mono text-text flex-1 text-left truncate">{displayPath}</span>
+        <span
+          className="text-sm font-mono text-text flex-1 min-w-0 text-left truncate"
+          title={displayPath}
+        >
+          {displayPath}
+        </span>
         {severityCounts.length > 0 && (
           <div className="flex items-center gap-1.5">
             {severityCounts.map(({ severity, count }) => (
@@ -333,7 +338,7 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
               </div>
 
               {/* Diff view */}
-              <div className="overflow-x-auto text-xs font-mono">
+              <div className="overflow-x-auto text-xs font-mono min-w-0 max-w-full">
                 {parsedFiles.map((file) => (
                   <Diff
                     key={file.newPath ?? file.oldPath}
@@ -360,29 +365,35 @@ export function FileDiff({ filename, path, diff, findings }: FileDiffProps) {
                 Unmapped findings ({unmappedFindings.length})
               </p>
               <div className="space-y-1.5">
-                {unmappedFindings.map((finding) => (
-                  <div
-                    key={finding.id}
-                    className="rounded border border-border-muted bg-surface-overlay/20 px-2.5 py-1.5 space-y-1"
-                  >
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <SeverityBadge severity={finding.severity} />
-                      {finding.isStale && (
-                        <span className="text-[10px] uppercase text-text-dim/70">stale</span>
-                      )}
-                      <span className="text-xs font-medium text-text">{finding.title}</span>
+                {unmappedFindings.map((finding) => {
+                  const anchorPath = finding.anchors
+                    .map(
+                      (a) =>
+                        `${normalizeAnchorPath(a.path)}:${a.side}:${a.line}${a.endLine ? `-${a.endLine}` : ''}`,
+                    )
+                    .join(', ');
+                  return (
+                    <div
+                      key={finding.id}
+                      className="rounded border border-border-muted bg-surface-overlay/20 px-2.5 py-1.5 space-y-1"
+                    >
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <SeverityBadge severity={finding.severity} />
+                        {finding.isStale && (
+                          <span className="text-[10px] uppercase text-text-dim/70">stale</span>
+                        )}
+                        <span className="text-xs font-medium text-text">{finding.title}</span>
+                      </div>
+                      <p className="text-xs text-text-dim leading-relaxed">{finding.comment}</p>
+                      <p
+                        className="text-[10px] text-text-dim/60 font-mono break-all"
+                        title={anchorPath}
+                      >
+                        {anchorPath}
+                      </p>
                     </div>
-                    <p className="text-xs text-text-dim leading-relaxed">{finding.comment}</p>
-                    <p className="text-[10px] text-text-dim/60 font-mono">
-                      {finding.anchors
-                        .map(
-                          (a) =>
-                            `${normalizeAnchorPath(a.path)}:${a.side}:${a.line}${a.endLine ? `-${a.endLine}` : ''}`,
-                        )
-                        .join(', ')}
-                    </p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
