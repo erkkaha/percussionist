@@ -6,6 +6,7 @@ import { persistEvent } from './audit.js';
 import { decide } from './decision.js';
 import { executeEffects } from './effects.js';
 import { ingestFindings } from './findings-ingestion.js';
+import { processInteractiveRequests } from './interactive-requests.js';
 import { observe } from './observations.js';
 import { byPriority, isActivePhase } from './scheduler.js';
 
@@ -34,6 +35,15 @@ export async function reconcileProject(project: Project, namespace: string): Pro
 
   // Re-fetch tasks after healing (to get fresh data with patched phases).
   const refreshedTasks = await listTasks(projectName, namespace);
+
+  // Consume interactive-run requests before the per-task decision loop so
+  // blocked tasks (skipped there) can still get an auxiliary run for
+  // debugging. A failure logs and never aborts reconciliation.
+  try {
+    await processInteractiveRequests(project, refreshedTasks, namespace);
+  } catch (e) {
+    console.error(`[reconcile] ${projectName} interactive requests error:`, e);
+  }
 
   // Filter to active tasks (not idea or done).
   const activeTasks = refreshedTasks.filter((t) => {
