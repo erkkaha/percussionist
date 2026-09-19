@@ -15,13 +15,18 @@ import type { AttentionResponse } from '../lib/types';
  * Pass `eventTick` from a collection-events hook (e.g. `useRunsEvents`) to
  * invalidate immediately on server-pushed updates instead of waiting for the
  * next poll, matching the SSE invalidation pattern used by BoardView.
+ *
+ * Pass `false` as the second argument (e.g. while `useAuth().isAuthenticated`
+ * is false) to keep the hook mounted without firing an unauthenticated
+ * request — react-query skips the query entirely until `enabled` flips back on.
  */
-export function useAttention(eventTick = 0) {
+export function useAttention(eventTick = 0, enabled = true) {
   const queryClient = useQueryClient();
 
   const query = useQuery<AttentionResponse, Error>({
     queryKey: ['attention'],
     queryFn: fetchAttention,
+    enabled,
     refetchInterval: 15_000,
     refetchOnWindowFocus: true,
   });
