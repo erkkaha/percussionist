@@ -44,4 +44,17 @@ describe('ensureManagerMcpToken', () => {
 
     await expect(ensureManagerMcpToken(core, 'test-ns')).resolves.toBeUndefined();
   });
+
+  it('keeps the operator running when an image-only upgrade has stale RBAC', async () => {
+    const core = {
+      readNamespacedSecret: mock(async () => {
+        throw Object.assign(new Error('not found'), { statusCode: 404 });
+      }),
+      createNamespacedSecret: mock(async () => {
+        throw Object.assign(new Error('forbidden'), { statusCode: 403 });
+      }),
+    } as unknown as CoreV1Api;
+
+    await expect(ensureManagerMcpToken(core, 'test-ns')).resolves.toBeUndefined();
+  });
 });
