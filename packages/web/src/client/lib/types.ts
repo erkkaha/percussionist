@@ -81,6 +81,10 @@ export interface AttentionItem {
   project: string;
   taskName: string;
   title: string;
+  /** PLAN vs BUILD — drives the row's type icon. */
+  type: 'PLAN' | 'BUILD';
+  /** Agent the task is assigned to, shown on the row. */
+  agent: string;
   phase: AttentionPhase;
   /** Short human-readable reason, e.g. "Answer agent question". */
   reason: string;

@@ -12,7 +12,7 @@
 // mirroring the shape of push-triggers.ts. The phase set matches the push
 // policy's PUSHED_TASK_PHASES so the two can never drift.
 
-import type { Task } from '@percussionist/api';
+import type { Task, TaskType } from '@percussionist/api';
 
 export const ATTENTION_PHASES = ['awaiting-human', 'waiting-for-input', 'failed'] as const;
 export type AttentionPhase = (typeof ATTENTION_PHASES)[number];
@@ -97,6 +97,10 @@ export interface AttentionItem {
   project: string;
   taskName: string;
   title: string;
+  /** PLAN vs BUILD — drives the row's type icon on the client. */
+  type: TaskType;
+  /** Agent the task is assigned to, shown on the row. */
+  agent: string;
   phase: AttentionPhase;
   reason: string;
   detail?: string;
@@ -145,6 +149,8 @@ export function collectAttention(
       project,
       taskName,
       title: task.spec.title || taskName,
+      type: task.spec.type,
+      agent: task.spec.agent,
       phase: phase as AttentionPhase,
       reason: attentionReason(task),
       ...(detail !== undefined ? { detail } : {}),

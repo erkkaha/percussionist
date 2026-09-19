@@ -22,6 +22,7 @@ import { AuthProvider } from './lib/auth';
 import { ChatContext } from './lib/chat-context';
 import type { Task } from './lib/types';
 import ActivityPage from './pages/ActivityPage';
+import AttentionPage from './pages/AttentionPage';
 import DevicePage from './pages/DevicePage';
 import LoginPage from './pages/LoginPage';
 
@@ -59,6 +60,7 @@ export default function App() {
               }
             >
               <Route index element={<ActivityPage />} />
+              <Route path="/attention" element={<AttentionPage />} />
               <Route path="/runs" element={<RunList />} />
               <Route path="/runs/new" element={<CreateRunForm />} />
               <Route path="/runs/:name" element={<RunDetail />} />
