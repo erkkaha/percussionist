@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { agentConfigEntry, apiCredentials, buildConfigContent, parseAgentFile } from './config.js';
+import {
+  agentConfigEntry,
+  apiCredentials,
+  buildConfigContent,
+  envCredentials,
+  parseAgentFile,
+} from './config.js';
 
 const BUILDER = `---
 name: builder
@@ -75,13 +81,17 @@ describe('buildConfigContent', () => {
     'opencode-go': { type: 'api', key: 'sk-go' },
   });
 
-  test('leaves provider settings alone and warns about oauth entries', () => {
+  test('leaves provider settings alone and classifies credentials', () => {
     const r = buildConfigContent({ configContent: cluster, authContent: auth });
     const cfg = JSON.parse(r.content);
     expect(cfg.provider['opencode-go']).toBeUndefined();
     expect(cfg.provider['llama.cpp'].options.apiKey).toBe('k1');
     expect(r.notes.some((n) => n.includes('opencode-go api key will be registered'))).toBe(true);
-    expect(r.warnings.some((w) => w.includes('github-copilot') && w.includes('oauth'))).toBe(true);
+    // github-copilot is an env-method credential, not an unsupported one.
+    expect(r.warnings).toEqual([]);
+    expect(r.notes.some((n) => n.includes('github-copilot') && n.includes('GITHUB_TOKEN'))).toBe(
+      true,
+    );
   });
 
   test('keeps an existing dispatcher MCP entry and adds one when missing', () => {
@@ -150,5 +160,30 @@ describe('apiCredentials', () => {
     expect(apiCredentials(auth)).toEqual([{ providerID: 'opencode-go', key: 'sk-go' }]);
     expect(apiCredentials('{oops')).toEqual([]);
     expect(apiCredentials(undefined)).toEqual([]);
+  });
+});
+
+describe('envCredentials', () => {
+  test('maps the github-copilot oauth token to GITHUB_TOKEN, preferring refresh', () => {
+    const auth = JSON.stringify({
+      'github-copilot': { type: 'oauth', access: 'gho_a', refresh: 'gho_r', expires: 0 },
+      'opencode-go': { type: 'api', key: 'sk' },
+      other: { type: 'oauth', access: 'x' },
+    });
+    expect(envCredentials(auth)).toEqual([
+      { providerID: 'github-copilot', env: 'GITHUB_TOKEN', value: 'gho_r' },
+    ]);
+    expect(
+      envCredentials(JSON.stringify({ 'github-copilot': { type: 'oauth', access: 'gho_a' } })),
+    ).toEqual([{ providerID: 'github-copilot', env: 'GITHUB_TOKEN', value: 'gho_a' }]);
+    expect(envCredentials(undefined)).toEqual([]);
+  });
+
+  test('buildConfigContent notes the env mapping instead of warning', () => {
+    const r = buildConfigContent({
+      authContent: JSON.stringify({ 'github-copilot': { type: 'oauth', refresh: 'gho_r' } }),
+    });
+    expect(r.warnings).toEqual([]);
+    expect(r.notes.some((n) => n.includes('GITHUB_TOKEN'))).toBe(true);
   });
 });
