@@ -83,7 +83,14 @@ export async function processInteractiveRequests(
       }
 
       await clearAnnotation(taskName, namespace);
-      await auditStarted(project, task, namespace, phase, runName);
+      // Best-effort audit: a failure here must not be reported as a failed
+      // request (the run already exists and the annotation is already cleared),
+      // and it must never abort processing of the remaining tasks.
+      try {
+        await auditStarted(project, task, namespace, phase, runName);
+      } catch (e) {
+        console.warn(`[reconcile] ${taskName} interactive run audit failed:`, e);
+      }
     } catch (e) {
       // Leave the annotation in place so the next cycle retries; the
       // deterministic run name makes that retry idempotent.

@@ -103,6 +103,21 @@ describe('processInteractiveRequests', () => {
     expect(clearPatchValue()).toBeNull();
   });
 
+  it('does not fail the pass when the audit event throws', async () => {
+    const project = makeProject('test-project');
+    const task = withAnnotation(makeTask('task-1', 'test-project', { phase: 'running' }), {
+      id: 'abcd1234',
+    });
+    persistEventSpy.mockRejectedValue(new Error('audit down'));
+
+    await processInteractiveRequests(project, [task], namespace);
+
+    // The run was created and the annotation cleared; audit failure is logged
+    // but never surfaces as a request failure.
+    expect(createRunSpy).toHaveBeenCalledTimes(1);
+    expect(clearPatchValue()).toBeNull();
+  });
+
   it('clears the annotation and skips invalid JSON payloads', async () => {
     const project = makeProject('test-project');
     const task = withAnnotation(
