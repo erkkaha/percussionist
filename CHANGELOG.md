@@ -1,6 +1,17 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.26] - 2026-09-19
+
+### <!-- 0 -->🚀 Features
+
+- OpenCode 2 embedded runner as a drop-in image _(runner-opencode)_
+- Expose the Copilot GitHub token as GITHUB_TOKEN _(runner-opencode)_
+- Embed the OpenCode 2 host, drop the opencode-web sidecar _(manager)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Wait for the requested model before the first prompt _(runner-opencode)_
 ## [v0.2.25] - 2026-09-19
 
 ### <!-- 0 -->🚀 Features
@@ -27,6 +38,7 @@ All notable changes to Percussionist are documented here.
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
 - Merge BUILD-3 (8f681a) FilterBar wrapping into BUILD-4 base _(web)_
+- Release v0.2.25
 ## [v0.2.24] - 2026-09-19
 
 ### <!-- 1 -->🐛 Bug Fixes
