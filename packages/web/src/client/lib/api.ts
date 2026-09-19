@@ -4,6 +4,7 @@ import type { ClusterAgent, ClusterSettings, Finding } from '@percussionist/api'
 import { authHeaders } from './auth';
 import type {
   AgentCapability,
+  AttentionResponse,
   BoardStatus,
   CreateAgentRequest,
   CreateMemoryRequest,
@@ -128,6 +129,17 @@ export async function fetchTaskEvents(
     `/board/${encodeURIComponent(project)}/tasks/${encodeURIComponent(taskName)}/events?limit=${limit}`,
   );
   return data.events;
+}
+
+// ---------------------------------------------------------------------------
+// Attention inbox (global HITL)
+//
+// Read-only aggregation of every Task in the namespace parked on a human
+// decision. Server-authoritative so the sidebar badge, bell section and
+// /attention page all agree with the Web Push payload.
+
+export async function fetchAttention(): Promise<AttentionResponse> {
+  return fetchJSON<AttentionResponse>('/attention');
 }
 
 export async function fetchRun(name: string): Promise<Run> {
