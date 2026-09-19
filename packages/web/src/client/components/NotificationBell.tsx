@@ -1,13 +1,18 @@
 // NotificationBell — top-bar bell icon with unread badge and history dropdown.
 //
-// - Badge shows unread count; pulses amber on new notification.
+// - Badge shows max(unread events, server-backed attention count); pulses amber
+//   on a new notification.
 // - Dropdown opens on click, closes on Escape or click-outside.
 // - Unread count resets to 0 as soon as the panel opens (auto-read).
+// - The "Needs attention" row reads the server-authoritative attention inbox
+//   (useAttention), so a push that fired while no tab was open is represented
+//   even though the ephemeral history below is page-load scoped.
 // - History is in-memory per page load (up to 50 entries, newest first).
 
-import { ChevronRight } from 'lucide-react';
+import { AlertCircle, ChevronRight } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAttention } from '../hooks/useAttention';
 import { useNotificationHistory } from '../hooks/useNotificationHistory';
 import type { DrumSound, NotificationEntry } from '../lib/notifications';
 
@@ -99,6 +104,14 @@ function NotificationItem({ entry, onClick }: { entry: NotificationEntry; onClic
 
 export default function NotificationBell() {
   const { entries, unreadCount, markAllRead, clearAll } = useNotificationHistory();
+  // Server-authoritative HITL count — polls and refetches on window focus so a
+  // gate reached while the tab was closed still shows up here.
+  const { data: attention } = useAttention();
+  const attentionCount = attention?.count ?? 0;
+  // The two sources are different concepts (persistent gates vs. ephemeral
+  // events), so the badge takes the larger rather than summing them to avoid
+  // double-counting a gate that also produced an in-session event.
+  const badgeCount = Math.max(unreadCount, attentionCount);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -148,10 +161,13 @@ export default function NotificationBell() {
       >
         <BellIcon className="w-4 h-4" />
 
-        {/* Unread badge */}
-        {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[14px] h-[14px] px-0.5 rounded-full bg-accent text-surface text-caption-xs font-bold leading-none animate-pulse">
-            {unreadCount > 9 ? '9+' : unreadCount}
+        {/* Unread / attention badge */}
+        {badgeCount > 0 && (
+          <span
+            data-testid="notification-badge"
+            className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[14px] h-[14px] px-0.5 rounded-full bg-accent text-surface text-caption-xs font-bold leading-none animate-pulse"
+          >
+            {badgeCount > 9 ? '9+' : badgeCount}
           </span>
         )}
       </button>
@@ -178,21 +194,57 @@ export default function NotificationBell() {
             )}
           </div>
 
-          {/* List */}
+          {/* Persistent, server-backed attention inbox. Kept separate from the
+              ephemeral event list below and labelled distinctly so the two
+              counts are not mistaken for one another. */}
+          <Link
+            to="/attention"
+            onClick={() => setOpen(false)}
+            className="group flex items-center gap-2.5 px-3 py-2.5 border-b border-border hover:bg-surface-overlay transition-colors"
+          >
+            <AlertCircle
+              aria-hidden="true"
+              className={`w-4 h-4 shrink-0 ${attentionCount > 0 ? 'text-accent' : 'text-text-dim'}`}
+            />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-text leading-tight">
+                Needs attention{attentionCount > 0 ? ` (${attentionCount})` : ''}
+              </p>
+              <p className="text-xs text-text-dim mt-0.5 truncate">
+                {attentionCount > 0 ? 'Tasks waiting on your decision' : 'Nothing waiting on you'}
+              </p>
+            </div>
+            {attentionCount > 0 && (
+              <span className="shrink-0 flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-accent text-surface text-caption-xs font-bold leading-none">
+                {attentionCount > 99 ? '99+' : attentionCount}
+              </span>
+            )}
+            <ChevronRight
+              className="w-3.5 h-3.5 shrink-0 text-text-dim group-hover:text-text transition-colors"
+              aria-hidden="true"
+            />
+          </Link>
+
+          {/* Ephemeral history (page-load scoped) */}
           <div className="overflow-y-auto max-h-96">
             {entries.length === 0 ? (
               <p className="text-xs text-text-dim text-center py-6">No notifications yet</p>
             ) : (
-              entries.map((entry) => (
-                <NotificationItem
-                  key={entry.key}
-                  entry={entry}
-                  onClick={() => {
-                    setOpen(false);
-                    markAllRead();
-                  }}
-                />
-              ))
+              <>
+                <p className="text-caption-xs font-semibold text-text-dim uppercase tracking-wider px-3 pt-2 pb-1">
+                  Recent
+                </p>
+                {entries.map((entry) => (
+                  <NotificationItem
+                    key={entry.key}
+                    entry={entry}
+                    onClick={() => {
+                      setOpen(false);
+                      markAllRead();
+                    }}
+                  />
+                ))}
+              </>
             )}
           </div>
         </div>
