@@ -2,14 +2,24 @@
 //
 // Lists every task in the namespace parked on a human decision
 // (awaiting-human / waiting-for-input / failed) from the server-authoritative
-// GET /api/attention endpoint. Read-only: each row links straight to the task
-// on its project board using the same URL shape as Web Push. Inline quick
-// actions live in a follow-up BUILD task.
+// GET /api/attention endpoint. Each row links straight to the task on its
+// project board using the same URL shape as Web Push, and offers inline quick
+// actions that reuse the board's existing endpoints so the operator can act
+// without leaving the inbox.
 
-import { FileText, Inbox, User, Wrench } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Check, FileText, Inbox, MessageSquare, RefreshCw, User, Wrench, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Textarea } from '../components/ui/textarea';
 import { useAttention } from '../hooks/useAttention';
+import {
+  answerTask,
+  approveTask,
+  replyToRun,
+  requestChangesTask,
+  retryEscalatedTask,
+} from '../lib/api';
 import { projectColor } from '../lib/project-color';
 import type { AttentionItem, AttentionPhase } from '../lib/types';
 
@@ -42,6 +52,215 @@ function TypeIcon({ type }: { type: AttentionItem['type'] }) {
     <Wrench className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" />
   ) : (
     <FileText className="h-3.5 w-3.5 shrink-0 text-phase-pending" aria-hidden="true" />
+  );
+}
+
+const ACTION_BUTTON =
+  'flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-text-dim hover:text-text transition-colors disabled:opacity-40';
+const PRIMARY_BUTTON =
+  'flex items-center gap-1 rounded-md bg-surface-container-high hover:bg-surface-container-highest px-2.5 py-1 text-xs font-medium text-text transition-colors disabled:opacity-40';
+const SUBMIT_BUTTON =
+  'flex items-center gap-1 rounded-md bg-surface-container-high hover:bg-surface-container-highest px-3 py-1.5 text-xs font-medium text-text transition-colors disabled:opacity-40';
+
+function InlineError({ error }: { error: unknown }) {
+  if (!error) return null;
+  return <p className="text-xs text-phase-failed">{(error as Error).message}</p>;
+}
+
+/**
+ * Inline quick actions for one attention row. Reuses the same API calls and
+ * mutation shape as TaskDetailPanel: approve/retry are single-click, while
+ * request-changes and answer require non-empty typed text. Every successful
+ * action invalidates the inbox and the affected project board so both refetch.
+ */
+function AttentionActions({ item }: { item: AttentionItem }) {
+  const queryClient = useQueryClient();
+  const [showRequestChanges, setShowRequestChanges] = useState(false);
+  const [requestChangesComment, setRequestChangesComment] = useState('');
+  const [showAnswer, setShowAnswer] = useState(false);
+  const [answerText, setAnswerText] = useState('');
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['attention'] });
+    void queryClient.invalidateQueries({ queryKey: ['board', item.project] });
+  };
+
+  const approveMutation = useMutation({
+    mutationFn: () => approveTask(item.project, item.taskName),
+    onSuccess: invalidate,
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: () => retryEscalatedTask(item.project, item.taskName),
+    onSuccess: invalidate,
+  });
+
+  const requestChangesMutation = useMutation({
+    mutationFn: (comment: string) => requestChangesTask(item.project, item.taskName, comment),
+    onSuccess: () => {
+      invalidate();
+      setShowRequestChanges(false);
+      setRequestChangesComment('');
+    },
+  });
+
+  const answerMutation = useMutation({
+    mutationFn: async (answer: string) => {
+      // Forward the reply into the parked run's session first so the agent
+      // actually sees it, then write the percussionist.dev/action-answer
+      // annotation that decideWaitingForInput consumes to resume the task.
+      if (item.workerRunName) await replyToRun(item.workerRunName, answer);
+      await answerTask(item.project, item.taskName, answer);
+    },
+    onSuccess: () => {
+      invalidate();
+      setShowAnswer(false);
+      setAnswerText('');
+    },
+  });
+
+  const isBuild = item.type === 'BUILD';
+  const isAwaitingHuman = item.phase === 'awaiting-human';
+  const isWaitingForInput = item.phase === 'waiting-for-input';
+  const isFailed = item.phase === 'failed';
+
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        {isAwaitingHuman && (
+          <button
+            type="button"
+            onClick={() => approveMutation.mutate()}
+            disabled={approveMutation.isPending}
+            className={PRIMARY_BUTTON}
+          >
+            <Check className="h-3.5 w-3.5" />
+            {approveMutation.isPending ? 'Approving…' : 'Approve'}
+          </button>
+        )}
+
+        {isAwaitingHuman && isBuild && (
+          <button
+            type="button"
+            onClick={() => setShowRequestChanges((open) => !open)}
+            className={ACTION_BUTTON}
+          >
+            <X className="h-3.5 w-3.5" />
+            Request changes
+          </button>
+        )}
+
+        {isWaitingForInput && (
+          <button
+            type="button"
+            onClick={() => setShowAnswer((open) => !open)}
+            className={ACTION_BUTTON}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            Answer
+          </button>
+        )}
+
+        {isFailed && (
+          <button
+            type="button"
+            onClick={() => retryMutation.mutate()}
+            disabled={retryMutation.isPending}
+            className={ACTION_BUTTON}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            {retryMutation.isPending ? 'Retrying…' : 'Retry'}
+          </button>
+        )}
+
+        <Link
+          to={item.url}
+          className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-text-dim hover:text-accent transition-colors"
+        >
+          Open
+        </Link>
+      </div>
+
+      {/* Success/failure feedback is inline per action, matching the detail panel. */}
+      <InlineError error={approveMutation.error} />
+      <InlineError error={retryMutation.error} />
+      <InlineError error={requestChangesMutation.error} />
+      <InlineError error={answerMutation.error} />
+
+      {isAwaitingHuman && isBuild && showRequestChanges && (
+        <div className="space-y-2 border border-border rounded-md p-3 bg-surface">
+          <p className="text-label-md font-mono uppercase text-text-dim">Review feedback</p>
+          <Textarea
+            placeholder="Describe required changes…"
+            value={requestChangesComment}
+            onChange={(e) => setRequestChangesComment(e.target.value)}
+            rows={3}
+            autoFocus
+          />
+          <div className="flex gap-2 justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                setShowRequestChanges(false);
+                setRequestChangesComment('');
+              }}
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-text-dim hover:text-text transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const comment = requestChangesComment.trim();
+                if (comment) requestChangesMutation.mutate(comment);
+              }}
+              disabled={requestChangesMutation.isPending || !requestChangesComment.trim()}
+              className={SUBMIT_BUTTON}
+            >
+              {requestChangesMutation.isPending ? 'Submitting…' : 'Submit'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isWaitingForInput && showAnswer && (
+        <div className="space-y-2 border border-phase-pending/30 rounded-md p-3 bg-surface">
+          <p className="text-label-md font-mono uppercase text-phase-pending">
+            Answer — run is waiting for input
+          </p>
+          <Textarea
+            placeholder="Type your answer for the agent…"
+            value={answerText}
+            onChange={(e) => setAnswerText(e.target.value)}
+            rows={3}
+            autoFocus
+          />
+          <div className="flex gap-2 justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                setShowAnswer(false);
+                setAnswerText('');
+              }}
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-text-dim hover:text-text transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const answer = answerText.trim();
+                if (answer) answerMutation.mutate(answer);
+              }}
+              disabled={answerMutation.isPending || !answerText.trim()}
+              className={SUBMIT_BUTTON}
+            >
+              {answerMutation.isPending ? 'Sending…' : 'Send answer'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -90,6 +309,8 @@ function AttentionRow({ item }: { item: AttentionItem }) {
             {item.detail}
           </p>
         )}
+
+        <AttentionActions item={item} />
       </div>
 
       {/* Relative age */}

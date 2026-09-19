@@ -188,6 +188,18 @@ describe('collectAttention', () => {
     expect(item?.title).toBe('fallback');
   });
 
+  it('carries the worker run name so the client can reply before answering', () => {
+    const [waiting] = collectAttention([
+      makeTask({
+        name: 'waiting',
+        phase: 'waiting-for-input',
+        worker: { status: 'Running', runName: 'run-9' },
+      }),
+    ]);
+    expect(waiting?.workerRunName).toBe('run-9');
+    expect(collectAttention([makeTask({ name: 'no-run' })])[0]?.workerRunName).toBeUndefined();
+  });
+
   it('sorts oldest-waiting first, then by project and task name', () => {
     const items = collectAttention([
       makeTask({ name: 'new', creationTimestamp: '2024-03-01T00:00:00Z' }),

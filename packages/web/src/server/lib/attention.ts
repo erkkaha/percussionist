@@ -104,6 +104,12 @@ export interface AttentionItem {
   phase: AttentionPhase;
   reason: string;
   detail?: string;
+  /**
+   * Worker run backing this task, when it has one. The client's inline answer
+   * action forwards the human's reply into this run's session (`replyToRun`)
+   * before writing the answer annotation, so the parked agent actually sees it.
+   */
+  workerRunName?: string;
   since: string;
   url: string;
 }
@@ -145,6 +151,7 @@ export function collectAttention(
     const project = task.spec.projectRef;
     const taskName = task.metadata.name;
     const detail = attentionDetail(task);
+    const workerRunName = task.status?.worker?.runName;
     items.push({
       project,
       taskName,
@@ -154,6 +161,7 @@ export function collectAttention(
       phase: phase as AttentionPhase,
       reason: attentionReason(task),
       ...(detail !== undefined ? { detail } : {}),
+      ...(workerRunName !== undefined ? { workerRunName } : {}),
       since: attentionSince(task) ?? '',
       // Identical shape to the push deep link so a click lands on the same task.
       url: `/projects/${encodeURIComponent(project)}/board?task=${encodeURIComponent(taskName)}`,

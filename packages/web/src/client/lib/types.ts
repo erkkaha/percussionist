@@ -90,6 +90,11 @@ export interface AttentionItem {
   reason: string;
   /** Best-effort context (question/failure text) when the server has it. */
   detail?: string;
+  /**
+   * Worker run backing this task, when it has one. The inline answer action
+   * replies into this run's session before writing the answer annotation.
+   */
+  workerRunName?: string;
   /** ISO timestamp the task started waiting; sorted oldest-first server-side. */
   since: string;
   /** Deep link to the task, identical in shape to the Web Push payload. */
