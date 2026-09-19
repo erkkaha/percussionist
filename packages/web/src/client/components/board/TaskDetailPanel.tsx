@@ -274,7 +274,7 @@ function CommitDiffList({
           >
             <button
               onClick={() => toggle(commit.sha)}
-              className="flex items-center gap-2 w-full px-3 py-2 hover:bg-surface-overlay/30 transition-colors text-left"
+              className="flex items-center gap-2 w-full min-w-0 px-3 py-2 hover:bg-surface-overlay/30 transition-colors text-left"
             >
               {isOpen ? (
                 <ChevronDown className="h-4 w-4 shrink-0 text-text-dim" />
@@ -285,7 +285,7 @@ function CommitDiffList({
               <span className="font-mono text-xs text-text-dim shrink-0">
                 {commit.sha.slice(0, 7)}
               </span>
-              <span className="text-sm text-text flex-1 truncate">{commit.subject}</span>
+              <span className="text-sm text-text flex-1 min-w-0 truncate">{commit.subject}</span>
               <span className="text-xs text-text-dim shrink-0">
                 {commit.files.length} {commit.files.length === 1 ? 'file' : 'files'}
               </span>
