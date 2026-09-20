@@ -5,6 +5,8 @@
 
 // Re-export server types so components import from a single place.
 import type {
+  Run as _Run,
+  RunSpec as _RunSpec,
   AgentCapability,
   AgentRef,
   DiffContext,
@@ -64,6 +66,43 @@ export interface Task extends _Task {
   /** Worker run status message, when present. */
   workerRunMessage?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Run list / detail response shapes (GET /api/runs, GET /api/runs/:name)
+//
+// The list route strips the full Run spec and returns a bounded projection so
+// the UI can render a purpose without shipping the whole prompt. These types
+// make that stripped shape explicit on the client.
+
+/** Task projection the server attaches to run list/detail responses when the
+ * run's `spec.boardTask` resolves to a live Task CR. Omitted when it does not
+ * (e.g. the Task was deleted) — consumers must degrade gracefully. */
+export interface RelatedTask {
+  name: string;
+  title: string;
+  type: 'PLAN' | 'BUILD';
+  phase?: string;
+}
+
+/**
+ * Spec facts exposed for run summaries. Extends the full `RunSpec` (which
+ * already declares `project`, `boardTask`, `interactive` and `runContext`)
+ * with the bounded `taskPreview`; the full prompt (`spec.task`) is
+ * deliberately not returned by the list route.
+ */
+export interface RunSummarySpec extends _RunSpec {
+  /** First line of the run prompt, whitespace-collapsed and bounded (~200 chars). */
+  taskPreview?: string;
+}
+
+/** A run as returned by the list endpoints: stripped spec plus related task. */
+export type RunListItem = _Run & {
+  spec: RunSummarySpec;
+  relatedTask?: RelatedTask;
+};
+
+/** A run as returned by GET /api/runs/:name: the full CR plus related task. */
+export type RunDetail = _Run & { relatedTask?: RelatedTask };
 
 // ---------------------------------------------------------------------------
 // Attention inbox (from GET /api/attention)
