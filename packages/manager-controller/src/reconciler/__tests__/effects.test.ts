@@ -850,6 +850,117 @@ describe('executeEffects — CreateTask', () => {
   });
 });
 
+describe('executeEffects — CreatePrFollowUpTask', () => {
+  const followUp: ReconcileEffect = {
+    type: 'CreatePrFollowUpTask',
+    taskName: 'test-project-build-abc123',
+    planTaskName: 'test-task',
+    title: '[PR #42 feedback] plan',
+    description: 'address feedback',
+    agent: 'builder',
+  };
+
+  /** Make the child lookup return `existing` (or 404 when undefined). */
+  function mockChild(existing: Task | undefined): void {
+    getTaskSpy.mockImplementation(async (name: string) => {
+      if (name === followUp.taskName) {
+        if (!existing) {
+          const err = new Error('not found');
+          (err as any).statusCode = 404;
+          throw err;
+        }
+        return existing;
+      }
+      return testTask;
+    });
+  }
+
+  it('creates the child and marks it pending when absent', async () => {
+    mockChild(undefined);
+
+    const result = await call(testTask, undefined, [followUp]);
+
+    expect(result.applied).toBe(true);
+    expect(createTaskSpy).toHaveBeenCalledTimes(1);
+    const created = createTaskSpy.mock.calls[0]?.[0] as Task;
+    expect(created.metadata.name).toBe('test-project-build-abc123');
+    expect(created.spec.type).toBe('BUILD');
+    expect(created.spec.parentTaskRef).toBe('test-task');
+    expect(created.spec.agent).toBe('builder');
+    expect(patchTaskStatusSpy).toHaveBeenCalledWith(
+      followUp.taskName,
+      { phase: 'pending' },
+      namespace,
+    );
+  });
+
+  it('does not recreate a child that already exists and is still pending', async () => {
+    mockChild(makeTask(followUp.taskName, 'test-project', { phase: 'pending' }));
+
+    const result = await call(testTask, undefined, [followUp]);
+
+    expect(result.applied).toBe(true);
+    expect(createTaskSpy).not.toHaveBeenCalled();
+    expect(patchTaskStatusSpy).toHaveBeenCalledWith(
+      followUp.taskName,
+      { phase: 'pending' },
+      namespace,
+    );
+  });
+
+  it('never resets a done child (retry does not resurrect completed work)', async () => {
+    mockChild(makeTask(followUp.taskName, 'test-project', { phase: 'done' }));
+
+    const result = await call(testTask, undefined, [followUp]);
+
+    expect(result.applied).toBe(true);
+    expect(createTaskSpy).not.toHaveBeenCalled();
+    expect(patchTaskStatusSpy).not.toHaveBeenCalled();
+  });
+
+  it('leaves a progressed (running) child untouched', async () => {
+    mockChild(makeTask(followUp.taskName, 'test-project', { phase: 'running' }));
+
+    const result = await call(testTask, undefined, [followUp]);
+
+    expect(result.applied).toBe(true);
+    expect(createTaskSpy).not.toHaveBeenCalled();
+    expect(patchTaskStatusSpy).not.toHaveBeenCalled();
+  });
+
+  it('tolerates a concurrent AlreadyExists on create', async () => {
+    mockChild(undefined);
+    const conflictErr = new Error('Conflict');
+    (conflictErr as any).statusCode = 409;
+    createTaskSpy.mockRejectedValue(conflictErr);
+
+    const result = await call(testTask, undefined, [followUp]);
+
+    expect(result.applied).toBe(true);
+    expect(patchTaskStatusSpy).toHaveBeenCalledWith(
+      followUp.taskName,
+      { phase: 'pending' },
+      namespace,
+    );
+  });
+
+  it('propagates a non-404 child lookup failure', async () => {
+    getTaskSpy.mockImplementation(async (name: string) => {
+      if (name === followUp.taskName) {
+        const err = new Error('api server down');
+        (err as any).statusCode = 500;
+        throw err;
+      }
+      return testTask;
+    });
+
+    const result = await call(testTask, undefined, [followUp]);
+
+    expect(result.applied).toBe(false);
+    expect(result.error).toMatch(/CreatePrFollowUpTask failed/);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Multiple effects
 // ---------------------------------------------------------------------------

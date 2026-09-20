@@ -6,16 +6,19 @@
 // module). A real QueryClient and MemoryRouter are used, matching the pattern
 // in board-view.test.tsx.
 
-import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import path from 'node:path';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import * as realApi from '../src/client/lib/api';
 import type { Task } from '../src/client/lib/types';
 
 const PROJECT_NAME = 'test-project';
 const REPO_WEB_URL = 'https://github.com/org/repo';
+
+// Tracked so the PR-stage submit tests can assert on the exact call.
+const requestChangesTask = mock(async (_project: string, _taskId: string, _comment: string) => {});
 
 // Spread the real module (captured above, before the mock below takes effect)
 // so every export other modules statically import (fetchTaskEvents, fetchRun,
@@ -34,7 +37,7 @@ mock.module(path.resolve('src/client/lib/api'), () => ({
   approveTask: async () => {},
   deleteBoardTask: async () => {},
   moveTask: async () => {},
-  requestChangesTask: async () => {},
+  requestChangesTask,
   retryEscalatedTask: async () => {},
   retryReviewTask: async () => {},
 }));
@@ -60,11 +63,11 @@ function makeTask(overrides: {
   } as unknown as Task;
 }
 
-async function renderDetailPanel(task: Task, repoWebUrl?: string) {
+async function renderDetailPanel(task: Task, repoWebUrl?: string, col = 'in-progress') {
   const { TaskDetailPanel } = await import('../src/client/components/board/TaskDetailPanel');
   const { MemoryRouter } = await import('react-router-dom');
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const result = render(
     React.createElement(
       MemoryRouter,
       null,
@@ -73,7 +76,7 @@ async function renderDetailPanel(task: Task, repoWebUrl?: string) {
         { client: queryClient },
         React.createElement(TaskDetailPanel, {
           task,
-          col: 'in-progress',
+          col,
           projectName: PROJECT_NAME,
           approvals: undefined,
           repoWebUrl,
@@ -82,6 +85,7 @@ async function renderDetailPanel(task: Task, repoWebUrl?: string) {
       ),
     ),
   );
+  return { ...result, queryClient };
 }
 
 describe('TaskDetailPanel Overview PR chip', () => {
@@ -128,5 +132,74 @@ describe('TaskDetailPanel Overview PR chip', () => {
 
     expect(screen.queryByText('Pull Request')).toBeNull();
     expect(screen.queryByTitle(/Open PR #/)).toBeNull();
+  });
+});
+
+describe('TaskDetailPanel PR-stage Request Changes', () => {
+  beforeEach(() => {
+    requestChangesTask.mock.calls.length = 0;
+  });
+  afterEach(cleanup);
+
+  it('shows the Request Changes action for an open PR in the PR stage', async () => {
+    const task = makeTask({ phase: 'awaiting-feature-merge', worker: { prNumber: 7 } });
+    await renderDetailPanel(task, REPO_WEB_URL);
+
+    expect(await screen.findByRole('button', { name: 'Request Changes' })).toBeTruthy();
+  });
+
+  it('explains the follow-up BUILD task in the PR-stage inline form', async () => {
+    const task = makeTask({ phase: 'awaiting-feature-merge', worker: { prNumber: 7 } });
+    await renderDetailPanel(task, REPO_WEB_URL);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Request Changes' }));
+
+    expect(await screen.findByText(/creates a follow-up BUILD task/)).toBeTruthy();
+    expect(screen.getByPlaceholderText('Describe required changes…')).toBeTruthy();
+  });
+
+  it('submits the feedback and invalidates the board query', async () => {
+    const task = makeTask({ phase: 'awaiting-feature-merge', worker: { prNumber: 7 } });
+    const { queryClient } = await renderDetailPanel(task, REPO_WEB_URL);
+    const invalidateSpy = spyOn(queryClient, 'invalidateQueries');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Request Changes' }));
+    fireEvent.change(screen.getByPlaceholderText('Describe required changes…'), {
+      target: { value: 'Also cover the edge case' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() =>
+      expect(requestChangesTask).toHaveBeenCalledWith(
+        PROJECT_NAME,
+        'proj-build-1',
+        'Also cover the edge case',
+      ),
+    );
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['board', PROJECT_NAME] }),
+    );
+  });
+
+  it('hides the action when the task has no open PR', async () => {
+    const noPr = makeTask({ phase: 'awaiting-feature-merge' });
+    await renderDetailPanel(noPr, REPO_WEB_URL);
+    expect(screen.queryByRole('button', { name: 'Request Changes' })).toBeNull();
+
+    cleanup();
+
+    const merged = makeTask({
+      phase: 'awaiting-feature-merge',
+      worker: { prNumber: 7, mergedAt: '2026-01-02T00:00:00Z' },
+    });
+    await renderDetailPanel(merged, REPO_WEB_URL);
+    expect(screen.queryByRole('button', { name: 'Request Changes' })).toBeNull();
+  });
+
+  it('hides the action for a non-PR-stage task', async () => {
+    const task = makeTask({ phase: 'in-progress', worker: { status: 'Running' } });
+    await renderDetailPanel(task, REPO_WEB_URL);
+
+    expect(screen.queryByRole('button', { name: 'Request Changes' })).toBeNull();
   });
 });

@@ -103,14 +103,20 @@ The decision engine reads the annotation:
 - Stale beyond `flow.timeouts.reviewStaleSeconds` (default 600s/10min) → `awaiting-human`
 
 ### `awaiting-human`
-The task waits for a human action written as Task annotations by the web UI.
-The decision engine reads the Task annotations:
+The task waits for a human action written as Task annotations by the web UI, the
+`beatctl board task` commands, or the manager MCP tools. The decision engine reads the
+Task annotations:
 
 | Action | Task annotation | BUILD path | PLAN path |
 |---|---|---|---|
 | **Approve** | `percussionist.dev/action-approved` | → `awaiting-merge` (creates merge run) | → `generating-builds` |
 | **Request changes** | `percussionist.dev/action-request-changes` + `percussionist.dev/action-rework-feedback` | → `rework-requested` (stores feedback) | same |
 | **Abandon** | `percussionist.dev/action-abandon` | → `done` | same |
+
+In this pre-PR phase, Request Changes sends a task back for rework. Once a PLAN has
+entered PR mode (`flow.integration.mode === "pr"`, phase `awaiting-feature-merge` with
+an open PR), Request Changes instead starts a scope-change follow-up BUILD child — see
+the `awaiting-feature-merge` section below.
 
 ### `awaiting-merge` *(BUILD only)*
 Manager creates a merge facilitator Run whose agent merges the BUILD's feature branch (`feature/{plan}--{build}`) into the parent PLAN branch (`feature/{plan}`). When the merge run succeeds → `done` and `worker.mergedAt` is recorded. This timestamp is what unlocks successor BUILD tasks in `canSchedule`. If the merge run fails or goes stale → `failed`.
@@ -132,18 +138,57 @@ Stays in this phase until every child task reaches `done`. Once all children are
 done, the next transition depends on `flow.integration.mode`:
 - **`auto-merge`** (default for `plan-build`/`plan-build-review-merge` presets):
   schedules a merge run for the task's feature branch → `awaiting-feature-merge`
+- **`pr`**: schedules a PR-open run (or, when `worker.prNumber` is already set, an
+  update run against the existing PR) → `awaiting-feature-merge`
 - **`manual`**: → `awaiting-human` so someone can merge the branch outside the system
 - **`disabled`**: → `done` without any integration step (no feature branching)
 
 If children don't complete within `flow.timeouts.buildgenStaleSeconds` (default
 600s/10min), the task escalates to `awaiting-human`.
 
-### `awaiting-feature-merge`
-Mirrors `awaiting-merge` but for a PLAN task's feature branch. The merge run
-merges the task's feature branch (`feature/{task-id}`) into the project's default
-git ref (`project.spec.source.git.ref ?? "main"`). When the merge run succeeds
-→ `done` and `worker.mergedAt` is recorded. If the merge run fails or goes stale
-→ `awaiting-human`.
+### `awaiting-feature-merge` *(PLAN only)*
+The PLAN's feature branch (`feature/{task-id}`) is complete and ready to land on the
+project's default git ref (`project.spec.source.git.ref ?? "main"`). How it lands is
+controlled by `flow.integration.mode`.
+
+**`auto-merge`** — mirrors `awaiting-merge`: the manager schedules a merge run that
+merges the feature branch directly into the target. Success → `done` with
+`worker.mergedAt` recorded; failure or staleness → `awaiting-human`.
+
+**`pr`** — the manager schedules a short-lived PR-open run (`buildPrOpenRun`) that
+pushes the feature branch and opens a GitHub PR. The run reports `outcome=pr-opened`
+plus the PR number via `complete_merge`; the manager records `worker.prNumber`, clears
+`worker.mergeRunName`, stays in `awaiting-feature-merge`, and polls the PR state
+(`getPrState`/`getPrComments`, 15-minute cache) on every reconcile cycle:
+
+| PR state | Transition |
+|---|---|
+| Merged | `done` (`worker.mergedAt` recorded) |
+| Closed without merging | `awaiting-human` (`worker.mergeError` set; `worker.prNumber` cleared so a later approval opens a fresh PR) |
+| Open, new human PR comments | a PR-feedback evaluation run distils the comments — an `approve` verdict resumes polling; a `request_changes` verdict creates a follow-up BUILD child and moves the PLAN to `awaiting-children` |
+| Open, nothing new | stays in `awaiting-feature-merge` (keep polling) |
+
+When a follow-up BUILD child merges into the PLAN's feature branch and the PLAN
+re-enters `awaiting-feature-merge`, the PR-open run is re-scheduled in **update** mode:
+`buildPrOpenRun` sees `worker.prNumber` and pushes the revised head to the *same* PR.
+
+A human can start that same scope-change loop without commenting on GitHub. **Request
+Changes** on the PR-stage task — the board's detail panel, or
+`beatctl board task request-changes --task-name <plan> --feedback <text>` — writes
+`percussionist.dev/action-request-changes` +
+`percussionist.dev/action-rework-feedback` on the Task. On the next cycle the manager
+creates one follow-up BUILD child (`[PR #N scope change] <plan title>`,
+`spec.parentTaskRef = <plan>`, agent `flow.build.defaultAgent`) from the feedback,
+appends it to `worker.createdBuildTaskRefs`, and transitions the PLAN to
+`awaiting-children`; the revised head then flows back to the same PR as above. The
+annotations are consumed (cleared) once the transition is applied, and the child name
+is derived deterministically from the feedback plus the round count so a retry cannot
+create a duplicate. The action is rejected for tasks that cannot consume it (`done`,
+`running`, or `awaiting-feature-merge` with no open PR).
+
+PR mode requires `source.git.githubTokenSecret` so the manager can read PR state via
+the GitHub API. Merge itself always happens on GitHub — a PR-stage task cannot be
+approved from Percussionist.
 
 ### `rework-requested`
 Waits for a scheduling slot (same `canSchedule` check as `pending`). When available → `scheduled`. The next run gets the stored `worker.reviewFeedback` injected into its prompt as rework context.
@@ -174,7 +219,7 @@ Terminal. Manager never touches it again. Task CR persists until the parent Proj
 
 When `Project.spec.featureBranchingEnabled: true`, every task gets its own branch. The workspace-init init container creates it from `parentRef` if it doesn't exist yet. A worktree is placed at `/data/worktrees/{run-name}/` and surfaced to the runner container as `/workspace` via a subPath mount, which is also the agent's working directory — agent prompts should say `/workspace`, not the `/data` path. Retries reuse the branch — the agent picks up where it left off. When a BUILD task is approved, a merge run merges its branch into the parent PLAN branch and sets `worker.mergedAt`. The next BUILD in sequence only starts after `mergedAt` is set, so each BUILD sees its predecessor's committed code.
 
-When all BUILD tasks under a PLAN are done, the PLAN transitions to `awaiting-feature-merge` (if `flow.integration.mode === "auto-merge"`). A merge run merges the PLAN's feature branch (`feature/{plan-id}`) into the project's default git ref (`project.spec.source.git.ref ?? "main"`). On success the PLAN reaches `done` with `worker.mergedAt` set.
+When all BUILD tasks under a PLAN are done, the PLAN transitions to `awaiting-feature-merge`. In `auto-merge` mode a merge run merges the PLAN's feature branch (`feature/{plan-id}`) into the project's default git ref (`project.spec.source.git.ref ?? "main"`); in `pr` mode a PR-open run opens a GitHub PR instead and the manager polls it until merged. On success the PLAN reaches `done` with `worker.mergedAt` set.
 
 ---
 
@@ -201,7 +246,7 @@ See [MCP tools reference: `inspect_task_flow`](reference/mcp-tools.md#inspect_ta
 
 ## Run Relationships
 
-A task has up to three live Runs at once:
+A task uses these run types over its lifetime:
 
 | Run type | Created in phase | Name scheme |
 |---|---|---|
@@ -209,8 +254,10 @@ A task has up to three live Runs at once:
 | Review | `succeeded` | `auxiliaryRunName(project, 'review', task, suffix)` — `{project}-review-{task}-{sha256:8}`; hash of `project:task:review:retryCount:aiReworkCount` |
 | Merge (BUILD) | `awaiting-human` (BUILD approval) | `auxiliaryRunName(project, 'merge', task, suffix)` — `{project}-merge-{task}-{sha256:8}`; hash of `project:task:retryCount` |
 | Merge (feature branch) | `awaiting-children` (auto-merge mode) | `auxiliaryRunName(project, 'merge', task, suffix)` — `{project}-merge-{task}-{sha256:10}`; hash of `project:task:merge` |
+| PR-open | `awaiting-children` (pr mode) | `auxiliaryRunName(project, 'pr', task, suffix)` — `{project}-pr-{task}-{sha256:10}`; hash of `project:task:pr-open` |
+| PR-feedback eval | `awaiting-feature-merge` (pr mode, new PR comments) | `auxiliaryRunName(project, 'preval', task, suffix)` — `{project}-preval-{task}-{sha256:10}`; hash of `project:task:preval:{newestCommentAt}` |
 | Buildgen | `generating-builds` | `auxiliaryRunName(project, 'buildgen', task, suffix)` — `{project}-buildgen-{task}-{sha256:10}`; hash of `project:task:buildgen` |
 
-All review/merge/buildgen runs are named via `auxiliaryRunName()` (`worker-builder.ts`): a truncated SHA-256 hash of the run's context (project, task, kind, retry counters) is appended as the suffix — the suffix is not a plain retry counter. Only worker runs use `workerRunName()`, whose deterministic hash keeps the name stable across reconcile cycles.
+All auxiliary runs (review, merge, buildgen, PR-open, PR-feedback eval) are named via `auxiliaryRunName()` (`worker-builder.ts`): a truncated SHA-256 hash of the run's context (project, task, kind, retry counters) is appended as the suffix — the suffix is not a plain retry counter. Only worker runs use `workerRunName()`, whose deterministic hash keeps the name stable across reconcile cycles.
 
 Old Runs are never deleted by state transitions — they persist as history until the TTL controller removes them. A Run's own `spec.ttlSecondsAfterFinished`, when set, takes precedence over the cluster-wide `runTTLDays` default (default 7 days); `runTTLDays` only applies to Runs that don't set the per-run field. Deleting a Run — whether by TTL expiry, `kubectl delete run`, the dashboard, or the manager — triggers a `batch/v1` Job that cleans up the Run's worktree.

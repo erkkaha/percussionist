@@ -9,7 +9,8 @@
 //   task move                      — patch task status.phase (validated against the transition table)
 //   task remove                    — delete the Task CR
 //   task approve                   — approve an awaiting-human task
-//   task request-changes           — send an awaiting-human task back for rework
+//   task request-changes           — send a task back for rework (awaiting-human,
+//                                    or a PR-stage task parked in awaiting-feature-merge)
 //   task retry                     — recover a failed task
 //   task interactive               — request an auxiliary interactive run on the task's branch
 //   plan <project>                 — read a PLAN artifact from the plans ConfigMap
@@ -520,12 +521,33 @@ export function retryTaskStatusPatch(task: Task, review: boolean): Partial<TaskS
     : { phase: target, worker: { ...worker, retryCount: (worker.retryCount ?? 0) + 1 } };
 }
 
+/**
+ * Whether a task's current phase can consume a `request-changes` verdict.
+ *
+ * `awaiting-human` is the normal gate. A PLAN task parked in
+ * `awaiting-feature-merge` with an open PR (`worker.prNumber` set) is the PR
+ * stage: the manager turns a request-changes verdict there into a follow-up
+ * BUILD child that updates the same PR head, so the annotation is equally
+ * consumable. Every other phase cannot — including `awaiting-feature-merge`
+ * with no `prNumber` (auto-merge/manual mode, or a PR that already closed).
+ *
+ * Pure, so the gate is unit-testable without a cluster.
+ */
+export function isRequestChangesEligible(task: Task): boolean {
+  const phase = task.status?.phase;
+  if (phase === 'awaiting-human') return true;
+  return phase === 'awaiting-feature-merge' && task.status?.worker?.prNumber !== undefined;
+}
+
 // Read the task and confirm it is actually waiting on a human. Exits non-zero
-// on any phase that a verdict cannot apply to.
+// on any phase that a verdict cannot apply to. `allowPrStage` widens the gate
+// for request-changes only: approve never applies to a task parked in
+// `awaiting-feature-merge`, because the PR merge happens on GitHub.
 async function requireAwaitingHuman(
   taskName: string,
   ns: string,
   verb: string,
+  opts: { allowPrStage?: boolean } = {},
 ): Promise<Task | undefined> {
   let task: Task;
   try {
@@ -536,6 +558,7 @@ async function requireAwaitingHuman(
 
   const phase = task.status?.phase;
   if (phase === 'awaiting-human') return task;
+  if (opts.allowPrStage && isRequestChangesEligible(task)) return task;
 
   if (verb === 'approve' && phase && SETTLED_PHASES.includes(phase)) {
     console.log(`task ${taskName} is already "${phase}" — nothing to approve`);
@@ -543,7 +566,14 @@ async function requireAwaitingHuman(
   }
 
   console.error(`beatctl: cannot ${verb} task ${taskName} in phase "${phase ?? 'unknown'}".`);
-  console.error('  Only tasks in "awaiting-human" are waiting on a verdict.');
+  if (opts.allowPrStage) {
+    console.error('  Only "awaiting-human" tasks, or a PLAN task with an open PR parked in');
+    console.error('  "awaiting-feature-merge" (status.worker.prNumber set), can consume a');
+    console.error('  request-changes verdict. A task in "awaiting-feature-merge" without a');
+    console.error('  prNumber has no PR to update, so the annotation would never be consumed.');
+  } else {
+    console.error('  Only tasks in "awaiting-human" are waiting on a verdict.');
+  }
   process.exit(1);
 }
 
@@ -637,12 +667,20 @@ export async function runBoardTaskRequestChanges(opts: BoardTaskRequestChangesOp
     process.exit(1);
   }
 
-  const task = await requireAwaitingHuman(opts.taskName, ns, 'request changes on');
+  const task = await requireAwaitingHuman(opts.taskName, ns, 'request changes on', {
+    allowPrStage: true,
+  });
   if (!task) return;
+
+  const prStage = task.status?.phase === 'awaiting-feature-merge';
 
   try {
     await patchTask(opts.taskName, requestChangesTaskMetadataPatch(task, feedback), ns);
-    console.log(`changes requested on task ${opts.taskName} — the manager will dispatch rework`);
+    console.log(
+      prStage
+        ? `changes requested on task ${opts.taskName} — the manager will create a follow-up BUILD task and update the open PR`
+        : `changes requested on task ${opts.taskName} — the manager will dispatch rework`,
+    );
   } catch (e) {
     fatal('request changes failed', e);
   }
