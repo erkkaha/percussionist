@@ -17,6 +17,11 @@
 // Only transitions fire, never states seen on the first pass — a server
 // restart must not re-buzz phones for everything already sitting on a human
 // gate. The poll is skipped entirely while nobody is subscribed.
+//
+// Deliberately *not* pushed: `awaiting-feature-merge` with an open PR. Merging
+// on GitHub is a human action, but it is surfaced only by the in-app Needs
+// attention inbox (lib/attention.ts, `OPEN_PR_PHASE`) so that inbox's count can
+// legitimately exceed what push reported.
 
 import type { Run, Task } from '@percussionist/api';
 import { getDb } from '../db.js';

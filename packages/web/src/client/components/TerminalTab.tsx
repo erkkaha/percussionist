@@ -7,6 +7,11 @@ import { Button } from './ui/button';
 interface TerminalTabProps {
   runName: string;
   active: boolean;
+  /**
+   * Fill the parent flex column instead of the default 600px box. Used by the
+   * immersive run shell; TaskRunsPanel leaves it unset and keeps today's height.
+   */
+  fillHeight?: boolean;
 }
 
 function wsUrlFor(runName: string): string {
@@ -28,7 +33,7 @@ function isReadinessError(msg: string): boolean {
   );
 }
 
-export default function TerminalTab({ runName, active }: TerminalTabProps) {
+export default function TerminalTab({ runName, active, fillHeight = false }: TerminalTabProps) {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [closed, setClosed] = useState(false);
@@ -257,7 +262,7 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
   }, [active, connect, clearRetryTimer]);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className={fillHeight ? 'flex h-full min-h-0 flex-col gap-3' : 'flex flex-col gap-3'}>
       {/* Status bar */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
@@ -292,8 +297,15 @@ export default function TerminalTab({ runName, active }: TerminalTabProps) {
 
       {/* Terminal */}
       <div
-        className="rounded-lg border border-border overflow-hidden"
-        style={{ height: '600px', background: '#111317', padding: '12px', minWidth: 0 }}
+        className={`rounded-lg border border-border overflow-hidden ${
+          fillHeight ? 'min-h-0 flex-1' : ''
+        }`}
+        style={{
+          height: fillHeight ? undefined : '600px',
+          background: '#111317',
+          padding: '12px',
+          minWidth: 0,
+        }}
       >
         <div ref={termDivRef} style={{ height: '100%', overflow: 'hidden' }} />
       </div>

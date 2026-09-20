@@ -16,6 +16,8 @@
 const DEFAULT_BASE_URL = 'http://ollama.percussionist.svc.cluster.local:11434';
 const DEFAULT_MODEL = 'nomic-embed-text';
 
+import { ollamaFetch } from './ollama.js';
+
 // ---------------------------------------------------------------------------
 // Internal state — shared with routes.ts for health checks
 
@@ -66,7 +68,8 @@ interface TagsResponse {
 }
 
 async function getTags(baseUrl: string): Promise<OllamaTagEntry[]> {
-  const res = await fetch(`${baseUrl}/api/tags`, {
+  void baseUrl;
+  const res = await ollamaFetch('/api/tags', {
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(`tags request failed (${res.status})`);
@@ -101,7 +104,8 @@ interface PullStreamEvent {
 }
 
 async function pullModel(baseUrl: string, name: string, timeoutMs: number): Promise<void> {
-  const res = await fetch(`${baseUrl}/api/pull`, {
+  void baseUrl;
+  const res = await ollamaFetch('/api/pull', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, stream: true }),

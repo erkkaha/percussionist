@@ -76,6 +76,15 @@ export const RunnerPackagesSchema = z
   .optional();
 export type RunnerPackages = z.infer<typeof RunnerPackagesSchema>;
 
+/**
+ * The runner image a Run gets when nothing (Run, board task, Project,
+ * ClusterSettings) names one. Since v0.2.27 this is the OpenCode 2 embedded
+ * runner (packages/runner-opencode); the v1 `opencode serve` image remains
+ * published as `ghcr.io/erkkaha/percussionist/runner` for opt-out via
+ * `spec.image` or `ClusterSettings.spec.runner.image`.
+ */
+export const DEFAULT_RUNNER_IMAGE = 'ghcr.io/erkkaha/percussionist/runner-opencode:latest';
+
 /** Default RunnerImageSpec — points at the opencode runtime. */
 export const OPENCODE_RUNNER_DEFAULTS: RunnerImageSpec = {
   image: 'ghcr.io/anomalyco/opencode:latest',
@@ -253,7 +262,25 @@ export const EmbeddingSpecSchema = z.object({
   enabled: z.boolean().default(false),
   model: z.string().default('nomic-embed-text'),
   dimensions: z.number().int().default(768),
-  ollamaUrl: z.string().optional(),
+  // The memory-service runtime additionally requires this origin to appear in
+  // the operator-controlled OLLAMA_ALLOWED_ORIGINS allowlist. Redirects are not
+  // followed by the memory-service client.
+  ollamaUrl: z
+    .string()
+    .refine(
+      (v) => {
+        try {
+          const u = new URL(v);
+          if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+          if (u.username || u.password) return false;
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: 'ollamaUrl must be an http(s) URL without credentials' },
+    )
+    .optional(),
   resources: ResourceRequirementsSchema.optional(),
 });
 export type EmbeddingSpec = z.infer<typeof EmbeddingSpecSchema>;
@@ -541,7 +568,7 @@ export const ClusterSettingsSpecSchema = z.object({
 
   runner: z
     .object({
-      image: z.string().default('ghcr.io/erkkaha/percussionist/runner:latest'),
+      image: z.string().default(DEFAULT_RUNNER_IMAGE),
       timeoutSeconds: z.number().int().positive().default(3600),
       resources: ResourceRequirementsSchema.optional(),
     })
@@ -674,7 +701,7 @@ export const RunSpecSchema = z
     inlineAgents: AgentDefSchema.array().max(5).optional(),
 
     model: z.string().optional(),
-    image: z.string().default('ghcr.io/erkkaha/percussionist/runner:latest'),
+    image: z.string().default(DEFAULT_RUNNER_IMAGE),
     dispatcher: z
       .object({
         image: z.string().optional(),
@@ -1911,7 +1938,7 @@ export function resolveRunConfig(
       boardOverrides?.image ??
       project.image ??
       clusterBase?.runner?.image ??
-      'ghcr.io/erkkaha/percussionist/runner:latest',
+      DEFAULT_RUNNER_IMAGE,
     timeoutSeconds:
       runOverrides?.timeoutSeconds ??
       boardOverrides?.timeoutSeconds ??
@@ -1976,4 +2003,71 @@ export function buildRepoWebUrl(url: string): string | undefined {
   const parsed = parseGitHubUrl(url);
   if (!parsed) return undefined;
   return `https://github.com/${parsed.owner}/${parsed.repo}`;
+}
+
+// ---------------------------------------------------------------------------
+// Interactive task runs.
+//
+// An interactive run is attached to a board Task but is auxiliary: it never
+// touches `Task.status.phase` or `Task.status.worker.runName`. The web UI, CLI,
+// and manager MCP tool all request one by writing a JSON payload to the Task
+// annotation below; the manager reconciler is the only component that creates
+// the Run. The run name is derived from a writer-generated request id so a
+// retry after a partial failure recreates the same name and the AlreadyExists
+// response is adopted instead of duplicating work.
+
+/** Task annotation carrying an `InteractiveRunRequest` JSON payload. */
+export const INTERACTIVE_RUN_ANNOTATION = 'percussionist.dev/action-interactive';
+
+export const InteractiveRunRequestSchema = z.object({
+  id: z.string().regex(/^[a-z0-9]{4,16}$/),
+  agent: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  timeoutSeconds: z.number().int().positive().max(86_400).optional(),
+});
+export type InteractiveRunRequest = z.infer<typeof InteractiveRunRequestSchema>;
+
+/**
+ * Compute a deterministic run name for an interactive task run.
+ *
+ * Format: `{project}-interactive-{mid}-{requestId}`, where `mid` is derived
+ * from the task name with any project-name prefix stripped. The result is a
+ * valid DNS-1123 label of at most 63 characters; the middle segment is
+ * truncated and, for pathologically long project names, the project prefix is
+ * shortened as well — but the request id suffix is always preserved so the
+ * name stays collision-resistant.
+ *
+ * Pure string operations only: the api package is imported by the browser
+ * bundle, so `node:crypto` must not be used here (see `parseGitHubUrl`).
+ */
+export function interactiveRunName(
+  projectName: string,
+  taskName: string,
+  requestId: string,
+): string {
+  const sanitize = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+  const project = sanitize(projectName) || 'project';
+  const task = sanitize(taskName);
+  const stripped = task.startsWith(`${project}-`) ? task.slice(project.length + 1) : task;
+
+  const literal = '-interactive-';
+  const tail = `-${requestId}`;
+
+  let prefix = project;
+  let maxMid = 63 - prefix.length - literal.length - tail.length;
+  if (maxMid < 1) {
+    // The project name alone leaves no room for the middle segment — shorten
+    // it, keeping the leading portion (and always at least one character).
+    const prefixBudget = 63 - literal.length - tail.length - 1;
+    prefix = prefix.slice(0, Math.max(prefixBudget, 1)).replace(/-+$/g, '');
+    maxMid = 63 - prefix.length - literal.length - tail.length;
+  }
+
+  const mid = stripped.slice(0, maxMid).replace(/-+$/g, '') || 'x';
+  return `${prefix}${literal}${mid}${tail}`;
 }

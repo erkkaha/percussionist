@@ -1,4 +1,75 @@
 // chat-utils.ts — utilities for parsing structured content in agent chat messages
+// and for matching the copies of a reply that reach the panel by different paths.
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  text: string;
+  id?: string;
+  created?: number;
+  /** `false` while the SSE stream is still delivering this turn's text. */
+  completed?: boolean;
+}
+
+// Monotonically increasing sequence for messages that carry no server `id`
+// (optimistic user bubbles, system/error bubbles, POST-response text). A fresh
+// key per message lets identical text render more than once ("yes" twice).
+let _clientSeq = 0;
+
+// Stable per-message identity: keep the server `id` when one is supplied,
+// otherwise assign a unique client sequence key.
+export function stableKey(m: ChatMessage): string {
+  return m.id ?? `client-${++_clientSeq}`;
+}
+
+// Synthetic keys are the ones we assign locally (`client-*` for live messages,
+// `hist-*` for loaded history); everything else is a real server id.
+function isSyntheticKey(id: string | undefined): boolean {
+  return id == null || id.startsWith('client-') || id.startsWith('hist-');
+}
+
+// Index of the last item satisfying the predicate, or -1. Matching the last
+// (newest) occurrence keeps an SSE upgrade from hijacking an older history
+// bubble with identical text.
+function lastIndexMatching(items: ChatMessage[], pred: (m: ChatMessage) => boolean): number {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const m = items[i];
+    if (m && pred(m)) return i;
+  }
+  return -1;
+}
+
+// The same assistant turn reaches the panel twice: the SSE stream delivers it
+// under its opencode id (possibly first as partial text, then again complete),
+// and the POST /chat response delivers the final text (with the id when the
+// manager could resolve it). Pick the bubble both copies should land in, or -1
+// to append a new one.
+export function findBubbleIndex(items: ChatMessage[], msg: ChatMessage): number {
+  if (msg.id != null) {
+    const byId = lastIndexMatching(items, (m) => m.id === msg.id);
+    if (byId !== -1) return byId;
+    // Same text already shown under a locally assigned key (history or the
+    // POST response): adopt that bubble instead of duplicating it.
+    return lastIndexMatching(
+      items,
+      (m) => m.role === msg.role && m.text === msg.text && isSyntheticKey(m.id),
+    );
+  }
+  if (msg.role === 'assistant') {
+    // POST response without an id: the turn it answers is the newest assistant
+    // bubble the stream is still filling in (completed === false), if any.
+    const streaming = lastIndexMatching(
+      items,
+      (m) => m.role === 'assistant' && !isSyntheticKey(m.id),
+    );
+    const candidate = streaming !== -1 ? items[streaming] : undefined;
+    if (candidate && candidate.completed === false) return streaming;
+  }
+  // Identical text already delivered under a real id: refresh it in place.
+  return lastIndexMatching(
+    items,
+    (m) => m.role === msg.role && m.text === msg.text && !isSyntheticKey(m.id),
+  );
+}
 
 /** An option definition extracted from an [!option ...] tag */
 export interface OptionDef {

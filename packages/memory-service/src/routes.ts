@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { getRawDb } from './db.js';
 import { getEmbedding } from './embed.js';
 import { normalizeModelName } from './model-warmup.js';
+import { ollamaFetch } from './ollama.js';
 
 /**
  * Run `fn` inside a SQLite transaction, rolling back if it throws.
@@ -428,16 +429,13 @@ export async function handleDeleteMemory(id: string): Promise<DeleteMemoryRespon
   return { deleted: true };
 }
 
-const OLLAMA_BASE_URL =
-  process.env.OLLAMA_BASE_URL ?? 'http://ollama.percussionist.svc.cluster.local:11434';
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? 'nomic-embed-text';
 
 export async function handleHealth(): Promise<{ ok: boolean }> {
   getRawDb(); // ensure DB is initialised
 
   try {
-    const tagsUrl = `${OLLAMA_BASE_URL}/api/tags`;
-    const res = await fetch(tagsUrl, {
+    const res = await ollamaFetch('/api/tags', {
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {

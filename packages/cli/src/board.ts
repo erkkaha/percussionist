@@ -12,17 +12,21 @@
 //   task request-changes           — send a task back for rework (awaiting-human,
 //                                    or a PR-stage task parked in awaiting-feature-merge)
 //   task retry                     — recover a failed task
+//   task interactive               — request an auxiliary interactive run on the task's branch
 //   plan <project>                 — read a PLAN artifact from the plans ConfigMap
 //
-// `move`/`remove`/`approve`/`request-changes`/`retry` are addressed by
-// --task-name only: Task CR names are unique within a namespace, so no
-// `<project>` positional is needed (one used to be accepted and silently
+// `move`/`remove`/`approve`/`request-changes`/`retry`/`interactive` are
+// addressed by --task-name only: Task CR names are unique within a namespace,
+// so no `<project>` positional is needed (one used to be accepted and silently
 // ignored).
 
 import {
   BoardColumn,
   computeBoardColumn,
   type Finding,
+  INTERACTIVE_RUN_ANNOTATION,
+  type InteractiveRunRequest,
+  interactiveRunName,
   type Project,
   type Task,
   type TaskPhase,
@@ -680,4 +684,93 @@ export async function runBoardTaskRequestChanges(opts: BoardTaskRequestChangesOp
   } catch (e) {
     fatal('request changes failed', e);
   }
+}
+
+// ---------------------------------------------------------------------------
+// board task interactive
+//
+// Starts an auxiliary interactive Run attached to a Task — an attachable shell
+// on the task's branch, for investigating or fixing work in progress. Like the
+// other task commands this only writes an annotation: the manager's reconciler
+// is the single Run-creation authority and creates the Run on its next pass.
+//
+// The task's phase and worker.runName are deliberately left untouched — the
+// interactive run is auxiliary, not the task's worker, so starting one must not
+// move the task through the pipeline or disturb a failed/running task.
+//
+// The session is a real shell, so the human must `git commit` for work to be
+// durable: only committed HEAD is published when the run ends, and uncommitted
+// changes are lost. A worker run may still be using the same branch, so stop a
+// live worker before making conflicting edits.
+
+const INTERACTIVE_REQUEST_ID_BYTES = 4;
+
+/**
+ * Build the metadata patch for `board task interactive`: writes the
+ * `percussionist.dev/action-interactive` JSON payload, preserving every other
+ * annotation and the task's existing metadata.
+ */
+export function interactiveTaskMetadataPatch(
+  task: Task,
+  request: InteractiveRunRequest,
+): Pick<Task, 'metadata'> {
+  return {
+    metadata: {
+      ...task.metadata,
+      annotations: {
+        ...(task.metadata.annotations ?? {}),
+        [INTERACTIVE_RUN_ANNOTATION]: JSON.stringify(request),
+      },
+    },
+  };
+}
+
+export interface BoardTaskInteractiveOpts {
+  namespace?: string;
+  taskName: string;
+  agent?: string;
+  model?: string;
+}
+
+export async function runBoardTaskInteractive(opts: BoardTaskInteractiveOpts): Promise<void> {
+  const ns = opts.namespace ?? NAMESPACE;
+
+  let task: Task;
+  try {
+    task = await getTask(opts.taskName, ns);
+  } catch (e) {
+    fatal('get task failed', e);
+  }
+
+  // An interactive run is for work in progress or investigation; a terminal
+  // task (or one still parked in the ideas column) has nothing to attach to.
+  const phase = task.status?.phase;
+  if (phase === 'done' || phase === 'idea') {
+    console.error(
+      `beatctl: cannot start an interactive run for task ${opts.taskName} in phase "${phase}".`,
+    );
+    console.error('  Pick a task that is in progress (or failed / awaiting-human).');
+    process.exit(1);
+  }
+
+  const { randomBytes } = await import('node:crypto');
+  const request: InteractiveRunRequest = {
+    id: randomBytes(INTERACTIVE_REQUEST_ID_BYTES).toString('hex'),
+    ...(opts.agent ? { agent: opts.agent } : {}),
+    ...(opts.model ? { model: opts.model } : {}),
+  };
+
+  const runName = interactiveRunName(task.spec.projectRef, task.metadata.name, request.id);
+
+  try {
+    await patchTask(opts.taskName, interactiveTaskMetadataPatch(task, request), ns);
+  } catch (e) {
+    fatal('start interactive run failed', e);
+  }
+
+  console.log(`interactive run requested for task ${opts.taskName} — expected run name ${runName}`);
+  console.log(
+    '  the manager will create it on its next reconcile cycle; attach once it is Running',
+  );
+  console.log('  commit your work in the session — uncommitted changes are not published');
 }

@@ -3,7 +3,7 @@ import type { ProjectSpec, ResourceRequirements } from '../index.js';
 import { resolveRunConfig } from '../index.js';
 
 describe('resolveRunConfig', () => {
-  const defaultImage = 'ghcr.io/erkkaha/percussionist/runner:latest';
+  const defaultImage = 'ghcr.io/erkkaha/percussionist/runner-opencode:latest';
   const defaultTimeout = 3600;
 
   const baseProject: ProjectSpec = {

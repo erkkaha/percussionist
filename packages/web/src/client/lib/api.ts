@@ -4,6 +4,7 @@ import type { ClusterAgent, ClusterSettings, Finding } from '@percussionist/api'
 import { authHeaders } from './auth';
 import type {
   AgentCapability,
+  AttentionResponse,
   BoardStatus,
   CreateAgentRequest,
   CreateMemoryRequest,
@@ -130,6 +131,17 @@ export async function fetchTaskEvents(
   return data.events;
 }
 
+// ---------------------------------------------------------------------------
+// Attention inbox (global HITL)
+//
+// Read-only aggregation of every Task in the namespace parked on a human
+// decision. Server-authoritative so the sidebar badge, bell section and
+// /attention page all agree with the Web Push payload.
+
+export async function fetchAttention(): Promise<AttentionResponse> {
+  return fetchJSON<AttentionResponse>('/attention');
+}
+
 export async function fetchRun(name: string): Promise<Run> {
   return fetchJSON<Run>(`/runs/${encodeURIComponent(name)}`);
 }
@@ -186,6 +198,19 @@ export async function replyToRun(runName: string, message: string): Promise<void
     method: 'POST',
     body: JSON.stringify({ message }),
   });
+}
+
+// Start the session of an interactive run (spec.interactive). The dispatcher
+// adopts it and publishes status.sessionID a few seconds later; poll the run.
+export async function startRunSession(runName: string): Promise<{ sessionID: string }> {
+  return requestJSON<{ sessionID: string }>(`/runs/${encodeURIComponent(runName)}/session`, {
+    method: 'POST',
+  });
+}
+
+// Stop the agent's current turn; the session stays open.
+export async function interruptRun(runName: string): Promise<void> {
+  await requestVoid(`/runs/${encodeURIComponent(runName)}/interrupt`, { method: 'POST' });
 }
 
 // ---------------------------------------------------------------------------
@@ -392,6 +417,30 @@ export async function answerTask(project: string, taskName: string, answer: stri
     {
       method: 'POST',
       body: JSON.stringify({ answer }),
+    },
+  );
+}
+
+export interface StartInteractiveRunOptions {
+  agent?: string;
+  model?: string;
+  timeoutSeconds?: number;
+}
+
+// Request an auxiliary interactive run attached to this task's branch. The
+// route writes the percussionist.dev/action-interactive annotation; the
+// reconciler creates the Run on its next pass and the response carries the
+// deterministic run name so callers can poll for it.
+export async function startInteractiveRun(
+  project: string,
+  taskName: string,
+  opts: StartInteractiveRunOptions = {},
+): Promise<{ success: boolean; runName: string }> {
+  return requestJSON<{ success: boolean; runName: string }>(
+    `/projects/${encodeURIComponent(project)}/board/tasks/${encodeURIComponent(taskName)}/interactive-run`,
+    {
+      method: 'POST',
+      body: JSON.stringify(opts),
     },
   );
 }

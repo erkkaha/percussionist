@@ -17,7 +17,7 @@ import {
   MEMORY_SERVICE_PORT,
   type Project,
 } from '@percussionist/api';
-import { MEMORY_SERVICE_IMAGE, OLLAMA_BASE_URL } from './config.js';
+import { MEMORY_SERVICE_IMAGE, OLLAMA_ALLOWED_ORIGINS, OLLAMA_BASE_URL } from './config.js';
 
 // ---------------------------------------------------------------------------
 // Naming helpers
@@ -64,15 +64,16 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
     { name: 'MEMORY_SERVICE_PORT', value: String(MEMORY_SERVICE_PORT) },
     { name: 'MEMORY_DB_PATH', value: `${mountPath}/memory/vectors.db` },
     { name: 'OLLAMA_BASE_URL', value: embedding.ollamaUrl ?? OLLAMA_BASE_URL },
+    { name: 'OLLAMA_ALLOWED_ORIGINS', value: OLLAMA_ALLOWED_ORIGINS },
     { name: 'EMBEDDING_MODEL', value: embedding.model },
     { name: 'EMBEDDING_DIMENSIONS', value: String(embedding.dimensions ?? 768) },
     // Shared control-plane token gating every route except /health. The manager
     // is the only legitimate caller; this Secret is deliberately not projected
     // into run pods, so an agent that reaches :4100 still cannot read or poison
-    // a project's memories. optional: true keeps dev clusters working.
+    // a project's memories. The operator provisions this Secret at startup.
     {
       name: 'MCP_TOKEN',
-      valueFrom: { secretKeyRef: { name: 'manager-mcp-token', key: 'token', optional: true } },
+      valueFrom: { secretKeyRef: { name: 'manager-mcp-token', key: 'token', optional: false } },
     },
   ];
 

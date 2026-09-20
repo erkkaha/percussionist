@@ -76,7 +76,7 @@ describe('buildRunFromFlags project defaults merge', () => {
     expect(run.spec.gitCache).toBeUndefined();
     expect(run.spec.runner).toBeUndefined();
     // RunSchema defaults apply for the defaulted fields.
-    expect(run.spec.image).toBe('ghcr.io/erkkaha/percussionist/runner:latest');
+    expect(run.spec.image).toBe('ghcr.io/erkkaha/percussionist/runner-opencode:latest');
     expect(run.spec.timeoutSeconds).toBe(3600);
   });
 });

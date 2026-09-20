@@ -1,12 +1,17 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, ClipboardCopy, RefreshCw, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useRun } from '../hooks/useRun';
 import { useRunEvents } from '../hooks/useRunEvents';
-import { deleteRun } from '../lib/api';
-import { TERMINAL_PHASES } from '../lib/types';
+import { deleteRun, interruptRun } from '../lib/api';
+import { type Run, TERMINAL_PHASES } from '../lib/types';
 import LogViewer from './LogViewer';
-import SessionView from './SessionView';
+import type { RunView } from './run-terminal/commands';
+import type { CommandOutputEntry } from './run-terminal/RunCommandBar';
+import RunCommandBar from './run-terminal/RunCommandBar';
+import type { LocalEntry } from './run-terminal/TerminalTranscript';
+import TerminalTranscript from './run-terminal/TerminalTranscript';
 import StatusBadge from './StatusBadge';
 import TerminalTab from './TerminalTab';
 import TokenCounter from './TokenCounter';
@@ -14,6 +19,28 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 
 const WORKSPACE_INIT_CONTAINER = 'workspace-init';
+
+const RUN_VIEWS: readonly RunView[] = ['conversation', 'logs', 'status', 'shell'];
+
+/**
+ * Legacy `?tab=` deep links map onto the terminal's view modes so old bookmarks
+ * keep working after the tab bar was replaced by slash commands.
+ */
+const LEGACY_TAB_TO_VIEW: Record<string, RunView> = {
+  overview: 'status',
+  session: 'conversation',
+  logs: 'logs',
+  terminal: 'shell',
+};
+
+/** Read the requested view: `?view=` first, then a legacy `?tab=` fallback. */
+function resolveRequestedView(searchParams: URLSearchParams): RunView | null {
+  const view = searchParams.get('view');
+  if (view && (RUN_VIEWS as readonly string[]).includes(view)) return view as RunView;
+  const tab = searchParams.get('tab');
+  if (tab && tab in LEGACY_TAB_TO_VIEW) return LEGACY_TAB_TO_VIEW[tab] ?? null;
+  return null;
+}
 
 function formatTime(iso: string | undefined): string {
   if (!iso) return '-';
@@ -40,6 +67,14 @@ function duration(start: string | undefined, end: string | undefined): string {
   return `${hrs}h ${remMins}m`;
 }
 
+/**
+ * RunDetail — the immersive cloud terminal for a single run.
+ *
+ * The page is one full-viewport shell: a slim header, a single stage, and a
+ * persistent command prompt. The old tab bar is gone; functionality is reached
+ * with slash commands (`/logs`, `/status`, `/conversation`, `/shell`, …) typed
+ * into the prompt, or by deep-linking `?view=` (legacy `?tab=` still maps).
+ */
 export default function RunDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
@@ -49,6 +84,10 @@ export default function RunDetail() {
   const runIsActive = !!run && (!runPhase || !TERMINAL_PHASES.has(runPhase));
   const { connected: sseConnected, eventTick } = useRunEvents(name ?? '', runIsActive);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [logContainer, setLogContainer] = useState<string | undefined>(undefined);
+  const [localEntries, setLocalEntries] = useState<LocalEntry[]>([]);
+  const localEntryIdRef = useRef(0);
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteRun(name ?? ''),
@@ -58,15 +97,95 @@ export default function RunDetail() {
     },
   });
 
+  const phase = run?.status?.phase;
+  const isActive = !!run && (!phase || !TERMINAL_PHASES.has(phase));
+  const isFailed = phase === 'Failed';
+  const hasSession = !!run?.status?.sessionID;
+
+  // The interactive attach needs an active run whose pod is Running. The claude
+  // engine still reaches the `shell` stage so its explanation stays available —
+  // the stage branches on the engine and renders the explainer instead of xterm.
+  const attachRunning = isActive && !!run?.status?.podName && run?.status?.podPhase === 'Running';
+
+  const requestedView = resolveRequestedView(searchParams);
+  const activeView: RunView =
+    requestedView && (requestedView !== 'shell' || attachRunning) ? requestedView : 'conversation';
+
+  // Keep ?view= honest: when the requested view is not available (the run left
+  // the attachable state) rewrite the param to the fallback so a refresh never
+  // asks for a stage that cannot render. Mirrors TaskRunsPanel's reset effect.
+  useEffect(() => {
+    if (!run) return;
+    const rawView = searchParams.get('view');
+    const rawTab = searchParams.get('tab');
+    if (!rawView && !rawTab) return;
+    if (requestedView === activeView) return;
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        params.delete('tab');
+        params.set('view', activeView);
+        return params;
+      },
+      { replace: true },
+    );
+  }, [run, searchParams, requestedView, activeView, setSearchParams]);
+
+  const setView = useCallback(
+    (next: RunView) => {
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          params.delete('tab');
+          params.set('view', next);
+          return params;
+        },
+        // Replace so view toggles do not pollute the back button.
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const appendEntry = useCallback((entry: CommandOutputEntry) => {
+    localEntryIdRef.current += 1;
+    const id = `local-${localEntryIdRef.current}`;
+    setLocalEntries((prev) => [
+      ...prev,
+      { id, kind: entry.kind, text: entry.text, at: Date.now() },
+    ]);
+  }, []);
+
+  const clearEntries = useCallback(() => setLocalEntries([]), []);
+
+  const invalidate = useCallback(
+    (queryKey: readonly unknown[]) => {
+      void queryClient.invalidateQueries({ queryKey: queryKey as unknown[] });
+    },
+    [queryClient],
+  );
+
+  const refresh = useCallback(() => {
+    invalidate(['run', name]);
+    invalidate(['session', name]);
+    invalidate(['logs', name]);
+  }, [invalidate, name]);
+
   if (!name) return null;
 
   if (error) {
     return (
-      <div className="space-y-4">
-        <BackLink />
-        <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
-          <h2 className="text-headline-md mb-1">Failed to load run</h2>
-          <p className="text-caption-xs">{error.message}</p>
+      // Pull out of the parent p-6 padding so the shell fills the viewport.
+      <div
+        className="-m-6 flex flex-col bg-surface-container-lowest font-mono"
+        style={{ height: 'calc(100svh - 3.5rem)' }}
+      >
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
+          <BackLink />
+          <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
+            <h2 className="text-headline-md mb-1">Failed to load run</h2>
+            <p className="text-caption-xs">{error.message}</p>
+          </div>
         </div>
       </div>
     );
@@ -74,98 +193,275 @@ export default function RunDetail() {
 
   if (isLoading || !run) {
     return (
-      <div className="space-y-4">
-        <BackLink />
-        <DetailSkeleton />
+      <div
+        className="-m-6 flex flex-col bg-surface-container-lowest font-mono"
+        style={{ height: 'calc(100svh - 3.5rem)' }}
+      >
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
+          <BackLink />
+          <DetailSkeleton />
+        </div>
       </div>
     );
   }
-
-  const phase = run.status?.phase;
-  const isActive = !phase || !TERMINAL_PHASES.has(phase);
-  const isFailed = phase === 'Failed';
 
   // When the run failed on an init container (workspace-init), default the log
   // viewer to that container so the error is immediately visible.
   const failedOnInit = isFailed && run.status?.message?.startsWith('init container');
   const defaultLogContainer = failedOnInit ? WORKSPACE_INIT_CONTAINER : 'bootstrap';
+  const effectiveLogContainer = logContainer ?? defaultLogContainer;
 
   return (
-    <div className="space-y-6">
-      {/* Navigation */}
-      <BackLink />
+    // Root stays the established `-m-6` viewport idiom shared with BoardView and
+    // ActivityPage, now wearing the terminal surface and monospace font.
+    <div
+      className="-m-6 flex flex-col bg-surface-container-lowest font-mono"
+      style={{ height: 'calc(100svh - 3.5rem)' }}
+    >
+      {/* Slim header — pinned; only the stage scrolls */}
+      <div className="shrink-0 border-b border-border-muted px-4 py-2 space-y-2">
+        <div className="flex items-center gap-3 min-w-0">
+          <BackLink iconOnly />
+          <span className="truncate text-sm font-medium text-text">{run.metadata.name}</span>
+          <StatusBadge phase={phase} />
+          <LiveDot active={isActive} connected={sseConnected} />
+          {isFetching && <span className="text-xs text-text-dim animate-pulse">refreshing</span>}
 
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-headline-lg">{run.metadata.name}</h1>
-            <StatusBadge phase={phase} />
-            {isFetching && <span className="text-xs text-text-dim animate-pulse">refreshing</span>}
-          </div>
-          {/* Show message as muted subtitle only when not failed — failed gets a banner below */}
-          {run.status?.message && !isFailed && (
-            <p className="text-sm text-text-muted">{run.status.message}</p>
-          )}
-        </div>
-        <div className="flex items-center gap-3">
-          <TokenCounter tokensIn={run.status?.tokensIn} tokensOut={run.status?.tokensOut} />
-          <Link to={`/runs/new?copyFrom=${encodeURIComponent(name ?? '')}`}>
-            <Button variant="outline" size="sm">
-              Copy
-            </Button>
-          </Link>
-          {/* Cancel / Delete button */}
-          {!confirmDelete ? (
-            <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
-              {isActive ? 'Cancel Run' : 'Delete Run'}
-            </Button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-text-muted">Sure?</span>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => deleteMutation.mutate()}
-                disabled={deleteMutation.isPending}
-              >
-                {deleteMutation.isPending ? 'Deleting...' : 'Confirm'}
+          <div className="ml-auto flex items-center gap-1.5">
+            <TokenCounter tokensIn={run.status?.tokensIn} tokensOut={run.status?.tokensOut} />
+            <Link
+              to={`/runs/new?copyFrom=${encodeURIComponent(name ?? '')}`}
+              aria-label="Copy run"
+              title="Copy run"
+            >
+              <Button variant="ghost" size="icon" aria-label="Copy run" title="Copy run">
+                <ClipboardCopy />
               </Button>
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(false)}
-                className="text-sm text-text-muted hover:text-text transition-colors"
+            </Link>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Refresh"
+              title="Refresh"
+              onClick={refresh}
+            >
+              <RefreshCw />
+            </Button>
+            {!confirmDelete ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={isActive ? 'Cancel run' : 'Delete run'}
+                title={isActive ? 'Cancel run' : 'Delete run'}
+                onClick={() => setConfirmDelete(true)}
               >
-                No
-              </button>
-            </div>
-          )}
+                <Trash2 className="text-phase-failed" />
+              </Button>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-text-muted">Sure?</span>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => deleteMutation.mutate()}
+                  disabled={deleteMutation.isPending}
+                >
+                  {deleteMutation.isPending ? 'Deleting…' : 'Confirm'}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+                  No
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* Show message as muted subtitle only when not failed — failed gets a banner */}
+        {run.status?.message && !isFailed && (
+          <p className="truncate text-xs text-text-muted">{run.status.message}</p>
+        )}
+
+        {/* Failed-run banner — prominent, replaces the subtitle */}
+        {isFailed && run.status?.message && (
+          <div className="rounded border border-phase-failed/40 bg-phase-failed/10 px-3 py-2 flex items-start gap-2">
+            <span className="text-phase-failed text-sm leading-none mt-0.5">✕</span>
+            <div>
+              <p className="text-xs font-medium text-phase-failed">Run failed</p>
+              <p className="text-xs text-phase-failed/80 mt-0.5 font-mono">{run.status.message}</p>
+            </div>
+          </div>
+        )}
+
+        {deleteMutation.error && (
+          <div className="rounded border border-phase-failed/30 bg-phase-failed/10 px-3 py-2 text-xs text-phase-failed">
+            Delete failed: {deleteMutation.error.message}
+          </div>
+        )}
       </div>
 
-      {/* Error banner — shown prominently when the run has failed */}
-      {isFailed && run.status?.message && (
-        <div className="rounded-lg border border-phase-failed/40 bg-phase-failed/10 px-4 py-3 flex items-start gap-3">
-          <span className="text-phase-failed text-base leading-none mt-0.5">✕</span>
-          <div>
-            <p className="text-sm font-medium text-phase-failed">Run failed</p>
-            <p className="text-sm text-phase-failed/80 mt-0.5 font-mono">{run.status.message}</p>
+      {/* STAGE — the single panel; only it scrolls, the page never does */}
+      <div className="flex flex-1 min-h-0 flex-col">
+        {activeView === 'conversation' && (
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+            <TerminalTranscript
+              name={name}
+              hasSession={hasSession}
+              active={isActive}
+              sseConnected={sseConnected}
+              eventTick={eventTick}
+              localEntries={localEntries}
+            />
           </div>
-        </div>
-      )}
+        )}
 
-      {deleteMutation.error && (
-        <div className="rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
-          Delete failed: {deleteMutation.error.message}
-        </div>
-      )}
+        {activeView === 'logs' && (
+          <div className="flex flex-1 min-h-0 flex-col p-6">
+            <LogViewer
+              name={name}
+              active={isActive}
+              defaultContainer={effectiveLogContainer}
+              sseConnected={sseConnected}
+              eventTick={eventTick}
+              fillHeight
+            />
+          </div>
+        )}
 
+        {activeView === 'status' && (
+          <div className="flex-1 min-h-0 overflow-y-auto p-6">
+            <RunOverview run={run} phase={phase} />
+          </div>
+        )}
+
+        {/* Interactive terminal — attaches to the runner's TUI inside the pod.
+            Only the opencode engine has one: attach execs `opencode attach`, and
+            the claude engine's runner is a headless HTTP server with no TUI to
+            connect to, so the terminal would retry and flicker forever. Explain
+            the absence rather than silently dropping the section. */}
+        {activeView === 'shell' && (
+          <div className="flex flex-1 min-h-0 flex-col p-6">
+            {run.spec.engine === 'claude' ? (
+              <p className="text-sm text-text-dim">
+                Interactive attach is not available for the{' '}
+                <code className="font-mono text-xs">claude</code> engine — its runner is a headless
+                server with no terminal session. Use the conversation and log views instead.
+              </p>
+            ) : (
+              <TerminalTab runName={name} active={isActive} fillHeight />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* COMMAND BAR — the persistent prompt. Hidden in `shell`: the raw PTY
+          owns stdin there, so slash commands cannot be intercepted. */}
+      {activeView === 'shell' ? (
+        <AttachedBar
+          runName={name}
+          tty={run.spec.engine !== 'claude'}
+          onConversation={() => setView('conversation')}
+        />
+      ) : (
+        <RunCommandBar
+          run={run}
+          view={activeView}
+          setView={setView}
+          setLogContainer={setLogContainer}
+          appendEntry={appendEntry}
+          clearEntries={clearEntries}
+          invalidate={invalidate}
+          navigate={(to) => navigate(to)}
+          confirmCancel={() => deleteMutation.mutate()}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shell-view bar
+//
+// Once attached the browser forwards every keystroke to the pod's PTY, so the
+// slash-command prompt is hidden. The remaining affordances are a way back to
+// the conversation and a Stop that still interrupts the agent's turn. The
+// claude engine has no PTY at all — the stage shows an explainer, so the hint
+// drops the "keystrokes go to the pod" claim.
+function AttachedBar({
+  runName,
+  tty,
+  onConversation,
+}: {
+  runName: string;
+  tty: boolean;
+  onConversation: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const stop = useMutation({
+    mutationFn: () => interruptRun(runName),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', runName] }),
+  });
+
+  return (
+    <div className="shrink-0 border-t border-border bg-surface px-4 py-2 space-y-2 font-mono">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <span className="text-xs text-text-dim">
+          {tty
+            ? '⌨ attached — keystrokes go to the pod. Slash commands are unavailable here.'
+            : 'No interactive TTY for the claude engine.'}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={onConversation}>
+            /conversation
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => stop.mutate()}
+            disabled={stop.isPending}
+            title="Stop the agent's current turn; the session stays open"
+          >
+            {stop.isPending ? 'Stopping…' : 'Stop'}
+          </Button>
+        </div>
+      </div>
+      {stop.error && (
+        <p className="text-xs text-phase-failed" role="alert">
+          {stop.error.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+
+function LiveDot({ active, connected }: { active: boolean; connected: boolean }) {
+  const state = !active ? 'idle' : connected ? 'live' : 'polling';
+  const color = !active
+    ? 'bg-text-dim'
+    : connected
+      ? 'bg-phase-succeeded'
+      : 'bg-phase-pending animate-pulse';
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-text-dim">
+      <span className={`inline-block h-2 w-2 rounded-full ${color}`} />
+      {state}
+    </span>
+  );
+}
+
+function RunOverview({ run, phase }: { run: Run; phase?: string }) {
+  return (
+    <div className="space-y-6">
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Status card */}
         <Card>
           <CardHeader className="border-b border-border-muted">
-            <CardTitle className="text-sm font-medium text-text-muted">Status</CardTitle>
+            <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-text-muted">
+              Status
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             <Field label="Phase" value={phase ?? 'Unknown'} />
@@ -186,7 +482,9 @@ export default function RunDetail() {
         {/* Spec card */}
         <Card>
           <CardHeader className="border-b border-border-muted">
-            <CardTitle className="text-sm font-medium text-text-muted">Spec</CardTitle>
+            <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-text-muted">
+              Spec
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             <Field label="Image" value={run.spec.image} mono />
@@ -230,7 +528,9 @@ export default function RunDetail() {
       {run.spec.task && (
         <Card>
           <CardHeader className="border-b border-border-muted">
-            <CardTitle className="text-sm font-medium text-text-muted">Task</CardTitle>
+            <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-text-muted">
+              Task
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-text whitespace-pre-wrap leading-relaxed">{run.spec.task}</p>
@@ -242,7 +542,9 @@ export default function RunDetail() {
       {run.status?.conditions && run.status.conditions.length > 0 && (
         <Card>
           <CardHeader className="border-b border-border-muted">
-            <CardTitle className="text-sm font-medium text-text-muted">Conditions</CardTitle>
+            <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-text-muted">
+              Conditions
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="table-scroll">
@@ -291,70 +593,23 @@ export default function RunDetail() {
           verdict={reviewVerdict(run) as NonNullable<ReturnType<typeof reviewVerdict>>}
         />
       )}
-
-      {/* Session conversation */}
-      <Card>
-        <CardHeader className="border-b border-border-muted">
-          <CardTitle className="text-sm font-medium text-text-muted">Session</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <SessionView
-            name={name}
-            hasSession={!!run.status?.sessionID}
-            active={isActive}
-            sseConnected={sseConnected}
-            eventTick={eventTick}
-          />
-        </CardContent>
-      </Card>
-
-      {/* Interactive terminal — attaches to the runner's TUI inside the pod.
-          Only the opencode engine has one: attach execs `opencode attach`, and the
-          claude engine's runner is a headless HTTP server with no TUI to connect
-          to, so the terminal would retry and flicker forever. Explain the absence
-          rather than silently dropping the section. */}
-      {isActive && run.status?.podName && run.status?.podPhase === 'Running' && (
-        <Card>
-          <CardHeader className="border-b border-border-muted">
-            <CardTitle className="text-sm font-medium text-text-muted">Terminal</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {run.spec.engine === 'claude' ? (
-              <p className="text-sm text-text-dim">
-                Interactive attach is not available for the{' '}
-                <code className="font-mono text-xs">claude</code> engine — its runner is a headless
-                server with no terminal session. Use the Session and Logs sections below.
-              </p>
-            ) : (
-              <TerminalTab runName={name} active={isActive} />
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Logs */}
-      <Card>
-        <CardHeader className="border-b border-border-muted">
-          <CardTitle className="text-sm font-medium text-text-muted">Logs</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <LogViewer
-            name={name}
-            active={isActive}
-            defaultContainer={defaultLogContainer}
-            sseConnected={sseConnected}
-            eventTick={eventTick}
-          />
-        </CardContent>
-      </Card>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Sub-components
-
-function BackLink() {
+function BackLink({ iconOnly = false }: { iconOnly?: boolean }) {
+  if (iconOnly) {
+    return (
+      <Link
+        to="/runs"
+        aria-label="All runs"
+        title="All runs"
+        className="text-text-dim hover:text-text transition-colors"
+      >
+        <ArrowLeft size={16} />
+      </Link>
+    );
+  }
   return (
     <Link
       to="/runs"
@@ -420,7 +675,9 @@ function ReviewVerdictCard({ verdict }: { verdict: ReviewVerdictData }) {
   return (
     <Card>
       <CardHeader className="border-b border-border-muted">
-        <CardTitle className="text-sm font-medium text-text-muted">Review Verdict</CardTitle>
+        <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-text-muted">
+          Review Verdict
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <div

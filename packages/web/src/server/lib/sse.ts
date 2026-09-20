@@ -29,6 +29,61 @@ export function sseEventChunk(event: string, data: Record<string, unknown>): str
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
+/**
+ * Give unnamed SSE frames an `event:` name taken from their JSON `type`.
+ *
+ * The runners' `/event` streams (opencode v1, runner-claude, runner-opencode)
+ * send `data: {"type":"message.updated",...}` with no `event:` line. The
+ * browser's EventSource only dispatches `addEventListener('message.updated')`
+ * for frames that carry that name; unnamed frames go to `onmessage`, which
+ * nothing listens to — so the run page never refetched on agent activity and
+ * a reply showed up only when something else happened to refetch. Frames that
+ * already have a name (`event: ping`) and non-JSON frames pass through as-is.
+ */
+export function nameSseEventsByType(): TransformStream<Uint8Array, Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = '';
+
+  const nameFrame = (frame: string): string => {
+    const lines = frame.split('\n');
+    if (lines.some((l) => l.startsWith('event:'))) return frame;
+    const data = lines
+      .filter((l) => l.startsWith('data:'))
+      .map((l) => l.slice(5).trim())
+      .join('\n');
+    if (!data) return frame;
+    try {
+      const type = (JSON.parse(data) as { type?: unknown }).type;
+      if (typeof type === 'string' && type && !/[\r\n]/.test(type)) {
+        return `event: ${type}\n${frame}`;
+      }
+    } catch {
+      // Not JSON; leave the frame alone.
+    }
+    return frame;
+  };
+
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true });
+      // Frames end with a blank line; the runners write \n\n. Tolerate \r\n.
+      let idx = buffer.search(/\r?\n\r?\n/);
+      while (idx !== -1) {
+        const match = /\r?\n\r?\n/.exec(buffer.slice(idx)) as RegExpExecArray;
+        const frame = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + match[0].length);
+        controller.enqueue(encoder.encode(`${nameFrame(frame)}\n\n`));
+        idx = buffer.search(/\r?\n\r?\n/);
+      }
+    },
+    flush(controller) {
+      const rest = buffer + decoder.decode();
+      if (rest.trim()) controller.enqueue(encoder.encode(`${nameFrame(rest)}\n\n`));
+    },
+  });
+}
+
 export function createPollingSseResponse(opts: PollingSseOptions): Response {
   const encoder = new TextEncoder();
   const {

@@ -21,6 +21,14 @@ const projectsMock: { data: Array<Record<string, unknown>> | undefined } = {
   data: undefined,
 };
 
+// Mutable mock state for the server-backed attention hook and auth gate.
+const attentionMock: {
+  data: { count: number } | undefined;
+  calls: boolean[];
+} = { data: undefined, calls: [] };
+
+const authMock: { isAuthenticated: boolean } = { isAuthenticated: false };
+
 // ---------------------------------------------------------------------------
 // Module mocks — intercept at the module resolution level.
 // ---------------------------------------------------------------------------
@@ -33,8 +41,15 @@ mock.module(path.resolve('src/client/hooks/useProjectsEvents'), () => ({
   useProjectsEvents: () => ({ connected: true, eventTick: 0 }),
 }));
 
+mock.module(path.resolve('src/client/hooks/useAttention'), () => ({
+  useAttention: (_eventTick = 0, enabled = true) => {
+    attentionMock.calls.push(enabled);
+    return { data: attentionMock.data };
+  },
+}));
+
 mock.module(path.resolve('src/client/lib/auth'), () => ({
-  useAuth: () => ({ isAuthenticated: false, user: null, logout: () => {} }),
+  useAuth: () => ({ isAuthenticated: authMock.isAuthenticated, user: null, logout: () => {} }),
   authHeaders: () => ({}),
 }));
 
@@ -120,6 +135,9 @@ async function renderSidebar(defaultOpen: boolean) {
 describe('AppSidebar project color chips', () => {
   beforeEach(() => {
     projectsMock.data = [PROJECT_A, PROJECT_B];
+    authMock.isAuthenticated = true;
+    attentionMock.data = undefined;
+    attentionMock.calls = [];
     localStorage.clear();
   });
   afterEach(cleanup);
@@ -171,5 +189,68 @@ describe('AppSidebar project color chips', () => {
     const tooltipTexts = tooltipContents.map((el) => el.textContent);
     expect(tooltipTexts).toContain('Apollo');
     expect(tooltipTexts).toContain('Boreas');
+  });
+});
+
+describe('AppSidebar Needs attention nav item', () => {
+  beforeEach(() => {
+    projectsMock.data = [PROJECT_A];
+    authMock.isAuthenticated = true;
+    attentionMock.data = undefined;
+    attentionMock.calls = [];
+    localStorage.clear();
+  });
+  afterEach(cleanup);
+
+  it('renders the Needs attention nav item linking to /attention', async () => {
+    await renderSidebar(true);
+
+    const link = screen.getByRole('link', { name: /Needs attention/ });
+    expect(link.getAttribute('href')).toBe('/attention');
+  });
+
+  it('shows the count badge when the attention count is greater than zero', async () => {
+    attentionMock.data = { count: 3 };
+    await renderSidebar(true);
+
+    expect(screen.getByTestId('attention-nav-badge').textContent).toBe('3');
+  });
+
+  it('hides the count badge when the attention count is zero', async () => {
+    attentionMock.data = { count: 0 };
+    await renderSidebar(true);
+
+    expect(screen.queryByTestId('attention-nav-badge')).toBeNull();
+  });
+
+  it('caps the badge at 99+', async () => {
+    attentionMock.data = { count: 120 };
+    await renderSidebar(true);
+
+    expect(screen.getByTestId('attention-nav-badge').textContent).toBe('99+');
+  });
+
+  it('hides the badge when the sidebar is collapsed to the icon rail', async () => {
+    attentionMock.data = { count: 5 };
+    await renderSidebar(false);
+
+    // happy-dom does not apply Tailwind, so assert the collapse rule is wired
+    // rather than the computed display value.
+    const badge = screen.getByTestId('attention-nav-badge');
+    expect(badge.className).toContain('group-data-[collapsible=icon]:hidden');
+  });
+
+  it('only enables the attention query when authenticated', async () => {
+    authMock.isAuthenticated = false;
+    attentionMock.calls = [];
+    await renderSidebar(true);
+    expect(attentionMock.calls.at(-1)).toBe(false);
+
+    cleanup();
+
+    authMock.isAuthenticated = true;
+    attentionMock.calls = [];
+    await renderSidebar(true);
+    expect(attentionMock.calls.at(-1)).toBe(true);
   });
 });

@@ -217,7 +217,7 @@ export default function BoardView() {
         {(!showFindings || selectedTask) && (
           <div
             data-testid="desktop-detail-panel"
-            className="hidden md:flex flex-col flex-1 min-h-0"
+            className="hidden md:flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden"
           >
             {detailPanel ?? <TaskDetailEmpty />}
           </div>
@@ -241,7 +241,7 @@ export default function BoardView() {
           side="right"
           className={`md:hidden w-full ${detailFocused ? 'max-w-none sm:max-w-none' : 'sm:max-w-lg'} p-0 flex flex-col overflow-hidden bg-surface text-text border-border [&>button]:z-10`}
         >
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
             {detailPanel ?? <TaskDetailEmpty />}
           </div>
         </SheetContent>

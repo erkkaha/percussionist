@@ -59,10 +59,10 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
-  # Secrets — read the operator's API key for minting per-run keys.
+  # Secrets — read the operator API key and provision the shared control-plane token.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get"]
+    verbs: ["get", "create"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -197,7 +197,7 @@ spec:
             - name: WATCH_NAMESPACE
               value: percussionist
             - name: RUNNER_IMAGE_DEFAULT
-              value: ghcr.io/erkkaha/percussionist/runner:latest
+              value: ghcr.io/erkkaha/percussionist/runner-opencode:latest
             - name: DISPATCHER_IMAGE
               value: ghcr.io/erkkaha/percussionist/dispatcher:latest
             - name: DISPATCHER_SERVICE_ACCOUNT
@@ -213,6 +213,13 @@ spec:
               value: "ReadWriteOnce"
             - name: DEFAULT_STORAGE_SIZE
               value: "50Gi"
+            # How often the operator re-renders agent-config / opencode-config
+            # from ClusterSettings even when no informer event arrives, in
+            # milliseconds. Reclaims field ownership from foreign writers
+            # (Flux, kubectl apply, beatctl deploy). Defaults to 300000 (5 min);
+            # 0 disables the periodic pass (the ConfigMap informer still runs).
+            # - name: PERCUSSIONIST_CLUSTER_SETTINGS_RESYNC_INTERVAL_MS
+            #   value: "300000"
             # Allow user-supplied sidecar securityContext (privileged, runAsUser: 0,
             # allowPrivilegeEscalation). OFF by default — a privileged sidecar is a
             # container-escape primitive and specs are dashboard-editable. Enable
@@ -258,11 +265,16 @@ spec:
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits:   { cpu: 500m, memory: 512Mi }
+          ports:
+            - name: health
+              containerPort: 8081
+          # HTTP, not exec: exec probes run through the containerd shim and
+          # after a host suspend/resume each timed-out `pgrep` left a process
+          # behind until the node froze (2026-09-18). /readyz flips to 200 once
+          # the informers are up; see packages/operator/src/health.ts.
           readinessProbe:
-            # The operator has no HTTP surface yet; use an exec probe on a
-            # sentinel file the process could touch later. For now simply
-            # check that the process is alive via a tiny `node -e`.
-            exec:
-              command: ["sh", "-c", "pgrep -f node >/dev/null"]
+            httpGet:
+              path: /readyz
+              port: health
             initialDelaySeconds: 2
             periodSeconds: 5

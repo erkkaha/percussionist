@@ -113,4 +113,44 @@ describe('mutating helpers share fetchJSON error/lock handling', () => {
 
     await expect(api.deleteRun('run-1')).resolves.toBeUndefined();
   });
+
+  it('startInteractiveRun POSTs the overrides and returns the run name', async () => {
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const captured = { url, init };
+      (fetchMock as unknown as { captured?: typeof captured }).captured = captured;
+      return Promise.resolve(
+        jsonResponse(200, { success: true, runName: 'proj-interactive-t-abcd1234' }),
+      );
+    });
+
+    const result = await api.startInteractiveRun('proj', 'proj-build-1', {
+      agent: 'planner',
+      model: 'openai/gpt-5',
+      timeoutSeconds: 600,
+    });
+
+    const captured = (fetchMock as unknown as { captured?: { url: string; init?: RequestInit } })
+      .captured;
+    expect(captured?.url).toBe('/api/projects/proj/board/tasks/proj-build-1/interactive-run');
+    expect(captured?.init?.method).toBe('POST');
+    expect(JSON.parse(String(captured?.init?.body))).toEqual({
+      agent: 'planner',
+      model: 'openai/gpt-5',
+      timeoutSeconds: 600,
+    });
+    expect(result).toEqual({ success: true, runName: 'proj-interactive-t-abcd1234' });
+  });
+
+  it('startInteractiveRun defaults to an empty JSON body', async () => {
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const captured = { url, init };
+      (fetchMock as unknown as { captured?: typeof captured }).captured = captured;
+      return Promise.resolve(jsonResponse(200, { success: true, runName: 'run' }));
+    });
+
+    await api.startInteractiveRun('proj', 'proj-build-1');
+
+    const captured = (fetchMock as unknown as { captured?: { init?: RequestInit } }).captured;
+    expect(JSON.parse(String(captured?.init?.body))).toEqual({});
+  });
 });

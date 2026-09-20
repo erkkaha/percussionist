@@ -74,10 +74,25 @@ async function getOptionalClusterSettings(context: string) {
 }
 
 /**
+ * Optional overrides for {@link buildWorkerRun}. Defaults preserve the
+ * historical worker path exactly; interactive runs set `interactive: true` to
+ * skip prompt construction and drive the run from an attached terminal.
+ */
+export interface WorkerRunOptions {
+  interactive?: boolean;
+  agent?: string;
+  model?: string;
+  timeoutSeconds?: number;
+}
+
+/**
  * Builds a fully-resolved Run for an Task CR.
  *
  * Config resolution order: project defaults → task-specific overrides.
  * When featureBranchingEnabled: true, overrides git ref with task's feature branch.
+ *
+ * `options` is optional; when omitted the result is identical to the
+ * pre-options behavior (including the full worker prompt).
  */
 export async function buildWorkerRun(
   project: Project,
@@ -86,7 +101,10 @@ export async function buildWorkerRun(
   retryCount: number,
   reworkFeedback?: string,
   allTasks?: Task[],
+  options?: WorkerRunOptions,
 ): Promise<Run> {
+  const interactive = options?.interactive === true;
+  const effectiveAgent = options?.agent ?? task.spec.agent;
   const clusterSettings = await getOptionalClusterSettings('buildWorkerRun');
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
@@ -97,177 +115,199 @@ export async function buildWorkerRun(
   });
 
   // Resolution order (highest → lowest):
-  //   explicit run override (MCP tool) → per-agent model → ClusterAgent model → project.spec.model
-  const agentModel = await resolveAgentModel(project, task.spec.agent);
+  //   explicit model override → per-agent model → ClusterAgent model → project.spec.model
+  const agentModel = options?.model ?? (await resolveAgentModel(project, effectiveAgent));
   if (agentModel) {
     resolved.model = agentModel;
   }
 
-  // Validate that auth is configured for the resolved model.
+  // Validate that auth is configured for the final resolved model.
   const authValidation = validateModelAuth(resolved.model, resolved.secrets);
   if (!authValidation.ok) {
     throw new Error(
-      `Auth validation failed for task "${task.metadata.name}" (agent="${task.spec.agent}"): ${authValidation.error}`,
+      `Auth validation failed for task "${task.metadata.name}" (agent="${effectiveAgent}"): ${authValidation.error}`,
     );
   }
 
   const taskName = task.metadata.name;
-  const promptLines = [
-    `TASK: ${taskName} — ${task.spec.title}`,
-    '',
-    'DESCRIPTION:',
-    task.spec.description ?? 'No description provided.',
-    '',
-  ];
-
-  if (retryCount > 0) {
-    promptLines.push(
-      `RETRY ${retryCount}/${MAX_RETRIES}:`,
-      reworkFeedback ?? 'Previous attempt failed. Review the error and try a different approach.',
-      '',
-    );
-  } else if (reworkFeedback) {
-    promptLines.push('HUMAN FEEDBACK (rework):', reworkFeedback, '');
-  }
-
   const projectName = project.metadata.name;
   const planPath = `.percussionist/plans/${taskName}.md`;
 
-  if (task.spec.type === 'PLAN') {
-    // If this is a retry/rework, the agent should redo the plan. Otherwise,
-    // instruct it to check for an existing plan first and short-circuit if found.
-    const isRework = reworkFeedback != null || retryCount > 0;
-    if (!isRework) {
+  // Interactive runs are driven from an attached terminal — there is no
+  // auto-prompt, so skip prompt construction entirely. This also skips the
+  // memory-service lookup and leaves `spec.task` unset (the operator ignores it
+  // for interactive runs anyway).
+  const promptLines: string[] = [];
+  if (!interactive) {
+    promptLines.push(
+      `TASK: ${taskName} — ${task.spec.title}`,
+      '',
+      'DESCRIPTION:',
+      task.spec.description ?? 'No description provided.',
+      '',
+    );
+
+    if (retryCount > 0) {
       promptLines.push(
-        'IDEMPOTENCY CHECK (do this first, before any exploration):',
-        `- Run: \`cat ${planPath}\``,
-        '- If the file exists and is non-empty:',
-        `  1. Call percussionist_dispatcher_write_plan(project="${projectName}", task="${taskName}", content=<file-content>) to ensure it is persisted.`,
-        '  2. Call percussionist_dispatcher_complete_plan with a brief summary of the existing plan.',
-        '  3. Do NOT re-explore or re-plan — the work is already done.',
-        '- Only proceed with planning if the file does not exist or is empty.',
+        `RETRY ${retryCount}/${MAX_RETRIES}:`,
+        reworkFeedback ?? 'Previous attempt failed. Review the error and try a different approach.',
+        '',
+      );
+    } else if (reworkFeedback) {
+      promptLines.push('HUMAN FEEDBACK (rework):', reworkFeedback, '');
+    }
+
+    if (task.spec.type === 'PLAN') {
+      // If this is a retry/rework, the agent should redo the plan. Otherwise,
+      // instruct it to check for an existing plan first and short-circuit if found.
+      const isRework = reworkFeedback != null || retryCount > 0;
+      if (!isRework) {
+        promptLines.push(
+          'IDEMPOTENCY CHECK (do this first, before any exploration):',
+          `- Run: \`cat ${planPath}\``,
+          '- If the file exists and is non-empty:',
+          `  1. Call percussionist_dispatcher_write_plan(project="${projectName}", task="${taskName}", content=<file-content>) to ensure it is persisted.`,
+          '  2. Call percussionist_dispatcher_complete_plan with a brief summary of the existing plan.',
+          '  3. Do NOT re-explore or re-plan — the work is already done.',
+          '- Only proceed with planning if the file does not exist or is empty.',
+          '',
+        );
+      }
+      promptLines.push(
+        'PLAN ARTIFACT REQUIREMENTS:',
+        `- Create or update ${planPath} in the repository.`,
+        '- The file is the authoritative PLAN output and will be reviewed by facilitator/human reviewers.',
+        '- Include implementation context, scope boundaries, risks, acceptance criteria, and proposed BUILD task breakdown.',
+        '- Commit the plan artifact on this task branch before completing the run.',
+        '- The platform automatically publishes your branch to a namespaced remote ref on completion;',
+        '  do not push the branch yourself.',
+        `- After committing, call percussionist_dispatcher_write_plan(project="${projectName}", task="${taskName}", content=<plan-content>) to persist it to ConfigMap.`,
+        `- Mention ${planPath} in the completion summary.`,
+        `- When done, call percussionist_dispatcher_complete_plan instead of complete_run.`,
+        '',
+      );
+    } else if (task.spec.type === 'BUILD' && task.spec.parentTaskRef) {
+      const planPathForParent = `.percussionist/plans/${task.spec.parentTaskRef}.md`;
+      promptLines.push(
+        'PLAN CONTEXT:',
+        // The ConfigMap is the reliable source. complete_plan does not enforce
+        // that the planner committed the artifact, so the file is frequently
+        // absent — agents were sent to cat a path that did not exist, burned a
+        // turn on ENOENT, and only recovered if they thought to reach for the
+        // tool. Name the tool first and demote the file to a fallback.
+        `- Read the PLAN before implementing: call percussionist_dispatcher_read_plan(project="${projectName}", task="${task.spec.parentTaskRef}").`,
+        `- If that returns no content, fall back to ${planPathForParent} in the repo.`,
+        '- Treat that PLAN artifact as the full feature context, even if this BUILD task covers only one slice.',
+        "- Keep your changes aligned with the plan's acceptance criteria and sequencing notes.",
+        // The task description is a condensed brief, so a plan constraint that
+        // was not restated in it is invisible to both the ACCEPTANCE list and the
+        // reviewer. Ask for the conflict to be surfaced rather than silently
+        // resolved in favour of the shorter document.
+        '- If the plan requires something this task description does not mention, or the two conflict, say so',
+        '  explicitly in your completion summary rather than silently following only the task description.',
         '',
       );
     }
-    promptLines.push(
-      'PLAN ARTIFACT REQUIREMENTS:',
-      `- Create or update ${planPath} in the repository.`,
-      '- The file is the authoritative PLAN output and will be reviewed by facilitator/human reviewers.',
-      '- Include implementation context, scope boundaries, risks, acceptance criteria, and proposed BUILD task breakdown.',
-      '- Commit the plan artifact on this task branch before completing the run.',
-      '- The platform automatically publishes your branch to a namespaced remote ref on completion;',
-      '  do not push the branch yourself.',
-      `- After committing, call percussionist_dispatcher_write_plan(project="${projectName}", task="${taskName}", content=<plan-content>) to persist it to ConfigMap.`,
-      `- Mention ${planPath} in the completion summary.`,
-      `- When done, call percussionist_dispatcher_complete_plan instead of complete_run.`,
-      '',
-    );
-  } else if (task.spec.type === 'BUILD' && task.spec.parentTaskRef) {
-    const planPathForParent = `.percussionist/plans/${task.spec.parentTaskRef}.md`;
-    promptLines.push(
-      'PLAN CONTEXT:',
-      // The ConfigMap is the reliable source. complete_plan does not enforce
-      // that the planner committed the artifact, so the file is frequently
-      // absent — agents were sent to cat a path that did not exist, burned a
-      // turn on ENOENT, and only recovered if they thought to reach for the
-      // tool. Name the tool first and demote the file to a fallback.
-      `- Read the PLAN before implementing: call percussionist_dispatcher_read_plan(project="${projectName}", task="${task.spec.parentTaskRef}").`,
-      `- If that returns no content, fall back to ${planPathForParent} in the repo.`,
-      '- Treat that PLAN artifact as the full feature context, even if this BUILD task covers only one slice.',
-      "- Keep your changes aligned with the plan's acceptance criteria and sequencing notes.",
-      // The task description is a condensed brief, so a plan constraint that
-      // was not restated in it is invisible to both the ACCEPTANCE list and the
-      // reviewer. Ask for the conflict to be surfaced rather than silently
-      // resolved in favour of the shorter document.
-      '- If the plan requires something this task description does not mention, or the two conflict, say so',
-      '  explicitly in your completion summary rather than silently following only the task description.',
-      '',
-    );
-  }
 
-  if (task.spec.type === 'BUILD') {
-    promptLines.push(
-      'GIT COMMIT REQUIREMENTS:',
-      '- Stage and commit your changes before calling complete_run.',
-      '- The dispatcher will reject complete_run if the working tree has uncommitted changes.',
-      '- If no code changes are needed, call complete_run with "force": true to bypass this check.',
-      '- The platform automatically publishes your branch to a namespaced remote ref on completion;',
-      '  do not push the branch yourself.',
-      '',
-    );
-  }
-
-  // A run is a single session that ends when the agent signals completion.
-  // Observed: an agent finished its turn with "I'll pause here and wait for the
-  // background install or the scheduled wakeup to resume" and never called
-  // complete_run, so the dispatcher settled the run as
-  // "session ended without completion signal" — 47k output tokens of finished
-  // work reported as a failure. The agent was reasoning from a harness that has
-  // wakeups and durable background tasks; this one has neither.
-  promptLines.push(
-    'THIS RUN ENDS WHEN YOU SIGNAL COMPLETION:',
-    '- There is no scheduled wakeup, no resume, and no one polling on your behalf.',
-    '  Ending a turn to "wait" ends the run, and the work is recorded as a failure.',
-    '- Do not background a command and yield expecting to be woken. If you need a',
-    '  long-running command, wait for it in the foreground.',
-    '- If something genuinely cannot finish inside this run, call fail_run with the',
-    '  reason, or complete_run describing what is incomplete. Either is far better',
-    '  than yielding silently.',
-    '',
-  );
-
-  // Inject relevant memory context if vector memory is enabled.
-  if (project.spec.embedding?.enabled) {
-    try {
-      const query = task.spec.description ?? task.spec.title ?? taskName;
-      const { context } = await getContext(projectName, query, taskName);
-      if (context && context !== 'No relevant context found.') {
-        promptLines.push('RELEVANT PROJECT CONTEXT:', context, '');
-      }
-    } catch {
-      // Memory service unavailable — skip silently.
+    if (task.spec.type === 'BUILD') {
+      promptLines.push(
+        'GIT COMMIT REQUIREMENTS:',
+        '- Stage and commit your changes before calling complete_run.',
+        '- The dispatcher will reject complete_run if the working tree has uncommitted changes.',
+        '- If no code changes are needed, call complete_run with "force": true to bypass this check.',
+        '- The platform automatically publishes your branch to a namespaced remote ref on completion;',
+        '  do not push the branch yourself.',
+        '',
+      );
     }
-  }
 
-  // Inject available system tools if declared.
-  if (resolved.packages && resolved.packages.length > 0) {
+    // A run is a single session that ends when the agent signals completion.
+    // Observed: an agent finished its turn with "I'll pause here and wait for the
+    // background install or the scheduled wakeup to resume" and never called
+    // complete_run, so the dispatcher settled the run as
+    // "session ended without completion signal" — 47k output tokens of finished
+    // work reported as a failure. The agent was reasoning from a harness that has
+    // wakeups and durable background tasks; this one has neither.
     promptLines.push(
-      'AVAILABLE SYSTEM TOOLS:',
-      'The following packages are installed in this run environment:',
-      resolved.packages.map((p) => `  - ${p}`).join('\n'),
+      'THIS RUN ENDS WHEN YOU SIGNAL COMPLETION:',
+      '- There is no scheduled wakeup, no resume, and no one polling on your behalf.',
+      '  Ending a turn to "wait" ends the run, and the work is recorded as a failure.',
+      '- Do not background a command and yield expecting to be woken. If you need a',
+      '  long-running command, wait for it in the foreground.',
+      '- If something genuinely cannot finish inside this run, call fail_run with the',
+      '  reason, or complete_run describing what is incomplete. Either is far better',
+      '  than yielding silently.',
       '',
-      'The opencode-native tools grep, glob, read, list, edit, bash, and todowrite are always available.',
-      'Note: the task tracking tool is called `todowrite`, not `todo`.',
-      'Use `which <tool>` to check if a specific tool is available at runtime.',
+    );
+
+    // Inject relevant memory context if vector memory is enabled.
+    if (project.spec.embedding?.enabled) {
+      try {
+        const query = task.spec.description ?? task.spec.title ?? taskName;
+        const { context } = await getContext(projectName, query, taskName);
+        if (context && context !== 'No relevant context found.') {
+          promptLines.push('RELEVANT PROJECT CONTEXT:', context, '');
+        }
+      } catch {
+        // Memory service unavailable — skip silently.
+      }
+    }
+
+    // Inject available system tools if declared.
+    if (resolved.packages && resolved.packages.length > 0) {
+      promptLines.push(
+        'AVAILABLE SYSTEM TOOLS:',
+        'The following packages are installed in this run environment:',
+        resolved.packages.map((p) => `  - ${p}`).join('\n'),
+        '',
+        'The opencode-native tools grep, glob, read, list, edit, bash, and todowrite are always available.',
+        'Note: the task tracking tool is called `todowrite`, not `todo`.',
+        'Use `which <tool>` to check if a specific tool is available at runtime.',
+        '',
+      );
+    }
+
+    // Unrelated-issue reporting prompt. Once included unconditionally: the old
+    // guard (`task.spec.type !== 'BUILD' || !description.includes('merge')`) was
+    // aimed at merge runs, but merge runs are built by buildMergeRun (which never
+    // calls buildWorkerRun), so it could never fire for them — it only suppressed
+    // the block for BUILD tasks whose description happened to mention "merge"
+    // (A13). Include it for every worker run.
+    promptLines.push(
+      'UNRELATED ISSUES:',
+      '- Your job is the TASK above. Stay on it.',
+      '- If, while working, you notice a SEPARATE problem unrelated to your task — a security hole,',
+      '  a real bug, a performance trap, or notable tech debt — report it ONCE with the',
+      '  `percussionist_dispatcher_report_unrelated_issue` tool, then continue your task.',
+      '  Do not investigate it further.',
+      '- Provide: a one-line title, a short description (what is wrong + why it matters +',
+      '  suggested fix), severity (low/medium/high/critical), category',
+      '  (bug/security/performance/debt/docs/other), and filePath/snippet when you have them.',
+      '- Do NOT report: style nits, things already covered by your task, speculative',
+      '  "could be better" ideas, or anything you are not fairly confident about.',
+      '- One finding per distinct issue. The manager de-duplicates, so do not worry about',
+      '  repeats — but do not spam.',
       '',
     );
   }
 
-  // Unrelated-issue reporting prompt. Once included unconditionally: the old
-  // guard (`task.spec.type !== 'BUILD' || !description.includes('merge')`) was
-  // aimed at merge runs, but merge runs are built by buildMergeRun (which never
-  // calls buildWorkerRun), so it could never fire for them — it only suppressed
-  // the block for BUILD tasks whose description happened to mention "merge"
-  // (A13). Include it for every worker run.
-  promptLines.push(
-    'UNRELATED ISSUES:',
-    '- Your job is the TASK above. Stay on it.',
-    '- If, while working, you notice a SEPARATE problem unrelated to your task — a security hole,',
-    '  a real bug, a performance trap, or notable tech debt — report it ONCE with the',
-    '  `percussionist_dispatcher_report_unrelated_issue` tool, then continue your task.',
-    '  Do not investigate it further.',
-    '- Provide: a one-line title, a short description (what is wrong + why it matters +',
-    '  suggested fix), severity (low/medium/high/critical), category',
-    '  (bug/security/performance/debt/docs/other), and filePath/snippet when you have them.',
-    '- Do NOT report: style nits, things already covered by your task, speculative',
-    '  "could be better" ideas, or anything you are not fairly confident about.',
-    '- One finding per distinct issue. The manager de-duplicates, so do not worry about',
-    '  repeats — but do not spam.',
-    '',
-  );
+  // Branch selection. For interactive runs the task's recorded branch always
+  // wins, even when feature branching is disabled: the run must attach to the
+  // branch the worker actually used, not whatever `resolveTaskBranch` would
+  // return for the current project config.
+  if (interactive && resolved.source?.git) {
+    const gitBranch =
+      task.status?.worker?.gitBranch ?? resolveTaskBranch(task, project, allTasks ?? []);
+    const parentBranch =
+      task.status?.worker?.parentBranch ?? resolveParentBranch(task, project, allTasks ?? []);
 
-  // Feature branching: override git ref with task's branch.
-  if (project.spec.featureBranchingEnabled && resolved.source?.git) {
+    if (gitBranch) {
+      resolved.source.git.ref = gitBranch;
+    }
+    if (parentBranch) {
+      resolved.source.git.parentRef = parentBranch;
+    }
+  } else if (project.spec.featureBranchingEnabled && resolved.source?.git) {
     const gitBranch = resolveTaskBranch(task, project, allTasks ?? []);
     const parentBranch = resolveParentBranch(task, project, allTasks ?? []);
 
@@ -303,13 +343,13 @@ export async function buildWorkerRun(
     spec: {
       project: projectName,
       boardTask: taskName,
-      task: promptLines.join('\n'),
-      interactive: false,
-      agent: task.spec.agent,
-      agents: (project.spec.agents ?? []).filter((a) => a.name !== task.spec.agent),
+      ...(interactive ? {} : { task: promptLines.join('\n') }),
+      interactive,
+      agent: effectiveAgent,
+      agents: (project.spec.agents ?? []).filter((a) => a.name !== effectiveAgent),
       model: resolved.model,
       image: resolved.image,
-      timeoutSeconds: resolved.timeoutSeconds,
+      timeoutSeconds: options?.timeoutSeconds ?? resolved.timeoutSeconds,
       ttlSecondsAfterFinished: 7 * 86400,
       ...(resolved.resources ? { resources: resolved.resources } : {}),
       ...(resolved.secrets ? { secrets: resolved.secrets } : {}),

@@ -316,8 +316,53 @@ function asKubeWebSocketInterface(handler: ExecWebSocketHandler): KubeWebSocketI
 // string — `getAuthValue` (auth.ts) no longer accepts `?token=` for regular
 // HTTP routes, for the same logging reason. Don't go looking for it there.
 
+/**
+ * Origin allowlist for the terminal WebSocket upgrade.
+ *
+ * The session cookie alone does not isolate sibling origins under the same
+ * registrable site (SameSite cookies are sent cross-subdomain), so a
+ * malicious sibling origin could open an authenticated terminal. Require an
+ * exact match against WEB_BASE_URL's origin (plus localhost dev origins and
+ * any extra origins in ATTACH_ALLOWED_ORIGINS) whenever the browser sends
+ * Origin. Non-browser clients send no Origin and skip this check — they still
+ * need the session/token credential below.
+ */
+export function isAllowedAttachOrigin(req: Request): boolean {
+  const origin = req.headers.get('origin');
+  if (!origin) return true;
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  const allowed = new Set<string>();
+  const base = process.env.WEB_BASE_URL ?? '';
+  if (base) {
+    try {
+      allowed.add(new URL(base).origin);
+    } catch {
+      // Ignore a malformed WEB_BASE_URL — fall through to deny.
+    }
+  }
+  for (const extra of (process.env.ATTACH_ALLOWED_ORIGINS ?? '').split(',')) {
+    const trimmed = extra.trim();
+    if (!trimmed) continue;
+    try {
+      allowed.add(new URL(trimmed).origin);
+    } catch {
+      // Ignore malformed entries.
+    }
+  }
+  // Local dev loopback origins are always acceptable.
+  if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') return true;
+  return allowed.has(parsed.origin);
+}
+
 export async function isAttachAuthorized(req: Request): Promise<boolean> {
   if (process.env.AUTH_DISABLED === '1') return true;
+
+  if (!isAllowedAttachOrigin(req)) return false;
 
   try {
     const session = await getAuth().api.getSession({ headers: req.headers });

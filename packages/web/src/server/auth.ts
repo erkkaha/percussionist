@@ -49,6 +49,10 @@ export type AuthContext = {
   keyId?: string;
   /** Scopes the key carries, for audit logging. */
   permissions?: Record<string, string[]>;
+  /** Stable key name; per-run keys use the run:<name> prefix. */
+  keyName?: string;
+  /** Metadata stored on the key row (per-run keys carry runName/runUid/project). */
+  keyMetadata?: Record<string, unknown>;
 };
 
 declare module 'hono' {
@@ -123,8 +127,50 @@ async function humanSession(c: Context): Promise<string | null> {
 }
 
 type KeyVerdict =
-  | { ok: true; keyId?: string; permissions?: Record<string, string[]> }
+  | {
+      ok: true;
+      keyId?: string;
+      keyName?: string;
+      permissions?: Record<string, string[]>;
+      metadata?: Record<string, unknown>;
+    }
   | { ok: false; reason: 'invalid' | 'forbidden' };
+
+/**
+ * Read the metadata column for a key row. Per-run keys carry
+ * {kind:'run', runName, runUid?, project?} so stats ingestion can bind the
+ * request to the run that holds the key. Failures resolve to undefined —
+ * verification already succeeded; a missing row just means no binding.
+ */
+async function readKeyMetadata(
+  keyId: string | undefined,
+): Promise<Record<string, unknown> | undefined> {
+  if (!keyId) return undefined;
+  try {
+    const { getDb } = await import('./db.js');
+    const { apikey } = await import('./schema.js');
+    const { eq } = await import('drizzle-orm');
+    const rows = getDb()
+      .select({ metadata: apikey.metadata })
+      .from(apikey)
+      .where(eq(apikey.id, keyId))
+      .all();
+    const raw = rows[0]?.metadata;
+    if (!raw) return undefined;
+    if (typeof raw === 'object') return raw as Record<string, unknown>;
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>;
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Verify an API key, optionally requiring a permission.
@@ -149,7 +195,9 @@ async function verifyKey(
       return {
         ok: true,
         keyId: res.key?.id,
+        keyName: res.key?.name ?? undefined,
         permissions: (res.key?.permissions as Record<string, string[]> | null) ?? undefined,
+        metadata: await readKeyMetadata(res.key?.id),
       };
     }
     if (!required) return { ok: false, reason: 'invalid' };
@@ -276,7 +324,9 @@ export function scoped(resource: PermissionResource, action: string): Middleware
           role: 'user',
           subject: 'agent',
           keyId: verdict.keyId,
+          keyName: verdict.keyName,
           permissions: verdict.permissions,
+          keyMetadata: verdict.metadata,
         });
         await next();
         return;

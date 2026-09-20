@@ -16,6 +16,12 @@ interface LogViewerProps {
   sseConnected: boolean;
   /** Increments whenever relevant SSE events arrive. */
   eventTick: number;
+  /**
+   * Fill the parent flex column instead of the default 600px box. Used by the
+   * immersive run shell so the log pane occupies the whole stage; the board's
+   * TaskRunsPanel leaves it unset and keeps today's fixed height.
+   */
+  fillHeight?: boolean;
 }
 
 /**
@@ -73,6 +79,7 @@ export default function LogViewer({
   defaultContainer = 'bootstrap',
   sseConnected,
   eventTick,
+  fillHeight = false,
 }: LogViewerProps) {
   void eventTick;
   const [container, setContainer] = useState<string>(defaultContainer);
@@ -272,7 +279,7 @@ export default function LogViewer({
   }, [writeData]);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className={fillHeight ? 'flex h-full min-h-0 flex-col gap-3' : 'flex flex-col gap-3'}>
       {/* Controls */}
       <div className="flex items-center gap-3 flex-wrap">
         {/* Container tabs */}
@@ -329,8 +336,15 @@ export default function LogViewer({
 
       {/* Log output — always render the terminal; error/loading written into it */}
       <div
-        className="rounded-lg border border-border overflow-hidden"
-        style={{ height: '600px', background: '#111317', padding: '12px', minWidth: 0 }}
+        className={`rounded-lg border border-border overflow-hidden ${
+          fillHeight ? 'min-h-0 flex-1' : ''
+        }`}
+        style={{
+          height: fillHeight ? undefined : '600px',
+          background: '#111317',
+          padding: '12px',
+          minWidth: 0,
+        }}
       >
         <div ref={termCallbackRef} style={{ height: '100%', overflow: 'hidden' }} />
       </div>

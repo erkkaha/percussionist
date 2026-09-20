@@ -3,8 +3,10 @@
 //
 //   - routes/runs.ts — GET / list (sorting/pagination/task filter/stripping),
 //     GET /:name, POST / create (schema validation + kube error mapping),
-//     DELETE /:name, and POST /:name/reply (the human-answer path: session
-//     gating, message validation, forwarding, failure mapping).
+//     DELETE /:name, POST /:name/reply (the human-answer path: session
+//     gating, message validation, forwarding, failure mapping), POST
+//     /:name/session (starting an interactive run's session from the
+//     dashboard) and POST /:name/interrupt (stopping the current turn).
 //   - routes/upgrade.ts — GET /status and POST /apply proxying to the
 //     manager's MCP tools, including the ManagerMcpHttpError → 502 split.
 //
@@ -63,6 +65,9 @@ let getRunSpy: ReturnType<typeof spyOn>;
 let createRunSpy: ReturnType<typeof spyOn>;
 let deleteRunSpy: ReturnType<typeof spyOn>;
 let postSessionMessageSpy: ReturnType<typeof spyOn>;
+let createRunnerSessionSpy: ReturnType<typeof spyOn>;
+let listRunnerSessionsSpy: ReturnType<typeof spyOn>;
+let interruptRunnerSessionSpy: ReturnType<typeof spyOn>;
 let callManagerToolSpy: ReturnType<typeof spyOn>;
 
 beforeAll(async () => {
@@ -71,6 +76,9 @@ beforeAll(async () => {
   createRunSpy = spyOn(kube, 'createRun');
   deleteRunSpy = spyOn(kube, 'deleteRun');
   postSessionMessageSpy = spyOn(kube, 'postSessionMessage');
+  createRunnerSessionSpy = spyOn(kube, 'createRunnerSession');
+  listRunnerSessionsSpy = spyOn(kube, 'listRunnerSessions');
+  interruptRunnerSessionSpy = spyOn(kube, 'interruptRunnerSession');
   callManagerToolSpy = spyOn(managerMcp, 'callManagerTool');
 
   const [{ default: runsRouter }, { default: upgradeRouter }] = await Promise.all([
@@ -90,6 +98,9 @@ afterAll(() => {
   createRunSpy.mockRestore();
   deleteRunSpy.mockRestore();
   postSessionMessageSpy.mockRestore();
+  createRunnerSessionSpy.mockRestore();
+  listRunnerSessionsSpy.mockRestore();
+  interruptRunnerSessionSpy.mockRestore();
   callManagerToolSpy.mockRestore();
   if (prevAuthDisabled !== undefined) process.env.AUTH_DISABLED = prevAuthDisabled;
   else delete process.env.AUTH_DISABLED;
@@ -101,6 +112,10 @@ beforeEach(() => {
   createRunSpy.mockReset();
   deleteRunSpy.mockReset();
   postSessionMessageSpy.mockReset();
+  createRunnerSessionSpy.mockReset();
+  listRunnerSessionsSpy.mockReset();
+  listRunnerSessionsSpy.mockResolvedValue([] as never);
+  interruptRunnerSessionSpy.mockReset();
   callManagerToolSpy.mockReset();
 });
 
@@ -314,7 +329,11 @@ describe('POST /api/runs/:name/reply', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
-    expect(postSessionMessageSpy).toHaveBeenCalledWith('svc-reply', 'sess-reply', 'Yes, continue');
+    // Routed like the dispatcher's first prompt: on the run's model and agent.
+    expect(postSessionMessageSpy).toHaveBeenCalledWith('svc-reply', 'sess-reply', 'Yes, continue', {
+      model: 'openai/gpt-4o',
+      agent: 'builder',
+    });
   });
 
   it('answers 404 when the run is missing', async () => {
@@ -375,6 +394,138 @@ describe('POST /api/runs/:name/reply', () => {
     expect(res.status).toBe(502);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain('Failed to forward reply');
+  });
+});
+
+describe('POST /api/runs/:name/session', () => {
+  const interactiveNoSession = makeRun('run-int', {
+    spec: { project: 'proj', agent: 'builder', interactive: true },
+    status: {
+      phase: 'Running',
+      message: 'waiting for attach or web session',
+      serviceName: 'svc-int',
+      podName: 'pod-int',
+      podPhase: 'Running',
+    },
+  } as never);
+
+  it('creates the session on the runner and returns its id', async () => {
+    getRunSpy.mockResolvedValue(interactiveNoSession);
+    createRunnerSessionSpy.mockResolvedValue({ id: 'ses_new' } as never);
+
+    const res = await runsApp.request('/api/runs/run-int/session', { method: 'POST' });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({ sessionID: 'ses_new' });
+    expect(createRunnerSessionSpy).toHaveBeenCalledWith('svc-int', 'run/run-int', 'builder');
+  });
+
+  it('hands back a session the runner already has instead of creating a second one', async () => {
+    // status.sessionID lags the runner by a dispatcher tick; a double click in
+    // that window must not create a second session the dispatcher never adopts.
+    getRunSpy.mockResolvedValue(interactiveNoSession);
+    listRunnerSessionsSpy.mockResolvedValue([{ id: 'ses_first' }] as never);
+
+    const res = await runsApp.request('/api/runs/run-int/session', { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sessionID: 'ses_first', existing: true });
+    expect(createRunnerSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 when the run is missing', async () => {
+    getRunSpy.mockRejectedValue(new Error('not found'));
+    const res = await runsApp.request('/api/runs/ghost/session', { method: 'POST' });
+    expect(res.status).toBe(404);
+    expect(createRunnerSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it('answers 400 for a prompt-mode run (the dispatcher owns that session)', async () => {
+    getRunSpy.mockResolvedValue(
+      makeRun('run-prompt', {
+        status: { phase: 'Running', serviceName: 'svc', podPhase: 'Running' },
+      } as never),
+    );
+    const res = await runsApp.request('/api/runs/run-prompt/session', { method: 'POST' });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('Not an interactive run');
+    expect(createRunnerSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it('answers 409 when the run already has a session', async () => {
+    getRunSpy.mockResolvedValue({
+      ...interactiveNoSession,
+      status: { ...interactiveNoSession.status, sessionID: 'ses_old' },
+    });
+    const res = await runsApp.request('/api/runs/run-int/session', { method: 'POST' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { sessionID: string }).sessionID).toBe('ses_old');
+    expect(createRunnerSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it('answers 400 while the pod is not Running yet', async () => {
+    getRunSpy.mockResolvedValue({
+      ...interactiveNoSession,
+      status: { ...interactiveNoSession.status, podPhase: 'Pending' },
+    });
+    const res = await runsApp.request('/api/runs/run-int/session', { method: 'POST' });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('not up yet');
+  });
+
+  it('answers 400 for a finished run', async () => {
+    getRunSpy.mockResolvedValue({
+      ...interactiveNoSession,
+      status: { ...interactiveNoSession.status, phase: 'Succeeded' },
+    });
+    const res = await runsApp.request('/api/runs/run-int/session', { method: 'POST' });
+    expect(res.status).toBe(400);
+    expect(createRunnerSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it('answers 502 when the runner refuses', async () => {
+    getRunSpy.mockResolvedValue(interactiveNoSession);
+    createRunnerSessionSpy.mockRejectedValue(new Error('OpenCode API 500: boom'));
+    const res = await runsApp.request('/api/runs/run-int/session', { method: 'POST' });
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as { error: string }).error).toContain('Failed to start session');
+  });
+});
+
+describe('POST /api/runs/:name/interrupt', () => {
+  const activeRun = makeRun('run-stop', {
+    status: { phase: 'Running', sessionID: 'sess-stop', serviceName: 'svc-stop' },
+  });
+
+  it('forwards the interrupt to the run service', async () => {
+    getRunSpy.mockResolvedValue(activeRun);
+    interruptRunnerSessionSpy.mockResolvedValue(undefined as never);
+    const res = await runsApp.request('/api/runs/run-stop/interrupt', { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(interruptRunnerSessionSpy).toHaveBeenCalledWith('svc-stop', 'sess-stop');
+  });
+
+  it('answers 404 when the run is missing', async () => {
+    getRunSpy.mockRejectedValue(new Error('not found'));
+    const res = await runsApp.request('/api/runs/ghost/interrupt', { method: 'POST' });
+    expect(res.status).toBe(404);
+    expect(interruptRunnerSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it('answers 400 when the run has no session', async () => {
+    getRunSpy.mockResolvedValue(
+      makeRun('run-idle', { status: { phase: 'Running', serviceName: 'svc' } } as never),
+    );
+    const res = await runsApp.request('/api/runs/run-idle/interrupt', { method: 'POST' });
+    expect(res.status).toBe(400);
+  });
+
+  it('answers 502 when the runner cannot interrupt', async () => {
+    getRunSpy.mockResolvedValue(activeRun);
+    interruptRunnerSessionSpy.mockRejectedValue(
+      new Error('this runner does not support interrupting a turn'),
+    );
+    const res = await runsApp.request('/api/runs/run-stop/interrupt', { method: 'POST' });
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as { error: string }).error).toContain('does not support');
   });
 });
 

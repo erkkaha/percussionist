@@ -1,6 +1,11 @@
 // TaskDetailPanel.tsx — tabbed detail view for a selected task.
 // Shows: Overview, Runs (with per-run Session/Logs), Events, Plan (PLAN tasks only).
-// Actions: Approve, Request Changes, Abandon, Retry, Delete.
+// Actions: Approve, Request Changes, Abandon, Retry, Start Interactive Run, Delete.
+//   Start Interactive Run requests an auxiliary run on the task's branch (it does
+//   not change the task's phase or worker) for investigating/fixing work in
+//   progress. The session is a real shell: only committed work is published when
+//   the run ends, so the user must `git commit`; and a live worker on the same
+//   branch can diverge, so stop the worker before making conflicting edits.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -23,6 +28,7 @@ import {
   MousePointerClick,
   RefreshCw,
   Sparkles,
+  Terminal,
   Trash2,
   User,
   Wrench,
@@ -45,6 +51,7 @@ import {
   requestChangesTask,
   retryEscalatedTask,
   retryReviewTask,
+  startInteractiveRun,
 } from '../../lib/api';
 import type { DiffFindingSort } from '../../lib/diff-findings';
 import {
@@ -274,7 +281,7 @@ function CommitDiffList({
           >
             <button
               onClick={() => toggle(commit.sha)}
-              className="flex items-center gap-2 w-full px-3 py-2 hover:bg-surface-overlay/30 transition-colors text-left"
+              className="flex items-center gap-2 w-full min-w-0 px-3 py-2 hover:bg-surface-overlay/30 transition-colors text-left"
             >
               {isOpen ? (
                 <ChevronDown className="h-4 w-4 shrink-0 text-text-dim" />
@@ -285,7 +292,7 @@ function CommitDiffList({
               <span className="font-mono text-xs text-text-dim shrink-0">
                 {commit.sha.slice(0, 7)}
               </span>
-              <span className="text-sm text-text flex-1 truncate">{commit.subject}</span>
+              <span className="text-sm text-text flex-1 min-w-0 truncate">{commit.subject}</span>
               <span className="text-xs text-text-dim shrink-0">
                 {commit.files.length} {commit.files.length === 1 ? 'file' : 'files'}
               </span>
@@ -384,12 +391,16 @@ function DiffContent({ projectName, taskName }: { projectName: string; taskName:
 
   return (
     <div className="space-y-3 px-4 py-3">
-      <div className="rounded border border-border-muted bg-surface-overlay/30 px-3 py-2 text-xs text-text-dim">
-        Base: <span className="font-mono text-text">{data.baseRef}</span>
-        {'  '}
-        Head: <span className="font-mono text-text">{data.headRef}</span>
-        {'  '}
-        Default: <span className="font-mono text-text">{data.defaultRef}</span>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded border border-border-muted bg-surface-overlay/30 px-3 py-2 text-xs text-text-dim">
+        <span className="min-w-0">
+          Base: <span className="font-mono text-text break-all">{data.baseRef}</span>
+        </span>
+        <span className="min-w-0">
+          Head: <span className="font-mono text-text break-all">{data.headRef}</span>
+        </span>
+        <span className="min-w-0">
+          Default: <span className="font-mono text-text break-all">{data.defaultRef}</span>
+        </span>
       </div>
 
       {/* Findings summary panel */}
@@ -1019,6 +1030,9 @@ function TaskDetailPanelInner({
     task.status?.phase === 'failed';
   const approvalState = approvals?.[taskName];
   const alreadyApproved = approvalState?.approved === true;
+  // An interactive run can be started on any task that still has a branch to
+  // work on — i.e. not parked in the idea backlog and not already done.
+  const canStartInteractiveRun = task.status?.phase !== 'idea' && task.status?.phase !== 'done';
 
   const invalidateBoard = () => queryClient.invalidateQueries({ queryKey: ['board', projectName] });
 
@@ -1082,6 +1096,19 @@ function TaskDetailPanelInner({
     onSuccess: invalidateBoard,
   });
 
+  // Interactive runs are auxiliary: the reconciler creates the Run from the
+  // task annotation without touching the task phase/worker. Refresh the board
+  // and the task's Runs list, then surface the Runs tab so the user can watch
+  // for the new run and attach once its pod is Running.
+  const startInteractiveRunMutation = useMutation({
+    mutationFn: () => startInteractiveRun(projectName, taskName),
+    onSuccess: () => {
+      invalidateBoard();
+      queryClient.invalidateQueries({ queryKey: ['taskRuns', taskName] });
+      setTab('runs');
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: () => deleteBoardTask(projectName, taskName),
     onSuccess: () => {
@@ -1115,7 +1142,7 @@ function TaskDetailPanelInner({
 
   return (
     <div
-      className={`flex flex-col h-full min-h-0 border-l border-border ${focused ? 'md:border-l-0' : ''}`}
+      className={`flex flex-col h-full min-h-0 min-w-0 border-l border-border ${focused ? 'md:border-l-0' : ''}`}
     >
       {/* Header */}
       <div className="shrink-0 px-4 pt-4 pb-3 border-b border-border space-y-2">
@@ -1171,6 +1198,18 @@ function TaskDetailPanelInner({
 
         {/* Action buttons */}
         <div className="flex items-center gap-2 flex-wrap">
+          {canStartInteractiveRun && (
+            <button
+              onClick={() => startInteractiveRunMutation.mutate()}
+              disabled={startInteractiveRunMutation.isPending}
+              title="Start an interactive run on this task's branch"
+              className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text transition-colors disabled:opacity-40"
+            >
+              <Terminal className="h-3.5 w-3.5" />
+              {startInteractiveRunMutation.isPending ? 'Starting…' : 'Start Interactive Run'}
+            </button>
+          )}
+
           {col === 'ideas' && (
             <button
               onClick={() => promoteIdeaMutation.mutate()}
@@ -1440,7 +1479,7 @@ function TaskDetailPanelInner({
       )}
 
       {/* Tab content — scrollable */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-w-0 overflow-y-auto">
         {activeTab === 'overview' && (
           <OverviewContent
             task={task}

@@ -1,21 +1,37 @@
-// notification-bell.test.tsx — NotificationBell dropdown link behavior.
+// notification-bell.test.tsx — NotificationBell dropdown link + attention behavior.
 //
 // Entries with a `url` render as react-router `Link`s that navigate and close
-// the panel; entries without one stay plain, non-clickable rows.
+// the panel; entries without one stay plain, non-clickable rows. Above them the
+// bell renders a persistent, server-backed "Needs attention" row linking to
+// /attention, and folds that count into the bell badge.
 //
 // react-router-dom is deliberately NOT mocked — a real MemoryRouter is mounted
 // so rendered anchors carry real hrefs and clicking them performs real SPA
 // navigation. See the notes in board-header.test.tsx for why stubbing `Link`
 // leaks process-globally and breaks other suites' `link` role queries.
 //
+// useAttention (react-query) is mocked at the module level so this suite needs
+// no QueryClientProvider/network, following the app-sidebar.test.tsx pattern.
 // Module-level `_history` / `_shown` state persists across tests within this
 // file (the `--isolate` flag only isolates per file), so every test seeds via
 // `notify()` with a unique `key`.
 
-import { afterEach, describe, expect, it } from 'bun:test';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import path from 'node:path';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
+
+// ---------------------------------------------------------------------------
+// Mutable mock state for the server-backed attention hook.
+// ---------------------------------------------------------------------------
+
+const attentionMock: { data: { count: number } | undefined } = { data: undefined };
+
+mock.module(path.resolve('src/client/hooks/useAttention'), () => ({
+  useAttention: () => ({ data: attentionMock.data }),
+}));
+
 import { notify } from '../src/client/lib/notifications';
 
 const { default: NotificationBell } = await import('../src/client/components/NotificationBell');
@@ -52,6 +68,9 @@ async function openPanel() {
 // Tests
 
 describe('NotificationBell dropdown links', () => {
+  beforeEach(() => {
+    attentionMock.data = { count: 0 };
+  });
   afterEach(cleanup);
 
   it('renders an entry with url as a link carrying the destination href', async () => {
@@ -109,5 +128,53 @@ describe('NotificationBell dropdown links', () => {
     const plain = screen.getByText('Cancelled');
     expect(plain.closest('a')).toBeNull();
     expect(screen.queryByRole('link', { name: /Cancelled/ })).toBeNull();
+  });
+});
+
+describe('NotificationBell needs-attention section', () => {
+  beforeEach(() => {
+    attentionMock.data = { count: 0 };
+  });
+  afterEach(cleanup);
+
+  it('renders a persistent Needs attention row linking to /attention', async () => {
+    attentionMock.data = { count: 2 };
+    renderBell();
+    await openPanel();
+
+    const link = screen.getByRole('link', { name: /Needs attention/ });
+    expect(link.getAttribute('href')).toBe('/attention');
+    // Server count is shown inline so the two lists are distinguishable.
+    expect(link.textContent).toContain('(2)');
+  });
+
+  it('reflects the server attention count in the bell badge', async () => {
+    attentionMock.data = { count: 4 };
+    renderBell();
+
+    expect(screen.getByTestId('notification-badge').textContent).toBe('4');
+  });
+
+  it('uses the larger of unread events and attention count for the badge', async () => {
+    attentionMock.data = { count: 1 };
+    renderBell();
+
+    // A live in-session event takes the badge above the (smaller) server count.
+    act(() => {
+      notify({ key: 'bell-badge-live-a', title: 'Run finished', sound: 'success' });
+      notify({ key: 'bell-badge-live-b', title: 'Run failed', sound: 'failure' });
+    });
+
+    expect(screen.getByTestId('notification-badge').textContent).toBe('2');
+  });
+
+  it('still renders the ephemeral event history below the attention row', async () => {
+    attentionMock.data = { count: 1 };
+    notify({ key: 'bell-attn-history', title: 'Review requested', sound: 'escalated' });
+    renderBell();
+    await openPanel();
+
+    expect(screen.getByText('Recent')).toBeTruthy();
+    expect(screen.getByText('Review requested')).toBeTruthy();
   });
 });

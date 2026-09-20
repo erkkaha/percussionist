@@ -1,6 +1,204 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.31] - 2026-09-20
+
+### <!-- 0 -->🚀 Features
+
+- Add slash-command registry and parser for run terminal _(web)_
+- Add terminal transcript for the run conversation _(web)_
+- Add slash-command bar for the run terminal _(web)_
+- Wire the immersive run terminal shell _(web)_
+- Add interactive run contract and builder options _(api,manager)_
+- Add start_interactive_run MCP tool _(manager)_
+- Publish branch on interactive shutdown _(dispatcher)_
+- Add interactive run request contract _(api)_
+- Add interactive run route and client wrapper _(web)_
+- Add Start Interactive Run button to task detail panel _(web)_
+- Consume interactive-run requests in the reconciler _(manager)_
+- Add beatctl board task interactive _(cli)_
+- Add interactive-run board route _(web)_
+- Add reconciler interactive-run request pass _(manager)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Use canonical interactive-run reconciler pass _(manager)_
+- Make interactive-run audit best-effort _(manager)_
+
+### <!-- 10 -->💼 Other
+
+- Bring in BUILD A (interactive contract + builder) and BUILD C (start_interactive_run MCP tool)
+- Bring in BUILD F (publish branch on interactive shutdown)
+- Bring in BUILD D (interactive-run web route + client wrapper)
+- Bring in BUILD E (Start Interactive Run board button)
+- Bring in BUILD A (shared interactive-run contract + builder options)
+- Bring in BUILD B (reconciler interactive-run request pass)
+- Bring in BUILD C (start_interactive_run MCP tool)
+
+### <!-- 2 -->🚜 Refactor
+
+- Extract shared session-part renderers _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add run page immersive terminal plan _(plans)_
+- Document immersive run terminal shell and slash commands _(web)_
+- Correct shell view fallback for claude engine _(dashboard)_
+- Add plan for interactive run from task _(plans)_
+
+### <!-- 6 -->🧪 Testing
+
+- Cover the immersive run shell and reach attach via /shell _(web)_
+- Add deterministic interactive run extended test _(e2e)_
+- Pin start_interactive_run does not create the Run _(manager)_
+- Add deterministic interactive run extended test _(e2e)_
+- Stop start_interactive_run test leaking a status-less buildTask stub _(manager)_
+## [v0.2.30] - 2026-09-20
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Refetch the run transcript when the agent actually replies _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.30
+## [v0.2.29] - 2026-09-20
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Route dashboard turns on the run's model and show the live transcript _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.29
+## [v0.2.28] - 2026-09-20
+
+### <!-- 0 -->🚀 Features
+
+- Drive a run's session from the dashboard _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Return a partial transcript when a later message page fails _(runner-opencode)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.28
+## [v0.2.27] - 2026-09-19
+
+### <!-- 0 -->🚀 Features
+
+- Add server attention selection logic _(web)_
+- Add GET /api/attention HITL inbox route _(web)_
+- Add client attention api and useAttention hook _(web)_
+- Add Needs attention page at /attention _(web)_
+- Add server-backed needs-attention section to notification bell _(web)_
+- Add inline quick actions to attention rows _(web)_
+- Add Needs attention sidebar nav item with live count badge _(web)_
+- Include open-PR tasks in attention inbox _(web)_
+- Make runner-opencode the default runner image _(runner)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add HITL needs-attention inbox plan _(plan)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.27
+## [v0.2.26] - 2026-09-19
+
+### <!-- 0 -->🚀 Features
+
+- OpenCode 2 embedded runner as a drop-in image _(runner-opencode)_
+- Expose the Copilot GitHub token as GITHUB_TOKEN _(runner-opencode)_
+- Embed the OpenCode 2 host, drop the opencode-web sidecar _(manager)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Wait for the requested model before the first prompt _(runner-opencode)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.26
+## [v0.2.25] - 2026-09-19
+
+### <!-- 0 -->🚀 Features
+
+- Make run detail a full-height tabbed shell _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Tolerate stale secret RBAC during upgrades _(operator)_
+- Constrain detail panel flex chain and ref banner _(web)_
+- Constrain long diff file paths and commit header truncation _(web)_
+- Harden board FilterBar chip wrapping _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Board ui fixes for diff filename overflow and focus-mode overlap _(plan)_
+- Add tabbed run page redesign plan _(plans)_
+
+### <!-- 6 -->🧪 Testing
+
+- Add board overflow regression tests and manual checklist _(web)_
+- Add RunDetail tab shell coverage _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Merge BUILD-3 (8f681a) FilterBar wrapping into BUILD-4 base _(web)_
+- Release v0.2.25
+## [v0.2.24] - 2026-09-19
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Harden control-plane trust boundaries _(security)_
+- Resolve rebased core export _(operator)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.24
+## [v0.2.23] - 2026-09-18
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Replace exec readiness probes with HTTP/TCP _(operator,k8s)_
+- Bump better-auth to 1.7.4 to restore GitHub sign-in _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.23
+## [v0.2.22] - 2026-09-18
+
+### <!-- 0 -->🚀 Features
+
+- Keep agent-config/opencode-config converged with ClusterSettings _(operator)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Make git-publish workspace root injectable _(dispatcher)_
+- Keep findings panel width when no task is selected _(web)_
+- Count run rows before retention delete to avoid cascaded overcount _(web)_
+- Stop manager chat replaying and double-rendering replies _(chat)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add plan for hermetic dispatcher git-publish tests _(plans)_
+- Fix findings panel width when no task selected _(plan)_
+
+### <!-- 6 -->🧪 Testing
+
+- Isolate git fixtures from pre-commit hook env _(dispatcher)_
+- Stub gitCheck.isClean in branch-publish tests _(dispatcher)_
+- Sanitize git env in git-publish tests _(dispatcher)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.22
+## [v0.2.21] - 2026-09-10
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.21
 ## [v0.2.20] - 2026-09-08
 
 ### <!-- 0 -->🚀 Features

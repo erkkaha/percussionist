@@ -1,5 +1,6 @@
 // reconciler.ts — core reconcile loop for Run CRs.
 
+import { createHash } from 'node:crypto';
 import {
   AppsV1Api,
   CoreV1Api,
@@ -8,6 +9,7 @@ import {
   NetworkingV1Api,
   PatchStrategy,
   setHeaderOptions,
+  type V1ConfigMap,
   type V1Deployment,
   type V1Pod,
   type V1Service,
@@ -46,6 +48,7 @@ import {
 } from './code-server.js';
 import {
   ALLOW_PRIVILEGED_SIDECARS,
+  CLUSTER_SETTINGS_RESYNC_INTERVAL_MS,
   INGRESS_BASE_URL,
   NAMESPACE,
   SELF_NAMESPACE,
@@ -228,15 +231,194 @@ async function ensureOpencodeConfig(ns: string): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Owned ConfigMap reconciliation
+//
+// The operator is the authoritative writer of `agent-config` and
+// `opencode-config` (see docs/guide/configuration.md). Both are written with
+// server-side apply under fieldManager="percussionist-operator" + force=true,
+// so any foreign writer is reverted on the next reconcile. The helpers below
+// add the pieces that make that actually happen in practice:
+//   - read-before-write so identical data is a no-op (no resourceVersion churn)
+//   - one corrective log line naming the previous field manager
+//   - a periodic / event-driven resync that does not depend on ClusterSettings
+//     informer events (Flux overwriting the ConfigMap fires none)
+
+/** fieldManager the operator applies its ConfigMaps with. */
+export const OPERATOR_FIELD_MANAGER = 'percussionist-operator';
+
+/** The two ConfigMaps the operator owns; the ConfigMap informer only reacts to these. */
+export const MANAGED_CONFIGMAP_NAMES = ['agent-config', 'opencode-config'] as const;
+
+/**
+ * Pod-template annotation on the manager Deployment carrying a hash of the
+ * rendered agent-config data. The manager's embedded OpenCode host reads
+ * OPENCODE_CONFIG_CONTENT (a configMapKeyRef) once at container start, so a
+ * corrected ConfigMap only takes effect after a rollout — and a rollout is only
+ * triggered when this hash actually changes.
+ */
+export const AGENT_CONFIG_HASH_ANNOTATION = 'percussionist.dev/agent-config-hash';
+
+/** Deployment whose embedded OpenCode host consumes agent-config. */
+export const MANAGER_DEPLOYMENT_NAME = 'percussionist-manager';
+
+/** True when `name` is one of the ConfigMaps the operator owns. */
+export function isManagedConfigMapName(name: string | undefined): boolean {
+  return (MANAGED_CONFIGMAP_NAMES as readonly string[]).includes(name ?? '');
+}
+
+/**
+ * Shallow key/value equality for two ConfigMap `data` maps. Used to skip the
+ * SSA write when the live object already matches the rendered state — an
+ * unconditional write would bump resourceVersion, fire the ConfigMap informer,
+ * and log a line on every periodic resync.
+ */
+export function configMapDataEqual(
+  a: Record<string, string> | undefined,
+  b: Record<string, string> | undefined,
+): boolean {
+  const aKeys = Object.keys(a ?? {}).sort();
+  const bKeys = Object.keys(b ?? {}).sort();
+  if (aKeys.length !== bKeys.length) return false;
+  for (let i = 0; i < aKeys.length; i++) {
+    const key = aKeys[i] as string;
+    if (key !== bKeys[i]) return false;
+    if (a?.[key] !== b?.[key]) return false;
+  }
+  return true;
+}
+
+/** Stable short hash of rendered ConfigMap data (order-independent). */
+export function configMapDataHash(data: Record<string, string>): string {
+  const canonical = Object.keys(data)
+    .sort()
+    .map((key) => `${key}\u0000${data[key] ?? ''}`)
+    .join('\u0001');
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+}
+
+/**
+ * The field manager that most recently owned the ConfigMap's `data`, excluding
+ * the operator itself. Best-effort — used only for the corrective-write log
+ * line so ownership fights (Flux, kubectl, tofu) are visible in operator logs.
+ */
+export function previousFieldManager(cm: V1ConfigMap | undefined): string | undefined {
+  const entries = cm?.metadata?.managedFields ?? [];
+  let dataManager: string | undefined;
+  let anyManager: string | undefined;
+  for (const entry of entries) {
+    const manager = entry.manager;
+    if (!manager || manager === OPERATOR_FIELD_MANAGER) continue;
+    anyManager = manager;
+    const fields = entry.fieldsV1 as Record<string, unknown> | undefined;
+    if (fields && 'f:data' in fields) dataManager = manager;
+  }
+  return dataManager ?? anyManager;
+}
+
+export interface ConfigMapApplyResult {
+  /** 'unchanged' when the live data matched, 'applied' after a corrective SSA write. */
+  outcome: 'unchanged' | 'applied' | 'failed';
+  previousFieldManager?: string;
+}
+
+/**
+ * Read → compare → corrective SSA write for one owned ConfigMap.
+ *
+ * A read failure is treated as "not found" and falls through to the write:
+ * the operator must not stall on a transient GET when it can still apply the
+ * authoritative state. The SSA write itself never throws (ssaConfigMap logs and
+ * returns false), and the caller only rolls the manager when it succeeds.
+ */
+export async function ensureConfigMap(
+  ns: string,
+  name: string,
+  desired: Record<string, string>,
+): Promise<ConfigMapApplyResult> {
+  let existing: V1ConfigMap | undefined;
+  try {
+    existing = await core.readNamespacedConfigMap({ name, namespace: ns });
+  } catch {
+    existing = undefined;
+  }
+  if (existing && configMapDataEqual(existing.data, desired)) {
+    return { outcome: 'unchanged' };
+  }
+  const previous = previousFieldManager(existing);
+  const applied = await ssaConfigMap(ns, name, desired);
+  if (!applied) return { outcome: 'failed', previousFieldManager: previous };
+  log(`corrected ConfigMap ${ns}/${name} (previous field manager: ${previous ?? 'none'})`);
+  return { outcome: 'applied', previousFieldManager: previous };
+}
+
+/**
+ * Sets the manager Deployment's pod-template agent-config hash annotation when
+ * it differs from the rendered content. Kubernetes rolls a new pod template
+ * when the annotation changes, which is what makes the manager re-read
+ * OPENCODE_CONFIG_CONTENT. A matching annotation is a no-op, so the periodic
+ * resync never restarts the manager unnecessarily — including across operator
+ * restarts, since the comparison is against the live Deployment, not memory.
+ */
+export async function syncManagerDeploymentHash(desired: Record<string, string>): Promise<boolean> {
+  const hash = configMapDataHash(desired);
+  let deployment: V1Deployment | undefined;
+  try {
+    deployment = await apps.readNamespacedDeployment({
+      name: MANAGER_DEPLOYMENT_NAME,
+      namespace: SELF_NAMESPACE,
+    });
+  } catch (e) {
+    if (!isNotFoundError(e)) {
+      err(`syncManagerDeploymentHash: read ${MANAGER_DEPLOYMENT_NAME}:`, (e as Error).message);
+    }
+    return false;
+  }
+  const current = deployment?.spec?.template?.metadata?.annotations?.[AGENT_CONFIG_HASH_ANNOTATION];
+  if (current === hash) return false;
+  try {
+    await apps.patchNamespacedDeployment(
+      {
+        name: MANAGER_DEPLOYMENT_NAME,
+        namespace: SELF_NAMESPACE,
+        // JSON merge patch: merges into metadata.annotations, leaving the rest
+        // of the Deployment (and any other annotations) untouched.
+        body: {
+          spec: {
+            template: {
+              metadata: {
+                annotations: { [AGENT_CONFIG_HASH_ANNOTATION]: hash },
+              },
+            },
+          },
+        },
+      },
+      setHeaderOptions('Content-Type', PatchStrategy.MergePatch),
+    );
+    log(
+      `rolled ${SELF_NAMESPACE}/${MANAGER_DEPLOYMENT_NAME} to pick up agent-config (hash ${hash})`,
+    );
+    return true;
+  } catch (e) {
+    err(`syncManagerDeploymentHash: patch ${MANAGER_DEPLOYMENT_NAME}:`, (e as Error).message);
+    return false;
+  }
+}
+
 // Reconcile ClusterSettings spec into the two managed ConfigMaps:
 //   1. opencode-config  — copied to every namespace that has a run
-//   2. agent-config     — used by the manager's opencode-web sidecar
+//   2. agent-config     — used by the manager's embedded OpenCode host
 //
 // Both ConfigMaps are written using server-side apply (SSA) with
 // fieldManager="percussionist-operator" and force=true. This means the
 // operator is the authoritative owner of these ConfigMap data keys regardless
 // of what other tools (kubectl, tofu, node-fetch) may have written previously.
 // Tofu excludes agent-config from its for_each to avoid conflicts.
+//
+// This function runs from three triggers (index.ts): the ClusterSettings
+// informer on add/update, a ConfigMap informer on the two owned ConfigMaps,
+// and a periodic resync. The read-before-write in ensureConfigMap means only
+// the first pass after a real change writes; every other pass is a no-op, so
+// none of the triggers can churn resourceVersions or hot-loop.
 //
 // ConfigMap sources of truth (in priority order):
 //   opencode.config  >  opencode.configMapRef  >  existing opencode-config CM
@@ -254,10 +436,9 @@ export async function reconcileClusterSettings(cs: ClusterSettings): Promise<voi
   // If spec.runnerConfig?.config is set, it becomes the data source.
   // Otherwise use configMapRef if set. If neither, leave existing CM alone.
   if (spec.runnerConfig?.config) {
-    await ssaConfigMap(SELF_NAMESPACE, 'opencode-config', {
+    await ensureConfigMap(SELF_NAMESPACE, 'opencode-config', {
       'opencode.json': injectDispatcherMcpStanza(spec.runnerConfig.config),
     });
-    log(`reconciled opencode-config from ClusterSettings (config string)`);
   } else if (spec.runnerConfig?.configMapRef) {
     // Mirror the referenced ConfigMap into our namespace as opencode-config.
     try {
@@ -266,12 +447,11 @@ export async function reconcileClusterSettings(cs: ClusterSettings): Promise<voi
         name: ref.name,
         namespace: SELF_NAMESPACE,
       });
-      const data = source.data ?? {};
-      if (data['opencode.json']) {
-        await ssaConfigMap(SELF_NAMESPACE, 'opencode-config', {
-          'opencode.json': injectDispatcherMcpStanza(data['opencode.json']),
+      const raw = source.data?.['opencode.json'];
+      if (raw) {
+        await ensureConfigMap(SELF_NAMESPACE, 'opencode-config', {
+          'opencode.json': injectDispatcherMcpStanza(raw),
         });
-        log(`reconciled opencode-config from ref ${ref.name}/${ref.key}`);
       }
     } catch (e) {
       err(`failed to mirror configMapRef for opencode-config:`, (e as Error).message);
@@ -283,7 +463,6 @@ export async function reconcileClusterSettings(cs: ClusterSettings): Promise<voi
   // Always write agent-config so the operator owns it via SSA, even when
   // spec.manager is not set (use static defaults). This prevents field-manager
   // conflicts when other tools (kubectl, tofu) bootstrapped the ConfigMap.
-  const agentName = spec.manager?.agentName ?? 'manager-agent';
   const decisionAgentName = 'manager-decision';
   const decisionContent =
     spec.manager?.decisionAgentContent ??
@@ -339,7 +518,7 @@ Each option must have:
 
 Always include at least one actionable option when presenting choices.`;
 
-  // Build opencode.json for the manager sidecar. It always needs the MCP
+  // Build opencode.json for the manager's embedded host. It always needs the MCP
   // manager-agent entry; model/provider/skills are layered on top when set.
   const runnerConfig: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',
@@ -384,11 +563,17 @@ Always include at least one actionable option when presenting choices.`;
   }
   const runnerConfigJson = JSON.stringify(runnerConfig, null, 2);
 
-  await ssaConfigMap(SELF_NAMESPACE, 'agent-config', {
+  const agentConfigData: Record<string, string> = {
     'opencode.json': runnerConfigJson,
     [`${decisionAgentName}.md`]: decisionContent,
-  });
-  log(`reconciled agent-config via SSA (agentName=${agentName})`);
+  };
+  const result = await ensureConfigMap(SELF_NAMESPACE, 'agent-config', agentConfigData);
+  // Only roll the manager when the authoritative write is in place. Rolling on
+  // a hash of content the ConfigMap does not actually hold would leave the
+  // sidecar running stale config with no way to detect it.
+  if (result.outcome !== 'failed') {
+    await syncManagerDeploymentHash(agentConfigData);
+  }
 }
 
 // ssaConfigMap writes a ConfigMap using server-side apply with
@@ -398,12 +583,14 @@ Always include at least one actionable option when presenting choices.`;
 // from any prior field manager (kubectl, tofu, node-fetch, etc.). This is safe
 // because the operator is the authoritative source of truth for these ConfigMaps
 // and rebuilds them from ClusterSettings on every reconcile cycle.
+// Returns false (and logs) instead of throwing on failure so callers can decide
+// whether a dependent action (e.g. a manager rollout) is still safe.
 // Exported for unit testing (the SSA request shape is asserted without a cluster).
 export async function ssaConfigMap(
   ns: string,
   name: string,
   data: Record<string, string>,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await core.patchNamespacedConfigMap(
       {
@@ -415,13 +602,15 @@ export async function ssaConfigMap(
           metadata: { name, namespace: ns },
           data,
         },
-        fieldManager: 'percussionist-operator',
+        fieldManager: OPERATOR_FIELD_MANAGER,
         force: true,
       },
       setHeaderOptions('Content-Type', PatchStrategy.ServerSideApply),
     );
+    return true;
   } catch (e) {
     err(`ssaConfigMap(${ns}/${name}):`, (e as Error).message);
+    return false;
   }
 }
 
@@ -957,6 +1146,80 @@ export function startPeriodicResync(): void {
   }, 10_000).unref();
 }
 
+// ---------------------------------------------------------------------------
+// ClusterSettings / owned ConfigMap resync
+//
+// `agent-config` and `opencode-config` are owned by the operator, but the
+// ClusterSettings informer only fires on ClusterSettings changes. A foreign
+// writer (Flux's kustomize-controller, `kubectl apply`, `beatctl deploy`) can
+// overwrite their data keys without touching ClusterSettings, and the operator
+// would never notice until it restarted. Two independent triggers close that
+// gap:
+//   1. a ConfigMap informer on the operator namespace (index.ts), which
+//      re-renders immediately when one of the two ConfigMaps changes, and
+//   2. this periodic resync, a backstop that does not depend on any event
+//      reaching the operator.
+
+/** Reads the singleton ClusterSettings/default; undefined when absent/unreadable. */
+export async function fetchClusterSettings(): Promise<ClusterSettings | undefined> {
+  try {
+    return (await co.getClusterCustomObject({
+      group: API_GROUP,
+      version: API_VERSION,
+      plural: PLURAL_CLUSTER_SETTINGS,
+      name: 'default',
+    })) as ClusterSettings;
+  } catch (e) {
+    err('fetchClusterSettings(default):', errorMessage(e));
+    return undefined;
+  }
+}
+
+/** Fetch the current ClusterSettings and re-render the owned ConfigMaps. */
+export async function resyncClusterSettings(): Promise<void> {
+  const cs = await fetchClusterSettings();
+  if (cs) await reconcileClusterSettings(cs);
+}
+
+/** Schedules one `resync` pass; returns a stop function (defaults to setInterval). */
+export type ResyncScheduler = (
+  callback: () => void | Promise<void>,
+  intervalMs: number,
+) => () => void;
+
+const defaultResyncScheduler: ResyncScheduler = (callback, intervalMs) => {
+  const timer = setInterval(() => {
+    void callback();
+  }, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+};
+
+/**
+ * Starts the periodic ClusterSettings resync. The interval defaults to
+ * `PERCUSSIONIST_CLUSTER_SETTINGS_RESYNC_INTERVAL_MS` (5 min); an interval of
+ * 0 disables the timer (the ConfigMap informer still reacts to drift). The
+ * injected seams exist so tests can drive a tick without real timers.
+ */
+export function startClusterSettingsResync(
+  options: { intervalMs?: number; resync?: () => Promise<void>; scheduler?: ResyncScheduler } = {},
+): () => void {
+  const intervalMs = options.intervalMs ?? CLUSTER_SETTINGS_RESYNC_INTERVAL_MS;
+  if (!(intervalMs > 0)) {
+    log('cluster-settings periodic resync disabled (interval <= 0)');
+    return () => {};
+  }
+  const resync = options.resync ?? resyncClusterSettings;
+  const scheduler = options.scheduler ?? defaultResyncScheduler;
+  return scheduler(async () => {
+    try {
+      await resync();
+    } catch (e) {
+      err('cluster-settings resync failed:', (e as Error).message);
+    }
+  }, intervalMs);
+}
+
 // Test-only access to the in-memory work queue. Production code never calls
 // this; queue.test.ts uses it to reset state between scenarios and to assert
 // on the resulting queue/pending/processing/dirty/seen contents. The queue
@@ -1374,5 +1637,5 @@ export async function cleanupMemoryService(project: Project): Promise<void> {
   }
 }
 
-// Export kc for informer setup in index.ts
-export { co, kc, NAMESPACE };
+// Export clients + namespaces for informer setup in index.ts
+export { co, core, kc, NAMESPACE, SELF_NAMESPACE };

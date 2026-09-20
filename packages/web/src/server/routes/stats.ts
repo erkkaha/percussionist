@@ -83,6 +83,117 @@ interface SessionPayload {
 }
 
 // ---------------------------------------------------------------------------
+// Ingestion guards — a compromised run must not falsify another run's audit
+// history or exhaust SQLite/the web PVC with unbounded payloads.
+//
+// Per-run keys carry {kind:'run', runName, runUid?, project?} in metadata.
+// When the caller authenticated with such a key, the payload's run.name must
+// match the key's runName. Standing component keys (operator/manager) and
+// human sessions skip the binding so retries and manual backfills keep
+// working.
+//
+// Payload caps bound storage per request regardless of caller.
+
+// Max raw JSON body accepted for session ingestion (15 MB).
+export const MAX_SESSION_BODY_BYTES = 15 * 1024 * 1024;
+const MAX_MESSAGES = 5000;
+const MAX_TOOL_CALLS = 5000;
+const MAX_FILE_OPS = 2000;
+const MAX_CONTENT_CHARS = 200_000;
+const MAX_ARGS_CHARS = 50_000;
+const MAX_FILE_PATH_CHARS = 1024;
+
+function checkRunBinding(
+  c: {
+    get(
+      k: 'auth',
+    ): { subject: string; keyName?: string; keyMetadata?: Record<string, unknown> } | undefined;
+  },
+  runName: string,
+): { ok: true } | { ok: false; error: string } {
+  const auth = c.get('auth');
+  const meta = auth?.keyMetadata;
+  if (auth?.keyName?.startsWith('run:') && meta?.kind !== 'run') {
+    return { ok: false, error: 'run key is missing identity metadata' };
+  }
+  if (auth?.subject === 'agent' && meta?.kind === 'run' && typeof meta.runName === 'string') {
+    if (runName !== meta.runName) {
+      return { ok: false, error: `run.name does not match the caller's key (${meta.runName})` };
+    }
+  }
+  return { ok: true };
+}
+
+function checkPayloadLimits(body: SessionPayload): string | null {
+  if ((body.messages?.length ?? 0) > MAX_MESSAGES) return `too many messages (max ${MAX_MESSAGES})`;
+  if ((body.toolCalls?.length ?? 0) > MAX_TOOL_CALLS)
+    return `too many toolCalls (max ${MAX_TOOL_CALLS})`;
+  if ((body.fileOps?.length ?? 0) > MAX_FILE_OPS) return `too many fileOps (max ${MAX_FILE_OPS})`;
+  for (const m of body.messages ?? []) {
+    if ((m.content?.length ?? 0) > MAX_CONTENT_CHARS)
+      return `message content too large (max ${MAX_CONTENT_CHARS} chars)`;
+  }
+  for (const t of body.toolCalls ?? []) {
+    if ((t.args?.length ?? 0) > MAX_ARGS_CHARS)
+      return `toolCall args too large (max ${MAX_ARGS_CHARS} chars)`;
+  }
+  for (const f of body.fileOps ?? []) {
+    if ((f.filePath?.length ?? 0) > MAX_FILE_PATH_CHARS) return 'filePath too long';
+  }
+  return null;
+}
+
+class PayloadTooLargeError extends Error {}
+class SessionOwnershipError extends Error {}
+
+export async function readSessionPayload(req: Request): Promise<SessionPayload> {
+  const declaredLength = req.headers.get('content-length');
+  if (declaredLength && Number(declaredLength) > MAX_SESSION_BODY_BYTES) {
+    throw new PayloadTooLargeError('payload too large');
+  }
+
+  if (!req.body) throw new Error('invalid JSON body');
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_SESSION_BODY_BYTES) {
+      await reader.cancel();
+      throw new PayloadTooLargeError('payload too large');
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes)) as SessionPayload;
+}
+
+function assertExistingSessionOwnership(
+  c: {
+    get(
+      k: 'auth',
+    ): { subject: string; keyName?: string; keyMetadata?: Record<string, unknown> } | undefined;
+  },
+  existingRunName: string | undefined,
+  runName: string,
+): void {
+  const meta = c.get('auth')?.keyMetadata;
+  if (meta?.kind !== 'run') return;
+
+  if (existingRunName && existingRunName !== runName) {
+    throw new SessionOwnershipError('sessionID already belongs to a different run');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 
 const stats = new Hono();
@@ -92,8 +203,9 @@ const stats = new Hono();
 stats.post('/session', scoped('stats', 'write'), async (c) => {
   let body: SessionPayload;
   try {
-    body = (await c.req.json()) as SessionPayload;
-  } catch {
+    body = await readSessionPayload(c.req.raw);
+  } catch (e) {
+    if (e instanceof PayloadTooLargeError) return c.json({ error: e.message }, 413);
     return c.json({ error: 'invalid JSON body' }, 400);
   }
 
@@ -102,10 +214,23 @@ stats.post('/session', scoped('stats', 'write'), async (c) => {
     return c.json({ error: 'sessionID and run.name are required' }, 400);
   }
 
+  const binding = checkRunBinding(c, runPayload.name);
+  if (!binding.ok) return c.json({ error: binding.error }, 403);
+  const limitError = checkPayloadLimits(body);
+  if (limitError) return c.json({ error: limitError }, 413);
+
   const db = getDb();
 
   try {
     db.transaction((tx) => {
+      // Keep ownership validation and the upsert in one SQLite transaction so
+      // concurrent first writes cannot race between the check and insert.
+      const existing = tx
+        .select({ name: runs.name })
+        .from(runs)
+        .where(eq(runs.id, sessionID))
+        .get();
+      assertExistingSessionOwnership(c, existing?.name, runPayload.name);
       // Upsert the run row (idempotent — dispatcher may retry on network hiccup).
       tx.insert(runs)
         .values({
@@ -197,6 +322,7 @@ stats.post('/session', scoped('stats', 'write'), async (c) => {
       }
     });
   } catch (e) {
+    if (e instanceof SessionOwnershipError) return c.json({ error: e.message }, 403);
     console.error('[stats] failed to persist session:', (e as Error).message);
     return c.json({ error: 'failed to persist session' }, 500);
   }
@@ -211,8 +337,9 @@ stats.post('/session', scoped('stats', 'write'), async (c) => {
 stats.patch('/session', scoped('stats', 'write'), async (c) => {
   let body: SessionPayload;
   try {
-    body = (await c.req.json()) as SessionPayload;
-  } catch {
+    body = await readSessionPayload(c.req.raw);
+  } catch (e) {
+    if (e instanceof PayloadTooLargeError) return c.json({ error: e.message }, 413);
     return c.json({ error: 'invalid JSON body' }, 400);
   }
 
@@ -221,10 +348,21 @@ stats.patch('/session', scoped('stats', 'write'), async (c) => {
     return c.json({ error: 'sessionID and run.name are required' }, 400);
   }
 
+  const binding = checkRunBinding(c, runPayload.name);
+  if (!binding.ok) return c.json({ error: binding.error }, 403);
+  const limitError = checkPayloadLimits(body);
+  if (limitError) return c.json({ error: limitError }, 413);
+
   const db = getDb();
 
   try {
     db.transaction((tx) => {
+      const existing = tx
+        .select({ name: runs.name })
+        .from(runs)
+        .where(eq(runs.id, sessionID))
+        .get();
+      assertExistingSessionOwnership(c, existing?.name, runPayload.name);
       // Upsert run row — create if not exists, update token counts and phase if set.
       tx.insert(runs)
         .values({
@@ -318,6 +456,7 @@ stats.patch('/session', scoped('stats', 'write'), async (c) => {
       }
     });
   } catch (e) {
+    if (e instanceof SessionOwnershipError) return c.json({ error: e.message }, 403);
     console.error('[stats] incremental flush failed:', (e as Error).message);
     return c.json({ error: 'failed to persist incremental flush' }, 500);
   }

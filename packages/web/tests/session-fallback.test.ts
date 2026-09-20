@@ -6,7 +6,8 @@
 // ordering, and the DB-replay fallback for TTL-deleted runs), so the whole
 // chain is pinned here:
 //
-//   1. snapshot ConfigMap exists            → source: 'snapshot'
+//   0. run phase is active (Running etc.)  → live proxy first, snapshot fallback
+//   1. snapshot ConfigMap exists            → source: 'snapshot'  (finished / unknown phase)
 //   2. no snapshot, live proxy works        → source: 'live'
 //   3. no snapshot, live proxy fails, DB    → source: 'db'
 //   4. Run CR deleted (404), DB row exists  → source: 'db'
@@ -110,6 +111,55 @@ beforeEach(() => {
 });
 
 describe('GET /api/runs/:name/session fallback chain', () => {
+  it('serves the live transcript first for an active run, even when a snapshot exists', async () => {
+    // Someone may be talking to this run right now; the dispatcher's periodic
+    // snapshot lags by up to its interval, so it must not win while the run
+    // is active.
+    getRunSpy.mockResolvedValue({
+      metadata: {},
+      status: { serviceName: 'run-svc', sessionID: 'sess-a', phase: 'Running' },
+    } as RunWithStatus);
+    readSessionConfigMapSpy.mockResolvedValue({ messages: [{ info: { id: 'snap-old' } }] });
+    fetchSessionMessagesSpy.mockResolvedValue([{ info: { id: 'live-now' } }]);
+
+    const res = await app.request('/api/runs/run-a/session');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { source: string; messages: unknown[] };
+    expect(body.source).toBe('live');
+    expect(body.messages).toEqual([{ info: { id: 'live-now' } }]);
+    expect(readSessionConfigMapSpy).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the snapshot for an active run whose live proxy fails', async () => {
+    getRunSpy.mockResolvedValue({
+      metadata: {},
+      status: { serviceName: 'run-svc', sessionID: 'sess-b', phase: 'WaitingForInput' },
+    } as RunWithStatus);
+    fetchSessionMessagesSpy.mockRejectedValue(new Error('ECONNREFUSED'));
+    readSessionConfigMapSpy.mockResolvedValue({ messages: [{ info: { id: 'snap-b' } }] });
+
+    const res = await app.request('/api/runs/run-b/session');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { source: string; messages: unknown[] };
+    expect(body.source).toBe('snapshot');
+    expect(body.messages).toEqual([{ info: { id: 'snap-b' } }]);
+    // The live proxy is tried once, not again after the snapshot.
+    expect(fetchSessionMessagesSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the snapshot first for a finished run (source: snapshot)', async () => {
+    getRunSpy.mockResolvedValue({
+      metadata: {},
+      status: { serviceName: 'run-svc', sessionID: 'sess-c', phase: 'Succeeded' },
+    } as RunWithStatus);
+    readSessionConfigMapSpy.mockResolvedValue({ messages: [{ info: { id: 'snap-c' } }] });
+
+    const res = await app.request('/api/runs/run-c/session');
+    const body = (await res.json()) as { source: string };
+    expect(body.source).toBe('snapshot');
+    expect(fetchSessionMessagesSpy).not.toHaveBeenCalled();
+  });
+
   it('serves the snapshot ConfigMap when it exists (source: snapshot)', async () => {
     getRunSpy.mockResolvedValue({
       metadata: {},
@@ -261,6 +311,34 @@ describe('GET /api/runs/:name/session/events', () => {
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain('No active session');
+  });
+
+  it('proxies the runner stream with each frame named after its type', async () => {
+    getRunSpy.mockResolvedValue({
+      metadata: {},
+      status: { serviceName: 'run-svc', sessionID: 'sess-e0', phase: 'Running' },
+    } as RunWithStatus);
+    const upstream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const enc = new TextEncoder();
+        controller.enqueue(enc.encode('data: {"type":"server.connected"}\n\n'));
+        controller.enqueue(enc.encode('event: ping\ndata: \n\n'));
+        controller.enqueue(enc.encode('data: {"type":"session.idle","properties":{}}\n\n'));
+        controller.close();
+      },
+    });
+    fetchSpy.mockResolvedValue(
+      new Response(upstream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+    );
+
+    const res = await app.request('/api/runs/run-e0/session/events');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/event-stream');
+    expect(await res.text()).toBe(
+      'event: server.connected\ndata: {"type":"server.connected"}\n\n' +
+        'event: ping\ndata: \n\n' +
+        'event: session.idle\ndata: {"type":"session.idle","properties":{}}\n\n',
+    );
   });
 
   it('answers 502 when the upstream event stream cannot be reached', async () => {

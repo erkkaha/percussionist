@@ -1,18 +1,21 @@
-// run-detail-terminal.test.tsx — the Terminal section must not render an attach
+// run-detail-terminal.test.tsx — the shell stage must not render an attach
 // widget for the claude engine.
 //
 // Attach execs `opencode attach` inside the run pod (see server/attach-ws.ts).
 // The claude engine's runner is a headless HTTP server with no TUI, so the
 // terminal would retry and flicker for the whole run.
 //
+// The old tab bar is gone, so the stage is reached by submitting `/shell` into
+// the command bar instead of clicking a Terminal tab.
+//
 // Uses @testing-library/react with the happy-dom environment from tests/setup.ts.
-// The heavy children (terminal, session view, log viewer) are mocked out — this
-// is about which branch RunDetail takes, not about what they render.
+// The heavy children (transcript, terminal, log viewer) are mocked out — this is
+// about which branch RunDetail takes, not about what they render.
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import path from 'node:path';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 
 // ---------------------------------------------------------------------------
@@ -48,8 +51,8 @@ mock.module(path.resolve('src/client/components/TerminalTab'), () => ({
   default: () => React.createElement('div', { 'data-testid': 'terminal-tab' }, 'TERMINAL'),
 }));
 
-mock.module(path.resolve('src/client/components/SessionView'), () => ({
-  default: () => React.createElement('div', null, 'SESSION'),
+mock.module(path.resolve('src/client/components/run-terminal/TerminalTranscript'), () => ({
+  default: () => React.createElement('div', null, 'TRANSCRIPT'),
 }));
 
 mock.module(path.resolve('src/client/components/LogViewer'), () => ({
@@ -118,6 +121,19 @@ async function renderRunDetail() {
   );
 }
 
+/**
+ * The shell stage is reached with the `/shell` slash command. The first Enter
+ * completes the command token in the autocomplete menu and the second executes
+ * it, switching the stage. Only the opencode engine mounts the attach widget;
+ * claude mounts the explanation instead.
+ */
+function openShell() {
+  const el = screen.getByLabelText('Command or message to the agent') as HTMLTextAreaElement;
+  fireEvent.change(el, { target: { value: '/shell' } });
+  fireEvent.keyDown(el, { key: 'Enter' });
+  fireEvent.keyDown(el, { key: 'Enter' });
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -134,18 +150,21 @@ describe('RunDetail terminal gating by engine', () => {
   it('renders the attach terminal for the default (opencode) engine', async () => {
     runMock.data = makeRun();
     await renderRunDetail();
+    openShell();
     expect(screen.queryByTestId('terminal-tab')).not.toBeNull();
   });
 
   it('renders the attach terminal for an explicit opencode engine', async () => {
     runMock.data = makeRun('opencode');
     await renderRunDetail();
+    openShell();
     expect(screen.queryByTestId('terminal-tab')).not.toBeNull();
   });
 
   it('does not render the attach terminal for the claude engine', async () => {
     runMock.data = makeRun('claude');
     await renderRunDetail();
+    openShell();
     expect(screen.queryByTestId('terminal-tab')).toBeNull();
   });
 
@@ -153,6 +172,7 @@ describe('RunDetail terminal gating by engine', () => {
   it('explains the absence instead of dropping the section', async () => {
     runMock.data = makeRun('claude');
     await renderRunDetail();
+    openShell();
     expect(screen.getByText(/Interactive attach is not available/)).toBeInTheDocument();
   });
 });

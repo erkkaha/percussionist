@@ -445,7 +445,7 @@ The manager MCP server also provides tools for managing agent-reported findings:
 ### Base image
 
 Packages are installed on top of the runner image
-(`ghcr.io/erkkaha/percussionist/runner:latest`). The base image always
+(`ghcr.io/erkkaha/percussionist/runner-opencode:latest`). The base image always
 includes git, openssh, node, npm, pnpm, bun, bash, curl, unzip, and github-cli.
 
 Both runner images carry the same toolchain, so `spec.initScript` and agent
@@ -558,6 +558,7 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 | `force_retry` | Restart a stuck task at an incremented retry count via `Task.status` (does not delete old runs) |
 | `set_task_state` | Move a task to a target column, optionally cancel running runs (runs preserved by default) |
 | `manager_approve` | Approve a BUILD task in `awaiting-human` for merge by writing the canonical approval annotation |
+| `start_interactive_run` | Start an auxiliary interactive run on a task's branch by writing the canonical interactive-run annotation |
 | `exec_in_workspace` | Run commands in the project's data PVC workspace |
 | `read_plan` | Read a plan artifact from the project's plans ConfigMap |
 | `write_plan` | Write a plan artifact to the project's plans ConfigMap |
@@ -639,6 +640,25 @@ If the status is anything other than `"connected"`, the URL or path is wrong.
 - Idempotent: repeated calls are safe and do not duplicate reconciler state.
 - The reconciler consumes the annotation on its next pass and transitions the task to
   `awaiting-merge`, scheduling the merge run with the correct feature-branch metadata.
+
+**`start_interactive_run`** — Start an auxiliary interactive run on a task's branch.
+- Requires: `project`, `task` (Task CR name)
+- Optional: `agent`, `model`, `timeoutSeconds`, `namespace`
+- Writes `percussionist.dev/action-interactive` (a JSON payload with a writer-generated
+  `id`) and returns the deterministic `runName`; the reconciler creates the Run on its next
+  pass, so the tool does not create it directly.
+- The run is **auxiliary**: it does not modify `Task.status.phase` or
+  `Task.status.worker.runName`, and the reconciler ignores it. This lets a human investigate
+  a `failed`, `running`, or `blocked` task without disturbing it.
+- The task's branch is checked out (`worker.gitBranch` when present, otherwise the resolved
+  feature branch / project default). Attach with the board's Runs → Terminal tab, or
+  `beatctl attach <run-name>`.
+- **The session is a real shell — `git commit` or the work is not durable.** Only committed
+  HEAD is published to `refs/percussionist/<branch>` when the run ends gracefully;
+  uncommitted changes are lost with the worktree.
+- **Concurrent worker warning.** A live worker may still be using the same branch; edits
+  from both worktrees can diverge. Stop the worker run before making conflicting changes.
+- CLI equivalent: `beatctl board task interactive --task-name <name> [--agent <a>] [--model <m>]`.
 
 **`read_session_live`** — Real-time session message streaming.
 - Requires: `runName`

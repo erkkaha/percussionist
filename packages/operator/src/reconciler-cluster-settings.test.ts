@@ -11,7 +11,20 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { ClusterSettings } from '@percussionist/api';
-import { injectDispatcherMcpStanza, reconcileClusterSettings, ssaConfigMap } from './reconciler.js';
+import {
+  AGENT_CONFIG_HASH_ANNOTATION,
+  configMapDataEqual,
+  configMapDataHash,
+  ensureConfigMap,
+  injectDispatcherMcpStanza,
+  MANAGER_DEPLOYMENT_NAME,
+  previousFieldManager,
+  reconcileClusterSettings,
+  resyncClusterSettings,
+  ssaConfigMap,
+  startClusterSettingsResync,
+  syncManagerDeploymentHash,
+} from './reconciler.js';
 import { type FakeKubeInstaller, installFakeKube } from './test-helpers/fake-kube.js';
 
 const NS = 'percussionist'; // NAMESPACE / SELF_NAMESPACE defaults in tests
@@ -306,12 +319,330 @@ describe('ssaConfigMap', () => {
     console.error = originalErr;
   });
 
-  it('swallows a failed patch (logs only) rather than throwing', async () => {
+  it('swallows a failed patch (logs and returns false) rather than throwing', async () => {
     kube = installFakeKube({
       patchNamespacedConfigMap: { error: Object.assign(new Error('boom'), { statusCode: 500 }) },
     });
-    await expect(
-      ssaConfigMap(NS, 'agent-config', { 'opencode.json': '{}' }),
-    ).resolves.toBeUndefined();
+    await expect(ssaConfigMap(NS, 'agent-config', { 'opencode.json': '{}' })).resolves.toBe(false);
+  });
+
+  it('returns true after a successful apply', async () => {
+    kube = installFakeKube({ patchNamespacedConfigMap: { value: {} } });
+    await expect(ssaConfigMap(NS, 'agent-config', { 'opencode.json': '{}' })).resolves.toBe(true);
+  });
+});
+
+describe('configMapDataEqual', () => {
+  it('treats two empty/undefined maps as equal', () => {
+    expect(configMapDataEqual(undefined, {})).toBe(true);
+    expect(configMapDataEqual(undefined, undefined)).toBe(true);
+  });
+
+  it('is order-independent', () => {
+    expect(configMapDataEqual({ a: '1', b: '2' }, { b: '2', a: '1' })).toBe(true);
+  });
+
+  it('detects changed values and added/removed keys', () => {
+    expect(configMapDataEqual({ a: '1' }, { a: '2' })).toBe(false);
+    expect(configMapDataEqual({ a: '1' }, { a: '1', b: '2' })).toBe(false);
+    expect(configMapDataEqual({ a: '1', b: '2' }, { a: '1' })).toBe(false);
+  });
+});
+
+describe('previousFieldManager', () => {
+  it('prefers the manager that owns the data fields', () => {
+    const cm = {
+      metadata: {
+        managedFields: [
+          { manager: 'percussionist-operator', fieldsV1: { 'f:data': {} } },
+          { manager: 'kustomize-controller', fieldsV1: { 'f:metadata': {} } },
+          { manager: 'kubectl', fieldsV1: { 'f:data': {} } },
+        ],
+      },
+    } as never;
+    expect(previousFieldManager(cm)).toBe('kubectl');
+  });
+
+  it('falls back to any non-operator manager when no entry owns f:data', () => {
+    const cm = {
+      metadata: {
+        managedFields: [{ manager: 'flux', fieldsV1: { 'f:metadata': {} } }],
+      },
+    } as never;
+    expect(previousFieldManager(cm)).toBe('flux');
+  });
+
+  it('returns undefined when only the operator has managed the object', () => {
+    const cm = {
+      metadata: { managedFields: [{ manager: 'percussionist-operator', fieldsV1: {} }] },
+    } as never;
+    expect(previousFieldManager(cm)).toBeUndefined();
+    expect(previousFieldManager(undefined)).toBeUndefined();
+  });
+});
+
+describe('ensureConfigMap', () => {
+  let kube: FakeKubeInstaller;
+  let originalLog: typeof console.log;
+  let originalErr: typeof console.error;
+
+  beforeEach(() => {
+    kube = installFakeKube();
+    originalLog = console.log;
+    originalErr = console.error;
+    console.log = () => {};
+    console.error = () => {};
+  });
+
+  afterEach(() => {
+    kube.restore();
+    console.log = originalLog;
+    console.error = originalErr;
+  });
+
+  it('is a no-op (no SSA write) when the live data already matches', async () => {
+    const desired = { 'opencode.json': '{"a":1}', 'manager-decision.md': '# x' };
+    kube = installFakeKube({
+      readNamespacedConfigMap: { value: { data: desired } },
+      patchNamespacedConfigMap: { value: {} },
+    });
+
+    const result = await ensureConfigMap(NS, 'agent-config', desired);
+
+    expect(result.outcome).toBe('unchanged');
+    expect(kube.calls.filter((c) => c.method === 'patchNamespacedConfigMap')).toHaveLength(0);
+  });
+
+  it('writes via SSA and logs the previous field manager when data drifts', async () => {
+    const lines: string[] = [];
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    kube = installFakeKube({
+      readNamespacedConfigMap: {
+        value: {
+          data: { 'opencode.json': '{"model":"stale"}' },
+          metadata: {
+            managedFields: [{ manager: 'kustomize-controller', fieldsV1: { 'f:data': {} } }],
+          },
+        },
+      },
+      patchNamespacedConfigMap: { value: {} },
+    });
+
+    const result = await ensureConfigMap(NS, 'opencode-config', {
+      'opencode.json': '{"model":"fresh"}',
+    });
+
+    expect(result.outcome).toBe('applied');
+    expect(result.previousFieldManager).toBe('kustomize-controller');
+    const corrective = lines.filter((l) => l.includes('corrected ConfigMap'));
+    expect(corrective).toHaveLength(1);
+    expect(corrective[0]).toContain(`${NS}/opencode-config`);
+    expect(corrective[0]).toContain('kustomize-controller');
+    // Exactly one corrective SSA write.
+    expect(kube.calls.filter((c) => c.method === 'patchNamespacedConfigMap')).toHaveLength(1);
+  });
+
+  it('reports failed (not unchanged) when the SSA write fails', async () => {
+    kube = installFakeKube({
+      readNamespacedConfigMap: { error: Object.assign(new Error('boom'), { statusCode: 404 }) },
+      patchNamespacedConfigMap: { error: Object.assign(new Error('boom'), { statusCode: 500 }) },
+    });
+    const result = await ensureConfigMap(NS, 'agent-config', { 'opencode.json': '{}' });
+    expect(result.outcome).toBe('failed');
+  });
+});
+
+describe('syncManagerDeploymentHash', () => {
+  let kube: FakeKubeInstaller;
+  let originalLog: typeof console.log;
+  let originalErr: typeof console.error;
+
+  beforeEach(() => {
+    kube = installFakeKube();
+    originalLog = console.log;
+    originalErr = console.error;
+    console.log = () => {};
+    console.error = () => {};
+  });
+
+  afterEach(() => {
+    kube.restore();
+    console.log = originalLog;
+    console.error = originalErr;
+  });
+
+  it('sets the pod-template annotation when it differs from the rendered hash', async () => {
+    const desired = { 'opencode.json': '{"model":"fresh"}' };
+    kube = installFakeKube({
+      readNamespacedDeployment: {
+        value: { spec: { template: { metadata: { annotations: {} } } } },
+      },
+      patchNamespacedDeployment: { value: {} },
+    });
+
+    const changed = await syncManagerDeploymentHash(desired);
+
+    expect(changed).toBe(true);
+    const call = kube.calls.find((c) => c.method === 'patchNamespacedDeployment');
+    expect(call).toBeDefined();
+    expect((call?.args[0] as { name: string }).name).toBe(MANAGER_DEPLOYMENT_NAME);
+    const body = (call?.args[0] as { body: Record<string, any> }).body;
+    expect(body.spec.template.metadata.annotations[AGENT_CONFIG_HASH_ANNOTATION]).toBe(
+      configMapDataHash(desired),
+    );
+  });
+
+  it('is a no-op when the annotation already matches the rendered hash', async () => {
+    const desired = { 'opencode.json': '{"model":"fresh"}' };
+    kube = installFakeKube({
+      readNamespacedDeployment: {
+        value: {
+          spec: {
+            template: {
+              metadata: {
+                annotations: { [AGENT_CONFIG_HASH_ANNOTATION]: configMapDataHash(desired) },
+              },
+            },
+          },
+        },
+      },
+      patchNamespacedDeployment: { value: {} },
+    });
+
+    const changed = await syncManagerDeploymentHash(desired);
+
+    expect(changed).toBe(false);
+    expect(kube.calls.filter((c) => c.method === 'patchNamespacedDeployment')).toHaveLength(0);
+  });
+
+  it('does not throw when the manager Deployment is absent', async () => {
+    kube = installFakeKube({
+      readNamespacedDeployment: {
+        error: Object.assign(new Error('not found'), { statusCode: 404 }),
+      },
+    });
+    await expect(syncManagerDeploymentHash({ 'opencode.json': '{}' })).resolves.toBe(false);
+  });
+});
+
+describe('startClusterSettingsResync', () => {
+  it('invokes resync on each scheduled tick at the configured interval', async () => {
+    const ticks: Array<() => void | Promise<void>> = [];
+    let observedInterval = -1;
+    let calls = 0;
+    const stop = startClusterSettingsResync({
+      intervalMs: 1234,
+      scheduler: (callback, intervalMs) => {
+        ticks.push(callback);
+        observedInterval = intervalMs;
+        return () => {};
+      },
+      resync: async () => {
+        calls++;
+      },
+    });
+
+    expect(observedInterval).toBe(1234);
+    expect(ticks).toHaveLength(1);
+    await ticks[0]?.();
+    await ticks[0]?.();
+    expect(calls).toBe(2);
+    stop();
+  });
+
+  it('swallows a rejected resync (logs only) so the interval keeps firing', async () => {
+    const errors: string[] = [];
+    const originalErr = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(' '));
+    };
+    try {
+      const ticks: Array<() => void | Promise<void>> = [];
+      const stop = startClusterSettingsResync({
+        intervalMs: 1000,
+        scheduler: (callback) => {
+          ticks.push(callback);
+          return () => {};
+        },
+        resync: async () => {
+          throw new Error('boom');
+        },
+      });
+      await expect(ticks[0]?.()).resolves.toBeUndefined();
+      expect(errors.some((l) => l.includes('cluster-settings resync failed'))).toBe(true);
+      stop();
+    } finally {
+      console.error = originalErr;
+    }
+  });
+
+  it('does not schedule when the interval is 0 (disabled)', () => {
+    let scheduled = false;
+    const stop = startClusterSettingsResync({
+      intervalMs: 0,
+      scheduler: () => {
+        scheduled = true;
+        return () => {};
+      },
+      resync: async () => {},
+    });
+    expect(scheduled).toBe(false);
+    stop();
+  });
+});
+
+describe('resyncClusterSettings', () => {
+  let kube: FakeKubeInstaller;
+  let originalLog: typeof console.log;
+  let originalErr: typeof console.error;
+
+  beforeEach(() => {
+    kube = installFakeKube();
+    originalLog = console.log;
+    originalErr = console.error;
+    console.log = () => {};
+    console.error = () => {};
+  });
+
+  afterEach(() => {
+    kube.restore();
+    console.log = originalLog;
+    console.error = originalErr;
+  });
+
+  it('fetches ClusterSettings/default and re-renders the owned ConfigMaps', async () => {
+    kube = installFakeKube({
+      getClusterCustomObject: {
+        value: makeClusterSettings({ manager: { model: 'claude-sonnet-4' } }),
+      },
+      patchNamespacedConfigMap: { value: {} },
+    });
+
+    await resyncClusterSettings();
+
+    const call = kube.calls.find(
+      (c) =>
+        c.method === 'patchNamespacedConfigMap' &&
+        (c.args[0] as { name?: string }).name === 'agent-config',
+    );
+    expect(call).toBeDefined();
+    const parsed = JSON.parse(
+      (call?.args[0] as { body: { data?: Record<string, string> } }).body.data?.['opencode.json'] ??
+        '{}',
+    ) as Record<string, unknown>;
+    expect(parsed.model).toBe('claude-sonnet-4');
+  });
+
+  it('does nothing when ClusterSettings/default is absent', async () => {
+    kube = installFakeKube({
+      getClusterCustomObject: { error: Object.assign(new Error('not found'), { statusCode: 404 }) },
+      patchNamespacedConfigMap: { value: {} },
+    });
+
+    await resyncClusterSettings();
+
+    expect(kube.calls.filter((c) => c.method === 'patchNamespacedConfigMap')).toHaveLength(0);
   });
 });

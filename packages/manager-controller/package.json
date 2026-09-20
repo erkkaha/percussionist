@@ -1,6 +1,6 @@
 {
   "name": "@percussionist/manager",
-  "version": "0.2.21",
+  "version": "0.2.31",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -13,9 +13,10 @@
   "dependencies": {
     "@kubernetes/client-node": "2.0.0",
     "@percussionist/api": "workspace:*",
-    "@percussionist/kube": "workspace:*"
+    "@percussionist/kube": "workspace:*",
+    "@percussionist/runner-opencode": "workspace:*"
   },
   "devDependencies": {
-    "@types/bun": "1.3.14"
+    "@types/bun": "1.4.2"
   }
 }

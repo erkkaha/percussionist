@@ -43,11 +43,13 @@ spec:
       ports:
         - protocol: TCP
           port: 4097
-    # The chat port (4098) is intentionally left open to all sources.
-    # `beatctl chat` reaches it via `kubectl port-forward`, whose traffic
-    # originates from the node/kubelet rather than an allowlisted pod — a
-    # pod-selector rule here would break the CLI on any CNI that enforces
-    # NetworkPolicy (e.g. k3s). Chat exposes a far smaller surface than MCP.
+    # The chat port (4098) is reachable cluster-wide so `beatctl chat` keeps
+    # working via `kubectl port-forward` (whose traffic originates from the
+    # node/kubelet rather than an allowlisted pod — a pod-selector rule here
+    # would break the CLI on any CNI that enforces NetworkPolicy, e.g. k3s).
+    # Cross-pod callers must still present the MCP bearer token; loopback
+    # (port-forward) is exempt. Prompts forwarded here drive privileged
+    # same-pod MCP tools, so do not treat the open port as an open API.
     - ports:
         - protocol: TCP
           port: 4098

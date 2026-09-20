@@ -745,7 +745,13 @@ describe('executeEffects — DeliverAnswer', () => {
 
     expect(result.applied).toBe(true);
     expect(fetchSessionMessagesSpy).toHaveBeenCalledWith('answer-svc', 'sess-1', namespace);
-    expect(postSessionMessageSpy).toHaveBeenCalledWith('answer-svc', 'sess-1', 'yes', namespace);
+    expect(postSessionMessageSpy).toHaveBeenCalledWith(
+      'answer-svc',
+      'sess-1',
+      'yes',
+      { model: undefined, agent: 'builder' },
+      namespace,
+    );
   });
 
   it('skips the post when the last user message text already equals the answer', async () => {

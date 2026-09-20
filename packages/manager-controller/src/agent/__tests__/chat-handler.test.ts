@@ -364,9 +364,56 @@ describe('handleChat', () => {
     // only the assistant reply survives. Existing production behavior — pinned
     // as-is; candidates for a follow-up fix.
     expect(__test.getState().conversationHistory).toEqual([
-      { role: 'assistant', text: 'The answer' },
+      { role: 'assistant', text: 'The answer', created: expect.any(Number) },
     ]);
     expect(createSessionSpy).toHaveBeenCalledWith('manager-interactive', 'manager-decision');
+  });
+
+  it('returns the opencode id and timestamp of the reply and records them in history', async () => {
+    waitForCompletionSpy.mockResolvedValue('The answer');
+    // First message: ensureSession() creates a session without polling it, so
+    // the only getMessages call is the reply lookup after completion.
+    getMessagesSpy.mockResolvedValue([
+      { info: { id: 'u1', role: 'user' }, parts: [{ type: 'text', text: 'hello' }] },
+      {
+        info: { id: 'a1', role: 'assistant', time: { created: 1700, completed: 1800 } },
+        parts: [{ type: 'text', text: 'The answer' }],
+      },
+    ]);
+    const res = new FakeRes();
+
+    await __test.handleChat(
+      makeReq('POST', '/chat', JSON.stringify({ message: 'hello' })) as never,
+      res as never,
+    );
+
+    expect(JSON.parse(res.body)).toEqual({
+      response: 'The answer',
+      sessionId: 'session-1',
+      id: 'a1',
+      created: 1700,
+    });
+    expect(__test.getState().conversationHistory).toEqual([
+      { role: 'assistant', text: 'The answer', id: 'a1', created: 1700 },
+    ]);
+  });
+
+  it('omits the id when the newest assistant turn does not carry the returned text', async () => {
+    waitForCompletionSpy.mockResolvedValue('The answer');
+    getMessagesSpy.mockResolvedValue([
+      {
+        info: { id: 'a2', role: 'assistant', time: { created: 1900 } },
+        parts: [{ type: 'text', text: 'something else' }],
+      },
+    ]);
+    const res = new FakeRes();
+
+    await __test.handleChat(
+      makeReq('POST', '/chat', JSON.stringify({ message: 'hello' })) as never,
+      res as never,
+    );
+
+    expect(JSON.parse(res.body)).toEqual({ response: 'The answer', sessionId: 'session-1' });
   });
 
   it('reuses the existing session for a second message (createSession once)', async () => {
@@ -526,6 +573,103 @@ describe('handleChat — debounced ConfigMap persistence', () => {
     }>;
     // The user message was cleared by the fresh-session reset in ensureSession
     // (see the happy-path test above) — the persisted history holds the reply.
-    expect(saved).toEqual([{ role: 'assistant', text: 'saved reply' }]);
+    expect(saved).toEqual([
+      { role: 'assistant', text: 'saved reply', created: expect.any(Number) },
+    ]);
+  }, 10_000);
+});
+
+// ---------------------------------------------------------------------------
+// handleStream — connect-time seeding and in-place updates
+//
+// Every SSE (re)connect used to start with an empty "known ids" set and
+// replayed the whole session, which made the dashboard re-render and re-speak
+// old replies. The stream now treats everything present at connect as history
+// and only emits turns that appear or change afterwards.
+// ---------------------------------------------------------------------------
+
+class FakeStreamRes extends EventEmitter {
+  chunks: string[] = [];
+  ended = false;
+  writeHead(): this {
+    return this;
+  }
+  write(chunk: string): boolean {
+    this.chunks.push(chunk);
+    return true;
+  }
+  end(): this {
+    this.ended = true;
+    return this;
+  }
+  /** Parsed `data:` payloads (the `event: ready` frame is skipped). */
+  events(): Array<Record<string, unknown>> {
+    return this.chunks
+      .filter((c) => c.startsWith('data: '))
+      .map((c) => JSON.parse(c.slice('data: '.length)) as Record<string, unknown>);
+  }
+}
+
+const assistantMsg = (id: string, text: string, completed?: number) => ({
+  info: {
+    id,
+    role: 'assistant' as const,
+    time: { created: 1000, ...(completed ? { completed } : {}) },
+  },
+  parts: [{ type: 'text' as const, text }],
+});
+
+describe('handleStream', () => {
+  it('ends immediately when no session exists yet', async () => {
+    const res = new FakeStreamRes();
+    await __test.handleStream(makeReq('GET', '/chat/stream') as never, res as never);
+    expect(res.ended).toBe(true);
+    expect(res.events()).toEqual([]);
+  });
+
+  it('does not replay turns that already existed when the stream connected', async () => {
+    await __test.ensureSession();
+    getMessagesSpy.mockResolvedValue([assistantMsg('old-1', 'old reply', 1100)]);
+    const req = makeReq('GET', '/chat/stream');
+    const res = new FakeStreamRes();
+
+    await __test.handleStream(req as never, res as never);
+    await new Promise((r) => setTimeout(r, 2100));
+    req.emit('close');
+
+    expect(res.events()).toEqual([]);
+  }, 5000);
+
+  it('emits a new turn, then re-emits it under the same id as its text grows and completes', async () => {
+    await __test.ensureSession();
+    getMessagesSpy.mockResolvedValue([assistantMsg('old-1', 'old reply', 1100)]);
+    const req = makeReq('GET', '/chat/stream');
+    const res = new FakeStreamRes();
+    await __test.handleStream(req as never, res as never);
+
+    getMessagesSpy.mockResolvedValue([
+      assistantMsg('old-1', 'old reply', 1100),
+      assistantMsg('new-1', 'partial'),
+    ]);
+    await new Promise((r) => setTimeout(r, 2100));
+    getMessagesSpy.mockResolvedValue([
+      assistantMsg('old-1', 'old reply', 1100),
+      assistantMsg('new-1', 'partial and the rest', 1200),
+    ]);
+    await new Promise((r) => setTimeout(r, 2100));
+    // Unchanged snapshot: nothing further is written.
+    await new Promise((r) => setTimeout(r, 2100));
+    req.emit('close');
+
+    expect(res.events()).toEqual([
+      { role: 'assistant', text: 'partial', completed: false, id: 'new-1', created: 1000 },
+      {
+        role: 'assistant',
+        text: 'partial and the rest',
+        completed: true,
+        id: 'new-1',
+        created: 1000,
+      },
+    ]);
   }, 10_000);
 });

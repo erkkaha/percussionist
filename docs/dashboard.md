@@ -32,6 +32,48 @@ Real-time pod CPU and memory usage across the Percussionist cluster. Monitor res
 
 ## Run Detail
 
-Every run shows its phase, session history, logs, and exit status in a single-page view. The header displays the run name, phase badge, timing, and links to the web UI and git source. Below, session messages replay the agent conversation with tool calls and responses. Logs from the pod containers are available alongside the session view.
+Selecting a run opens an immersive, full-viewport cloud terminal. A slim header keeps the run name, phase badge, live-connection dot, token counter, and compact actions for copy, refresh, and cancel/delete. Below it sits a single stage, and below that a persistent command prompt. The page fills the viewport under the app header and never scrolls at the document level; the stage scrolls internally.
+
+### View modes
+
+The stage has four modes, deep-linkable via the `?view=` query parameter:
+
+| View | Shows |
+|------|-------|
+| `conversation` (default) | The terminal-style agent transcript |
+| `logs` | Pod container logs |
+| `status` | The run overview — phase, timing, pod, git, and review verdict |
+| `shell` | An interactive TTY attached to a Running pod (opencode engine); a claude run shows an explanation instead |
+
+Legacy `?tab=` deep links still work and map onto the new views: `overview` → `status`, `session` → `conversation`, `logs` → `logs`, `terminal` → `shell`. `shell` is available only while the run is active and its pod is `Running`; a view that cannot render (for example `?view=shell` on a run whose pod is no longer `Running`) falls back to `conversation` and rewrites the parameter, so a refresh never asks for a stage that cannot render. A claude run with a `Running` pod still reaches `shell` — because its runner is a headless server with no TTY, the stage renders the "Interactive attach is not available for the claude engine" explanation instead.
+
+### Command bar
+
+The prompt at the bottom of the page drives the terminal. Typing `/` opens an autocomplete listbox (arrow keys to move, Enter or Tab to complete, Escape to close). Plain text with no leading `/` is sent to the agent exactly as before — Enter sends, Shift+Enter inserts a newline — and a leading `/` resolves to one of the commands below. Unknown commands print an error into the local output tail and are **not** forwarded to the agent.
+
+Commands come in two kinds. **UI** commands change the stage or local state; **server** commands call the existing run API endpoints.
+
+| Command | Kind | Effect |
+|---------|------|--------|
+| `/help` | UI | List the slash commands |
+| `/status` | UI | Switch to the status view |
+| `/logs [container]` | UI | Switch to the logs view, optionally for a specific container |
+| `/conversation` | UI | Switch back to the agent conversation |
+| `/shell` | UI | Switch to the shell view (needs a Running pod); a claude run shows the explanation instead |
+| `/clear` | UI | Clear the local command output — never the conversation |
+| `/copy` | UI | Copy the run name to the clipboard |
+| `/refresh` | UI | Refresh the run, session, and log data |
+| `/stop` | Server | Stop the agent's current turn; the session stays open |
+| `/start` | Server | Start the session of an interactive run |
+| `/reply <text>` | Server | Send a message to the agent (same as typing plain text) |
+| `/cancel` | Server | Delete the run after a second `/cancel` confirmation |
+
+Slash commands are interpreted in the `conversation`, `logs`, and `status` views only. Once `/shell` attaches the raw PTY, keystrokes go straight to the pod and are not intercepted by the browser — use the on-screen affordance to return to `/conversation` and get the prompt back.
+
+### Conversation transcript
+
+The conversation renders terminal-style: a dim header line per message (`user ▸ 12:04:03`, `assistant ▸ provider/model · tokens · cost`) with text inline and a prompt prefix. Nothing is dropped — tool calls, file diffs, todo lists, subagents, and reasoning are collapsed behind accordions and expand in place, and malformed parts render as a labelled entry rather than blanking the page. Long tool output is truncated with a "show more" control. `/clear` only clears command output; the conversation is always sourced from the durable session record (live → snapshot → stats DB).
+
+> **Documentation follow-up:** the screenshot below still shows the old tabbed layout. Regenerating it is handled by a separate screenshot pipeline.
 
 ![Individual run detail with phase, session, and logs](/images/run-detail.png)

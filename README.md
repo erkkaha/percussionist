@@ -34,7 +34,7 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
   `kubectl`.
 - **Provider auth** — OAuth tokens (GitHub Copilot, ChatGPT Plus, Claude Pro)
   imported once and shared cluster-wide via Kubernetes Secrets.
-- **Manager agent** — the manager controller embeds an OpenCode agent (opencode-web sidecar) with K8s tool access, a decision engine that diagnoses failures and parses ambiguous output, and an interactive chat API. Chat via the web dashboard or `beatctl chat`.
+- **Manager agent** — the manager controller embeds an OpenCode 2 agent runtime in-process (`@opencode/sdk`) with K8s tool access, a decision engine that diagnoses failures and parses ambiguous output, and an interactive chat API. Chat via the web dashboard or `beatctl chat`.
 - **Vector memory** — per-project semantic memory service with LLM-powered context injection (`RELEVANT PROJECT CONTEXT:` in worker prompts) and automatic session summarization on run completion; summaries are stored in ConfigMaps and the vector database for use by BUILD task generators.
 - **Runner packages** — declare Alpine packages (`spec.runner.packages`) that get installed at pod init time; the manager injects `AVAILABLE SYSTEM TOOLS:` into agent prompts so agents know what's available.
 - **GitOps upgrades** — `beatctl deploy --gitops` puts the control plane behind Flux, pinned to an exact release. Upgrades stay on-demand (dashboard button or one patched field) but apply CRDs before rolling the Deployments, which the in-place upgrade path cannot do. Manifests ship as an OCI artifact alongside the images on every release.
@@ -175,7 +175,17 @@ A run in `WaitingForInput` means the agent needs human clarification.
 Reply from the dashboard or via `beatctl submit --attach`.
 ```
 
-### 4. Attach to a live run
+### 4. Talk to a live run
+
+Open the run in the dashboard (`beatctl web`) and use the **Session** tab: the
+transcript streams live, the composer underneath sends your next turn into the
+agent's session, and **Stop** interrupts the current one. For an interactive
+run (`beatctl submit -i`, or the "Interactive mode" switch in the dashboard's
+create form) the same tab offers **Start session** — the runner sits idle until
+someone does. This works on every runner image, including the default
+OpenCode 2 runner.
+
+The terminal route is still there for the v1 `runner` image:
 
 ```sh
 beatctl attach hello
@@ -184,7 +194,10 @@ beatctl attach hello
 Execs into the run's pod and drops you into the opencode TUI attached to the
 live agent session. It runs `kubectl exec` into the pod's `opencode` container
 (which serves the headless agent API on `http://127.0.0.1:4096`) and launches
-`opencode attach` against it — no port-forward or Secret read involved.
+`opencode attach` against it — no port-forward or Secret read involved. The
+default `runner-opencode` image embeds OpenCode 2 and has no TUI, so there
+`beatctl attach` and the dashboard's Terminal tab report that and the Session
+tab is the interactive path.
 
 Or combine submit + attach in one step:
 
@@ -336,7 +349,7 @@ CLI reference: `beatctl agent list`, `beatctl agent create --name <name> -f agen
 
 The manager controller embeds an LLM-powered agent that diagnoses board issues,
 parses ambiguous facilitator output, and supports interactive chat. It runs as
-a module inside the manager process alongside an opencode-web sidecar container.
+a module inside the manager process; the OpenCode 2 agent runtime is embedded in that same process (no sidecar since v0.2.24).
 
 ```mermaid
 flowchart TD
@@ -345,7 +358,7 @@ flowchart TD
     MGR -->|in-process| DEC[Decision Engine\nfailure analysis\nfacilitation parsing\nreview parsing\nbuild task gen parsing]
     MGR -->|in-process| CHAT[Chat Handler :4098]
 
-    MGR -.->|sidecar| SIDECAR[opencode-web :4096\nghcr.io/anomalyco/opencode]
+    MGR -.->|in-process| SIDECAR[embedded OpenCode 2 host\n127.0.0.1:4096]
 
     DEC -->|createSession + sendPrompt| SIDECAR
     SIDECAR -->|responses| DEC
@@ -481,13 +494,13 @@ pnpm bundle
 | `beatctl deploy --down` | Delete all operator/web/manager resources and CRDs. Removes the Flux bootstrap first if present. |
 | `beatctl web` | Port-forward the dashboard to `localhost` and open it in your browser. `localhost` is a secure context so browser notifications and drum audio work without HTTPS. |
 | `beatctl submit -t "<task>" --project <name>` | Create an `Run` with an inline task prompt (requires a project name). |
-| `beatctl submit -i --project <name>` | Interactive run — no prompt; runner stays alive for `beatctl attach`. |
+| `beatctl submit -i --project <name>` | Interactive run — no prompt; runner stays alive until a session is started from the dashboard's Session tab (or `beatctl attach` on the v1 image). |
 | `beatctl submit ... -a` | After submit, poll until `Running` then hand off to attach. |
 | `beatctl submit -f run.yaml` | Create from a YAML file (requires `-t` or `-i`; project is resolved via `spec.project` in the file). |
 | `beatctl ls` | Table of runs with phase, session ID, token totals, age. |
 | `beatctl get <name>` | Detailed view of a single run (`-o yaml` / `-o json` supported). |
 | `beatctl logs <name> [-f]` | Stream container logs. `-c dispatcher` to watch the sidecar. |
-| `beatctl attach <name>` | Exec into the run's pod and launch `opencode attach` against the in-pod agent server (`kubectl exec -it pod/<pod> -c opencode`). |
+| `beatctl attach <name>` | Exec into the run's pod and launch `opencode attach` against the in-pod agent server (`kubectl exec -it pod/<pod> -c opencode`). v1 `runner` image only; on `runner-opencode` use the dashboard's Session tab. |
 | `beatctl chat` | Port-forward the manager agent and start an interactive chat REPL. |
 | `beatctl wait <name>` | Block until terminal phase. Exit 0 = Succeeded, 1 = other terminal or deleted, 2 = timeout, 3 = API error. `--for <phase>` to await a specific phase. |
 | `beatctl cancel <name>` | Delete the run and all owned resources. |
@@ -1477,7 +1490,7 @@ When a worker run reaches `Succeeded` or `Failed` phase, and
 
 1. **Reads session data** from the dispatcher's ConfigMap snapshot
 2. **Compacts messages** to fit within the LLM context window (60K chars max)
-3. **Calls the LLM** via the manager's opencode-web sidecar with a summarization prompt
+3. **Calls the LLM** via the manager's embedded OpenCode host with a summarization prompt
 4. **Stores the summary** in:
    - The `{runName}-session` ConfigMap as `summary-{sessionID}` (up to 16K chars)
    - The vector memory database, tagged as `type: "session-summary"`, for future
@@ -1586,5 +1599,5 @@ spec:
 ### Base image
 
 Packages are installed on top of the runner image
-(`ghcr.io/erkkaha/percussionist/runner:latest`). The base image always
+(`ghcr.io/erkkaha/percussionist/runner-opencode:latest`). The base image always
 includes git, openssh, node, npm, pnpm, bun, bash, curl, unzip, and github-cli.

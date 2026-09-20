@@ -32,6 +32,7 @@ import {
   runBoardPlan,
   runBoardTaskAdd,
   runBoardTaskApprove,
+  runBoardTaskInteractive,
   runBoardTaskMove,
   runBoardTaskRemove,
   runBoardTaskRequestChanges,
@@ -651,6 +652,53 @@ boardTask
       review: opts.review,
     });
   });
+
+// board task interactive ----------------------------------------------------
+// The interactive-run option set is factored out so the flag → options mapping
+// can be unit-tested (see parseBoardTaskInteractiveArgs) without a cluster.
+function withBoardTaskInteractiveOptions(cmd: Command): Command {
+  return cmd
+    .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
+    .option('--task-name <name>', 'task CR name to attach an interactive run to (required)')
+    .option('--agent <agent>', "override the task's agent for the interactive run")
+    .option('--model <model>', "override the task's model for the interactive run");
+}
+
+export function parseBoardTaskInteractiveArgs(args: string[]): {
+  namespace: string;
+  taskName?: string;
+  agent?: string;
+  model?: string;
+} {
+  const cmd = withBoardTaskInteractiveOptions(new Command('interactive')).action(() => {});
+  cmd.parse(args, { from: 'user' });
+  const opts = cmd.opts();
+  return {
+    namespace: opts.namespace,
+    taskName: opts.taskName,
+    agent: opts.agent,
+    model: opts.model,
+  };
+}
+
+withBoardTaskInteractiveOptions(
+  boardTask
+    .command('interactive')
+    .description(
+      "start an auxiliary interactive run on a task's branch (attach with beatctl attach)",
+    ),
+).action((opts) => {
+  if (!opts.taskName) {
+    console.error('beatctl: --task-name is required');
+    process.exit(1);
+  }
+  runBoardTaskInteractive({
+    namespace: opts.namespace,
+    taskName: opts.taskName,
+    agent: opts.agent,
+    model: opts.model,
+  });
+});
 
 // validate ------------------------------------------------------------------
 // Subcommand group for read-only cluster validation checks.

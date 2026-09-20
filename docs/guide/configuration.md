@@ -166,9 +166,72 @@ metadata:
   name: default
 spec:
   runner:
-    image: ghcr.io/erkkaha/percussionist/runner:latest
+    image: ghcr.io/erkkaha/percussionist/runner-opencode:latest
   runTTLDays: 7
 ```
+
+## ConfigMap Ownership
+
+The operator is the **authoritative writer** of two ConfigMaps in the
+`percussionist` namespace:
+
+| ConfigMap | Consumer | Content |
+|---|---|---|
+| `agent-config` | manager's embedded OpenCode host (`OPENCODE_CONFIG_CONTENT` on the manager container) | `opencode.json` (provider, model, MCP, skills) + `manager-decision.md` |
+| `opencode-config` | every run pod (`OPENCODE_CONFIG_CONTENT`) | `opencode.json` with the dispatcher MCP stanza injected |
+
+Both are rendered from `ClusterSettings` and written with **server-side apply**
+under `fieldManager="percussionist-operator"` with `force=true`. That makes the
+operator the owner of the `data` keys regardless of who wrote them before.
+
+**Do not manage the `data` keys of these ConfigMaps from Flux, `kubectl apply`,
+`beatctl deploy`, a kustomize overlay, or any other writer.** A foreign writer
+takes field ownership and, because it changes the object without changing
+`ClusterSettings`, would otherwise win permanently: the operator's
+`ClusterSettings` informer never fires. The operator now defends against that
+with three triggers:
+
+1. the `ClusterSettings` informer (add/update), as before;
+2. a **ConfigMap informer** on the two owned ConfigMaps, so drift is reverted
+   immediately;
+3. a **periodic resync** — `PERCUSSIONIST_CLUSTER_SETTINGS_RESYNC_INTERVAL_MS`,
+   default `300000` (5 minutes), `0` disables it.
+
+Before every write the operator reads the live ConfigMap and skips the write
+when the data already matches, so steady state produces no `resourceVersion`
+churn and no log lines. Each corrective write logs one line naming the
+ConfigMap and the previous field manager, e.g.:
+
+```
+corrected ConfigMap percussionist/agent-config (previous field manager: kustomize-controller)
+```
+
+### Sidecar Rollout
+
+The manager's embedded OpenCode host reads `OPENCODE_CONFIG_CONTENT` from a
+`configMapKeyRef` **once at container start**, so a corrected `agent-config` only
+takes effect after the manager pod restarts. When the rendered `agent-config`
+content changes, the operator stamps the manager Deployment's pod template with
+`percussionist.dev/agent-config-hash` (a hash of the data). Adjusting that
+annotation rolls the pod; an unchanged hash is a no-op, so the periodic resync
+never restarts the manager for nothing.
+
+### GitOps / Flux
+
+Flux's kustomize-controller also applies `k8s/deploy/agent-config.yaml` from the
+manifests artifact every reconcile. Without a guard it would reclaim the `data`
+keys and revert the operator on its own schedule. The shipped manifest therefore
+carries:
+
+```yaml
+metadata:
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
+```
+
+which tells kustomize-controller to create the ConfigMap only when absent and
+otherwise leave it alone. If you maintain your own overlay, keep this
+annotation on `agent-config` and do not set its `data` keys.
 
 ## Run Timeout
 

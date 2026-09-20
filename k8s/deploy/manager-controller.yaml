@@ -142,7 +142,7 @@ spec:
             - name: WEB_SERVICE_URL
               value: http://percussionist-web.percussionist.svc.cluster.local:8080
             - name: RUNNER_IMAGE_DEFAULT
-              value: ghcr.io/erkkaha/percussionist/runner:latest
+              value: ghcr.io/erkkaha/percussionist/runner-opencode:latest
             - name: MERGING_AGENT
               value: integrator
             # Outbound: the manager's own scoped API key (stats:write,
@@ -162,57 +162,48 @@ spec:
                 secretKeyRef:
                   name: manager-mcp-token
                   key: token
-                  optional: true
+                  optional: false
             - name: NODE_EXTRA_CA_CERTS
               value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-          resources:
-            requests: { cpu: 50m, memory: 128Mi }
-            limits:   { cpu: 500m, memory: 512Mi }
-          readinessProbe:
-            exec:
-              command: ["sh", "-c", "pgrep -f node >/dev/null"]
-            initialDelaySeconds: 2
-            periodSeconds: 5
-
-        # opencode-web sidecar — runs the agent session for decision-making
-        # and interactive chat. The manager connects to it via localhost:4096.
-        - name: opencode-web
-          image: ghcr.io/anomalyco/opencode:1.18.21
-          imagePullPolicy: IfNotPresent
-          args: ["serve", "--hostname", "0.0.0.0", "--port", "4096"]
-          env:
+            # Embedded OpenCode 2 host (replaces the opencode-web sidecar since
+            # v0.2.24). Same inputs the sidecar had: the operator-rendered
+            # agent-config and the shared agent-auth Secret. The host binds
+            # 127.0.0.1:4096 in-process; AGENT_OPENCODE_EMBEDDED=0 reverts to an
+            # external server at AGENT_OPENCODE_URL.
             - name: OPENCODE_CONFIG_CONTENT
               valueFrom:
                 configMapKeyRef:
                   name: agent-config
                   key: opencode.json
-            - name: HOME
-              value: /root
             - name: OPENCODE_AUTH_CONTENT
               valueFrom:
                 secretKeyRef:
                   name: agent-auth
                   key: auth.json
                   optional: true
+            - name: HOME
+              value: /root
           envFrom:
             - secretRef:
                 name: llm-keys
                 optional: true
-          ports:
-            - containerPort: 4096
-              name: opencode
-              protocol: TCP
           volumeMounts:
             - name: agent-skills
               mountPath: /root/.config/opencode/agents/
+          # The embedded SDK host adds ~300–400 MB RSS on top of the controller
+          # (measured 2026-09-19); the sidecar it replaces had a 1Gi limit.
           resources:
-            requests: { cpu: 50m, memory: 128Mi }
-            limits:   { cpu: 500m, memory: 1Gi }
+            requests: { cpu: 100m, memory: 512Mi }
+            limits:   { cpu: 1000m, memory: 1536Mi }
+          # TCP on the MCP port, not exec: index.ts binds 4097 before the
+          # informers start, and exec probes through the containerd shim leaked
+          # processes after a host suspend/resume (2026-09-18).
           readinessProbe:
             tcpSocket:
-              port: 4096
-            initialDelaySeconds: 5
+              port: 4097
+            initialDelaySeconds: 2
             periodSeconds: 5
+
       volumes:
         - name: agent-skills
           configMap:
