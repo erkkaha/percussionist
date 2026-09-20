@@ -415,33 +415,14 @@ export default function RunCommandBar({
           className="min-h-[40px] max-h-40 flex-1 resize-none font-mono text-sm"
           disabled={send.isPending}
         />
-        <div className="flex items-end gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => stop.mutate()}
-            disabled={stop.isPending}
-            title="Stop the agent's current turn; the session stays open"
-          >
-            {stop.isPending ? 'Stopping…' : 'Stop'}
-          </Button>
-          <Button size="sm" onClick={submit} disabled={!canSend}>
-            {send.isPending ? 'Sending…' : 'Send'}
-          </Button>
-        </div>
       </div>
-      <div className="flex items-center justify-between gap-4 text-xs">
-        <span className="text-text-dim">
-          {phase === 'WaitingForInput'
-            ? 'The agent asked for input and is parked until you answer.'
-            : 'Enter to send, Shift+Enter for a new line, / for commands.'}
-        </span>
-        {error && (
+      {error && (
+        <div className="flex items-center justify-between gap-4 text-xs">
           <span className="text-phase-failed" role="alert">
             {error.message}
           </span>
-        )}
-      </div>
+        </div>
+      )}
       <LiveRegion message={announcement} />
     </div>
   );

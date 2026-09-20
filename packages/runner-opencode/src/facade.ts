@@ -23,6 +23,7 @@ import {
   materializeAuthFile,
 } from './config.js';
 import { RunnerHost, type V1Event } from './host.js';
+import { waitForDispatcherMcp } from './mcp-readiness.js';
 import type { PermissionMode } from './plugin.js';
 
 const require = createRequire(import.meta.url);
@@ -113,6 +114,15 @@ export async function startFacade(opts: FacadeOptions): Promise<Facade> {
   const authPath = materializeAuthFile(opts.authContent);
   if (authPath) log(`auth: legacy auth.json materialized at ${authPath}`);
   applyEnvCredentials(opts.authContent, log, warn);
+
+  // The OpenCode 2 host opens its MCP connections once, during startup, and
+  // never retries a refusal (see mcp-readiness.ts). The dispatcher and the
+  // runner start as sibling containers, so wait for the dispatcher's listener
+  // before the host is created; otherwise a run can silently lose every
+  // dispatcher tool. Bounded and best-effort.
+  if (opts.dispatcherMcpUrl) {
+    await waitForDispatcherMcp(opts.dispatcherMcpUrl, { log, warn });
+  }
 
   const host = await RunnerHost.start({
     workspace: opts.workspace,

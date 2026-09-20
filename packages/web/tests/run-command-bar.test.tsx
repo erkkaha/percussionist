@@ -182,11 +182,11 @@ describe('RunCommandBar', () => {
     await waitFor(() => expect(box().value).toBe(''));
   });
 
-  it('sends via the button and surfaces a failure', async () => {
+  it('sends via Enter and surfaces a failure', async () => {
     replyFails = new Error('Failed to forward reply: OpenCode API 500');
     await renderBar(makeRun({ sessionID: 'ses_1' }));
     fireEvent.change(box(), { target: { value: 'hi' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    fireEvent.keyDown(box(), { key: 'Enter' });
     await waitFor(() => expect(calls.reply.length).toBe(1));
     await waitFor(() =>
       expect(screen.getByRole('alert').textContent).toContain('Failed to forward reply'),
@@ -195,20 +195,21 @@ describe('RunCommandBar', () => {
     expect(box().value).toBe('hi');
   });
 
-  it('disables Send while the box is empty', async () => {
+  it('does not send while the box is empty', async () => {
     await renderBar(makeRun({ sessionID: 'ses_1' }));
-    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(calls.reply).toEqual([]);
   });
 
-  it('Stop calls the interrupt route', async () => {
+  it('/stop calls the interrupt route', async () => {
     await renderBar(makeRun({ sessionID: 'ses_1' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    submitLine('/stop');
     await waitFor(() => expect(calls.interrupt).toEqual(['r1']));
   });
 
-  it('tells the person when the agent is parked on their answer', async () => {
+  it('hints when the agent is parked on their answer via placeholder', async () => {
     await renderBar(makeRun({ sessionID: 'ses_1', phase: 'WaitingForInput' }));
-    expect(screen.getByText(/parked until you answer/)).toBeTruthy();
+    expect(box().placeholder).toMatch(/waiting for your answer/);
   });
 
   it('renders nothing once the run is over', async () => {
