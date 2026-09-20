@@ -85,6 +85,27 @@ function TerminalTranscriptContent({
     if (!hasSession) onNoSessionRef.current?.();
   }, [hasSession]);
 
+  // Autoscroll: stick to the bottom while new messages arrive, but release
+  // when the person scrolls up to read history. The scroll container lives in
+  // the parent (RunDetail stage), so track the closest scrollable ancestor of
+  // the bottom anchor.
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+
+  useEffect(() => {
+    const anchor = bottomRef.current;
+    if (!anchor) return;
+    const scroller = findScrollParent(anchor);
+    if (!scroller) return;
+    const onScroll = () => {
+      stickRef.current = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 80;
+    };
+    // Observe the anchor's position relative to the scroller: while stuck,
+    // new content keeps the bottom pinned without stealing scroll-up reads.
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    return () => scroller.removeEventListener('scroll', onScroll);
+  });
+
   // Event-driven refetch while the stream is up, with a slow safety poll in
   // case a frame is missed; 5 s polling when the stream is down.
   const { data, error, isLoading, isFetching } = useSession(
@@ -92,6 +113,17 @@ function TerminalTranscriptContent({
     hasSession,
     active ? (sseConnected ? 15_000 : 5_000) : false,
   );
+
+  const messageCount = data?.messages?.length ?? 0;
+
+  // Pin the bottom anchor into view when new content lands while stuck.
+  // No-ops in tests where scrollIntoView is undefined.
+  useEffect(() => {
+    void messageCount;
+    void localEntries.length;
+    if (!stickRef.current) return;
+    bottomRef.current?.scrollIntoView?.({ block: 'end' });
+  }, [messageCount, localEntries.length]);
 
   if (!hasSession) {
     return (
@@ -150,6 +182,7 @@ function TerminalTranscriptContent({
       )}
 
       <LocalOutput entries={localEntries} />
+      <div ref={bottomRef} aria-hidden="true" />
     </div>
   );
 }
@@ -394,6 +427,17 @@ function LocalOutput({ entries }: { entries: LocalEntry[] }) {
 
 // ---------------------------------------------------------------------------
 // Helpers
+
+/** Closest scrollable ancestor of the bottom anchor (the RunDetail stage). */
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const style = getComputedStyle(node);
+    if (style.overflowY === 'auto' || style.overflowY === 'scroll') return node;
+    node = node.parentElement;
+  }
+  return null;
+}
 
 function formatClock(ts: number | undefined): string {
   if (!ts) return '-';
