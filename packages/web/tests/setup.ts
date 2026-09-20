@@ -1,6 +1,15 @@
 // Setup file for DOM-based React component tests using happy-dom.
 // Preloaded via bun test --preload (or bunfig.toml [test].preload).
 //
+// React's entry point picks `cjs/react.development.js` vs `react.production.js`
+// from `process.env.NODE_ENV` at require time. The production build does not
+// export `act`, so @testing-library/react's act-compat falls back to
+// react-dom/test-utils, which also calls `React.act` and throws
+// "React.act is not a function". Force a non-production env *before* any React
+// import so component tests resolve the development build regardless of the
+// ambient NODE_ENV (some sandboxes/CI images export NODE_ENV=production).
+process.env.NODE_ENV = 'test';
+
 // happy-dom must install `document` before anything imports
 // `@testing-library/dom`. That package freezes `screen` at module-eval time;
 // if document is missing, every screen.* query permanently throws. jest-dom@7
