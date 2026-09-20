@@ -66,6 +66,56 @@ export interface Task extends _Task {
 }
 
 // ---------------------------------------------------------------------------
+// Attention inbox (from GET /api/attention)
+
+/**
+ * Task phases that park a task on a human decision. Mirrors the server's
+ * `ATTENTION_PHASES` (server/lib/attention.ts), which in turn matches the Web
+ * Push policy, so the in-app inbox and push never disagree about what "needs
+ * attention" means.
+ */
+export type AttentionPhase = 'awaiting-human' | 'waiting-for-input' | 'failed';
+
+/**
+ * Phase an inbox item can actually carry: the push-parity set plus the opt-in
+ * open-PR extension. `awaiting-feature-merge` with an open PR needs a human on
+ * GitHub but is deliberately not pushed, so the inbox count can exceed push.
+ */
+export type AttentionItemPhase = AttentionPhase | 'awaiting-feature-merge';
+
+/** One task waiting on a human, as returned by GET /api/attention. */
+export interface AttentionItem {
+  project: string;
+  taskName: string;
+  title: string;
+  /** PLAN vs BUILD — drives the row's type icon. */
+  type: 'PLAN' | 'BUILD';
+  /** Agent the task is assigned to, shown on the row. */
+  agent: string;
+  phase: AttentionItemPhase;
+  /** Short human-readable reason, e.g. "Answer agent question". */
+  reason: string;
+  /** Best-effort context (question/failure text) when the server has it. */
+  detail?: string;
+  /**
+   * Worker run backing this task, when it has one. The inline answer action
+   * replies into this run's session before writing the answer annotation.
+   */
+  workerRunName?: string;
+  /** ISO timestamp the task started waiting; sorted oldest-first server-side. */
+  since: string;
+  /** Deep link to the task, identical in shape to the Web Push payload. */
+  url: string;
+}
+
+/** GET /api/attention response — global, server-authoritative HITL inbox. */
+export interface AttentionResponse {
+  items: AttentionItem[];
+  count: number;
+  generatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
 // Run creation request (sent to POST /api/runs)
 
 export interface AgentDef {

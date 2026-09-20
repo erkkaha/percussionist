@@ -69,6 +69,12 @@ export function OrphanFindings({ findings, orphanFiles }: OrphanFindingsProps) {
               (a) => normalizeAnchorPath(a.path) === normalizeAnchorPath(f.path),
             ),
           );
+          const anchorPath = finding.anchors
+            .map(
+              (a) =>
+                `${normalizeAnchorPath(a.path)}:${a.side}:${a.line}${a.endLine ? `-${a.endLine}` : ''}`,
+            )
+            .join(', ');
           return (
             <div
               key={finding.id}
@@ -82,13 +88,8 @@ export function OrphanFindings({ findings, orphanFiles }: OrphanFindingsProps) {
                 <span className="text-xs font-medium text-text">{finding.title}</span>
               </div>
               <p className="text-xs text-text-dim leading-relaxed">{finding.comment}</p>
-              <p className="text-[10px] text-text-dim/60 font-mono">
-                {finding.anchors
-                  .map(
-                    (a) =>
-                      `${normalizeAnchorPath(a.path)}:${a.side}:${a.line}${a.endLine ? `-${a.endLine}` : ''}`,
-                  )
-                  .join(', ')}
+              <p className="text-[10px] text-text-dim/60 font-mono break-all" title={anchorPath}>
+                {anchorPath}
               </p>
               {file ? (
                 <FindingSnippet file={file} finding={finding} />

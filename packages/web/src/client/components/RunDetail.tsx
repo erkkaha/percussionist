@@ -1,19 +1,23 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useRun } from '../hooks/useRun';
 import { useRunEvents } from '../hooks/useRunEvents';
 import { deleteRun } from '../lib/api';
-import { TERMINAL_PHASES } from '../lib/types';
+import { type Run, TERMINAL_PHASES } from '../lib/types';
 import LogViewer from './LogViewer';
+import SessionComposer from './SessionComposer';
 import SessionView from './SessionView';
 import StatusBadge from './StatusBadge';
 import TerminalTab from './TerminalTab';
 import TokenCounter from './TokenCounter';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 
 const WORKSPACE_INIT_CONTAINER = 'workspace-init';
+
+type RunTab = 'overview' | 'session' | 'logs' | 'terminal';
 
 function formatTime(iso: string | undefined): string {
   if (!iso) return '-';
@@ -49,6 +53,7 @@ export default function RunDetail() {
   const runIsActive = !!run && (!runPhase || !TERMINAL_PHASES.has(runPhase));
   const { connected: sseConnected, eventTick } = useRunEvents(name ?? '', runIsActive);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteRun(name ?? ''),
@@ -58,15 +63,74 @@ export default function RunDetail() {
     },
   });
 
+  const phase = run?.status?.phase;
+  const isActive = !!run && (!phase || !TERMINAL_PHASES.has(phase));
+  const isFailed = phase === 'Failed';
+  const hasSession = !!run?.status?.sessionID;
+
+  // The Terminal tab is offered under the same conditions as the old inline
+  // card: an active run whose pod is Running. The claude engine still gets the
+  // tab so its explanation stays reachable — the panel branches on the engine.
+  const terminalAvailable =
+    isActive && !!run?.status?.podName && run?.status?.podPhase === 'Running';
+
+  const availableTabs: Array<{ id: RunTab; label: string }> = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'session', label: 'Session' },
+    { id: 'logs', label: 'Logs' },
+    ...(terminalAvailable ? [{ id: 'terminal' as RunTab, label: 'Terminal' }] : []),
+  ];
+
+  const requestedTab = searchParams.get('tab');
+  const defaultTab: RunTab = isActive && hasSession ? 'session' : 'overview';
+  const activeTab: RunTab =
+    requestedTab && availableTabs.some((t) => t.id === requestedTab)
+      ? (requestedTab as RunTab)
+      : defaultTab;
+
+  // Keep ?tab= honest: when the requested tab is no longer available (the run
+  // left the attachable state, the session was cleared), rewrite the param to
+  // the fallback so a refresh does not keep asking for a panel that cannot
+  // render. Mirrors TaskRunsPanel's reset-on-unavailable effect.
+  useEffect(() => {
+    if (!run) return;
+    const raw = searchParams.get('tab');
+    if (raw && raw !== activeTab) {
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          params.set('tab', activeTab);
+          return params;
+        },
+        { replace: true },
+      );
+    }
+  }, [run, searchParams, activeTab, setSearchParams]);
+
+  function handleTabChange(next: string) {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        params.set('tab', next);
+        return params;
+      },
+      // Replace so tab toggles do not pollute the back button (matches BoardView).
+      { replace: true },
+    );
+  }
+
   if (!name) return null;
 
   if (error) {
     return (
-      <div className="space-y-4">
-        <BackLink />
-        <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
-          <h2 className="text-headline-md mb-1">Failed to load run</h2>
-          <p className="text-caption-xs">{error.message}</p>
+      // Pull out of the parent p-6 padding so the shell fills the viewport.
+      <div className="-m-6 flex flex-col" style={{ height: 'calc(100svh - 3.5rem)' }}>
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
+          <BackLink />
+          <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-6 text-phase-failed">
+            <h2 className="text-headline-md mb-1">Failed to load run</h2>
+            <p className="text-caption-xs">{error.message}</p>
+          </div>
         </div>
       </div>
     );
@@ -74,16 +138,14 @@ export default function RunDetail() {
 
   if (isLoading || !run) {
     return (
-      <div className="space-y-4">
-        <BackLink />
-        <DetailSkeleton />
+      <div className="-m-6 flex flex-col" style={{ height: 'calc(100svh - 3.5rem)' }}>
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
+          <BackLink />
+          <DetailSkeleton />
+        </div>
       </div>
     );
   }
-
-  const phase = run.status?.phase;
-  const isActive = !phase || !TERMINAL_PHASES.has(phase);
-  const isFailed = phase === 'Failed';
 
   // When the run failed on an init container (workspace-init), default the log
   // viewer to that container so the error is immediately visible.
@@ -91,75 +153,161 @@ export default function RunDetail() {
   const defaultLogContainer = failedOnInit ? WORKSPACE_INIT_CONTAINER : 'bootstrap';
 
   return (
-    <div className="space-y-6">
-      {/* Navigation */}
-      <BackLink />
+    <div className="-m-6 flex flex-col" style={{ height: 'calc(100svh - 3.5rem)' }}>
+      {/* Header — pinned above the tab panel region */}
+      <div className="shrink-0 space-y-4 px-6 pt-6">
+        <BackLink />
 
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-headline-lg">{run.metadata.name}</h1>
-            <StatusBadge phase={phase} />
-            {isFetching && <span className="text-xs text-text-dim animate-pulse">refreshing</span>}
-          </div>
-          {/* Show message as muted subtitle only when not failed — failed gets a banner below */}
-          {run.status?.message && !isFailed && (
-            <p className="text-sm text-text-muted">{run.status.message}</p>
-          )}
-        </div>
-        <div className="flex items-center gap-3">
-          <TokenCounter tokensIn={run.status?.tokensIn} tokensOut={run.status?.tokensOut} />
-          <Link to={`/runs/new?copyFrom=${encodeURIComponent(name ?? '')}`}>
-            <Button variant="outline" size="sm">
-              Copy
-            </Button>
-          </Link>
-          {/* Cancel / Delete button */}
-          {!confirmDelete ? (
-            <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
-              {isActive ? 'Cancel Run' : 'Delete Run'}
-            </Button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-text-muted">Sure?</span>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => deleteMutation.mutate()}
-                disabled={deleteMutation.isPending}
-              >
-                {deleteMutation.isPending ? 'Deleting...' : 'Confirm'}
-              </Button>
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(false)}
-                className="text-sm text-text-muted hover:text-text transition-colors"
-              >
-                No
-              </button>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <h1 className="text-headline-lg">{run.metadata.name}</h1>
+              <StatusBadge phase={phase} />
+              {isFetching && (
+                <span className="text-xs text-text-dim animate-pulse">refreshing</span>
+              )}
             </div>
-          )}
+            {/* Show message as muted subtitle only when not failed — failed gets a banner below */}
+            {run.status?.message && !isFailed && (
+              <p className="text-sm text-text-muted">{run.status.message}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <TokenCounter tokensIn={run.status?.tokensIn} tokensOut={run.status?.tokensOut} />
+            <Link to={`/runs/new?copyFrom=${encodeURIComponent(name ?? '')}`}>
+              <Button variant="outline" size="sm">
+                Copy
+              </Button>
+            </Link>
+            {/* Cancel / Delete button */}
+            {!confirmDelete ? (
+              <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
+                {isActive ? 'Cancel Run' : 'Delete Run'}
+              </Button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-text-muted">Sure?</span>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => deleteMutation.mutate()}
+                  disabled={deleteMutation.isPending}
+                >
+                  {deleteMutation.isPending ? 'Deleting...' : 'Confirm'}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(false)}
+                  className="text-sm text-text-muted hover:text-text transition-colors"
+                >
+                  No
+                </button>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* Error banner — shown prominently when the run has failed */}
+        {isFailed && run.status?.message && (
+          <div className="rounded-lg border border-phase-failed/40 bg-phase-failed/10 px-4 py-3 flex items-start gap-3">
+            <span className="text-phase-failed text-base leading-none mt-0.5">✕</span>
+            <div>
+              <p className="text-sm font-medium text-phase-failed">Run failed</p>
+              <p className="text-sm text-phase-failed/80 mt-0.5 font-mono">{run.status.message}</p>
+            </div>
+          </div>
+        )}
+
+        {deleteMutation.error && (
+          <div className="rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
+            Delete failed: {deleteMutation.error.message}
+          </div>
+        )}
       </div>
 
-      {/* Error banner — shown prominently when the run has failed */}
-      {isFailed && run.status?.message && (
-        <div className="rounded-lg border border-phase-failed/40 bg-phase-failed/10 px-4 py-3 flex items-start gap-3">
-          <span className="text-phase-failed text-base leading-none mt-0.5">✕</span>
-          <div>
-            <p className="text-sm font-medium text-phase-failed">Run failed</p>
-            <p className="text-sm text-phase-failed/80 mt-0.5 font-mono">{run.status.message}</p>
+      {/* Tabs — only the active panel scrolls; the page itself never does */}
+      <Tabs
+        value={activeTab}
+        onValueChange={handleTabChange}
+        className="flex flex-1 min-h-0 flex-col"
+      >
+        <div className="shrink-0 overflow-x-auto px-6 pt-4">
+          <TabsList className="w-max min-w-max">
+            {availableTabs.map((t) => (
+              <TabsTrigger key={t.id} value={t.id} className="shrink-0">
+                {t.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
+
+        <TabsContent value="overview" className="flex-1 min-h-0 overflow-y-auto p-6">
+          <RunOverview run={run} phase={phase} />
+        </TabsContent>
+
+        {/* Session conversation — the transcript scrolls, the composer stays
+            pinned underneath it. The composer is the interactive path for a
+            run: it sends turns into the live session, stops the current one,
+            and for `spec.interactive` runs starts the session in the first
+            place. It renders nothing once the run is over. */}
+        <TabsContent value="session" className="flex flex-1 min-h-0 flex-col">
+          <div className="flex-1 min-h-0 overflow-y-auto p-6">
+            <SessionView
+              name={name}
+              hasSession={hasSession}
+              active={isActive}
+              sseConnected={sseConnected}
+              eventTick={eventTick}
+              noSessionMessage={
+                run.spec.interactive && isActive
+                  ? 'No session yet — start one below to talk to the agent.'
+                  : undefined
+              }
+            />
           </div>
-        </div>
-      )}
+          <SessionComposer run={run} />
+        </TabsContent>
 
-      {deleteMutation.error && (
-        <div className="rounded-md border border-phase-failed/30 bg-phase-failed/10 px-4 py-3 text-sm text-phase-failed">
-          Delete failed: {deleteMutation.error.message}
-        </div>
-      )}
+        {/* Logs */}
+        <TabsContent value="logs" className="flex-1 min-h-0 overflow-y-auto p-6">
+          <LogViewer
+            name={name}
+            active={isActive}
+            defaultContainer={defaultLogContainer}
+            sseConnected={sseConnected}
+            eventTick={eventTick}
+          />
+        </TabsContent>
 
+        {/* Interactive terminal — attaches to the runner's TUI inside the pod.
+            Only the opencode engine has one: attach execs `opencode attach`, and
+            the claude engine's runner is a headless HTTP server with no TUI to
+            connect to, so the terminal would retry and flicker forever. Explain
+            the absence rather than silently dropping the section. */}
+        {terminalAvailable && (
+          <TabsContent value="terminal" className="flex-1 min-h-0 overflow-y-auto p-6">
+            {run.spec.engine === 'claude' ? (
+              <p className="text-sm text-text-dim">
+                Interactive attach is not available for the{' '}
+                <code className="font-mono text-xs">claude</code> engine — its runner is a headless
+                server with no terminal session. Use the Session and Logs sections below.
+              </p>
+            ) : (
+              <TerminalTab runName={name} active={isActive} />
+            )}
+          </TabsContent>
+        )}
+      </Tabs>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+
+function RunOverview({ run, phase }: { run: Run; phase?: string }) {
+  return (
+    <div className="space-y-6">
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Status card */}
@@ -291,68 +439,9 @@ export default function RunDetail() {
           verdict={reviewVerdict(run) as NonNullable<ReturnType<typeof reviewVerdict>>}
         />
       )}
-
-      {/* Session conversation */}
-      <Card>
-        <CardHeader className="border-b border-border-muted">
-          <CardTitle className="text-sm font-medium text-text-muted">Session</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <SessionView
-            name={name}
-            hasSession={!!run.status?.sessionID}
-            active={isActive}
-            sseConnected={sseConnected}
-            eventTick={eventTick}
-          />
-        </CardContent>
-      </Card>
-
-      {/* Interactive terminal — attaches to the runner's TUI inside the pod.
-          Only the opencode engine has one: attach execs `opencode attach`, and the
-          claude engine's runner is a headless HTTP server with no TUI to connect
-          to, so the terminal would retry and flicker forever. Explain the absence
-          rather than silently dropping the section. */}
-      {isActive && run.status?.podName && run.status?.podPhase === 'Running' && (
-        <Card>
-          <CardHeader className="border-b border-border-muted">
-            <CardTitle className="text-sm font-medium text-text-muted">Terminal</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {run.spec.engine === 'claude' ? (
-              <p className="text-sm text-text-dim">
-                Interactive attach is not available for the{' '}
-                <code className="font-mono text-xs">claude</code> engine — its runner is a headless
-                server with no terminal session. Use the Session and Logs sections below.
-              </p>
-            ) : (
-              <TerminalTab runName={name} active={isActive} />
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Logs */}
-      <Card>
-        <CardHeader className="border-b border-border-muted">
-          <CardTitle className="text-sm font-medium text-text-muted">Logs</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <LogViewer
-            name={name}
-            active={isActive}
-            defaultContainer={defaultLogContainer}
-            sseConnected={sseConnected}
-            eventTick={eventTick}
-          />
-        </CardContent>
-      </Card>
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Sub-components
 
 function BackLink() {
   return (

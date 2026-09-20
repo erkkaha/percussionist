@@ -438,7 +438,7 @@ The manager MCP server also provides tools for managing agent-reported findings:
 ### Base image
 
 Packages are installed on top of the runner image
-(`ghcr.io/erkkaha/percussionist/runner:latest`). The base image always
+(`ghcr.io/erkkaha/percussionist/runner-opencode:latest`). The base image always
 includes git, openssh, node, npm, pnpm, bun, bash, curl, unzip, and github-cli.
 
 Both runner images carry the same toolchain, so `spec.initScript` and agent

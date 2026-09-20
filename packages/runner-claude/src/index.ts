@@ -183,6 +183,16 @@ app.post('/session/:id/message', async (c) => {
   return c.json({ ok: true });
 });
 
+/** The `type` of a JSON event payload, for the SSE `event:` field. */
+function sseEventName(payload: string): string | undefined {
+  try {
+    const type = (JSON.parse(payload) as { type?: unknown }).type;
+    return typeof type === 'string' && type ? type : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * SSE. The dispatcher only acts on three event types, and deliberately not on
  * `permission.updated` — that one means a human is needed, and in a
@@ -191,7 +201,10 @@ app.post('/session/:id/message', async (c) => {
  */
 app.get('/event', (c) =>
   streamSSE(c, async (stream) => {
-    await stream.writeSSE({ data: JSON.stringify({ type: 'server.connected' }) });
+    await stream.writeSSE({
+      data: JSON.stringify({ type: 'server.connected' }),
+      event: 'server.connected',
+    });
 
     const queue: string[] = [];
     let wake: (() => void) | undefined;
@@ -214,7 +227,9 @@ app.get('/event', (c) =>
           if (queue.length === 0) await stream.writeSSE({ data: '', event: 'ping' });
           continue;
         }
-        await stream.writeSSE({ data: next });
+        // Named after the JSON `type` too: the dispatcher reads `data:`, a
+        // browser EventSource dispatches listeners on `event:`.
+        await stream.writeSSE({ data: next, event: sseEventName(next) });
       }
     } finally {
       bus.delete(push);

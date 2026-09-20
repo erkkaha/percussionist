@@ -656,7 +656,7 @@ describe('renderPod - per-run stats key', () => {
 // the opencode image — which is exactly what happened the first time this was
 // deployed to minikube.
 describe('renderPod - engine image precedence', () => {
-  const CRD_DEFAULT = 'ghcr.io/erkkaha/percussionist/runner:latest';
+  const CRD_DEFAULT = 'ghcr.io/erkkaha/percussionist/runner-opencode:latest';
 
   function runnerImage(run: Run): string | undefined {
     const pod = renderPod(run, [], [], runnerDefaultsFor(run.spec.engine));
@@ -687,7 +687,7 @@ describe('renderPod - engine image precedence', () => {
 // Engine selection normally rides the model field, so the prefix must reach the
 // image choice — not just the `engine` field that few callers set.
 describe('renderPod - engine from model prefix', () => {
-  const CRD_DEFAULT = 'ghcr.io/erkkaha/percussionist/runner:latest';
+  const CRD_DEFAULT = 'ghcr.io/erkkaha/percussionist/runner-opencode:latest';
 
   function runnerImage(run: Run): string | undefined {
     const pod = renderPod(run, [], [], runnerDefaultsFor(deriveEngine(run.spec)));

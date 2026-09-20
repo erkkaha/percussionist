@@ -57,7 +57,7 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
       </div>
 
       {/* Search + type/priority chips */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex flex-wrap items-center gap-2 min-w-0">
         <div className="relative flex-1 min-w-[10rem]">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-dim pointer-events-none" />
           <input
@@ -78,7 +78,7 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
         </div>
 
         {/* Type filter */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           {(['all', 'PLAN', 'BUILD'] as const).map((t) => (
             <Button
               key={t}
@@ -93,7 +93,7 @@ export function FilterBar({ filters, onChange, columnCounts }: FilterBarProps) {
         </div>
 
         {/* Priority filter */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           {(['all', 'high', 'medium', 'low'] as const).map((p) => (
             <Button
               key={p}

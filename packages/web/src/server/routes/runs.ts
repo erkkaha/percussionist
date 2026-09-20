@@ -1,8 +1,17 @@
 import { randomBytes } from 'node:crypto';
-import { API_GROUP_VERSION, KIND_RUN, RunSpecSchema } from '@percussionist/api';
+import { API_GROUP_VERSION, KIND_RUN, RunSpecSchema, TERMINAL_PHASES } from '@percussionist/api';
 import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
-import { createRun, deleteRun, getRun, listRuns, postSessionMessage } from '../kube.js';
+import {
+  createRun,
+  createRunnerSession,
+  deleteRun,
+  getRun,
+  interruptRunnerSession,
+  listRunnerSessions,
+  listRuns,
+  postSessionMessage,
+} from '../kube.js';
 import { isKubeNotFound, kubeStatusCode } from '../lib/kube-errors.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
@@ -195,12 +204,94 @@ runs.post('/:name/reply', adminAuth(), async (c) => {
   }
 
   try {
-    await postSessionMessage(serviceName, run.status.sessionID, textBody.message);
+    // Route the turn the way the dispatcher routes the first prompt: on the
+    // run's model and agent, not the runner's config default.
+    await postSessionMessage(serviceName, run.status.sessionID, textBody.message, {
+      model: run.spec.model,
+      agent: run.spec.agent,
+    });
     return c.json({ ok: true });
   } catch (e) {
     const msg = (e as Error).message;
     console.error('reply failed:', msg);
     return c.json({ error: `Failed to forward reply: ${msg}` }, 502);
+  }
+});
+
+// POST /api/runs/:name/session — start the session of an interactive run.
+//
+// Prompt-mode runs get their session from the dispatcher; an interactive run
+// (`spec.interactive`) waits for someone to create one, which used to mean the
+// in-pod TUI. The dispatcher's discovery loop adopts the new session within a
+// few seconds and publishes `status.sessionID`; the client polls the run for
+// that rather than this route patching status it does not own.
+runs.post('/:name/session', adminAuth(), async (c) => {
+  const runName = c.req.param('name');
+
+  let run: import('@percussionist/api').Run;
+  try {
+    run = await getRun(runName);
+  } catch {
+    return c.json({ error: 'Run not found' }, 404);
+  }
+
+  const phase = run.status?.phase;
+  if (phase && TERMINAL_PHASES.has(phase)) {
+    return c.json({ error: `Run is ${phase}; nothing to start a session on` }, 400);
+  }
+  if (!run.spec.interactive) {
+    return c.json({ error: 'Not an interactive run; the dispatcher creates its session' }, 400);
+  }
+  if (run.status?.sessionID) {
+    return c.json({ error: 'Run already has a session', sessionID: run.status.sessionID }, 409);
+  }
+  const serviceName = run.status?.serviceName;
+  if (!serviceName || run.status?.podPhase !== 'Running') {
+    return c.json({ error: 'Runner is not up yet; try again shortly' }, 400);
+  }
+
+  try {
+    // `status.sessionID` lags the runner by one dispatcher discovery tick
+    // (~3 s), so a second click in that window would create a second session
+    // the dispatcher never adopts. Ask the runner first and hand back what is
+    // already there.
+    const existing = (await listRunnerSessions(serviceName))[0];
+    if (existing) {
+      return c.json({ sessionID: existing.id, existing: true });
+    }
+    const session = await createRunnerSession(serviceName, `run/${runName}`, run.spec.agent);
+    return c.json({ sessionID: session.id }, 201);
+  } catch (e) {
+    const msg = (e as Error).message;
+    console.error('start session failed:', msg);
+    return c.json({ error: `Failed to start session: ${msg}` }, 502);
+  }
+});
+
+// POST /api/runs/:name/interrupt — stop the agent's current turn. The session
+// stays open; the next message continues the conversation.
+runs.post('/:name/interrupt', adminAuth(), async (c) => {
+  const runName = c.req.param('name');
+
+  let run: import('@percussionist/api').Run;
+  try {
+    run = await getRun(runName);
+  } catch {
+    return c.json({ error: 'Run not found' }, 404);
+  }
+
+  const serviceName = run.status?.serviceName;
+  if (!serviceName || !run.status?.sessionID) {
+    return c.json({ error: 'No active session for this run' }, 400);
+  }
+
+  try {
+    await interruptRunnerSession(serviceName, run.status.sessionID);
+    return c.json({ ok: true });
+  } catch (e) {
+    const msg = (e as Error).message;
+    console.error('interrupt failed:', msg);
+    return c.json({ error: `Failed to interrupt: ${msg}` }, 502);
   }
 });
 

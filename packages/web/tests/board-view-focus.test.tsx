@@ -245,6 +245,12 @@ describe('BoardView focus-mode layout', () => {
     const listWrapper = (await screen.findByTestId('task-list-panel')).parentElement as HTMLElement;
     expect(listWrapper.className).not.toContain('md:hidden');
 
+    // The desktop detail wrapper must be allowed to shrink below the min-content
+    // width of wide diff content so it cannot overlap the findings panel.
+    const detailPanel = await screen.findByTestId('desktop-detail-panel');
+    expect(detailPanel.className).toContain('min-w-0');
+    expect(detailPanel.className).toContain('md:flex');
+
     const sheet = await getMobileDetailSheet();
     expect(sheet.className).toContain('sm:max-w-lg');
     expect(sheet.className).not.toContain('max-w-none');
@@ -260,6 +266,11 @@ describe('BoardView focus-mode layout', () => {
 
     const listWrapper = (await screen.findByTestId('task-list-panel')).parentElement as HTMLElement;
     expect(listWrapper.className).toContain('md:hidden');
+
+    // Focus mode must not weaken the shrink guard — the detail panel stays
+    // min-w-0 in both states.
+    const detailPanel = await screen.findByTestId('desktop-detail-panel');
+    expect(detailPanel.className).toContain('min-w-0');
 
     const sheet = await getMobileDetailSheet();
     expect(sheet.className).toContain('max-w-none');

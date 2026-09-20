@@ -34,6 +34,8 @@ interface SessionViewProps {
   sseConnected: boolean;
   /** Increments whenever relevant SSE events arrive. */
   eventTick: number;
+  /** Replaces the default "still initializing" copy when there is no session. */
+  noSessionMessage?: string;
 }
 
 export default function SessionView(props: SessionViewProps) {
@@ -62,18 +64,25 @@ function SessionViewContent({
   active,
   sseConnected,
   eventTick,
+  noSessionMessage,
 }: SessionViewProps) {
   void eventTick;
+  // Event-driven refetch while the stream is up, with a slow safety poll in
+  // case a frame is missed; 5 s polling when the stream is down.
   const { data, error, isLoading, isFetching } = useSession(
     name,
     hasSession,
-    active && !sseConnected ? 5_000 : false,
+    active ? (sseConnected ? 15_000 : 5_000) : false,
   );
 
   const messageRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
 
   if (!hasSession) {
-    return <div className="text-sm text-text-dim">No session yet — run is still initializing.</div>;
+    return (
+      <div className="text-sm text-text-dim">
+        {noSessionMessage ?? 'No session yet — run is still initializing.'}
+      </div>
+    );
   }
 
   if (error) {
@@ -121,7 +130,9 @@ function SessionViewContent({
       )}
       {data?.source === 'snapshot' && (
         <div className="rounded border border-border-muted bg-surface-overlay/30 px-3 py-2 text-xs text-text-dim">
-          Loaded from snapshot (pod no longer available)
+          {active
+            ? 'Loaded from the dispatcher’s last snapshot (live transcript unavailable)'
+            : 'Loaded from snapshot (pod no longer available)'}
           {data.truncated && ' — oldest messages truncated to fit size limit'}
         </div>
       )}

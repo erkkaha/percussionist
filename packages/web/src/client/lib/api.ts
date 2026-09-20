@@ -4,6 +4,7 @@ import type { ClusterAgent, ClusterSettings, Finding } from '@percussionist/api'
 import { authHeaders } from './auth';
 import type {
   AgentCapability,
+  AttentionResponse,
   BoardStatus,
   CreateAgentRequest,
   CreateMemoryRequest,
@@ -130,6 +131,17 @@ export async function fetchTaskEvents(
   return data.events;
 }
 
+// ---------------------------------------------------------------------------
+// Attention inbox (global HITL)
+//
+// Read-only aggregation of every Task in the namespace parked on a human
+// decision. Server-authoritative so the sidebar badge, bell section and
+// /attention page all agree with the Web Push payload.
+
+export async function fetchAttention(): Promise<AttentionResponse> {
+  return fetchJSON<AttentionResponse>('/attention');
+}
+
 export async function fetchRun(name: string): Promise<Run> {
   return fetchJSON<Run>(`/runs/${encodeURIComponent(name)}`);
 }
@@ -186,6 +198,19 @@ export async function replyToRun(runName: string, message: string): Promise<void
     method: 'POST',
     body: JSON.stringify({ message }),
   });
+}
+
+// Start the session of an interactive run (spec.interactive). The dispatcher
+// adopts it and publishes status.sessionID a few seconds later; poll the run.
+export async function startRunSession(runName: string): Promise<{ sessionID: string }> {
+  return requestJSON<{ sessionID: string }>(`/runs/${encodeURIComponent(runName)}/session`, {
+    method: 'POST',
+  });
+}
+
+// Stop the agent's current turn; the session stays open.
+export async function interruptRun(runName: string): Promise<void> {
+  await requestVoid(`/runs/${encodeURIComponent(runName)}/interrupt`, { method: 'POST' });
 }
 
 // ---------------------------------------------------------------------------

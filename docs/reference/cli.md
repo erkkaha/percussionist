@@ -45,6 +45,13 @@ http://127.0.0.1:4096`: it execs into the pod's `opencode` container — where t
 runner serves the headless agent API on `:4096` — and attaches to the session
 with a full TUI. No port-forward or auth-Secret read is involved.
 
+Since v0.2.27 the default runner image (`runner-opencode`) embeds OpenCode 2
+in-process and has no TUI, so `attach` is not available on such pods; the
+`opencode` shim in that image exits with an explanatory error. Use
+`beatctl logs`, the dashboard session view, or run with the v1 image
+(`spec.image: ghcr.io/erkkaha/percussionist/runner:latest`) when a live TUI
+is needed.
+
 ### logs
 
 Stream logs from a run's pod.

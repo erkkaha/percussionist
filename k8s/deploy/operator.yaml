@@ -197,7 +197,7 @@ spec:
             - name: WATCH_NAMESPACE
               value: percussionist
             - name: RUNNER_IMAGE_DEFAULT
-              value: ghcr.io/erkkaha/percussionist/runner:latest
+              value: ghcr.io/erkkaha/percussionist/runner-opencode:latest
             - name: DISPATCHER_IMAGE
               value: ghcr.io/erkkaha/percussionist/dispatcher:latest
             - name: DISPATCHER_SERVICE_ACCOUNT

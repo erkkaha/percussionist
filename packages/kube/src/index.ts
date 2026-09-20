@@ -953,20 +953,127 @@ export async function fetchSessionMessages(
   }
 }
 
+/** Routing for a user turn, in the shape the dispatcher posts (polling.ts). */
+export type SessionMessageOptions = {
+  /** `provider/model`, as in Run.spec.model. Split into {providerID, modelID}. */
+  model?: string;
+  agent?: string;
+};
+
+/**
+ * Push a user turn into a run's session.
+ *
+ * Pass the run's `spec.model` / `spec.agent`: the dispatcher sends both with
+ * every prompt, and a turn posted without them runs on the runner's config
+ * default — which, on a cluster whose only config-defined provider is a local
+ * one, is not the model the person picked for the run (an interactive run's
+ * first turns went to the wrong provider and 500'd this way).
+ */
 export async function postSessionMessage(
   serviceName: string,
   sessionID: string,
   text: string,
+  options: SessionMessageOptions = {},
   ns: string = NAMESPACE,
 ): Promise<void> {
   const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session/${sessionID}/message`;
+  const body: Record<string, unknown> = { parts: [{ type: 'text', text }] };
+  if (options.agent) body.agent = options.agent;
+  if (options.model) {
+    const slash = options.model.indexOf('/');
+    if (slash !== -1) {
+      body.model = {
+        providerID: options.model.slice(0, slash),
+        modelID: options.model.slice(slash + 1),
+      };
+    }
+  }
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ parts: [{ type: 'text', text }] }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(`OpenCode API ${res.status}: ${await res.text().catch(() => '')}`);
+}
+
+/** v1 `GET /session` on a live run pod: the sessions the runner knows about. */
+export async function listRunnerSessions(
+  serviceName: string,
+  ns: string = NAMESPACE,
+): Promise<Array<{ id: string; title?: string }>> {
+  const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session`;
+  const res = await fetch(url, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`OpenCode API ${res.status}: ${await res.text().catch(() => '')}`);
+  const data = (await res.json()) as unknown;
+  const list = Array.isArray(data)
+    ? data
+    : (((data as Record<string, unknown>).items ??
+        (data as Record<string, unknown>).sessions ??
+        []) as unknown[]);
+  return list
+    .filter(
+      (s): s is { id: string; title?: string } => typeof (s as { id?: unknown }).id === 'string',
+    )
+    .map((s) => ({ id: s.id, ...(typeof s.title === 'string' ? { title: s.title } : {}) }));
+}
+
+/**
+ * Create a session on a live run pod's runner (v1 contract `POST /session`).
+ *
+ * Prompt-mode runs get their session from the dispatcher; interactive runs
+ * (`spec.interactive`) have nobody create one — the dispatcher polls
+ * `GET /session` and adopts whatever appears. This is how the dashboard starts
+ * that session, so an interactive run no longer needs the in-pod TUI.
+ */
+export async function createRunnerSession(
+  serviceName: string,
+  title: string,
+  agent?: string,
+  ns: string = NAMESPACE,
+): Promise<{ id: string; title?: string }> {
+  const url = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, ...(agent ? { agent } : {}) }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`OpenCode API ${res.status}: ${await res.text().catch(() => '')}`);
+  const data = (await res.json()) as { id?: unknown; title?: unknown };
+  if (typeof data.id !== 'string' || !data.id) {
+    throw new Error('OpenCode API returned a session without an id');
+  }
+  return { id: data.id, ...(typeof data.title === 'string' ? { title: data.title } : {}) };
+}
+
+/**
+ * Stop the agent's current turn. The runner-opencode facade spells this
+ * `POST /session/:id/interrupt`; v1 `opencode serve` spells it
+ * `POST /session/:id/abort`. Try the first, fall back on 404, and report a
+ * runner that has neither (runner-claude) as unsupported rather than as a
+ * generic HTTP failure.
+ */
+export async function interruptRunnerSession(
+  serviceName: string,
+  sessionID: string,
+  ns: string = NAMESPACE,
+): Promise<void> {
+  const base = `http://${serviceName}.${ns}.svc.cluster.local:${OPENCODE_RUNNER_DEFAULTS.port}/session/${sessionID}`;
+  for (const path of ['interrupt', 'abort']) {
+    const res = await fetch(`${base}/${path}`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) return;
+    if (res.status !== 404) {
+      throw new Error(`OpenCode API ${res.status}: ${await res.text().catch(() => '')}`);
+    }
+  }
+  throw new Error('this runner does not support interrupting a turn');
 }
 
 export async function postPermissionReply(

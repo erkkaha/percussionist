@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import path from 'node:path';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 
 // ---------------------------------------------------------------------------
@@ -118,6 +118,15 @@ async function renderRunDetail() {
   );
 }
 
+/**
+ * The terminal now lives behind a tab (Overview/Session/Logs/Terminal), so its
+ * panel is unmounted until the tab is selected. Select it before asserting on
+ * the attach widget or the claude explanation.
+ */
+function selectTerminalTab() {
+  fireEvent.click(screen.getByRole('tab', { name: 'Terminal' }));
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -134,18 +143,21 @@ describe('RunDetail terminal gating by engine', () => {
   it('renders the attach terminal for the default (opencode) engine', async () => {
     runMock.data = makeRun();
     await renderRunDetail();
+    selectTerminalTab();
     expect(screen.queryByTestId('terminal-tab')).not.toBeNull();
   });
 
   it('renders the attach terminal for an explicit opencode engine', async () => {
     runMock.data = makeRun('opencode');
     await renderRunDetail();
+    selectTerminalTab();
     expect(screen.queryByTestId('terminal-tab')).not.toBeNull();
   });
 
   it('does not render the attach terminal for the claude engine', async () => {
     runMock.data = makeRun('claude');
     await renderRunDetail();
+    selectTerminalTab();
     expect(screen.queryByTestId('terminal-tab')).toBeNull();
   });
 
@@ -153,6 +165,7 @@ describe('RunDetail terminal gating by engine', () => {
   it('explains the absence instead of dropping the section', async () => {
     runMock.data = makeRun('claude');
     await renderRunDetail();
+    selectTerminalTab();
     expect(screen.getByText(/Interactive attach is not available/)).toBeInTheDocument();
   });
 });
