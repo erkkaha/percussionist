@@ -12,6 +12,12 @@
 
 export type CommandKind = 'ui' | 'server';
 
+/**
+ * The run page's stage, mirrored by the `?view=` search param. `conversation` is
+ * the default; the others are reachable by slash command (and deep link).
+ */
+export type RunView = 'conversation' | 'logs' | 'status' | 'shell';
+
 export interface SlashCommand {
   /** Bare command token, lowercase, without the leading slash. */
   name: string;
