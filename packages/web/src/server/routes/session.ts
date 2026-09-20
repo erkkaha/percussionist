@@ -26,10 +26,14 @@ session.get('/:name/session', auth(), async (c) => {
   let serviceName = name;
   let sessionID: string;
   let runMissing = false;
+  /** The run is still going (a phase that is not terminal) — see the source order below. */
+  let live = false;
   try {
     const run = await getRun(name);
     serviceName = run.status?.serviceName ?? name;
     sessionID = run.status?.sessionID ?? '';
+    const phase = run.status?.phase;
+    live = !!phase && !TERMINAL_PHASES.has(phase as RunPhase);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
     if (!isKubeNotFound(e)) {
@@ -45,11 +49,26 @@ session.get('/:name/session', auth(), async (c) => {
   }
 
   if (sessionID) {
-    // Prefer the dispatcher's compact snapshot when it exists. Live OpenCode
-    // sessions can include very large tool outputs; pulling them repeatedly
-    // while viewing a run can OOM the web pod even if the route later falls
-    // back. A deleted run may still have a surviving snapshot ConfigMap, so
-    // this path is attempted regardless of run presence.
+    // An active run is a conversation someone may be having right now: serve
+    // the runner's live transcript (bounded to 20 MB and 10 s in
+    // fetchSessionMessages) so a reply shows up on the next poll, not on the
+    // dispatcher's next periodic snapshot. The snapshot is the fallback while
+    // the pod is up and the source of truth once it is gone.
+    if (live && !runMissing) {
+      try {
+        const messages = await fetchSessionMessages(serviceName, sessionID);
+        return c.json({ sessionID, messages, source: 'live' });
+      } catch (e) {
+        console.warn(`[session] live fetch failed for ${name}:`, (e as Error).message);
+        // Fall through to the snapshot.
+      }
+    }
+
+    // The dispatcher's compact snapshot. Finished runs always come from here:
+    // live sessions can include very large tool outputs, and pulling them
+    // repeatedly while browsing history can OOM the web pod. A deleted run may
+    // still have a surviving snapshot ConfigMap, so this path is attempted
+    // regardless of run presence.
     try {
       const snapshot = await readSessionConfigMap(name, sessionID);
       if (snapshot) {
@@ -64,9 +83,9 @@ session.get('/:name/session', auth(), async (c) => {
       // Snapshot read failed — fall through to live proxy / DB replay.
     }
 
-    // No snapshot yet: try the bounded live proxy (only for an existing run —
+    // No snapshot: try the bounded live proxy once (only for an existing run —
     // a deleted run's pod is gone by definition).
-    if (!runMissing) {
+    if (!live && !runMissing) {
       try {
         const messages = await fetchSessionMessages(serviceName, sessionID);
         return c.json({ sessionID, messages, source: 'live' });

@@ -128,7 +128,9 @@ function SessionViewContent({
       )}
       {data?.source === 'snapshot' && (
         <div className="rounded border border-border-muted bg-surface-overlay/30 px-3 py-2 text-xs text-text-dim">
-          Loaded from snapshot (pod no longer available)
+          {active
+            ? 'Loaded from the dispatcher’s last snapshot (live transcript unavailable)'
+            : 'Loaded from snapshot (pod no longer available)'}
           {data.truncated && ' — oldest messages truncated to fit size limit'}
         </div>
       )}

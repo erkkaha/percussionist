@@ -83,6 +83,14 @@ describe('SessionComposer', () => {
     fireEvent.click(button);
     await waitFor(() => expect(calls.start).toEqual(['r1']));
     expect(screen.queryByLabelText('Message to the agent')).toBeNull();
+    // Parked until the dispatcher publishes the session: no second click.
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Started' }) as HTMLButtonElement).disabled).toBe(
+        true,
+      ),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Started' }));
+    expect(calls.start).toEqual(['r1']);
   });
 
   it('renders nothing for a prompt-mode run that has no session yet', async () => {

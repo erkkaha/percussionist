@@ -44,6 +44,7 @@ export {
   // Project helpers
   listProjects,
   // Run helpers
+  listRunnerSessions,
   listRuns,
   // Task helpers
   listTasks,

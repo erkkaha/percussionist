@@ -66,6 +66,7 @@ let createRunSpy: ReturnType<typeof spyOn>;
 let deleteRunSpy: ReturnType<typeof spyOn>;
 let postSessionMessageSpy: ReturnType<typeof spyOn>;
 let createRunnerSessionSpy: ReturnType<typeof spyOn>;
+let listRunnerSessionsSpy: ReturnType<typeof spyOn>;
 let interruptRunnerSessionSpy: ReturnType<typeof spyOn>;
 let callManagerToolSpy: ReturnType<typeof spyOn>;
 
@@ -76,6 +77,7 @@ beforeAll(async () => {
   deleteRunSpy = spyOn(kube, 'deleteRun');
   postSessionMessageSpy = spyOn(kube, 'postSessionMessage');
   createRunnerSessionSpy = spyOn(kube, 'createRunnerSession');
+  listRunnerSessionsSpy = spyOn(kube, 'listRunnerSessions');
   interruptRunnerSessionSpy = spyOn(kube, 'interruptRunnerSession');
   callManagerToolSpy = spyOn(managerMcp, 'callManagerTool');
 
@@ -97,6 +99,7 @@ afterAll(() => {
   deleteRunSpy.mockRestore();
   postSessionMessageSpy.mockRestore();
   createRunnerSessionSpy.mockRestore();
+  listRunnerSessionsSpy.mockRestore();
   interruptRunnerSessionSpy.mockRestore();
   callManagerToolSpy.mockRestore();
   if (prevAuthDisabled !== undefined) process.env.AUTH_DISABLED = prevAuthDisabled;
@@ -110,6 +113,8 @@ beforeEach(() => {
   deleteRunSpy.mockReset();
   postSessionMessageSpy.mockReset();
   createRunnerSessionSpy.mockReset();
+  listRunnerSessionsSpy.mockReset();
+  listRunnerSessionsSpy.mockResolvedValue([] as never);
   interruptRunnerSessionSpy.mockReset();
   callManagerToolSpy.mockReset();
 });
@@ -324,7 +329,11 @@ describe('POST /api/runs/:name/reply', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
-    expect(postSessionMessageSpy).toHaveBeenCalledWith('svc-reply', 'sess-reply', 'Yes, continue');
+    // Routed like the dispatcher's first prompt: on the run's model and agent.
+    expect(postSessionMessageSpy).toHaveBeenCalledWith('svc-reply', 'sess-reply', 'Yes, continue', {
+      model: 'openai/gpt-4o',
+      agent: 'builder',
+    });
   });
 
   it('answers 404 when the run is missing', async () => {
@@ -407,7 +416,19 @@ describe('POST /api/runs/:name/session', () => {
     const res = await runsApp.request('/api/runs/run-int/session', { method: 'POST' });
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual({ sessionID: 'ses_new' });
-    expect(createRunnerSessionSpy).toHaveBeenCalledWith('svc-int', 'run/run-int');
+    expect(createRunnerSessionSpy).toHaveBeenCalledWith('svc-int', 'run/run-int', 'builder');
+  });
+
+  it('hands back a session the runner already has instead of creating a second one', async () => {
+    // status.sessionID lags the runner by a dispatcher tick; a double click in
+    // that window must not create a second session the dispatcher never adopts.
+    getRunSpy.mockResolvedValue(interactiveNoSession);
+    listRunnerSessionsSpy.mockResolvedValue([{ id: 'ses_first' }] as never);
+
+    const res = await runsApp.request('/api/runs/run-int/session', { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sessionID: 'ses_first', existing: true });
+    expect(createRunnerSessionSpy).not.toHaveBeenCalled();
   });
 
   it('answers 404 when the run is missing', async () => {

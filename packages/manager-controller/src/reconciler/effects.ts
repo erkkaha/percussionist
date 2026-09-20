@@ -441,7 +441,15 @@ export async function executeEffects(
               );
               break;
             }
-            await postSessionMessage(serviceName, sessionID, effect.text, namespace);
+            // Same routing as the dispatcher's prompt — the run's model and
+            // agent — so the answer does not land on the runner's config default.
+            await postSessionMessage(
+              serviceName,
+              sessionID,
+              effect.text,
+              { model: run.spec.model, agent: run.spec.agent },
+              namespace,
+            );
             console.log(
               `[effects] DeliverAnswer: posted answer to ${effect.runName} (session ${sessionID})`,
             );

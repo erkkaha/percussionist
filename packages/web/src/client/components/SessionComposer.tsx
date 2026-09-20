@@ -41,15 +41,21 @@ function StartSession({ name }: { name: string }) {
     // query polls every 3 s, so one eager refetch is enough here.
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['run', name] }),
   });
+  // Between a successful start and the dispatcher publishing the session the
+  // run still reports none; keep the button parked so it cannot be pressed
+  // again in that window (the server also refuses a duplicate, this is UX).
+  const started = start.isSuccess;
 
   return (
-    <div className="shrink-0 border-t border-border bg-surface px-6 py-3">
+    <div className="shrink-0 border-t border-border bg-surface pl-6 pr-20 py-3">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <p className="text-sm text-text-muted">
-          Interactive run — the agent is idle until a session is started.
+          {started
+            ? 'Session started — waiting for the dispatcher to pick it up…'
+            : 'Interactive run — the agent is idle until a session is started.'}
         </p>
-        <Button size="sm" onClick={() => start.mutate()} disabled={start.isPending}>
-          {start.isPending ? 'Starting…' : 'Start session'}
+        <Button size="sm" onClick={() => start.mutate()} disabled={start.isPending || started}>
+          {start.isPending ? 'Starting…' : started ? 'Started' : 'Start session'}
         </Button>
       </div>
       {start.error && (
@@ -96,7 +102,9 @@ function Composer({ name, waiting }: { name: string; waiting: boolean }) {
   const error = send.error ?? stop.error;
 
   return (
-    <div className="shrink-0 border-t border-border bg-surface px-6 py-3 space-y-2">
+    // Right padding keeps the buttons clear of the floating agent-chat button
+    // pinned to the viewport's bottom-right corner.
+    <div className="shrink-0 border-t border-border bg-surface pl-6 pr-20 py-3 space-y-2">
       <div className="flex items-end gap-2">
         <Textarea
           aria-label="Message to the agent"
@@ -110,10 +118,7 @@ function Composer({ name, waiting }: { name: string; waiting: boolean }) {
           className="min-h-[56px] max-h-40 flex-1"
           disabled={send.isPending}
         />
-        <div className="flex flex-col gap-2">
-          <Button size="sm" onClick={submit} disabled={!canSend}>
-            {send.isPending ? 'Sending…' : 'Send'}
-          </Button>
+        <div className="flex items-end gap-2">
           <Button
             size="sm"
             variant="outline"
@@ -122,6 +127,9 @@ function Composer({ name, waiting }: { name: string; waiting: boolean }) {
             title="Stop the agent's current turn; the session stays open"
           >
             {stop.isPending ? 'Stopping…' : 'Stop'}
+          </Button>
+          <Button size="sm" onClick={submit} disabled={!canSend}>
+            {send.isPending ? 'Sending…' : 'Send'}
           </Button>
         </div>
       </div>
