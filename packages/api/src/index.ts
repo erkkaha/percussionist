@@ -1997,23 +1997,20 @@ export function buildRepoWebUrl(url: string): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Interactive run requests
-// ---------------------------------------------------------------------------
-// A board Task can request an auxiliary interactive Run — an attachable shell
-// on the task's branch — by writing `percussionist.dev/action-interactive` with
-// a JSON payload. The manager reconciler is the only Run-creation authority, so
-// the annotation carries everything the builder needs, including a
-// writer-generated `id` that makes the run name deterministic so a retry after a
-// partial failure adopts the existing Run instead of duplicating it.
+// Interactive task runs.
 //
-// Keep this section browser-safe: the web client imports it, so the name helper
-// must use pure string operations only (no `node:crypto`).
+// An interactive run is attached to a board Task but is auxiliary: it never
+// touches `Task.status.phase` or `Task.status.worker.runName`. The web UI, CLI,
+// and manager MCP tool all request one by writing a JSON payload to the Task
+// annotation below; the manager reconciler is the only component that creates
+// the Run. The run name is derived from a writer-generated request id so a
+// retry after a partial failure recreates the same name and the AlreadyExists
+// response is adopted instead of duplicating work.
 
-/** Annotation key for an interactive-run request written on a Task CR. */
+/** Task annotation carrying an `InteractiveRunRequest` JSON payload. */
 export const INTERACTIVE_RUN_ANNOTATION = 'percussionist.dev/action-interactive';
 
 export const InteractiveRunRequestSchema = z.object({
-  /** Writer-generated random id; makes the derived Run name deterministic. */
   id: z.string().regex(/^[a-z0-9]{4,16}$/),
   agent: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
@@ -2021,47 +2018,47 @@ export const InteractiveRunRequestSchema = z.object({
 });
 export type InteractiveRunRequest = z.infer<typeof InteractiveRunRequestSchema>;
 
-const DNS_LABEL_MAX = 63;
-
-/** Collapse arbitrary text into a lowercase DNS-1123 label segment. */
-function toDnsLabelSegment(input: string): string {
-  return input
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
 /**
- * Build the deterministic Run name for a task's interactive run:
- * `{project}-interactive-{task}-{requestId}`.
+ * Compute a deterministic run name for an interactive task run.
  *
- * The middle segments are truncated so the result always stays a valid DNS-1123
- * label (<= 63 chars) even when the project and task names are long; the
- * `requestId` suffix is never truncated. Pure string operations only.
+ * Format: `{project}-interactive-{mid}-{requestId}`, where `mid` is derived
+ * from the task name with any project-name prefix stripped. The result is a
+ * valid DNS-1123 label of at most 63 characters; the middle segment is
+ * truncated and, for pathologically long project names, the project prefix is
+ * shortened as well — but the request id suffix is always preserved so the
+ * name stays collision-resistant.
+ *
+ * Pure string operations only: the api package is imported by the browser
+ * bundle, so `node:crypto` must not be used here (see `parseGitHubUrl`).
  */
 export function interactiveRunName(
   projectName: string,
   taskName: string,
   requestId: string,
 ): string {
-  const connector = '-interactive-';
-  const project = toDnsLabelSegment(projectName) || 'project';
-  const task = toDnsLabelSegment(taskName) || 'task';
-  const id = toDnsLabelSegment(requestId) || 'req';
+  const sanitize = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
 
-  // Budget left for the project + task segments after the fixed connector, the
-  // separator before the id, and the id itself.
-  const available = DNS_LABEL_MAX - connector.length - id.length - 1;
-  // Keep the project whole when it fits; otherwise split the budget evenly so
-  // neither segment can push the name over the limit.
-  const projectSegment =
-    project.length <= available - 1
-      ? project
-      : project.slice(0, Math.max(1, Math.floor(available / 2))).replace(/-+$/, '') || 'project';
+  const project = sanitize(projectName) || 'project';
+  const task = sanitize(taskName);
+  const stripped = task.startsWith(`${project}-`) ? task.slice(project.length + 1) : task;
 
-  const taskBudget = Math.max(1, available - projectSegment.length);
-  const taskSegment = task.slice(0, taskBudget).replace(/-+$/, '') || 'task'.slice(0, taskBudget);
+  const literal = '-interactive-';
+  const tail = `-${requestId}`;
 
-  return `${projectSegment}${connector}${taskSegment}-${id}`;
+  let prefix = project;
+  let maxMid = 63 - prefix.length - literal.length - tail.length;
+  if (maxMid < 1) {
+    // The project name alone leaves no room for the middle segment — shorten
+    // it, keeping the leading portion (and always at least one character).
+    const prefixBudget = 63 - literal.length - tail.length - 1;
+    prefix = prefix.slice(0, Math.max(prefixBudget, 1)).replace(/-+$/g, '');
+    maxMid = 63 - prefix.length - literal.length - tail.length;
+  }
+
+  const mid = stripped.slice(0, maxMid).replace(/-+$/g, '') || 'x';
+  return `${prefix}${literal}${mid}${tail}`;
 }
