@@ -31,7 +31,9 @@ export default function SessionView(props: SessionViewProps) {
   );
 }
 
-function SessionViewFallback() {
+// Exported so the terminal transcript can reuse the exact same boundary
+// fallback instead of inventing a second "malformed session" message.
+export function SessionViewFallback() {
   return (
     <div className="rounded-lg border border-phase-failed/30 bg-phase-failed/10 p-4 text-sm text-phase-failed">
       Could not render this session — a malformed message part was received.
