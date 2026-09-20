@@ -616,7 +616,9 @@ boardTask
 
 boardTask
   .command('request-changes')
-  .description('send a task parked in awaiting-human back for rework')
+  .description(
+    'send a task back for rework — awaiting-human, or an open-PR task parked in awaiting-feature-merge',
+  )
   .option('-n, --namespace <ns>', 'namespace', DEFAULT_NAMESPACE)
   .option('--task-name <name>', 'task CR name to rework (required)')
   .option('--feedback <text>', 'what needs to change — becomes the rework brief (required)')
