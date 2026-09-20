@@ -1,15 +1,8 @@
-// interactive-requests.test.ts
+// Unit tests for the reconciler's interactive-run request pass.
 //
-// Unit coverage for the interactive-run reconcile pass (BUILD B). The pass
-// consumes `percussionist.dev/action-interactive` annotations written by the
-// board/CLI/MCP tool and creates an auxiliary Run via buildWorkerRun. These
-// tests pin:
-//   - create + annotation clear (null merge-patch value);
-//   - idempotent adoption of an existing Run (AlreadyExists 409);
-//   - invalid / malformed payloads clear the annotation without a Run;
-//   - done/idea tasks clear the annotation without a Run;
-//   - per-task failure isolation (one bad task must not starve the rest);
-//   - the deterministic run name derived from the request id.
+// Covers the annotation-driven flow end to end at the module boundary:
+// parse → build → create (adopt 409) → clear annotation, plus terminal-phase
+// clearing, invalid payloads, and per-task failure isolation.
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import type { Run, Task } from '@percussionist/api';
@@ -19,24 +12,9 @@ import * as events from '../../events.js';
 import * as workerBuilder from '../../worker-builder.js';
 import * as audit from '../audit.js';
 import { processInteractiveRequests } from '../interactive-requests.js';
-import { makeProject, makeTask } from './fixtures.js';
+import { makeProject, makeRun, makeTask } from './fixtures.js';
 
 const namespace = 'percussionist';
-const requestId = 'abcd1234';
-
-function withAnnotation(task: Task, payload: unknown): Task {
-  return {
-    ...task,
-    metadata: {
-      ...task.metadata,
-      annotations: {
-        ...(task.metadata.annotations ?? {}),
-        [INTERACTIVE_RUN_ANNOTATION]:
-          typeof payload === 'string' ? payload : JSON.stringify(payload),
-      },
-    },
-  } as Task;
-}
 
 let buildWorkerRunSpy: ReturnType<typeof spyOn>;
 let createRunSpy: ReturnType<typeof spyOn>;
@@ -44,15 +22,31 @@ let patchTaskSpy: ReturnType<typeof spyOn>;
 let persistEventSpy: ReturnType<typeof spyOn>;
 let emitEventSpy: ReturnType<typeof spyOn>;
 
+function withAnnotation(task: Task, payload: unknown): Task {
+  task.metadata.annotations = {
+    ...(task.metadata.annotations ?? {}),
+    [INTERACTIVE_RUN_ANNOTATION]: typeof payload === 'string' ? payload : JSON.stringify(payload),
+  };
+  return task;
+}
+
+function clearPatchValue(): string | null | undefined {
+  for (const call of patchTaskSpy.mock.calls) {
+    const metadata = (call[1] as { metadata?: { annotations?: Record<string, unknown> } }).metadata;
+    const value = metadata?.annotations?.[INTERACTIVE_RUN_ANNOTATION];
+    if (value !== undefined) return value as string | null;
+  }
+  return undefined;
+}
+
 beforeEach(() => {
-  buildWorkerRunSpy = spyOn(workerBuilder, 'buildWorkerRun').mockResolvedValue({
-    metadata: { name: 'run-1' },
-    spec: {},
-  } as Run);
+  buildWorkerRunSpy = spyOn(workerBuilder, 'buildWorkerRun').mockImplementation(
+    async (_project: unknown, _task: unknown, runName: string) => makeRun(runName) as Run,
+  );
   createRunSpy = spyOn(kube, 'createRun').mockResolvedValue({} as Run);
   patchTaskSpy = spyOn(kube, 'patchTask').mockResolvedValue({} as Task);
-  persistEventSpy = spyOn(audit, 'persistEvent').mockResolvedValue(undefined);
-  emitEventSpy = spyOn(events, 'emitEvent').mockReturnValue(undefined);
+  persistEventSpy = spyOn(audit, 'persistEvent').mockResolvedValue(undefined as never);
+  emitEventSpy = spyOn(events, 'emitEvent').mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -63,120 +57,139 @@ afterEach(() => {
   emitEventSpy.mockRestore();
 });
 
-const expectedClearPatch = {
-  metadata: {
-    name: 'task-1',
-    annotations: { [INTERACTIVE_RUN_ANNOTATION]: null },
-  },
-};
-
 describe('processInteractiveRequests', () => {
-  it('creates an interactive run and clears the annotation', async () => {
-    const project = makeProject('proj');
-    const task = withAnnotation(makeTask('task-1', 'proj', { phase: 'pending' }), {
-      id: requestId,
+  it('creates a run for a valid request and clears the annotation', async () => {
+    const project = makeProject('test-project');
+    const task = withAnnotation(
+      makeTask('task-1', 'test-project', { phase: 'running', gitBranch: 'feature/task-1' }),
+      { id: 'abcd1234', agent: 'reviewer', model: 'gpt-x', timeoutSeconds: 120 },
+    );
+
+    await processInteractiveRequests(project, [task], namespace);
+
+    const expectedName = interactiveRunName('test-project', 'task-1', 'abcd1234');
+    expect(buildWorkerRunSpy).toHaveBeenCalledTimes(1);
+    const args = buildWorkerRunSpy.mock.calls[0] as unknown[];
+    expect(args[2]).toBe(expectedName);
+    expect(args[3]).toBe(0);
+    expect(args[4]).toBeUndefined();
+    expect(args[5]).toEqual([task]);
+    expect(args[6]).toEqual({
+      interactive: true,
+      agent: 'reviewer',
+      model: 'gpt-x',
       timeoutSeconds: 120,
+    });
+
+    expect(createRunSpy).toHaveBeenCalledTimes(1);
+    expect((createRunSpy.mock.calls[0] as unknown[])[1]).toBe(namespace);
+
+    // Annotation cleared with an explicit null (undefined would be dropped).
+    expect(clearPatchValue()).toBeNull();
+    expect(persistEventSpy).toHaveBeenCalledTimes(1);
+    expect(emitEventSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('adopts an existing run on AlreadyExists (409) and clears the annotation', async () => {
+    const project = makeProject('test-project');
+    const task = withAnnotation(makeTask('task-1', 'test-project', { phase: 'failed' }), {
+      id: 'abcd1234',
+    });
+    createRunSpy.mockRejectedValue(Object.assign(new Error('already exists'), { statusCode: 409 }));
+
+    await processInteractiveRequests(project, [task], namespace);
+
+    expect(createRunSpy).toHaveBeenCalledTimes(1);
+    expect(clearPatchValue()).toBeNull();
+  });
+
+  it('does not fail the pass when the audit event throws', async () => {
+    const project = makeProject('test-project');
+    const task = withAnnotation(makeTask('task-1', 'test-project', { phase: 'running' }), {
+      id: 'abcd1234',
+    });
+    persistEventSpy.mockRejectedValue(new Error('audit down'));
+
+    await processInteractiveRequests(project, [task], namespace);
+
+    // The run was created and the annotation cleared; audit failure is logged
+    // but never surfaces as a request failure.
+    expect(createRunSpy).toHaveBeenCalledTimes(1);
+    expect(clearPatchValue()).toBeNull();
+  });
+
+  it('clears the annotation and skips invalid JSON payloads', async () => {
+    const project = makeProject('test-project');
+    const task = withAnnotation(
+      makeTask('task-1', 'test-project', { phase: 'running' }),
+      'not-json{',
+    );
+
+    await processInteractiveRequests(project, [task], namespace);
+
+    expect(buildWorkerRunSpy).not.toHaveBeenCalled();
+    expect(createRunSpy).not.toHaveBeenCalled();
+    expect(clearPatchValue()).toBeNull();
+  });
+
+  it('clears the annotation and skips schema-invalid payloads', async () => {
+    const project = makeProject('test-project');
+    const task = withAnnotation(makeTask('task-1', 'test-project', { phase: 'running' }), {
+      id: 'BAD!',
+      timeoutSeconds: -5,
     });
 
     await processInteractiveRequests(project, [task], namespace);
 
-    expect(buildWorkerRunSpy).toHaveBeenCalledTimes(1);
-    const call = buildWorkerRunSpy.mock.calls[0] as unknown[];
-    expect(call[0]).toBe(project);
-    expect(call[1]).toBe(task);
-    expect(call[2]).toBe(interactiveRunName('proj', 'task-1', requestId));
-    expect(call[3]).toBe(0);
-    expect(call[4]).toBeUndefined();
-    expect(call[5]).toEqual([task]);
-    expect(call[6]).toMatchObject({ interactive: true, timeoutSeconds: 120 });
-
-    expect(createRunSpy).toHaveBeenCalledTimes(1);
-    expect(patchTaskSpy).toHaveBeenCalledWith('task-1', expectedClearPatch, namespace);
-    expect(emitEventSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('adopts an existing run when createRun reports AlreadyExists (409)', async () => {
-    createRunSpy.mockRejectedValueOnce(
-      Object.assign(new Error('runs.percussionist.dev "run-1" already exists'), {
-        statusCode: 409,
-      }),
-    );
-
-    const project = makeProject('proj');
-    const task = withAnnotation(makeTask('task-1', 'proj'), { id: requestId });
-
-    await processInteractiveRequests(project, [task], namespace);
-
-    expect(createRunSpy).toHaveBeenCalledTimes(1);
-    // The annotation is still consumed, so the pass does not retry forever.
-    expect(patchTaskSpy).toHaveBeenCalledWith('task-1', expectedClearPatch, namespace);
-  });
-
-  it('clears a malformed (non-JSON) payload without creating a run', async () => {
-    const project = makeProject('proj');
-    const task = withAnnotation(makeTask('task-1', 'proj'), 'not-json');
-
-    await processInteractiveRequests(project, [task], namespace);
-
     expect(buildWorkerRunSpy).not.toHaveBeenCalled();
     expect(createRunSpy).not.toHaveBeenCalled();
-    expect(patchTaskSpy).toHaveBeenCalledWith('task-1', expectedClearPatch, namespace);
+    expect(clearPatchValue()).toBeNull();
   });
 
-  it('clears a schema-invalid payload without creating a run', async () => {
-    const project = makeProject('proj');
-    // `id` must match /^[a-z0-9]{4,16}$/.
-    const task = withAnnotation(makeTask('task-1', 'proj'), { id: 'NOT VALID!' });
+  for (const phase of ['done', 'idea'] as const) {
+    it(`clears the annotation and skips ${phase} tasks`, async () => {
+      const project = makeProject('test-project');
+      const task = withAnnotation(makeTask('task-1', 'test-project', { phase }), {
+        id: 'abcd1234',
+      });
 
-    await processInteractiveRequests(project, [task], namespace);
+      await processInteractiveRequests(project, [task], namespace);
 
-    expect(createRunSpy).not.toHaveBeenCalled();
-    expect(patchTaskSpy).toHaveBeenCalledWith('task-1', expectedClearPatch, namespace);
-  });
+      expect(buildWorkerRunSpy).not.toHaveBeenCalled();
+      expect(createRunSpy).not.toHaveBeenCalled();
+      expect(clearPatchValue()).toBeNull();
+    });
+  }
 
-  it.each([
-    'done',
-    'idea',
-  ] as const)('clears the annotation on a %s task without creating a run', async (phase) => {
-    const project = makeProject('proj');
-    const task = withAnnotation(makeTask('task-1', 'proj', { phase }), { id: requestId });
-
-    await processInteractiveRequests(project, [task], namespace);
-
-    expect(buildWorkerRunSpy).not.toHaveBeenCalled();
-    expect(createRunSpy).not.toHaveBeenCalled();
-    expect(patchTaskSpy).toHaveBeenCalledWith('task-1', expectedClearPatch, namespace);
-  });
-
-  it('isolates a failing task and still processes the rest', async () => {
-    buildWorkerRunSpy.mockRejectedValueOnce(new Error('boom'));
-
-    const project = makeProject('proj');
-    const bad = withAnnotation(makeTask('bad-task', 'proj'), { id: requestId });
-    const good = withAnnotation(makeTask('good-task', 'proj'), { id: requestId });
+  it('isolates a failing task, leaves its annotation, and still processes later tasks', async () => {
+    const project = makeProject('test-project');
+    const bad = withAnnotation(makeTask('task-bad', 'test-project', { phase: 'running' }), {
+      id: 'bad11111',
+    });
+    const good = withAnnotation(makeTask('task-good', 'test-project', { phase: 'running' }), {
+      id: 'good2222',
+    });
+    createRunSpy.mockImplementation(async (run: Run) => {
+      if (run.metadata.name?.includes('task-bad')) {
+        throw new Error('boom');
+      }
+      return {} as Run;
+    });
 
     await processInteractiveRequests(project, [bad, good], namespace);
 
+    // Both tasks were attempted; the bad task's failure did not abort the pass.
     expect(buildWorkerRunSpy).toHaveBeenCalledTimes(2);
-    expect(createRunSpy).toHaveBeenCalledTimes(1);
-    // Only the healthy task's annotation is consumed; the failed task keeps
-    // its annotation so the next cycle retries with the same run name.
-    expect(patchTaskSpy).toHaveBeenCalledTimes(1);
-    expect(patchTaskSpy).toHaveBeenCalledWith(
-      'good-task',
-      {
-        metadata: {
-          name: 'good-task',
-          annotations: { [INTERACTIVE_RUN_ANNOTATION]: null },
-        },
-      },
-      namespace,
-    );
+    expect(createRunSpy).toHaveBeenCalledTimes(2);
+    // Only the good task's annotation was cleared.
+    const patchedNames = patchTaskSpy.mock.calls.map((c) => (c as unknown[])[0]);
+    expect(patchedNames).toContain('task-good');
+    expect(patchedNames).not.toContain('task-bad');
   });
 
-  it('ignores tasks without a request annotation', async () => {
-    const project = makeProject('proj');
-    const task = makeTask('task-1', 'proj');
+  it('ignores tasks without the annotation', async () => {
+    const project = makeProject('test-project');
+    const task = makeTask('task-1', 'test-project', { phase: 'running' });
 
     await processInteractiveRequests(project, [task], namespace);
 

@@ -36,9 +36,9 @@ export async function reconcileProject(project: Project, namespace: string): Pro
   // Re-fetch tasks after healing (to get fresh data with patched phases).
   const refreshedTasks = await listTasks(projectName, namespace);
 
-  // Consume interactive-run requests before the per-task decision loop so
-  // blocked tasks (skipped there) can still get an auxiliary run for
-  // debugging. A failure logs and never aborts reconciliation.
+  // Create auxiliary interactive runs requested via Task annotation. This runs
+  // before the active-task loop so blocked tasks (skipped below) can still get
+  // a run for debugging; a failure must not abort reconciliation.
   try {
     await processInteractiveRequests(project, refreshedTasks, namespace);
   } catch (e) {
