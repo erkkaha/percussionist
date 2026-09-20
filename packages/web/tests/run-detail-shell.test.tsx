@@ -67,6 +67,9 @@ mock.module(path.resolve('src/client/lib/api'), () => ({
   replyToRun: async () => {},
   startRunSession: async () => ({ sessionID: 'ses_new' }),
   interruptRun: async () => {},
+  // RunDetail now calls useSession for the header summary; the hook imports
+  // fetchSession from this module, so the mock must export it too.
+  fetchSession: async () => ({ sessionID: 'sess-1', messages: [] }),
 }));
 
 // Stand-ins that are trivially identifiable in the rendered output.

@@ -4,9 +4,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useRun } from '../hooks/useRun';
 import { useRunEvents } from '../hooks/useRunEvents';
+import { useSession } from '../hooks/useSession';
 import { deleteRun, interruptRun } from '../lib/api';
-import { type Run, TERMINAL_PHASES } from '../lib/types';
+import { deriveRunSummary, type RunSummary } from '../lib/run-summary';
+import type { RelatedTask, RunDetail as RunDetailData } from '../lib/types';
+import { TERMINAL_PHASES } from '../lib/types';
 import LogViewer from './LogViewer';
+import ModeBadge from './ModeBadge';
 import type { RunView } from './run-terminal/commands';
 import type { CommandOutputEntry } from './run-terminal/RunCommandBar';
 import RunCommandBar from './run-terminal/RunCommandBar';
@@ -67,6 +71,30 @@ function duration(start: string | undefined, end: string | undefined): string {
   return `${hrs}h ${remMins}m`;
 }
 
+/** Relative "as of" age for a summary activity timestamp, or null. */
+function relativeAge(ms: number | null): string | null {
+  if (ms === null) return null;
+  const delta = Date.now() - ms;
+  if (Number.isNaN(delta) || delta < 0) return null;
+  const secs = Math.floor(delta / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 48) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+/**
+ * Board deep link for a run's linked task. Null when either the task did not
+ * resolve (deleted) or the project is unknown, so callers degrade to plain text
+ * instead of rendering a dead link.
+ */
+function boardTaskLink(project?: string | null, relatedTask?: RelatedTask | null): string | null {
+  if (!project || !relatedTask) return null;
+  return `/projects/${encodeURIComponent(project)}/board?task=${encodeURIComponent(relatedTask.name)}`;
+}
+
 /**
  * RunDetail — the immersive cloud terminal for a single run.
  *
@@ -83,6 +111,11 @@ export default function RunDetail() {
   const runPhase = run?.status?.phase;
   const runIsActive = !!run && (!runPhase || !TERMINAL_PHASES.has(runPhase));
   const { connected: sseConnected, eventTick } = useRunEvents(name ?? '', runIsActive);
+  // Session-derived activity for the summary. Gated on `hasSession` so a run
+  // that never started a session does not issue a request that can only 404.
+  // Shares the `['session', name]` cache with TerminalTranscript, so viewing
+  // both the strip and the conversation does not double-fetch.
+  const { data: sessionForSummary } = useSession(name ?? '', !!run?.status?.sessionID);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [logContainer, setLogContainer] = useState<string | undefined>(undefined);
@@ -211,6 +244,16 @@ export default function RunDetail() {
   const defaultLogContainer = failedOnInit ? WORKSPACE_INIT_CONTAINER : 'bootstrap';
   const effectiveLogContainer = logContainer ?? defaultLogContainer;
 
+  // One derived summary shared by the header strip and the status-view card, so
+  // the two can never disagree. Pure derivation: no model prose, only the
+  // resolved task, prompt, phase/status timestamps and structured tool parts.
+  const summary = deriveRunSummary({
+    run,
+    relatedTask: run.relatedTask,
+    sessionMessages: sessionForSummary?.messages,
+    now: Date.now(),
+  });
+
   return (
     // Root stays the established `-m-6` viewport idiom shared with BoardView and
     // ActivityPage, now wearing the terminal surface and monospace font.
@@ -276,12 +319,11 @@ export default function RunDetail() {
           </div>
         </div>
 
-        {/* Show message as muted subtitle only when not failed — failed gets a banner */}
-        {run.status?.message && !isFailed && (
-          <p className="truncate text-xs text-text-muted">{run.status.message}</p>
-        )}
+        {/* Summary strip — replaces the bare status.message subtitle with the
+            deterministic derived summary (purpose, mode, latest activity + age). */}
+        <SummaryStrip summary={summary} relatedTask={run.relatedTask} project={run.spec.project} />
 
-        {/* Failed-run banner — prominent, replaces the subtitle */}
+        {/* Failed-run banner — prominent, kept alongside the summary strip */}
         {isFailed && run.status?.message && (
           <div className="rounded border border-phase-failed/40 bg-phase-failed/10 px-3 py-2 flex items-start gap-2">
             <span className="text-phase-failed text-sm leading-none mt-0.5">✕</span>
@@ -329,7 +371,7 @@ export default function RunDetail() {
 
         {activeView === 'status' && (
           <div className="flex-1 min-h-0 overflow-y-auto p-6">
-            <RunOverview run={run} phase={phase} />
+            <RunOverview run={run} phase={phase} summary={summary} />
           </div>
         )}
 
@@ -451,9 +493,20 @@ function LiveDot({ active, connected }: { active: boolean; connected: boolean })
   );
 }
 
-function RunOverview({ run, phase }: { run: Run; phase?: string }) {
+function RunOverview({
+  run,
+  phase,
+  summary,
+}: {
+  run: RunDetailData;
+  phase?: string;
+  summary: RunSummary;
+}) {
   return (
     <div className="space-y-6">
+      {/* Summary — purpose, linked task, mode and latest activity. */}
+      <RunSummaryCard summary={summary} relatedTask={run.relatedTask} project={run.spec.project} />
+
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Status card */}
@@ -597,6 +650,123 @@ function RunOverview({ run, phase }: { run: Run; phase?: string }) {
   );
 }
 
+const NO_SUMMARY_TEXT = 'No summary available — this run has no linked task or prompt.';
+const NO_SUMMARY_TITLE =
+  'This run has no linked task and no prompt, so there is nothing to summarize.';
+
+/**
+ * Header summary strip: purpose (task board link when resolved) + mode badge +
+ * latest deterministic activity with its "as of" age. Falls back to the explicit
+ * muted no-summary state instead of a blank line.
+ */
+function SummaryStrip({
+  summary,
+  relatedTask,
+  project,
+}: {
+  summary: RunSummary;
+  relatedTask?: RelatedTask;
+  project?: string;
+}) {
+  if (!summary.hasSummary) {
+    return (
+      <p className="truncate text-xs text-text-dim italic" title={NO_SUMMARY_TITLE}>
+        {NO_SUMMARY_TEXT}
+      </p>
+    );
+  }
+
+  const boardLink = boardTaskLink(project, relatedTask);
+  const age = relativeAge(summary.activityAt);
+  const purposeClass = 'truncate text-text';
+
+  return (
+    <div className="flex items-center gap-2 min-w-0 text-xs">
+      {boardLink ? (
+        <Link
+          to={boardLink}
+          className={`${purposeClass} hover:text-white underline-offset-2 hover:underline`}
+          title={summary.purpose ?? undefined}
+        >
+          {summary.purpose}
+        </Link>
+      ) : (
+        <span className={purposeClass} title={summary.purpose ?? undefined}>
+          {summary.purpose}
+        </span>
+      )}
+      <ModeBadge interactive={summary.mode === 'interactive'} className="shrink-0" />
+      <span
+        className={`truncate ${summary.activityIsStale ? 'text-text-dim' : 'text-text-muted'}`}
+        title={summary.activity}
+      >
+        {summary.activity}
+      </span>
+      {age && <span className="shrink-0 text-text-dim">· {age}</span>}
+    </div>
+  );
+}
+
+/**
+ * Status-view Summary card. Shows purpose, the linked task (type/title via the
+ * purpose, plus name and phase) with a board link, mode and latest activity.
+ * Renders the explicit muted no-summary state when there is no purpose source.
+ */
+function RunSummaryCard({
+  summary,
+  relatedTask,
+  project,
+}: {
+  summary: RunSummary;
+  relatedTask?: RelatedTask;
+  project?: string;
+}) {
+  const boardLink = boardTaskLink(project, relatedTask);
+  const age = relativeAge(summary.activityAt);
+  const activityWithAge = age ? `${summary.activity} · ${age}` : summary.activity;
+
+  return (
+    <Card>
+      <CardHeader className="border-b border-border-muted">
+        <CardTitle className="font-mono text-xs font-medium uppercase tracking-wide text-text-muted">
+          Summary
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {summary.hasSummary ? (
+          <>
+            <div className="flex items-center gap-2 flex-wrap">
+              {boardLink ? (
+                <Link
+                  to={boardLink}
+                  className="text-sm text-text hover:text-white underline-offset-2 hover:underline"
+                  title={summary.purpose ?? undefined}
+                >
+                  {summary.purpose}
+                </Link>
+              ) : (
+                <span className="text-sm text-text">{summary.purpose}</span>
+              )}
+              <ModeBadge interactive={summary.mode === 'interactive'} />
+            </div>
+            <Field label="Latest activity" value={activityWithAge} title={summary.activity} />
+            {relatedTask && (
+              <>
+                <Field label="Task" value={relatedTask.name} mono />
+                <Field label="Task phase" value={relatedTask.phase ?? '-'} />
+              </>
+            )}
+          </>
+        ) : (
+          <p className="text-sm text-text-dim italic" title={NO_SUMMARY_TITLE}>
+            {NO_SUMMARY_TEXT}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function BackLink({ iconOnly = false }: { iconOnly?: boolean }) {
   if (iconOnly) {
     return (
@@ -620,11 +790,21 @@ function BackLink({ iconOnly = false }: { iconOnly?: boolean }) {
   );
 }
 
-function Field({ label, value, mono }: { label: string; value?: string | null; mono?: boolean }) {
+function Field({
+  label,
+  value,
+  mono,
+  title,
+}: {
+  label: string;
+  value?: string | null;
+  mono?: boolean;
+  title?: string;
+}) {
   return (
     <div className="flex items-baseline gap-3 text-sm">
       <span className="text-text-dim w-36 shrink-0">{label}</span>
-      <span className={`text-text ${mono ? 'font-mono text-xs' : ''} break-all`}>
+      <span className={`text-text ${mono ? 'font-mono text-xs' : ''} break-all`} title={title}>
         {value ?? '-'}
       </span>
     </div>
