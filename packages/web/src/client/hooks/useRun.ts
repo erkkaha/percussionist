@@ -1,10 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchRun } from '../lib/api';
-import type { Run } from '../lib/types';
+import type { RunDetail } from '../lib/types';
 import { TERMINAL_PHASES } from '../lib/types';
 
 export function useRun(name: string, refetchInterval: number | false = 3_000) {
-  return useQuery<Run, Error>({
+  return useQuery<RunDetail, Error>({
     queryKey: ['run', name],
     queryFn: () => fetchRun(name),
     refetchInterval: (query) => {

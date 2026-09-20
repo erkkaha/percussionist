@@ -19,6 +19,8 @@ import type {
   ProjectDetail,
   ProjectMemory,
   Run,
+  RunDetail,
+  RunListItem,
   SessionResponse,
   StatSession,
   Task,
@@ -83,20 +85,24 @@ async function requestVoid(path: string, init?: RequestInit): Promise<void> {
   await apiFetch(path, init);
 }
 
-export async function fetchRuns(): Promise<Run[]> {
-  const data = await fetchJSON<{ items: Run[] }>('/runs');
+export async function fetchRuns(): Promise<RunListItem[]> {
+  const data = await fetchJSON<{ items: RunListItem[] }>('/runs');
   return data.items;
 }
 
 export async function fetchRunsPaginated(
   limit: number,
   offset: number,
-): Promise<{ items: Run[]; total: number }> {
-  return fetchJSON<{ items: Run[]; total: number }>(`/runs?limit=${limit}&offset=${offset}`);
+): Promise<{ items: RunListItem[]; total: number }> {
+  return fetchJSON<{ items: RunListItem[]; total: number }>(
+    `/runs?limit=${limit}&offset=${offset}`,
+  );
 }
 
-export async function fetchTaskRuns(taskName: string): Promise<Run[]> {
-  const data = await fetchJSON<{ items: Run[] }>(`/runs?task=${encodeURIComponent(taskName)}`);
+export async function fetchTaskRuns(taskName: string): Promise<RunListItem[]> {
+  const data = await fetchJSON<{ items: RunListItem[] }>(
+    `/runs?task=${encodeURIComponent(taskName)}`,
+  );
   return data.items;
 }
 
@@ -142,8 +148,8 @@ export async function fetchAttention(): Promise<AttentionResponse> {
   return fetchJSON<AttentionResponse>('/attention');
 }
 
-export async function fetchRun(name: string): Promise<Run> {
-  return fetchJSON<Run>(`/runs/${encodeURIComponent(name)}`);
+export async function fetchRun(name: string): Promise<RunDetail> {
+  return fetchJSON<RunDetail>(`/runs/${encodeURIComponent(name)}`);
 }
 
 export async function fetchLogs(
