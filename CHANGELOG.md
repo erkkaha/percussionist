@@ -1,6 +1,15 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.28] - 2026-09-20
+
+### <!-- 0 -->🚀 Features
+
+- Drive a run's session from the dashboard _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Return a partial transcript when a later message page fails _(runner-opencode)_
 ## [v0.2.27] - 2026-09-19
 
 ### <!-- 0 -->🚀 Features
@@ -18,6 +27,10 @@ All notable changes to Percussionist are documented here.
 ### <!-- 3 -->📚 Documentation
 
 - Add HITL needs-attention inbox plan _(plan)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.27
 ## [v0.2.26] - 2026-09-19
 
 ### <!-- 0 -->🚀 Features
