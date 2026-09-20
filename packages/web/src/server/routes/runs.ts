@@ -1,5 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { API_GROUP_VERSION, KIND_RUN, RunSpecSchema, TERMINAL_PHASES } from '@percussionist/api';
+import {
+  API_GROUP_VERSION,
+  KIND_RUN,
+  type Run,
+  RunSpecSchema,
+  type Task,
+  TERMINAL_PHASES,
+} from '@percussionist/api';
 import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';
 import {
@@ -7,15 +14,85 @@ import {
   createRunnerSession,
   deleteRun,
   getRun,
+  getTask,
   interruptRunnerSession,
   listRunnerSessions,
   listRuns,
+  listTasks,
+  NAMESPACE,
   postSessionMessage,
 } from '../kube.js';
 import { isKubeNotFound, kubeStatusCode } from '../lib/kube-errors.js';
 import { createPollingSseResponse } from '../lib/sse.js';
 
 const runs = new Hono();
+
+// Deterministic projection of the Task a run is linked to via spec.boardTask.
+// Enough for the client to render a purpose line without a second request.
+type RelatedTask = {
+  name: string;
+  title?: string;
+  type: Task['spec']['type'];
+  phase?: string;
+};
+
+function toRelatedTask(task: Task): RelatedTask {
+  return {
+    name: task.metadata.name,
+    title: task.spec.title,
+    type: task.spec.type,
+    phase: task.status?.phase,
+  };
+}
+
+// Bounded, whitespace-collapsed preview of the worker prompt. The full
+// spec.task (up to 8 KB) stays out of the list response.
+const TASK_PREVIEW_MAX = 200;
+
+function taskPreview(task: string | undefined): string | undefined {
+  if (!task) return undefined;
+  for (const line of task.split('\n')) {
+    const collapsed = line.replace(/\s+/g, ' ').trim();
+    if (collapsed) return collapsed.slice(0, TASK_PREVIEW_MAX);
+  }
+  return undefined;
+}
+
+// Resolve boardTask → Task for a page of runs with at most one listTasks()
+// call. Short-circuits when no run carries a boardTask. A lookup failure is
+// non-fatal: the list degrades to no relatedTask (logged once).
+async function buildRelatedTaskMap(items: Run[]): Promise<Map<string, RelatedTask>> {
+  const map = new Map<string, RelatedTask>();
+  const names = new Set<string>();
+  for (const run of items) {
+    if (run.spec.boardTask) names.add(run.spec.boardTask);
+  }
+  if (names.size === 0) return map;
+
+  try {
+    const tasks = await listTasks();
+    for (const task of tasks) {
+      if (!names.has(task.metadata.name)) continue;
+      map.set(task.metadata.name, toRelatedTask(task));
+    }
+  } catch (e: unknown) {
+    console.error('run list task enrichment failed:', (e as Error).message);
+  }
+  return map;
+}
+
+// Detail counterpart of buildRelatedTaskMap: a single getTask lookup, omitted
+// on 404/error so a missing Task never fails the run request.
+async function resolveRelatedTask(run: Run): Promise<RelatedTask | undefined> {
+  const taskName = run.spec.boardTask;
+  if (!taskName) return undefined;
+  try {
+    const task = await getTask(taskName, run.metadata.namespace ?? NAMESPACE);
+    return toRelatedTask(task);
+  } catch {
+    return undefined;
+  }
+}
 
 // GET /api/runs — list Runs in the namespace with optional pagination.
 // Supported query params: ?task=, ?limit=, ?offset=
@@ -46,32 +123,46 @@ runs.get('/', auth(), async (c) => {
       items = items.slice(offset, offset + limit);
     }
 
-    // Lightweight response — UI only needs these fields.
-    const stripped = items.map((r) => ({
-      metadata: {
-        name: r.metadata.name,
-        uid: r.metadata.uid,
-        namespace: r.metadata.namespace,
-        creationTimestamp: r.metadata.creationTimestamp,
-      },
-      spec: {
-        agent: r.spec.agent,
-        model: r.spec.model,
-      },
-      status: r.status
-        ? {
-            phase: r.status.phase,
-            message: r.status.message,
-            sessionID: r.status.sessionID,
-            tokensIn: r.status.tokensIn,
-            tokensOut: r.status.tokensOut,
-            startedAt: r.status.startedAt,
-            completedAt: r.status.completedAt,
-            lastEventAt: r.status.lastEventAt,
-            podName: r.status.podName,
-          }
-        : undefined,
-    }));
+    // One Task lookup for the whole page. Runs without a boardTask add nothing
+    // to the map, and an enrichment failure degrades to no relatedTask.
+    const relatedTasks = await buildRelatedTaskMap(items);
+
+    // Lightweight response — UI only needs these fields. serviceName and the
+    // full spec.task stay server-side; taskPreview carries the first line.
+    const stripped = items.map((r) => {
+      const relatedTask = r.spec.boardTask ? relatedTasks.get(r.spec.boardTask) : undefined;
+      return {
+        metadata: {
+          name: r.metadata.name,
+          uid: r.metadata.uid,
+          namespace: r.metadata.namespace,
+          creationTimestamp: r.metadata.creationTimestamp,
+        },
+        spec: {
+          project: r.spec.project,
+          boardTask: r.spec.boardTask,
+          interactive: r.spec.interactive,
+          runContext: r.spec.runContext,
+          agent: r.spec.agent,
+          model: r.spec.model,
+          taskPreview: taskPreview(r.spec.task),
+        },
+        status: r.status
+          ? {
+              phase: r.status.phase,
+              message: r.status.message,
+              sessionID: r.status.sessionID,
+              tokensIn: r.status.tokensIn,
+              tokensOut: r.status.tokensOut,
+              startedAt: r.status.startedAt,
+              completedAt: r.status.completedAt,
+              lastEventAt: r.status.lastEventAt,
+              podName: r.status.podName,
+            }
+          : undefined,
+        ...(relatedTask ? { relatedTask } : {}),
+      };
+    });
 
     return c.json({ items: stripped, total });
   } catch (e: unknown) {
@@ -112,7 +203,10 @@ runs.get('/:name', auth(), async (c) => {
   const name = c.req.param('name');
   try {
     const run = await getRun(name);
-    return c.json(run);
+    // Enrich with the linked Task when it still exists. A missing/erroring Task
+    // is non-fatal — the raw run is returned either way.
+    const relatedTask = await resolveRelatedTask(run);
+    return c.json(relatedTask ? { ...run, relatedTask } : run);
   } catch (e: unknown) {
     const anyE = e as { statusCode?: number; body?: { message?: string }; message?: string };
     const status = isKubeNotFound(e) ? 404 : 500;
