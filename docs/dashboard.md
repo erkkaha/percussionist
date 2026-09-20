@@ -43,9 +43,9 @@ The stage has four modes, deep-linkable via the `?view=` query parameter:
 | `conversation` (default) | The terminal-style agent transcript |
 | `logs` | Pod container logs |
 | `status` | The run overview — phase, timing, pod, git, and review verdict |
-| `shell` | An interactive TTY attached to the pod (opencode engine, Running pod only) |
+| `shell` | An interactive TTY attached to a Running pod (opencode engine); a claude run shows an explanation instead |
 
-Legacy `?tab=` deep links still work and map onto the new views: `overview` → `status`, `session` → `conversation`, `logs` → `logs`, `terminal` → `shell`. A view that cannot render (for example `?view=shell` on a run whose pod is no longer Running, or on the claude engine) falls back to `conversation` and rewrites the parameter, so a refresh never asks for a stage that cannot render.
+Legacy `?tab=` deep links still work and map onto the new views: `overview` → `status`, `session` → `conversation`, `logs` → `logs`, `terminal` → `shell`. `shell` is available only while the run is active and its pod is `Running`; a view that cannot render (for example `?view=shell` on a run whose pod is no longer `Running`) falls back to `conversation` and rewrites the parameter, so a refresh never asks for a stage that cannot render. A claude run with a `Running` pod still reaches `shell` — because its runner is a headless server with no TTY, the stage renders the "Interactive attach is not available for the claude engine" explanation instead.
 
 ### Command bar
 
@@ -59,7 +59,7 @@ Commands come in two kinds. **UI** commands change the stage or local state; **s
 | `/status` | UI | Switch to the status view |
 | `/logs [container]` | UI | Switch to the logs view, optionally for a specific container |
 | `/conversation` | UI | Switch back to the agent conversation |
-| `/shell` | UI | Attach an interactive TTY (opencode engine, Running pod only) |
+| `/shell` | UI | Switch to the shell view (needs a Running pod); a claude run shows the explanation instead |
 | `/clear` | UI | Clear the local command output — never the conversation |
 | `/copy` | UI | Copy the run name to the clipboard |
 | `/refresh` | UI | Refresh the run, session, and log data |
