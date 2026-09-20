@@ -1,6 +1,11 @@
 // TaskDetailPanel.tsx — tabbed detail view for a selected task.
 // Shows: Overview, Runs (with per-run Session/Logs), Events, Plan (PLAN tasks only).
 // Actions: Approve, Request Changes, Abandon, Retry, Start Interactive Run, Delete.
+//   Start Interactive Run requests an auxiliary run on the task's branch (it does
+//   not change the task's phase or worker) for investigating/fixing work in
+//   progress. The session is a real shell: only committed work is published when
+//   the run ends, so the user must `git commit`; and a live worker on the same
+//   branch can diverge, so stop the worker before making conflicting edits.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
