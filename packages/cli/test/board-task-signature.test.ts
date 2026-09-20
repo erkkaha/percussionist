@@ -15,6 +15,7 @@ const realKube = await import('@percussionist/kube');
 
 const state = {
   phases: new Map<string, string>(),
+  prNumbers: new Map<string, number>(),
   taskPatches: [] as Array<{ name: string; patch: unknown }>,
   statusPatches: [] as Array<{ name: string; patch: unknown }>,
   deleted: [] as string[],
@@ -23,17 +24,19 @@ const state = {
 mock.module('@percussionist/kube', () => ({
   ...realKube,
   NAMESPACE: 'percussionist',
-  getTask: async (name: string) =>
-    ({
+  getTask: async (name: string) => {
+    const prNumber = state.prNumbers.get(name);
+    return {
       apiVersion: 'percussionist.dev/v1alpha1',
       kind: 'Task',
       metadata: { name, namespace: 'percussionist', uid: `uid-${name}` },
       spec: { projectRef: 'proj', type: 'BUILD', title: name },
       status: {
         phase: state.phases.get(name) ?? 'awaiting-human',
-        worker: { retryCount: 0 },
+        worker: prNumber !== undefined ? { retryCount: 0, prNumber } : { retryCount: 0 },
       },
-    }) as Task,
+    } as Task;
+  },
   patchTask: async (name: string, patch: unknown) => {
     state.taskPatches.push({ name, patch });
   },
@@ -56,18 +59,40 @@ const {
   runBoardTaskRetry,
 } = await import('../src/board.js');
 
+// The gating handlers exit the process (and print to stderr) on an ineligible
+// task. Stub both so the rejection path can be asserted instead of killing the
+// test runner, and always restore them between tests.
+const realExit = process.exit;
+const realError = console.error;
+const errorLines: string[] = [];
+
+function stubProcessExit(): void {
+  process.exit = ((code?: number) => {
+    throw new Error(`process.exit(${code ?? 0})`);
+  }) as unknown as typeof process.exit;
+}
+
 beforeEach(() => {
   state.phases.clear();
+  state.prNumbers.clear();
   state.taskPatches = [];
   state.statusPatches = [];
   state.deleted = [];
+  errorLines.length = 0;
+  stubProcessExit();
+  console.error = (...args: unknown[]) => {
+    errorLines.push(args.join(' '));
+  };
 });
 
 afterEach(() => {
   state.phases.clear();
+  state.prNumbers.clear();
   state.taskPatches = [];
   state.statusPatches = [];
   state.deleted = [];
+  process.exit = realExit;
+  console.error = realError;
 });
 
 describe('board task handlers are addressed by --task-name only', () => {
@@ -118,5 +143,50 @@ describe('board task handlers are addressed by --task-name only', () => {
     };
     expect(patch.phase).toBe('pending');
     expect(patch.worker?.retryCount).toBe(1);
+  });
+});
+
+describe('request-changes accepts the PR stage', () => {
+  it('writes the annotation for an open-PR task parked in awaiting-feature-merge', async () => {
+    state.phases.set('plan-1', 'awaiting-feature-merge');
+    state.prNumbers.set('plan-1', 42);
+    await runBoardTaskRequestChanges({ taskName: 'plan-1', feedback: 'widen the scope' });
+
+    expect(state.taskPatches).toHaveLength(1);
+    const annotations = (
+      state.taskPatches[0]?.patch as { metadata: { annotations: Record<string, string> } }
+    ).metadata.annotations;
+    expect(annotations['percussionist.dev/action-request-changes']).toBe('true');
+    expect(annotations['percussionist.dev/action-rework-feedback']).toBe('widen the scope');
+  });
+
+  it('refuses awaiting-feature-merge without a prNumber', async () => {
+    state.phases.set('plan-1', 'awaiting-feature-merge');
+    await expect(
+      runBoardTaskRequestChanges({ taskName: 'plan-1', feedback: 'widen the scope' }),
+    ).rejects.toThrow('process.exit(1)');
+
+    expect(state.taskPatches).toHaveLength(0);
+    expect(errorLines.join('\n')).toContain('awaiting-feature-merge');
+    expect(errorLines.join('\n')).toContain('prNumber');
+  });
+
+  it('refuses a done task', async () => {
+    state.phases.set('task-1', 'done');
+    await expect(
+      runBoardTaskRequestChanges({ taskName: 'task-1', feedback: 'redo it' }),
+    ).rejects.toThrow('process.exit(1)');
+
+    expect(state.taskPatches).toHaveLength(0);
+    expect(errorLines.join('\n')).toContain('cannot request changes on');
+  });
+
+  it('refuses a running task', async () => {
+    state.phases.set('task-1', 'running');
+    await expect(
+      runBoardTaskRequestChanges({ taskName: 'task-1', feedback: 'redo it' }),
+    ).rejects.toThrow('process.exit(1)');
+
+    expect(state.taskPatches).toHaveLength(0);
   });
 });
