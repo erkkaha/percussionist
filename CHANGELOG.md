@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.29] - 2026-09-20
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Route dashboard turns on the run's model and show the live transcript _(web)_
 ## [v0.2.28] - 2026-09-20
 
 ### <!-- 0 -->🚀 Features
@@ -10,6 +15,10 @@ All notable changes to Percussionist are documented here.
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Return a partial transcript when a later message page fails _(runner-opencode)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.28
 ## [v0.2.27] - 2026-09-19
 
 ### <!-- 0 -->🚀 Features
