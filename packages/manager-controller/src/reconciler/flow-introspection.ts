@@ -48,6 +48,7 @@ export interface TaskFlowInspection {
       mergedAt?: string;
       retryCount?: number;
       aiReworkCount?: number;
+      prNumber?: number;
     };
     manualActionFlagsPresent: string[];
     blocked?: boolean;
@@ -422,8 +423,44 @@ function explainAwaitingFeatureMerge(
   task: Task,
   flow: ResolvedFlow,
   observed: ObservedRuns,
+  actions: ManualActionFlags,
 ): ExpectedNext {
   const mergeRunName = task.status?.worker?.mergeRunName;
+  const prNumber = task.status?.worker?.prNumber;
+
+  // PR mode: the feature branch lands via a GitHub pull request instead of a
+  // feature-branch merge run. When a PR is open (prNumber set) and no merge run
+  // is active, the reconciler polls the PR for merge state and new comments; a
+  // human can also request a scope change through the board/CLI annotations.
+  if (!mergeRunName && prNumber) {
+    if (actions.requestChanges) {
+      return {
+        primary: `PR #${prNumber} open; action-request-changes will start a scope-change follow-up BUILD child`,
+        reason:
+          'awaiting-feature-merge with worker.prNumber set and action-request-changes annotation set ' +
+          '(optionally action-rework-feedback carries the scope change); the follow-up child merges into ' +
+          'the feature branch and the PR-open run updates the same PR head',
+        blockingConditions: [],
+        suggestedActions: [
+          'Provide action-rework-feedback annotation describing the scope change',
+          'Remove action-request-changes to cancel',
+        ],
+      };
+    }
+    return {
+      primary: `PR #${prNumber} open; waiting for merge`,
+      reason:
+        'awaiting-feature-merge with worker.prNumber set and no active merge run; the reconciler polls ' +
+        'the PR for merge state and new review comments',
+      blockingConditions: [],
+      suggestedActions: [
+        'Merge the PR on GitHub to complete the task',
+        'Comment on the PR to trigger a PR-feedback evaluation run',
+        'Set action-request-changes + action-rework-feedback to start a scope-change follow-up BUILD child',
+      ],
+    };
+  }
+
   if (!mergeRunName) {
     return {
       primary: 'Feature-branch merge run will be scheduled',
@@ -647,7 +684,7 @@ function buildExpectedNext(
     case 'awaiting-merge':
       return explainAwaitingMerge(task, flow, observed);
     case 'awaiting-feature-merge':
-      return explainAwaitingFeatureMerge(task, flow, observed);
+      return explainAwaitingFeatureMerge(task, flow, observed, actions);
     case 'awaiting-children':
       return explainAwaitingChildren(task, project, allTasks, flow);
     case 'failed':
@@ -694,6 +731,7 @@ export function inspectTaskFlow(
         mergedAt: worker?.mergedAt,
         retryCount: worker?.retryCount,
         aiReworkCount: worker?.aiReworkCount,
+        prNumber: worker?.prNumber,
       },
       manualActionFlagsPresent: presentManualActionFlags(actions),
       blocked: task.status?.blocked,

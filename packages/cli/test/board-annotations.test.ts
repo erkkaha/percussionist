@@ -11,6 +11,7 @@ import { describe, expect, it } from 'bun:test';
 import type { Task } from '@percussionist/api';
 import {
   approveTaskMetadataPatch,
+  isRequestChangesEligible,
   requestChangesTaskMetadataPatch,
   retryTaskStatusPatch,
 } from '../src/board.ts';
@@ -77,6 +78,38 @@ describe('requestChangesTaskMetadataPatch', () => {
     const patch = requestChangesTaskMetadataPatch(makeTask(), 'redo');
     expect(patch.metadata.annotations?.['pre-existing']).toBe('keep');
     expect(patch.metadata.name).toBe('task-1');
+  });
+});
+
+describe('isRequestChangesEligible', () => {
+  it('accepts the normal awaiting-human gate', () => {
+    expect(isRequestChangesEligible(makeTask())).toBe(true);
+  });
+
+  it('accepts a PR-stage task — awaiting-feature-merge with an open PR number', () => {
+    const task = makeTask({
+      status: {
+        phase: 'awaiting-feature-merge',
+        worker: { status: 'Succeeded', retryCount: 0, aiReworkCount: 0, prNumber: 42 },
+      },
+    });
+    expect(isRequestChangesEligible(task)).toBe(true);
+  });
+
+  it('rejects awaiting-feature-merge when no PR is open (auto-merge/manual/closed)', () => {
+    const task = makeTask({
+      status: {
+        phase: 'awaiting-feature-merge',
+        worker: { status: 'Succeeded', retryCount: 0, aiReworkCount: 0 },
+      },
+    });
+    expect(isRequestChangesEligible(task)).toBe(false);
+  });
+
+  it('rejects phases that cannot consume the annotation', () => {
+    for (const phase of ['done', 'running', 'awaiting-merge', 'pending', 'failed'] as const) {
+      expect(isRequestChangesEligible(makeTask({ status: { phase } }))).toBe(false);
+    }
   });
 });
 

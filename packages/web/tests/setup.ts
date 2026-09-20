@@ -1,6 +1,19 @@
 // Setup file for DOM-based React component tests using happy-dom.
 // Preloaded via bun test --preload (or bunfig.toml [test].preload).
 //
+// React 19 only exports `act` from its development build; the production build
+// omits it entirely. `@testing-library/react` resolves `act` lazily at import
+// time and falls back to `react-dom/test-utils`, whose `act` itself delegates
+// to `React.act` — which is `undefined` under a production React build. That
+// surfaces as `TypeError: React.act is not a function` in every component test.
+//
+// `bun test` only defaults NODE_ENV to "test" when it is unset, so an ambient
+// NODE_ENV=production (e.g. in a run pod or a shell profile) makes React
+// resolve to the production entrypoint and breaks the whole component suite.
+// Force the test environment here, before any test file imports React, so the
+// suite is reproducible regardless of the surrounding environment.
+process.env.NODE_ENV = 'test';
+
 // happy-dom must install `document` before anything imports
 // `@testing-library/dom`. That package freezes `screen` at module-eval time;
 // if document is missing, every screen.* query permanently throws. jest-dom@7

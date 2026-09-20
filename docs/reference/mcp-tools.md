@@ -192,6 +192,12 @@ The dispatcher sidecar runs an in-process MCP server on port 4097 within each ru
 | `read_session` | Read session messages from another run's ConfigMap snapshot |
 | `report_unrelated_issue` | Report an issue outside the agent's own task (bug, security, performance, debt) for manager triage |
 
+### Startup readiness (opencode engine)
+
+The dispatcher and the runner are sibling containers in the run pod, started independently; the dispatcher's MCP listener is brought up at the top of its `main()` before it waits for the runner's health. OpenCode 2 opens its MCP connections exactly once, during host startup, and does not retry a refused connection, so a runner that reaches MCP setup before the dispatcher is listening would lose **every** dispatcher tool for the rest of the run. To prevent that, `runner-opencode` probes the dispatcher MCP host:port (default `127.0.0.1:4097`) before creating the OpenCode host and waits for it to accept a connection.
+
+The wait is bounded and best-effort — 60 s by default, `DISPATCHER_MCP_READY_TIMEOUT_MS=0` disables it. If the endpoint never answers the runner logs a warning and starts anyway; the dispatcher's own 120 s health-check window remains the authority on a run whose dispatcher never came up. This behavior is intentional: refusing to boot the runner would turn a recoverable startup race into a hard run failure, and the runner has no MCP API to reconnect later.
+
 ### `complete_review`
 
 Submits a review verdict for a completed worker run. Requires `approved` (boolean) and `diagnosis` (1–2 sentence assessment); accepts optional `feedback`, `suggestion`, and `findings`.

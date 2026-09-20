@@ -1633,6 +1633,33 @@ describe('decide — PR feedback loop', () => {
     expect(worker.prFeedbackRunName).toBeNull();
     expect(worker.createdBuildTaskRefs).toEqual(['test-project-build-old111', create.taskName]);
     expect(result.events[0]?.reason).toBe('PrFeedbackChangesRequested');
+    // No human annotation pending → nothing to consume.
+    expect(result.effects.some((e) => e.type === 'ClearTaskAnnotations')).toBe(false);
+  });
+
+  it('eval verdict request_changes + manual requestChanges → consumes the human annotations too', () => {
+    const task = makePrTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    (task.status as any).worker.prFeedbackLastCommentAt = '2026-05-28T10:00:00.000Z';
+    const evalRun = makeRun('preval-1', { phase: 'Succeeded' });
+    (evalRun.metadata as any).annotations = {
+      'percussionist.dev/review-verdict': JSON.stringify({
+        action: 'request_changes',
+        diagnosis: 'reviewer asked for a rename',
+      }),
+    };
+    const result = decide(
+      makeInput(task, {
+        manualActions: { requestChanges: true, reworkFeedback: 'and update the docs' },
+        observed: { prState: { state: 'open', mergedAt: null }, prFeedbackRun: evalRun },
+      }),
+    );
+    expect(result.toPhase).toBe('awaiting-children');
+    expect(result.effects.some((e) => e.type === 'CreatePrFollowUpTask')).toBe(true);
+    const clear = result.effects.find((e) => e.type === 'ClearTaskAnnotations') as any;
+    expect(clear).toBeDefined();
+    expect(clear.keys).toContain('percussionist.dev/action-request-changes');
+    expect(clear.keys).toContain('percussionist.dev/action-rework-feedback');
   });
 
   it('eval run failed → clears run name and resumes polling (round consumed)', () => {
@@ -1680,6 +1707,185 @@ describe('decide — PR feedback loop', () => {
     const task = makePrTask();
     const result = decide(
       makeInput(task, { observed: { prState: { state: 'open', mergedAt: null } } }),
+    );
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects).toEqual([]);
+  });
+});
+
+describe('decide — PR-stage human request-changes', () => {
+  const prProject = makeProject('test-project', { featureBranchingEnabled: true });
+  prProject.spec.flow = { ...prProject.spec.flow, integration: { mode: 'pr' } };
+  const prFlow = resolveFlow(prProject);
+
+  function makePrStageTask(type: 'PLAN' | 'BUILD' = 'PLAN') {
+    const task = makeTask('t1', 'test-project', {
+      phase: 'awaiting-feature-merge',
+      type,
+    });
+    (task.status as any).worker = { prNumber: 42 };
+    return task;
+  }
+
+  function decidePrStage(
+    task: ReturnType<typeof makeTask>,
+    manualActions: {
+      approved?: boolean;
+      requestChanges?: boolean;
+      reworkFeedback?: string;
+      abandon?: boolean;
+      answer?: string;
+    },
+    observed: {
+      prState?: { state: 'open' | 'closed'; mergedAt: string | null };
+      prFeedbackRun?: ReturnType<typeof makeRun>;
+      prFeedback?: { count: number; newestCommentAt: string; preview: string };
+    } = {},
+  ) {
+    return decide({
+      task,
+      project: prProject,
+      allTasks: [task],
+      observed,
+      manualActions,
+      flow: prFlow,
+      capacity: { activeCount: 0, maxParallel: 2 },
+      now,
+    });
+  }
+
+  it('requestChanges on open PR → one follow-up child + awaiting-children + cleared annotations', () => {
+    const task = makePrStageTask();
+    (task.status as any).worker.createdBuildTaskRefs = ['test-project-build-old111'];
+    const result = decidePrStage(
+      task,
+      { requestChanges: true, reworkFeedback: 'rename foo to bar in src/x.ts' },
+      { prState: { state: 'open', mergedAt: null } },
+    );
+
+    expect(result.toPhase).toBe('awaiting-children');
+    const creates = result.effects.filter((e) => e.type === 'CreatePrFollowUpTask') as any[];
+    expect(creates.length).toBe(1);
+    expect(creates[0].planTaskName).toBe('t1');
+    expect(creates[0].title).toBe('[PR #42 scope change] t1');
+    expect(creates[0].description).toContain('rename foo to bar');
+    expect(creates[0].agent).toBe(prFlow.build.defaultAgent);
+    const worker = result.statusPatch?.worker as any;
+    expect(worker.createdBuildTaskRefs).toEqual(['test-project-build-old111', creates[0].taskName]);
+    // Annotation is only consumed after the status patch lands (deferred clear).
+    const clear = result.effects.find((e) => e.type === 'ClearTaskAnnotations') as any;
+    expect(clear?.keys).toContain('percussionist.dev/action-request-changes');
+    expect(clear?.keys).toContain('percussionist.dev/action-rework-feedback');
+  });
+
+  it('same feedback twice → deterministic child name (idempotent)', () => {
+    const actions = { requestChanges: true, reworkFeedback: 'rename foo to bar' };
+    const first = decidePrStage(makePrStageTask(), actions, {
+      prState: { state: 'open', mergedAt: null },
+    });
+    const second = decidePrStage(makePrStageTask(), actions, {
+      prState: { state: 'open', mergedAt: null },
+    });
+    const firstName = (first.effects.find((e) => e.type === 'CreatePrFollowUpTask') as any)
+      .taskName;
+    const secondName = (second.effects.find((e) => e.type === 'CreatePrFollowUpTask') as any)
+      .taskName;
+    expect(secondName).toBe(firstName);
+  });
+
+  it('empty feedback → falls back to the default brief', () => {
+    const result = decidePrStage(
+      makePrStageTask(),
+      { requestChanges: true },
+      { prState: { state: 'open', mergedAt: null } },
+    );
+    expect(result.toPhase).toBe('awaiting-children');
+    const create = result.effects.find((e) => e.type === 'CreatePrFollowUpTask') as any;
+    expect(create.description).toContain('No feedback provided');
+  });
+
+  it('closed+merged PR wins over a pending requestChanges', () => {
+    const result = decidePrStage(
+      makePrStageTask(),
+      { requestChanges: true, reworkFeedback: 'rename foo' },
+      { prState: { state: 'closed', mergedAt: '2026-05-29T12:00:00.000Z' } },
+    );
+    expect(result.toPhase).toBe('done');
+    expect(result.effects.some((e) => e.type === 'CreatePrFollowUpTask')).toBe(false);
+  });
+
+  it('closed-without-merge PR wins and clears prNumber', () => {
+    const result = decidePrStage(
+      makePrStageTask(),
+      { requestChanges: true, reworkFeedback: 'rename foo' },
+      { prState: { state: 'closed', mergedAt: null } },
+    );
+    expect(result.toPhase).toBe('awaiting-human');
+    expect((result.statusPatch?.worker as any).prNumber).toBeNull();
+    expect(result.effects.some((e) => e.type === 'CreatePrFollowUpTask')).toBe(false);
+  });
+
+  it('in-flight feedback evaluation wins over a pending requestChanges', () => {
+    const task = makePrStageTask();
+    (task.status as any).worker.prFeedbackRunName = 'preval-1';
+    const result = decidePrStage(
+      task,
+      { requestChanges: true, reworkFeedback: 'rename foo' },
+      {
+        prState: { state: 'open', mergedAt: null },
+        prFeedbackRun: makeRun('preval-1', { phase: 'Running' }),
+      },
+    );
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects).toEqual([]);
+  });
+
+  it('requestChanges wins over unevaluated comments on the open PR', () => {
+    const task = makePrStageTask();
+    const result = decidePrStage(
+      task,
+      { requestChanges: true, reworkFeedback: 'rename foo' },
+      {
+        prState: { state: 'open', mergedAt: null },
+        prFeedback: {
+          count: 2,
+          newestCommentAt: '2026-05-28T10:00:00.000Z',
+          preview: 'alice: please rename this',
+        },
+      },
+    );
+
+    // The manual request outranks comment scheduling, so the annotation is
+    // consumed this cycle instead of leaving a feedback evaluation to run
+    // against the still-pending human request (which could create a second
+    // child when the PLAN returns to awaiting-feature-merge).
+    expect(result.toPhase).toBe('awaiting-children');
+    const creates = result.effects.filter((e) => e.type === 'CreatePrFollowUpTask') as any[];
+    expect(creates.length).toBe(1);
+    expect(result.effects.some((e) => e.type === 'SchedulePrFeedbackEvalRun')).toBe(false);
+    const worker = result.statusPatch?.worker as any;
+    expect(worker.prFeedbackRunName).toBeUndefined();
+    expect(worker.createdBuildTaskRefs).toEqual([creates[0].taskName]);
+    const clear = result.effects.find((e) => e.type === 'ClearTaskAnnotations') as any;
+    expect(clear?.keys).toContain('percussionist.dev/action-request-changes');
+    expect(clear?.keys).toContain('percussionist.dev/action-rework-feedback');
+  });
+
+  it('non-PLAN task ignores requestChanges (BUILD tasks never park in the PR stage)', () => {
+    const result = decidePrStage(
+      makePrStageTask('BUILD'),
+      { requestChanges: true, reworkFeedback: 'rename foo' },
+      { prState: { state: 'open', mergedAt: null } },
+    );
+    expect(result.toPhase).toBeUndefined();
+    expect(result.effects).toEqual([]);
+  });
+
+  it('no annotation → keep polling (unchanged)', () => {
+    const result = decidePrStage(
+      makePrStageTask(),
+      {},
+      { prState: { state: 'open', mergedAt: null } },
     );
     expect(result.toPhase).toBeUndefined();
     expect(result.effects).toEqual([]);
