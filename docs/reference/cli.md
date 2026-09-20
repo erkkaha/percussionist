@@ -208,10 +208,11 @@ beatctl board task remove --task-name <name>
 beatctl board task approve --task-name <name>          # approve an awaiting-human task
 beatctl board task request-changes --task-name <name> --feedback "..."
 beatctl board task retry --task-name <name> [--review]
+beatctl board task interactive --task-name <name> [--agent <a>] [--model <m>]
 ```
 
-`board task move|remove|approve|request-changes|retry` are addressed by
-`--task-name` only (Task CR names are unique within a namespace); no
+`board task move|remove|approve|request-changes|retry|interactive` are addressed
+by `--task-name` only (Task CR names are unique within a namespace); no
 `<project>` positional is accepted.
 
 #### board plan
@@ -253,6 +254,24 @@ the task to `pending` and bumps the worker `retryCount`, so the manager
 dispatches a fresh worker run. With `--review`, the work already landed and only
 a verdict is missing: the task moves straight to `awaiting-human` without
 dispatching a new run.
+
+#### board task interactive
+
+Start an **auxiliary** interactive run attached to a task, checked out on that
+task's branch (`status.worker.gitBranch` when present, otherwise the resolved
+feature branch / project default). Writes the
+`percussionist.dev/action-interactive` annotation and prints the deterministic
+run name; the manager's reconciler creates the Run on its next pass, then attach
+with `beatctl attach <run-name>` or the board's Runs → Terminal tab.
+
+The run does not change the task's `status.phase` or `status.worker.runName`, so
+it can be used to investigate a `failed`, `running`, or `blocked` task without
+disturbing it. `--agent` / `--model` override the task's agent and model for the
+interactive run only. Tasks in `idea` or `done` are rejected.
+
+The session is a real shell: only committed HEAD is published when the run ends
+gracefully, so `git commit` or the work is lost with the worktree. A live worker
+may still be using the same branch — stop it before making conflicting edits.
 
 ### auth
 

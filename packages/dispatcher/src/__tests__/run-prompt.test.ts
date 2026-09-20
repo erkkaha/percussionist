@@ -1,5 +1,6 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import type { CoreV1Api } from '@kubernetes/client-node';
+import { gitPublish } from '../git-publish.js';
 import {
   FatalRunError,
   type PromptPostResult,
@@ -535,5 +536,98 @@ describe('runInteractive (smoke)', () => {
     expect(Number.isNaN(Date.parse(statsCalls[0]?.startedAt ?? ''))).toBe(false);
     expect(statsCalls[0]?.completedAt).toBeDefined();
     expect(Number.isNaN(Date.parse(statsCalls[0]?.completedAt ?? ''))).toBe(false);
+  });
+});
+
+describe('runInteractive branch publish on teardown', () => {
+  /** Fake opencode server: empty SSE + a discovered session, so teardown runs. */
+  function stubOpencodeFetch(): () => void {
+    const enc = new TextEncoder();
+    const makeSse = () =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(enc.encode('data: {"type":"session.idle","properties":{}}\n\n'));
+          controller.close();
+        },
+      });
+    const fakeFetch = async (input: string | URL | Request): Promise<Response> => {
+      const url = String(input);
+      if (url.endsWith('/event')) {
+        return new Response(makeSse(), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }
+      if (url.endsWith('/session')) return new Response(JSON.stringify([{ id: 's1' }]));
+      if (url.includes('/message')) return new Response(JSON.stringify([]));
+      return new Response('', { status: 404 });
+    };
+    const origFetch = globalThis.fetch;
+    (globalThis as { fetch: unknown }).fetch = fakeFetch as typeof fetch;
+    return () => {
+      (globalThis as { fetch: unknown }).fetch = origFetch;
+    };
+  }
+
+  /** Run an interactive session that shuts down on the first poll interval. */
+  function runUntilShutdown(): Promise<void> {
+    const coreApi = {
+      createNamespacedConfigMap: async () => {},
+      patchNamespacedConfigMap: async () => {},
+    } as unknown as CoreV1Api;
+    let shuttingDown = false;
+    setTimeout(() => {
+      shuttingDown = true;
+    }, 50);
+    return runInteractive(
+      async () => {},
+      () => shuttingDown,
+      // Yield to the event loop so the shutdown interval can fire.
+      async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      },
+      coreApi,
+      'run-1',
+      'ns',
+      'uid',
+      { sendStats: async () => {} },
+    );
+  }
+
+  it('publishes the worker branch once on graceful interactive shutdown', async () => {
+    const restoreFetch = stubOpencodeFetch();
+    const original = gitPublish.publishWorkerBranch;
+    let calls = 0;
+    // Exported as a mutable object property so callers (polling.ts) resolve it
+    // at call time; replacing it here intercepts the teardown publish.
+    gitPublish.publishWorkerBranch = async () => {
+      calls++;
+      return { ok: true };
+    };
+    try {
+      await runUntilShutdown();
+    } finally {
+      gitPublish.publishWorkerBranch = original;
+      restoreFetch();
+    }
+    expect(calls).toBe(1);
+  });
+
+  it('swallows a publish failure so the run still ends cleanly', async () => {
+    const restoreFetch = stubOpencodeFetch();
+    const original = gitPublish.publishWorkerBranch;
+    gitPublish.publishWorkerBranch = async () => {
+      throw new Error('remote rejected push');
+    };
+    let rejected = false;
+    try {
+      await runUntilShutdown().catch(() => {
+        rejected = true;
+      });
+    } finally {
+      gitPublish.publishWorkerBranch = original;
+      restoreFetch();
+    }
+    expect(rejected).toBe(false);
   });
 });
