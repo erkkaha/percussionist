@@ -3,7 +3,9 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useRunsEvents } from '../hooks/useRunsEvents';
 import { fetchRunsPaginated } from '../lib/api';
-import type { Run, RunPhase } from '../lib/types';
+import { deriveRunSummary } from '../lib/run-summary';
+import type { RunListItem, RunPhase } from '../lib/types';
+import ModeBadge from './ModeBadge';
 import StatusBadge from './StatusBadge';
 import TokenCounter from './TokenCounter';
 import { Button } from './ui/button';
@@ -18,9 +20,7 @@ const ALL_PHASES: RunPhase[] = [
 ];
 const PAGE_SIZE = 50;
 
-function age(iso: string | undefined): string {
-  if (!iso) return '-';
-  const ms = Date.now() - new Date(iso).getTime();
+function formatAge(ms: number): string {
   if (Number.isNaN(ms) || ms < 0) return '-';
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -30,6 +30,18 @@ function age(iso: string | undefined): string {
   if (h < 48) return `${h}h`;
   const d = Math.floor(h / 24);
   return `${d}d`;
+}
+
+function age(iso: string | undefined): string {
+  if (!iso) return '-';
+  return formatAge(Date.now() - new Date(iso).getTime());
+}
+
+/** Relative age ("42s ago") for a summary activity timestamp, or null. */
+function relativeAge(ms: number | null): string | null {
+  if (ms === null) return null;
+  const value = formatAge(Date.now() - ms);
+  return value === '-' ? null : `${value} ago`;
 }
 
 type SortField = 'name' | 'phase' | 'age' | 'tokensIn';
@@ -145,14 +157,14 @@ export default function RunList() {
         </div>
       ) : (
         <div className="rounded-lg border border-border table-scroll">
-          <table className="w-full min-w-[640px] text-sm">
+          <table className="w-full min-w-[880px] text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-raised text-text-muted text-left">
                 <Th onClick={() => handleSort('name')}>Name{sortIndicator('name')}</Th>
                 <Th onClick={() => handleSort('phase')}>Phase{sortIndicator('phase')}</Th>
                 <th className="px-4 py-2.5 font-medium">Agent</th>
                 <th className="px-4 py-2.5 font-medium">Model</th>
-                <th className="px-4 py-2.5 font-medium">Session</th>
+                <th className="px-4 py-2.5 font-medium">Summary</th>
                 <Th onClick={() => handleSort('tokensIn')}>Tokens{sortIndicator('tokensIn')}</Th>
                 <Th onClick={() => handleSort('age')}>Age{sortIndicator('age')}</Th>
                 <th className="px-4 py-2.5 font-medium" />
@@ -203,10 +215,29 @@ export default function RunList() {
 // ---------------------------------------------------------------------------
 // Sub-components
 
-function RunRow({ run }: { run: Run }) {
+function RunRow({ run }: { run: RunListItem }) {
   const phase = run.status?.phase;
   const isFailed = phase === 'Failed';
   const errorMsg = isFailed ? run.status?.message : undefined;
+
+  // The list has no session messages — purpose + phase/status activity only.
+  const summary = deriveRunSummary({ run, relatedTask: run.relatedTask, now: Date.now() });
+  const interactive = summary.mode === 'interactive';
+  const purposeText = summary.hasSummary && summary.purpose ? summary.purpose : NO_SUMMARY_TEXT;
+  const activityAge = relativeAge(summary.activityAt);
+  const activityText = activityAge ? `${summary.activity} · ${activityAge}` : summary.activity;
+
+  // The failed-run message under the name duplicates the summary's failure
+  // reason once the summary carries it; keep it only when it does not.
+  const showErrorUnderName = !!errorMsg && !summary.activity.startsWith('Failed');
+
+  const boardLink =
+    run.relatedTask && run.spec.project
+      ? `/projects/${encodeURIComponent(run.spec.project)}/board?task=${encodeURIComponent(
+          run.relatedTask.name,
+        )}`
+      : null;
+
   return (
     <tr className="hover:bg-surface-raised/60 transition-colors">
       <td className="px-4 py-3">
@@ -216,7 +247,7 @@ function RunRow({ run }: { run: Run }) {
         >
           {run.metadata.name}
         </Link>
-        {errorMsg && (
+        {showErrorUnderName && errorMsg && (
           <p
             className="text-xs text-phase-failed/80 mt-0.5 font-mono truncate max-w-xs"
             title={errorMsg}
@@ -230,8 +261,15 @@ function RunRow({ run }: { run: Run }) {
       </td>
       <td className="px-4 py-3 text-text-muted">{run.spec.agent ?? '-'}</td>
       <td className="px-4 py-3 text-text-muted font-mono text-xs">{run.spec.model ?? '-'}</td>
-      <td className="px-4 py-3 text-text-muted font-mono text-xs">
-        {run.status?.sessionID ? truncate(run.status.sessionID, 16) : '-'}
+      <td className="px-4 py-3 max-w-[20rem]">
+        <RunSummaryCell
+          purpose={purposeText}
+          hasSummary={summary.hasSummary}
+          interactive={interactive}
+          activity={activityText}
+          activityIsStale={summary.activityIsStale}
+          boardLink={boardLink}
+        />
       </td>
       <td className="px-4 py-3">
         <TokenCounter tokensIn={run.status?.tokensIn} tokensOut={run.status?.tokensOut} />
@@ -249,6 +287,63 @@ function RunRow({ run }: { run: Run }) {
         </div>
       </td>
     </tr>
+  );
+}
+
+const NO_SUMMARY_TEXT = 'No summary available';
+
+/**
+ * Summary cell: purpose (task board link when resolved), mode badge, and the
+ * latest deterministic activity + relative age. A run with no purpose source
+ * renders the explicit, muted no-summary state rather than a blank cell.
+ */
+function RunSummaryCell({
+  purpose,
+  hasSummary,
+  interactive,
+  activity,
+  activityIsStale,
+  boardLink,
+}: {
+  purpose: string;
+  hasSummary: boolean;
+  interactive: boolean;
+  activity: string;
+  activityIsStale: boolean;
+  boardLink: string | null;
+}) {
+  const purposeClass = hasSummary
+    ? 'block truncate text-text'
+    : 'block truncate text-text-dim italic';
+  const purposeTitle = hasSummary
+    ? purpose
+    : 'No linked task or prompt — this run has no summary source.';
+
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center gap-2">
+        {boardLink ? (
+          <Link
+            to={boardLink}
+            className={`${purposeClass} hover:text-white underline-offset-2 hover:underline`}
+            title={purposeTitle}
+          >
+            {purpose}
+          </Link>
+        ) : (
+          <span className={purposeClass} title={purposeTitle}>
+            {purpose}
+          </span>
+        )}
+        <ModeBadge interactive={interactive} className="shrink-0" />
+      </div>
+      <p
+        className={`truncate text-xs ${activityIsStale ? 'text-text-dim' : 'text-text-muted'}`}
+        title={activity}
+      >
+        {activity}
+      </p>
+    </div>
   );
 }
 
@@ -292,19 +387,20 @@ function TableSkeleton() {
     <div className="rounded-lg border border-border overflow-x-auto">
       <div className="divide-y divide-border-muted">
         {[0, 1, 2, 3, 4].map((k) => (
-          <div key={k} className="px-4 py-4 flex gap-6">
+          <div key={k} className="px-4 py-4 flex items-center gap-6">
             <div className="h-4 w-32 rounded bg-surface-overlay animate-pulse" />
             <div className="h-4 w-20 rounded bg-surface-overlay animate-pulse" />
             <div className="h-4 w-16 rounded bg-surface-overlay animate-pulse" />
             <div className="h-4 w-24 rounded bg-surface-overlay animate-pulse" />
+            <div className="w-40 space-y-1.5">
+              <div className="h-4 w-40 rounded bg-surface-overlay animate-pulse" />
+              <div className="h-3 w-24 rounded bg-surface-overlay animate-pulse" />
+            </div>
             <div className="h-4 w-16 rounded bg-surface-overlay animate-pulse" />
+            <div className="h-4 w-10 rounded bg-surface-overlay animate-pulse" />
           </div>
         ))}
       </div>
     </div>
   );
-}
-
-function truncate(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max)}\u2026` : s;
 }
