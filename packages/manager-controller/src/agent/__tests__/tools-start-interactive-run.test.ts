@@ -32,7 +32,6 @@ const state = {
 mock.module('@percussionist/kube', () => ({
   ...realKube,
   apps: () => ({}),
-  buildTask: (args: Record<string, unknown>) => ({ metadata: { name: args.name }, ...args }),
   createRun: async () => {
     state.createRunCalls++;
     return {};
