@@ -6,6 +6,7 @@ import { useRunEvents } from '../hooks/useRunEvents';
 import { deleteRun } from '../lib/api';
 import { type Run, TERMINAL_PHASES } from '../lib/types';
 import LogViewer from './LogViewer';
+import SessionComposer from './SessionComposer';
 import SessionView from './SessionView';
 import StatusBadge from './StatusBadge';
 import TerminalTab from './TerminalTab';
@@ -244,15 +245,27 @@ export default function RunDetail() {
           <RunOverview run={run} phase={phase} />
         </TabsContent>
 
-        {/* Session conversation */}
-        <TabsContent value="session" className="flex-1 min-h-0 overflow-y-auto p-6">
-          <SessionView
-            name={name}
-            hasSession={hasSession}
-            active={isActive}
-            sseConnected={sseConnected}
-            eventTick={eventTick}
-          />
+        {/* Session conversation — the transcript scrolls, the composer stays
+            pinned underneath it. The composer is the interactive path for a
+            run: it sends turns into the live session, stops the current one,
+            and for `spec.interactive` runs starts the session in the first
+            place. It renders nothing once the run is over. */}
+        <TabsContent value="session" className="flex flex-1 min-h-0 flex-col">
+          <div className="flex-1 min-h-0 overflow-y-auto p-6">
+            <SessionView
+              name={name}
+              hasSession={hasSession}
+              active={isActive}
+              sseConnected={sseConnected}
+              eventTick={eventTick}
+              noSessionMessage={
+                run.spec.interactive && isActive
+                  ? 'No session yet — start one below to talk to the agent.'
+                  : undefined
+              }
+            />
+          </div>
+          <SessionComposer run={run} />
         </TabsContent>
 
         {/* Logs */}

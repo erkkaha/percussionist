@@ -10,6 +10,7 @@ export {
   createClusterAgent,
   createProject,
   createRun,
+  createRunnerSession,
   createTask,
   custom,
   deleteClusterAgent,
@@ -29,6 +30,7 @@ export {
   getTask,
   gitUrlHash,
   inboxFindingKey,
+  interruptRunnerSession,
   kubeConfig,
   // ClusterAgent helpers
   listClusterAgents,

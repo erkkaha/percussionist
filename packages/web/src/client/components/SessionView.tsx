@@ -34,6 +34,8 @@ interface SessionViewProps {
   sseConnected: boolean;
   /** Increments whenever relevant SSE events arrive. */
   eventTick: number;
+  /** Replaces the default "still initializing" copy when there is no session. */
+  noSessionMessage?: string;
 }
 
 export default function SessionView(props: SessionViewProps) {
@@ -62,6 +64,7 @@ function SessionViewContent({
   active,
   sseConnected,
   eventTick,
+  noSessionMessage,
 }: SessionViewProps) {
   void eventTick;
   const { data, error, isLoading, isFetching } = useSession(
@@ -73,7 +76,11 @@ function SessionViewContent({
   const messageRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
 
   if (!hasSession) {
-    return <div className="text-sm text-text-dim">No session yet — run is still initializing.</div>;
+    return (
+      <div className="text-sm text-text-dim">
+        {noSessionMessage ?? 'No session yet — run is still initializing.'}
+      </div>
+    );
   }
 
   if (error) {

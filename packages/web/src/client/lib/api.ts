@@ -200,6 +200,19 @@ export async function replyToRun(runName: string, message: string): Promise<void
   });
 }
 
+// Start the session of an interactive run (spec.interactive). The dispatcher
+// adopts it and publishes status.sessionID a few seconds later; poll the run.
+export async function startRunSession(runName: string): Promise<{ sessionID: string }> {
+  return requestJSON<{ sessionID: string }>(`/runs/${encodeURIComponent(runName)}/session`, {
+    method: 'POST',
+  });
+}
+
+// Stop the agent's current turn; the session stays open.
+export async function interruptRun(runName: string): Promise<void> {
+  await requestVoid(`/runs/${encodeURIComponent(runName)}/interrupt`, { method: 'POST' });
+}
+
 // ---------------------------------------------------------------------------
 // Projects
 

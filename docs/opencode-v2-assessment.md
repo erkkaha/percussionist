@@ -98,6 +98,23 @@ changed. Since v0.2.27 `runner-opencode` is the default (`DEFAULT_RUNNER_IMAGE` 
 the dashboard terminal exec `opencode attach` inside the runner container,
 which the v2 image cannot serve (no TUI); the shim exits with a clear error.
 
+The interactive path on the v2 runner is the dashboard's Session tab instead,
+and it goes entirely through the v1 runner contract both images serve:
+
+- the composer under the transcript posts turns with `POST /session/:id/message`
+  (the web's existing `POST /api/runs/:name/reply` route);
+- **Stop** calls `POST /api/runs/:name/interrupt`, which tries the facade's
+  `POST /session/:id/interrupt` and falls back to v1's `/abort`;
+- **Start session** on an interactive run calls `POST /api/runs/:name/session`,
+  which creates the session with `POST /session`; the dispatcher's discovery
+  loop adopts it within a few seconds and publishes `status.sessionID`.
+
+Shipping the OpenCode 2 CLI in the image for a TUI was tried and dropped: it is
+a 200 MB binary, the v2 CLI has no `attach` (its TUI takes `--server`), and it
+needs the v2 HTTP API exposed from the embedded host, which the SDK does not
+hand out. Permission prompts in `RUNNER_PERMISSION_MODE=ask` still have no
+dashboard reply on this runner (the facade serves no `/permissions` route).
+
 Inputs the image consumes are exactly the v1 runner's:
 
 | Input | Source | Used for |
