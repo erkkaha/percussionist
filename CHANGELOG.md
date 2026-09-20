@@ -1,11 +1,67 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.31] - 2026-09-20
+
+### <!-- 0 -->🚀 Features
+
+- Add slash-command registry and parser for run terminal _(web)_
+- Add terminal transcript for the run conversation _(web)_
+- Add slash-command bar for the run terminal _(web)_
+- Wire the immersive run terminal shell _(web)_
+- Add interactive run contract and builder options _(api,manager)_
+- Add start_interactive_run MCP tool _(manager)_
+- Publish branch on interactive shutdown _(dispatcher)_
+- Add interactive run request contract _(api)_
+- Add interactive run route and client wrapper _(web)_
+- Add Start Interactive Run button to task detail panel _(web)_
+- Consume interactive-run requests in the reconciler _(manager)_
+- Add beatctl board task interactive _(cli)_
+- Add interactive-run board route _(web)_
+- Add reconciler interactive-run request pass _(manager)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Use canonical interactive-run reconciler pass _(manager)_
+- Make interactive-run audit best-effort _(manager)_
+
+### <!-- 10 -->💼 Other
+
+- Bring in BUILD A (interactive contract + builder) and BUILD C (start_interactive_run MCP tool)
+- Bring in BUILD F (publish branch on interactive shutdown)
+- Bring in BUILD D (interactive-run web route + client wrapper)
+- Bring in BUILD E (Start Interactive Run board button)
+- Bring in BUILD A (shared interactive-run contract + builder options)
+- Bring in BUILD B (reconciler interactive-run request pass)
+- Bring in BUILD C (start_interactive_run MCP tool)
+
+### <!-- 2 -->🚜 Refactor
+
+- Extract shared session-part renderers _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add run page immersive terminal plan _(plans)_
+- Document immersive run terminal shell and slash commands _(web)_
+- Correct shell view fallback for claude engine _(dashboard)_
+- Add plan for interactive run from task _(plans)_
+
+### <!-- 6 -->🧪 Testing
+
+- Cover the immersive run shell and reach attach via /shell _(web)_
+- Add deterministic interactive run extended test _(e2e)_
+- Pin start_interactive_run does not create the Run _(manager)_
+- Add deterministic interactive run extended test _(e2e)_
+- Stop start_interactive_run test leaking a status-less buildTask stub _(manager)_
 ## [v0.2.30] - 2026-09-20
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Refetch the run transcript when the agent actually replies _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.30
 ## [v0.2.29] - 2026-09-20
 
 ### <!-- 1 -->🐛 Bug Fixes
