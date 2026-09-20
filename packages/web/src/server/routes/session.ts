@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { auth } from '../auth.js';
 import { fetchSessionMessages, getRun, readSessionConfigMap } from '../kube.js';
 import { isKubeNotFound } from '../lib/kube-errors.js';
+import { nameSseEventsByType } from '../lib/sse.js';
 import { lookupSessionIdByRunName, replaySessionFromDb } from './stats.js';
 
 const session = new Hono();
@@ -161,7 +162,9 @@ session.get('/:name/session/events', auth(), async (c) => {
   headers.set('Connection', 'keep-alive');
   headers.set('X-Accel-Buffering', 'off');
 
-  return new Response(upstream.body, {
+  // Name each frame after its JSON `type` so the browser's EventSource
+  // listeners (message.updated, session.idle, permission.updated) fire.
+  return new Response(upstream.body.pipeThrough(nameSseEventsByType()), {
     status: 200,
     headers,
   });

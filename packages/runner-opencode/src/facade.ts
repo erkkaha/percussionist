@@ -197,12 +197,13 @@ export async function startFacade(opts: FacadeOptions): Promise<Facade> {
     streamSSE(c, async (stream) => {
       await stream.writeSSE({
         data: JSON.stringify({ type: 'server.connected' } satisfies V1Event),
+        event: 'server.connected',
       });
 
-      const queue: string[] = [];
+      const queue: V1Event[] = [];
       let wake: (() => void) | undefined;
       const unsubscribe = host.subscribe((ev) => {
-        queue.push(JSON.stringify(ev));
+        queue.push(ev);
         wake?.();
       });
       try {
@@ -218,7 +219,10 @@ export async function startFacade(opts: FacadeOptions): Promise<Facade> {
             if (queue.length === 0) await stream.writeSSE({ data: '', event: 'ping' });
             continue;
           }
-          await stream.writeSSE({ data: next });
+          // Named after the type as well as carrying it in the JSON: the
+          // dispatcher reads `data:`, a browser EventSource dispatches on
+          // `event:`. Both see the same frame.
+          await stream.writeSSE({ data: JSON.stringify(next), event: next.type });
         }
       } finally {
         unsubscribe();

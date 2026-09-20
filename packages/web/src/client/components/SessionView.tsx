@@ -67,10 +67,12 @@ function SessionViewContent({
   noSessionMessage,
 }: SessionViewProps) {
   void eventTick;
+  // Event-driven refetch while the stream is up, with a slow safety poll in
+  // case a frame is missed; 5 s polling when the stream is down.
   const { data, error, isLoading, isFetching } = useSession(
     name,
     hasSession,
-    active && !sseConnected ? 5_000 : false,
+    active ? (sseConnected ? 15_000 : 5_000) : false,
   );
 
   const messageRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());

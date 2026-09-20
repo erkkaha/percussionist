@@ -313,6 +313,34 @@ describe('GET /api/runs/:name/session/events', () => {
     expect(body.error).toContain('No active session');
   });
 
+  it('proxies the runner stream with each frame named after its type', async () => {
+    getRunSpy.mockResolvedValue({
+      metadata: {},
+      status: { serviceName: 'run-svc', sessionID: 'sess-e0', phase: 'Running' },
+    } as RunWithStatus);
+    const upstream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const enc = new TextEncoder();
+        controller.enqueue(enc.encode('data: {"type":"server.connected"}\n\n'));
+        controller.enqueue(enc.encode('event: ping\ndata: \n\n'));
+        controller.enqueue(enc.encode('data: {"type":"session.idle","properties":{}}\n\n'));
+        controller.close();
+      },
+    });
+    fetchSpy.mockResolvedValue(
+      new Response(upstream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+    );
+
+    const res = await app.request('/api/runs/run-e0/session/events');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/event-stream');
+    expect(await res.text()).toBe(
+      'event: server.connected\ndata: {"type":"server.connected"}\n\n' +
+        'event: ping\ndata: \n\n' +
+        'event: session.idle\ndata: {"type":"session.idle","properties":{}}\n\n',
+    );
+  });
+
   it('answers 502 when the upstream event stream cannot be reached', async () => {
     getRunSpy.mockResolvedValue({
       metadata: {},
