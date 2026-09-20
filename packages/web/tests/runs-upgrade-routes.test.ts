@@ -14,13 +14,36 @@
 // no cluster is touched. AUTH_DISABLED=1 skips the auth middleware.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import type { Run } from '@percussionist/api';
+import type { Run, Task } from '@percussionist/api';
 import { Hono } from 'hono';
 import * as kube from '../src/server/kube.js';
 import * as managerMcp from '../src/server/lib/manager-mcp.js';
 
 const prevAuthDisabled = process.env.AUTH_DISABLED;
 process.env.AUTH_DISABLED = '1';
+
+function makeTask(name: string, overrides?: Partial<Task>): Task {
+  return {
+    apiVersion: 'percussionist.dev/v1alpha1',
+    kind: 'Task',
+    metadata: {
+      name,
+      namespace: 'percussionist',
+      uid: `uid-${name}`,
+      resourceVersion: '1',
+      generation: 1,
+    },
+    spec: {
+      projectRef: 'proj',
+      type: 'BUILD',
+      title: 'Add run summary API',
+      agent: 'builder',
+      priority: 'medium',
+    },
+    status: { phase: 'running' },
+    ...overrides,
+  } as Task;
+}
 
 function makeRun(name: string, overrides?: Partial<Run>): Run {
   return {
@@ -62,6 +85,8 @@ let upgradeApp: Hono;
 
 let listRunsSpy: ReturnType<typeof spyOn>;
 let getRunSpy: ReturnType<typeof spyOn>;
+let listTasksSpy: ReturnType<typeof spyOn>;
+let getTaskSpy: ReturnType<typeof spyOn>;
 let createRunSpy: ReturnType<typeof spyOn>;
 let deleteRunSpy: ReturnType<typeof spyOn>;
 let postSessionMessageSpy: ReturnType<typeof spyOn>;
@@ -73,6 +98,8 @@ let callManagerToolSpy: ReturnType<typeof spyOn>;
 beforeAll(async () => {
   listRunsSpy = spyOn(kube, 'listRuns');
   getRunSpy = spyOn(kube, 'getRun');
+  listTasksSpy = spyOn(kube, 'listTasks');
+  getTaskSpy = spyOn(kube, 'getTask');
   createRunSpy = spyOn(kube, 'createRun');
   deleteRunSpy = spyOn(kube, 'deleteRun');
   postSessionMessageSpy = spyOn(kube, 'postSessionMessage');
@@ -95,6 +122,8 @@ beforeAll(async () => {
 afterAll(() => {
   listRunsSpy.mockRestore();
   getRunSpy.mockRestore();
+  listTasksSpy.mockRestore();
+  getTaskSpy.mockRestore();
   createRunSpy.mockRestore();
   deleteRunSpy.mockRestore();
   postSessionMessageSpy.mockRestore();
@@ -109,6 +138,9 @@ afterAll(() => {
 beforeEach(() => {
   listRunsSpy.mockReset();
   getRunSpy.mockReset();
+  listTasksSpy.mockReset();
+  listTasksSpy.mockResolvedValue([] as never);
+  getTaskSpy.mockReset();
   createRunSpy.mockReset();
   deleteRunSpy.mockReset();
   postSessionMessageSpy.mockReset();
@@ -226,6 +258,114 @@ describe('GET /api/runs', () => {
   });
 });
 
+describe('GET /api/runs — purpose facts and related-task enrichment', () => {
+  type ListItem = {
+    metadata: { name: string };
+    spec: {
+      project?: string;
+      boardTask?: string;
+      interactive?: boolean;
+      runContext?: string;
+      agent?: string;
+      task?: string;
+      taskPreview?: string;
+    };
+    relatedTask?: { name: string; title?: string; type: string; phase?: string };
+  };
+
+  function withTask(name: string, task: string, overrides?: Partial<Run>): Run {
+    return makeRun(name, {
+      spec: {
+        project: 'proj',
+        boardTask: 'task-a',
+        agent: 'builder',
+        interactive: false,
+        task,
+        runContext: 'build-worker',
+      },
+      ...overrides,
+    } as never);
+  }
+
+  it('attaches relatedTask and purpose facts while stripping serviceName and full task', async () => {
+    const fullPrompt = 'TASK: build the thing\n\nSECOND LINE SECRET MARKER';
+    listRunsSpy.mockResolvedValue([withTask('run-linked', fullPrompt)]);
+    listTasksSpy.mockResolvedValue([makeTask('task-a')]);
+
+    const res = await runsApp.request('/api/runs');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: ListItem[] };
+    const item = body.items[0];
+    expect(item?.spec.project).toBe('proj');
+    expect(item?.spec.boardTask).toBe('task-a');
+    expect(item?.spec.interactive).toBe(false);
+    expect(item?.spec.runContext).toBe('build-worker');
+    // Bounded preview is the first whitespace-collapsed line, not the full prompt.
+    expect(item?.spec.taskPreview).toBe('TASK: build the thing');
+    expect(item?.relatedTask).toEqual({
+      name: 'task-a',
+      title: 'Add run summary API',
+      type: 'BUILD',
+      phase: 'running',
+    });
+
+    const json = JSON.stringify(item);
+    expect(json).not.toContain('serviceName');
+    expect(json).not.toContain('SECOND LINE SECRET MARKER');
+    expect(json).not.toContain('"task"');
+    // One lookup per request.
+    expect(listTasksSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('omits relatedTask when the linked Task is missing', async () => {
+    listRunsSpy.mockResolvedValue([withTask('run-orphan', 'do work')]);
+    listTasksSpy.mockResolvedValue([makeTask('other-task')]);
+
+    const body = (await (await runsApp.request('/api/runs')).json()) as { items: ListItem[] };
+    expect(body.items[0]?.relatedTask).toBeUndefined();
+  });
+
+  it('skips listTasks entirely when no listed run has a boardTask', async () => {
+    listRunsSpy.mockResolvedValue([
+      makeRun('run-int', {
+        spec: { project: 'proj', agent: 'builder', interactive: true },
+      } as never),
+    ]);
+
+    const res = await runsApp.request('/api/runs');
+    expect(res.status).toBe(200);
+    expect(listTasksSpy).not.toHaveBeenCalled();
+  });
+
+  it('caps taskPreview at 200 chars and collapses whitespace', async () => {
+    listRunsSpy.mockResolvedValue([withTask('run-long', `  first    line   ${'x'.repeat(500)}`)]);
+    listTasksSpy.mockResolvedValue([]);
+
+    const body = (await (await runsApp.request('/api/runs')).json()) as { items: ListItem[] };
+    const preview = body.items[0]?.spec.taskPreview ?? '';
+    expect(preview.startsWith('first line ')).toBe(true);
+    expect(preview.length).toBe(200);
+  });
+
+  it('degrades gracefully when the task lookup fails', async () => {
+    listRunsSpy.mockResolvedValue([withTask('run-fail', 'do work')]);
+    listTasksSpy.mockRejectedValue(new Error('api down'));
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const res = await runsApp.request('/api/runs');
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { items: ListItem[]; total: number };
+      expect(body.total).toBe(1);
+      expect(body.items[0]?.spec.taskPreview).toBe('do work');
+      expect(body.items[0]?.relatedTask).toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
 describe('GET /api/runs/:name', () => {
   it('returns the full run object (not stripped)', async () => {
     getRunSpy.mockResolvedValue(makeRun('run-detail'));
@@ -234,6 +374,63 @@ describe('GET /api/runs/:name', () => {
     const body = (await res.json()) as { metadata: { name: string }; status: { podName: string } };
     expect(body.metadata.name).toBe('run-detail');
     expect(body.status.podName).toBe('pod-run-detail');
+  });
+
+  it('enriches the raw run with relatedTask when the linked Task resolves', async () => {
+    getRunSpy.mockResolvedValue(
+      makeRun('run-detail', {
+        spec: {
+          project: 'proj',
+          boardTask: 'task-a',
+          agent: 'builder',
+          interactive: false,
+          task: 'the full prompt',
+        },
+      } as never),
+    );
+    getTaskSpy.mockResolvedValue(makeTask('task-a'));
+
+    const res = await runsApp.request('/api/runs/run-detail');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      spec: { task?: string };
+      status: { podName: string; serviceName: string };
+      relatedTask?: { name: string; type: string; title?: string; phase?: string };
+    };
+    // Raw fields survive the enrichment (not stripped like the list route).
+    expect(body.spec.task).toBe('the full prompt');
+    expect(body.status.podName).toBe('pod-run-detail');
+    expect(body.status.serviceName).toBe('svc-run-detail');
+    expect(body.relatedTask).toEqual({
+      name: 'task-a',
+      title: 'Add run summary API',
+      type: 'BUILD',
+      phase: 'running',
+    });
+    expect(getTaskSpy).toHaveBeenCalledWith('task-a', 'percussionist');
+  });
+
+  it('omits relatedTask when the linked Task is gone without failing the request', async () => {
+    getRunSpy.mockResolvedValue(makeRun('run-detail'));
+    getTaskSpy.mockRejectedValue(Object.assign(new Error('not found'), { statusCode: 404 }));
+
+    const res = await runsApp.request('/api/runs/run-detail');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { metadata: { name: string }; relatedTask?: unknown };
+    expect(body.metadata.name).toBe('run-detail');
+    expect(body.relatedTask).toBeUndefined();
+  });
+
+  it('does not look up a Task for a run without boardTask', async () => {
+    getRunSpy.mockResolvedValue(
+      makeRun('run-int', {
+        spec: { project: 'proj', agent: 'builder', interactive: true },
+      } as never),
+    );
+
+    const res = await runsApp.request('/api/runs/run-int');
+    expect(res.status).toBe(200);
+    expect(getTaskSpy).not.toHaveBeenCalled();
   });
 
   it('maps a kube 404 to 404 and other failures to 500', async () => {
