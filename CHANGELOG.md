@@ -1,11 +1,20 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.30] - 2026-09-20
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Refetch the run transcript when the agent actually replies _(web)_
 ## [v0.2.29] - 2026-09-20
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Route dashboard turns on the run's model and show the live transcript _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.29
 ## [v0.2.28] - 2026-09-20
 
 ### <!-- 0 -->🚀 Features
