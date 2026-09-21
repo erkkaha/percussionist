@@ -50,7 +50,7 @@ The summary strip and the Summary card at the top of the `status` view are both 
   3. **Interactive session** — a generic label when the run is interactive.
   4. **None** — an explicit, muted "No summary available — this run has no linked task or prompt." state, with a tooltip explaining why.
 - **Mode badge** — `Interactive` or `Automated`, from the authoritative `spec.interactive` flag; neutral styling so it reads as metadata rather than phase state.
-- **Activity** — a deterministic phrase derived from the run phase/status and, for active runs, the newest structured session tool part (for example "Editing run-summary.ts", "Running pnpm …", "Thinking…"). Terminal runs show a completion phrase instead — "Completed in 12m", "Failed — <reason>", or "Cancelled" — never an in-progress verb.
+- **Activity** — a deterministic phrase derived from the run phase/status and, for active runs, the newest structured session tool part (for example "Editing run-summary.ts", "Running pnpm …", "Thinking…"). Terminal runs show a completion phrase instead — "Completed in 12m", `Failed — <reason>`, or "Cancelled" — never an in-progress verb.
 - **Timestamp and staleness** — every activity string is paired with the timestamp of its source, shown as a relative age ("42s ago"). An active run with no event for more than five minutes is shown muted as "No activity for 7m" instead of a stale in-progress claim.
 
 ### View modes
