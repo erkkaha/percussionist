@@ -1,6 +1,48 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.2.32] - 2026-09-21
+
+### <!-- 0 -->🚀 Features
+
+- Add ModeBadge component for interactive/automated runs _(web)_
+- Expose run purpose facts and related-task enrichment _(web)_
+- Add pure run-summary derivation helper _(web)_
+- Add run summary client types and typed run fetchers _(web)_
+- Add run summary column to the run list _(web)_
+- Add run summary strip and overview card to run detail _(web)_
+- Add run summary client types and typed run fetchers _(web)_
+- Honor request-changes on PR-stage PLAN tasks _(manager)_
+- Allow request-changes on PR-stage tasks _(cli)_
+- Add request_changes MCP tool for PR-stage parity _(manager)_
+- Teach inspect_task_flow about PR-stage tasks _(manager-controller)_
+- Surface Request Changes action in the PR stage _(web)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Wait for dispatcher MCP listener before host startup _(runner-opencode)_
+- Force NODE_ENV=test in component test setup _(web)_
+- Prioritize PR-stage request-changes over comment eval _(manager)_
+- Harden PR follow-up idempotency and stale-annotation handling _(manager)_
+- Force non-production NODE_ENV in test setup for React.act _(web)_
+- Escape unclosed <reason> placeholder breaking VitePress build _(docs)_
+
+### <!-- 2 -->🚜 Refactor
+
+- Extract shared PR follow-up decision helper _(manager)_
+- Simplify run command bar and autoscroll conversation _(web)_
+
+### <!-- 3 -->📚 Documentation
+
+- Add run summary design plan _(plan)_
+- Document run summary column and detail strip _(dashboard)_
+- Continue work on tasks in the PR stage _(plan)_
+- Document PR-stage scope-change flow
+
+### <!-- 6 -->🧪 Testing
+
+- Add deterministic PR-stage scope-change wiring test _(e2e)_
+- Preload the React test setup via bunfig _(web)_
 ## [v0.2.31] - 2026-09-20
 
 ### <!-- 0 -->🚀 Features
@@ -53,6 +95,10 @@ All notable changes to Percussionist are documented here.
 - Pin start_interactive_run does not create the Run _(manager)_
 - Add deterministic interactive run extended test _(e2e)_
 - Stop start_interactive_run test leaking a status-less buildTask stub _(manager)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.31
 ## [v0.2.30] - 2026-09-20
 
 ### <!-- 1 -->🐛 Bug Fixes
