@@ -22,7 +22,7 @@
     "@opencode/plugin": "2.0.10",
     "@opencode/sdk": "2.0.10",
     "hono": "4.13.7",
-    "yaml": "2.9.0"
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@types/bun": "1.4.2"
