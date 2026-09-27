@@ -12,11 +12,32 @@ import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseAllDocuments } from 'yaml';
-import { patchedOperatorManifest, patchedWebManifest } from '../src/deploy-manifests.ts';
+import {
+  patchedOperatorManifest,
+  patchedPostgresManifest,
+  patchedWebManifest,
+} from '../src/deploy-manifests.ts';
 
 const REPO_ROOT = path.resolve(import.meta.dir, '../../..');
 const OPERATOR = readFileSync(path.join(REPO_ROOT, 'k8s/deploy/operator.yaml'), 'utf8');
 const WEB = readFileSync(path.join(REPO_ROOT, 'k8s/deploy/web.yaml'), 'utf8');
+const POSTGRES = readFileSync(path.join(REPO_ROOT, 'k8s/deploy/postgres.yaml'), 'utf8');
+
+/** The bundled database StatefulSet's first volumeClaimTemplates spec. */
+function postgresClaimSpec(manifest: string): Record<string, unknown> {
+  for (const doc of parseAllDocuments(manifest)) {
+    const obj = doc.toJS() as {
+      kind?: string;
+      spec?: { volumeClaimTemplates?: Array<{ spec?: Record<string, unknown> }> };
+    };
+    if (obj?.kind === 'StatefulSet') {
+      const template = obj.spec?.volumeClaimTemplates?.[0];
+      if (!template) throw new Error('StatefulSet has no volumeClaimTemplates');
+      return template.spec ?? {};
+    }
+  }
+  throw new Error('no StatefulSet in the database manifest');
+}
 
 interface EnvEntry {
   name: string;
@@ -162,5 +183,49 @@ describe('patchedWebManifest — against the checked-in manifest', () => {
 
   it('leaves the manifest untouched when nothing is requested', () => {
     expect(patchedWebManifest(WEB, {})).toBe(WEB);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// postgres.yaml — the StorageClass override
+//
+// `--database-storage-class` has to land in the manifest, not in a
+// `kubectl patch`: spec.volumeClaimTemplates is immutable, so a patch is
+// rejected by the API server on every existing StatefulSet.
+
+describe('patchedPostgresManifest', () => {
+  it('ships without a storageClassName so the cluster default applies', () => {
+    expect(postgresClaimSpec(POSTGRES).storageClassName).toBeUndefined();
+  });
+
+  it('sets the requested class on the claim template', () => {
+    const spec = postgresClaimSpec(patchedPostgresManifest(POSTGRES, { storageClass: 'longhorn' }));
+    expect(spec.storageClassName).toBe('longhorn');
+  });
+
+  it('is idempotent — re-patching replaces rather than duplicating', () => {
+    const once = patchedPostgresManifest(POSTGRES, { storageClass: 'longhorn' });
+    const twice = patchedPostgresManifest(once, { storageClass: 'ceph' });
+    const spec = postgresClaimSpec(twice);
+    expect(spec.storageClassName).toBe('ceph');
+    expect(twice.match(/storageClassName/g)).toHaveLength(1);
+  });
+
+  it('leaves the manifest untouched when no class is requested', () => {
+    expect(patchedPostgresManifest(POSTGRES, {})).toBe(POSTGRES);
+    expect(patchedPostgresManifest(POSTGRES, { storageClass: '  ' })).toBe(POSTGRES);
+  });
+
+  it('keeps the Service document intact alongside the patched StatefulSet', () => {
+    const docs = parseAllDocuments(patchedPostgresManifest(POSTGRES, { storageClass: 'longhorn' }));
+    const kinds = docs.map((d) => d.get('kind'));
+    expect(kinds).toEqual(['Service', 'StatefulSet']);
+    const service = docs.find((d) => d.get('kind') === 'Service');
+    expect(service?.getIn(['spec', 'ports', 0, 'port'])).toBe(5432);
+  });
+
+  it('warns instead of silently no-oping when there is no claim template', () => {
+    const noClaims = 'kind: StatefulSet\nmetadata:\n  name: x\nspec:\n  replicas: 1\n';
+    expect(patchedPostgresManifest(noClaims, { storageClass: 'longhorn' })).toBe(noClaims);
   });
 });

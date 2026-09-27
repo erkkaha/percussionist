@@ -135,8 +135,10 @@ spec:
         # No storageClassName: provisioned with the cluster default, like every
         # other PVC in this repo. `standard` only exists on minikube/k3s and
         # hard-coding it breaks clusters whose default is named differently.
-        # Override with `beatctl deploy --database-storage-class <name>`, which
-        # patches this field after apply.
+        # `beatctl deploy --database-storage-class <name>` substitutes the class
+        # into this block before applying — it cannot be patched afterwards,
+        # because spec.volumeClaimTemplates is immutable and the PVC is
+        # provisioned once, at creation.
         resources:
           requests:
             storage: 20Gi

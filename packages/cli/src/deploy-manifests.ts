@@ -10,6 +10,8 @@
 // drift (a requested name not present in the manifest) — the caller owns temp
 // file creation and cleanup.
 
+import { parseAllDocuments, stringify } from 'yaml';
+
 export interface OperatorManifestPatch {
   /** Replace PERCUSSIONIST_INGRESS_BASE_URL (scheme://host[:port]). */
   baseUrl?: string;
@@ -219,4 +221,55 @@ export function patchedWebManifest(yaml: string, opts: WebManifestPatch): string
   }
 
   return out;
+}
+
+/**
+ * Patch the bundled PostgreSQL StatefulSet so its PVC uses a specific
+ * StorageClass.
+ *
+ * This has to happen in the *manifest*, not as a `kubectl patch` afterwards:
+ * `spec.volumeClaimTemplates` is immutable on a live StatefulSet, and the API
+ * server rejects any update that touches it ("updates to statefulset spec for
+ * fields other than 'replicas', 'ordinals', 'template', ... are forbidden").
+ * Substituting before `kubectl apply` is also the only point at which the class
+ * can still have an effect — the PVC is provisioned once, at creation.
+ *
+ * Parsed with `yaml` rather than string surgery: the value sits inside a nested
+ * sequence, and a silent no-op here would apply an unchanged manifest while
+ * reporting success. A shape we do not recognise warns instead. The patched copy
+ * is re-serialised, so its comments do not survive — it is written to a temp file
+ * and fed to `kubectl apply`, never written back to the repo.
+ */
+export function patchedPostgresManifest(manifest: string, opts: { storageClass?: string }): string {
+  const storageClass = opts.storageClass?.trim();
+  if (!storageClass) return manifest;
+
+  const docs = parseAllDocuments(manifest);
+  let patched = false;
+
+  const rendered = docs.map((doc) => {
+    if (doc.errors.length > 0) return doc.toString();
+    const obj = doc.toJS() as {
+      kind?: string;
+      spec?: { volumeClaimTemplates?: Array<{ spec?: Record<string, unknown> }> };
+    };
+    if (obj?.kind !== 'StatefulSet') return doc.toString();
+    const templates = obj.spec?.volumeClaimTemplates;
+    if (!Array.isArray(templates) || templates.length === 0) return doc.toString();
+    for (const template of templates) {
+      template.spec = { ...(template.spec ?? {}), storageClassName: storageClass };
+    }
+    patched = true;
+    return stringify(obj);
+  });
+
+  if (!patched) {
+    console.warn(
+      `beatctl: warning: no StatefulSet volumeClaimTemplates found in the database manifest — ` +
+        `apply the storage class manually: ${storageClass}`,
+    );
+    return manifest;
+  }
+
+  return rendered.join('---\n');
 }

@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   patchedOperatorManifest,
+  patchedPostgresManifest,
   patchedWebManifest,
   type WebManifestPatch,
 } from './deploy-manifests.js';
@@ -136,6 +137,16 @@ function secretUrlPointsAtBundledPostgres(url: string | undefined): boolean {
   if (!url) return false;
   try {
     return new URL(url).hostname === DATABASE_HOST;
+  } catch {
+    return false;
+  }
+}
+
+/** True when the bundled database StatefulSet is already installed. */
+function statefulSetExists(namespace: string): boolean {
+  try {
+    kubectlOutput(['-n', namespace, 'get', 'statefulset', DATABASE_HOST, '-o', 'name']);
+    return true;
   } catch {
     return false;
   }
@@ -1133,6 +1144,19 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
   const webIsTemp = patchedWebContent !== webContent;
   const patchedWeb = webIsTemp ? writeTempManifest(patchedWebContent, 'web') : manifests.web;
 
+  // The storage class is substituted into the database manifest, not patched
+  // onto the live StatefulSet: spec.volumeClaimTemplates is immutable, so a
+  // patch can only ever be rejected, and the PVC is provisioned once at
+  // creation anyway.
+  const postgresContent = readFileSync(manifests.postgres, 'utf8');
+  const patchedPostgresContent = patchedPostgresManifest(postgresContent, {
+    storageClass: opts.databaseStorageClass,
+  });
+  const postgresIsTemp = patchedPostgresContent !== postgresContent;
+  const patchedPostgres = postgresIsTemp
+    ? writeTempManifest(patchedPostgresContent, 'postgres')
+    : manifests.postgres;
+
   try {
     console.log('beatctl: applying CRDs...');
     await runKubectl(['apply', '-f', manifests.runCrd]);
@@ -1172,25 +1196,17 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     // web and memory pods crash-loop on a refused connection until PG is
     // serving, which turns a slow first boot into a restart storm.
     if (bundledPostgres) {
-      await runKubectl(['apply', '-f', manifests.postgres]);
-      if (opts.databaseStorageClass) {
-        // volumeClaimTemplates are immutable, so the class is patched onto the
-        // live StatefulSet rather than baked into the manifest (which ships
-        // without a storageClassName so the cluster default applies).
-        await runKubectl([
-          '-n',
-          ns,
-          'patch',
-          `statefulset/${DATABASE_HOST}`,
-          '--type=merge',
-          '-p',
-          JSON.stringify({
-            spec: {
-              volumeClaimTemplates: [{ spec: { storageClassName: opts.databaseStorageClass } }],
-            },
-          }),
-        ]);
+      // A class requested for a database that already exists cannot take
+      // effect, which is worth saying out loud.
+      if (opts.databaseStorageClass && statefulSetExists(ns)) {
+        console.log(
+          `beatctl: note: ${DATABASE_HOST} already exists, so its PVC keeps the StorageClass it ` +
+            'was provisioned with. To move existing data to another class, provision a new volume ' +
+            'and restore into it.',
+        );
       }
+
+      await runKubectl(['apply', '-f', patchedPostgres]);
       if (opts.wait !== false) {
         console.log('beatctl: waiting for the database to accept connections...');
         await runKubectl([
@@ -1258,6 +1274,13 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     if (webIsTemp) {
       try {
         rmSync(patchedWeb);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (postgresIsTemp) {
+      try {
+        rmSync(patchedPostgres);
       } catch {
         /* ignore */
       }
